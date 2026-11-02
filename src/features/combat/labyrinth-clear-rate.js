@@ -1021,7 +1021,12 @@ class LabyrinthClearRate {
             this.scheduleAutoTileCalc();
             if (before && previousFloor === this.currentFloor) {
                 const after = this.revealSnapshot(roomData, data.labyrinth);
-                if (isBeaconReveal(before, after)) this.scheduleAutoPath();
+                if (isBeaconReveal(before, after)) {
+                    this.scheduleAutoPath('beacon');
+                } else if (after.revealed > before.revealed) {
+                    // Rooms lit with no beacon spent: a room clear opened its neighbors
+                    this.scheduleAutoPath('reveal');
+                }
             }
         } else {
             // No grid in this message (a run ending): an open distribution panel
@@ -3641,6 +3646,27 @@ class LabyrinthClearRate {
         settingsPanel.appendChild(autoPathButton);
         syncAutoPath();
 
+        // Whether Auto-path also reacts to a room clear lighting up a new room (no beacon spent)
+        const revealPathOn = () => !!config.getSetting('labyrinthAutoPathOnReveal');
+        const revealPathButton = document.createElement('button');
+        revealPathButton.className = `${TILE_CONTROLS_CLASS}-auto-path-reveal-toggle`;
+        revealPathButton.style.cssText = autoButton.style.cssText;
+        revealPathButton.title =
+            'Also works out the path when clearing a room reveals a new room beside it, not only after a beacon. Needs Auto-path on';
+        const syncRevealPath = () => {
+            const on = revealPathOn();
+            revealPathButton.textContent = on ? 'Path on reveal: on' : 'Path on reveal: off';
+            revealPathButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+        };
+        revealPathButton.addEventListener('click', () => {
+            config.setSetting('labyrinthAutoPathOnReveal', !revealPathOn());
+            // A reveal-triggered path already pending is dropped; a beacon's stays
+            if (!revealPathOn() && this._autoPathReason === 'reveal') this.cancelAutoPath();
+            syncRevealPath();
+        });
+        settingsPanel.appendChild(revealPathButton);
+        syncRevealPath();
+
         // How the beacon planner ranks placements; any change redraws a plan on the map
         const beaconGroup = document.createElement('div');
         beaconGroup.className = `${TILE_CONTROLS_CLASS}-beacon-settings`;
@@ -5468,20 +5494,29 @@ class LabyrinthClearRate {
      * calculation in progress (it queues as a Path press would, without the
      * press's toggle).
      */
-    scheduleAutoPath() {
+    scheduleAutoPath(reason = 'beacon') {
         if (!config.getSetting('labyrinthAutoPath')) return;
-        if (this.autoPathTimer) return;
+        // A room clear's reveal has its own switch, under the Auto-path one
+        if (reason === 'reveal' && !config.getSetting('labyrinthAutoPathOnReveal')) return;
+        if (this.autoPathTimer) {
+            // A beacon landing on a pending reveal makes it a beacon's: the reveal switch no longer gates it
+            if (reason === 'beacon') this._autoPathReason = 'beacon';
+            return;
+        }
+        this._autoPathReason = reason;
         const floor = this.currentFloor;
         const characterId = dataManager.getCurrentCharacterId();
         this.autoPathTimer = setTimeout(() => {
             this.autoPathTimer = null;
+            const firedFor = this._autoPathReason || 'beacon';
             if (!config.getSetting('labyrinthAutoPath')) return;
+            if (firedFor === 'reveal' && !config.getSetting('labyrinthAutoPathOnReveal')) return;
             // The floor and the character still the ones the reveal was about
             if (this.currentFloor !== floor || dataManager.getCurrentCharacterId() !== characterId) return;
             if (!this.roomData) return;
             if (this.pathCalcRunning) {
                 // The path in flight read the grid from before the reveal
-                this.scheduleAutoPath();
+                this.scheduleAutoPath(firedFor);
                 return;
             }
             if (this.tileCalcRunning || this.autoTileTimer) {
@@ -5503,6 +5538,7 @@ class LabyrinthClearRate {
     cancelAutoPath() {
         if (this.autoPathTimer) clearTimeout(this.autoPathTimer);
         this.autoPathTimer = null;
+        this._autoPathReason = null;
         // A path Auto-path queued behind a room calculation is withdrawn with
         // it; one a Path press queued is left to run
         if (this._pathQueuedAuto) {

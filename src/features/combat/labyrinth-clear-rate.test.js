@@ -7527,8 +7527,12 @@ describe('auto-path after a beacon reveal', () => {
     let pathSpy;
     let tileSpy;
 
-    const setSettings = ({ autoPath = true } = {}) =>
-        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoPath' ? autoPath : false));
+    const setSettings = ({ autoPath = true, onReveal = true } = {}) =>
+        configMock.getSetting.mockImplementation((key) => {
+            if (key === 'labyrinthAutoPath') return autoPath;
+            if (key === 'labyrinthAutoPathOnReveal') return onReveal;
+            return false;
+        });
 
     /**
      * A labyrinth update for floor 3 with `revealed` rooms lit and `beacons` left in the run, on the
@@ -7626,11 +7630,73 @@ describe('auto-path after a beacon reveal', () => {
         expect(pathSpy).not.toHaveBeenCalled();
     });
 
-    test('a reveal that spent no beacon (a cleared room) does not re-path', () => {
+    test('a reveal that spent no beacon (a cleared room) does not re-path with the reveal option off', () => {
+        setSettings({ onReveal: false });
         labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
         vi.advanceTimersByTime(2000);
 
         expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a reveal that spent no beacon re-paths once with the reveal option on', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.onLabyrinthUpdated(update(6, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('the reveal option needs Auto-path itself: with Auto-path off a room-clear reveal does nothing', () => {
+        setSettings({ autoPath: false, onReveal: true });
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).not.toHaveBeenCalled();
+    });
+
+    test('a beacon still re-paths with the reveal option off', () => {
+        setSettings({ onReveal: false });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
+        vi.advanceTimersByTime(2000);
+
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('turning the reveal option off drops a pending reveal re-path but not a beacon one', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        setSettings({ onReveal: false });
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).not.toHaveBeenCalled();
+
+        setSettings({ onReveal: true });
+        labyrinthClearRate.onLabyrinthUpdated(update(8, 3));
+        labyrinthClearRate.onLabyrinthUpdated(update(12, 2));
+        setSettings({ onReveal: false });
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('real messages: the room clear that lights two rooms re-paths only with the reveal option, a beacon always', () => {
+        const run = (name, opts) => {
+            setSettings(opts);
+            labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('entry'));
+            labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated(name));
+            vi.advanceTimersByTime(2000);
+        };
+        run('roomClearReveal', { onReveal: false });
+        expect(pathSpy).not.toHaveBeenCalled();
+
+        labyrinthClearRate.roomData = null;
+        run('roomClearReveal', { onReveal: true });
+        expect(pathSpy).toHaveBeenCalledTimes(1);
+
+        pathSpy.mockClear();
+        labyrinthClearRate.roomData = null;
+        setSettings({ onReveal: false });
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('torchSpent'));
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+        vi.advanceTimersByTime(2000);
+        expect(pathSpy).toHaveBeenCalledTimes(1);
     });
 
     test('a room calculation in progress gets the path queued behind it, not run beside it', () => {

@@ -3065,6 +3065,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Works out the labyrinth path after a beacon reveals rooms on the floor, whether or not a path is shown yet (once per reveal, after any room calculation it triggers)',
             },
+            labyrinthAutoPathOnReveal: {
+                id: 'labyrinthAutoPathOnReveal',
+                label: 'Labyrinth: Auto-path also when a room clear reveals rooms',
+                type: 'checkbox',
+                default: true,
+                help: 'Needs Auto-path above. Also works out the path again when clearing a room lights up a new room beside it (no beacon spent). Turn this off to re-path only after a beacon.',
+            },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
                 label: 'Show battle/wave counter in current action panel during combat',
