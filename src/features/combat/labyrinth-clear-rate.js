@@ -129,6 +129,23 @@ const BUFF_INPUT_EVENTS = [
 /** How often the orphan check runs — slow on purpose, see `_previewWatchdogTick` */
 const PREVIEW_WATCHDOG_MS = 500;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
+
+/**
+ * Longest corner-badge reading, in characters, that fits a desktop tile: "100% 99s" and "99% 999+" (7) fit,
+ * "100% 102s" and "100% 999+" (8) do not. Decided from the text, never measured.
+ */
+const CORNER_BADGE_MAX_CHARS = 7;
+
+/**
+ * Whether a clear badge must take the full-width strip form ("100|102s", no percent sign) rather than the
+ * corner badge ("100% 102s"), because the corner form would run past its tile.
+ * @param {number} pct - Whole-number clear percent
+ * @param {string} etaText - The time reading, e.g. "102s" or "999+"
+ * @returns {boolean}
+ */
+export function badgeNeedsStrip(pct, etaText) {
+    return `${pct}%`.length + String(etaText).length > CORNER_BADGE_MAX_CHARS;
+}
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
 const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
 // inline-block + never-shrinking min-width so the readout keeps a stable
@@ -5698,12 +5715,21 @@ class LabyrinthClearRate {
         // untidy. So on a phone the badge is a strip across the room's full width, with the "%" sign
         // dropped and a "|" between the numbers, since at this size "100 7s" read as "1007s". The widest
         // reading, "100|999+", measured 30 px in the 32 px strip. The room's hover preview shows the full
-        // "%" reading. Desktop is unchanged.
+        // "%" reading.
+        //
+        // Desktop keeps its corner badge with the "%" sign, until the text is too long for the tile. A tile is
+        // 2.875rem (46 px) at grid scale 1, so the corner badge has 44 px less 6 px of padding, and "100% 102s" /
+        // "100% 999+" (about 42 px of text at 9 px and 8 px) ran past both edges. The grid scale is a CSS zoom
+        // over the tile and the badge together, so the ratio holds at 75% and every other scale and nothing
+        // needs measuring. The length decides (see badgeNeedsStrip): a long reading takes the phone's strip
+        // form, "100|102s" at the desktop fonts, about 36 px in the 46 px tile.
         const mobile = isMobileMode();
+        const etaText = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
+        const strip = mobile || badgeNeedsStrip(pct, etaText);
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
         badge.style.cssText =
-            (mobile
+            (strip
                 ? 'position:absolute; left:0; right:0; bottom:0; z-index:9; width:100%; max-width:100%; padding:1px; ' +
                   'border-radius:0 0 3px 3px; box-sizing:border-box; display:flex; align-items:baseline; ' +
                   'justify-content:center; gap:1px; '
@@ -5716,14 +5742,14 @@ class LabyrinthClearRate {
 
         const chanceSpan = document.createElement('span');
         chanceSpan.style.cssText = `font-size:${mobile ? 7 : 9}px; font-weight:700; line-height:1; flex:0 0 auto;`;
-        chanceSpan.textContent = mobile ? `${pct}` : `${pct}%`;
+        chanceSpan.textContent = strip ? `${pct}` : `${pct}%`;
 
         const etaSpan = document.createElement('span');
         etaSpan.style.cssText = `font-size:${mobile ? 6 : 8}px; font-weight:600; line-height:1; opacity:0.95; flex:0 0 auto;`;
-        etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
+        etaSpan.textContent = etaText;
 
         badge.appendChild(chanceSpan);
-        if (mobile) {
+        if (strip) {
             const separator = document.createElement('span');
             separator.style.cssText = 'font-size:6px; line-height:1; opacity:0.7; flex:0 0 auto;';
             separator.textContent = '|';
