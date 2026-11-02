@@ -330,12 +330,52 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         ...record,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
-        history: history.slice(-MAX_ARCHIVED_CYCLES),
+        history: capHistory(history),
     };
 }
 
 /** How many finished cycles are kept beside the live one */
 export const MAX_ARCHIVED_CYCLES = 4;
+
+/**
+ * When an archived cycle happened, for ordering: its week, then within the week
+ * the cycle it closed (test server) or when it was archived.
+ * @param {Object} cycle - An archived cycle
+ * @returns {number[]} `[week, within]`, compared in that order
+ */
+function cycleOrder(cycle) {
+    const week = Number.isFinite(cycle?.weekStart)
+        ? cycle.weekStart
+        : Number.isFinite(cycle?.archivedAt)
+          ? trialWeekStart(cycle.archivedAt)
+          : -Infinity;
+    const within = Number.isFinite(cycle?.cycleFrom)
+        ? cycle.cycleFrom
+        : Number.isFinite(cycle?.archivedAt)
+          ? cycle.archivedAt
+          : -Infinity;
+    return [week, within];
+}
+
+/**
+ * The archived cycles, oldest first, capped to the newest {@link MAX_ARCHIVED_CYCLES}.
+ *
+ * Sorted before the cap rather than trusting insertion order: a merge appends
+ * one side's history after the other's, and a stale device's record from weeks
+ * ago appended its older weeks last — the cap then kept those and dropped the
+ * newer weeks for good.
+ *
+ * @param {Array<Object>} history - Archived cycles, any order
+ * @returns {Array<Object>} A new array
+ */
+function capHistory(history) {
+    const sorted = [...history].sort((a, b) => {
+        const [aw, ai] = cycleOrder(a);
+        const [bw, bi] = cycleOrder(b);
+        return aw !== bw ? aw - bw : ai !== bi ? ai - bi : 0;
+    });
+    return sorted.slice(-MAX_ARCHIVED_CYCLES);
+}
 
 /** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
 const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
@@ -1224,7 +1264,7 @@ export function mergeTrialRecords(base, incoming) {
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
-        history: history.slice(-MAX_ARCHIVED_CYCLES),
+        history: capHistory(history),
     };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {

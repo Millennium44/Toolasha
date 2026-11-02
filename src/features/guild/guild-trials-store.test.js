@@ -507,6 +507,24 @@ describe('loading and saving', () => {
             expect(tiles['skilling::brewing']).toMatchObject({ serverTier: 0 });
         });
 
+        test('a stale device’s record from weeks ago never pushes the newer weeks out of the capped history', () => {
+            const WEEK = 7 * 24 * 3600_000;
+            const archive = (weeksAgo) => ({
+                archivedAt: thisWeek - (weeksAgo - 1) * WEEK,
+                reason: 'the week rolled over',
+                weekStart: thisWeek - weeksAgo * WEEK,
+                tiles: { 'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', serverTier: weeksAgo } },
+            });
+            // This device: the last four weeks, oldest first, as the archive writes them
+            const current = { ...emptyRecord(thisWeek), history: [4, 3, 2, 1].map(archive) };
+            // A device last used four weeks ago, still holding weeks seven to five
+            const stale = { ...emptyRecord(thisWeek - 4 * WEEK), history: [7, 6, 5].map(archive) };
+
+            const weeksAgo = (merged) => merged.history.map((cycle) => (thisWeek - cycle.weekStart) / WEEK);
+            expect(weeksAgo(mergeTrialRecords(current, stale))).toEqual([4, 3, 2, 1]);
+            expect(weeksAgo(mergeTrialRecords(stale, current))).toEqual([4, 3, 2, 1]);
+        });
+
         test('the archive keeps the history cap', () => {
             const held = Array.from({ length: MAX_ARCHIVED_CYCLES }, (unused, index) => ({
                 archivedAt: lastWeek - (index + 1) * 7 * 24 * 3600_000,
