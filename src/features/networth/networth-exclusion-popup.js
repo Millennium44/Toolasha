@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { networthFormatter } from '../../utils/formatters.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { getExclusions, isExcluded, addExclusion, removeExclusion, clearExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
@@ -231,10 +232,10 @@ class NetworthExclusionPopup {
             max-height: 580px;
             display: flex;
             flex-direction: column;
-            background: rgba(10, 10, 20, 0.96);
-            border: 2px solid ${config.COLOR_ACCENT};
-            border-radius: 8px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.8);
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
             user-select: none;
@@ -248,14 +249,13 @@ class NetworthExclusionPopup {
             align-items: center;
             justify-content: space-between;
             padding: 10px 14px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid ${GAME_COLORS.border};
             cursor: grab;
-            background: rgba(255,255,255,0.04);
             flex-shrink: 0;
         `;
 
         const title = document.createElement('span');
-        title.style.cssText = `font-size: 0.9rem; font-weight: 600; color: ${config.COLOR_ACCENT};`;
+        title.style.cssText = `font-size: 0.9rem; font-weight: 600; color: ${GAME_COLORS.text};`;
         title.textContent = 'Net Worth Exclusions';
 
         const closeBtn = document.createElement('button');
@@ -405,7 +405,7 @@ class NetworthExclusionPopup {
             outline: none;
             margin-bottom: 8px;
         `;
-        searchInput.addEventListener('focus', () => (searchInput.style.borderColor = config.COLOR_ACCENT));
+        searchInput.addEventListener('focus', () => (searchInput.style.borderColor = GAME_COLORS.text));
         searchInput.addEventListener('blur', () => (searchInput.style.borderColor = 'rgba(255,255,255,0.15)'));
         searchInput.value = initialQuery;
         body.appendChild(searchInput);
@@ -588,7 +588,7 @@ class NetworthExclusionPopup {
             actionBtn.textContent = alreadyExcluded ? '✕ Remove' : '+ Exclude';
             actionBtn.addEventListener('mouseenter', () => {
                 actionBtn.style.opacity = '1';
-                actionBtn.style.borderColor = alreadyExcluded ? 'rgba(255,100,100,0.9)' : config.COLOR_ACCENT;
+                actionBtn.style.borderColor = alreadyExcluded ? 'rgba(255,100,100,0.9)' : GAME_COLORS.text;
             });
             actionBtn.addEventListener('mouseleave', () => {
                 actionBtn.style.opacity = '';

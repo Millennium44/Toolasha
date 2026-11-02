@@ -33,6 +33,7 @@ import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis
 import { calendarDaysBefore } from '../../utils/calendar-days.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 /** formatKMB, on a rounded figure — the shape every money row in this panel uses. */
 const roundedKMB = (value) => formatKMB(Math.round(value));
@@ -590,9 +591,10 @@ class TaskStatistics {
         // Create popup container
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #1a1a1a;
-            border: 2px solid #3a3a3a;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             padding: 20px;
             max-width: 500px;
             max-height: 90%;
@@ -608,7 +610,7 @@ class TaskStatistics {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 20px;
-            border-bottom: 2px solid #3a3a3a;
+            border-bottom: 1px solid ${GAME_COLORS.border};
             padding-bottom: 10px;
         `;
 
@@ -890,19 +892,11 @@ class TaskStatistics {
      * @param {string} textColor - Text color
      * @returns {HTMLElement} The button
      */
-    createCopyCsvButton(rewards, textColor) {
+    createCopyCsvButton(rewards, _textColor) {
         const button = document.createElement('button');
         const label = 'Copy CSV';
         button.textContent = label;
-        button.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #3a3a3a;
-            border-radius: 4px;
-            color: ${textColor};
-            font-size: 12px;
-            cursor: pointer;
-            padding: 4px 8px;
-        `;
+        styleGameButton(button, 'quiet', true);
 
         button.onclick = async () => {
             try {
@@ -1040,9 +1034,9 @@ class TaskStatistics {
     createSection(titleText) {
         const section = document.createElement('div');
         section.style.cssText = `
-            background: #2a2a2a;
-            border: 1px solid #3a3a3a;
-            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid ${GAME_COLORS.border};
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 12px;
             margin-bottom: 12px;
         `;
@@ -1050,7 +1044,7 @@ class TaskStatistics {
         const sectionTitle = document.createElement('div');
         sectionTitle.textContent = titleText;
         sectionTitle.style.cssText = `
-            color: ${config.COLOR_ACCENT};
+            color: ${GAME_COLORS.text};
             font-size: 14px;
             font-weight: bold;
             margin-bottom: 8px;

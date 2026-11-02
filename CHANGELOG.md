@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Settings, What's New, the combat panels, market views, Net Worth History and task panels now use the game's plain dark frame and blue buttons, and Settings rows fit a phone better.
 - Net Worth History marks a setting change on the chart and leaves its step out of the gain and rate figures.
 - Net Worth History has a What moved button on chart points: the top 10 items behind a change, and whether quantity or price caused it. Kept for recent readings and big jumps.
 - The Dungeon Tracker opened with no dungeon running now shows your real run history with Export and Import, and has a close button that stays closed for that dungeon action.

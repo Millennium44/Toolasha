@@ -34,6 +34,7 @@
 import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { registerCommand } from '../../utils/command-registry.js';
 import {
     attributeGoldSources,
@@ -1026,7 +1027,6 @@ export function buildCalendarSection(series, options = {}, onSelectDay = null) {
 }
 
 const PANEL_ID = 'goldSources';
-const ACCENT = '#eab308';
 // The figures here are all read once per load rather than kept live, and a
 // fast redraw would rebuild the calendar section from scratch on its own
 // timer and fold it back up under whoever had just opened it — see
@@ -1165,15 +1165,8 @@ function drawControls(body) {
         const button = document.createElement('button');
         button.textContent = window.label;
         button.dataset.window = window.key;
-        Object.assign(button.style, {
-            padding: '3px 10px',
-            fontSize: '11px',
-            cursor: 'pointer',
-            borderRadius: '3px',
-            border: '1px solid rgba(255,255,255,0.16)',
-            background: window.key === activeWindow ? 'rgba(234,179,8,0.18)' : 'transparent',
-            color: window.key === activeWindow ? ACCENT : '#9ca3af',
-        });
+        // The chosen window is the primary blue, the others the quiet blue
+        styleGameButton(button, window.key === activeWindow ? 'primary' : 'quiet', true);
         button.addEventListener('click', () => selectWindow(window.key));
         controls.appendChild(button);
     }
@@ -1182,15 +1175,7 @@ function drawControls(body) {
         const today = document.createElement('button');
         today.textContent = 'Back to today';
         today.title = 'Drop the day picked from the calendar and go back to what the window buttons mean by default.';
-        Object.assign(today.style, {
-            background: 'none',
-            border: '1px solid rgba(255,255,255,0.16)',
-            color: '#9ca3af',
-            borderRadius: '3px',
-            padding: '3px 8px',
-            cursor: 'pointer',
-            fontSize: '11px',
-        });
+        styleGameButton(today, 'quiet', true);
         today.addEventListener('click', () => {
             anchorTo = null;
             invalidate();
@@ -1207,15 +1192,7 @@ function drawControls(body) {
     copyBtn.id = 'mwi-gold-sources-copy';
     copyBtn.textContent = 'Copy';
     copyBtn.title = 'Copy this breakdown as text';
-    Object.assign(copyBtn.style, {
-        background: 'none',
-        border: '1px solid rgba(255,255,255,0.16)',
-        color: '#9ca3af',
-        borderRadius: '3px',
-        padding: '3px 8px',
-        cursor: 'pointer',
-        fontSize: '11px',
-    });
+    styleGameButton(copyBtn, 'quiet', true);
     copyBtn.addEventListener('click', async () => {
         const text = formatAttributionAsText(lastAttribution);
         const original = copyBtn.textContent;
@@ -1269,7 +1246,6 @@ export const goldSourcesPanel = createPanel({
     id: PANEL_ID,
     title: 'Where the gold came from',
     size: { width: 640, height: 560 },
-    accent: ACCENT,
     refreshMs: REFRESH_MS,
     draw,
 });
