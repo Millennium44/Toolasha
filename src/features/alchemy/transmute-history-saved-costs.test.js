@@ -166,7 +166,7 @@ describe('a session with saved costs', () => {
         expect(transmuteHistoryViewer.buildDataNote(old, after)).toContain("input priced at today's market");
     });
 
-    test('a saved unpriced input stays unpriced when the market has a price later', () => {
+    test('units that had no price when they ran read at the market now, marked, not unpriced for good', () => {
         const session = capeSession(CAPES[0], {
             costs: {
                 input: { cost: 0, units: 0, unpricedUnits: 4, bases: {} },
@@ -175,9 +175,15 @@ describe('a session with saved costs', () => {
         });
         mocks.prices[CAPES[0]] = 100;
         const detail = transmuteHistoryViewer.computeSessionProfit(session);
-        expect(detail.inputUnpriced).toBe(true);
-        expect(detail.inputCost).toBe(0);
-        expect(detail.inputAtTodaysPrice).toBe(false);
+        expect(detail.inputUnpriced).toBe(false);
+        expect(detail.inputCost).toBe(400);
+        expect(detail.inputAtTodaysPrice).toBe(true);
+
+        // ...and unpriced only when today has no price either
+        delete mocks.prices[CAPES[0]];
+        const none = transmuteHistoryViewer.computeSessionProfit(session);
+        expect(none.inputUnpriced).toBe(true);
+        expect(none.inputAtTodaysPrice).toBe(false);
     });
 
     test('a refined cape saved under the base-cape rule keeps that cost when the cape value changes', () => {

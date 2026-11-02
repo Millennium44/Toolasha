@@ -10,10 +10,11 @@ import dataManager from '../../core/data-manager.js';
 import { coinifyHistoryTracker } from './coinify-history-tracker.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine } from '../../utils/refined-item-cost.js';
-import { priceInputNow, priceCatalystNow } from './alchemy-session-cost.js';
+import { priceInputNow, priceCatalystNow, currentPricingMode } from './alchemy-session-cost.js';
 import {
     resolveInputCost,
     resolveCatalystCost,
+    resolveBulk,
     TODAYS_PRICE_MARK,
     todaysPriceNote,
     joinTitles,
@@ -419,7 +420,7 @@ class CoinifyHistoryViewer {
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
-        const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        const bulkMultiplier = resolveBulk(session, itemDetails);
         const attempts = session.totalAttempts || 0;
 
         const revenue = session.totalCoinsEarned || 0;
@@ -479,6 +480,8 @@ class CoinifyHistoryViewer {
             inputSavedUnits: inputResolved.savedUnits,
             inputTodayUnits: inputResolved.todayUnits,
             inputAtTodaysPrice: inputResolved.pricedToday,
+            inputSavedMode: inputResolved.mode,
+            inputTodayMode: inputResolved.mode ? currentPricingMode() : null,
         };
     }
 

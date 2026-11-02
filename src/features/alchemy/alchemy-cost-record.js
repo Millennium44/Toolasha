@@ -38,7 +38,7 @@ export function addBasis(bases, basis, units) {
  * @param {number} netConsumed - Units the session consumed, as the reader counts them
  * @param {Function} priceToday - `() => {price, basis, unpriced}`, called only when something is uncovered
  * @returns {{cost: number, basis: string|null, unpriced: boolean, savedUnits: number, todayUnits: number,
- *   hasSaved: boolean, pricedToday: boolean}} `cost` covers every priced unit; `basis` names what the
+ *   hasSaved: boolean, pricedToday: boolean, mode: string|null}} `cost` covers every priced unit; `basis` names what the
  *   cost was computed under, or null when nothing could be priced
  */
 export function resolveInputCost(session, netConsumed, priceToday) {
@@ -56,25 +56,26 @@ export function resolveInputCost(session, netConsumed, priceToday) {
             todayUnits: needed,
             hasSaved: false,
             pricedToday: needed > 0 && today.basis !== null,
+            mode: null,
         };
     }
 
-    const pricedUnits = Math.max(0, num(saved.units));
-    const unpricedUnits = Math.max(0, num(saved.unpricedUnits));
-    const covered = pricedUnits + unpricedUnits;
+    // Only units that were priced when they ran are covered. A message that could not be priced then (the
+    // first tick after a reload, before market data loads) saves nothing, so the reader prices it at today's
+    // market and marks it, and only shows it unpriced if today has no price either
+    const covered = Math.max(0, num(saved.units));
 
     // A saved record covering more than the session now says it consumed (a hand-corrected import) is
     // scaled down to it, so a lowered count lowers the cost with it
     const scale = covered > needed && covered > 0 ? needed / covered : 1;
     let cost = num(saved.cost) * scale;
-    const savedUnpriced = unpricedUnits * scale > 0;
     const savedUnits = covered * scale;
 
     const bases = Object.keys(saved.bases || {});
     let basis = bases.length === 1 ? bases[0] : bases.length > 1 ? MIXED_BASIS : null;
 
     const remainder = Math.max(0, needed - covered);
-    let unpriced = savedUnpriced;
+    let unpriced = false;
     let remainderUnpriced = false;
     if (remainder > 0) {
         const today = priceToday();
@@ -95,6 +96,7 @@ export function resolveInputCost(session, netConsumed, priceToday) {
         todayUnits: remainder,
         hasSaved: true,
         pricedToday: remainder > 0 && !remainderUnpriced,
+        mode: typeof saved.mode === 'string' ? saved.mode : null,
     };
 }
 
@@ -117,13 +119,11 @@ export function resolveCatalystCost(session, catalystHrid, count, priceToday) {
             : { cost: needed * price, unpriced: false, pricedToday: needed > 0 };
     }
 
-    const pricedCount = Math.max(0, num(saved.count));
-    const unpricedCount = Math.max(0, num(saved.unpricedCount));
-    const covered = pricedCount + unpricedCount;
+    const covered = Math.max(0, num(saved.count));
     const scale = covered > needed && covered > 0 ? needed / covered : 1;
 
     let cost = num(saved.cost) * scale;
-    let unpriced = unpricedCount * scale > 0;
+    let unpriced = false;
     let pricedToday = false;
     const remainder = Math.max(0, needed - covered);
     if (remainder > 0) {
@@ -158,19 +158,19 @@ export function mergeCosts(a, b) {
         out.input = {
             cost: num(a?.input?.cost) + num(b?.input?.cost),
             units: num(a?.input?.units) + num(b?.input?.units),
-            unpricedUnits: num(a?.input?.unpricedUnits) + num(b?.input?.unpricedUnits),
             bases,
         };
+        const modes = [a?.input?.mode, b?.input?.mode].filter(Boolean);
+        if (modes.length > 0) out.input.mode = modes.every((m) => m === modes[0]) ? modes[0] : MIXED_BASIS;
     }
 
     if (a?.catalysts || b?.catalysts) {
         out.catalysts = {};
         for (const source of [a?.catalysts, b?.catalysts]) {
             for (const [hrid, entry] of Object.entries(source || {})) {
-                const current = (out.catalysts[hrid] ||= { cost: 0, count: 0, unpricedCount: 0 });
+                const current = (out.catalysts[hrid] ||= { cost: 0, count: 0 });
                 current.cost += num(entry?.cost);
                 current.count += num(entry?.count);
-                current.unpricedCount += num(entry?.unpricedCount);
             }
         }
     }
@@ -179,14 +179,20 @@ export function mergeCosts(a, b) {
 }
 
 /**
- * How much of a session its saved costs cover, for choosing between two copies.
  * @param {Object|undefined} costs
- * @returns {number} Covered input units plus covered catalysts
+ * @returns {number} Input units the record covers
  */
-function coverageOf(costs) {
-    if (!costs) return 0;
-    let total = num(costs.input?.units) + num(costs.input?.unpricedUnits);
-    for (const entry of Object.values(costs.catalysts || {})) total += num(entry?.count) + num(entry?.unpricedCount);
+function inputCoverage(costs) {
+    return num(costs?.input?.units);
+}
+
+/**
+ * @param {Object|undefined} costs
+ * @returns {number} Catalyst units the record covers
+ */
+function catalystCoverage(costs) {
+    let total = 0;
+    for (const entry of Object.values(costs?.catalysts || {})) total += num(entry?.count);
     return total;
 }
 
@@ -198,6 +204,10 @@ function coverageOf(costs) {
  * the one that lacks them (recorded on a build that does not save costs), and
  * dropping the other's would turn a recorded cost back into today's price.
  *
+ * Input coverage decides first, so catalysts cannot outvote it; catalyst
+ * coverage breaks a tie; a full tie is broken by the records' own text, so the
+ * answer does not depend on which copy is passed first.
+ *
  * @param {Object|undefined} a
  * @param {Object|undefined} b
  * @returns {Object|undefined} The record covering more, or undefined when neither has one
@@ -205,7 +215,69 @@ function coverageOf(costs) {
 export function pickCosts(a, b) {
     if (!a) return b;
     if (!b) return a;
-    return coverageOf(b) > coverageOf(a) ? b : a;
+    for (const measure of [inputCoverage, catalystCoverage]) {
+        const diff = measure(a) - measure(b);
+        if (diff !== 0) return diff > 0 ? a : b;
+    }
+    return JSON.stringify(a) >= JSON.stringify(b) ? a : b;
+}
+
+/**
+ * The bulk size a session's units are counted with: its own recorded one, else the item's, else 1.
+ * The trackers (units saved per message) and the viewers (units consumed) share this so the two cannot
+ * count a different number of items.
+ * @param {Object} session
+ * @param {Object|null|undefined} itemDetails - The input item's game data
+ * @returns {number}
+ */
+export function resolveBulk(session, itemDetails) {
+    return session?.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+}
+
+/**
+ * Scale a session's saved costs down to what its counts now say it consumed.
+ *
+ * Done when a hand-corrected count is imported, so the record is right from then on and the ticks recorded
+ * afterwards are added to a record that already describes the edited part, instead of being diluted by a
+ * read-time scale over the whole.
+ *
+ * @param {Object} session - A session with `costs`, `totalAttempts`, `bulkMultiplier`, `results`, `catalystsUsed`
+ * @returns {Object|undefined} The costs to keep (equal to the input when nothing needs scaling)
+ */
+export function rescaleCosts(session) {
+    const costs = session?.costs;
+    if (!costs) return costs;
+    const out = { ...costs };
+
+    if (costs.input && Number(session.bulkMultiplier) > 0) {
+        let selfReturned = 0;
+        for (const result of Object.values(session.results || {})) {
+            if (result?.isSelfReturn) selfReturned += num(result.count);
+        }
+        const needed = Math.max(0, num(session.totalAttempts) * session.bulkMultiplier - selfReturned);
+        const covered = num(costs.input.units);
+        if (covered > needed && covered > 0) {
+            const f = needed / covered;
+            out.input = { ...costs.input, cost: num(costs.input.cost) * f, units: covered * f };
+            out.input.bases = Object.fromEntries(
+                Object.entries(costs.input.bases || {}).map(([basis, units]) => [basis, num(units) * f])
+            );
+        }
+    }
+
+    if (costs.catalysts && session.catalystsUsed && typeof session.catalystsUsed === 'object') {
+        out.catalysts = { ...costs.catalysts };
+        for (const [hrid, entry] of Object.entries(costs.catalysts)) {
+            if (!Object.hasOwn(session.catalystsUsed, hrid)) continue;
+            const needed = Math.max(0, num(session.catalystsUsed[hrid]));
+            const covered = num(entry?.count);
+            if (covered > needed && covered > 0) {
+                const f = needed / covered;
+                out.catalysts[hrid] = { cost: num(entry.cost) * f, count: covered * f };
+            }
+        }
+    }
+    return out;
 }
 
 /**
@@ -220,9 +292,10 @@ export function validateCosts(costs) {
     if (costs.input !== undefined) {
         const input = costs.input;
         if (!isObject(input)) return 'has a non-object costs.input';
-        for (const field of ['cost', 'units', 'unpricedUnits']) {
+        for (const field of ['cost', 'units']) {
             if (bad(input[field])) return `has a bad costs.input.${field}`;
         }
+        if (input.mode !== undefined && typeof input.mode !== 'string') return 'has a non-text costs.input.mode';
         if (input.bases !== undefined) {
             if (!isObject(input.bases)) return 'has a non-object costs.input.bases';
             for (const [basis, units] of Object.entries(input.bases)) {
@@ -234,7 +307,7 @@ export function validateCosts(costs) {
         if (!isObject(costs.catalysts)) return 'has a non-object costs.catalysts';
         for (const [hrid, entry] of Object.entries(costs.catalysts)) {
             if (!isObject(entry)) return `has a non-object costs.catalysts entry for "${hrid}"`;
-            for (const field of ['cost', 'count', 'unpricedCount']) {
+            for (const field of ['cost', 'count']) {
                 if (bad(entry[field])) return `has a bad costs.catalysts.${field} for "${hrid}"`;
             }
         }
@@ -267,6 +340,8 @@ export function joinTitles(...parts) {
 }
 
 export default {
+    resolveBulk,
+    rescaleCosts,
     TODAYS_PRICE_MARK,
     todaysPriceNote,
     joinTitles,

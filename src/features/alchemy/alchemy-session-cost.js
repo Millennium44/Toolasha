@@ -18,15 +18,16 @@
  *
  * ```
  * session.costs = {
- *     input: { cost, units, unpricedUnits, bases: { [basis]: units } },
- *     catalysts: { [hrid]: { cost, count, unpricedCount } },
+ *     input: { cost, units, mode, bases: { [basis]: units } },
+ *     catalysts: { [hrid]: { cost, count } },
  * }
  * ```
  *
- * `units` and `count` are what the saved `cost` covers; `unpricedUnits` and
- * `unpricedCount` are consumption the market could not price at the time. Those
- * are NEVER folded into `cost` as 0: a reader reports them as unpriced, the way
- * a read-time price that could not be found always was.
+ * `units` and `count` are what the saved `cost` covers, and only units that were
+ * priced when they ran. Consumption the market could not price at the time is
+ * NOT saved (never as a 0): it stays uncovered, and the reader prices it at the
+ * market it finds, marks it, and shows it unpriced only if that has no price
+ * either. `mode` is the pricing mode the cost was taken under.
  *
  * ## Coverage, not a flag
  *
@@ -47,10 +48,10 @@
  * `MAX_BASES` basis labels, whatever the length of the session.
  */
 
-import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
+import { getItemPrice, getItemPriceInfo, getPricingMode } from '../../utils/market-data.js';
 import { priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
 import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
-import { addBasis } from './alchemy-cost-record.js';
+import { addBasis, MIXED_BASIS } from './alchemy-cost-record.js';
 
 export {
     resolveInputCost,
@@ -121,22 +122,38 @@ export function recordInputCost(session, { inputItemHrid, enhancementLevel, unit
         priced = { price: 0, basis: null, unpriced: true };
     }
 
-    if (!session.costs) session.costs = {};
-    if (!session.costs.input) session.costs.input = { cost: 0, units: 0, unpricedUnits: 0, bases: {} };
-    const input = session.costs.input;
+    // No price and no fallback (the first tick after a reload, before market data has loaded, say): nothing
+    // is saved. The units stay uncovered, so the reader prices them at the market it finds when it looks,
+    // marks them, and shows them unpriced only if that market has no price either. Saving them as unpriced
+    // would pin a transient gap onto the session for good, and saving 0 would call them free.
+    if (priced.basis === null || priced.unpriced) return;
 
-    // No price and no fallback: the consumption is real and its cost is not
-    // known, which is not the same as nothing
-    if (priced.basis === null || priced.unpriced) {
-        input.unpricedUnits += units;
-        return;
-    }
+    if (!session.costs) session.costs = {};
+    if (!session.costs.input) session.costs.input = { cost: 0, units: 0, bases: {} };
+    const input = session.costs.input;
 
     // A priced zero (the base-cape-counts-as-nothing setting) is the player's
     // rule, not a missing price, and is saved as the 0 it is
     input.cost += priced.price * units;
     input.units += units;
     addBasis(input.bases, priced.basis, units);
+
+    // Which pricing mode the cost was taken under, so a reader can say when it differs from today's
+    const mode = currentPricingMode();
+    if (mode) input.mode = input.mode === undefined || input.mode === mode ? mode : MIXED_BASIS;
+}
+
+/**
+ * The pricing mode a profit-context buy price follows right now.
+ * @returns {string|null} 'ask' | 'bid' | 'average', or null when it cannot be read
+ */
+export function currentPricingMode() {
+    try {
+        const mode = getPricingMode('profit', 'buy');
+        return typeof mode === 'string' ? mode : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -157,16 +174,14 @@ export function recordCatalystCost(session, catalystHrid, count) {
         console.error('[AlchemyCost] Could not price the consumed catalyst:', error);
     }
 
+    // As for the input: no price now means uncovered, not saved
+    if (price === null) return;
+
     if (!session.costs) session.costs = {};
     if (!session.costs.catalysts) session.costs.catalysts = {};
-    const entry = (session.costs.catalysts[catalystHrid] ||= { cost: 0, count: 0, unpricedCount: 0 });
-
-    if (price === null) {
-        entry.unpricedCount += count;
-        return;
-    }
+    const entry = (session.costs.catalysts[catalystHrid] ||= { cost: 0, count: 0 });
     entry.cost += price * count;
     entry.count += count;
 }
 
-export default { priceInputNow, priceCatalystNow, recordInputCost, recordCatalystCost };
+export default { priceInputNow, priceCatalystNow, currentPricingMode, recordInputCost, recordCatalystCost };

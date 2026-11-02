@@ -97,10 +97,11 @@ describe('buildDataNote', () => {
     });
 
     test('an unpriced input says the total is incomplete', () => {
-        // Saved as unpriced when the input ran: no price was found then, and none is looked for now
+        // Nothing was saved for the input, and the market has no price for it now either
+        game.prices[GEM] = 0;
         const s = session({
             costs: {
-                input: { cost: 0, units: 0, unpricedUnits: 100, bases: {} },
+                input: undefined,
                 catalysts: session().costs.catalysts,
             },
         });
@@ -110,8 +111,9 @@ describe('buildDataNote', () => {
     });
 
     test('an unpriced catalyst says it was excluded, not free', () => {
+        game.prices[PRIME] = 0;
         const s = session({
-            costs: { input: session().costs.input, catalysts: { [PRIME]: { cost: 0, count: 0, unpricedCount: 80 } } },
+            costs: { input: session().costs.input, catalysts: undefined },
         });
         const detail = transmuteHistoryViewer.computeSessionProfit(s);
         expect(detail.catalystUnpriced).toBe(true);
@@ -156,10 +158,12 @@ describe('buildDataNote', () => {
     });
 
     test('several qualifications on one session all land in the note', () => {
+        game.prices[GEM] = 0;
+        game.prices[PRIME] = 0;
         const s = session({
             costs: {
-                input: { cost: 0, units: 0, unpricedUnits: 100, bases: {} },
-                catalysts: { [PRIME]: { cost: 0, count: 0, unpricedCount: 80 } },
+                input: undefined,
+                catalysts: undefined,
             },
         });
         const detail = transmuteHistoryViewer.computeSessionProfit(s);
@@ -199,10 +203,11 @@ describe('exportHistory', () => {
     });
 
     test('a qualified row carries the readable note in the CSV', () => {
+        game.prices[GEM] = 0;
         transmuteHistoryViewer.sessions = [
             session({
                 costs: {
-                    input: { cost: 0, units: 0, unpricedUnits: 100, bases: {} },
+                    input: undefined,
                     catalysts: session().costs.catalysts,
                 },
             }),

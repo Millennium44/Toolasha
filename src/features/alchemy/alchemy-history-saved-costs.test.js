@@ -208,7 +208,7 @@ describe('coinify: what each batch cost when it ran', () => {
 
         const session = stored();
         expect(session.totalAttempts).toBe(9);
-        expect(session.costs.input).toMatchObject({ cost: 3 * 10 + 3 * 14 + 3 * 9, units: 9, unpricedUnits: 0 });
+        expect(session.costs.input).toMatchObject({ cost: 3 * 10 + 3 * 14 + 3 * 9, units: 9 });
         expect(session.costs.catalysts[PRIME]).toMatchObject({ cost: 3 * 1000 + 2 * 1200 + 3 * 1200, count: 8 });
 
         // Looking at it later, at any price, reads back the same
@@ -219,7 +219,7 @@ describe('coinify: what each batch cost when it ran', () => {
         expect(resolveCatalystCost(session, PRIME, 8, () => 99999).pricedToday).toBe(false);
     });
 
-    test('a batch with no price is flagged unpriced and not costed at zero', async () => {
+    test('a batch with no price saves nothing: it reads at the market found later, marked, and unpriced only if there is none', async () => {
         await loadPage(coinifyHistoryTracker);
         await deliver(3);
         delete game.prices[DONUT];
@@ -227,8 +227,12 @@ describe('coinify: what each batch cost when it ran', () => {
         game.prices[DONUT] = 10;
         await deliver(3);
 
-        expect(stored().costs.input).toMatchObject({ cost: 3 * 10 + 3 * 10, units: 6, unpricedUnits: 3 });
-        expect(resolveInputCost(stored(), 9, () => ({ price: 10, basis: 'current buy' })).unpriced).toBe(true);
+        // The unpriced batch is not covered (and not saved as a free one)
+        expect(stored().costs.input).toMatchObject({ cost: 3 * 10 + 3 * 10, units: 6 });
+        const later = resolveInputCost(stored(), 9, () => ({ price: 12, basis: 'current buy', unpriced: false }));
+        expect(later).toMatchObject({ cost: 60 + 3 * 12, todayUnits: 3, pricedToday: true, unpriced: false });
+        const none = resolveInputCost(stored(), 9, () => ({ price: 0, basis: null, unpriced: true }));
+        expect(none).toMatchObject({ unpriced: true, pricedToday: false });
     });
 
     test('a reload in the middle: the batch that finished in the gap is costed when the page comes back', async () => {
@@ -265,6 +269,24 @@ describe('coinify: what each batch cost when it ran', () => {
         const resolved = resolveInputCost(session, 9, () => ({ price: 30, basis: 'current buy', unpriced: false }));
         // Three saved at 20, six not saved: read at today's 30, and marked
         expect(resolved).toMatchObject({ cost: 3 * 20 + 6 * 30, savedUnits: 3, todayUnits: 6, pricedToday: true });
+    });
+});
+
+describe("coinify: units follow the viewer's bulk rule", () => {
+    test("a session with no recorded bulk size counts the item's, as the viewer does", async () => {
+        await loadPage(coinifyHistoryTracker);
+        await deliver(3);
+        // A record from before the bulk size was persisted
+        delete store.sessions[0].bulkMultiplier;
+        unloadPage();
+        game.items[DONUT].alchemyDetail.bulkMultiplier = 5;
+
+        await loadPage(coinifyHistoryTracker);
+        coinifyHistoryTracker.activeSession.bulkMultiplier = undefined;
+        await deliver(3);
+
+        // Three attempts at the item's bulk of 5 are 15 items, which is what the viewer will say was consumed
+        expect(stored().costs.input.units).toBe(3 + 15);
     });
 });
 

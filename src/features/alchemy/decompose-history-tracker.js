@@ -32,6 +32,7 @@ import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { recordInputCost, recordCatalystCost } from './alchemy-session-cost.js';
+import { resolveBulk } from './alchemy-cost-record.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
@@ -464,7 +465,7 @@ class DecomposeHistoryTracker {
         recordInputCost(session, {
             inputItemHrid: session.inputItemHrid,
             enhancementLevel: session.enhancementLevel || 0,
-            units: attemptCount * (session.bulkMultiplier ?? bulkMultiplier),
+            units: attemptCount * resolveBulk(session, dataManager.getItemDetails(session.inputItemHrid)),
         });
 
         // Where the next message — or the gap a reload leaves — is measured from

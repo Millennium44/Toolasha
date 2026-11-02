@@ -28,6 +28,7 @@ import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
 import { recordInputCost, recordCatalystCost } from './alchemy-session-cost.js';
+import { resolveBulk } from './alchemy-cost-record.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
@@ -511,7 +512,11 @@ class TransmuteHistoryTracker {
         const selfReturnedActions = producedActions.get(inputItemHrid) || 0;
         recordInputCost(session, {
             inputItemHrid,
-            units: Math.max(0, (attemptCount - selfReturnedActions) * bulkMultiplier),
+            // The viewer counts attempts at the session's bulk size and takes off what the results recorded
+            units: Math.max(
+                0,
+                attemptCount * resolveBulk(session, itemDetailsForBulk) - selfReturnedActions * bulkMultiplier
+            ),
         });
 
         this.recordCatalystUse(session, action, noted, successCount, attemptCount);

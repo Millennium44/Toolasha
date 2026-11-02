@@ -122,9 +122,10 @@ describe('exportHistory', () => {
     });
 
     test('a qualified row carries the readable note in the CSV', () => {
+        state.inputPriced = false;
         coinifyHistoryViewer.sessions = [
             session({
-                costs: { input: { cost: 0, units: 0, unpricedUnits: 10, bases: {} }, catalysts: SAVED_CATALYSTS },
+                costs: { catalysts: SAVED_CATALYSTS },
             }),
         ];
         const csv = captureCsv();

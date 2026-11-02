@@ -10,10 +10,11 @@ import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine } from '../../utils/refined-item-cost.js';
-import { priceInputNow, priceCatalystNow } from './alchemy-session-cost.js';
+import { priceInputNow, priceCatalystNow, currentPricingMode } from './alchemy-session-cost.js';
 import {
     resolveInputCost,
     resolveCatalystCost,
+    resolveBulk,
     TODAYS_PRICE_MARK,
     todaysPriceNote,
     joinTitles,
@@ -1458,7 +1459,7 @@ class TransmuteHistoryViewer {
         // The session's own bulk size, when it has one. Sessions recorded before
         // it was persisted have none, and the item's current value is the only
         // answer available for those.
-        const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        const bulkMultiplier = resolveBulk(session, itemDetails);
 
         let revenue = 0;
         let revenueUnpriced = false;
@@ -1527,6 +1528,8 @@ class TransmuteHistoryViewer {
             inputSavedUnits: inputResolved.savedUnits,
             inputTodayUnits: inputResolved.todayUnits,
             inputAtTodaysPrice: inputResolved.pricedToday,
+            inputSavedMode: inputResolved.mode,
+            inputTodayMode: inputResolved.mode ? currentPricingMode() : null,
             ...catalyst,
         };
     }

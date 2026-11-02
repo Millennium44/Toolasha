@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
     throwOnPrice: false,
     capeValue: null,
     capes: new Set(),
+    mode: 'ask',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -47,7 +48,7 @@ vi.mock('../../utils/market-data.js', () => {
             return { price, source: price === null ? null : mocks.sources[itemHrid] || 'book', estimated: false };
         },
         getItemPrices: () => null,
-        getPricingMode: () => 'ask',
+        getPricingMode: () => mocks.mode,
     };
 });
 
@@ -56,9 +57,18 @@ vi.mock('../enhancement/untradable-cape-value.js', () => ({
 }));
 
 const { recordInputCost, recordCatalystCost } = await import('./alchemy-session-cost.js');
-const { resolveInputCost, resolveCatalystCost, mergeCosts, pickCosts, validateCosts, TODAYS_PRICE_MARK } =
-    await import('./alchemy-cost-record.js');
+const {
+    resolveInputCost,
+    resolveCatalystCost,
+    mergeCosts,
+    pickCosts,
+    validateCosts,
+    TODAYS_PRICE_MARK,
+    rescaleCosts,
+    resolveBulk,
+} = await import('./alchemy-cost-record.js');
 const { mergeSessionCopies } = await import('./alchemy-session-store.js');
+const { planAlchemyImportMerge } = await import('./alchemy-session-import.js');
 const { mergeReloadSplitSessions } = await import('./alchemy-session-merge.js');
 const { formatInputCostLine } = await import('../../utils/refined-item-cost.js');
 
@@ -75,6 +85,7 @@ beforeEach(() => {
     mocks.throwOnPrice = false;
     mocks.capeValue = null;
     mocks.capes = new Set();
+    mocks.mode = 'ask';
 });
 
 describe('recording what an input cost at the time', () => {
@@ -108,7 +119,7 @@ describe('recording what an input cost at the time', () => {
         expect(resolveInputCost(session, 20, today(GEM)).cost).toBe(2080);
     });
 
-    test('an unpriced message is flagged and never saved as a zero cost', () => {
+    test('a message with no price saves nothing, never a zero cost, and a later price reads it at today', () => {
         const session = {};
         recordInputCost(session, { inputItemHrid: GEM, units: 4 });
         delete mocks.prices[GEM];
@@ -116,20 +127,21 @@ describe('recording what an input cost at the time', () => {
         // The market has it again by the time anyone looks; the unpriced part stays unpriced
         mocks.prices[GEM] = 500;
 
-        expect(session.costs.input).toMatchObject({ cost: 400, units: 4, unpricedUnits: 6 });
+        expect(session.costs.input).toMatchObject({ cost: 400, units: 4 });
         const resolved = resolveInputCost(session, 10, today(GEM));
-        expect(resolved.cost).toBe(400);
-        expect(resolved.unpriced).toBe(true);
-        expect(resolved.todayUnits).toBe(0);
+        expect(resolved.cost).toBe(400 + 6 * 500);
+        expect(resolved).toMatchObject({ unpriced: false, todayUnits: 6, pricedToday: true });
+        delete mocks.prices[GEM];
+        expect(resolveInputCost(session, 10, today(GEM))).toMatchObject({ unpriced: true, pricedToday: false });
     });
 
-    test('a lookup that throws is an unpriced message, not a free one and not a lost attempt', () => {
+    test('a lookup that throws saves nothing: not a free input and not a lost attempt', () => {
         const session = {};
         const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
         mocks.throwOnPrice = true;
         recordInputCost(session, { inputItemHrid: GEM, units: 7 });
         errors.mockRestore();
-        expect(session.costs.input).toMatchObject({ cost: 0, units: 0, unpricedUnits: 7 });
+        expect(session.costs).toBeUndefined();
     });
 
     test('an enhanced input is priced at its own level', () => {
@@ -176,7 +188,7 @@ describe('recording what an input cost at the time', () => {
         const session = {};
         recordInputCost(session, { inputItemHrid: BASE_CAPE, units: 2 });
 
-        expect(session.costs.input).toMatchObject({ cost: 0, units: 2, unpricedUnits: 0 });
+        expect(session.costs.input).toMatchObject({ cost: 0, units: 2 });
         expect(session.costs.input.bases).toEqual({ 'cape setting: base cape counted as nothing': 2 });
         expect(resolveInputCost(session, 2, today(BASE_CAPE)).unpriced).toBe(false);
     });
@@ -184,7 +196,7 @@ describe('recording what an input cost at the time', () => {
     test('the number of bases kept is bounded', () => {
         const session = {};
         for (let i = 0; i < 12; i++) {
-            session.costs ||= { input: { cost: 0, units: 0, unpricedUnits: 0, bases: {} } };
+            session.costs ||= { input: { cost: 0, units: 0, bases: {} } };
             session.costs.input.bases[`basis ${i}`] = 1;
         }
         // Recording another message under yet another basis folds into the overflow bucket
@@ -197,7 +209,7 @@ describe('recording what an input cost at the time', () => {
 });
 
 describe('recording what a catalyst cost at the time', () => {
-    test('priced per message, and unpriced counts are kept apart', () => {
+    test('priced per message; an unpriced message is left uncovered', () => {
         const session = {};
         recordCatalystCost(session, PRIME, 2);
         mocks.prices[PRIME] = 1500;
@@ -205,12 +217,13 @@ describe('recording what a catalyst cost at the time', () => {
         delete mocks.prices[PRIME];
         recordCatalystCost(session, PRIME, 3);
 
-        expect(session.costs.catalysts[PRIME]).toEqual({ cost: 2 * 1000 + 4 * 1500, count: 6, unpricedCount: 3 });
+        expect(session.costs.catalysts[PRIME]).toEqual({ cost: 2 * 1000 + 4 * 1500, count: 6 });
         mocks.prices[PRIME] = 9999;
         const resolved = resolveCatalystCost(session, PRIME, 9, todayCatalyst);
-        expect(resolved.cost).toBe(8000);
-        expect(resolved.unpriced).toBe(true);
-        expect(resolved.pricedToday).toBe(false);
+        expect(resolved.cost).toBe(8000 + 3 * 9999);
+        expect(resolved).toMatchObject({ unpriced: false, pricedToday: true });
+        delete mocks.prices[PRIME];
+        expect(resolveCatalystCost(session, PRIME, 9, todayCatalyst)).toMatchObject({ unpriced: true });
     });
 });
 
@@ -231,7 +244,7 @@ describe('reading a session back', () => {
     });
 
     test('a record covering part of the run prices the rest at today', () => {
-        const session = { costs: { input: { cost: 400, units: 4, unpricedUnits: 0, bases: { 'current buy': 4 } } } };
+        const session = { costs: { input: { cost: 400, units: 4, bases: { 'current buy': 4 } } } };
         mocks.prices[GEM] = 250;
         const resolved = resolveInputCost(session, 10, today(GEM));
         expect(resolved.cost).toBe(400 + 6 * 250);
@@ -259,14 +272,14 @@ describe('reading a session back', () => {
     });
 
     test('a hand-lowered attempt count lowers the saved cost with it', () => {
-        const session = { costs: { input: { cost: 1000, units: 10, unpricedUnits: 0, bases: { 'current buy': 10 } } } };
+        const session = { costs: { input: { cost: 1000, units: 10, bases: { 'current buy': 10 } } } };
         const resolved = resolveInputCost(session, 5, today(GEM));
         expect(resolved.cost).toBe(500);
         expect(resolved.todayUnits).toBe(0);
     });
 
     test('catalysts: the same coverage rule', () => {
-        const session = { costs: { catalysts: { [PRIME]: { cost: 1000, count: 1, unpricedCount: 0 } } } };
+        const session = { costs: { catalysts: { [PRIME]: { cost: 1000, count: 1 } } } };
         mocks.prices[PRIME] = 2000;
         const resolved = resolveCatalystCost(session, PRIME, 3, todayCatalyst);
         expect(resolved.cost).toBe(1000 + 2 * 2000);
@@ -279,8 +292,8 @@ describe('reading a session back', () => {
 
 describe('two copies and two parts of one session', () => {
     const recorded = (units, cost) => ({
-        input: { cost, units, unpricedUnits: 0, bases: { 'current buy': units } },
-        catalysts: { [PRIME]: { cost: units * 10, count: units, unpricedCount: 0 } },
+        input: { cost, units, bases: { 'current buy': units } },
+        catalysts: { [PRIME]: { cost: units * 10, count: units } },
     });
 
     test('merging a recorded part with an unrecorded one adds coverage, and the rest reads at today', () => {
@@ -349,13 +362,107 @@ describe('an imported file', () => {
     test('a well-formed record passes and malformed ones are named', () => {
         expect(
             validateCosts({
-                input: { cost: 1, units: 1, unpricedUnits: 0, bases: { x: 1 } },
-                catalysts: { [PRIME]: { cost: 1, count: 1, unpricedCount: 0 } },
+                input: { cost: 1, units: 1, bases: { x: 1 } },
+                catalysts: { [PRIME]: { cost: 1, count: 1 } },
             })
         ).toBeNull();
         expect(validateCosts('nope')).toMatch(/non-object costs/);
         expect(validateCosts({ input: { cost: -1, units: 1, unpricedUnits: 0 } })).toMatch(/costs\.input\.cost/);
         expect(validateCosts({ input: { cost: 1, units: 'x', unpricedUnits: 0 } })).toMatch(/costs\.input\.units/);
-        expect(validateCosts({ catalysts: { [PRIME]: { cost: 1, count: NaN, unpricedCount: 0 } } })).toMatch(/count/);
+        expect(validateCosts({ catalysts: { [PRIME]: { cost: 1, count: NaN } } })).toMatch(/count/);
+    });
+});
+
+describe('review follow-ups', () => {
+    test("a saved cost carries the pricing mode, and the hover says so when today's differs, without repricing", () => {
+        const session = {};
+        recordInputCost(session, { inputItemHrid: GEM, units: 4 });
+        expect(session.costs.input.mode).toBe('ask');
+        mocks.mode = 'bid';
+        recordInputCost(session, { inputItemHrid: GEM, units: 2 });
+        expect(session.costs.input.mode).toBe('mixed');
+
+        const only = {};
+        mocks.mode = 'ask';
+        recordInputCost(only, { inputItemHrid: GEM, units: 4 });
+        mocks.prices[GEM] = 900;
+        const resolved = resolveInputCost(only, 4, today(GEM));
+        expect(resolved.cost).toBe(400);
+        const line = formatInputCostLine({
+            netConsumed: 4,
+            inputCost: resolved.cost,
+            inputBasis: resolved.basis,
+            inputSavedUnits: resolved.savedUnits,
+            inputTodayUnits: resolved.todayUnits,
+            inputSavedMode: resolved.mode,
+            inputTodayMode: 'bid',
+        });
+        expect(line).toContain('saved under ask pricing; today');
+        expect(
+            formatInputCostLine({
+                netConsumed: 4,
+                inputCost: 400,
+                inputBasis: 'current buy',
+                inputSavedUnits: 4,
+                inputSavedMode: 'ask',
+                inputTodayMode: 'ask',
+            })
+        ).not.toContain('saved under');
+    });
+
+    test('the tracker and the viewer count units with one bulk rule', () => {
+        const details = { alchemyDetail: { bulkMultiplier: 5 } };
+        expect(resolveBulk({ bulkMultiplier: 3 }, details)).toBe(3);
+        expect(resolveBulk({}, details)).toBe(5);
+        expect(resolveBulk({}, null)).toBe(1);
+    });
+
+    test('pickCosts is order independent on a tie and lets input coverage outrank catalysts', () => {
+        const a = { input: { cost: 100, units: 10, bases: {} }, catalysts: { [PRIME]: { cost: 1, count: 1 } } };
+        const b = { input: { cost: 200, units: 10, bases: {} }, catalysts: { [PRIME]: { cost: 1, count: 1 } } };
+        expect(pickCosts(a, b)).toBe(pickCosts(b, a));
+
+        const moreInput = { input: { cost: 1, units: 20, bases: {} } };
+        const moreCatalyst = {
+            input: { cost: 1, units: 10, bases: {} },
+            catalysts: { [PRIME]: { cost: 9, count: 500 } },
+        };
+        expect(pickCosts(moreInput, moreCatalyst)).toBe(moreInput);
+        expect(pickCosts(moreCatalyst, moreInput)).toBe(moreInput);
+    });
+
+    test('an import of an older file keeps the stored costs; one that carries costs replaces them', () => {
+        const costs = { input: { cost: 1000, units: 10, bases: { x: 10 } } };
+        const stored = [{ id: 's1', totalAttempts: 10, totalSuccesses: 5, bulkMultiplier: 1, costs }];
+
+        const older = { id: 's1', totalAttempts: 10, totalSuccesses: 5, bulkMultiplier: 1 };
+        expect(planAlchemyImportMerge(stored, [older], 5).merged[0]).toBe(stored[0]);
+
+        const edited = { ...older, totalSuccesses: 4 };
+        expect(planAlchemyImportMerge(stored, [edited], 5).merged[0]).toMatchObject({ costs, totalSuccesses: 4 });
+
+        const own = { input: { cost: 7, units: 10, bases: {} } };
+        expect(planAlchemyImportMerge(stored, [{ ...older, costs: own }], 5).merged[0].costs).toEqual(own);
+    });
+
+    test('a hand-lowered count is rescaled at import, so later ticks are not diluted', () => {
+        const stored = [];
+        const edited = {
+            id: 's1',
+            totalAttempts: 5,
+            totalSuccesses: 2,
+            bulkMultiplier: 1,
+            costs: { input: { cost: 1000, units: 10, bases: { 'current buy': 10 } } },
+        };
+        const [session] = planAlchemyImportMerge(stored, [edited], 5).merged;
+        expect(session.costs.input).toMatchObject({ cost: 500, units: 5 });
+
+        // Five more attempts run at 200 after the edit
+        mocks.prices[GEM] = 200;
+        session.totalAttempts += 5;
+        recordInputCost(session, { inputItemHrid: GEM, units: 5 });
+        const resolved = resolveInputCost(session, 10, today(GEM));
+        expect(resolved.cost).toBe(500 + 1000);
+        expect(rescaleCosts({ ...session }).input.cost).toBe(1500);
     });
 });
