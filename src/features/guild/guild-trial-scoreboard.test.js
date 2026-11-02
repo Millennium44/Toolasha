@@ -1164,6 +1164,20 @@ describe('the trace recording warning', () => {
         expect(text()).toContain('recording gap 40s — attribution may undercount');
     });
 
+    test('calmer wording, not the warning color, once the totals are the game’s own', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            participants: 2,
+            encounter: 'swarm',
+            reported: { Tib: { damage: 500_000 }, Moo: { damage: 400_000 } },
+        });
+        game.traceStatus = tracing({ maxGapMs: 9 * 60_000 });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain("live chart missing 9m; totals are from the game's stats");
+        expect(text()).not.toContain('attribution may undercount');
+    });
+
     test('nothing while the trace feature is off', () => {
         game.breakdown = breakdown({ source: 'spectated', participants: 2 });
         game.traceStatus = null;

@@ -32,6 +32,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { compressionAvailable, gzipText, gunzipToText } from '../sync/sync-compress.js';
+import { parseCurrentTrialsData } from './guild-trials-math.js';
 import { readScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { isTestServer } from '../../utils/game-server.js';
@@ -127,6 +128,9 @@ export function traceablePayload(type, data) {
     if (type !== 'guild_updated') return data;
     return { currentTrialsData: data?.guild?.currentTrialsData ?? data?.currentTrialsData ?? null };
 }
+
+/** The messages that belong to a running fight; a gap is a hole between two of these */
+const FIGHT_MESSAGES = new Set(['new_guild_battle', 'guild_battle_updated', 'end_guild_battle']);
 
 /** The message whose absence at the head of a trace means the fight was joined late */
 const BOUNDARY_MESSAGE = 'new_guild_battle';
@@ -253,6 +257,13 @@ class GuildTrialTrace {
         this.gapsOver5s = 0;
         this.firstEventType = null;
         this.lastEventAt = 0;
+        /**
+         * When the last fight event (tier start, tick, end) of the fight now
+         * running arrived, or 0 when no fight is running. Gaps are measured
+         * against this and nothing else: quiet time between fights is not a
+         * hole in a recording. Survives a reload through the manifest.
+         */
+        this.fightLastAt = 0;
         this.lastFlushAt = 0;
         this.resumed = false;
         this.lastGuildBattleKey = null;
@@ -533,6 +544,9 @@ class GuildTrialTrace {
         this.gapsOver5s = manifest.gapsOver5s || 0;
         this.firstEventType = manifest.firstEventType || null;
         this.lastEventAt = manifest.lastEventAt;
+        // Absent from a manifest an older build wrote: no fight known to be
+        // running, so the first fight event after the reload is not a gap
+        this.fightLastAt = typeof manifest.fightLastAt === 'number' ? manifest.fightLastAt : 0;
         this.lastFlushAt = Date.now();
         this.resumed = true;
         return 'adopted';
@@ -644,6 +658,14 @@ class GuildTrialTrace {
                 // Matching payloads in different fights are not duplicate ticks.
                 this.lastGuildBattleKey = null;
             }
+
+            // A recording gap is a hole inside a running fight. Measured between
+            // fight events only, so skilling-phase `guild_updated` traffic and the
+            // quiet before a fight neither open nor close one. A repeated tick
+            // dropped below is still a fight event: it proves the feed was alive.
+            if (FIGHT_MESSAGES.has(type)) this._noteFightEvent(type, at);
+            else if (type === 'guild_updated') this._noteGameTrialStatus(data);
+
             if (type === 'guild_battle_updated') {
                 // Drop an exact repeat of the previous tick: the hook exempts
                 // this message from its own dedup (consecutive ticks open with
@@ -662,14 +684,6 @@ class GuildTrialTrace {
                 if (key !== null) this.lastGuildBattleKey = key;
             }
 
-            if (this.lastEventAt) {
-                // Stalls in the feed, tracked as the stream goes by — a reader
-                // trusting tick cadence needs to know where it went quiet (tab
-                // throttled, fight view closed, page reloaded)
-                const gap = at - this.lastEventAt;
-                if (this.maxGapMs === null || gap > this.maxGapMs) this.maxGapMs = gap;
-                if (gap > 5000) this.gapsOver5s++;
-            }
             if (!this.firstEventType) this.firstEventType = type;
 
             this.pending.push(
@@ -677,6 +691,8 @@ class GuildTrialTrace {
             );
             this.eventCount++;
             this.lastEventAt = at;
+            // The fight is over; the next one starts clean
+            if (type === 'end_guild_battle') this.fightLastAt = 0;
 
             // A write failure keeps lines pending for a retry; do not let a dead
             // IndexedDB grow the buffer past the cap the chunks are held to
@@ -697,6 +713,54 @@ class GuildTrialTrace {
         } catch (error) {
             console.error('[GuildTrialTrace] Recording a trial message failed:', error);
         }
+    }
+
+    /**
+     * Account for one fight event (tier start, tick or end).
+     *
+     * `maxGapMs` / `gapsOver5s` mean: holes over 5 s between consecutive fight
+     * events of one fight (across a tier change, and across a reload while the
+     * fight runs). Traces written by older builds measured every traced message
+     * and may carry quiet time between fights in those fields; they are not
+     * rewritten.
+     *
+     * The first event of a fight is not a gap, and starts the per-fight
+     * counters over: `maxGapMs` / `gapsOver5s` describe the fight now running or
+     * the last one that ran, never an earlier trial's hole. Inside a fight every
+     * event, including the tier-opening one, measures against the previous.
+     *
+     * An end message with no fight running (a repeat, or the game's own ending
+     * already seen) changes nothing, so it cannot wipe the finished fight's gaps.
+     *
+     * @param {string} type - The message name
+     * @param {number} at - When the event arrived
+     */
+    _noteFightEvent(type, at) {
+        if (!this.fightLastAt) {
+            if (type === 'end_guild_battle') return;
+            this.maxGapMs = null;
+            this.gapsOver5s = 0;
+        } else {
+            const gap = at - this.fightLastAt;
+            if (this.maxGapMs === null || gap > this.maxGapMs) this.maxGapMs = gap;
+            if (gap > 5000) this.gapsOver5s++;
+        }
+        this.fightLastAt = at;
+    }
+
+    /**
+     * End the running fight when the game says the combat trial is over, for a
+     * client that never received `end_guild_battle`. Same rule the damage module
+     * reads the ending by: combat leaves `in_progress`, or every party is done.
+     * Anything unreadable is not an ending.
+     *
+     * @param {Object} data - A `guild_updated` payload
+     */
+    _noteGameTrialStatus(data) {
+        if (!this.fightLastAt) return;
+        const combat = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData)?.combat;
+        if (!combat) return;
+        if (combat.allDone || (combat.status !== null && !combat.inProgress)) this.fightLastAt = 0;
     }
 
     /** Queue one flush behind any in flight. Never throws into the message handler. */
@@ -783,6 +847,7 @@ class GuildTrialTrace {
                     gapsOver5s: this.gapsOver5s,
                     firstEventType: this.firstEventType,
                     lastEventAt: this.lastEventAt,
+                    fightLastAt: this.fightLastAt,
                     resumed: this.resumed,
                 },
                 TRACE_STORE,
@@ -1180,13 +1245,18 @@ export function describeTraceStatus(status) {
  * not computed from, and warning about it would be warning about nothing.
  *
  * @param {Object|null} status - From {@link GuildTrialTrace#status}
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.reconciled] - The totals on screen come from the game's post-trial stats
  * @returns {string} The line, or '' when there is nothing to warn about
  */
-export function traceGapWarning(status) {
+export function traceGapWarning(status, { reconciled = false } = {}) {
     if (!status?.running) return '';
     if (!(status.gapsOver5s > 0)) return '';
     if (!Number.isFinite(status.maxGapMs)) return '';
 
+    // Once the fight is reconciled from the game's own post-trial stats the
+    // totals no longer depend on the live feed: only the live chart is short
+    if (reconciled) return `live chart missing ${formatGap(status.maxGapMs)}; totals are from the game's stats`;
     return `recording gap ${formatGap(status.maxGapMs)} — attribution may undercount`;
 }
 

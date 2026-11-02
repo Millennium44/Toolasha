@@ -1309,9 +1309,9 @@ class GuildTrialScoreboard {
         // this is about ticks that never arrived. A fully-covered attribution
         // computed over a feed with a forty-second hole in it is still short by
         // forty seconds, and only this line says so.
-        const traceGap = saved ? null : traceGapWarning(guildTrialTrace.status?.());
+        const traceGap = saved ? null : traceGapWarning(guildTrialTrace.status?.(), { reconciled: fromGame });
         const traceNote = traceGap
-            ? `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+            ? `<div style="color:${fromGame ? DIM : WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
               `${escapeText(traceGap)}</div>`
             : '';
 
