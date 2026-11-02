@@ -19,6 +19,7 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { foldXPSeriesForPull } from '../../utils/xp-series-sync.js';
 import { runInBackground } from '../../utils/background-work.js';
+import { setScheduleHourOffset } from './guild-trial-schedule.js';
 import { loadoutIdChanges, signupFieldsFromGuildChar, signupFieldsFromUpdate } from './guild-trial-signups.js';
 
 const STORE_NAME = 'guildHistory';
@@ -891,6 +892,8 @@ class GuildXPTracker {
         if (epoch !== this._epoch) return;
 
         const guild = data.guild;
+        // The schedule belongs to the guild this login names; no guild, or no stated offset, holds none
+        setScheduleHourOffset(guild ? (guild.trialScheduleHourOffset ?? data.guildTrialScheduleHourOffset) : null);
         if (!guild) return; // Player not in a guild
 
         const guildName = guild.name;
@@ -1071,9 +1074,15 @@ class GuildXPTracker {
         // history, but stop exposing the departed guild's roster under the arriving guild's name.
         if (guild.id != null && this.ownGuildID != null && String(guild.id) !== String(this.ownGuildID)) {
             this.memberMeta = {};
+            // The departed guild's schedule is not the arriving guild's
+            setScheduleHourOffset(null);
         }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
+
+        // Kept when the message does not state it (0 is a stated value)
+        const scheduleOffset = guild.trialScheduleHourOffset ?? data.guildTrialScheduleHourOffset;
+        if (scheduleOffset !== undefined && scheduleOffset !== null) setScheduleHourOffset(scheduleOffset);
 
         const name = guild.name;
         const previous = this.ownGuildName;
@@ -1127,7 +1136,10 @@ class GuildXPTracker {
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
         // An initial history load may still be pending. Invalidate outgoing signups immediately on receipt.
-        if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) this.memberMeta = {};
+        if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) {
+            this.memberMeta = {};
+            setScheduleHourOffset(null);
+        }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
         this.rawSharableMap = sharableMap;
@@ -1135,6 +1147,7 @@ class GuildXPTracker {
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
             // Readers must not pair the arriving guild ID with the departed guild's signups while history loads.
             this.memberMeta = {};
+            setScheduleHourOffset(null);
             // Guild switched — drop the old guild's member data and load the new
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
@@ -1620,6 +1633,7 @@ class GuildXPTracker {
         this.leaderboardXPHistory = {};
         this.memberXPHistory = {};
         this.memberMeta = {};
+        setScheduleHourOffset(null);
         this.initialized = false;
     }
 }
