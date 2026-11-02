@@ -1134,7 +1134,7 @@ class TaskProfitDisplay {
                 dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo?.fightInfo
                     ?.randomSpawnInfo?.maxSpawnCount
             ) || null;
-        const { fights } = padFightCount({
+        const { fights: ownFights } = padFightCount({
             unpaddedFights: estimate.predictedFights,
             thresholds: Number.isFinite(estimate.killsPerFight)
                 ? [
@@ -1152,6 +1152,13 @@ class TaskProfitDisplay {
             // so nobody's existing padding shrinks.
             floorPercent: deterministic ? 0 : bufferPercent,
         });
+        // A zone-mode card that draws a zone summary quotes the fights to clear
+        // EVERY open task in the zone. Go opens that zone, so it fills that
+        // quoted count (already a quantile at the chosen coverage, so it is
+        // not padded again) rather than only this card's own kills, which
+        // would be a fraction of what the summary tells the player to expect.
+        const fights =
+            Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0 ? estimate.zoneFights : ownFights;
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most
         // of the active tasks share. When the panel Go landed on is a
@@ -1931,7 +1938,17 @@ class TaskProfitDisplay {
             // on them.
             const liveTaskData = this._liveTaskData(cardTaskNode, taskData) || taskData;
             const figures = this._deriveCombatEstimateFigures(simResult, monsterHrid, SIM_HOURS, liveTaskData);
-            if (cardTaskNode) this._storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, estimateTier, figures, mode);
+            if (cardTaskNode) {
+                this._storeCardEstimate(
+                    cardTaskNode,
+                    zoneHrid,
+                    monsterHrid,
+                    estimateTier,
+                    figures,
+                    mode,
+                    this._zoneSummaryFights(mode, zoneHrid, simResult, SIM_HOURS)
+                );
+            }
 
             const playerHrid = players[0]?.hrid || 'player1';
             const { netPerHour, dropEntries, consumableEntries, unpricedDrops, unpricedConsumables } =
@@ -2043,10 +2060,11 @@ class TaskProfitDisplay {
      * this again, so Go never fills the count of a task that has since moved.
      * @private
      */
-    _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures, mode) {
+    _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures, mode, zoneFights = null) {
         this._cardEstimates.set(cardTaskNode, {
             zoneHrid,
             mode,
+            zoneFights,
             predictedFights: figures.predictedFights,
             monsterHrid,
             tier,
@@ -2168,7 +2186,8 @@ class TaskProfitDisplay {
                 cached.monsterHrid,
                 cached.estimateTier,
                 figures,
-                cached.mode
+                cached.mode,
+                this._zoneSummaryFights(cached.mode, cached.zoneHrid, cached.simResult, cached.simHours)
             );
 
             const wasOpen = container.querySelector('.mwi-task-profit-breakdown')?.style.display === 'block' || false;
@@ -2418,88 +2437,124 @@ class TaskProfitDisplay {
         container.appendChild(breakdown);
 
         // Zone summary: show aggregate time to clear all tasks in this zone
-        if (mode === 'zone' && simResult && zoneHrid) {
-            const taskListNode = document.querySelector(GAME.TASK_LIST);
-            const allTaskInfos = taskListNode ? taskListNode.querySelectorAll(GAME.TASK_INFO) : [];
-
-            // A task belongs to this summary when its monster can be killed in
-            // the simmed zone (regular or boss spawn) — not by first-match
-            // zone lookup, which can pick a different zone for shared monsters
-            const zoneAct = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid];
-            const zoneMonsterHrids = new Set(
-                [
-                    ...(zoneAct?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || []),
-                    ...(zoneAct?.combatZoneInfo?.fightInfo?.bossSpawns || []),
-                ].map((s) => s.combatMonsterHrid)
-            );
-
-            // Duplicate tasks for the same monster sum: each kill progresses
-            // only one task at a time
-            const perMonster = new Map();
-            let zoneTaskCount = 0;
-
-            for (const node of allTaskInfos) {
-                const td = this.parseTaskData(node);
-                if (!td) continue;
-                const m = td.description.match(/^Defeat\s*-\s*(.+)$/i);
-                if (!m) continue;
-                const mName = m[1].trim();
-                const mHrid = dataManager.getMonsterHridFromName(mName);
-                if (!mHrid || !zoneMonsterHrids.has(mHrid)) continue;
-
-                const rem = Math.max((td.quantity ?? 0) - (td.currentProgress ?? 0), 0);
-                // A finished task has nothing left to clear, the way the Task
-                // Statistics zone rows count it (groupCombatTasksByZone)
-                if (rem <= 0) continue;
-                const entry = perMonster.get(mHrid) || { name: mName, remaining: 0, taskCount: 0 };
-                entry.remaining += rem;
-                entry.taskCount += 1;
-                perMonster.set(mHrid, entry);
-                zoneTaskCount++;
+        const zoneSummary =
+            mode === 'zone' && simResult && zoneHrid ? this._zoneSummary(zoneHrid, simResult, simHours) : null;
+        if (zoneSummary) {
+            const { bottleneck, estimate } = zoneSummary;
+            const summary = document.createElement('div');
+            summary.style.cssText =
+                'margin-top: 4px; font-size: 0.7rem; color: #aaddff; border-top: 1px solid #333; padding-top: 4px;';
+            const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name || 'Zone';
+            const bottleneckLabel =
+                bottleneck.bottleneckTaskCount > 1
+                    ? `${bottleneck.bottleneckName} ×${bottleneck.bottleneckTaskCount}`
+                    : bottleneck.bottleneckName;
+            if (estimate) {
+                // Name the monster that sets the quoted figure, which need not be the mean bottleneck
+                const limiting = estimate.limiting;
+                const limitingLabel =
+                    limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
+                summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(Math.round(estimate.hoursNeeded * 3600))} (bottleneck: ${limitingLabel})`;
+                // The figure is for one tier; Go opens the zone at that tier and fills this count
+                summary.title = estimateTierKnown
+                    ? `Simulated at T${estimateTier}. Go opens the zone at that tier and fills this fight count.`
+                    : `Simulated at T${estimateTier} (no recorded tier for this zone). Go opens the zone at that tier and fills this fight count.`;
+                const medianHint = createMedianHint(estimate);
+                if (medianHint) summary.appendChild(medianHint);
+            } else {
+                summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
             }
-
-            if (zoneTaskCount > 1) {
-                const bottleneck = computeZoneBottleneck(
-                    [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
-                    simResult,
-                    simHours
-                );
-
-                const summary = document.createElement('div');
-                summary.style.cssText =
-                    'margin-top: 4px; font-size: 0.7rem; color: #aaddff; border-top: 1px solid #333; padding-top: 4px;';
-                const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name || 'Zone';
-                const bottleneckLabel =
-                    bottleneck.bottleneckTaskCount > 1
-                        ? `${bottleneck.bottleneckName} ×${bottleneck.bottleneckTaskCount}`
-                        : bottleneck.bottleneckName;
-                if (Number.isFinite(bottleneck.hoursNeeded)) {
-                    // The quoted figure is a quantile of the fights needed, not
-                    // the mean (see task-zone-estimate-percentile.js); Go keeps
-                    // padding the mean on its own setting
-                    const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.combatZoneInfo;
-                    const estimate = zoneBottleneckEstimate({
-                        monsterEntries: [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry })),
-                        simResult,
-                        simHours,
-                        slotsPerFight: Number(zoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount) || null,
-                        isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
-                        percent: getZoneEstimatePercent(),
-                    });
-                    const totalSeconds = Math.round(estimate.hoursNeeded * 3600);
-                    // Name the monster that sets the quoted figure, which need not be the mean bottleneck
-                    const limiting = estimate.limiting;
-                    const limitingLabel =
-                        limiting.taskCount > 1 ? `${limiting.name} ×${limiting.taskCount}` : limiting.name;
-                    summary.textContent = `${zoneName}: ~${formatKMB(estimate.fightsNeeded)} fights${formatPercentSuffix(estimate.percent)} | ${timeReadable(totalSeconds)} (bottleneck: ${limitingLabel})`;
-                    const medianHint = createMedianHint(estimate);
-                    if (medianHint) summary.appendChild(medianHint);
-                } else {
-                    summary.textContent = `${zoneName}: ??? (no kills for ${bottleneckLabel} in sim)`;
-                }
-                container.appendChild(summary);
-            }
+            container.appendChild(summary);
         }
+    }
+
+    /**
+     * The zone-wide summary a zone-mode card draws under its estimate, and the
+     * fight count Go fills for it. One computation for both, so the count Go
+     * types is the figure the card quotes.
+     *
+     * Every open Defeat task on the board whose monster can be killed in the
+     * zone counts; duplicate tasks for one monster sum, since each kill
+     * progresses only one task at a time. Null when fewer than two such tasks
+     * are open (no summary is drawn then). `estimate` is null when the
+     * bottleneck monster has no kills in the sim (the card says "???").
+     * @param {string} zoneHrid
+     * @param {Object} simResult
+     * @param {number} simHours
+     * @returns {{bottleneck: Object, estimate: (Object|null)}|null}
+     * @private
+     */
+    _zoneSummary(zoneHrid, simResult, simHours) {
+        const taskListNode = document.querySelector(GAME.TASK_LIST);
+        const allTaskInfos = taskListNode ? taskListNode.querySelectorAll(GAME.TASK_INFO) : [];
+
+        // A task belongs to this summary when its monster can be killed in
+        // the simmed zone (regular or boss spawn) — not by first-match
+        // zone lookup, which can pick a different zone for shared monsters
+        const zoneAct = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid];
+        const zoneMonsterHrids = new Set(
+            [
+                ...(zoneAct?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.spawns || []),
+                ...(zoneAct?.combatZoneInfo?.fightInfo?.bossSpawns || []),
+            ].map((s) => s.combatMonsterHrid)
+        );
+
+        const perMonster = new Map();
+        let zoneTaskCount = 0;
+
+        for (const node of allTaskInfos) {
+            const td = this.parseTaskData(node);
+            if (!td) continue;
+            const m = td.description.match(/^Defeat\s*-\s*(.+)$/i);
+            if (!m) continue;
+            const mName = m[1].trim();
+            const mHrid = dataManager.getMonsterHridFromName(mName);
+            if (!mHrid || !zoneMonsterHrids.has(mHrid)) continue;
+
+            const rem = Math.max((td.quantity ?? 0) - (td.currentProgress ?? 0), 0);
+            // A finished task has nothing left to clear, the way the Task
+            // Statistics zone rows count it (groupCombatTasksByZone)
+            if (rem <= 0) continue;
+            const entry = perMonster.get(mHrid) || { name: mName, remaining: 0, taskCount: 0 };
+            entry.remaining += rem;
+            entry.taskCount += 1;
+            perMonster.set(mHrid, entry);
+            zoneTaskCount++;
+        }
+        if (zoneTaskCount <= 1) return null;
+
+        const monsterEntries = [...perMonster].map(([hrid, entry]) => ({ hrid, ...entry }));
+        const bottleneck = computeZoneBottleneck(monsterEntries, simResult, simHours);
+        if (!Number.isFinite(bottleneck.hoursNeeded)) return { bottleneck, estimate: null };
+
+        // The quoted figure is a quantile of the fights needed, not the mean
+        // (see task-zone-estimate-percentile.js)
+        const estimate = zoneBottleneckEstimate({
+            monsterEntries,
+            simResult,
+            simHours,
+            slotsPerFight: Number(zoneAct?.combatZoneInfo?.fightInfo?.randomSpawnInfo?.maxSpawnCount) || null,
+            isBoss: (hrid) => Boolean(dataManager.isBossMonster?.(hrid)),
+            percent: getZoneEstimatePercent(),
+        });
+        return { bottleneck, estimate };
+    }
+
+    /**
+     * The fight count a zone-mode card's summary quotes for its zone, for Go to
+     * fill. Null when the card draws no such figure (solo mode, a single open
+     * task in the zone, or no kills of the bottleneck in the sim).
+     * @param {string} mode
+     * @param {string} zoneHrid
+     * @param {Object} simResult
+     * @param {number} simHours
+     * @returns {number|null}
+     * @private
+     */
+    _zoneSummaryFights(mode, zoneHrid, simResult, simHours) {
+        if (mode !== 'zone' || !simResult || !zoneHrid) return null;
+        const fights = this._zoneSummary(zoneHrid, simResult, simHours)?.estimate?.fightsNeeded;
+        return Number.isFinite(fights) && fights > 0 ? Math.ceil(fights) : null;
     }
 
     /**
