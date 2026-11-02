@@ -342,18 +342,88 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
         config.getSetting.mockImplementation((key) => key === 'taskCombatEstimate' || key === 'taskGoMerge');
     }
 
-    test('a finished estimate still opens the planet, with the merged total as the count', async () => {
-        const card = mountCard();
+    /** Four Smashy cards on the board, the first one estimated in Zone mode. */
+    async function board() {
+        const cards = [0, 1, 2, 3].map(() => mountCard('Defeat - Smashy', 5));
+        await estimateAt(cards[0]);
+        return cards;
+    }
+
+    test('a mixed-monster zone fills the zone fight figure, not the raw 240 kills', async () => {
+        const cards = await board();
+        const zoneFights = estimateOf(cards[0]).zoneFights;
+        expect(zoneFights).toBeGreaterThan(0);
+        fourSmashy();
+        landOnDefaultZone();
+
+        await pressGo(cards[0]);
+
+        const [, , options] = openCombatZoneAtTierSequence.mock.calls[0];
+        expect(openCombatZoneAtTierSequence.mock.calls[0].slice(0, 2)).toEqual([PLANET, 0]);
+        expect(options.count).toBeGreaterThanOrEqual(zoneFights);
+        expect(options.count).not.toBe(240);
+    });
+
+    test('a mixed zone with no zone figure converts the merged kills at the zone kill rate, padded', async () => {
+        const card = mountCard('Defeat - Smashy', 5);
         await estimateAt(card);
+        expect(estimateOf(card).zoneFights).toBeNull();
         fourSmashy();
         landOnDefaultZone();
 
         await pressGo(card);
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 0, { count: 240 }, 'char-a');
+        // 0.5 kills a fight: 240 kills is 480 fights before padding
+        expect(openCombatZoneAtTierSequence.mock.calls[0][2].count).toBeGreaterThanOrEqual(480);
     });
 
-    test('a redo in flight on a merged card opens the planet at the remembered tier with the merged total', async () => {
+    test('a one-monster zone fills the merged kill total directly', async () => {
+        const panel = document.createElement('div');
+        panel.className = 'SkillActionDetail_skillActionDetail__1a';
+        const name = document.createElement('div');
+        name.className = 'SkillActionDetail_name__1a';
+        name.textContent = 'Gobo Planet';
+        panel.appendChild(name);
+        document.body.appendChild(panel);
+
+        await taskProfitDisplay._applyGoEstimate(
+            {
+                zoneHrid: SMASHY_OWN,
+                mode: 'zone',
+                predictedFights: 60,
+                killsNeeded: 60,
+                killsPerFight: 1,
+                monsterHrid: '/monsters/smashy',
+                mergedKills: 240,
+            },
+            'char-a'
+        );
+
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(SMASHY_OWN, 0, { count: 240 }, 'char-a');
+    });
+
+    test('the merge handler stands down when an estimate resolves, so its raw write cannot land', async () => {
+        const cards = await board();
+        fourSmashy();
+        landOnDefaultZone();
+        const root = vi.spyOn(document, 'getElementById');
+
+        await pressGo(cards[0]);
+
+        expect(root).not.toHaveBeenCalledWith('root');
+    });
+
+    test('a merged card with no estimate still runs the merge handler', async () => {
+        const card = mountCard();
+        fourSmashy();
+        const root = vi.spyOn(document, 'getElementById');
+
+        await pressGo(card);
+
+        expect(root).toHaveBeenCalledWith('root');
+    });
+
+    test('a redo in flight on a merged card opens the planet at the remembered tier and fills no count', async () => {
         const card = mountCard();
         await drawThenTierChanges(card);
         fourSmashy();
@@ -361,7 +431,7 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
 
         await pressGo(card);
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, { count: 240 }, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, {}, 'char-a');
     });
 
     test('a merged card with no estimate at all leaves Go to the game and the merge fill', () => {

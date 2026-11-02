@@ -592,7 +592,7 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
 
         expect(taskProfitDisplay._resolveGoEstimate(taskNode)).toMatchObject({
             zoneHrid: '/actions/combat/fly',
-            mergedCount: 80,
+            mergedKills: 80,
         });
     });
 

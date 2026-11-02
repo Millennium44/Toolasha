@@ -931,6 +931,9 @@ class TaskProfitDisplay {
                     // card has since swapped it for a confirm step, this click
                     // is not a Go and nothing here applies to it
                     if (isConfirmPendingFor(goBtn)) return;
+                    // A card with a usable estimate fills its own count (the estimate's Go click handler);
+                    // this raw kill total would land after it and overwrite a fight count with kills
+                    if (this._resolveGoEstimate(taskNode)) return;
 
                     // Extract the quest for this task card from the fiber tree
                     const rootEl = document.getElementById('root');
@@ -1079,12 +1082,12 @@ class TaskProfitDisplay {
                     q.monsterHrid === estimate.monsterHrid
             );
             if (matchingQuests.length > 1) {
-                // The merge handler fills one exact total for every task on this monster. The zone and
-                // tier still come from the estimate, and the count is that same total, so the two never
-                // race to write different numbers into one input.
+                // The merge handler's own fill stands down when an estimate resolves (see the click
+                // handler above), so the zone, tier and count all come from here and nothing races.
+                // `mergedKills` is kills, not fights; `_applyGoEstimate` converts it.
                 const total = matchingQuests.reduce((sum, q) => sum + (q.goalCount - q.currentCount), 0);
                 const isBoss = dataManager.isBossMonster(estimate.monsterHrid);
-                return { ...estimate, mergedCount: isBoss ? total * 10 : total };
+                return { ...estimate, mergedKills: total, mergedBoss: Boolean(isBoss) };
             }
         }
 
@@ -1184,9 +1187,9 @@ class TaskProfitDisplay {
                 dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo?.fightInfo
                     ?.randomSpawnInfo?.maxSpawnCount
             ) || null;
-        // A redo in flight has no count; a merged card fills the merge's exact total instead
-        const mergedCount = Number.isFinite(estimate.mergedCount) ? estimate.mergedCount : null;
-        const fillsCount = mergedCount !== null || !estimate.countless;
+        // A redo in flight has no count
+        const mergedKills = Number.isFinite(estimate.mergedKills) ? estimate.mergedKills : null;
+        let fillsCount = !estimate.countless;
         const { fights: ownFights } = padFightCount({
             unpaddedFights: estimate.predictedFights,
             thresholds: Number.isFinite(estimate.killsPerFight)
@@ -1223,7 +1226,42 @@ class TaskProfitDisplay {
             });
             fights = Math.max(Math.ceil(estimate.zoneFights), padded);
         }
-        if (mergedCount !== null) fights = mergedCount;
+        if (mergedKills !== null && fillsCount) {
+            // Several tasks on one monster: the kill target is their sum, and a kill is not a fight
+            // wherever the zone spawns other monsters too.
+            const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo;
+            const zoneMonsters = new Set(
+                [
+                    ...(zoneInfo?.fightInfo?.randomSpawnInfo?.spawns || []),
+                    ...(zoneInfo?.fightInfo?.bossSpawns || []),
+                ].map((m) => m.combatMonsterHrid)
+            );
+            if (estimate.mergedBoss) {
+                // Boss waves are arithmetic: the merge's own rule, ten fights a boss
+                fights = mergedKills * 10;
+            } else if (Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
+                // The zone figure above already sums every open task, duplicates included
+            } else if (zoneMonsters.size === 1) {
+                fights = mergedKills;
+            } else if (Number.isFinite(estimate.killsPerFight) && estimate.killsPerFight > 0) {
+                fights = padFightCount({
+                    unpaddedFights: Math.ceil(mergedKills / estimate.killsPerFight),
+                    thresholds: [
+                        {
+                            killsNeeded: mergedKills,
+                            killsPerFight: estimate.killsPerFight,
+                            slotsPerFight,
+                            deterministic: false,
+                        },
+                    ],
+                    confidencePercent,
+                    floorPercent: bufferPercent,
+                }).fights;
+            } else {
+                // No kill rate to convert with: filling the raw kills would under-fill, so fill nothing
+                fillsCount = false;
+            }
+        }
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most
         // of the active tasks share. When the panel Go landed on is a
