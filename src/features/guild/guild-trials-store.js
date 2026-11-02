@@ -517,6 +517,7 @@ function tileStamps(tile) {
         tile?.tierReadAt,
         tile?.serverTierAt,
         tile?.endedAt,
+        tile?.runSeenAt,
         tile?.signupLevelsAt,
     ]
         .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
@@ -578,6 +579,7 @@ function currentCyclePart(tile, from) {
     // The end and the sign-up levels are stamped, so they go with the cycle they were taken in
     const ended = since(tile.endedAt);
     const signedUp = since(tile.signupLevelsAt);
+    const watched = since(tile.runSeenAt);
     if (
         !samples.length &&
         !pointSamples.length &&
@@ -585,6 +587,7 @@ function currentCyclePart(tile, from) {
         !read &&
         !stated &&
         !ended &&
+        !watched &&
         !signedUp
     ) {
         return null;
@@ -617,6 +620,7 @@ function currentCyclePart(tile, from) {
             ? { serverTier: tile.serverTier, serverTierAt: tile.serverTierAt, serverDone: Boolean(tile.serverDone) }
             : {}),
         ...(ended ? { endedAt: tile.endedAt, ...(tile.endReason ? { endReason: tile.endReason } : {}) } : {}),
+        ...(watched ? { runSeenAt: tile.runSeenAt } : {}),
         ...(signedUp ? { signupLevels: tile.signupLevels, signupLevelsAt: tile.signupLevelsAt } : {}),
     };
 }
@@ -653,6 +657,7 @@ function earlierCyclePart(tile, from) {
     if (stampedSince(tile.endedAt, from)) {
         for (const field of ['endedAt', 'endReason']) delete part[field];
     }
+    if (stampedSince(tile.runSeenAt, from)) delete part.runSeenAt;
     if (stampedSince(tile.signupLevelsAt, from)) {
         for (const field of ['signupLevels', 'signupLevelsAt']) delete part[field];
     }
@@ -1079,11 +1084,21 @@ export function recordServerTiers(
         changed = true;
     }
     const ended = endFacts(existing, { tierStated, bankedTier, done, at, seenAt, deadlineAt });
+    // A party read running now: the moment, so a later "done" can tell a watched ending from a late open.
+    // Seen running after a stated end, the end belongs to an earlier cycle and is dropped
+    const runningNow = tierStated && !done && Number.isFinite(seenAt);
+    const lastSeen = Number.isFinite(existing.runSeenAt) ? existing.runSeenAt : -Infinity;
+    // Refreshed only every few minutes so a stream of identical readings does not rewrite the record; the held
+    // stamp can only lag the true last reading, so a window measured from it is never too generous
+    const runSeenAt = runningNow && seenAt - lastSeen >= RUN_SEEN_REFRESH_MS ? seenAt : null;
+    const staleEnd = runningNow && Number.isFinite(existing.endedAt) && seenAt > existing.endedAt;
     const signedUp = signupFacts(existing, signupLevels, Number.isFinite(seenAt) ? seenAt : at);
     if (
         record.tiles?.[key] &&
         !changed &&
         !ended &&
+        runSeenAt === null &&
+        !staleEnd &&
         !signedUp &&
         (!tierStated ||
             (existing.serverTier === bankedTier &&
@@ -1093,13 +1108,15 @@ export function recordServerTiers(
         return record;
     }
 
+    const base = staleEnd ? omitKeys(existing, ['endedAt', 'endReason']) : existing;
     return {
         ...record,
         tiles: {
             ...(record.tiles || {}),
             [key]: {
-                ...existing,
+                ...base,
                 tierSeenAt,
+                ...(runSeenAt !== null ? { runSeenAt } : {}),
                 ...(tierStated ? { serverTier: bankedTier, serverTierAt: at, serverDone: Boolean(done) } : {}),
                 ...(ended || {}),
                 ...(signedUp || {}),
@@ -1107,6 +1124,31 @@ export function recordServerTiers(
         },
     };
 }
+
+/**
+ * Copy of an object without some keys.
+ * @param {Object} object - Source
+ * @param {string[]} keys - Keys to leave out
+ * @returns {Object} The copy
+ */
+function omitKeys(object, keys) {
+    return Object.fromEntries(Object.entries(object).filter(([key]) => !keys.includes(key)));
+}
+
+/**
+ * How recent the reading that showed a party running must be for its ending to count as watched.
+ *
+ * One payload interval: `guild_updated` arrives on guild events, at the top tiers
+ * one every ten minutes or more, so fifteen minutes is that cadence with a
+ * margin. A party last seen running longer ago than this (a tab closed through
+ * the end, a game reopened hours later) has an end that happened somewhere in
+ * the gap, and stamping the reload as the end, or judging clock-versus-early
+ * from it, would be a guess. The end then stays unknown.
+ */
+export const END_SEEN_RUNNING_MS = 15 * 60_000;
+
+/** How much newer a running reading must be than the held `runSeenAt` before it is written again */
+export const RUN_SEEN_REFRESH_MS = 5 * 60_000;
 
 /**
  * Within this of a party's own deadline, a trial that ended did so on the clock.
@@ -1137,8 +1179,16 @@ function endFacts(existing, { tierStated, bankedTier, done, at, seenAt, deadline
     if (!tierStated || !done || Number.isFinite(existing?.endedAt)) return null;
     if (bankedTier >= TRIAL_MAX_TIER) return Number.isFinite(at) ? { endedAt: at, endReason: 'ladder' } : null;
 
-    const wasRunning = Number.isFinite(existing?.serverTier) && !existing.serverDone;
-    if (!wasRunning || !Number.isFinite(seenAt)) return null;
+    // Seen running recently, by a stamp of the reading itself: `serverTierAt` is when a tier banked, not
+    // when the party was last looked at, and says nothing about how stale the running reading is
+    const lastRunning = existing?.runSeenAt;
+    const wasRunning =
+        Number.isFinite(lastRunning) &&
+        !existing.serverDone &&
+        Number.isFinite(seenAt) &&
+        seenAt >= lastRunning &&
+        seenAt - lastRunning <= END_SEEN_RUNNING_MS;
+    if (!wasRunning) return null;
     if (!Number.isFinite(deadlineAt)) return { endedAt: seenAt };
     return { endedAt: seenAt, endReason: seenAt >= deadlineAt - END_CLOCK_SLACK_MS ? 'clock' : 'early' };
 }
@@ -1241,6 +1291,17 @@ function mergeTierSeenAt(a, b) {
 function latestTierReadAt(a, b) {
     const reads = [a?.tierReadAt, b?.tierReadAt].filter(Number.isFinite);
     return reads.length ? { tierReadAt: Math.max(...reads) } : {};
+}
+
+/**
+ * The later of two tiles' last "seen running" readings, omitted when neither has one.
+ * @param {Object} a - One side's tile
+ * @param {Object} b - The other side's tile
+ * @returns {{runSeenAt?: number}} Spreadable
+ */
+function latestRunSeenAt(a, b) {
+    const reads = [a?.runSeenAt, b?.runSeenAt].filter(Number.isFinite);
+    return reads.length ? { runSeenAt: Math.max(...reads) } : {};
 }
 
 /**
@@ -1484,6 +1545,7 @@ export function mergeTrialRecords(base, incoming) {
             // each, from whichever side has it — one copy kept whole must not
             // drop what only the other saw
             ...mergeTrialFacts(existing, tile),
+            ...latestRunSeenAt(existing, tile),
             // Latest wins: either side reading the badge is the card being watched
             ...latestTierReadAt(existing, tile),
             // The newer statement of the guild payload, all three fields together

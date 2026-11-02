@@ -363,6 +363,12 @@ describe('the count follows what the scope carries', () => {
         expect(builds()).toBe(0);
     });
 
+    test('the Trials tab folds are this device’s own and never count as a change', async () => {
+        write('settings', ['guildTrialSectionFolds']);
+        expect((await autoPush()).reason).toBe('unchanged');
+        expect(builds()).toBe(0);
+    });
+
     test('a settings-only push still counts a setting', async () => {
         await settingsScope();
         write('settings', ['script_settingsMap_603281'], 'remote');

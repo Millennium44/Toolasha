@@ -8,9 +8,10 @@
 
 import { describe, expect, test, vi } from 'vitest';
 
+const server = vi.hoisted(() => ({ test: false }));
 vi.mock('../../utils/game-server.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    isTestServer: () => false,
+    isTestServer: () => server.test,
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -153,7 +154,7 @@ describe('recordServerTiers writes the facts onto the tile', () => {
     });
 
     test('null levels (not loaded) write nothing and leave the record untouched', () => {
-        const held = record({ serverTier: 4, serverTierAt: 5000, serverDone: false });
+        const held = record({ serverTier: 4, serverTierAt: 5000, serverDone: false, runSeenAt: 6000 });
         expect(recordServerTiers(held, KEY, { bankedTier: 4, at: 5000, seenAt: 6000, signupLevels: null })).toBe(held);
     });
 
@@ -184,7 +185,15 @@ describe('recordServerTiers writes the facts onto the tile', () => {
             deadlineAt: 900_000,
         });
         expect(running.tiles[KEY].endedAt).toBeUndefined();
-        const done = recordServerTiers(running, KEY, {
+        // Another running reading a few minutes before the end keeps the stamp fresh
+        const later = recordServerTiers(running, KEY, {
+            bankedTier: 5,
+            at: 4000,
+            seenAt: 700_000,
+            deadlineAt: 900_000,
+        });
+        expect(later.tiles[KEY].runSeenAt).toBe(700_000);
+        const done = recordServerTiers(later, KEY, {
             bankedTier: 5,
             done: true,
             at: 4000,
@@ -192,6 +201,75 @@ describe('recordServerTiers writes the facts onto the tile', () => {
             deadlineAt: 900_000,
         });
         expect(done.tiles[KEY]).toMatchObject({ endedAt: 800_000, endReason: 'early' });
+    });
+});
+
+describe('an end only counts as watched when the party was seen running recently', () => {
+    const running = () => ({
+        weekStart: WEEK,
+        tiles: {
+            [KEY]: {
+                name: 'Milking',
+                kind: 'skilling',
+                samples: [],
+                tiers: [],
+                pointsByTier: {},
+                tierSeenAt: {},
+                serverTier: 5,
+                serverTierAt: 4000,
+                serverDone: false,
+                runSeenAt: 100_000,
+            },
+        },
+    });
+
+    test('seen done two hours after the last running reading: no end, no reason', () => {
+        const next = recordServerTiers(running(), KEY, {
+            bankedTier: 5,
+            done: true,
+            at: 4000,
+            seenAt: 100_000 + 2 * 3_600_000,
+            deadlineAt: 100_000 + 3_600_000,
+        });
+        expect(next.tiles[KEY].serverDone).toBe(true);
+        expect(next.tiles[KEY].endedAt).toBeUndefined();
+        expect(next.tiles[KEY].endReason).toBeUndefined();
+    });
+
+    test('a tile from before the stamp existed has no watched reading, so no end is stated', () => {
+        const held = running();
+        delete held.tiles[KEY].runSeenAt;
+        const next = recordServerTiers(held, KEY, { bankedTier: 5, done: true, at: 4000, seenAt: 101_000 });
+        expect(next.tiles[KEY].endedAt).toBeUndefined();
+    });
+
+    test('a party seen running after a stated end drops that end: it belonged to an earlier cycle', () => {
+        const held = running();
+        held.tiles[KEY] = { ...held.tiles[KEY], serverDone: true, endedAt: 50_000, endReason: 'early' };
+        const next = recordServerTiers(held, KEY, { bankedTier: 2, done: false, at: 600_000, seenAt: 600_000 });
+        expect(next.tiles[KEY].endedAt).toBeUndefined();
+        expect(next.tiles[KEY].endReason).toBeUndefined();
+        expect(next.tiles[KEY].runSeenAt).toBe(600_000);
+    });
+
+    test('a stale tab’s pre-cut end does not outlive the new cycle’s end (test server, cycles an hour apart)', () => {
+        server.test = true;
+        try {
+            const oldCycle = { endedAt: 1_000_000, endReason: 'early' };
+            const newCycle = { endedAt: 1_000_000 + 3 * 3_600_000, endReason: 'clock' };
+            expect(mergeTrialFacts(oldCycle, newCycle)).toEqual(newCycle);
+            expect(mergeTrialFacts(newCycle, oldCycle)).toEqual(newCycle);
+            // Within one hour they are one end seen twice, and the earlier stands
+            const close = { endedAt: 1_000_000 + 60_000, endReason: 'clock' };
+            expect(mergeTrialFacts(oldCycle, close)).toEqual(oldCycle);
+        } finally {
+            server.test = false;
+        }
+    });
+
+    test('the stamp goes with its cycle: an archived cut keeps the old, the new part starts without it', () => {
+        const cut = rollRecordToWeek(running(), NEXT_WEEK);
+        expect(Object.values(cut.tiles || {}).some((t) => t.runSeenAt)).toBe(false);
     });
 });
 

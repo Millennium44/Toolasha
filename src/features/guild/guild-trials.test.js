@@ -8160,6 +8160,32 @@ describe('a combat trial only mates joined', () => {
         expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
     });
 
+    test('a scheduled trial whose forecast is too early to say does not print a bare tier', () => {
+        const forecast = {
+            tier: 9,
+            tiersCleared: 9,
+            source: 'estimated',
+            limitedBy: 'time',
+            range: { low: 0, high: 9, point: 9, early: true },
+        };
+        const html = renderTrialBlock(
+            analyseTrial(badger(), { phase: 'scheduled', participants: 0, now }),
+            0,
+            undefined,
+            { phase: 'scheduled', forecast }
+        );
+        expect(html).toContain('If it started now');
+        expect(html).toContain('too early to say');
+        expect(html).not.toContain('~T9');
+        const settled = renderTrialBlock(
+            analyseTrial(badger(), { phase: 'scheduled', participants: 0, now }),
+            0,
+            undefined,
+            { phase: 'scheduled', forecast: { ...forecast, range: null } }
+        );
+        expect(settled).toContain('~T9');
+    });
+
     test('a scheduled trial is forecast only from the loadouts of members signed up for it', async () => {
         game.clientData = clientData;
         const capture = (await import('./guild-loadout-capture.js')).default;
@@ -8595,6 +8621,25 @@ describe('a fight you are in: the pace is a range until the damage rate has show
             expect(text).not.toMatch(/Guild Points banked~/);
         });
 
+        test('the range holds the point: a high end capped at the point keeps its part-tier credit', () => {
+            const wide = fight(3);
+            const pace = { ...wide.pace, tiersCleared: 15, partialFraction: 0.8 };
+            const figure = (text) => text.match(/Guild Points on pace~?([\d,]+)(?:–([\d,]+))?/);
+            const num = (value) => Number(value.replace(/,/g, ''));
+            const point = figure(payoutText({ ...wide, tiersClearedSoFar: 3, pace, paceRange: null }).text);
+            const ranged = figure(
+                payoutText({
+                    ...wide,
+                    tiersClearedSoFar: 3,
+                    pace,
+                    paceRange: { low: 12, high: 15, point: 15, early: false },
+                }).text
+            );
+            expect(point[2]).toBeUndefined();
+            expect(num(ranged[2])).toBeGreaterThanOrEqual(num(point[1]));
+            expect(num(ranged[1])).toBeLessThanOrEqual(num(point[1]));
+        });
+
         test('an early pace pays from what is banked up to the flat walk', () => {
             const { trials } = payoutText(fight(1));
             expect(trials[0].projectedRange).toEqual({ low: 1, high: 21 });
@@ -8664,9 +8709,12 @@ describe('how a trial ended and who signed up, kept with the panel shut', () => 
     });
 
     /** A party running at tier 7, then the same party finished at `tier` when the message is heard at `serverAt` */
-    const runThenFinish = ({ tier = 8, serverAt }) => {
+    const runThenFinish = ({ tier = 8, serverAt, lastRunningAt = serverAt - 5 * 60_000 }) => {
         hear(message({}), newestStamp);
-        const running = file(record());
+        let running = file(record());
+        // The reading that last showed the party running: a payload a few minutes before the end
+        hear(message({ tierStartedAtMs: newestStamp, highestTierReachedAtMs: newestStamp }), lastRunningAt);
+        running = file(running);
         hear(
             message({
                 highestTier: tier,
@@ -8698,6 +8746,21 @@ describe('how a trial ended and who signed up, kept with the panel shut', () => 
         expect(done.tiles[key]).toMatchObject({ serverTier: 9, serverDone: true });
         expect(done.tiles[key].endedAt).toBeUndefined();
         expect(done.tiles[key].endReason).toBeUndefined();
+    });
+
+    test('a party last seen running hours before it is seen done states no end and no reason: unknown, never guessed', () => {
+        // Wiped at minute 20, tab closed, game reopened two hours later: the reload is not the end
+        const done = runThenFinish({ serverAt: deadline + 2 * 3_600_000, lastRunningAt: deadline - 40 * 60_000 });
+        expect(done.tiles[key]).toMatchObject({ serverDone: true });
+        expect(done.tiles[key].endedAt).toBeUndefined();
+        expect(done.tiles[key].endReason).toBeUndefined();
+    });
+
+    test('a running reading just past the window is stale, and just inside it counts', () => {
+        const stale = runThenFinish({ serverAt: deadline, lastRunningAt: deadline - 16 * 60_000 });
+        expect(stale.tiles[key].endedAt).toBeUndefined();
+        const fresh = runThenFinish({ serverAt: deadline, lastRunningAt: deadline - 14 * 60_000 });
+        expect(fresh.tiles[key].endReason).toBe('clock');
     });
 
     test('the top tier banked and the party done is the ladder, ended at the final clear', () => {

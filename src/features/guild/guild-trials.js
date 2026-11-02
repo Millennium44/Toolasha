@@ -303,7 +303,7 @@ const WORK_BASE_VERSION = 2;
 /** What a card's level line looks like, for finding the node the tier badge belongs on */
 const LEVEL_LINE_RE = /Lv\.\s*\d+/;
 
-/** Where the folded history sections are remembered (the `settings` store; the `guildTrial` prefix syncs it) */
+/** Where the folded history sections are remembered (the `settings` store; device-local, listed in `LOCAL_ONLY_KEY_PREFIXES`) */
 const SECTION_FOLDS_KEY = 'guildTrialSectionFolds';
 
 /**
@@ -1472,15 +1472,20 @@ export function renderTrialBlock(
             ),
         ];
         if (forecast && forecast.tier !== null) {
+            // The scoreboard's verdict on this same forecast: nothing is banked on a trial that has not
+            // started, so a range that is early says "too early to say" here as there, never a bare tier
+            const early = rangedPace(forecast.range);
             scheduledRows.push(
                 line(
                     'If it started now',
-                    `~T${forecast.tiersCleared}${Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : ''}`,
+                    (early ? early.text : `~T${forecast.tiersCleared}`) +
+                        (Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : ''),
                     WARN,
                     'Walked from tier 1 over a full hour, at the party damage estimated from the loadouts ' +
                         'captured so far' +
                         (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
-                        ' — a rough shape before anything is measured, priced from the game’s own tier data.'
+                        ' — a rough shape before anything is measured, priced from the game’s own tier data.' +
+                        (early ? early.hover : '')
                 )
             );
         }
@@ -5435,15 +5440,22 @@ class GuildTrials {
             });
         const projected = projectTrials(trials);
         // Where a trial's pace is a range of tiers, the figures it pays are a range too: the low and
-        // high ends of every such trial together, the whole tiers only (no part-tier credit at an end)
+        // high ends of every such trial together. An end keeps the point's part-tier credit only where it
+        // sits at or below the point's own tier (the high end capped at the point): above it, one more whole
+        // tier pays at least what the part-tier credit (at most half a tier) did, so the range holds the point
         const spread = trials.some((trial) => trial.projectedRange);
         const atEnd = (end) =>
             projectTrials(
-                trials.map((trial) =>
-                    trial.projectedRange
-                        ? { ...trial, projected: trial.projectedRange[end], partialFraction: 0 }
-                        : trial
-                )
+                trials.map((trial) => {
+                    if (!trial.projectedRange) return trial;
+                    const tier = trial.projectedRange[end];
+                    const atPoint = !(tier > (trial.projected ?? 0));
+                    return {
+                        ...trial,
+                        projected: tier,
+                        partialFraction: end === 'high' && atPoint ? trial.partialFraction : 0,
+                    };
+                })
             );
         const lowEnd = spread ? atEnd('low') : null;
         const highEnd = spread ? atEnd('high') : null;

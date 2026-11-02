@@ -911,6 +911,20 @@ describe('the panel', () => {
         expect(text()).toContain('measured rate');
     });
 
+    test('a forecast that is too early to say reads as a sentence, not a tier that is too early', () => {
+        guildTrialScoreboard.noteForecast({
+            tier: 21,
+            source: 'estimated',
+            limitedBy: 'time',
+            range: { low: 0, high: 21, point: 21, early: true },
+        });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain('Too early to say what tier it will reach in the hour');
+        expect(text()).not.toContain('a tier that is too early');
+        expect(text()).not.toContain('Expected to reach');
+    });
+
     test('an enraged forecast says so here too, without calling it a wall', () => {
         guildTrialScoreboard.noteForecast({ tier: 3, source: 'estimated', limitedBy: 'time', enragedFrom: 3 });
         guildTrialScoreboard.open();

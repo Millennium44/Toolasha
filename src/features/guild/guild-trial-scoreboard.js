@@ -1461,16 +1461,17 @@ class GuildTrialScoreboard {
         const forecastRange = forecast?.range;
         const reach = !forecastRange
             ? `T${forecast?.tier}`
-            : forecastRange.early
-              ? 'a tier that is too early to say'
-              : forecastRange.high > forecastRange.low
-                ? `T${forecastRange.low}–${forecastRange.high}`
-                : `T${forecast.tier}`;
+            : forecastRange.high > forecastRange.low
+              ? `T${forecastRange.low}–${forecastRange.high}`
+              : `T${forecast.tier}`;
+        const basis = `${forecast?.source === 'measured' ? 'from the party’s measured rate' : 'estimated from captured loadouts'}`;
         const expected =
             forecast && forecast.tier !== null
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:6px;">` +
-                  `Expected to reach <span style="color:${GOOD}; font-weight:600;">${reach}</span> ` +
-                  `in the hour — ${forecast.source === 'measured' ? 'from the party\u2019s measured rate' : 'estimated from captured loadouts'}` +
+                  (forecastRange?.early
+                      ? `<span style="color:${GOOD}; font-weight:600;">Too early to say</span> what tier it will reach in the hour`
+                      : `Expected to reach <span style="color:${GOOD}; font-weight:600;">${reach}</span> in the hour`) +
+                  ` — ${basis}` +
                   `${Number.isFinite(forecast.enragedFrom) ? ', with the boss fully enraged by then' : ''}.</div>`
                 : '';
 

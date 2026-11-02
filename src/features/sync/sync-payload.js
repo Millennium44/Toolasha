@@ -180,6 +180,9 @@ export const LOCAL_ONLY_KEY_PREFIXES = [
     'bulkSellPanelPosition',
     'consumablesBuyWidgetPosition',
     'taskRerollWalkPanelPosition',
+    // Which Trials-tab history sections this device has folded: a display preference for the screen in
+    // front of it, rewritten whole on each fold, so a pulled copy would reset another device's folds
+    'guildTrialSectionFolds',
 ];
 
 /**

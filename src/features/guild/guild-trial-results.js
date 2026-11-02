@@ -44,6 +44,7 @@ import {
     guildPoints,
     trialBasePoints,
     trialFromHrid,
+    TRIAL_ACTIVE_MS,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { matchTrialHrid } from './guild-trials-scrape.js';
@@ -161,7 +162,7 @@ export function boundSignupLevels(levels) {
  *
  * Neither is overwritten once stated, so the earlier observation of each wins:
  * the first moment the end was seen (its reason with it), and the first
- * non-empty sign-up map. A map stated empty stands only when the other copy has
+ * non-empty sign-up map (on the test server, of two ends a trial's hour apart, the later cycle's). A map stated empty stands only when the other copy has
  * none; "never loaded" (no `signupLevels` field at all) is told apart from
  * "nobody signed up" (`{}`).
  *
@@ -173,7 +174,13 @@ export function mergeTrialFacts(a, b) {
     const out = {};
     const ended = [a, b].filter((side) => Number.isFinite(side?.endedAt));
     if (ended.length) {
-        const first = ended.reduce((best, side) => (side.endedAt < best.endedAt ? side : best));
+        // Earliest wins, except on the test server (several cycles a week): two ends more than a trial's hour
+        // apart are two cycles', and the later is the current one. A stale tab's pre-cut end must not outlive it
+        const apart =
+            ended.length > 1 && isTestServer() && Math.abs(ended[0].endedAt - ended[1].endedAt) > TRIAL_ACTIVE_MS;
+        const first = ended.reduce((best, side) =>
+            (apart ? side.endedAt > best.endedAt : side.endedAt < best.endedAt) ? side : best
+        );
         const reason = [first, ...ended.filter((side) => side.endedAt === first.endedAt)]
             .map((side) => side.endReason)
             .find((value) => END_REASONS.includes(value));
