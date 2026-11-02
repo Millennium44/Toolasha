@@ -161,6 +161,8 @@ Every brief to a sub-agent carries these lines:
 - Commit messages go in a uniquely named file (`msg-<branch>.txt`); the scratch folder is shared, and a
   generic name has been overwritten by a sibling. Run Prettier and ESLint on the touched files before
   committing with `--no-verify -F <file>`.
+- **Logs, edit scripts and message files go in your session scratchpad**, never the folder above the repo
+  (`../gates.log`). About 200 of them piled up there.
 - **Confirm the diagnosis before building**; if the brief's diagnosis is wrong or backwards, stop and
   say so with file:line.
 - **Consumer sweep**: list every reader and writer of the state you change, check each, and put the list

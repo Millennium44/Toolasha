@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Agent briefs now send logs and scratch files to the session scratchpad instead of the folder above the repo.
+
 <!-- shipped in 3.73.0 -->
 
 ### Labyrinth rooms fit a phone
