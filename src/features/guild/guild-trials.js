@@ -299,6 +299,26 @@ const WORK_BASE_VERSION = 2;
 /** What a card's level line looks like, for finding the node the tier badge belongs on */
 const LEVEL_LINE_RE = /Lv\.\s*\d+/;
 
+/** Where the folded history sections are remembered (the `settings` store; the `guildTrial` prefix syncs it) */
+const SECTION_FOLDS_KEY = 'guildTrialSectionFolds';
+
+/**
+ * A history section's heading as a button that folds it.
+ * @param {string} key - The block key, carried in `data-fold`
+ * @param {string} label - The heading
+ * @param {string} title - The hover, already escaped
+ * @param {boolean} collapsed - Whether the section is folded
+ * @returns {string} Markup
+ */
+function foldHeading(key, label, title, collapsed) {
+    return (
+        `<button type="button" data-fold="${key}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${title}" ` +
+        `style="display:flex; align-items:center; gap:6px; width:100%; min-height:32px; padding:0; margin:0 0 2px; ` +
+        `background:none; border:0; cursor:pointer; text-align:left; color:${ACCENT}; font:inherit; font-weight:700;">` +
+        `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span>${label}</span></button>`
+    );
+}
+
 /** Cycles the Trial history table has a column for; earlier ones are in each row's hover */
 const TRIAL_HISTORY_COLUMNS = 5;
 
@@ -2925,6 +2945,16 @@ class GuildTrials {
          * `foldServerTierClears`.
          */
         this.serverTierClears = null;
+        /**
+         * The sign-up level map the game last stated, with the guild it was sent
+         * for — `{guildId, map}` — or null while none has been seen (unknown,
+         * which is not the same as nobody having signed up); see
+         * {@link _noteSignupLevels}.
+         */
+        this.signupLevelMap = null;
+        /** Folded history sections by block key; see {@link _foldsFor} */
+        this.sectionFolds = {};
+        this.foldsHydration = null;
         /**
          * Milliseconds to add to a server stamp to put it on this client's
          * clock, the tightest bound seen so far; see `serverClockOffset`. A
@@ -5588,27 +5618,80 @@ class GuildTrials {
         const summaries = this._pastWeekSummaries(now, bonuses);
         if (!summaries.length) return false;
 
+        const collapsed = this._foldsFor().history === true;
         const rows = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
-                'title="The last few finished cycles, kept when the week rolled over. Newest first. ' +
-                '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
-                'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
-                'derived from today’s building bonuses, which is what the ~ marks.">' +
-                'Past weeks</div>',
+            foldHeading(
+                'history',
+                'Past weeks',
+                'The last few finished cycles, kept when the week rolled over. Newest first. ' +
+                    '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
+                    'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
+                    'derived from today’s building bonuses, which is what the ~ marks.',
+                collapsed
+            ),
         ];
-        for (const summary of summaries) {
+        for (const summary of collapsed ? [] : summaries) {
             const title = summary.reason ? ` title="Archived: ${String(summary.reason).replace(/"/g, '&quot;')}"` : '';
             rows.push(`<div style="color:${DIM};"${title}>${pastWeekLine(summary)}</div>`);
         }
 
         this._placeBlock(root, 'history', {
             html: rows.join(''),
+            onBuild: (block) => this._wireFolds(block, root),
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',
             place: (block) => root.insertAdjacentElement('beforeend', block),
         });
         return true;
+    }
+
+    /**
+     * Which of the Trials tab's history sections are folded, `{[blockKey]: true}`.
+     *
+     * Read from the `settings` store once per session, as the Guild panel's
+     * sign-ups fold is; a section never touched is expanded. A fold set before
+     * the read lands is kept over what the read brings. The read redraws the
+     * sections when it lands so a remembered fold applies on the first view.
+     *
+     * @returns {Object<string, boolean>} Live object; a missing key is expanded
+     */
+    _foldsFor() {
+        if (!this.foldsHydration) {
+            this.foldsHydration = (async () => {
+                try {
+                    const stored = await storage.get(SECTION_FOLDS_KEY, 'settings', {});
+                    if (stored && typeof stored === 'object') {
+                        for (const [key, folded] of Object.entries(stored)) {
+                            if (!(key in this.sectionFolds)) this.sectionFolds[key] = folded === true;
+                        }
+                    }
+                } catch {
+                    /* an unreadable preference is just the default */
+                }
+                const root = findTrialsRoot();
+                if (root?.isConnected) this._render(root);
+            })();
+        }
+        return this.sectionFolds;
+    }
+
+    /**
+     * Make a history block's heading fold its section.
+     * @param {Element} block - The block just built
+     * @param {Element} root - The trials content element
+     */
+    _wireFolds(block, root) {
+        for (const button of block.querySelectorAll('[data-fold]')) {
+            button.addEventListener('click', () => {
+                const key = button.dataset.fold;
+                this.sectionFolds[key] = !this.sectionFolds[key];
+                // Not remembered across a reload if this write fails; the fold stands for the session
+                Promise.resolve(storage.set(SECTION_FOLDS_KEY, { ...this.sectionFolds }, 'settings')).catch(() => {});
+                this._renderHistory(root);
+                this._renderTrialHistory(root);
+            });
+        }
     }
 
     /**
@@ -5662,15 +5745,20 @@ class GuildTrials {
             cell('Best', GAME_COLORS.textDim) +
             '</div>';
 
-        const html = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
-                'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
+        const collapsed = this._foldsFor()['trial-history'] === true;
+        const heading = foldHeading(
+            'trial-history',
+            'Trial history',
+            'The tier each trial reached in every finished cycle this client saw, newest first, and ' +
                 `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
                 'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle ' +
-                'and the date of its best.">' +
-                'Trial history</div>',
-            header,
-            ...rows.map((row) => {
+                'and the date of its best.',
+            collapsed
+        );
+        const html = [
+            heading,
+            ...(collapsed ? [] : [header]),
+            ...(collapsed ? [] : rows).map((row) => {
                 const detail = trialHistoryDetail(row);
                 return (
                     `<div style="${grid}" title="${escapeAttr(detail)}">` +
@@ -5685,7 +5773,7 @@ class GuildTrials {
                     '</div>'
                 );
             }),
-            ...(hidden > 0
+            ...(hidden > 0 && !collapsed
                 ? [
                       `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
                           `+${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover</div>`,
@@ -5695,6 +5783,7 @@ class GuildTrials {
 
         this._placeBlock(root, 'trial-history', {
             html,
+            onBuild: (block) => this._wireFolds(block, root),
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',
@@ -6607,6 +6696,8 @@ class GuildTrials {
         this.timers.clearAll();
         this.samplerId = null;
         this.lastTickAt = 0;
+        // Re-enabled, the folds are read again rather than trusted from before
+        this.foldsHydration = null;
         // Before the breakdown goes: the trial in hand is saved off it — trial-history.js
         trialHistory.stop();
         guildTrialDamage.cleanup();

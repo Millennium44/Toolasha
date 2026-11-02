@@ -3625,6 +3625,82 @@ describe('the panel, end to end', () => {
             expect(text()).not.toContain('Past tiers');
         });
 
+        describe('folding the sections', () => {
+            // Timers are faked in this file: let the storage promises land by microtask
+            const settle = async () => {
+                for (let i = 0; i < 10; i += 1) await Promise.resolve();
+            };
+            const drawn = () => {
+                const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+                guildTrials.record = {
+                    ...guildTrials.record,
+                    history: [
+                        archivedWeek({ weekStart: weekAgo(1), tiles: { 'skilling::alchemy': alchemy(7, 1200) } }),
+                    ],
+                };
+                fire(root);
+                return root;
+            };
+            const heading = (key) => document.querySelector(`[data-fold="${key}"]`);
+
+            beforeEach(() => {
+                guildTrials.sectionFolds = {};
+                guildTrials.foldsHydration = null;
+                delete game.store.guildTrialSectionFolds;
+            });
+
+            test('a section nobody has touched is expanded, and its heading is a button', () => {
+                drawn();
+                expect(heading('history').tagName).toBe('BUTTON');
+                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+                expect(historyCells('Alchemy')).not.toBeNull();
+            });
+
+            test('clicking a heading folds only its section, and a redraw does not reopen it', async () => {
+                const root = drawn();
+                await settle();
+                heading('trial-history').click();
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
+                expect(document.querySelector('[data-mwi-block="trial-history"]').children).toHaveLength(1);
+                // Past weeks is untouched
+                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
+                expect(document.querySelector('[data-mwi-block="history"]').children.length).toBeGreaterThan(1);
+
+                // The live trial redraws the tab every pass
+                fire(root);
+                fire(root);
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
+                expect(document.querySelector('[data-mwi-block="trial-history"]').children).toHaveLength(1);
+
+                heading('trial-history').click();
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+                expect(historyCells('Alchemy')).not.toBeNull();
+            });
+
+            test('a fold is written down and read back on the next load', async () => {
+                drawn();
+                await settle();
+                heading('history').click();
+                await settle();
+                expect(game.store.guildTrialSectionFolds).toEqual({ history: true });
+
+                document.body.innerHTML = '';
+                guildTrials.sectionFolds = {};
+                guildTrials.foldsHydration = null;
+                drawn();
+                await settle();
+                expect(heading('history').getAttribute('aria-expanded')).toBe('false');
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+            });
+
+            test('a section with nothing to show has no heading to fold', () => {
+                fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
+                expect(heading('history')).toBeNull();
+                expect(heading('trial-history')).toBeNull();
+            });
+        });
+
         test('weeks the four-cycle archive has dropped still show, from the kept results', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = {
@@ -3724,9 +3800,7 @@ describe('the panel, end to end', () => {
                 const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
                 guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
                 fire(root);
-                const header = [...document.querySelectorAll('[title]')].find(
-                    (node) => node.textContent === 'Trial history'
-                );
+                const header = document.querySelector('[data-fold="trial-history"]');
                 expect(header.getAttribute('title')).toContain('the last 120 cycles');
             } finally {
                 game.testServer = false;
@@ -3737,9 +3811,7 @@ describe('the panel, end to end', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
             fire(root);
-            const header = [...document.querySelectorAll('[title]')].find(
-                (node) => node.textContent === 'Trial history'
-            );
+            const header = document.querySelector('[data-fold="trial-history"]');
             expect(header.getAttribute('title')).toContain('52 weeks');
             expect(header.getAttribute('title')).not.toContain('test server');
         });
