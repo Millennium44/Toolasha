@@ -796,6 +796,9 @@ class MarketHistoryViewer {
             display: flex;
             gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
+            min-width: 0;
+            max-width: 100%;
         `;
 
         // Search box
@@ -811,6 +814,8 @@ class MarketHistoryViewer {
             background: #1a1a1a;
             color: #fff;
             min-width: 200px;
+            max-width: 100%;
+            box-sizing: border-box;
         `;
         searchBox.addEventListener('input', (e) => {
             this.searchTerm = e.target.value;
@@ -827,6 +832,7 @@ class MarketHistoryViewer {
             border-radius: 4px;
             background: #1a1a1a;
             color: #fff;
+            max-width: 100%;
         `;
         const typeOptions = [
             { value: 'all', label: 'All Types' },
@@ -857,6 +863,7 @@ class MarketHistoryViewer {
             border-radius: 4px;
             background: #1a1a1a;
             color: #fff;
+            max-width: 100%;
         `;
         const statusOptions = [
             { value: 'all', label: 'All Statuses' },
@@ -904,6 +911,7 @@ class MarketHistoryViewer {
             display: flex;
             gap: 8px;
             align-items: center;
+            flex-wrap: wrap;
         `;
 
         // Export button
@@ -961,6 +969,7 @@ class MarketHistoryViewer {
             display: flex;
             gap: 12px;
             align-items: center;
+            flex-wrap: wrap;
             margin-left: auto;
         `;
 

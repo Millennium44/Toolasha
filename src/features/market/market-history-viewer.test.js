@@ -626,6 +626,31 @@ describe('an archive of older listings that could not be read', () => {
     });
 });
 
+describe('the filter row on a phone', () => {
+    test('every group in the controls row can wrap instead of running off the side', () => {
+        marketHistoryViewer.createModal();
+        const stubs = [
+            vi.spyOn(marketHistoryViewer, 'updateClearFiltersButton').mockImplementation(() => {}),
+            vi.spyOn(marketHistoryViewer, 'renderActiveFilters').mockImplementation(() => {}),
+        ];
+        // An earlier test in this file stubs the instance's renderControls; call the real one
+        Object.getPrototypeOf(marketHistoryViewer).renderControls.call(marketHistoryViewer);
+
+        const controls = document.querySelector('.mwi-market-history-controls');
+        const groups = [...controls.children];
+        expect(groups).toHaveLength(4);
+        for (const group of groups) {
+            expect(group.style.flexWrap).toBe('wrap');
+        }
+        // The search box and both selects sit in the first group; none may be wider than the group
+        for (const el of [...groups[0].children]) {
+            expect(el.style.maxWidth).toBe('100%');
+        }
+        stubs.forEach((stub) => stub.mockRestore());
+        marketHistoryViewer.closeModal();
+    });
+});
+
 describe('deleting a row from the table', () => {
     const proto = Object.getPrototypeOf(marketHistoryViewer);
     const alertText = () => globalThis.alert.mock.calls.at(-1)[0];
