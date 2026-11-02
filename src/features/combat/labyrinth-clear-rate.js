@@ -5593,6 +5593,9 @@ class LabyrinthClearRate {
                     this._pathQueued = true;
                     this._pathQueuedAuto = true;
                     this._pathQueuedReason = firedFor;
+                } else if (this._pathQueuedAuto && firedFor === 'beacon') {
+                    // A beacon landing on a queued automatic path makes it a beacon's, as for a pending timer
+                    this._pathQueuedReason = 'beacon';
                 }
                 this.setPathButtonRunning(false);
                 return;

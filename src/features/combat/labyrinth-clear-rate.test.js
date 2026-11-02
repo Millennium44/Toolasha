@@ -7690,6 +7690,22 @@ describe('auto-path after a beacon reveal', () => {
         expect(labyrinthClearRate._pathQueued).toBe(true);
     });
 
+    test('a beacon absorbed into a queued reveal path makes it a beacon path the reveal option cannot withdraw', () => {
+        labyrinthClearRate.onLabyrinthUpdated(update(5, 3));
+        labyrinthClearRate.tileCalcRunning = true;
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueuedReason).toBe('reveal');
+
+        labyrinthClearRate.onLabyrinthUpdated(update(9, 2));
+        vi.advanceTimersByTime(2000);
+        expect(labyrinthClearRate._pathQueuedReason).toBe('beacon');
+
+        setSettings({ onReveal: false });
+        labyrinthClearRate.withdrawRevealAutoPath();
+        expect(labyrinthClearRate._pathQueued).toBe(true);
+        expect(labyrinthClearRate.revealQueueWithdrawn()).toBe(false);
+    });
+
     test('a beacon still re-paths with the reveal option off', () => {
         setSettings({ onReveal: false });
         labyrinthClearRate.onLabyrinthUpdated(update(8, 2));
