@@ -110,6 +110,9 @@ const SKIP_DEDUP_TYPES = new Set([
     'end_guild_battle',
     'end_guild_skilling',
     'action_type_consumable_slots_updated',
+    // Server notices: the same refusal twice is two refusals, not one frame seen twice
+    'error',
+    'info',
     'consumable_buffs_updated',
     'community_buffs_updated',
     'house_rooms_updated',

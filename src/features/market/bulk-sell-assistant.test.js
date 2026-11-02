@@ -130,6 +130,24 @@ vi.mock('../../utils/react-click.js', () => ({
     },
 }));
 
+// Server notices: the test drives the handler by hand (fixture shaped from the game's handler code)
+const notices = vi.hoisted(() => ({ handler: null, unsubs: 0 }));
+vi.mock('../../utils/server-notices.js', () => ({
+    SALE_REFUSAL_KEYS: [
+        'errorNotification.itemIsLocked',
+        'errorNotification.orderNotFulfilled',
+        'errorNotification.maxListingsPerItem',
+        'errorNotification.requestSpamProtection',
+    ],
+    onServerNotice: (handler) => {
+        notices.handler = handler;
+        return () => {
+            notices.unsubs += 1;
+            if (notices.handler === handler) notices.handler = null;
+        };
+    },
+}));
+
 const { default: bulkSell } = await import('./bulk-sell-assistant.js');
 
 const inventory = (itemHrid, count = 5, enhancementLevel = 0) => ({
@@ -2110,6 +2128,59 @@ describe('confirming from the strip', () => {
 
             expect(armClicks).toBe(1);
             expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(true);
+            bulkSell._releaseSaleGuard();
+        });
+
+        test('a server refusal after our press frees the step instead of leaving it waiting for the game', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmSent()).toBe(true);
+
+            notices.handler({ level: 'error', key: 'errorNotification.itemIsLocked', variables: {}, at: Date.now() });
+
+            expect(bulkSell._confirmSent()).toBe(false);
+            expect(bulkSell.confirmNote).toContain('itemIsLocked');
+            expect(confirmBtn().disabled).toBe(false);
+            expect(notices.handler).toBeNull();
+        });
+
+        test('the refusal listener is gone once the window ends, so a later error is not read as the answer', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(notices.handler).not.toBeNull();
+
+            await vi.advanceTimersByTimeAsync(10500);
+
+            expect(notices.handler).toBeNull();
+            bulkSell._releaseSaleGuard();
+        });
+
+        test('the listener is disposed when the step moves on', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+            expect(notices.handler).not.toBeNull();
+
+            bulkSell._clearTransient();
+
+            expect(notices.handler).toBeNull();
+        });
+
+        test('an unrelated key, an info notice or a late refusal leaves the pressed step alone', async () => {
+            openMenu();
+            vendorRun();
+            await pressAndSettle();
+
+            notices.handler({ level: 'error', key: 'errorNotification.chatSpamProtection', variables: {}, at: 0 });
+            notices.handler({ level: 'info', key: 'errorNotification.itemIsLocked', variables: {}, at: 0 });
+            expect(bulkSell._confirmSent()).toBe(true);
+
+            await vi.advanceTimersByTimeAsync(11000);
+            expect(notices.handler).toBeNull();
             expect(bulkSell._confirmSent()).toBe(true);
             bulkSell._releaseSaleGuard();
         });

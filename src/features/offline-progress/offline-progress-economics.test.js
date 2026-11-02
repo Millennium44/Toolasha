@@ -89,7 +89,11 @@ vi.mock('../../utils/dom-observer-helpers.js', () => ({
     }),
 }));
 
-import offlineProgressEconomics, { buildBlock, readExperience } from './offline-progress-economics.js';
+import offlineProgressEconomics, {
+    buildBlock,
+    readExperience,
+    sumOfflineExperience,
+} from './offline-progress-economics.js';
 
 function buildModalNode() {
     const modalContent = document.createElement('div');
@@ -574,6 +578,71 @@ describe('offline-progress-economics', () => {
         const text = document.querySelector('#mwi-offline-economics').textContent;
         expect(text).toContain('Experience');
         expect(text).toContain('1.5K/hr');
+    });
+});
+
+// Fixture shape built from the game's Welcome Back handler (no live capture): [{skillHrid, offlineExperience}]
+describe('sumOfflineExperience', () => {
+    test('sums offlineExperience across skills', () => {
+        expect(
+            sumOfflineExperience([
+                { skillHrid: '/skills/milking', offlineExperience: 10291.5 },
+                { skillHrid: '/skills/foraging', offlineExperience: 35540 },
+            ])
+        ).toBe(45831.5);
+    });
+
+    test('null (use the DOM) when the field is absent, 0 when it is an empty array', () => {
+        expect(sumOfflineExperience(undefined)).toBeNull();
+        expect(sumOfflineExperience(null)).toBeNull();
+        expect(sumOfflineExperience([])).toBe(0);
+    });
+
+    test('ignores zero, negative and malformed entries', () => {
+        expect(
+            sumOfflineExperience([
+                { offlineExperience: 0 },
+                { offlineExperience: -5 },
+                {},
+                null,
+                { offlineExperience: 7 },
+            ])
+        ).toBe(7);
+    });
+});
+
+describe('offline experience source', () => {
+    beforeEach(() => {
+        settingValues.offlineProgressEconomics = true;
+        mockCalculateOfflineEconomics.mockReset().mockReturnValue(SAMPLE_ECONOMICS);
+        mockGetOfflineHourCap.mockReset().mockReturnValue(null);
+        mockOnClass.mockClear();
+        fakeDataManager.characterData = null;
+    });
+    afterEach(() => {
+        offlineProgressEconomics.disable();
+        document.body.innerHTML = '';
+    });
+
+    test('takes experience from offlineSkills, not the modal cells', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized({ offlineSkills: [{ skillHrid: '/skills/milking', offlineExperience: 12000 }] });
+        const modalNode = buildModalNode();
+        mockOnClass.mock.calls[0][2](modalNode);
+        const block = document.querySelector('#mwi-offline-economics');
+        expect(block.textContent).toContain('12.0K');
+    });
+
+    test('falls back to the modal cells when the payload has no offlineSkills', () => {
+        offlineProgressEconomics.initialize();
+        triggerCharacterInitialized();
+        const modalNode = buildModalNode();
+        modalNode.insertAdjacentHTML(
+            'beforeend',
+            '<div class="OfflineProgressModal_expList__x"><div class="OfflineProgressModal_skillExperience__y">5000</div></div>'
+        );
+        mockOnClass.mock.calls[0][2](modalNode);
+        expect(document.querySelector('#mwi-offline-economics').textContent).toContain('5.0K');
     });
 });
 
