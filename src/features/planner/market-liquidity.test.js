@@ -614,6 +614,101 @@ describe('bounding a whole ranking', () => {
     });
 });
 
+describe('reporting how far a sweep has got', () => {
+    const rateFor = (...items) => ({
+        label: items.join('+'),
+        goldPerHour: 1_000,
+        sells: items.map((itemHrid) => ({ itemHrid, unitsPerHour: 1 })),
+    });
+
+    test('counts each uncached lookup as it settles, once per distinct item, and says when it is over', async () => {
+        // Duplicates across rates and within one rate; one item already measured
+        for (const item of ['cached', 'a', 'b', 'c']) history.rows[`/items/${item}`] = tradedAt(10);
+        await dailyVolume('/items/cached');
+        history.calls = [];
+        const reports = [];
+
+        await applyLiquidityLimits(
+            [
+                rateFor('/items/a', '/items/b', '/items/a'),
+                rateFor('/items/b', '/items/cached'),
+                rateFor('/items/c', '/items/coin'),
+            ],
+            { onProgress: (progress) => reports.push(progress && { ...progress }) }
+        );
+
+        expect(reports).toEqual([{ done: 1, total: 3 }, { done: 2, total: 3 }, { done: 3, total: 3 }, null]);
+        expect(history.calls.map((call) => call.itemHrid).sort()).toEqual(['/items/a', '/items/b', '/items/c']);
+    });
+
+    test('a sweep with everything cached, or nothing to look up, reports nothing', async () => {
+        history.rows['/items/a'] = tradedAt(10);
+        await applyLiquidityLimits([rateFor('/items/a')]);
+        const onProgress = vi.fn();
+
+        await applyLiquidityLimits([rateFor('/items/a')], { onProgress });
+        await applyLiquidityLimits([], { onProgress });
+        await applyLiquidityLimits([{ label: 'Coins only', goldPerHour: 1, sells: [{ itemHrid: '/items/coin' }] }], {
+            onProgress,
+        });
+
+        expect(onProgress).not.toHaveBeenCalled();
+    });
+
+    test('a pool that answers nothing still runs the count to its end instead of freezing it', async () => {
+        history.enabled = false; // every lookup settles at once as unknown, as a cool-down does
+        const reports = [];
+
+        await applyLiquidityLimits([rateFor('/items/a', '/items/b', '/items/c')], {
+            onProgress: (progress) => reports.push(progress && { ...progress }),
+        });
+
+        expect(reports.at(-2)).toEqual({ done: 3, total: 3 });
+        expect(reports.at(-1)).toBeNull();
+    });
+
+    test('a callback that throws does not stop the pricing', async () => {
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        history.rows['/items/milk'] = tradedAt(50_000);
+
+        const { rates, measured } = await applyLiquidityLimits(
+            [{ label: 'Milk a Cow', goldPerHour: 12_400_000, sells: [{ itemHrid: '/items/milk', unitsPerHour: 400 }] }],
+            {
+                onProgress: () => {
+                    throw new Error('the panel is gone');
+                },
+            }
+        );
+
+        expect(measured).toBe(true);
+        expect(rates).toHaveLength(1);
+        expect(errorLog).toHaveBeenCalled();
+        errorLog.mockRestore();
+    });
+
+    test('two overlapping sweeps each report to their own caller', async () => {
+        history.hang = true;
+        const first = [];
+        const second = [];
+
+        const one = applyLiquidityLimits([rateFor('/items/a', '/items/b')], { onProgress: (p) => first.push(p) });
+        const two = applyLiquidityLimits([rateFor('/items/x')], { onProgress: (p) => second.push(p) });
+        await Promise.resolve();
+        await Promise.resolve();
+        while (history.pending.length) history.pending.shift().resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        history.hang = false;
+        while (history.pending.length) history.pending.shift().resolve();
+        await Promise.all([one, two]);
+
+        expect(first.filter(Boolean).every((p) => p.total === 2)).toBe(true);
+        expect(second.filter(Boolean).every((p) => p.total === 1)).toBe(true);
+        expect(first.at(-1)).toBeNull();
+        expect(second.at(-1)).toBeNull();
+    });
+});
+
 describe('in the split production build', () => {
     test('reads the history API the market bundle published, not the inlined module', async () => {
         const hadWindow = 'window' in globalThis;

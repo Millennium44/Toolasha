@@ -77,25 +77,33 @@ vi.mock('../alchemy/alchemy-rankings.js', () => ({
     },
 }));
 vi.mock('./combat-rates.js', () => ({ loadCombatRates: async () => rates.combat }));
-const liquidity = vi.hoisted(() => ({ measured: true, throttle: {}, unmeasured: {} }));
+const liquidity = vi.hoisted(() => ({ measured: true, throttle: {}, unmeasured: {}, progress: null, gate: null }));
 // Bounding rates by market volume reaches a third-party history server, and what
 // this file is about is which rates get ranked, not how fast they sell. The
 // liquidity bound has its own tests; here it passes everything through and says
 // it measured, so the "not being checked" note stays out of the note assertions.
 vi.mock('./market-liquidity.js', () => ({
     // A test can thin an item's book with `liquidity.throttle[itemHrid] = share`; absent = unmeasured
-    applyLiquidityLimits: async (rates) => ({
-        rates: rates.map((rate) => {
-            const share = Math.min(1, ...(rate.sells || []).map((sold) => liquidity.throttle[sold.itemHrid] ?? 1));
-            const bounded = share < 1 ? { ...rate, goldPerHour: rate.goldPerHour * share } : rate;
-            // The real module marks a rate whose output went unmeasured while others were
-            return (rate.sells || []).some((sold) => liquidity.unmeasured[sold.itemHrid])
-                ? { ...bounded, limits: [{ kind: 'unmeasured', note: 'market volume not measured' }] }
-                : bounded;
-        }),
-        measured: liquidity.measured,
-    }),
+    applyLiquidityLimits: async (rates, options) => {
+        // A test can have the sweep report progress, then wait, to look at what is heard meanwhile
+        if (liquidity.progress) {
+            options?.onProgress?.(liquidity.progress);
+            await liquidity.gate;
+        }
+        return mockBounded(rates);
+    },
 }));
+const mockBounded = (rates) => ({
+    rates: rates.map((rate) => {
+        const share = Math.min(1, ...(rate.sells || []).map((sold) => liquidity.throttle[sold.itemHrid] ?? 1));
+        const bounded = share < 1 ? { ...rate, goldPerHour: rate.goldPerHour * share } : rate;
+        // The real module marks a rate whose output went unmeasured while others were
+        return (rate.sells || []).some((sold) => liquidity.unmeasured[sold.itemHrid])
+            ? { ...bounded, limits: [{ kind: 'unmeasured', note: 'market volume not measured' }] }
+            : bounded;
+    }),
+    measured: liquidity.measured,
+});
 const craft = vi.hoisted(() => ({ plan: null }));
 vi.mock('../crafting-plan/crafting-plan-calculator.js', () => ({ computeBestCraftingPlan: () => craft.plan }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
@@ -1178,6 +1186,68 @@ describe('route rates — every action of a skill, locked ones included', () => 
         expect(route.actionHrid).toBe('/actions/alchemy/transmute');
         expect(route.goldPerHour).toBeNull();
         expect(route.goldKnown).toBe(false);
+    });
+
+    describe('progress while volumes are looked up', () => {
+        const withSale = () => {
+            rates.production = {
+                '/actions/cooking/stew': {
+                    profitPerHour: 1_000,
+                    itemHrid: '/items/stew',
+                    totalItemsPerHour: 10,
+                    revenuePerHour: 5_000,
+                },
+            };
+        };
+        afterEach(() => {
+            liquidity.progress = null;
+            liquidity.gate = null;
+        });
+
+        test('a pricing build hands the sweep its own callback', async () => {
+            liquidity.progress = { done: 4, total: 9 };
+            const heard = [];
+            await buildPlannerContext({ onProgress: (progress) => heard.push(progress) });
+            expect(heard).toContainEqual({ done: 4, total: 9 });
+        });
+
+        test('a route pricing tells every press that is waiting on it, a late one included', async () => {
+            withSale();
+            const context = await buildPlannerContext();
+            liquidity.progress = { done: 2, total: 5 };
+            const gate = Promise.withResolvers();
+            liquidity.gate = gate.promise;
+
+            const first = [];
+            const second = [];
+            const one = context.routeRates('/skills/cooking', { onProgress: (p) => first.push(p) });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            const two = context.routeRates('/skills/cooking', {
+                onProgress: (p) => second.push(p),
+            });
+            expect(one).toBe(two);
+            gate.resolve();
+            await one;
+
+            expect(first).toEqual([{ done: 2, total: 5 }]);
+            // The press that joined late is told where the sweep already is
+            expect(second).toEqual([{ done: 2, total: 5 }]);
+        });
+
+        test('a callback that throws does not break the route pricing', async () => {
+            withSale();
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            const context = await buildPlannerContext();
+            liquidity.progress = { done: 1, total: 2 };
+            liquidity.gate = Promise.resolve();
+            const rates = await context.routeRates('/skills/cooking', {
+                onProgress: () => {
+                    throw new Error('gone');
+                },
+            });
+            expect(rates.length).toBeGreaterThan(0);
+            vi.restoreAllMocks();
+        });
     });
 
     test('is measured once per pricing, and again after a new pricing', async () => {

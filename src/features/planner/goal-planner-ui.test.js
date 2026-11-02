@@ -123,9 +123,10 @@ vi.mock('../../utils/combat-zone-open.js', () => ({
 
 const plannerContext = vi.hoisted(() => ({ value: null, builds: 0, onBuild: null, coins: undefined }));
 vi.mock('./goal-planner-context.js', () => ({
-    buildPlannerContext: async () => {
+    buildPlannerContext: async (options) => {
         plannerContext.builds += 1;
-        if (plannerContext.onBuild) return plannerContext.onBuild();
+        plannerContext.lastOptions = options;
+        if (plannerContext.onBuild) return plannerContext.onBuild(options);
         return plannerContext.value;
     },
     withHouseCosts: async (context) => context,
@@ -855,6 +856,86 @@ describe('adding and removing a goal', () => {
         await refreshing;
         expect(goalPlannerPanel.plans.some((plan) => plan.title === 'Have 900.0M coins')).toBe(true);
         expect(plannerContext.builds).toBe(1);
+    });
+
+    describe('while market volumes are looked up', () => {
+        const statusText = () => goalPlannerPanel.statusEl.textContent;
+
+        test('the status line counts the lookups and goes back to normal when pricing ends', async () => {
+            goalPlannerPanel.show();
+            await goalPlannerPanel.load();
+            const gate = Promise.withResolvers();
+            const building = Promise.withResolvers();
+            plannerContext.onBuild = async ({ onProgress }) => {
+                onProgress({ done: 40, total: 500 });
+                building.resolve();
+                await gate.promise;
+                return plannerContext.value;
+            };
+
+            const refreshing = goalPlannerPanel.refresh();
+            await building.promise;
+            expect(statusText()).toBe('Pricing 40 of 500…');
+
+            // A redraw in the middle of pricing keeps the count rather than resetting it
+            goalPlannerPanel._render();
+            expect(statusText()).toBe('Pricing 40 of 500…');
+
+            gate.resolve();
+            await refreshing;
+            expect(statusText()).not.toContain(' of ');
+        });
+
+        test('a sweep with nothing to wait for never shows a count', async () => {
+            goalPlannerPanel.show();
+            await goalPlannerPanel.load();
+            await goalPlannerPanel.refresh();
+            expect(statusText()).not.toContain(' of ');
+        });
+
+        test('a report that arrives after pricing ended, or from an older pass, is dropped', async () => {
+            goalPlannerPanel.show();
+            await goalPlannerPanel.load();
+            await goalPlannerPanel.refresh();
+            const staleReport = plannerContext.lastOptions.onProgress;
+
+            staleReport({ done: 3, total: 9 });
+            expect(statusText()).not.toContain('3 of 9');
+
+            // A newer pass starts; the older pass's late report must not overwrite its status
+            const gate = Promise.withResolvers();
+            const building = Promise.withResolvers();
+            plannerContext.onBuild = async () => {
+                building.resolve();
+                await gate.promise;
+                return plannerContext.value;
+            };
+            const refreshing = goalPlannerPanel.refresh();
+            await building.promise;
+            staleReport({ done: 3, total: 9 });
+            expect(statusText()).not.toContain('3 of 9');
+            gate.resolve();
+            await refreshing;
+        });
+
+        test('a report after the panel is disabled does nothing and does not throw', async () => {
+            goalPlannerPanel.show();
+            await goalPlannerPanel.load();
+            const gate = Promise.withResolvers();
+            const building = Promise.withResolvers();
+            plannerContext.onBuild = async ({ onProgress }) => {
+                building.resolve();
+                await gate.promise;
+                onProgress({ done: 1, total: 2 });
+                return plannerContext.value;
+            };
+            const refreshing = goalPlannerPanel.refresh();
+            await building.promise;
+            goalPlannerPanel.disable();
+            gate.resolve();
+            await expect(refreshing).resolves.toBeUndefined();
+            expect(goalPlannerPanel.pricingProgress ?? null).toBeNull();
+        });
     });
 
     test('a goal added while a refresh fails to price retries the pricing, not the stale prices', async () => {

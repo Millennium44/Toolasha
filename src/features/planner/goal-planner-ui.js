@@ -536,6 +536,8 @@ class GoalPlannerPanel {
         this.busy = true;
         this.idle = new Promise((resolve) => (this.resolveIdle = resolve));
         this.notice = null;
+        const token = (this.pricingToken = (this.pricingToken || 0) + 1);
+        this.pricingProgress = null;
         this._status(reprice ? 'Pricing…' : 'Planning…');
         // Who this plan is for, fixed before the pricing. `buildPlannerContext()`
         // is the multi-second market fetch the "Pricing…" status exists for, and
@@ -550,7 +552,15 @@ class GoalPlannerPanel {
         let pricingFailed = false;
         try {
             if (reprice || !this.context) {
-                const context = await buildPlannerContext();
+                const context = await buildPlannerContext({
+                    // Dropped once the panel is closed, the character changes, or this pass is over;
+                    // `busy` is false the moment a pass finishes, and a newer one sets its own token
+                    onProgress: (progress) => {
+                        if (gone() || !this.busy || this.pricingToken !== token) return;
+                        this.pricingProgress = progress;
+                        this._status(this._busyStatus(reprice ? 'Pricing…' : 'Planning…'));
+                    },
+                });
                 if (gone()) return;
                 this.context = context;
                 // The market snapshot's own time: a cached snapshot is not "priced just now".
@@ -578,6 +588,7 @@ class GoalPlannerPanel {
             this.notice = reprice ? 'Pricing failed — see the console.' : 'Planning failed — see the console.';
             pricingFailed = reprice;
         } finally {
+            if (this.pricingToken === token) this.pricingProgress = null;
             if (current()) {
                 this.busy = false;
                 this._settleIdle();
@@ -798,6 +809,17 @@ class GoalPlannerPanel {
         if (this.statusEl) this.statusEl.textContent = text;
     }
 
+    /**
+     * What the status line says while a pricing pass runs: the plain word, or how many market
+     * volumes have been looked up of how many there are to look up.
+     * @param {string} plain - The line without a count
+     * @returns {string}
+     */
+    _busyStatus(plain) {
+        const progress = this.pricingProgress;
+        return progress && progress.total > 0 ? `Pricing ${progress.done} of ${progress.total}…` : plain;
+    }
+
     // -------------------------------------------------------------------------
     // Rendering
     // -------------------------------------------------------------------------
@@ -809,7 +831,7 @@ class GoalPlannerPanel {
         this._status(
             this.notice ||
                 (this.busy
-                    ? 'Pricing…'
+                    ? this._busyStatus('Pricing…')
                     : this.pricedAt
                       ? `priced ${new Date(this.pricedAt).toLocaleTimeString()}${pricedAgo(this.pricedAt)}`
                       : 'not priced yet')
@@ -1523,7 +1545,13 @@ class GoalPlannerPanel {
             // The pricing these rates belong to, fixed now: a Refresh during the search swaps
             // `this.pricedAt`, and stamping the finished route with the new one would hide that it is old
             const pricedAt = this.pricedAt;
-            const rates = await context.routeRates(goal.skillHrid);
+            const rates = await context.routeRates(goal.skillHrid, {
+                onProgress: (progress) => {
+                    if (!live() || state.status !== 'pricing') return;
+                    state.pricingProgress = progress;
+                    this._drawRouteProgress(state);
+                },
+            });
             if (!live()) return;
 
             const skill = context.skill?.(goal.skillHrid) || {};
@@ -1604,7 +1632,16 @@ class GoalPlannerPanel {
      * @param {Object} state - A route state
      */
     _drawRouteProgress(state) {
-        if (!state.progressEl || !state.progress) return;
+        if (!state.progressEl) return;
+        if (state.status === 'pricing') {
+            const counted = state.pricingProgress;
+            state.progressEl.textContent =
+                counted && counted.total > 0
+                    ? `Pricing ${counted.done} of ${counted.total}…`
+                    : 'Pricing every action of this skill…';
+            return;
+        }
+        if (!state.progress) return;
         const { done, total } = state.progress;
         state.progressEl.textContent = `Searching… ${total > 0 ? Math.floor((done / total) * 100) : 0}%`;
     }

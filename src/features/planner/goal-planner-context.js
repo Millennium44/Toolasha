@@ -410,9 +410,10 @@ function noteTrainingSales(sales, actionHrid, profit, lines) {
  * @param {Map<string, {proceedsPerHour: number, capPerHour: number}>} trainingSaleCap - Filled for each
  *   action the book limits: the uncapped proceeds of the outputs it limits and what the market absorbs of
  *   them, both per hour (an output that sells freely is in neither)
+ * @param {Function} [onProgress] - Told how far the volume lookups have got, see `applyLiquidityLimits`
  * @returns {Promise<void>}
  */
-async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
+async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap, onProgress) {
     if (!sales.length) return;
     try {
         const pseudo = [];
@@ -425,7 +426,7 @@ async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap) {
                 });
             }
         }
-        const bounded = await applyLiquidityLimits(pseudo);
+        const bounded = await applyLiquidityLimits(pseudo, { onProgress });
         const byKey = new Map((bounded?.rates || []).map((rate) => [rate.actionHrid, rate]));
         for (const sale of sales) {
             let unsold = 0;
@@ -536,8 +537,9 @@ function availableActions(types) {
  *
  * @returns {Promise<{rates: Array<Object>, byAction: Map<string, number>, notes: Array<string>}>}
  *   Rates best first, gold by action for the skilling rates, and anything the panel should say
+ * @param {Function} [onProgress] - Told how far the volume lookups have got, see `applyLiquidityLimits`
  */
-async function measureGoldRates() {
+async function measureGoldRates(onProgress) {
     const rates = [];
     const byAction = new Map();
     // Signed, and apart from `rates`: the rankings only want what pays, but training
@@ -649,7 +651,7 @@ async function measureGoldRates() {
     // ranking it first is how the planner recommended a method that cannot be run.
     let liquidity;
     try {
-        liquidity = await applyLiquidityLimits(rates);
+        liquidity = await applyLiquidityLimits(rates, { onProgress });
     } catch (error) {
         console.error('[GoalPlanner] Bounding rates by market volume failed:', error);
         liquidity = { rates, measured: false };
@@ -664,7 +666,7 @@ async function measureGoldRates() {
 
     // Training sells its output through the same book, so its margin gets the same bound. Without
     // it a thin-market craft trained for XP counted every unit sold at the quoted price.
-    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap);
+    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap, onProgress);
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
     return {
@@ -770,9 +772,10 @@ function measureXpRates(
  * are the quick estimate's own.
  *
  * @param {string} skillHrid - The skill
+ * @param {Function} [onProgress] - Told how far the volume lookups have got
  * @returns {Promise<Array<Object>>} Rates for every action of the skill, best first
  */
-async function measureRouteRates(skillHrid) {
+async function measureRouteRates(skillHrid, onProgress) {
     if (skillHrid === ENHANCING_SKILL) {
         const measuredAtLevel = skillState(skillHrid).level;
         return measureEnhancingRates().map((rate) => ({ ...rate, measuredAtLevel }));
@@ -805,7 +808,7 @@ async function measureRouteRates(skillHrid) {
             console.error(`[GoalPlanner] Costing ${hrid} for a route failed:`, error);
         }
     }
-    await boundTrainingMargins(sales, margin, saleCap);
+    await boundTrainingMargins(sales, margin, saleCap, onProgress);
     // Read after the awaits, beside the experience rates: the efficiency inside them is this level's
     const measuredAtLevel = skillState(skillHrid).level;
     return measureXpRates(skillHrid, margin, drinkCost, upfront, saleCap).map((rate) => {
@@ -1143,9 +1146,11 @@ function rescaleMaterialBill(bill, { attempts, fromAttempts, protectionCount, fr
  * @param {Object} [options] - Options
  * @param {boolean} [options.measureRates=true] - Rank every activity's income. Off for a
  *   redraw that only needs names and levels, since the ranking is the expensive part.
+ * @param {Function} [options.onProgress] - Told `{done, total}` as market volumes are looked up and
+ *   `null` when each sweep ends. Per call, so two builds never share it.
  * @returns {Promise<Object>} A context for `planGoal`
  */
-export async function buildPlannerContext({ measureRates = true } = {}) {
+export async function buildPlannerContext({ measureRates = true, onProgress } = {}) {
     if (!marketAPI.isLoaded?.()) {
         try {
             await marketAPI.fetch();
@@ -1156,7 +1161,7 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
 
     const gameData = dataManager.getInitClientData();
     const measured = measureRates
-        ? await measureGoldRates()
+        ? await measureGoldRates(onProgress)
         : {
               rates: [],
               byAction: new Map(),
@@ -1177,6 +1182,8 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
     const runs = new Map();
     const xpCache = new Map();
     const routeCache = new Map();
+    /** Skill → the progress listeners of the route pricing still running for it */
+    const routeSweeps = new Map();
     const houseCosts = new Map();
 
     return {
@@ -1224,18 +1231,40 @@ export async function buildPlannerContext({ measureRates = true } = {}) {
         // Every action of the skill, locked ones included, for the leveling route optimizer. Asked only
         // when the player presses Optimize route; memoised with the rest of this pricing, so Refresh
         // (a new context) is what re-measures it
-        routeRates: (skillHrid) => {
+        routeRates: (skillHrid, { onProgress } = {}) => {
+            // Everyone waiting on this skill's one measurement hears about it, not only whoever
+            // started it: a second press joins the sweep already running and must not sit on a
+            // line that never moves. Each listener is its caller's own.
+            let sweep = routeSweeps.get(skillHrid);
             if (!routeCache.has(skillHrid)) {
+                sweep = { listeners: new Set(), last: undefined };
+                routeSweeps.set(skillHrid, sweep);
+                const tell = (progress) => {
+                    sweep.last = progress;
+                    for (const listener of [...sweep.listeners]) {
+                        try {
+                            listener(progress);
+                        } catch (error) {
+                            console.error('[GoalPlanner] A pricing progress callback failed:', error);
+                        }
+                    }
+                };
                 const pending = (async () => {
                     try {
-                        return await measureRouteRates(skillHrid);
+                        return await measureRouteRates(skillHrid, tell);
                     } catch (error) {
                         // A failed measurement is not remembered: the next press tries again
                         routeCache.delete(skillHrid);
                         throw error;
+                    } finally {
+                        routeSweeps.delete(skillHrid);
                     }
                 })();
                 routeCache.set(skillHrid, pending);
+            }
+            if (typeof onProgress === 'function' && sweep) {
+                sweep.listeners.add(onProgress);
+                if (sweep.last) onProgress(sweep.last);
             }
             return routeCache.get(skillHrid);
         },

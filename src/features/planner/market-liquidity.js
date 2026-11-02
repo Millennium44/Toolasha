@@ -452,9 +452,12 @@ export async function applyInputNote(rate) {
  * and is where it is actually reported.
  *
  * @param {Array<Object>} rates - Gold rates, read for `sells` and `itemHrid`
+ * @param {((progress: {done: number, total: number}|null) => void)|undefined} [onProgress] - Told
+ *   `{done, total}` as each uncached lookup settles, and `null` once the sweep ends. Never called for a
+ *   sweep with nothing uncached. A throw from it is logged and ignored.
  * @returns {Promise<void>}
  */
-async function prefetchVolumes(rates) {
+async function prefetchVolumes(rates, onProgress) {
     const wanted = new Map();
     for (const rate of rates) {
         try {
@@ -471,15 +474,40 @@ async function prefetchVolumes(rates) {
         }
     }
 
-    await runPool([...wanted.values()], VOLUME_CONCURRENCY, async ({ itemHrid, enhancementLevel }) => {
+    // Only what is not already measured is work. A measurement that is cached answers at once, so
+    // counting it would show a count for a sweep that has nothing to wait for.
+    const todo = [...wanted.values()].filter(
+        ({ itemHrid, enhancementLevel }) => !cachedDailyVolume(itemHrid, enhancementLevel)
+    );
+    const total = todo.length;
+    let done = 0;
+    const report = (progress) => {
+        if (typeof onProgress !== 'function') return;
         try {
-            await dailyVolume(itemHrid, enhancementLevel);
+            onProgress(progress);
         } catch (error) {
-            // dailyVolume already settles its own failures as "unknown"; this is
-            // a second net, the same one sellThrottle keeps below.
-            console.error(`[MarketLiquidity] Prefetching volume for ${itemHrid} failed:`, error);
+            console.error('[MarketLiquidity] A progress callback failed:', error);
         }
-    });
+    };
+
+    try {
+        await runPool(todo, VOLUME_CONCURRENCY, async ({ itemHrid, enhancementLevel }) => {
+            try {
+                await dailyVolume(itemHrid, enhancementLevel);
+            } catch (error) {
+                // dailyVolume already settles its own failures as "unknown"; this is
+                // a second net, the same one sellThrottle keeps below.
+                console.error(`[MarketLiquidity] Prefetching volume for ${itemHrid} failed:`, error);
+            }
+            // Counted when the lookup settles, whatever it settled with: a refused or cooling-down
+            // pool settles the rest at once, so the count runs to its end instead of freezing
+            done += 1;
+            report({ done, total });
+        });
+    } finally {
+        // The sweep is over, so whoever showed a count stops showing it
+        if (total > 0) report(null);
+    }
 }
 
 /**
@@ -531,14 +559,17 @@ function markUnmeasuredUnsafe(rate) {
  * Bound every rate in a ranking, and say whether the bounding could happen at all.
  *
  * @param {Array<Object>} rates - Gold rates
+ * @param {Object} [options] - Options
+ * @param {Function} [options.onProgress] - See {@link prefetchVolumes}. Per call, never shared, so
+ *   overlapping sweeps each report to their own caller.
  * @returns {Promise<{rates: Array<Object>, measured: boolean}>} The rates, best
  *   first, and whether any volume figure was available — a run where none was is
  *   a run where nothing was checked, which the panel has to be able to say
  */
-export async function applyLiquidityLimits(rates) {
+export async function applyLiquidityLimits(rates, { onProgress } = {}) {
     const list = Array.isArray(rates) ? rates : [];
 
-    await prefetchVolumes(list);
+    await prefetchVolumes(list, onProgress);
 
     const bounded = [];
     for (const rate of list) {
