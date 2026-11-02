@@ -33,6 +33,11 @@ import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 import { cheapestWithMirror } from '../../utils/mirror-route.js';
 import { getIconHref } from '../../utils/game-lookups.js';
+import {
+    ensureEnhancementMobileStyles,
+    releaseEnhancementMobileStyles,
+    placeCalculator,
+} from './enhancement-mobile-layout.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -113,6 +118,7 @@ export async function displayEnhancementStats(panel, itemHrid) {
             if (existing) {
                 existing.remove();
             }
+            releaseEnhancementMobileStyles();
             return;
         }
 
@@ -1756,20 +1762,12 @@ function injectDisplay(panel, html) {
     const container = document.createElement('div');
     container.id = 'mwi-enhancement-stats';
     container.innerHTML = html;
+    // Phone-width layout rules and the breakpoint listener (idempotent; inert on wider screens)
+    ensureEnhancementMobileStyles();
 
-    // For enhancing panels: append to the end of the panel
-    // For regular action panels: insert after drop table or exp gain
-    const dropTable = panel.querySelector('div.SkillActionDetail_dropTable__3ViVp');
-    const expGain = panel.querySelector('div.SkillActionDetail_expGain__F5xHu');
-
-    if (dropTable || expGain) {
-        // Regular action panel - insert after drop table or exp gain
-        const insertAfter = dropTable || expGain;
-        insertAfter.parentNode.insertBefore(container, insertAfter.nextSibling);
-    } else {
-        // Enhancing panel - append to end
-        panel.appendChild(container);
-    }
+    // Wide: after the drop table or exp gain, else the end of the panel. Phone: the end of the panel,
+    // so the calculator can span both columns
+    placeCalculator(panel, container);
 
     // Restore scroll position after DOM insertion
     if (savedScrollTop > 0) {

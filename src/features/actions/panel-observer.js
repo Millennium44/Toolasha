@@ -13,6 +13,7 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { displayEnhancementStats, getProtectionItemFromUI } from './enhancement-display.js';
+import { releaseEnhancementMobileStyles } from './enhancement-mobile-layout.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
 import { getOriginalText } from '../../utils/dom.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -797,6 +798,9 @@ export function disablePanelObserver() {
         dataManager.off('consumables_updated', consumablesUpdatedHandler);
         consumablesUpdatedHandler = null;
     }
+
+    // The calculator's phone-layout stylesheet goes with the calculator
+    releaseEnhancementMobileStyles();
 
     // Cleanup action filter
     actionFilter.cleanup();

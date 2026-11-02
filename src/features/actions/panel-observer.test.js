@@ -172,6 +172,16 @@ describe('late-rendered enhancement protection slot', () => {
         expect(createMutationWatcher.mock.calls.filter(([target]) => target === protectionContainer)).toHaveLength(1);
     });
 
+    test('disabling the observer removes the calculator phone-layout stylesheet', () => {
+        const style = document.createElement('style');
+        style.id = 'mwi-enhancement-mobile-layout';
+        document.head.appendChild(style);
+
+        disablePanelObserver();
+
+        expect(document.getElementById('mwi-enhancement-mobile-layout')).toBeNull();
+    });
+
     test('re-enabling on a reused panel reattaches the panel and protection watchers', async () => {
         const panel = buildEnhancingPanel();
         const protectionContainer = document.createElement('div');

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement calculator uses the full panel on a phone
+
+- On a narrow screen the calculator sits under both columns instead of in the 158 px right one, so the cost and protect-from tables show far more columns.
+
 ### Market History filters reachable on a phone
 
 - The search box and the type and status filters now wrap, so All Statuses no longer runs off the side of the window on a narrow screen.
