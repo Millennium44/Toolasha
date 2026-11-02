@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial results are recorded without opening the Trials tab
+
+- Each trial's banked tier is now recorded from the guild data the server sends (including at login), so results land and Past weeks can show them (points derived from the tier, marked ~) even if the Trials tab was never open.
+- A trial damage board closed by hand now stays closed for the rest of that trial, across reloads; for new players it no longer opens by itself (existing players keep their setting).
+
 ### Live party and stat sheet
 
 - Toolasha now follows party changes as they happen (not only at login or the next fight) and the server's own stat sheet after gear, level or buff changes, so Combat Sim exports, the party roster and the Labyrinth planner's combat level stay current without a reload.

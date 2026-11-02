@@ -327,7 +327,7 @@ const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
-const { saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
+const { emptyRecord, saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
 const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -371,6 +371,7 @@ function resetTrialsSingleton() {
     guildTrials.lastSessionChecked = false;
     guildTrials.blockHtml.clear();
     guildTrials._autoOpenedTrialKey = null;
+    guildTrials._autoOpenLoaded = false;
     guildTrials._scoreboardTabButton = null;
 }
 
@@ -1895,6 +1896,345 @@ describe('the panel, end to end', () => {
         expect(guildTrials.currentTrials?.source).toBe('init');
         expect(guildTrials.currentTrials.skilling.trials['/guild_skilling/alchemy'].highestTier).toBe(18);
         game.characterId = null;
+    });
+
+    describe('the guild payload is recorded with the Trials tab shut', () => {
+        const KEY = 'guildTrials_Milky Way';
+        /**
+         * The test server's `currentTrialsData` (four skilling parties, as sent), moved onto this test's clock:
+         * every party banked a few seconds before `at`, the hour began twenty minutes before it.
+         * @param {number} at - When the message arrives, client ms
+         * @param {Object} [edit] - `(payload) => void`, to change it
+         * @returns {Object} A `guild_updated` payload
+         */
+        const message = (at, edit = null) => {
+            const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+            for (const party of Object.values(payload.skilling.parties)) {
+                party.tierStartedAtMs = at - 2_000;
+                party.highestTierReachedAtMs = at - 2_000;
+                party.budgetRemainingMs = 40 * 60_000;
+            }
+            edit?.(payload);
+            return { guild: { name: 'Milky Way', currentTrialsData: JSON.stringify(payload) } };
+        };
+        const hear = (data) => game.wsHandlers.guild_updated(data);
+
+        beforeEach(async () => {
+            // Awaited: its `initialized = false` lands after the trace flush
+            await trialsFeature.cleanup();
+            game.guildName = 'Milky Way';
+            game.characterId = null;
+            game.testServer = false;
+            document.body.innerHTML = '';
+            resetTrialsSingleton();
+            await trialsFeature.initialize();
+        });
+
+        afterEach(() => {
+            game.testServer = false;
+        });
+
+        test('every party’s banked tier is filed and saved, with no trial tab on screen', async () => {
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+
+            const tiles = guildTrials.record.tiles;
+            expect(Object.keys(tiles).sort()).toEqual([
+                'skilling::alchemy',
+                'skilling::brewing',
+                'skilling::cooking',
+                'skilling::milking',
+            ]);
+            expect(tiles['skilling::alchemy']).toMatchObject({ name: 'Alchemy', kind: 'skilling', serverTier: 6 });
+            expect(tiles['skilling::milking'].serverTier).toBe(7);
+            // Nothing a card states is invented
+            expect(tiles['skilling::alchemy'].tier).toBeUndefined();
+            expect(tiles['skilling::alchemy'].points).toBeUndefined();
+            expect(game.store[KEY].tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+        });
+
+        test('a card read afterwards joins the same tile; a lower server tier never replaces its own', async () => {
+            hear(message(now));
+            vi.setSystemTime(now + 5_000);
+            buildTrialsTabFor('Alchemy', 170, 1260);
+            fire();
+            const tile = guildTrials.record.tiles['skilling::alchemy'];
+            expect(Object.keys(guildTrials.record.tiles).filter((key) => key.includes('alchemy'))).toEqual([
+                'skilling::alchemy',
+            ]);
+            expect(tile).toMatchObject({ tier: 8, points: 1260, serverTier: 6 });
+        });
+
+        test('a payload older than a trial’s hour files nothing', async () => {
+            const { INIT_CHARACTER_DATA } = await import('./guild-trial-tier-clears.fixture.js');
+            game.characterId = 30404;
+            guildTrials.characterId = 30404;
+            // Read back three hours after it was sent
+            vi.setSystemTime(Date.parse(INIT_CHARACTER_DATA.currentTimestamp) + 3 * 60 * 60_000);
+            guildTrials.record = emptyRecord(trialWeekStart(Date.now()), { guildName: 'Milky Way' });
+            guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
+            expect(guildTrials.record.tiles).toEqual({});
+            game.characterId = null;
+        });
+
+        test('a login snapshot taken after the cycle ended files nothing', () => {
+            hear(message(now, (payload) => (payload.skilling.status = 'completed')));
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('a record that belongs to another guild is not written into', () => {
+            guildTrials.record = { ...emptyRecord(trialWeekStart(now), { guildName: 'Other Guild' }) };
+            hear(message(now));
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('mid character switch nothing is filed until the arriving character’s record is in hand', async () => {
+            guildTrials._forgetCharacter(999);
+            hear(message(now));
+            expect(guildTrials.record).toBeNull();
+            await vi.advanceTimersByTimeAsync(10);
+            // The arriving character's own record, read back; the ids have not agreed yet
+            expect(guildTrials.awaitingCharacter).toBe(true);
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('a late message for the departing character’s guild is never filed for the arriving one', async () => {
+            guildTrials._forgetCharacter(999);
+            // The guild just left sends one more update before the arriving character's data lands
+            hear(message(now));
+            expect(guildTrials.currentTrials).toBeNull();
+
+            // The arriving character's guild has no trial running
+            game.characterId = 999;
+            for (const handler of game.dmHandlers.character_initialized || []) {
+                handler({
+                    character: { id: 999 },
+                    currentTimestamp: new Date(now).toISOString(),
+                    guild: { name: 'Andromeda' },
+                });
+            }
+            await vi.advanceTimersByTimeAsync(10);
+            expect(guildTrials.currentTrials).toBeNull();
+            expect(guildTrials.record.tiles).toEqual({});
+            game.characterId = null;
+        });
+
+        test('a login payload with no trial data drops what was held', () => {
+            hear(message(now));
+            expect(guildTrials.currentTrials).not.toBeNull();
+            guildTrials._noteInitialTrials({
+                currentTimestamp: new Date(now).toISOString(),
+                guild: { name: 'Milky Way' },
+            });
+            expect(guildTrials.currentTrials).toBeNull();
+        });
+
+        test('a guild change without a reload does not file the left guild’s snapshot into the joined guild’s record', async () => {
+            // Milky Way's trial snapshot is fresh in hand: Alchemy banked T9
+            hear(
+                message(now, (payload) => {
+                    payload.skilling.parties['/guild_skilling/alchemy'].highestTier = 9;
+                })
+            );
+            await vi.advanceTimersByTimeAsync(10);
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 9 });
+
+            // The character joins Andromeda; its first message carries no readable trial data
+            game.guildName = 'Andromeda';
+            vi.setSystemTime(now + 60_000);
+            hear({ guild: { name: 'Andromeda' } });
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.guildName).toBe('Andromeda');
+            expect(guildTrials.currentTrials).toBeNull();
+            expect(guildTrials.record.tiles).toEqual({});
+            expect(game.store['guildTrials_Andromeda']?.tiles ?? {}).toEqual({});
+            game.guildName = 'Milky Way';
+        });
+
+        test('a guild change whose message carries the joined guild’s trials keeps and files them', async () => {
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+            game.guildName = 'Andromeda';
+            vi.setSystemTime(now + 60_000);
+            const joined = message(now + 60_000, (payload) => {
+                payload.skilling.parties = {
+                    '/guild_skilling/cooking': payload.skilling.parties['/guild_skilling/cooking'],
+                };
+            });
+            joined.guild.name = 'Andromeda';
+            hear(joined);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.currentTrials?.guildName).toBe('Andromeda');
+            expect(Object.keys(guildTrials.record.tiles)).toEqual(['skilling::cooking']);
+            game.guildName = 'Milky Way';
+        });
+
+        test('a held snapshot is never filed into a record of another guild', () => {
+            hear(message(now));
+            guildTrials.record = emptyRecord(trialWeekStart(now), { guildName: 'Andromeda' });
+            guildTrials.guildName = 'Andromeda';
+            expect(guildTrials._fileServerTrials(now)).toBe(false);
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
+        test('a message naming another guild than the character’s own is not noted', () => {
+            game.characterData = { guild: { id: 'g-own', name: 'Milky Way' } };
+            const stray = message(now);
+            stray.guild.id = 'g-other';
+            hear(stray);
+            expect(guildTrials.currentTrials).toBeNull();
+            game.characterData = null;
+        });
+
+        test('after a character switch the arriving character’s login payload is filed without another message', async () => {
+            const loginPayload = {
+                character: { id: 999, name: 'Arriving' },
+                currentTimestamp: new Date(now).toISOString(),
+                guild: message(now).guild,
+            };
+            guildTrials._forgetCharacter(999);
+            // The arriving character's data lands: the ids agree, and its login payload is noted
+            game.characterId = 999;
+            for (const handler of game.dmHandlers.character_initialized || []) handler(loginPayload);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.awaitingCharacter).toBe(false);
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+            game.characterId = null;
+        });
+
+        test('the message that names the guild is filed once the record has moved onto the guild key', async () => {
+            // Started before anything had said which guild: the record is on the fallback key
+            await trialsFeature.cleanup();
+            game.guildName = null;
+            resetTrialsSingleton();
+            await trialsFeature.initialize();
+            expect(guildTrials.guildName).toBeNull();
+
+            // The first guild message names it, and starts the adoption before it is noted
+            hear(message(now));
+            expect(guildTrials.adopting).toBe(true);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.guildName).toBe('Milky Way');
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+            expect(game.store[KEY].tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+        });
+
+        describe('a live week rolling over', () => {
+            const WEEK = 7 * 24 * 60 * 60_000;
+            /** Last week as this tab left it: a Badger card read, Alchemy filed off the payload alone */
+            const lastWeeksRecord = (weekStart) => ({
+                ...emptyRecord(weekStart, { guildName: 'Milky Way' }),
+                tiles: {
+                    'combat::trial badger': {
+                        name: 'Trial Badger',
+                        kind: 'combat',
+                        level: 150,
+                        tier: 6,
+                        points: 2240,
+                        pointsByTier: { 6: 2240 },
+                        samples: [{ t: weekStart + 60_000, readings: [{ current: 5, max: 10 }] }],
+                        tiers: [],
+                    },
+                    'skilling::alchemy': {
+                        name: 'Alchemy',
+                        kind: 'skilling',
+                        samples: [],
+                        tiers: [],
+                        pointsByTier: {},
+                        tierSeenAt: {},
+                        serverTier: 9,
+                        serverTierAt: weekStart + 120_000,
+                        serverDone: true,
+                    },
+                },
+            });
+
+            test('with the tab shut, the finished week is archived and shows in Past weeks', async () => {
+                guildTrials.record = lastWeeksRecord(trialWeekStart(now) - WEEK);
+                hear(message(now));
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.weekStart).toBe(trialWeekStart(now));
+                const [archived] = guildTrials.record.history;
+                expect(archived).toMatchObject({
+                    reason: 'the week rolled over',
+                    weekStart: trialWeekStart(now) - WEEK,
+                });
+                // This week's trials start on their own tiles
+                expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 6 });
+                expect(guildTrials.record.tiles['combat::trial badger']).toBeUndefined();
+
+                const [summary] = guildTrials._pastWeekSummaries(now);
+                expect(summary).toMatchObject({ when: 'last week', combatTier: 6, skillingTier: 9 });
+                expect(game.store[KEY].history).toHaveLength(1);
+            });
+
+            test('with the tab open, the render rolls the week the same way, once', async () => {
+                guildTrials.record = lastWeeksRecord(trialWeekStart(now) - WEEK);
+                buildTrialsTabFor('Alchemy', 120, 300);
+                fire();
+                vi.setSystemTime(now + 5_000);
+                fire();
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.history).toHaveLength(1);
+                expect(guildTrials.record.history[0].reason).toBe('the week rolled over');
+                expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ tier: 3 });
+                expect(game.store[KEY].history).toHaveLength(1);
+            });
+
+            test('a payload of an hour that began before the rollover is filed into the archived week', async () => {
+                const weekStart = trialWeekStart(now);
+                // Five minutes into the new week, from an hour that began fifteen minutes before it
+                vi.setSystemTime(weekStart + 5 * 60_000);
+                guildTrials.record = lastWeeksRecord(weekStart - WEEK);
+                hear(
+                    message(weekStart + 5 * 60_000, (payload) => {
+                        payload.skilling.parties['/guild_skilling/alchemy'].highestTier = 11;
+                    })
+                );
+                await vi.advanceTimersByTimeAsync(10);
+
+                expect(guildTrials.record.weekStart).toBe(weekStart);
+                expect(guildTrials.record.tiles).toEqual({});
+                expect(guildTrials.record.history[0].tiles['skilling::alchemy']).toMatchObject({ serverTier: 11 });
+            });
+        });
+
+        test('on the test server, an earlier cycle is put away and keeps its server tier, tab shut', async () => {
+            game.testServer = true;
+            const earlier = now - 3 * 60 * 60_000;
+            guildTrials.record = {
+                ...emptyRecord(trialWeekStart(now), { guildName: 'Milky Way' }),
+                tiles: {
+                    'skilling::milking': {
+                        name: 'Milking',
+                        kind: 'skilling',
+                        samples: [],
+                        tiers: [],
+                        pointsByTier: {},
+                        tierSeenAt: { 9: earlier },
+                        serverTier: 9,
+                        serverTierAt: earlier,
+                        serverDone: true,
+                    },
+                },
+            };
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+
+            const [archived] = guildTrials.record.history;
+            expect(archived.reason).toBe('an earlier cycle of this week');
+            expect(archived.tiles['skilling::milking']).toMatchObject({ serverTier: 9 });
+            // The new cycle's statement is on the live tile, not in the archive
+            expect(guildTrials.record.tiles['skilling::milking']).toMatchObject({ serverTier: 7 });
+            const [summary] = guildTrials._pastWeekSummaries(now);
+            expect(summary.skillingTier).toBe(9);
+        });
     });
 
     test('draws a block on each card and a payout block above them', () => {
@@ -4521,6 +4861,11 @@ describe('the panel, end to end', () => {
             };
         }
 
+        // Turned on: what is under test is what it does when it is
+        beforeEach(() => {
+            game.settings.guildTrialAutoOpenScoreboard = true;
+        });
+
         test('opens once, and not again while the same fight keeps ticking', () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
@@ -4547,20 +4892,149 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpen).toBe(false);
         });
 
-        test('a new fight (a different battle) opens it again', () => {
+        test('a "new fight" restamp inside the same trial does not reopen a board closed by hand', () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(1);
+            game.scoreboardOpen = false;
 
+            // The damage module decided a new fight began: `fightSeenAt` restamped. The guild
+            // battle id is always 1 on the wire, so it says nothing either way
             vi.setSystemTime(now + 60_000);
             game.breakdown = watchedFight({
-                guildBattleId: 43,
+                guildBattleId: 1,
                 fightStartMs: now + 60_000,
                 fightSeenAt: now + 60_000,
                 pool: { ...watchedFight().pool, at: now + 60_000, tier: 3 },
             });
             fire(buildTab([{ name: 'Trial Chameleon', level: 120, points: 800, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
+        });
+
+        test('a different trial opens it once', () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+
+            vi.setSystemTime(now + 60_000);
+            const pool = { ...watchedFight().pool, at: now + 60_000, encounter: 'badger' };
+            game.breakdown = watchedFight({ fightSeenAt: now + 60_000, pool });
+            fire(buildTab([{ name: 'Trial Badger', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(2);
+
+            vi.setSystemTime(now + 65_000);
+            game.breakdown = watchedFight({ fightSeenAt: now + 60_000, pool: { ...pool, at: now + 65_000 } });
+            fire(buildTab([{ name: 'Trial Badger', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(2);
+        });
+
+        test('a board closed by hand stays closed after a reload mid-trial', async () => {
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            game.scoreboardOpen = false;
+            await vi.advanceTimersByTimeAsync(10);
+
+            // A reload: the feature starts over with nothing in memory, the fight still on screen
+            await trialsFeature.cleanup();
+            resetTrialsSingleton();
+            vi.setSystemTime(now + 30_000);
+            game.breakdown = watchedFight({
+                fightSeenAt: now + 30_000,
+                pool: { ...watchedFight().pool, at: now + 30_000 },
+            });
+            buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]);
+
+            await trialsFeature.initialize();
+            fire();
+            expect(game.scoreboardOpens).toBe(1);
+            expect(game.scoreboardOpen).toBe(false);
+        });
+
+        test('on the test server the same cycle is one key whether or not the skilling hour was seen', async () => {
+            game.testServer = true;
+            try {
+                // The combat hour, as `guild_updated` states it: begun ten minutes ago
+                const combatHour = () => ({
+                    ...parseCurrentTrialsData(
+                        JSON.stringify({
+                            skilling: { status: '', parties: null },
+                            combat: {
+                                status: 'in_progress',
+                                parties: {
+                                    '/guild_combat/chameleon': {
+                                        highestTier: 1,
+                                        budgetRemainingMs: 50 * 60_000,
+                                        tierStartedAtMs: now,
+                                        highestTierReachedAtMs: now,
+                                        done: false,
+                                    },
+                                },
+                            },
+                        })
+                    ),
+                    at: now,
+                    source: 'socket',
+                });
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = 0;
+                // This session watched the skilling hour start an hour before
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                game.breakdown = watchedFight();
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+                game.scoreboardOpen = false;
+                await vi.advanceTimersByTimeAsync(10);
+
+                // A reload mid combat hour: no skilling start seen this time
+                await trialsFeature.cleanup();
+                resetTrialsSingleton();
+                guildTrials.cycleStartMs = null;
+                vi.setSystemTime(now + 30_000);
+                await trialsFeature.initialize();
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = 0;
+                game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 30_000 } });
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+
+                // …and a reload where the clock offset is known only on one side keys the same cycle too
+                await trialsFeature.cleanup();
+                resetTrialsSingleton();
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                vi.setSystemTime(now + 60_000);
+                await trialsFeature.initialize();
+                guildTrials.currentTrials = combatHour();
+                guildTrials.serverClockOffsetMs = null;
+                game.breakdown = watchedFight({ pool: { ...watchedFight().pool, at: now + 60_000 } });
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(1);
+            } finally {
+                game.testServer = false;
+                guildTrials.cycleStartMs = null;
+            }
+        });
+
+        test('on the test server nothing auto-opens until the guild payload states the combat hour', () => {
+            game.testServer = true;
+            try {
+                guildTrials.currentTrials = null;
+                guildTrials.cycleStartMs = now - 70 * 60_000;
+                game.breakdown = watchedFight();
+                fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+                expect(game.scoreboardOpens).toBe(0);
+            } finally {
+                game.testServer = false;
+                guildTrials.cycleStartMs = null;
+            }
+        });
+
+        test('nothing opens before the saved trial has been read', () => {
+            guildTrials._autoOpenLoaded = false;
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
         });
 
         test('a fight first watched mid-tier does not reopen when its next tier states the start', () => {
@@ -4580,6 +5054,13 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpen).toBe(false);
         });
 
+        test('never opens it when the setting was never saved: off is the default', () => {
+            delete game.settings.guildTrialAutoOpenScoreboard;
+            game.breakdown = watchedFight();
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(0);
+        });
+
         test('never opens it when the setting is off', () => {
             game.settings.guildTrialAutoOpenScoreboard = false;
             game.breakdown = watchedFight();
@@ -4593,16 +5074,30 @@ describe('the panel, end to end', () => {
             expect(game.scoreboardOpens).toBe(0);
         });
 
-        test('a character switch frees the same battle id to auto-open again', () => {
+        test('a character switch hands the arriving character their own memory of the trial', async () => {
             game.breakdown = watchedFight();
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(1);
+            await vi.advanceTimersByTimeAsync(10);
 
-            guildTrials._forgetCharacter(999);
+            // Character 999 closed this same trial's board on an earlier visit
+            game.store['toolasha_local_guildTrialBoardAutoOpened_999'] = guildTrials._autoOpenedTrialKey;
             game.characterId = 999;
+            guildTrials._forgetCharacter(999);
+            // Not until their own key has been read
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
+            await vi.advanceTimersByTimeAsync(10);
+            fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
+            expect(game.scoreboardOpens).toBe(1);
 
+            // A character who never saw it gets it once
+            game.characterId = 998;
+            guildTrials._forgetCharacter(998);
+            await vi.advanceTimersByTimeAsync(10);
             fire(buildTab([{ name: 'Trial Chameleon', level: 110, points: 400, bar: '' }]));
             expect(game.scoreboardOpens).toBe(2);
+            expect(game.store['toolasha_local_guildTrialBoardAutoOpened_998']).toBe(guildTrials._autoOpenedTrialKey);
         });
     });
 
@@ -7727,7 +8222,8 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(once.tiles[key]).toMatchObject({ serverTier: 7, serverTierAt: stamp });
         expect(once.tiles[key].serverTierAt).toBe(once.tiles[key].tierSeenAt[7]);
 
-        // Alchemy banks again; Milking's statement is unchanged and nothing is rewritten
+        // Alchemy banks again; Milking's statement is unchanged and its tile is not rewritten
+        // (Alchemy's own tile, started off the payload, is)
         const alchemy = base.skilling.parties['/guild_skilling/alchemy'];
         const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
         payload.skilling.parties['/guild_skilling/alchemy'] = {
@@ -7737,7 +8233,11 @@ describe('a mates’ trial timed from the guild payload', () => {
             highestTierReachedAtMs: newestStamp + 60_000,
         };
         hear({ guild: { currentTrialsData: JSON.stringify(payload) } }, newestStamp + 60_000);
-        expect(guildTrials._recordServerTiers(once, now + 60_000)).toBe(once);
+        const twice = guildTrials._recordServerTiers(once, now + 60_000);
+        expect(twice.tiles[key]).toBe(once.tiles[key]);
+        expect(twice.tiles['skilling::alchemy']).toMatchObject({ serverTier: 7 });
+        // …and a third pass with nothing new writes nothing at all
+        expect(guildTrials._recordServerTiers(twice, now + 61_000)).toBe(twice);
     });
 
     test('without the payload the same card is still measuring', () => {
@@ -7824,7 +8324,7 @@ describe('a mates’ trial timed from the guild payload', () => {
         expect(trial.projected).toBeGreaterThan(9);
     });
 
-    test('a combat party the card cannot be matched to writes nothing', () => {
+    test('a combat party the card cannot be matched to writes nothing on it, and gets a tile of its own', () => {
         // Keyed `/guild_combat/<boss>` on the wire, as the skilling parties are
         // keyed by skill: another boss's party is not this card's
         vi.setSystemTime(newestStamp + SKEW);
@@ -7841,8 +8341,16 @@ describe('a mates’ trial timed from the guild payload', () => {
                 }),
             },
         });
-        const record = { weekStart: 0, tiles: { 'combat::trial badger': { name: 'Trial Badger', kind: 'combat' } } };
-        expect(guildTrials._recordServerTiers(record, newestStamp + SKEW)).toBe(record);
+        const badger = { name: 'Trial Badger', kind: 'combat' };
+        const record = { weekStart: 0, tiles: { 'combat::trial badger': badger } };
+        const next = guildTrials._recordServerTiers(record, newestStamp + SKEW);
+        expect(next.tiles['combat::trial badger']).toBe(badger);
+        expect(next.tiles['combat::trial chameleon']).toMatchObject({
+            name: 'Trial Chameleon',
+            kind: 'combat',
+            serverTier: 4,
+            samples: [],
+        });
     });
 
     test('a combat party is written onto its card through the boss key', () => {

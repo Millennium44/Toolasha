@@ -1408,6 +1408,22 @@ describe('flipped checkbox defaults reach new players only', () => {
 
         expect(settings.combatProfileButton.isTrue).toBe(true);
     });
+
+    test('a default flipped the other way keeps existing players on, and a new player off', async () => {
+        // guildTrialAutoOpenScoreboard went true -> false for new players only
+        const fresh = await settingsStorage.loadSettings();
+        expect(fresh.guildTrialAutoOpenScoreboard.isTrue).toBe(false);
+
+        stored.clear();
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        const existing = await settingsStorage.loadSettings();
+        expect(existing.guildTrialAutoOpenScoreboard.isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).guildTrialAutoOpenScoreboard.isTrue).toBe(true);
+
+        stored.clear();
+        stored.set(`json:${KEY}`, { guildTrialAutoOpenScoreboard: box('guildTrialAutoOpenScoreboard', false) });
+        expect((await settingsStorage.loadSettings()).guildTrialAutoOpenScoreboard.isTrue).toBe(false);
+    });
 });
 
 describe('SettingsStorage copy-from-character', () => {

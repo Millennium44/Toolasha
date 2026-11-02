@@ -1,9 +1,10 @@
 /**
  * Trial samples and building bonuses.
  *
- * Two claims here are load-bearing. A record from a previous week must be thrown
- * away rather than merged, because last week's tiers would be fitted into this
- * week's growth curve and every projection would inherit them. And an
+ * Two claims here are load-bearing. A record from a previous week must never be
+ * merged into this week's tiles (it is archived into the history instead),
+ * because last week's tiers would be fitted into this week's growth curve and
+ * every projection would inherit them. And an
  * unresolvable building bonus must come back as null, not zero: the panel prints
  * a caption off that distinction, and a zero would quietly present base figures
  * as final ones.
@@ -114,6 +115,7 @@ const {
     trialStatsStorageKey,
     tileKey,
     archiveEarlierCycles,
+    rollRecordToWeek,
 } = await import('./guild-trials-store.js');
 
 const { NOTICE_BOARD_KEY, NOTICE_BOARD_NAME, NOTICE_BOARD_PERSONAL, NOTICE_BOARD_SAMPLES } =
@@ -371,6 +373,169 @@ describe('loading and saving', () => {
         const record = await loadTrialRecord('Milky Way', now);
 
         expect(record).toMatchObject({ weekStart: thisWeek, tiles: {} });
+    });
+
+    describe('last week is archived when the week rolls over', () => {
+        const lastWeek = thisWeek - 7 * 24 * 3600_000;
+        // A live week as it is left on disk: one card read on the Trials tab, one
+        // trial filed off the guild payload alone
+        const lastWeeksRecord = (extra = {}) => ({
+            weekStart: lastWeek,
+            guildName: 'Milky Way',
+            tiles: {
+                'combat::trial badger': {
+                    name: 'Trial Badger',
+                    kind: 'combat',
+                    level: 150,
+                    tier: 6,
+                    points: 2240,
+                    pointsByTier: { 6: 2240 },
+                    samples: [{ t: lastWeek + 1000, readings: [{ current: 5, max: 10 }] }],
+                    tiers: [],
+                },
+                'skilling::alchemy': {
+                    name: 'Alchemy',
+                    kind: 'skilling',
+                    samples: [],
+                    tiers: [],
+                    pointsByTier: {},
+                    tierSeenAt: {},
+                    serverTier: 9,
+                    serverTierAt: lastWeek + 2000,
+                    serverDone: true,
+                },
+            },
+            history: [],
+            ...extra,
+        });
+
+        test('a load of last week’s record starts this week with last week in the history', async () => {
+            game.store['guildTrials_Milky Way'] = lastWeeksRecord();
+            const record = await loadTrialRecord('Milky Way', now);
+
+            expect(record).toMatchObject({ weekStart: thisWeek, tiles: {}, guildName: 'Milky Way' });
+            expect(record.history).toHaveLength(1);
+            expect(record.history[0]).toMatchObject({
+                reason: 'the week rolled over',
+                weekStart: lastWeek,
+                archivedAt: thisWeek,
+            });
+            expect(Object.keys(record.history[0].tiles).sort()).toEqual(['combat::trial badger', 'skilling::alchemy']);
+        });
+
+        test('another guild’s record is still discarded, not archived as this guild’s', async () => {
+            game.store['guildTrials_Milky Way'] = lastWeeksRecord({ guildName: 'Andromeda' });
+            const record = await loadTrialRecord('Milky Way', now);
+            expect(record).toMatchObject({ weekStart: thisWeek, tiles: {}, history: [] });
+        });
+
+        test('two copies that rolled the week at different moments are one archive', () => {
+            const tab = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            const device = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            expect(mergeTrialRecords(tab, device).history).toHaveLength(1);
+            // …and a copy still holding last week merges into the same one
+            expect(mergeTrialRecords(lastWeeksRecord(), tab).history).toHaveLength(1);
+            expect(mergeTrialRecords(tab, lastWeeksRecord()).history).toHaveLength(1);
+        });
+
+        test('the fuller copy of the week wins its archive', () => {
+            const partial = lastWeeksRecord();
+            delete partial.tiles['skilling::alchemy'];
+            const merged = mergeTrialRecords(
+                rollRecordToWeek(partial, thisWeek),
+                rollRecordToWeek(lastWeeksRecord(), thisWeek)
+            );
+            expect(Object.keys(merged.history[0].tiles)).toHaveLength(2);
+        });
+
+        test('this week’s tiles of the same trials are not dropped as stale copies of last week’s', () => {
+            const rolled = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            const thisWeeks = {
+                weekStart: thisWeek,
+                tiles: {
+                    // A Trials-tab read with no bar, and a payload-only tile
+                    'combat::trial badger': { name: 'Trial Badger', kind: 'combat', tier: 2, samples: [], tiers: [] },
+                    'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', samples: [], tiers: [], serverTier: 1 },
+                },
+            };
+            const merged = mergeTrialRecords(rolled, thisWeeks);
+            expect(Object.keys(merged.tiles).sort()).toEqual(['combat::trial badger', 'skilling::alchemy']);
+        });
+
+        test('a server tier filed into the archived week after the rollover survives a merge with the stored copy', () => {
+            // The last hour ran past Friday 00:00: the payload moved Alchemy from 9 to 11 in the archive
+            const stored = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            const updated = structuredClone(stored);
+            Object.assign(updated.history[0].tiles['skilling::alchemy'], {
+                serverTier: 11,
+                serverTierAt: thisWeek + 5 * 60_000,
+                tierSeenAt: { 11: thisWeek + 5 * 60_000 },
+            });
+
+            for (const merged of [mergeTrialRecords(stored, updated), mergeTrialRecords(updated, stored)]) {
+                expect(merged.history).toHaveLength(1);
+                const tiles = merged.history[0].tiles;
+                expect(tiles['skilling::alchemy']).toMatchObject({
+                    serverTier: 11,
+                    serverTierAt: thisWeek + 5 * 60_000,
+                });
+                expect(tiles['skilling::alchemy'].tierSeenAt[11]).toBe(thisWeek + 5 * 60_000);
+                // The card read in it is untouched
+                expect(tiles['combat::trial badger']).toMatchObject({ tier: 6, points: 2240 });
+            }
+        });
+
+        test('the copy that states more keeps a payload-only trial the other copy filed into the archive', () => {
+            // The stored copy holds a fuller card (more samples); the other heard one more party
+            const stored = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            stored.history[0].tiles['combat::trial badger'].samples.push({
+                t: thisWeek - 60_000,
+                readings: [{ current: 6, max: 10 }],
+            });
+            const updated = rollRecordToWeek(lastWeeksRecord(), thisWeek);
+            delete updated.history[0].tiles['combat::trial badger'];
+            updated.history[0].tiles['skilling::brewing'] = {
+                name: 'Brewing',
+                kind: 'skilling',
+                samples: [],
+                tiers: [],
+                serverTier: 0,
+                serverTierAt: thisWeek + 5 * 60_000,
+            };
+            const tiles = mergeTrialRecords(stored, updated).history[0].tiles;
+            expect(tiles['combat::trial badger'].samples).toHaveLength(2);
+            expect(tiles['skilling::brewing']).toMatchObject({ serverTier: 0 });
+        });
+
+        test('a stale device’s record from weeks ago never pushes the newer weeks out of the capped history', () => {
+            const WEEK = 7 * 24 * 3600_000;
+            const archive = (weeksAgo) => ({
+                archivedAt: thisWeek - (weeksAgo - 1) * WEEK,
+                reason: 'the week rolled over',
+                weekStart: thisWeek - weeksAgo * WEEK,
+                tiles: { 'skilling::alchemy': { name: 'Alchemy', kind: 'skilling', serverTier: weeksAgo } },
+            });
+            // This device: the last four weeks, oldest first, as the archive writes them
+            const current = { ...emptyRecord(thisWeek), history: [4, 3, 2, 1].map(archive) };
+            // A device last used four weeks ago, still holding weeks seven to five
+            const stale = { ...emptyRecord(thisWeek - 4 * WEEK), history: [7, 6, 5].map(archive) };
+
+            const weeksAgo = (merged) => merged.history.map((cycle) => (thisWeek - cycle.weekStart) / WEEK);
+            expect(weeksAgo(mergeTrialRecords(current, stale))).toEqual([4, 3, 2, 1]);
+            expect(weeksAgo(mergeTrialRecords(stale, current))).toEqual([4, 3, 2, 1]);
+        });
+
+        test('the archive keeps the history cap', () => {
+            const held = Array.from({ length: MAX_ARCHIVED_CYCLES }, (unused, index) => ({
+                archivedAt: lastWeek - (index + 1) * 7 * 24 * 3600_000,
+                reason: 'the week rolled over',
+                weekStart: lastWeek - (index + 1) * 7 * 24 * 3600_000,
+                tiles: { x: {} },
+            }));
+            const rolled = rollRecordToWeek(lastWeeksRecord({ history: held }), thisWeek);
+            expect(rolled.history).toHaveLength(MAX_ARCHIVED_CYCLES);
+            expect(rolled.history[rolled.history.length - 1].weekStart).toBe(lastWeek);
+        });
     });
 
     test('no record at all is a fresh one for this week', async () => {
@@ -1413,7 +1578,12 @@ describe('the record cannot be wiped by a failed read or a stale copy', () => {
         const cycle = { archivedAt: now, reason: 'a new cycle is scheduled', weekStart: thisWeek, tiles: {} };
         const merged = mergeTrialRecords(lastWeek, record([2], { history: [cycle], guildId: 'g1' }));
         expect(merged.weekStart).toBe(thisWeek);
-        expect(merged.history).toEqual([cycle]);
+        // This week's archive kept, and last week's tiles archived beside it rather than dropped
+        expect(merged.history).toHaveLength(2);
+        expect(merged.history).toContainEqual(cycle);
+        expect(merged.history).toContainEqual(
+            expect.objectContaining({ reason: 'the week rolled over', weekStart: thisWeek - 7 * 24 * 3600_000 })
+        );
         expect(merged.guildId).toBe('g1');
         expect(merged.guildName).toBe('Milky Way');
     });
@@ -1608,6 +1778,99 @@ describe('recordServerTiers — the guild payload’s tier clears on a tile', ()
         });
         expect(mergeTrialRecords(finished, running).tiles['skilling::milking'].serverDone).toBe(true);
         expect(mergeTrialRecords(running, finished).tiles['skilling::milking'].serverDone).toBe(true);
+    });
+
+    describe('a trial no card was read for', () => {
+        const create = { name: 'Brewing', kind: 'skilling' };
+
+        test('the tile is started with the statement and nothing a card would state', () => {
+            const held = record();
+            const next = recordServerTiers(held, 'skilling::brewing', {
+                bankedTier: 4,
+                clears: { 4: t0 },
+                at: t0,
+                create,
+            });
+            const tile = next.tiles['skilling::brewing'];
+            expect(tile).toMatchObject({ name: 'Brewing', kind: 'skilling', serverTier: 4, serverTierAt: t0 });
+            expect(tile.tierSeenAt).toEqual({ 4: t0 });
+            for (const field of ['tier', 'points', 'completed', 'level']) expect(tile[field]).toBeUndefined();
+            // The other tile is untouched, and the record keeps everything else on it
+            expect(next.tiles['skilling::milking']).toBe(held.tiles['skilling::milking']);
+            expect(next.weekStart).toBe(held.weekStart);
+        });
+
+        test('a record with no tiles yet takes one; with no tier stated none is started', () => {
+            const bare = { weekStart: 0 };
+            expect(recordServerTiers(bare, 'skilling::brewing', { bankedTier: null, at: t0, create })).toBe(bare);
+            expect(
+                recordServerTiers(bare, 'skilling::brewing', { bankedTier: 2, at: t0, create }).tiles
+            ).toHaveProperty('skilling::brewing');
+        });
+
+        test('a card scrape later lands on the same tile, and the card’s own figures stand beside the server’s', () => {
+            const filed = recordServerTiers({ weekStart: 0, tiles: {} }, tileKey(create), {
+                bankedTier: 4,
+                at: t0,
+                create,
+            });
+            const scraped = recordTileSample(
+                filed,
+                { name: 'Brewing', kind: 'skilling', level: 140, tier: 3, points: 700, readings: [] },
+                t0 + 5_000
+            );
+            expect(Object.keys(scraped.tiles)).toEqual(['skilling::brewing']);
+            expect(scraped.tiles['skilling::brewing']).toMatchObject({ tier: 3, points: 700, serverTier: 4 });
+        });
+
+        test('an archive of an earlier copy does not drop a tier the server stated since it was taken', () => {
+            const archivedAt = t0 - 10 * 60_000;
+            const stale = {
+                name: 'Brewing',
+                kind: 'skilling',
+                tier: 5,
+                samples: [{ t: archivedAt - 60_000, readings: [{ current: 1, max: 9 }] }],
+                tiers: [],
+            };
+            const withArchive = {
+                weekStart: thisWeek,
+                tiles: {},
+                history: [
+                    {
+                        archivedAt,
+                        reason: 'a new cycle is scheduled',
+                        weekStart: thisWeek,
+                        tiles: { 'skilling::brewing': stale },
+                    },
+                ],
+            };
+            // The same copy a stale tab still holds, plus a statement it heard since
+            const heard = recordServerTiers(
+                { weekStart: thisWeek, tiles: { 'skilling::brewing': stale } },
+                'skilling::brewing',
+                {
+                    bankedTier: 2,
+                    at: t0,
+                }
+            );
+            const merged = mergeTrialRecords(withArchive, heard);
+            const tile = merged.tiles['skilling::brewing'];
+            expect(tile).toMatchObject({ serverTier: 2, serverTierAt: t0 });
+            // …and none of the archived readings or badge come back with it
+            expect(tile.samples).toEqual([]);
+            expect(tile.tier).toBeUndefined();
+
+            // A copy with no statement since the archive is still dropped, as before
+            const old = recordServerTiers(
+                { weekStart: thisWeek, tiles: { 'skilling::brewing': stale } },
+                'skilling::brewing',
+                {
+                    bankedTier: 5,
+                    at: archivedAt - 30_000,
+                }
+            );
+            expect(mergeTrialRecords(withArchive, old).tiles['skilling::brewing']).toBeUndefined();
+        });
     });
 });
 
