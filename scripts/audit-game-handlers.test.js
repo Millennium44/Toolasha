@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseGameHandlers, parseToolashaSubscriptions, compare, formatReport } from './audit-game-handlers.mjs';
+import {
+    parseGameHandlers,
+    parseToolashaSubscriptions,
+    collectSharedStringConsts,
+    compare,
+    formatReport,
+} from './audit-game-handlers.mjs';
 
 // Shaped like the minified main chunk: arrow handlers assigned on `this`, a type -> handler map,
 // optional chaining, an inner callback that shadows the message parameter, and a delegating handler.
@@ -12,8 +18,11 @@ this.applyIt=e=>{this.setState({a:e.alpha,b:e["beta"]})},
 this.handleMessageDestructured=({gamma:e,delta:t})=>{},
 this.handleMessageAlias=e=>{const{epsilon:t,...r}=e;return r},
 this.handleMessageEmpty=()=>{this.setState({})},
+this.handleLabyrinthUpdated=e=>{this.setState({rooms:e.labyrinthRooms})},
+this.decoy={a_b:this.x,c_d:this.y,e_f:this.z},
 this.messageMap={skills_updated:this.handleMessageSkillsUpdated,collections_updated:this.handleMessageCollectionsUpdated,
-delegating:this.handleMessageDelegating,destructured:this.handleMessageDestructured,alias:this.handleMessageAlias,empty:this.handleMessageEmpty,other:this.notAHandler}
+delegating:this.handleMessageDelegating,destructured:this.handleMessageDestructured,alias:this.handleMessageAlias,empty:this.handleMessageEmpty,other:this.notAHandler,labyrinth_updated:this.handleLabyrinthUpdated,
+f_1:this.q1,f_2:this.q2,f_3:this.q3,f_4:this.q4}
 }}`;
 
 describe('parseGameHandlers', () => {
@@ -21,10 +30,31 @@ describe('parseGameHandlers', () => {
 
     it('maps message types to handlers and reads top-level fields', () => {
         expect([...game.keys()].sort()).toEqual(
-            ['alias', 'collections_updated', 'delegating', 'destructured', 'empty', 'skills_updated'].sort()
+            [
+                'alias',
+                'collections_updated',
+                'delegating',
+                'destructured',
+                'empty',
+                'skills_updated',
+                'labyrinth_updated',
+                'other',
+                'f_1',
+                'f_2',
+                'f_3',
+                'f_4',
+            ].sort()
         );
         expect([...game.get('skills_updated').fields]).toEqual(['endCharacterSkills']);
         expect([...game.get('collections_updated').fields]).toEqual(['collections']);
+    });
+
+    it('finds a handler whatever its method is called, and ignores small look-alike objects', () => {
+        expect(game.get('labyrinth_updated').handler).toBe('handleLabyrinthUpdated');
+        expect([...game.get('labyrinth_updated').fields]).toEqual(['labyrinthRooms']);
+        // A handler with no function behind it is listed, but opaque
+        expect(game.get('other').escapes).toBe(true);
+        expect(game.has('a_b')).toBe(false);
     });
 
     it('does not count reads on a shadowing inner parameter', () => {
@@ -92,6 +122,28 @@ describe('parseToolashaSubscriptions', () => {
         const s = by('collections_updated')[0];
         expect(s.resolved).toBe(false);
         expect(s.escapes).toBe(true);
+    });
+});
+
+describe('constants shared across files', () => {
+    const shared = collectSharedStringConsts([
+        "export const NEW_SKILLING = 'new_guild_skilling'; const DUP = 'a';",
+        "export const END_SKILLING = 'end_guild_skilling'; const DUP = 'b';",
+        'this is not valid js (((',
+    ]);
+
+    it('collects exported string consts and drops a name declared with two values', () => {
+        expect(shared.get('NEW_SKILLING')).toBe('new_guild_skilling');
+        expect(shared.get('END_SKILLING')).toBe('end_guild_skilling');
+        expect(shared.has('DUP')).toBe(false);
+    });
+
+    it('resolves an imported constant used as the subscription type', () => {
+        const src = "import { NEW_SKILLING } from './a.js';\nwebSocketHook.on(NEW_SKILLING, (d) => d.trial);";
+        expect(parseToolashaSubscriptions(src, 'b.js')).toHaveLength(0);
+        const subs = parseToolashaSubscriptions(src, 'b.js', shared);
+        expect(subs.map((x) => x.type)).toEqual(['new_guild_skilling']);
+        expect([...subs[0].fields]).toEqual(['trial']);
     });
 });
 

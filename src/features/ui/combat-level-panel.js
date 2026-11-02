@@ -211,7 +211,10 @@ function combatStarted() {
  * read *after* a run as often as during one, and the clock going on ticking
  * through the idle afterwards is the behaviour this panel has always had.
  */
-function combatEnded() {
+function combatEnded(data) {
+    // A guild trial's unit sheet is flagged `isGuildBattle` and says nothing
+    // about the player's own fight
+    if (data?.isGuildBattle) return;
     inCombat = false;
 }
 

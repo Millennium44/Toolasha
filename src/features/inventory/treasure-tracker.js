@@ -278,6 +278,60 @@ export function isScrollItem(itemHrid) {
 }
 
 /**
+ * What the game would print for the buffs a scroll granted ("Buffs Granted:" in its Opened Loot
+ * dialog): one `{ name, amount, durationSecs }` per grant.
+ *
+ * The game reads each grant's `typeHrid` as a personal buff type and takes the boost from
+ * `personalBuffTypeDetailMap[typeHrid].buff` (`flatBoost || ratioBoost`), not from the message;
+ * `duration` is nanoseconds there. A grant the client data cannot resolve falls back to a boost
+ * carried on the message itself, and failing that is shown by name alone. Fixtures are built from
+ * the game's handler (no live `loot_opened` scroll capture yet).
+ *
+ * @param {Array|undefined} grantedBuffs - `loot_opened.grantedBuffs`
+ * @returns {Array<{name: string, amount: number|null, durationSecs: number|null}>} Empty for absent/empty input
+ */
+export function describeGrantedBuffs(grantedBuffs) {
+    if (!Array.isArray(grantedBuffs)) return [];
+    const clientData = dataManager.getInitClientData?.();
+    const out = [];
+    for (const grant of grantedBuffs) {
+        if (!grant || typeof grant.typeHrid !== 'string') continue;
+        const buff = clientData?.personalBuffTypeDetailMap?.[grant.typeHrid]?.buff;
+        const boost = buff ? buff.flatBoost || buff.ratioBoost : grant.flatBoost || grant.ratioBoost;
+        const buffTypeHrid = buff?.typeHrid || grant.typeHrid;
+        const known = clientData?.buffTypeDetailMap?.[buffTypeHrid]?.name;
+        const slug = String(buffTypeHrid).split('/').pop().replace(/_/g, ' ');
+        const name = known || slug.replace(/\b\w/g, (c) => c.toUpperCase());
+        const duration = Number(grant.duration);
+        out.push({
+            name,
+            amount: Number.isFinite(Number(boost)) && Number(boost) > 0 ? Number(boost) : null,
+            durationSecs: Number.isFinite(duration) && duration > 0 ? duration / 1e9 : null,
+        });
+    }
+    return out;
+}
+
+/** A scroll's duration the short way: "1h", "30m", "1h 30m" */
+function grantDuration(secs) {
+    const minutes = Math.round(secs / 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return [h ? `${h}h` : '', m || !h ? `${m}m` : ''].filter(Boolean).join(' ');
+}
+
+/**
+ * One granted buff as a line: "+60% Rare Find for 1h".
+ * @param {{name: string, amount: number|null, durationSecs: number|null}} buff
+ * @returns {string}
+ */
+export function formatGrantedBuff(buff) {
+    const amount = buff.amount === null ? '' : `+${Math.round(buff.amount * 1000) / 10}% `;
+    const duration = buff.durationSecs === null ? '' : ` for ${grantDuration(buff.durationSecs)}`;
+    return `${amount}${buff.name}${duration}`;
+}
+
+/**
  * Whether an item is wearable equipment (capes, quivers, cloaks), the only kind
  * of untradable a Mirror of Protection can stand in for.
  * @param {string} itemHrid - Item
@@ -509,6 +563,11 @@ class TreasureTracker {
     constructor() {
         this.isInitialized = false;
         this.tally = {};
+        /**
+         * Scroll openings this session, by scroll: `{ opened, last: [granted buffs] }`. Display only
+         * and not persisted: a scroll has no place in the chest ledger (see `isScrollItem`).
+         */
+        this.scrollGrants = {};
         this.ledger = createPersistedRecord({
             base: STORAGE_KEY,
             store: 'settings',
@@ -687,6 +746,7 @@ class TreasureTracker {
             // follows a character switch reads the arriving character's, rather
             // than saving this one's under their key on the next chest.
             this.tally = {};
+            this.scrollGrants = {};
             this.ledger.reset();
             this.settings = { ...DEFAULT_SETTINGS };
             this.isInitialized = false;
@@ -719,12 +779,59 @@ class TreasureTracker {
         if (!chestHrid) return;
         // A scroll is not treasure: it pays a buff, has no drop table, and would
         // sit in the ledger as a row with nothing to measure. No popup either.
-        if (isScrollItem(chestHrid)) return;
+        if (isScrollItem(chestHrid)) {
+            this._recordScrollGrant(chestHrid, data);
+            return;
+        }
 
         this.tally = recordOpening(this.tally, chestHrid, data.openedItem.count || 1, data.gainedItems);
         this._save();
         if (this.panel) this._render();
         if (config.getSetting('treasureTracker_popup')) this._showOpening(chestHrid);
+    }
+
+    /**
+     * Remember the buffs a scroll just granted, for the panel's "Scroll buffs" lines. Nothing is
+     * recorded for a message with no grants (absent or empty `grantedBuffs`).
+     * @param {string} scrollHrid - The scroll opened
+     * @param {Object} data - `loot_opened` message
+     */
+    _recordScrollGrant(scrollHrid, data) {
+        const last = describeGrantedBuffs(data?.grantedBuffs);
+        if (last.length === 0) return;
+        const previous = this.scrollGrants[scrollHrid];
+        this.scrollGrants = {
+            ...this.scrollGrants,
+            [scrollHrid]: { opened: (previous?.opened || 0) + (data.openedItem.count || 1), last },
+        };
+        if (this.panel) this._render();
+    }
+
+    /**
+     * The session's scroll openings and what each granted, under the chest rows. Display only: a
+     * buff is not coin, so none of it is in any total above.
+     * @returns {HTMLElement|null} Null when no scroll has been opened this session
+     */
+    _scrollSection() {
+        const hrids = Object.keys(this.scrollGrants);
+        if (hrids.length === 0) return null;
+
+        const section = document.createElement('div');
+        section.dataset.mwiScrollBuffs = 'true';
+        Object.assign(section.style, { marginTop: '8px', paddingTop: '6px', borderTop: `1px solid ${COLORS.border}` });
+        const heading = document.createElement('div');
+        heading.textContent = 'Scroll buffs this session (not counted in the totals)';
+        heading.style.color = COLORS.accent;
+        heading.style.marginBottom = '3px';
+        section.appendChild(heading);
+
+        for (const hrid of hrids) {
+            const entry = this.scrollGrants[hrid];
+            const line = document.createElement('div');
+            line.textContent = `${itemName(hrid)} ×${entry.opened}: ${entry.last.map(formatGrantedBuff).join(', ')}`;
+            section.appendChild(line);
+        }
+        return section;
     }
 
     /**
@@ -2133,6 +2240,8 @@ class TreasureTracker {
             // every chest in the game, not only the ones you have opened
             empty.textContent = 'Waiting for the game to send its chest data…';
             this.contentEl.appendChild(empty);
+            const earlyScrolls = this._scrollSection();
+            if (earlyScrolls) this.contentEl.appendChild(earlyScrolls);
 
             // And look again shortly. A panel reopened at start-up is drawn
             // before the game has sent anything, and nothing else redraws it —
@@ -2153,6 +2262,9 @@ class TreasureTracker {
             if (!this.configMode && hidden.has(row.chestHrid)) continue;
             this.contentEl.appendChild(this._chestRow(row, hidden.has(row.chestHrid)));
         }
+
+        const scrolls = this._scrollSection();
+        if (scrolls) this.contentEl.appendChild(scrolls);
     }
 
     /**

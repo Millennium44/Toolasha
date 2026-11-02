@@ -162,7 +162,7 @@ export function partyLintWarnings(playerDTOs, playerInfo, gameData) {
  * The live party, in the DTO shape the lint reads.
  *
  * `new_battle` names every player and carries every player's equipped kit whole
- * (`combatDetails.combatAbilities`) — but nobody's equipment: the combat unit
+ * (`combatAbilities`) — but nobody's equipment: the combat unit
  * has stats, not wearables. So the mapping is honest about what it can source:
  * abilities are filled for everyone from the payload, and equipment only for
  * the current player, from the client's own always-current equipment list
@@ -203,7 +203,7 @@ export function battleLintInputs(battle, { currentCharacterId, ownEquipment, ite
             }
         }
 
-        const abilities = (player?.combatDetails?.combatAbilities || [])
+        const abilities = (player?.combatAbilities || [])
             .filter((ability) => ability?.abilityHrid)
             .map((ability) => ({ hrid: ability.abilityHrid, level: ability.level || 1 }));
 
