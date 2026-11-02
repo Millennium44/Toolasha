@@ -24,9 +24,10 @@ import taskRerollTracker from './task-reroll-tracker.js';
 import { countActiveTasks, forecastTaskSlots } from './task-slot-forecast.js';
 import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { computeAllZoneProgress } from './task-zone-progress.js';
-import { createMedianHint, formatPercentSuffix } from './task-zone-estimate-percentile.js';
+import { createMedianHint, formatPercentSuffix, paddedZoneFights } from './task-zone-estimate-percentile.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
+import { resolveZoneTier, ZONE_TIER_MEMORY_EVENT } from '../../utils/zone-tier-memory.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { calendarDaysBefore } from '../../utils/calendar-days.js';
@@ -64,6 +65,10 @@ class TaskStatistics {
         this.isInitialized = false;
         this.overlay = null;
         this.zoneRun = null;
+        /** The open popup's zone section, and the rows last drawn, for a redraw when a zone's tier changes */
+        this._zoneView = null;
+        this._zoneRows = [];
+        this._zoneTierHandler = null;
         /** Bumped by every close, so a popup build that awaited across one knows it was superseded */
         this._popupGeneration = 0;
         this.unregisterHandlers = [];
@@ -689,6 +694,7 @@ class TaskStatistics {
         this.cancelZoneProgress();
         const run = { cancelled: false };
         this.zoneRun = run;
+        this._watchZoneTiers(section, textColor);
 
         try {
             const rows = await computeAllZoneProgress({
@@ -705,6 +711,35 @@ class TaskStatistics {
         } finally {
             if (this.zoneRun === run) this.zoneRun = null;
         }
+    }
+
+    /**
+     * Redraw the open popup's zone rows when a zone's tier changes or the remembered tiers arrive: the
+     * rows were simulated at whatever tier was known when they started, which is T0 when the popup is
+     * opened before the record loads. Removed when the popup closes.
+     * @param {HTMLElement} section
+     * @param {string} textColor
+     */
+    _watchZoneTiers(section, textColor) {
+        this._zoneView = { section, textColor };
+        if (this._zoneTierHandler) return;
+        this._zoneTierHandler = () => {
+            const view = this._zoneView;
+            if (!this.overlay || !view) return;
+            const stale = this.zoneRun || this._zoneRows.some((row) => resolveZoneTier(row.zoneHrid).tier !== row.tier);
+            if (!stale) return;
+            this.renderZoneProgressRows(view.section, null, view.textColor);
+            this.startZoneProgress(view.section, view.textColor);
+        };
+        dataManager.on(ZONE_TIER_MEMORY_EVENT, this._zoneTierHandler);
+    }
+
+    /** Stop watching zone tiers (popup closed, or the feature disabled). */
+    _unwatchZoneTiers() {
+        if (this._zoneTierHandler) dataManager.off(ZONE_TIER_MEMORY_EVENT, this._zoneTierHandler);
+        this._zoneTierHandler = null;
+        this._zoneView = null;
+        this._zoneRows = [];
     }
 
     /**
@@ -727,6 +762,7 @@ class TaskStatistics {
      * @param {boolean} [failed] - The run threw
      */
     renderZoneProgressRows(section, zones, textColor, stillComputing = false, failed = false) {
+        this._zoneRows = Array.isArray(zones) ? zones : [];
         while (section.children.length > 1) section.removeChild(section.lastChild);
 
         if (failed) {
@@ -818,18 +854,15 @@ class TaskStatistics {
         const confidenceDefault = getSettingDefinition('combatFightConfidence')?.default ?? 90;
         const confidencePercent = config.getSettingValue('combatFightConfidence', confidenceDefault);
         if (Array.isArray(zone.monsterThresholds) && zone.monsterThresholds.length > 0) {
-            let best = Math.ceil(Number(zone.fightsNeeded) || 0);
-            for (const monster of zone.monsterThresholds) {
-                if (!Number.isFinite(monster.meanFights)) continue;
-                const { fights } = padFightCount({
-                    unpaddedFights: monster.meanFights,
-                    thresholds: Number.isFinite(monster.killsPerFight) ? [monster] : [],
-                    confidencePercent,
-                    floorPercent: monster.deterministic ? 0 : bufferPercent,
-                });
-                best = Math.max(best, fights);
-            }
-            return best;
+            const padded = paddedZoneFights({
+                thresholds: zone.monsterThresholds,
+                meanFloor: zone.fightsNeeded,
+                confidencePercent,
+                bufferPercent,
+            });
+            // Never less than the figure the row itself quotes
+            const quoted = Number(zone.estimate?.fightsNeeded);
+            return Number.isFinite(quoted) ? Math.max(padded, Math.ceil(quoted)) : padded;
         }
         const { fights } = padFightCount({
             unpaddedFights: zone.fightsNeeded,
@@ -1399,6 +1432,7 @@ class TaskStatistics {
     closePopup() {
         this._popupGeneration += 1;
         this.cancelZoneProgress();
+        this._unwatchZoneTiers();
         if (this.overlay) {
             this.overlay.remove();
             this.overlay = null;

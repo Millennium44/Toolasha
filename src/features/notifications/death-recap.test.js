@@ -390,7 +390,7 @@ describe('death recap', () => {
     test('the button opens the recap, saying so when it is unconfirmed or short', () => {
         send('new_battle', battle([['me', 0]]));
         run([0]);
-        document.getElementById('toolasha-death-recap-button').click();
+        document.querySelector('#toolasha-death-recap-button [data-role="recap-open"]').click();
         const text = document.getElementById('toolasha-death-recap-modal').textContent;
         expect(text).toContain('has not reported it yet');
         expect(text).toContain('Insufficient recording');
@@ -895,6 +895,145 @@ describe('death recap', () => {
             expect(recap.recapHistory().some((r) => r.id === oldest.id)).toBe(false);
             expect(modalEl()).not.toBeNull();
             expect(navText()).toBe('');
+        });
+    });
+
+    describe('labyrinth deaths', () => {
+        const LAB = [{ actionHrid: '/actions/labyrinth/explore', partyID: 0, ordinal: 1, isDone: false }];
+        const COMBAT = [{ actionHrid: '/actions/combat/golem_cave', partyID: 0, ordinal: 1, isDone: false }];
+
+        test('a labyrinth death is recorded and quiet while the setting is off', () => {
+            game.actions = LAB;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            run([0]);
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(recap.recapHistory()[0].labyrinth).toBe(true);
+            expect(recap.labyrinthDeathQuiet(true)).toBe(true);
+            expect(recap.labyrinthDeathQuiet()).toBe(true);
+            expect(recap.openRecap()).toBe(true);
+        });
+
+        test('with the setting on it announces', () => {
+            game.settings[recap.LABYRINTH_SETTING] = true;
+            game.actions = LAB;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            run([0]);
+            expect(recap.labyrinthDeathQuiet(true)).toBe(false);
+        });
+
+        test('a combat death is never quiet', () => {
+            game.actions = COMBAT;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            run([0]);
+            expect(recap.recapHistory()[0].labyrinth).toBe(false);
+            expect(recap.labyrinthDeathQuiet(false)).toBe(false);
+        });
+
+        test('a death after the run ended is not a labyrinth death', () => {
+            game.actions = LAB;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            game.actions = COMBAT;
+            send('new_battle', battle([['me', 0]], 2));
+            run([500], { battleId: 2 });
+            run([0], { battleId: 2 });
+            expect(recap.recapHistory()[0].labyrinth).toBe(false);
+            expect(recap.labyrinthDeathQuiet(false)).toBe(false);
+        });
+
+        test('the run ending the moment you die still counts as a labyrinth death', () => {
+            game.actions = LAB;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            game.actions = [];
+            run([0]);
+            expect(recap.recapHistory()[0].labyrinth).toBe(true);
+        });
+
+        test('a counter-only death is classified by the fight that ended', () => {
+            game.actions = LAB;
+            send('new_battle', battle([['me', 0]]));
+            run([500]);
+            game.actions = COMBAT;
+            send('new_battle', battle([['me', 1]], 2));
+            expect(recap.recapHistory()[0]).toMatchObject({ source: 'count', labyrinth: true });
+        });
+    });
+
+    describe('the chip', () => {
+        const LAB = [{ actionHrid: '/actions/labyrinth/explore', partyID: 0, ordinal: 1, isDone: false }];
+        const chip = () => document.getElementById('toolasha-death-recap-button');
+        const label = () => chip()?.querySelector('[data-role="recap-open"]').textContent;
+        const die = (battleId = 1) => {
+            send('new_battle', battle([['me', 0]], battleId));
+            run([500], { battleId });
+            run([0], { battleId });
+            run([900], { battleId });
+        };
+
+        test('a death shows a counted chip with a dismiss cross, away from the left edge', () => {
+            die();
+            expect(label()).toBe('Death recap (1)');
+            expect(chip().style.left).toBe('50%');
+            const x = chip().querySelector('[data-role="recap-dismiss"]');
+            expect(x.getAttribute('aria-label')).toBeTruthy();
+            expect(parseInt(x.style.minHeight, 10)).toBeGreaterThanOrEqual(36);
+        });
+
+        test('dismissed: the cross clears the chip and its count', () => {
+            die();
+            chip().querySelector('[data-role="recap-dismiss"]').click();
+            expect(chip()).toBeNull();
+        });
+
+        test('reopened from the chip clears what it counted', () => {
+            die();
+            chip().querySelector('[data-role="recap-open"]').click();
+            expect(document.getElementById('toolasha-death-recap-modal')).not.toBeNull();
+            expect(chip()).toBeNull();
+        });
+
+        test('closing the popup clears the count', () => {
+            die();
+            recap.openRecap();
+            const close = [...document.querySelectorAll('#toolasha-death-recap-modal button')].find(
+                (b) => b.textContent === 'Close'
+            );
+            close.click();
+            expect(chip()).toBeNull();
+        });
+
+        test('a new death after dismissal brings the chip back with a count of one', () => {
+            die();
+            chip().querySelector('[data-role="recap-dismiss"]').click();
+            vi.advanceTimersByTime(60_000);
+            die(2);
+            expect(label()).toBe('Death recap (1)');
+        });
+
+        test('a reload keeps nothing, and a character switch clears the chip', () => {
+            die();
+            game.dm.character_switching();
+            expect(chip()).toBeNull();
+            expect(recap.recapHistory()).toHaveLength(0);
+            expect(game.ws.battle_updated).toBeUndefined();
+        });
+
+        test('a labyrinth death with the setting off makes no chip and no count', () => {
+            game.actions = LAB;
+            die();
+            expect(recap.recapHistory()).toHaveLength(1);
+            expect(chip()).toBeNull();
+        });
+
+        test('a labyrinth death with the setting on makes the chip', () => {
+            game.settings[recap.LABYRINTH_SETTING] = true;
+            game.actions = LAB;
+            die();
+            expect(label()).toBe('Death recap (1)');
         });
     });
 });

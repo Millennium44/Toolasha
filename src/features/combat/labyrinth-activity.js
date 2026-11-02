@@ -42,6 +42,7 @@ export function isLabyrinthFightActive() {
     } catch {
         // fall through to the header
     }
+    if (typeof document === 'undefined') return false;
     const row = document.querySelector("div[class*='Header_actionName']");
     return !!row && LABYRINTH_HEADER.test(row.textContent || '');
 }

@@ -8,6 +8,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 - Net Worth History marks a setting change on the chart and leaves its step out of the gain and rate figures.
 - Net Worth History has a What moved button on chart points: the top 10 items behind a change, and whether quantity or price caused it. Kept for recent readings and big jumps.
+- A death in the labyrinth no longer raises the death notification or recap chip, with a setting to bring them back. The Death recap chip can now be dismissed, clears when viewed or closed, and no longer covers the sidebar.
+- Task Go now fills the fight count the card quotes (never less than your confidence setting asks) and opens the zone at the tier you last ran it, instead of T0 when it is not in your queue.
 - About 30 panels, plus dialogs, toasts and the floating widgets, now share the game's plain dark frame and blue buttons. Your Script Accent Color still colors figures and highlights.
 - The Treasure panel and popup now look like the game's own panels: plain dark frame, white title, blue buttons, and one row per item under column headers.
 - Agent briefs now send logs and scratch files to the session scratchpad instead of the folder above the repo.

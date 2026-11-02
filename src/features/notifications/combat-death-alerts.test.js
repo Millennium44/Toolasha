@@ -65,6 +65,7 @@ vi.mock('./notification-service.js', () => ({
 
 vi.mock('./death-recap.js', () => ({
     SETTING: 'combatDeathRecap',
+    labyrinthDeathQuiet: (live) => !game.settings.combatDeathRecapLabyrinth && live === true,
     openRecap: (...args) => {
         game.opened.push(args);
         return true;
@@ -395,6 +396,59 @@ describe('combat death alerts', () => {
         tick(1600);
         tick(0);
         expect(game.notified[1].options.action).toBeUndefined();
+    });
+
+    describe('labyrinth deaths', () => {
+        const LAB = [{ actionHrid: '/actions/labyrinth/explore', partyID: 0, ordinal: 1, isDone: false }];
+
+        test('a tick death in the labyrinth raises no notification at all', () => {
+            game.actions = LAB;
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('still quiet with Death Recap switched off', () => {
+            game.settings.combatDeathRecap = false;
+            game.actions = LAB;
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('a counter-only death is quiet when the fight that ended was the labyrinth', () => {
+            game.actions = LAB;
+            send(battle(['me', 0]));
+            tick(1600);
+            game.actions = SOLO;
+            send(battle(['me', 1]));
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('a death after the run ended is announced', () => {
+            game.actions = LAB;
+            send(battle(['me', 0]));
+            tick(1600);
+            game.actions = SOLO;
+            send(battle(['me', 0]));
+            game.wsHandlers.battle_updated({ battleId: 2, pMap: { 0: { cHP: 0, isActive: false } }, mMap: {} });
+            expect(game.notified).toHaveLength(1);
+        });
+
+        test('with the labyrinth setting on, the death is announced there with the recap link', () => {
+            game.settings.combatDeathRecapLabyrinth = true;
+            game.actions = LAB;
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified[0].options.action.label).toMatch(/recap/i);
+        });
+
+        test('a combat death still offers the recap link', () => {
+            game.actions = SOLO;
+            send(battle(['me', 0]));
+            tick(0);
+            expect(game.notified[0].options.action.label).toMatch(/recap/i);
+        });
     });
 
     test('a party member dying is their business', () => {

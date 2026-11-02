@@ -3121,6 +3121,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Keeps your own last ~15 seconds of HP, MP, incoming hits and casts in memory (about 30 small samples, nothing saved) and freezes a compact recap when you die. Open it from the death alert or the small Death recap button; the last five are kept until you reload. A zero-HP reading is shown as unconfirmed until the server’s death count agrees, attribution of hits to monsters is approximate, and a recap says so when recording began too late to cover the whole window.',
             },
+            combatDeathRecapLabyrinth: {
+                id: 'combatDeathRecapLabyrinth',
+                label: 'Death notification and recap in the labyrinth',
+                type: 'checkbox',
+                default: false,
+                help: 'A death inside the labyrinth is routine, so while this is off it raises no "You died" notification, no Death recap chip and no count there. Applies whether or not Death Recap is on; the recap itself is still kept in memory. Deaths anywhere else are unaffected.',
+            },
             combatDropLuck: {
                 id: 'combatDropLuck',
                 label: 'Combat Drop Luck: Show how lucky a session was on return',
@@ -3564,8 +3571,10 @@ export const settingsGroups = {
                 help:
                     'How many fights the zone estimates (the zone line on a combat task card and the Zone Task ' +
                     'Progress rows in Task Statistics) plan for. At 90% the slowest task in the zone is finished ' +
-                    'by then nine times in ten; the median is shown on hover. The counts Go and a zone row fill ' +
-                    'in are padded separately, by the Combat pre-fill confidence setting.',
+                    'by then nine times in ten; the median is shown on hover. Go on a zone task card and a zone ' +
+                    'row fill in the larger of this figure and the zone padded by the Combat pre-fill ' +
+                    'confidence setting (with the Go count buffer as a floor), so they never fill less than ' +
+                    'either.',
             },
             taskEfficiencyRating: {
                 id: 'taskEfficiencyRating',
