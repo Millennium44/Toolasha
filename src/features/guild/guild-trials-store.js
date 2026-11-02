@@ -53,7 +53,7 @@ import {
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
-import { statesAsMuch } from './guild-trial-history.js';
+import { FOREIGN_CYCLE_REASON, statesAsMuch } from './guild-trial-history.js';
 import { mergeResults, resultsFromHistory, trialResultsOf, withTrialResults } from './guild-trial-results.js';
 
 /** Object store the records live in — shared with the guild XP history */
@@ -301,7 +301,16 @@ export function recordProvenance(record, { guildId = null, guildName = null } = 
  */
 export function archiveCycle(record, reason, at = Date.now(), { accuracy = null, cycleFrom = null } = {}) {
     const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
-    const history = Array.isArray(record?.history) ? [...record.history] : [];
+    const foreign = reason === FOREIGN_CYCLE_REASON;
+    // A record put away as another guild's brings its earlier archive with it,
+    // and that archive is the other guild's weeks too: marked as such, so Past
+    // weeks labels them and no trial result is read off them. What they were
+    // archived for is kept beside the mark
+    const history = (Array.isArray(record?.history) ? record.history : []).map((cycle) =>
+        foreign && cycle && typeof cycle === 'object' && cycle.reason !== FOREIGN_CYCLE_REASON
+            ? { ...cycle, reason: FOREIGN_CYCLE_REASON, archivedReason: cycle.reason ?? null }
+            : cycle
+    );
 
     if (Object.keys(tiles).length) {
         const entry = { archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles };
@@ -333,8 +342,11 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         tiles: {},
         history: capHistory(history),
         // Read off the whole archive before the cap, so a cycle the cap drops
-        // has its results kept here first (see guild-trial-results.js)
-        trialResults: mergeResults(record?.trialResults, resultsFromHistory(history)),
+        // has its results kept here first (see guild-trial-results.js). A
+        // record put away as another guild's takes its results with it: they
+        // were folded off that guild's weeks, and kept they would draw and save
+        // as this guild's
+        trialResults: foreign ? [] : mergeResults(record?.trialResults, resultsFromHistory(history)),
     };
 }
 
@@ -1276,7 +1288,9 @@ export function mergeTrialRecords(base, incoming) {
         seenCycles.add(mark);
         history.push(cycle);
     }
-    // Each side's results with its own archive folded in
+    // Each side's results with its own archive folded in. Known limit: the
+    // foreign check above trusts the base, and sync calls this in both orders,
+    // so of two sides naming different guilds the base's stands either way
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,

@@ -132,6 +132,19 @@ describe('resultsFromCycle', () => {
         expect(results).toEqual([]);
     });
 
+    test('a cycle archived only off zeroed cards is no result, and never a best', () => {
+        // The cards after a cycle ends: a finite tier 0, nothing banked, not finished
+        const zeroed = { name: 'Trial Badger', kind: 'combat', tier: 0, points: 0, samples: [], tiers: [] };
+        expect(resultsFromCycle(cycle(weeksAgo(2), { a: zeroed }))).toEqual([]);
+        const results = resultsFromHistory([
+            cycle(weeksAgo(2), { a: zeroed }),
+            cycle(weeksAgo(1), { a: { ...zeroed, tier: 0, points: 0, completed: true } }),
+        ]);
+        const [row] = trialResultsHistory(results, { now }).rows;
+        // The zeroed week is no cycle of the history at all; the finished T0 is
+        expect(trialHistoryCells(row)).toBe('T0 · best T0 (last week)');
+    });
+
     test('a party that wiped before tier 1 is a real T0', () => {
         const [result] = resultsFromCycle(
             cycle(weeksAgo(1), {
@@ -215,6 +228,12 @@ describe('mergeResults', () => {
 
     test('stored entries that are not results are dropped', () => {
         expect(mergeResults([null, 5, { trial: 'badger' }])).toEqual([]);
+        // …including one with no name, which the history's sort would throw on
+        const named = resultsFromCycle(cycle(weeksAgo(1), { a: badger(6, 2240) }));
+        expect(mergeResults(named, [{ ...named[0], trial: 'hedgehog', name: null }])).toHaveLength(1);
+        expect(() =>
+            trialResultsHistory([...named, { ...named[0], trial: 'hedgehog', name: null }], { now })
+        ).not.toThrow();
     });
 });
 

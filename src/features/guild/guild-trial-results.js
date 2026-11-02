@@ -120,6 +120,10 @@ export function resultsFromCycle(cycle) {
         // A card nobody saw a result on, with no statement from the payload, is
         // not a result: the week shows "—" for it, never a zero
         if (cardTier === null && serverTier === null) continue;
+        // Nor is a card archived off its zeroed state: a finite tier 0 with
+        // nothing banked, not finished and no payload statement states nothing
+        // (the untouched zero Past weeks prints as "—"). A finished T0 is a result
+        if (cardTier === 0 && !(tile.points > 0) && !tile.completed && serverTier === null) continue;
         results.push({
             weekStart,
             cycleFrom,
@@ -178,6 +182,9 @@ function ahead(a, b) {
  */
 function mergeResult(held, other) {
     const card = ahead(cardWeight(other), cardWeight(held)) ? other : held;
+    // Newest statement wins, as `latestServerTier` has it — not the highest
+    // tier. Known limit: a later statement of a lower tier (another party's,
+    // filed under the same trial) would stand over an earlier higher one
     const stated = [held, other].filter((result) => Number.isFinite(result?.serverTier));
     const rank = (result) => [Number.isFinite(result.serverTierAt) ? result.serverTierAt : -1, result.serverTier];
     const server = stated.length
@@ -235,7 +242,8 @@ function isResult(result) {
         typeof result === 'object' &&
         Number.isFinite(result.weekStart) &&
         typeof result.trial === 'string' &&
-        typeof result.kind === 'string'
+        typeof result.kind === 'string' &&
+        typeof result.name === 'string'
     );
 }
 
@@ -412,7 +420,9 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                 best: best ? { tier: best.tier, label: best.label } : null,
             };
         })
-        .sort((a, b) => (a.kind !== b.kind ? (a.kind === 'combat' ? -1 : 1) : a.name.localeCompare(b.name)));
+        .sort((a, b) =>
+            a.kind !== b.kind ? (a.kind === 'combat' ? -1 : 1) : String(a.name).localeCompare(String(b.name))
+        );
 
     return { cycles, rows };
 }
