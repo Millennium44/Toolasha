@@ -8398,6 +8398,230 @@ describe('after a reload, before any guild message', () => {
     });
 });
 
+describe('how a trial ended and who signed up, kept with the panel shut', () => {
+    const base = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+    const milking = base.skilling.parties['/guild_skilling/milking'];
+    const newestStamp = base.skilling.parties['/guild_skilling/alchemy'].highestTierReachedAtMs;
+    const deadline = milking.tierStartedAtMs + milking.budgetRemainingMs;
+    const SKEW = 5_000;
+    const TRIP = 300;
+    const key = 'skilling::milking';
+    const HRID = '/guild_skilling/milking';
+
+    const message = (party) => {
+        const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+        payload.skilling.parties[HRID] = { ...milking, ...party };
+        return { guild: { id: 'g-own', currentTrialsData: JSON.stringify(payload) } };
+    };
+    const hear = (data, serverAt) => {
+        vi.setSystemTime(serverAt + SKEW + TRIP);
+        guildTrials._noteCurrentTrials(data);
+    };
+    const tile = () => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level: 170,
+        tier: 7,
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+    });
+    const record = () => ({ weekStart: 0, tiles: { [key]: tile() } });
+    let savedWeek = null;
+    const file = (held) => guildTrials._recordServerTiers(held, Date.now());
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
+        guildTrials.socketPhase = null;
+        guildTrials.signupLevelMap = null;
+        game.characterData = { guild: { id: 'g-own' } };
+        savedWeek = game.currentWeek;
+        game.currentWeek = 'W1';
+        game.members = [];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        game.characterData = null;
+        game.currentWeek = savedWeek;
+        game.members = [];
+        guildTrials.signupLevelMap = null;
+    });
+
+    /** A party running at tier 7, then the same party finished at `tier` when the message is heard at `serverAt` */
+    const runThenFinish = ({ tier = 8, serverAt }) => {
+        hear(message({}), newestStamp);
+        const running = file(record());
+        hear(
+            message({
+                highestTier: tier,
+                done: true,
+                tierStartedAtMs: serverAt,
+                highestTierReachedAtMs: serverAt,
+                budgetRemainingMs: Math.max(0, deadline - serverAt),
+            }),
+            serverAt
+        );
+        return file(running);
+    };
+
+    test('a party seen going from running to done at its deadline ended on the clock', () => {
+        const done = runThenFinish({ serverAt: deadline });
+        expect(done.tiles[key]).toMatchObject({ serverDone: true, endReason: 'clock' });
+        expect(done.tiles[key].endedAt).toBe(deadline + SKEW + TRIP);
+    });
+
+    test('a party seen finishing with the clock still running stopped early, the cause not stated', () => {
+        const done = runThenFinish({ serverAt: deadline - 20 * 60_000 });
+        expect(done.tiles[key].endReason).toBe('early');
+        expect(done.tiles[key].endedAt).toBe(deadline - 20 * 60_000 + SKEW + TRIP);
+    });
+
+    test('a party first seen already done states no end at all: never guessed', () => {
+        hear(message({ highestTier: 9, done: true }), deadline);
+        const done = file(record());
+        expect(done.tiles[key]).toMatchObject({ serverTier: 9, serverDone: true });
+        expect(done.tiles[key].endedAt).toBeUndefined();
+        expect(done.tiles[key].endReason).toBeUndefined();
+    });
+
+    test('the top tier banked and the party done is the ladder, ended at the final clear', () => {
+        hear(message({}), newestStamp);
+        const running = file(record());
+        const at = deadline - 15 * 60_000;
+        hear(message({ highestTier: 21, done: true, tierStartedAtMs: at, highestTierReachedAtMs: at }), at);
+        const done = file(running);
+        expect(done.tiles[key]).toMatchObject({ endReason: 'ladder', endedAt: at + SKEW + TRIP });
+    });
+
+    test('the end is stated once: a later message does not move it', () => {
+        const done = runThenFinish({ serverAt: deadline });
+        const first = done.tiles[key].endedAt;
+        hear(
+            message({ highestTier: 8, done: true, tierStartedAtMs: deadline, highestTierReachedAtMs: deadline }),
+            deadline + 90_000
+        );
+        expect(file(done).tiles[key].endedAt).toBe(first);
+    });
+
+    describe('sign-up levels', () => {
+        const SIGNUPS = {
+            1001: { combatLevel: 140, skillingTrialLevel: 150 },
+            1002: { combatLevel: 120, skillingTrialLevel: 95 },
+            1003: { combatLevel: 130, skillingTrialLevel: 110 },
+        };
+        const roster = () => {
+            game.members = [
+                { characterID: 1001, signedUpSkillingTrialHrid: HRID, signupWeekStartAt: 'W1' },
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+                { characterID: 1003, signedUpSkillingTrialHrid: HRID, signupWeekStartAt: 'W0' },
+            ];
+        };
+        const learn = (map = SIGNUPS) =>
+            guildTrials._noteSignupLevels('guild_characters_updated', {
+                guildCharacterMap: { 1001: { guildID: 'g-own' } },
+                guildTrialSignupLevelMap: map,
+            });
+
+        test('the levels of the members signed up to this trial this week, and no one else', () => {
+            roster();
+            learn();
+            hear(message({}), newestStamp);
+            const tileOut = file(record()).tiles[key];
+            expect(tileOut.signupLevels).toEqual({ 1001: 150 });
+            expect(tileOut.signupLevelsAt).toBe(Date.now());
+        });
+
+        test('a combat trial reads the combat level', () => {
+            game.members = [
+                { characterID: 1001, signedUpCombatTrialHrid: '/guild_combat/badger', signupWeekStartAt: 'W1' },
+            ];
+            learn();
+            expect(guildTrials._signupLevelsFor('/guild_combat/badger', 'combat', 'g-own')).toEqual({ 1001: 140 });
+        });
+
+        test('unknown is not empty: no map or no roster stores nothing, a loaded empty sheet stores {}', () => {
+            hear(message({}), newestStamp);
+            // No map ever seen
+            expect(file(record()).tiles[key].signupLevels).toBeUndefined();
+            // A map but no roster
+            learn();
+            expect(guildTrials._signupLevelsFor(HRID, 'skilling', 'g-own')).toBeNull();
+            expect(file(record()).tiles[key].signupLevels).toBeUndefined();
+            // Both loaded, nobody on this trial
+            game.members = [
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+            ];
+            expect(file(record()).tiles[key].signupLevels).toEqual({});
+        });
+
+        test('an empty first reading is replaced by the first non-empty one, which is then kept', () => {
+            hear(message({}), newestStamp);
+            game.members = [
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+            ];
+            learn();
+            const empty = file(record());
+            expect(empty.tiles[key].signupLevels).toEqual({});
+            roster();
+            const filled = file(empty);
+            expect(filled.tiles[key].signupLevels).toEqual({ 1001: 150 });
+            learn({ 1001: { skillingTrialLevel: 151 } });
+            expect(file(filled)).toBe(filled);
+        });
+
+        test('another guild’s levels are not held, and a held map is dropped for a guild that is not its own', () => {
+            roster();
+            guildTrials._noteSignupLevels('guild_characters_updated', {
+                guildCharacterMap: { 1001: { guildID: 'g-other' } },
+                guildTrialSignupLevelMap: SIGNUPS,
+            });
+            expect(guildTrials.signupLevelMap).toBeNull();
+            learn();
+            expect(guildTrials._signupLevelsFor(HRID, 'skilling', 'g-other')).toBeNull();
+        });
+
+        test('one member’s sign-up is merged only into a map already held', () => {
+            const signup = { characterId: 1001, trialSignupLevels: { combatLevel: 141, skillingTrialLevel: 152 } };
+            guildTrials._noteSignupLevels('guild_trial_signup_updated', signup);
+            expect(guildTrials.signupLevelMap).toBeNull();
+            learn();
+            guildTrials._noteSignupLevels('guild_trial_signup_updated', signup);
+            expect(guildTrials.signupLevelMap.map[1001]).toMatchObject({ skillingTrialLevel: 152 });
+            expect(guildTrials.signupLevelMap.map[1002]).toMatchObject({ skillingTrialLevel: 95 });
+        });
+
+        test('the map is dropped on a character switch', () => {
+            learn();
+            // A switch resets much more than the map; put it all back for the tests after this one
+            const fields = [
+                'record',
+                'guildName',
+                'socketGuildName',
+                'characterId',
+                'adopting',
+                'lastRecordSaveAt',
+                'recordUnread',
+                'awaitingCharacter',
+                'currentTrials',
+                'serverTierClears',
+                'socketPhase',
+            ];
+            const saved = Object.fromEntries(fields.map((field) => [field, guildTrials[field]]));
+            try {
+                guildTrials._forgetCharacter(777);
+                expect(guildTrials.signupLevelMap).toBeNull();
+            } finally {
+                Object.assign(guildTrials, saved);
+            }
+        });
+    });
+});
+
 describe('a mates’ trial timed from the guild payload', () => {
     // The live payload, as sent, and the same party's later messages: each one
     // states only the tier banked now and when it banked, on the server's clock

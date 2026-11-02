@@ -162,6 +162,7 @@ import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
     foldServerTierClears,
     INIT_PAYLOAD_FRESH_MS,
+    initPayloadAgeMs,
     rangeHover,
     serverClockOffset,
     tierClearTimes,
@@ -3128,6 +3129,16 @@ class GuildTrials {
         dataManager.on?.('character_initialized', this._onCharacterInit);
         this.unregister.push(() => dataManager.off?.('character_initialized', this._onCharacterInit));
 
+        // Before `_refresh` below, which files the trials a `guild_updated` states and reads this map
+        for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
+            const onLevels = (data, context) => {
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
+                this._noteSignupLevels(type, data);
+            };
+            webSocketHook.on(type, onLevels);
+            this.unregister.push(() => webSocketHook.off(type, onLevels));
+        }
+
         this._refresh = (data) => {
             this._noteGuildName(data);
             // Adoption starts even with the Guild page closed, so exports stop
@@ -3425,6 +3436,8 @@ class GuildTrials {
             this.currentTrials = null;
             // …and the tier clears it stated, which are the departing guild's parties
             this.serverTierClears = null;
+            // …and the departing guild's sign-up levels
+            this.signupLevelMap = null;
             this.socketPhase = null;
             // The forecast the per-player panel echoes, and the render state
             // that decides which card is allowed to replace it. Rebuilt every
@@ -3736,6 +3749,8 @@ class GuildTrials {
             const id = data?.character?.id ?? null;
             const current = dataManager.getCurrentCharacterId?.() ?? this.characterId ?? null;
             if (id !== null && current !== null && String(id) !== String(current)) return;
+            // The login payload's sign-up levels, until a message restates them
+            this._noteSignupLevels('init', data);
             // This character's guild states no trial: whatever is held is
             // another guild's or another cycle's, and must not be filed here
             if (data && !parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData)) {
@@ -3867,12 +3882,24 @@ class GuildTrials {
                     const partyAt = Number.isFinite(party.highestTierReachedAtMs)
                         ? party.highestTierReachedAtMs
                         : party.tierStartedAtMs;
+                    // The party's own deadline: the same absolute instant for every party, and
+                    // `budgetRemainingMs` is as of its last clear
+                    const deadlineAt =
+                        offset !== null &&
+                        Number.isFinite(party.tierStartedAtMs) &&
+                        Number.isFinite(party.budgetRemainingMs)
+                            ? party.tierStartedAtMs + party.budgetRemainingMs + offset
+                            : null;
                     next = recordServerTiers(next, key, {
                         bankedTier: party.highestTier,
                         done: party.done,
                         clears,
                         at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : held.at,
                         create,
+                        seenAt: held.at,
+                        deadlineAt,
+                        // Null while the sign-up sheet or level map has not been loaded: unknown, not empty
+                        signupLevels: this._signupLevelsFor(partyKey, kind, record.guildId ?? this._guildId()),
                     });
                 }
             }
@@ -3880,6 +3907,104 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Recording the guild payload’s tier clears failed:', error);
             return record;
+        }
+    }
+
+    /**
+     * Hold the sign-up level map the game states, whichever tab is open.
+     *
+     * `guildTrialSignupLevelMap` is `{characterId: {combatLevel, skillingTrialLevel}}`
+     * for the members signed up. It arrives whole on the login payload, on
+     * `guild_characters_updated` (which replaces the whole copy: an absent map
+     * means none) and on `guild_updated`; `guild_trial_signup_updated` carries one
+     * member's entry. A single member's entry is merged only into a map already
+     * held, because a map started from one member would read as the whole sheet.
+     * Kept with the guild it was sent for, and never filed under another.
+     *
+     * @param {'guild_updated'|'guild_characters_updated'|'guild_trial_signup_updated'|'init'} type - Where it came from
+     * @param {Object|null} data - The payload
+     */
+    _noteSignupLevels(type, data) {
+        try {
+            if (this.awaitingCharacter) return;
+            const own = dataManager.characterData?.guild?.id ?? null;
+            const sentFor =
+                type === 'guild_characters_updated'
+                    ? (Object.values(data?.guildCharacterMap || {})[0]?.guildID ?? null)
+                    : (data?.guild?.id ?? null);
+            if (sentFor !== null && own !== null && String(sentFor) !== String(own)) return;
+            const guildId = sentFor ?? own;
+
+            if (type === 'guild_trial_signup_updated') {
+                const held = this.signupLevelMap;
+                const id = data?.characterId != null ? String(data.characterId) : null;
+                const entry =
+                    data?.trialSignupLevels && typeof data.trialSignupLevels === 'object'
+                        ? data.trialSignupLevels
+                        : null;
+                const level = Number(entry?.skillingTrialLevel ?? data?.skillingTrialLevel);
+                if (!id || !held?.map || !(Number.isFinite(level) && level > 0)) return;
+                if (held.guildId !== null && guildId !== null && String(held.guildId) !== String(guildId)) return;
+                this.signupLevelMap = {
+                    guildId: held.guildId ?? guildId,
+                    map: { ...held.map, [id]: { ...held.map[id], ...entry, skillingTrialLevel: level } },
+                };
+                return;
+            }
+
+            const map = data?.guildTrialSignupLevelMap;
+            if (type === 'init' && this.signupLevelMap) {
+                // A login payload read back late is older than what the socket has said since
+                const age = initPayloadAgeMs(data, Date.now(), this.serverClockOffsetMs);
+                if (!Number.isFinite(age) || age > INIT_PAYLOAD_FRESH_MS) return;
+            }
+            if (map && typeof map === 'object') {
+                this.signupLevelMap = { guildId, map };
+            } else if (type === 'guild_characters_updated') {
+                this.signupLevelMap = { guildId, map: {} };
+            }
+        } catch (error) {
+            console.error('[GuildTrials] Reading the sign-up levels failed:', error);
+        }
+    }
+
+    /**
+     * The levels of the members signed up to one trial, for its record tile.
+     *
+     * Skilling reads each member's `skillingTrialLevel` and combat their
+     * `combatLevel`, out of the held map; who is signed up where comes from the
+     * XP tracker's sign-ups, as {@link participantCounts} counts them.
+     *
+     * @param {string} partyKey - The trial's hrid
+     * @param {'skilling'|'combat'} kind - Which ladder
+     * @param {string|number|null} guildId - The guild the record belongs to
+     * @param {Object} [tracker] - The XP tracker, injectable for tests
+     * @returns {Object<string, number>|null} `{characterId: level}`; `{}` when nobody is signed up, null when the
+     *   map or the roster has not been loaded (unknown, not empty), or is another guild's
+     */
+    _signupLevelsFor(partyKey, kind, guildId, tracker = guildXPTracker) {
+        try {
+            const held = this.signupLevelMap;
+            if (!held?.map || typeof held.map !== 'object') return null;
+            if (held.guildId !== null && guildId !== null && String(held.guildId) !== String(guildId)) return null;
+            const members = tracker?.getMemberList?.();
+            if (!Array.isArray(members) || !members.length) return null;
+
+            const week = tracker.getCurrentWeekStartAt?.() || null;
+            const levels = {};
+            for (const member of members) {
+                const meta = tracker.getMemberMeta?.(member.characterID) || member;
+                if (week && meta?.signupWeekStartAt !== week) continue;
+                const signedUp = kind === 'combat' ? meta?.signedUpCombatTrialHrid : meta?.signedUpSkillingTrialHrid;
+                if (signedUp !== partyKey) continue;
+                const entry = held.map[member.characterID];
+                const level = Number(kind === 'combat' ? entry?.combatLevel : entry?.skillingTrialLevel);
+                if (Number.isFinite(level) && level >= 1) levels[String(member.characterID)] = level;
+            }
+            return levels;
+        } catch (error) {
+            console.error('[GuildTrials] Reading who signed up to a trial failed:', error);
+            return null;
         }
     }
 
@@ -4131,6 +4256,10 @@ class GuildTrials {
                     this.currentTrials = null;
                     this.serverTierClears = null;
                     this.socketPhase = null;
+                }
+                // The sign-up levels carry their own guild; another's are not the arriving guild's
+                if (this.signupLevelMap && !snapshotNamesGuild({ guildId: this.signupLevelMap.guildId }, joined)) {
+                    this.signupLevelMap = null;
                 }
             } else {
                 // The name is adopted either way; a record under it that could
