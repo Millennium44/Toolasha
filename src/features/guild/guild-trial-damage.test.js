@@ -15,6 +15,14 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+    buildEndGuildBattle,
+    buildGuildBattleUpdated,
+    buildGuildTrialStatsUpdated,
+    buildGuildUpdated,
+    buildNewGuildBattle,
+    FIXTURE_GUILD_ID,
+} from '../../__fixtures__/wire/guild-trial.js';
 
 const game = vi.hoisted(() => ({
     clientData: {},
@@ -2520,10 +2528,11 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(game.storedStats.trials.badger.measured).toEqual(storedMeasured);
     });
 
+    // Player30 is the slot GUILD_BATTLE_TICKS[0] measures: stats rows must name people the fight measured
     const badgerStats = {
         guildTrialStatList: [
             {
-                characterId: 910011,
+                characterId: 900030,
                 trialHrid: '/guild_combat/badger',
                 damageDealt: 750_000,
                 healingDone: 0,
@@ -2542,7 +2551,7 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
 
         const report = guildTrialDamage.breakdown();
         expect(report.reported).toBe(null);
-        expect(report.storedStats.badger.reported.Tank.damage).toBe(750_000);
+        expect(report.storedStats.badger.reported.Player30.damage).toBe(750_000);
         expect(report.storedStats.badger.measured).toBe(null);
     });
 
@@ -2557,7 +2566,9 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
 
         vi.setSystemTime(at + 7 * 60_000);
         game.wsHandlers.guild_trial_stats_updated(badgerStats);
-        expect(guildTrialDamage.breakdown().reported).toEqual({ Tank: { damage: 750_000, healing: 0, taken: 2_000 } });
+        expect(guildTrialDamage.breakdown().reported).toEqual({
+            Player30: { damage: 750_000, healing: 0, taken: 2_000 },
+        });
         expect(guildTrialDamage.breakdown().storedStats.badger.measured).not.toBe(null);
     });
 
@@ -4058,5 +4069,266 @@ describe('the ability session learns the running trial from the lifecycle', () =
         } finally {
             guildTrialDamage.encounter = before;
         }
+    });
+});
+
+describe('trial stats are matched to their guild and fight, whenever they arrive (real wire shapes)', () => {
+    const at = new Date('2026-11-02T22:00:00Z').getTime();
+    const SWARM = '/guild_combat/swarm';
+    const JELLYFISH = '/guild_combat/jellyfish';
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        game.storedStats = null;
+        game.guildMembers = {};
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
+    /** Swings by slots 0 and 1 on the real tick shape, so both are measured */
+    function swing(tier, atk, hp, dmg) {
+        const late = buildGuildBattleUpdated('late');
+        const unit = late.pMap['37'];
+        const boss = late.mMap['3'];
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](
+            buildGuildBattleUpdated('late', {
+                battleId: 1,
+                tier,
+                pMap: { 0: { ...unit, atkCounter: atk }, 1: { ...unit, atkCounter: atk } },
+                mMap: { 0: { ...boss, cHP: hp, dmgCounter: dmg } },
+            })
+        );
+    }
+
+    /** The swarm fight, watched from tier 1, then ended by the game */
+    function watchSwarm({ end = true } = {}) {
+        game.wsHandlers.new_guild_battle(buildNewGuildBattle());
+        swing(1, 1, 300_000, 0);
+        vi.setSystemTime(at + 500);
+        swing(1, 2, 290_000, 1);
+        if (end) game.wsHandlers.end_guild_battle(buildEndGuildBattle());
+    }
+
+    /** A second, jellyfish fight with its own members */
+    function watchJellyfish(ids) {
+        const base = buildNewGuildBattle();
+        game.wsHandlers.new_guild_battle(
+            buildNewGuildBattle({
+                battleId: 2,
+                combatStartTime: new Date(at + 50 * 60_000).toISOString(),
+                players: ids.map((id) => ({
+                    ...structuredClone(base.players[0]),
+                    character: { ...base.players[0].character, id, name: `Jelly${id}` },
+                    name: `Jelly${id}`,
+                })),
+                monsters: [{ ...base.monsters[0], hrid: '/monsters/trial_jellyfish', name: 'Trial Jellyfish' }],
+            })
+        );
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](
+            buildGuildBattleUpdated('late', {
+                battleId: 2,
+                tier: 1,
+                mMap: { 0: buildGuildBattleUpdated('late').mMap['3'] },
+            })
+        );
+    }
+
+    const row = (message, characterId, hrid) =>
+        message.guildTrialStatList.find((r) => r.characterId === characterId && r.trialHrid === hrid);
+
+    test('an on-time message pairs, and a repeat of it changes nothing and adds no record', () => {
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated();
+        vi.setSystemTime(at + 28_000);
+        game.wsHandlers.guild_trial_stats_updated(message);
+        const first = guildTrialDamage.breakdown();
+        expect(first.reported.FixtureCharacter.damage).toBe(row(message, 900001, SWARM).damageDealt);
+        expect(first.reported.FixtureCharacter.taken).toBe(row(message, 900001, SWARM).premitigatedDamageTaken);
+        const measured = structuredClone(first.reportedMeasured);
+        expect(first.storedStats.swarm.measured).toEqual(measured);
+
+        // Opening the game's Stats re-sends it, minutes later
+        vi.setSystemTime(at + 9 * 60_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        const again = guildTrialDamage.breakdown();
+        expect(again.reported).toEqual(first.reported);
+        expect(again.reportedMeasured).toEqual(measured);
+        expect(Object.keys(again.storedStats)).toEqual(Object.keys(first.storedStats));
+    });
+
+    test('a message 10 minutes after the end pairs with the fight it describes', () => {
+        watchSwarm();
+        vi.setSystemTime(at + 10 * 60_000);
+        const message = buildGuildTrialStatsUpdated();
+        game.wsHandlers.guild_trial_stats_updated(message);
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported.Player02.damage).toBe(row(message, 900002, SWARM).damageDealt);
+        expect(report.storedStats.swarm.measured).not.toBe(null);
+    });
+
+    test('an automatic message followed by a later click: the click is a harmless repeat', () => {
+        watchSwarm();
+        vi.setSystemTime(at + 8_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        const auto = structuredClone(guildTrialDamage.breakdown().reported);
+        vi.setSystemTime(at + 20 * 60_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).toEqual(auto);
+    });
+
+    test('combat and skilling rows share a message: only combat is read, per trial, damage taken included', () => {
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated();
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.guild_trial_stats_updated(message);
+        const report = guildTrialDamage.breakdown();
+        const mine = message.guildTrialStatList.filter((r) => r.characterId === 900001 && r.trialHrid === SWARM);
+        expect(mine).toHaveLength(1);
+        expect(report.reported.FixtureCharacter).toEqual({
+            damage: mine[0].damageDealt,
+            healing: mine[0].healingDone,
+            taken: mine[0].premitigatedDamageTaken,
+        });
+        expect(mine[0].premitigatedDamageTaken).toBeGreaterThan(0);
+        // Skilling-only members have no combat row and never appear
+        const skillingOnly = message.guildTrialStatList.find(
+            (r) =>
+                r.trialHrid.startsWith('/guild_skilling/') &&
+                !message.guildTrialStatList.some(
+                    (c) => c.characterId === r.characterId && c.trialHrid.startsWith('/guild_combat/')
+                )
+        );
+        expect(skillingOnly).toBeDefined();
+        expect(Object.keys(report.storedStats)).toEqual(['swarm', 'jellyfish'].filter((k) => k in report.storedStats));
+    });
+
+    test('a character with two rows for one trial is summed', () => {
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated();
+        const split = { ...row(message, 900001, SWARM) };
+        message.guildTrialStatList.push({ ...split, damageDealt: 5, healingDone: 2, premitigatedDamageTaken: 3 });
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.guild_trial_stats_updated(message);
+        expect(guildTrialDamage.breakdown().reported.FixtureCharacter).toEqual({
+            damage: split.damageDealt + 5,
+            healing: split.healingDone + 2,
+            taken: split.premitigatedDamageTaken + 3,
+        });
+    });
+
+    test('another guild’s message is ignored outright, even inside the window', () => {
+        game.wsHandlers.guild_updated(buildGuildUpdated());
+        watchSwarm();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: FIXTURE_GUILD_ID + 1 }));
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).toBe(null);
+        expect(report.storedStats).toEqual({});
+        expect(warn).toHaveBeenCalled();
+
+        // Its own guild's copy, right after, still pairs
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
+    });
+
+    test('a message without a guildId, or to a client that does not know its guild, is accepted as before', () => {
+        watchSwarm();
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: null }));
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
+        guildTrialDamage.reported = null;
+        guildTrialDamage.reportedMeasured = null;
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: 4242 }));
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
+    });
+
+    test('Stats opened while a newer fight runs never overwrite it, and the older fight’s rows are filed apart', () => {
+        game.wsHandlers.guild_updated(buildGuildUpdated());
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated();
+        const jellyIds = [
+            ...new Set(message.guildTrialStatList.filter((r) => r.trialHrid === JELLYFISH).map((r) => r.characterId)),
+        ].slice(0, 3);
+        game.guildMembers = Object.fromEntries(jellyIds.map((id) => [id, `Jelly${id}`]));
+        vi.setSystemTime(at + 50 * 60_000);
+        watchJellyfish(jellyIds);
+
+        game.wsHandlers.guild_trial_stats_updated(message);
+        const report = guildTrialDamage.breakdown();
+        expect(report.encounter).toBe('jellyfish');
+        expect(report.reported).toBe(null);
+        expect(report.storedStats.jellyfish.measured).toBe(null);
+        expect(report.storedStats.swarm.measured).toBe(null);
+    });
+
+    test('a message for another run of the same trial, naming other people, is not paired', () => {
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated({
+            keep: (r) => r.trialHrid === SWARM && r.characterId > 900006,
+        });
+        game.guildMembers = Object.fromEntries(
+            message.guildTrialStatList.slice(0, 4).map((r) => [r.characterId, `Other${r.characterId}`])
+        );
+        vi.setSystemTime(at + 20_000);
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        game.wsHandlers.guild_trial_stats_updated(message);
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+        expect(info).toHaveBeenCalledWith(expect.stringContaining('matched no recorded fight'), expect.any(String));
+    });
+
+    test('no recorded fight: the rows are filed as a roster, nothing is paired, and it is logged', () => {
+        game.guildMembers = { 900001: 'FixtureCharacter' };
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).toBe(null);
+        expect(report.storedStats.swarm.reported.FixtureCharacter).toBeDefined();
+        expect(report.storedStats.swarm.measured).toBe(null);
+        expect(info).toHaveBeenCalled();
+    });
+
+    test('partial rows, and a member the rows leave out, still pair', () => {
+        watchSwarm();
+        const message = buildGuildTrialStatsUpdated({
+            keep: (r) => r.trialHrid === SWARM && r.characterId !== 900003 && r.characterId <= 900004,
+        });
+        vi.setSystemTime(at + 40_000);
+        game.wsHandlers.guild_trial_stats_updated(message);
+        const report = guildTrialDamage.breakdown();
+        expect(Object.keys(report.reported).sort()).toEqual(['FixtureCharacter', 'Player02', 'Player04']);
+        expect(report.reportedMeasured.FixtureCharacter).toBeDefined();
+    });
+
+    test('a personal fight after the window leaves an unreconciled ended trial alone', () => {
+        watchSwarm();
+        vi.setSystemTime(at + 10 * 60_000);
+        const before = guildTrialDamage.breakdown();
+        game.wsHandlers.new_battle({
+            battleId: 555,
+            monsters: [{ name: 'Cow', currentHitpoints: 10, maxHitpoints: 10 }],
+            players: { 0: { character: { name: 'Somebody' } } },
+        });
+        game.wsHandlers.battle_updated({ battleId: 556, pMap: {}, mMap: {} });
+        const after = guildTrialDamage.breakdown();
+        expect(after.reason).toBe(before.reason);
+        expect(after.monsterNames).toEqual(before.monsterNames);
+        expect(after.endedByGame).toBe(true);
+
+        // …and the message still pairs
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
     });
 });

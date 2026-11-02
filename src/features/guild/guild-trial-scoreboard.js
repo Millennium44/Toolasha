@@ -393,7 +393,7 @@ export function gameRateNote(span) {
     return `Per second over the whole ${fightSpanLabel(span)} fight (${how}), not over the stretch watched.`;
 }
 
-/** How long after the game ends a trial its totals are overdue: they have been seen landing 28 s after the end */
+/** How long after the game ends a trial its totals are overdue: they landed 28 s after the end in one trace and only on a Stats click in another */
 const STATS_OVERDUE_MS = 45_000;
 
 /**
@@ -417,7 +417,7 @@ export function statsPendingNote(breakdown, modalStats, now = Date.now()) {
         `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;" ` +
         'title="The game sends its own per-member totals only when its Combat Trial Stats panel is opened. ' +
         'Once they arrive they replace these figures here, in History and in the attendance ledger.">' +
-        'Open the game’s Combat Trial Stats to fetch the exact totals.</div>'
+        'These figures are estimates. Open Stats in the game to confirm them.</div>'
     );
 }
 

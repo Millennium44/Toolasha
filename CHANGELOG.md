@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Guild trial totals now match a fight by guild and trial whenever Stats is opened, ignore another guild's, and the panel says when figures are still estimates.
 - Refined capes show their real input cost in alchemy history again, so Net and Break-even are right; they had dropped to 0* with the base cape setting on Nothing.
 - Settings, What's New, the combat panels, market views, Net Worth History and task panels now use the game's plain dark frame and blue buttons, and Settings rows fit a phone better.
 - Guild trial cards line up and read Banked 18 · Best T20 with details on hover, Trial history is a table, finished cycles no longer say This week, and a missing point figure no longer reads as 0.

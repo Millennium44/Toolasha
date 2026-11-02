@@ -192,9 +192,11 @@ export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
  * The game's own end-of-trial per-member totals, keyed by character id:
  * `guildTrialStatList: [{ characterId, trialHrid, damageDealt, healingDone,
  * premitigatedDamageTaken }]`. This is the authoritative figure the plugin's
- * live measurement is estimating — captured so the two can be compared. Arrives
- * after {@link END_GUILD_BATTLE_MESSAGE} (27.9 s after it in the 2026-09-07
- * trace), and again whenever the game's own Stats panel is opened.
+ * live measurement is estimating — captured so the two can be compared. When it
+ * arrives is only partly known: 27.9 s after {@link END_GUILD_BATTLE_MESSAGE} in
+ * one 2026-09-07 trace, and on 2026-11-02 (test server) not for several minutes,
+ * until the player opened the game's Stats panel, which sends it again every
+ * time. Treat it as possibly click-only. The frame carries `guildId`.
  */
 export const GUILD_TRIAL_STATS_MESSAGE = 'guild_trial_stats_updated';
 
@@ -261,15 +263,19 @@ const ENCOUNTER_PROBE_MS = 1000;
  * How long after `end_guild_battle` the game's own per-member totals are still
  * expected.
  *
- * They were once seen about eight seconds later, and 27.9 s later in the
- * 2026-09-07 trace ({@link GUILD_TRIAL_STATS_MESSAGE}); a member who goes back
+ * Measured: 27.9 s later in the 2026-09-07 trace, and on 2026-11-02 not at all
+ * until Stats was opened ({@link GUILD_TRIAL_STATS_MESSAGE}); a member who goes back
  * to farming the moment the trial ends starts a personal fight inside that
  * window. Nothing of this trial may be reset or re-decided until the
  * reconciliation has landed, or the comparison the panel exists to show is
  * thrown away seconds before its other half arrives. Two minutes is four times
  * the slowest delay observed and still far short of anything that could swallow
- * a real second trial. It also bounds when that message may be paired with the
- * live tally at all — see {@link GuildTrialDamage#_reconcilable}.
+ * a real second trial. It is the whole rule only for a trial that ended without
+ * the game saying so (a stream that went quiet). A trial the game declared over
+ * keeps its record for the rest of its trial week, because the message arrives
+ * only when somebody opens the game's Stats and that was measured at several
+ * minutes after the end (2026-11-02, test server) — see
+ * {@link GuildTrialDamage#_lateStatsExpected}.
  */
 const RECONCILE_WINDOW_MS = 120_000;
 
@@ -940,6 +946,8 @@ class GuildTrialDamage {
          * fallback key before the guild is known. Set by {@link setGuildName}.
          */
         this.statsScope = { guildName: null, characterId: null };
+        /** The own guild's id as the latest `guild_updated` stated it; null until one arrives. Not per fight. */
+        this.ownGuildId = null;
         /**
          * Client minus server clock, from `serverClockOffset`: where a party's
          * countdown held, on this client's clock. A property of the connection,
@@ -1128,6 +1136,8 @@ class GuildTrialDamage {
          * kept so the two can be compared. Null until the stats message lands.
          */
         this.reported = null;
+        /** A stats message that arrived while the saved live tally was being read: `{data, characterId}` */
+        this.heldStats = null;
         /**
          * The live measurement snapshotted at the instant the reported stats
          * arrived, so the comparison survives the tally being reset next trial.
@@ -1275,6 +1285,7 @@ class GuildTrialDamage {
         this.onTrialStats = null;
         this.onGuildUpdated = null;
         this.serverClockOffsetMs = null;
+        this.ownGuildId = null;
         this.initialized = false;
         this.reset();
     }
@@ -1341,6 +1352,8 @@ class GuildTrialDamage {
      */
     _onGuildUpdated(data, { serverNow = null } = {}) {
         try {
+            const arrivingId = data?.guild?.id;
+            if (arrivingId !== undefined && arrivingId !== null && arrivingId !== '') this.ownGuildId = arrivingId;
             const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
             const receivedAt = Date.now();
             this.serverClockOffsetMs = serverClockOffset(read, receivedAt, this.serverClockOffsetMs);
@@ -1680,10 +1693,26 @@ class GuildTrialDamage {
      *
      * @param {Object} data - A `guild_trial_stats_updated` payload
      */
-    _onTrialStats(data) {
+    _onTrialStats(data, { replay = false } = {}) {
         try {
             const list = Array.isArray(data?.guildTrialStatList) ? data.guildTrialStatList : [];
             if (!list.length) return;
+
+            // Another guild's frame (the game sends one for whichever guild's Stats is
+            // viewed) says nothing about this guild's fight or its stored week.
+            // Measured on the test server only; the live server is assumed to send the same shape.
+            if (this._isOtherGuild(data?.guildId)) {
+                console.warn(
+                    `[GuildTrialDamage] Ignored trial stats for guild ${data.guildId}; this guild is ${this._ownGuildId()}`
+                );
+                return;
+            }
+            // The saved tally is still being read back: pairing now would find no fight to pair with.
+            // Replayed once the read decides (character identity re-checked there).
+            if (this._liveLoading && !replay) {
+                this.heldStats = { data, characterId: dataManager.getCurrentCharacterId?.() ?? null };
+                return;
+            }
 
             const grouped = {};
             for (const entry of list) {
@@ -1729,7 +1758,7 @@ class GuildTrialDamage {
             // trial; pairing it with the live tally would overwrite the week's
             // stored measurement with an unrelated partial one. Such a copy is
             // filed as a roster only.
-            const own = !this._reconcilable(now)
+            const candidate = !this._reconcilable(now)
                 ? null
                 : this.encounter
                   ? grouped[this.encounter]
@@ -1738,9 +1767,28 @@ class GuildTrialDamage {
                   : encounters.length === 1 && measuredAnything
                     ? encounters[0]
                     : null;
+            // …and only when its rows name the people this fight measured: a message
+            // for another run of the same trial (a repeat cycle) shares the trial
+            // hrid and nothing else
+            const own = candidate && this._rowsDescribeHeldFight(grouped[candidate]) ? candidate : null;
+            if (!own) {
+                console.info(
+                    '[GuildTrialDamage] Trial stats matched no recorded fight; filed as a roster only.',
+                    JSON.stringify({
+                        trials: encounters,
+                        held: this.encounter,
+                        ended: this.endedAt !== null,
+                        endedByGame: this.endedByGame,
+                        candidate: candidate || null,
+                    })
+                );
+            }
             if (own) {
+                const pairedBefore = Boolean(this.reported && this.reportedMeasured);
                 this.reported = grouped[own];
-                this.reportedMeasured = this._measuredByName();
+                // A repeat (the game re-sends the message each time its Stats are opened) refreshes the
+                // game's figures and keeps the snapshot already paired with them
+                this.reportedMeasured = pairedBefore ? this.reportedMeasured : this._measuredByName();
                 this._livePersist.note();
             }
 
@@ -1758,6 +1806,52 @@ class GuildTrialDamage {
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the trial stats failed:', error);
         }
+    }
+
+    /**
+     * The guild id this client belongs to, as far as it is known.
+     * @returns {string|number|null}
+     */
+    _ownGuildId() {
+        if (this.ownGuildId !== null) return this.ownGuildId;
+        const tracked = guildXPTracker.getOwnGuildID?.();
+        if (tracked !== undefined && tracked !== null && tracked !== '') return tracked;
+        return dataManager.characterData?.guild?.id ?? null;
+    }
+
+    /**
+     * Whether a stats frame names a guild other than this client's.
+     *
+     * A frame with no `guildId`, or a client that does not know its own, cannot be
+     * judged and is accepted as it was before the field was read.
+     *
+     * @param {*} guildId - The frame's `guildId`
+     * @returns {boolean}
+     */
+    _isOtherGuild(guildId) {
+        if (guildId === undefined || guildId === null || guildId === '') return false;
+        const own = this._ownGuildId();
+        return own !== null && String(own) !== String(guildId);
+    }
+
+    /**
+     * Whether one trial's stats rows name the people the held fight measured.
+     *
+     * At least half of the smaller side's names must appear on the other. A member
+     * the rows omit (left early, never credited) does not fail it, nor does a
+     * measured name the rows lack. With nothing measured, or no name resolved,
+     * there is nothing to compare and the trial hrid alone decides, as before.
+     *
+     * @param {Object|undefined} rows - `{name: {...}}` for one trial
+     * @returns {boolean}
+     */
+    _rowsDescribeHeldFight(rows) {
+        const reported = Object.keys(rows || {});
+        const measured = Object.keys(this._measuredByName());
+        if (!reported.length || !measured.length) return true;
+        const held = new Set(measured);
+        const shared = reported.filter((name) => held.has(name)).length;
+        return shared >= Math.ceil(Math.min(reported.length, measured.length) / 2);
     }
 
     /**
@@ -3151,6 +3245,22 @@ class GuildTrialDamage {
      * @param {number} generation - `_liveGeneration` when the read began
      */
     async _loadLive(generation) {
+        await this._readLive(generation);
+        // A stats message that came in mid-read is paired now that the read has decided, if
+        // it is still the same page, the same character and nothing reset the module since
+        const held = this.heldStats;
+        this.heldStats = null;
+        if (!held || generation !== this._liveGeneration) return;
+        const current = dataManager.getCurrentCharacterId?.() ?? null;
+        if (String(held.characterId ?? '') !== String(current ?? '')) return;
+        this._onTrialStats(held.data, { replay: true });
+    }
+
+    /**
+     * The read half of {@link _loadLive}.
+     * @param {number} generation - `_liveGeneration` when the read began
+     */
+    async _readLive(generation) {
         const characterId = this.statsScope.characterId ?? null;
         if (characterId === null || !liveSessionRestoreEnabled()) return;
         this._liveLoading = true;
@@ -3428,13 +3538,33 @@ class GuildTrialDamage {
     }
 
     /**
+     * Whether the held fight is one the game declared over and whose totals may still arrive.
+     *
+     * The game's totals came 27.9 s after the end in one recorded trial and, in
+     * another (2026-11-02), only when somebody opened its Stats panel minutes later.
+     * A fight the game itself declared over is still the fight held here until
+     * the next one arms (a new tier or fight clears `endedAt`), so its totals are
+     * paired, and a personal fight leaves its record alone, for the rest of that
+     * trial week. A quiet stream's ending may be a fight still running with the
+     * view shut, and keeps only {@link RECONCILE_WINDOW_MS}.
+     *
+     * @param {number} now - Clock
+     * @returns {boolean}
+     */
+    _lateStatsExpected(now) {
+        if (this.source !== 'spectated' || this.endedAt === null) return false;
+        return this.endedByGame === true && trialWeekStart(now) === trialWeekStart(this.endedAt);
+    }
+
+    /**
      * Whether a `guild_trial_stats_updated` can still be this fight's reconciliation.
      *
-     * Within {@link RECONCILE_WINDOW_MS} of the recorded end. With no end recorded
+     * Within {@link RECONCILE_WINDOW_MS} of the recorded end, or later for a fight
+     * the game declared over ({@link _lateStatsExpected}); either way it is paired
+     * only with the trial its rows name and the people the fight measured. With no end recorded
      * — the end message missed — the stream must have gone quiet, and recently:
      * a live stream is a fight still running, which no end-of-trial totals can
-     * describe. The 2026-09-07 trace put the totals 27.9 s after
-     * `end_guild_battle`. A client that never spectated keeps the old behaviour.
+     * describe. A client that never spectated keeps the old behaviour.
      *
      * @param {number} now - Clock
      * @returns {boolean}
@@ -3443,14 +3573,7 @@ class GuildTrialDamage {
         if (this.source !== 'spectated') return true;
         if (this.endedAt !== null) {
             if (now - this.endedAt <= RECONCILE_WINDOW_MS) return true;
-            // The game sends its totals only when somebody opens its Combat
-            // Trial Stats panel: 27.9 s after the end in one recorded trial, not
-            // until minutes later in another. A fight the game itself declared
-            // over is still the fight held here until the next one arms — a new
-            // tier or fight clears `endedAt` — so its totals are paired for the
-            // rest of that trial week. A quiet stream's ending may be a fight
-            // still running with the view shut, and keeps the short window.
-            return this.endedByGame === true && trialWeekStart(now) === trialWeekStart(this.endedAt);
+            return this._lateStatsExpected(now);
         }
         const lastAt = this.spectator.lastAt;
         if (!lastAt) return false;
@@ -3497,9 +3620,12 @@ class GuildTrialDamage {
     /**
      * Whether the game's own end-of-trial totals are still expected.
      *
-     * `guild_trial_stats_updated` lands some seconds after the trial ends
-     * (27.9 s in the 2026-09-07 trace), and this window is the reason a personal fight started in the
-     * meantime must not touch anything: the reconciliation the panel exists to
+     * `guild_trial_stats_updated` was measured 27.9 s after the end once (2026-09-07)
+     * and not until Stats was opened another time (2026-11-02). For this window a
+     * personal fight started in the meantime must not touch anything (it holds
+     * `_onNewBattle` and `_onBattleUpdated` and nothing else); past it,
+     * {@link _holdsUnreconciledRecord} keeps only the ended trial's displayed state
+     * untouched until the next trial, a reconciliation or the week's end. The reason: the reconciliation the panel exists to
      * show is half-arrived, and re-deciding the module's state on a zone battle
      * would archive the estimate against nothing.
      *
@@ -3509,6 +3635,23 @@ class GuildTrialDamage {
     _awaitingReconciliation(now = Date.now()) {
         if (!this.endedAt || this.reported) return false;
         return now - this.endedAt < RECONCILE_WINDOW_MS;
+    }
+
+    /**
+     * Whether an ended trial's record is still waiting for the game's totals
+     * and a personal fight must leave it alone.
+     *
+     * The window above holds everything for {@link RECONCILE_WINDOW_MS}. Past it,
+     * a trial the game declared over and nobody has reconciled keeps its record
+     * for its trial week ({@link _lateStatsExpected}), so a personal fight may
+     * not rewrite what the panel says about it (`reason`, `battleId`, the
+     * monster names) or reset it, unless the battle is itself a trial's.
+     *
+     * @param {number} [now=Date.now()] - Clock, injectable for tests
+     * @returns {boolean}
+     */
+    _holdsUnreconciledRecord(now = Date.now()) {
+        return !this.reported && this._lateStatsExpected(now);
     }
 
     /**
@@ -3547,6 +3690,9 @@ class GuildTrialDamage {
 
             const monsterNames = battleMonsterNames(data);
             const verdict = isTrialBattle({ monsterNames, trialNames: this.trialNames });
+            // Past the window the ended trial's record still waits for its totals;
+            // an ordinary zone fight changes nothing of it
+            if (!verdict.isTrial && this._holdsUnreconciledRecord()) return;
             this.monsterNames = monsterNames;
 
             this.battleId = data?.battleId ?? null;
@@ -3615,6 +3761,7 @@ class GuildTrialDamage {
             // trial's, so it is not counted. That is the reload-mid-trial case,
             // and measuring nothing there is the honest outcome
             if (data?.battleId !== this.battleId) {
+                if (this._holdsUnreconciledRecord()) return;
                 this.battleId = data?.battleId ?? null;
                 this.active = false;
                 this.reason =
