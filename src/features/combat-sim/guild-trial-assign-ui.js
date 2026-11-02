@@ -527,6 +527,12 @@ export class TrialAssignPlanner {
                 trials.map((t) => m.rates[t]),
             ]),
         ]);
+        // What the roster table shows: the above plus cells the optimizer never reads, so a change
+        // to these redraws the view without invalidating a recommendation
+        context.displaySignature = JSON.stringify([
+            context.signature,
+            members.map((m) => [m.id, m.combatTrial, m.role, m.rolePref, m.combatView, m.skillingView]),
+        ]);
         return context;
     }
 
@@ -712,14 +718,15 @@ export class TrialAssignPlanner {
      */
     inputsChanged() {
         if (this.controller || (this.sim.kind !== 'assign' && !this.result)) return;
-        const signature = this.context().signature;
+        const context = this.context();
+        const signature = context.signature;
         if (this.result && this.result.signature !== signature) {
             this.result = null;
             this.check = null;
             this.status = 'The roster, sign-ups, levels or readings changed since the last recommendation.';
             removeResultCards();
         }
-        if (this.sim.kind !== 'assign' || signature === this.drawnSignature) return;
+        if (this.sim.kind !== 'assign' || context.displaySignature === this.drawnSignature) return;
         const active = typeof document === 'undefined' ? null : document.activeElement;
         const typing =
             active?.closest?.('[data-trial-assign-root]') && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
@@ -752,7 +759,7 @@ export class TrialAssignPlanner {
         const busy = Boolean(this.controller);
         body.dataset.trialAssignRoot = 'true';
         const context = this.context();
-        this.drawnSignature = context.signature;
+        this.drawnSignature = context.displaySignature;
         const label = (trial) => trialLabel(trial, context.clientData);
         const rerender = () => this.sim.panel?.render();
         if (this.result && !busy && this.result.signature !== context.signature) {

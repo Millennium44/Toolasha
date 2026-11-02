@@ -802,6 +802,28 @@ describe('the Assign skilling view', () => {
         }
     });
 
+    test('a combat sign-up change redraws the roster but keeps the recommendation', async () => {
+        const { planner, shell, sim } = makeSim();
+        sim.panel.render();
+        await recommend(planner, shell);
+        const render = vi.spyOn(sim.panel, 'render');
+        const combatCell = () => shell.querySelector('tr[data-member-id="900002"] [data-combat-signup]').textContent;
+        const before = combatCell();
+        const result = planner.result;
+
+        META[900002] = { ...META[900002], signedUpCombatTrialHrid: '/guild_combat/chameleon' };
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(1);
+        expect(combatCell()).not.toBe(before);
+        // The optimizer does not read it, so the recommendation stands
+        expect(planner.result).toBe(result);
+        expect(shell.querySelector('[data-trial-assign="result"]')).not.toBeNull();
+
+        // Nothing changed: no further redraw
+        planner.inputsChanged();
+        expect(render).toHaveBeenCalledTimes(1);
+    });
+
     test('outside the Assign view nothing is computed or drawn', () => {
         const { planner, sim } = makeSim();
         sim.kind = 'skilling';
