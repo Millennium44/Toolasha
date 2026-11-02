@@ -26,6 +26,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Contributor checklist covers today's review themes
 
 - AGENTS.md's pre-PR questions now also ask about partial totals, caches built from another module's output, threading a new dimension through every reader, merges that drop a newer field, code a fix wakes up, and queued work that outlives the setting that allowed it.
+- Review rounds: from the second round, only P1s and player-facing number changes are fixed before merge (the rest go to follow-up issues), and a PR that reshapes stored data says how older and newer builds read it.
 
 ### Combat readers use the ability bar the game sends
 
