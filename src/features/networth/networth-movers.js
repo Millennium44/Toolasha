@@ -293,7 +293,10 @@ export function diffRecords(prev, cur, limit = TOP_COUNT) {
 
     // What is not itemized: houses, abilities and shrines, excluded items, and value rounding
     const house = (cur.house || 0) - (prev.house || 0);
-    const abilities = (cur.abilities || 0) - (prev.abilities || 0);
+    // With books held as fixed assets, `abilities` includes their value and the rows list them too (kind `k`):
+    // the itemized part comes out here so it is not counted twice
+    const bookValue = (record) => record.rows.reduce((sum, row) => (row[0] === 'k' ? sum + row[4] : sum), 0);
+    const abilities = (cur.abilities || 0) - (prev.abilities || 0) - (bookValue(cur) - bookValue(prev));
     const shrines = cur.shrines != null && prev.shrines != null ? cur.shrines - prev.shrines : 0;
     const excluded = cur.total - cur.nonExcluded - (prev.total - prev.nonExcluded);
     const fixedDelta = house + abilities + shrines + excluded;

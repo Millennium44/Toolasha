@@ -625,7 +625,9 @@ class NetworthHistory {
     _adoptPulled(charId, points, removed = []) {
         if (charId !== this.characterId) return;
         const gone = new Set(removed.map((point) => point?.t));
-        const have = new Set(this.history.map((point) => point.t));
+        // Taken after the removals: a pull that replaces a point (a marker carried onto it, a merged marker)
+        // brings the new object at a timestamp it also removes, and that replacement has to be accepted
+        const have = new Set(this.history.filter((point) => !gone.has(point.t)).map((point) => point.t));
         const added = points.filter((point) => point && typeof point.t === 'number' && !have.has(point.t));
         if (added.length === 0 && gone.size === 0) return;
         this.history = pruneHistory(
