@@ -80,6 +80,96 @@ export const DECLINE_FIT_INTERVALS = 4;
  */
 export const MAX_DECLINE_PER_TIER = 0.5;
 
+/*
+ * The Expected tier as a range, until the rate has shown it is falling.
+ *
+ * Source of every width below: the replay of this estimator on stored tier
+ * stamps (29 trials, 412 points; the "trial estimate replay" measurement of
+ * 2026-11-02), read as the symmetric half-width that covered 80% of the errors
+ * by the state of the rate. The widths rest on few trials, mostly one guild on
+ * the test server (three live combat trials, nine live points in the flat
+ * state), so they are a first reading and not a fitted interval.
+ */
+
+/** A rate below this fraction of the best seen has started to fall (the replay's onset rule) */
+export const RANGE_ONSET_FRACTION = 0.85;
+
+/** Intervals the rate must have been falling for before the estimate settles */
+export const RANGE_SETTLED_FALLING_INTERVALS = 3;
+
+/** Tiers done after which the estimate settles whatever the rate did (replay: 13-16 tiers, half-width 1) */
+export const RANGE_SETTLED_TIERS_DONE = 13;
+
+/**
+ * Half-width in tiers with one measured interval, which is a reading and not a
+ * trend. Replay: 80% half-width 6.0 over 29 trials at one interval. The live
+ * combat trials' flat-state need (6.0, three trials) is this same case, so live
+ * gets no width of its own.
+ */
+export const RANGE_HALF_WIDTH_ONE_INTERVAL = 6;
+
+/** Half-width in tiers while the rate is flat or has only just started to fall (replay: 3.0 for both) */
+export const RANGE_HALF_WIDTH_UNSETTLED = 3;
+
+/** Half-width in tiers once the rate has fallen for {@link RANGE_SETTLED_FALLING_INTERVALS} (replay: 1.0) */
+export const RANGE_HALF_WIDTH_SETTLED = 1;
+
+/**
+ * How many of the newest intervals have been running below the best rate.
+ *
+ * Counted from the first interval whose rate fell under
+ * {@link RANGE_ONSET_FRACTION} of the best before it, onset interval included.
+ * A rate that fell and has come back to within that fraction of its best is
+ * not falling now, and reads 0 again: the estimate is no surer than it was
+ * while flat.
+ *
+ * @param {Array<{sharePerMs: number}>} rates - From {@link tierFillRates}, ascending
+ * @returns {number} 0 while flat, rising or recovered
+ */
+export function fallingIntervals(rates) {
+    const list = (rates || []).map((rate) => rate?.sharePerMs).filter((rate) => rate > 0);
+    if (list.length < 2) return 0;
+    let best = list[0];
+    let onset = -1;
+    for (let i = 1; i < list.length; i += 1) {
+        if (onset < 0 && list[i] < RANGE_ONSET_FRACTION * best) onset = i;
+        best = Math.max(best, list[i]);
+    }
+    if (onset < 0 || list[list.length - 1] >= RANGE_ONSET_FRACTION * best) return 0;
+    return list.length - onset;
+}
+
+/**
+ * How wide the Expected tier is, from what the rates show and how far the trial has got.
+ *
+ * @param {Object} state - What the rule reads
+ * @param {number} state.intervals - Measured intervals
+ * @param {number} state.falling - From {@link fallingIntervals}
+ * @param {number} state.banked - Tiers banked
+ * @param {boolean} [state.overdue=false] - The tier in progress has run past what its rate says
+ * @returns {{halfWidth: number, state: 'one-interval'|'flat'|'falling'|'settled'}} Tiers either side, and why
+ */
+export function rangeHalfWidth({ intervals, falling, banked, overdue = false }) {
+    let width;
+    let why;
+    if (intervals < 2) {
+        width = RANGE_HALF_WIDTH_ONE_INTERVAL;
+        why = 'one-interval';
+    } else if (falling >= RANGE_SETTLED_FALLING_INTERVALS || banked >= RANGE_SETTLED_TIERS_DONE) {
+        width = RANGE_HALF_WIDTH_SETTLED;
+        why = 'settled';
+    } else {
+        width = RANGE_HALF_WIDTH_UNSETTLED;
+        why = falling > 0 ? 'falling' : 'flat';
+    }
+    // The tier in hand is taking longer than its own rate says: the figures are stale, so no better than unsettled
+    if (overdue && width < RANGE_HALF_WIDTH_UNSETTLED) {
+        width = RANGE_HALF_WIDTH_UNSETTLED;
+        why = falling > 0 ? 'falling' : 'flat';
+    }
+    return { halfWidth: width, state: why };
+}
+
 /**
  * The tier badges this record has been *watched* changing to, with their times —
  * or, where the guild payload stated it, when the server says the tier banked
@@ -333,6 +423,57 @@ export function rateAtTier(fit, tier) {
 }
 
 /**
+ * The tooltip sentence for an Expected range: why it is that wide.
+ *
+ * @param {{low: number, high: number, halfWidth: number, state: string}|null} range - From {@link tierTimingForecast}
+ * @returns {string} Empty when there is no spread to explain
+ */
+export function rangeHover(range) {
+    if (!range || !(range.high > range.low)) return '';
+    const why =
+        range.state === 'one-interval'
+            ? 'Only one tier has been timed, so a trend cannot be told from a single reading yet'
+            : range.state === 'flat'
+              ? 'The rate has not started falling, so nothing says where it will'
+              : range.state === 'falling'
+                ? 'The rate has only just started falling, so how far it goes is still open'
+                : `The rate has been falling long enough that the estimate holds to about ${range.halfWidth} tier${range.halfWidth === 1 ? '' : 's'} either side`;
+    return (
+        `\n${why}: the team could end anywhere from T${range.low} to T${range.high}. ` +
+        'The width comes from replaying this estimate on past trials, mostly one guild on the test server, so ' +
+        'it is a first reading.'
+    );
+}
+
+/**
+ * The last tier a trial would bank in the time left if it held one rate.
+ *
+ * The upper bound the Expected range is held under: it cannot reach further
+ * than the fastest tier this trial has shown would carry it.
+ *
+ * @param {Object} walk - The walk
+ * @param {'skilling'|'combat'} walk.kind - Which ladder
+ * @param {number} walk.currentTier - The tier in progress
+ * @param {number} walk.remainingShare - What is left of it, in shares
+ * @param {number} walk.rate - Shares per millisecond
+ * @param {number} walk.timeLeftMs - Time left in the hour
+ * @returns {number} The last tier banked, or the tier before the one in progress when none fits
+ */
+export function flatWalkTier({ kind, currentTier, remainingShare, rate, timeLeftMs }) {
+    let reached = currentTier - 1;
+    if (!(rate > 0) || !Number.isFinite(remainingShare) || !Number.isFinite(timeLeftMs)) return reached;
+    let spent = 0;
+    let need = remainingShare;
+    for (let tier = currentTier; tier <= TRIAL_MAX_TIER; tier += 1) {
+        spent += need / rate;
+        if (spent > timeLeftMs) break;
+        reached = tier;
+        need = tierWorkShape(kind, tier + 1);
+    }
+    return reached;
+}
+
+/**
  * A rate in shares of the first tier per millisecond, as work or damage a second.
  *
  * A share is the first tier's total before participants, on whichever ladder, so
@@ -522,6 +663,28 @@ export function tierTimingForecast(
         limitedBy = 'no-clock';
     }
 
+    // The Expected tier as a range. Absent where the walk could not run to the
+    // end of the hour (no clock, an unknown tier ahead): there is no point to widen.
+    const expectedPoint = walked.length ? walked[walked.length - 1].tier : banked || null;
+    let range = null;
+    if (
+        Number.isFinite(timeLeftMs) &&
+        timeLeftMs >= 0 &&
+        Number.isFinite(expectedPoint) &&
+        limitedBy !== 'no-clock' &&
+        limitedBy !== 'unknown-next-tier'
+    ) {
+        const overdue = Number.isFinite(shareNow) && shareNow > 0 && Number.isFinite(needNow) && doneShare >= needNow;
+        const falling = fallingIntervals(rates);
+        const { halfWidth, state } = rangeHalfWidth({ intervals: rates.length, falling, banked, overdue });
+        // No higher than the fastest rate this trial has measured would carry it in the time left
+        const fastest = Math.max(...rates.map((rate) => rate.sharePerMs));
+        const ceiling = flatWalkTier({ kind, currentTier, remainingShare, rate: fastest, timeLeftMs });
+        const low = Math.max(banked, expectedPoint - halfWidth);
+        const high = Math.min(TRIAL_MAX_TIER, expectedPoint + halfWidth, Math.max(ceiling, expectedPoint));
+        range = { low, high: Math.max(low, high), halfWidth, state, falling };
+    }
+
     // Printed only where the first tier's total is known. The walk above never
     // needed it; a "12.4 work/s" caption does.
     const workPerSecond = pricedPerSecond(shareNow, workBase, participants);
@@ -539,7 +702,10 @@ export function tierTimingForecast(
         lastTierMs: rates[rates.length - 1].ms,
         etaMsToNextTier,
         tiersBeforeEnd: Number.isFinite(timeLeftMs) ? walked.length : null,
-        expectedTier: walked.length ? walked[walked.length - 1].tier : banked || null,
+        expectedTier: expectedPoint,
+        // The same estimate as tiers either side of it, with why it is that wide; null where there is no point to widen
+        range,
+        tiersBeforeEndRange: range ? { low: range.low - banked, high: range.high - banked } : null,
         partialFraction,
         clears: walked,
         limitedBy,
@@ -586,5 +752,6 @@ export function tierTimingAsForecast(timing) {
         // to print the top of the ladder as if it were still ahead
         atFinalTier: timing.atFinalTier === true,
         measured: timing.measured,
+        range: timing.range ?? null,
     };
 }

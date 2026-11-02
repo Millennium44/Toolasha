@@ -751,7 +751,11 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
         // …and the expected tier is back, which is what an unjoined card lost
         expect(html).toContain('Expected');
         expect(html).not.toContain('not projectable');
-        expect(html).toContain(`~T${timing.expectedTier}`);
+        // Two timed badges are one interval: the end is a range, not a tier
+        expect(timing.range).toMatchObject({ state: 'one-interval' });
+        expect(html).toContain(`~T${timing.range.low}–${timing.range.high}`);
+        expect(timing.range.low).toBeLessThanOrEqual(timing.expectedTier);
+        expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
         expect(timing.expectedTier).toBeGreaterThan(18);
     });
 
@@ -872,8 +876,9 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
 
         expect(text).toContain('Last tier T18 took 8m 45s');
         expect(text).toMatch(/Next tier in ~1[12]m/);
-        expect(text).toContain('Before it ends ~1 more tier');
-        expect(text).toContain('~T19');
+        // Four timed intervals, the rate falling: the range is ±1 around the T19 the walk reaches
+        expect(text).toContain('Before it ends ~0–2 more tiers');
+        expect(text).toContain('Expected ~T18–20');
         const falling = Number(text.match(/falling ~(\d+)%\/tier/)?.[1]);
         expect(falling).toBeGreaterThan(0);
         expect(falling).toBeLessThanOrEqual(50);
@@ -8076,7 +8081,11 @@ describe('a combat trial only mates joined', () => {
         });
         expect(html).not.toContain('On pace for');
         expect(html).toContain(`Expected`);
-        expect(html).toContain(`~T${timing.expectedTier}`);
+        // Two timed clears at a flat rate: stated as the range it can end in, with the point inside it
+        expect(timing.range.high).toBeGreaterThan(timing.range.low);
+        expect(html).toContain(`~T${timing.range.low}–${timing.range.high}`);
+        expect(timing.range.low).toBeLessThanOrEqual(timing.expectedTier);
+        expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
     });
 
     test('a scheduled trial is forecast only from the loadouts of members signed up for it', async () => {

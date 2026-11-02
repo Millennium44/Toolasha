@@ -162,6 +162,7 @@ import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
     foldServerTierClears,
     INIT_PAYLOAD_FRESH_MS,
+    rangeHover,
     serverClockOffset,
     tierClearTimes,
     tierTimingAsForecast,
@@ -1530,13 +1531,19 @@ export function renderTrialBlock(
                 );
             }
             if (!atFinalTier && Number.isFinite(loose.tiersBeforeEnd)) {
+                // A wide estimate is a range of tiers, never a count stated as if it were sure
+                const spread = loose.tiersBeforeEndRange;
+                const ranged = spread && spread.high > spread.low;
                 rows.push(
                     line(
                         'Before it ends',
-                        `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
+                        ranged
+                            ? `~${spread.low}–${spread.high} more tiers`
+                            : `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
                         DIM,
                         'Walked one tier at a time for the rest of the hour, each priced at its own projected ' +
-                            'rate — not a time divided by a flat one. A tier only counts when it fits whole.'
+                            'rate — not a time divided by a flat one. A tier only counts when it fits whole.' +
+                            (ranged ? rangeHover(loose.range) : '')
                     )
                 );
             }
@@ -1742,11 +1749,13 @@ export function renderTrialBlock(
         // needs a live bar. An unjoined card has none, and reaching for it
         // unguarded is what turned a restored Expected row into a thrown render.
         const flat = analysis.pace ? analysis.pace.tiersCleared : null;
+        // Until the rate has shown it is falling the end is a range, not a tier
+        const range = timing && forecast.range && forecast.range.high > forecast.range.low ? forecast.range : null;
         rows.push(
             line(
                 slowdown || timing ? 'Expected' : 'On pace for',
                 slowdown || timing
-                    ? `~T${cleared}${margin}`
+                    ? `~T${range ? `${range.low}–${range.high}` : cleared}${margin}`
                     : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
                 forecast.source === 'estimated' ? WARN : GOOD,
                 timing
@@ -1761,7 +1770,8 @@ export function renderTrialBlock(
                                 'any further.'
                               : '\nOne tier has been timed, so the rate is held flat — a second timed tier ' +
                                 'is what turns a reading into a trend.') +
-                          '\nThe whole guild’s pace, not your own contribution.'
+                          '\nThe whole guild’s pace, not your own contribution.' +
+                          rangeHover(range)
                     : forecast.source === 'measured'
                       ? 'Walked from the work or health each tier actually needs — derived from the game’s own ' +
                         'data and rules, not fitted — at the rate this party is measured to be producing.' +
