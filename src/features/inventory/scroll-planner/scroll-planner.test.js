@@ -835,6 +835,27 @@ describe('ScrollPlanner', () => {
             }
         });
 
+        test('a narrow-screen sheet puts the skills on a second line, and goes with the modal', () => {
+            const sheet = modal().querySelector('style');
+            expect(sheet.textContent).toContain('@media (max-width: 768px)');
+            expect(sheet.textContent).toMatch(
+                /\.toolasha-scroll-planner-row \{\s*grid-template-columns: minmax\(0, 1fr\) auto auto auto !important/
+            );
+            expect(sheet.textContent).toMatch(/row-skills \{\s*grid-row: 2; grid-column: 1 \/ -1;\s*flex-wrap: wrap/);
+            // Every row still has the five cells the sheet and the desktop columns expect
+            for (const r of modal().querySelectorAll('.toolasha-scroll-planner-row')) {
+                expect(r.children).toHaveLength(5);
+                expect(
+                    r.children[1].matches(
+                        '.toolasha-scroll-planner-row-skills, .toolasha-scroll-planner-row-skills-empty'
+                    )
+                ).toBe(true);
+            }
+            planner.closeModal();
+            expect(document.querySelector('.toolasha-scroll-planner-modal')).toBeNull();
+            expect(document.querySelector('style')).toBeNull();
+        });
+
         test('the clear button after the skills empties every row and the selection, keeping N', () => {
             setN('30');
             skillButton('combat').click();

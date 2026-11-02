@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Scroll Planner fits a phone
+
+- On a narrow screen each scroll's name, owned count and number box share one line, with its skills on a second, so entering a count no longer needs a side-scroll.
+
 ### Enhancement calculator uses the full panel on a phone
 
 - On a narrow screen the calculator sits under both columns instead of in the 158 px right one, so the cost and protect-from tables show far more columns.

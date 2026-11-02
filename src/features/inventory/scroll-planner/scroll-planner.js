@@ -16,6 +16,7 @@
 import config from '../../../core/config.js';
 import dataManager from '../../../core/data-manager.js';
 import domObserver from '../../../core/dom-observer.js';
+import { MARKET_MOBILE_QUERY } from '../../market/market-mobile-layout.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { getIconHref, getItemHridFromIconHref, getItemHridFromName } from '../../../utils/game-lookups.js';
 import { itemHridFromIcon } from '../../../utils/item-icon.js';
@@ -68,6 +69,30 @@ const SKILLS_COLUMN = '150px';
 function rowColumns(withSkills) {
     return [NAME_COLUMN, withSkills ? SKILLS_COLUMN : null, '84px', '64px', 'auto'].filter(Boolean).join(' ');
 }
+
+/**
+ * On a narrow screen the fixed columns (172 + 150 + 84 + 64 + All, about 560px) are wider than the
+ * panel and the body scrolled sideways, which put the quantity box off screen. There the row is two
+ * lines: name | Owned | quantity | All, then the skills (icons wrap, text wraps) across the full
+ * width. !important because the desktop widths are inline styles. The sheet lives inside the modal,
+ * so it goes when the modal does.
+ */
+const MODAL_CONTENT_CLASS = 'toolasha-scroll-planner-content';
+const NARROW_CSS = `
+@media ${MARKET_MOBILE_QUERY} {
+    .${MODAL_CONTENT_CLASS} { padding: 12px !important; box-sizing: border-box; }
+    .${MODAL_CONTENT_CLASS} .toolasha-scroll-planner-quickfill { flex-wrap: wrap; }
+    .${MODAL_CONTENT_CLASS} .toolasha-scroll-planner-row {
+        grid-template-columns: minmax(0, 1fr) auto auto auto !important;
+        row-gap: 2px;
+    }
+    .${MODAL_CONTENT_CLASS} .toolasha-scroll-planner-row-skills {
+        grid-row: 2; grid-column: 1 / -1;
+        flex-wrap: wrap; white-space: normal !important; overflow: visible !important;
+        text-overflow: clip !important; padding: 0 6px 4px;
+    }
+    .${MODAL_CONTENT_CLASS} .toolasha-scroll-planner-row-skills-empty { display: none; }
+}`;
 
 const TEXT = {
     planButton: 'Plan scrolls',
@@ -974,6 +999,10 @@ class ScrollPlanner {
         this.modal.replaceChildren();
 
         const content = document.createElement('div');
+        content.className = MODAL_CONTENT_CLASS;
+        const narrowStyle = document.createElement('style');
+        narrowStyle.textContent = NARROW_CSS;
+        content.appendChild(narrowStyle);
         content.style.cssText = `
             background: #2a2a2a;
             border-radius: 8px;
@@ -1096,10 +1125,17 @@ class ScrollPlanner {
 
         // The skills column holds a cell on every row while it exists, so the columns line up
         if (coveredSkills.length > 0) {
-            row.appendChild(this.buildRowSkills(itemHrid, coveredSkills) || document.createElement('span'));
+            let skillsCell = this.buildRowSkills(itemHrid, coveredSkills);
+            if (!skillsCell) {
+                // Placeholder keeps the desktop columns aligned; hidden on a narrow screen
+                skillsCell = document.createElement('span');
+                skillsCell.className = 'toolasha-scroll-planner-row-skills-empty';
+            }
+            row.appendChild(skillsCell);
         }
 
         const ownedLabel = document.createElement('span');
+        ownedLabel.className = 'toolasha-scroll-planner-owned';
         ownedLabel.textContent = `Owned: ${owned}`;
         ownedLabel.style.cssText = 'color: #aaa; text-align: right; white-space: nowrap;';
         row.appendChild(ownedLabel);
