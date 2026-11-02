@@ -101,7 +101,7 @@ describe('pastCycles', () => {
 
         // Told apart on the line by when each ended; live lines print as before
         const lines = pastCycles([first, second], now).map((c) => pastWeekLine(summariseArchivedCycle(c, { now })));
-        expect(lines[0]).toMatch(/^This week \(ended .+\) · combat T5/);
+        expect(lines[0]).toMatch(/^Earlier this week \(ended .+\) · combat T5/);
         expect(lines[0]).not.toBe(lines[1]);
     });
 

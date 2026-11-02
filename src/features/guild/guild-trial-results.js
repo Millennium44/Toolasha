@@ -50,6 +50,7 @@ import { matchTrialHrid } from './guild-trials-scrape.js';
 import {
     FOREIGN_CYCLE_REASON,
     cardClearedTier,
+    cycleEndLabel,
     describeCycleAge,
     serverClearedTier,
     statesPoints,
@@ -327,7 +328,10 @@ export function resultTier(result) {
 export function resultPoints(result, buildersHallBonus = null) {
     const tier = resultTier(result);
     const cardSawIt = Number.isFinite(result?.cardTier) && result.cardTier === tier;
-    if (cardSawIt && Number.isFinite(result?.points)) return { points: result.points, derived: false };
+    // A zero above T0 is a card zeroed by the cycle's roll, not a result: every
+    // tier pays something, so it is priced off the ladder or left unknown
+    const statedZero = result?.points === 0 && tier > 0;
+    if (cardSawIt && Number.isFinite(result?.points) && !statedZero) return { points: result.points, derived: false };
     if (!Number.isFinite(tier) || !Number.isFinite(buildersHallBonus) || buildersHallBonus <= -1) return null;
     return { points: guildPoints(trialBasePoints(result.kind, tier), buildersHallBonus), derived: true };
 }
@@ -336,18 +340,10 @@ export function resultPoints(result, buildersHallBonus = null) {
  * When a cycle was, as the history prints it.
  * @param {{weekStart: number, cycleFrom: number|null}} cycle - A cycle
  * @param {number} now - Clock
- * @returns {string} e.g. `Last week`, `This week (ended Tue 3:00 PM)`
+ * @returns {string} e.g. `Last week`, or `Tue 3:00 PM` on the test server
  */
 function cycleLabel(cycle, now) {
-    const age = describeCycleAge({ weekStart: cycle.weekStart }, now) || '—';
-    const when = age.charAt(0).toUpperCase() + age.slice(1);
-    if (!Number.isFinite(cycle.cycleFrom)) return when;
-    const ended = new Date(cycle.cycleFrom).toLocaleString('en-US', {
-        weekday: 'short',
-        hour: 'numeric',
-        minute: '2-digit',
-    });
-    return `${when} (ended ${ended})`;
+    return cycleEndLabel(describeCycleAge({ weekStart: cycle.weekStart }, now), cycle.cycleFrom);
 }
 
 /**
@@ -440,18 +436,46 @@ function tierCell(week) {
 export const INLINE_CYCLES = 6;
 
 /**
+ * A trial's last cycles as plain tiers, newest first.
+ * @param {Object} row - A row from {@link trialResultsHistory}
+ * @param {number} [inline] - How many cycles to show
+ * @returns {string} e.g. `T20 · T20 · —`, with `+3 earlier` after them when some are left out
+ */
+export function trialHistoryTiers(row, inline = INLINE_CYCLES) {
+    const shown = (row?.weeks || []).slice(0, inline).map(tierCell);
+    const hidden = Math.max(0, (row?.weeks || []).length - inline);
+    return [...shown, ...(hidden ? [`+${hidden} earlier`] : [])].join(' · ');
+}
+
+/**
+ * A trial's best tier, without the date (that is the hover's).
+ * @param {Object} row - A row from {@link trialResultsHistory}
+ * @returns {string} `T20`, or "—" when no cycle has a result
+ */
+export function trialHistoryBest(row) {
+    return row?.best ? `T${row.best.tier}` : '—';
+}
+
+/**
+ * Where a cycle label reads inside a sentence: a relative age ("Last week") drops
+ * its capital, a plain end time ("Mon 3:00 PM") keeps it.
+ * @param {string} label - A cycle label
+ * @returns {string} The label for the middle of a sentence
+ */
+function inSentence(label) {
+    return /^[A-Z][a-z]{2} \d/.test(label) ? label : `${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
+
+/**
  * A trial's history as one compact line: its last cycles, newest first, then its best.
+ * Used by the text report; the panel draws {@link trialHistoryTiers} and {@link trialHistoryBest}.
  * @param {Object} row - A row from {@link trialResultsHistory}
  * @param {number} [inline] - How many cycles to show
  * @returns {string} e.g. `T7 · T9 · — · T8 · best T9 (2 weeks ago)`
  */
 export function trialHistoryCells(row, inline = INLINE_CYCLES) {
-    const shown = (row?.weeks || []).slice(0, inline).map(tierCell);
-    const hidden = Math.max(0, (row?.weeks || []).length - inline);
-    const best = row?.best
-        ? `best T${row.best.tier} (${row.best.label.charAt(0).toLowerCase()}${row.best.label.slice(1)})`
-        : 'best —';
-    return [...shown, ...(hidden ? [`+${hidden} earlier`] : []), best].join(' · ');
+    const best = row?.best ? `best T${row.best.tier} (${inSentence(row.best.label)})` : 'best —';
+    return [trialHistoryTiers(row, inline), best].filter(Boolean).join(' · ');
 }
 
 /**
@@ -462,15 +486,17 @@ export function trialHistoryCells(row, inline = INLINE_CYCLES) {
 export function trialHistoryDetail(row) {
     const lines = (row?.weeks || []).map((week) => {
         if (!Number.isFinite(week.tier)) return `${week.label}: —`;
+        // An unknown figure is "—", never 0: a tier above T0 always paid something
         const points = week.points
-            ? ` · ${week.points.derived ? '~' : ''}${formatWithSeparator(Math.round(week.points.points))} pts`
-            : '';
-        return `${week.label}: T${week.tier}${points}`;
+            ? `${week.points.derived ? '~' : ''}${formatWithSeparator(Math.round(week.points.points))} pts`
+            : '— pts';
+        return `${week.label}: T${week.tier} · ${points}`;
     });
     return [
         `${row?.name ?? 'Trial'} — tier reached each finished cycle, newest first.`,
-        '"—" is a cycle this client never saw a result for; T0 is a real result.',
+        '"—" is a cycle this client never saw a result for, or a points figure it never saw; T0 is a real result.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',
+        ...(row?.best ? [`Best: T${row.best.tier}, ${inSentence(row.best.label)}.`] : []),
         '',
         ...lines,
     ].join('\n');

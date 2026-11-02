@@ -108,6 +108,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { isTestServer } from '../../utils/game-server.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 import { formatEta } from '../../utils/progress-eta.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -208,8 +209,10 @@ import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle 
 import {
     historyRowFor,
     resultCycleCap,
+    trialHistoryBest,
     trialHistoryCells,
     trialHistoryDetail,
+    trialHistoryTiers,
     trialResultsHistory,
     trialResultsOf,
 } from './guild-trial-results.js';
@@ -294,6 +297,9 @@ const WORK_BASE_VERSION = 2;
 
 /** What a card's level line looks like, for finding the node the tier badge belongs on */
 const LEVEL_LINE_RE = /Lv\.\s*\d+/;
+
+/** Cycles the Trial history table has a column for; earlier ones are in each row's hover */
+const TRIAL_HISTORY_COLUMNS = 5;
 
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
@@ -1110,32 +1116,6 @@ function exact(value) {
 }
 
 /**
- * Longest a value can be before the row stacks instead of sitting in columns.
- *
- * "106 work/s" is a figure and belongs in a column beside its label. Anything
- * much longer is a phrase, and a phrase in the right-hand column of a block
- * beside a 126px card leaves nothing for the label — which produced two
- * successive reported screenshots. First a tall ragged noodle with two words per
- * line; then, after the value was told not to wrap, labels ellipsized past
- * recognition: `C… | 0 tiers → T1 (Lv.100)`, `Ban… | tier not seen yet`.
- *
- * A label cut to one letter is worse than either. So the threshold is low enough
- * that a phrase gets the full width with its label above it, and the label in
- * the column form is allowed to *wrap* rather than being cut — these are two-word
- * labels and two lines of "On pace for" reads perfectly well.
- */
-const VALUE_MAX_CHARS = 16;
-
-/**
- * Longest a label can be before its row stacks.
- *
- * "Expected" and "On pace for" fit beside a figure; "Next tier work (T3)" does
- * not, and squeezing it in is what produced a wrapped label with a single
- * letter on the second line.
- */
-const LABEL_MAX_CHARS = 12;
-
-/**
  * Text made safe to place between tags.
  * @param {*} text - Plain text
  * @returns {string} Escaped
@@ -1157,59 +1137,44 @@ function escapeAttr(text) {
 }
 
 /**
- * A trial card's "Past tiers" row: its last cycles' tiers and best, every cycle in the hover.
+ * What a card's Banked row adds about the trial's finished cycles: its best tier, and
+ * the hover that lists every cycle and the date the best was reached.
  * @param {Object|null} row - The trial's row from `trialResultsHistory`, or null when it has none
- * @returns {string} HTML, empty when the trial has no finished cycle yet
+ * @returns {{best: string, detail: string}|null} Null when the trial has no finished cycle yet
  */
-export function pastTiersLine(row) {
-    if (!row || !row.weeks.some((week) => Number.isFinite(week.tier))) return '';
-    return line('Past tiers', escapeText(trialHistoryCells(row, 4)), DIM, trialHistoryDetail(row));
+export function pastTiersSummary(row) {
+    if (!row || !row.weeks.some((week) => Number.isFinite(week.tier))) return null;
+    return {
+        best: `Best ${trialHistoryBest(row)}`,
+        detail: `Past tiers: ${trialHistoryTiers(row, 6)}\n${trialHistoryDetail(row)}`,
+    };
 }
 
 /**
- * A row of label and value, or a label with a caption under it.
+ * A readout row: one label and one value on a two-column grid.
  *
- * The shape is chosen by the content rather than by the caller, so a row that is
- * usually a figure and occasionally a sentence — "Rate" is `106 work/s` on a
- * trial you are in and a full explanation on one you are not — gets the right
- * layout in both cases without every call site having to think about it.
+ * Every row is the same shape, whatever its content, so the same row lines up
+ * on every card: the label sits left in a fixed share of the row, the value
+ * right-aligned in the rest. Either may wrap within its own column (at spaces —
+ * a figure's unit is joined to it with a no-break space), so a long caption
+ * grows its row downward instead of switching to another layout and shifting
+ * its neighbors' alignment.
  *
  * @param {string} label - Left side
- * @param {string} value - Right side, or the caption
+ * @param {string} value - Right side
  * @param {string} [color] - Value color
  * @param {string} [title] - Tooltip
  * @returns {string} HTML
  */
-function line(label, value, color = '#e8ecf5', title = '') {
+function line(label, value, color = GAME_COLORS.text, title = '') {
     const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
     const text = String(value ?? '');
-    // A label that cannot fit its column stacks too. "Next tier work (T3)" has
-    // no share of a narrow row worth having, and the alternative is what the
-    // screenshots showed: a word broken across lines with an orphan letter
-    // under it — "Expecte / d".
-    const isSentence = text.length > VALUE_MAX_CHARS || String(label ?? '').length > LABEL_MAX_CHARS;
-
-    if (isSentence) {
-        return (
-            `<div style="margin:2px 0;"${tip}>` +
-            `<div style="color:${DIM};">${label}</div>` +
-            `<div style="color:${color}; font-weight:600; line-height:1.45;">${text}</div></div>`
-        );
-    }
-
-    // Neither side ever breaks mid-word — a figure split from its unit is
-    // unreadable, and a label wrapped mid-phrase floats a word between rows:
-    // "Party DPS | 737 dmg/s" rendered as "Party  737 dmg/s" over an orphaned
-    // "DPS", which was reported. So the label holds one line too, and when the
-    // row genuinely cannot fit both, the *whole value* wraps under the label
-    // as its own right-aligned line — still a legible pair, never a shuffle.
     return (
-        `<div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; ` +
-        `gap:2px 8px;"${tip}>` +
-        `<span style="color:${DIM}; flex:1 1 auto; overflow-wrap:normal; ` +
-        `word-break:normal; hyphens:none; white-space:nowrap;">${label}</span>` +
-        `<span style="color:${color}; font-weight:600; text-align:right; white-space:nowrap; ` +
-        `flex:0 0 auto; margin-left:auto;">${text}</span></div>`
+        `<div style="display:grid; grid-template-columns:minmax(0,45%) minmax(0,1fr); align-items:baseline; ` +
+        `column-gap:8px; margin:1px 0;"${tip}>` +
+        `<span style="color:${GAME_COLORS.textDim}; overflow-wrap:break-word; hyphens:none;">${label}</span>` +
+        `<span style="color:${color}; font-weight:600; text-align:right; overflow-wrap:break-word; ` +
+        `line-height:1.35;">${text}</span></div>`
     );
 }
 
@@ -1290,7 +1255,10 @@ function tierProvenance(analysis) {
  * @param {Object} analysis - From {@link analyseTrial}
  * @returns {string} HTML
  */
-function bankedRow(analysis) {
+function bankedRow(analysis, past = null) {
+    // The best tier of the finished cycles rides on the same row; the list of them and the dates are the hover's
+    const withBest = (value) => (past ? `${value} · ${past.best}` : value);
+    const hover = (text) => (past ? `${text}\n\n${past.detail}` : text);
     // A trial that ended on nothing is an outcome, not a reading that has not
     // arrived — and it is answered before "tier not seen yet", because a card
     // that wiped on tier one carries no badge either. Reported from exactly
@@ -1300,49 +1268,57 @@ function bankedRow(analysis) {
     if (analysis.completed && !analysis.tiersClearedSoFar) {
         return line(
             'Banked',
-            '0 tiers — fell before tier 1',
+            withBest('0 · fell before T1'),
             DIM,
-            'This trial is over and its card states no points, so nothing was banked: the party did not ' +
-                'finish the first tier. Zero here is a result rather than a figure still to arrive.'
+            hover(
+                'This trial is over and its card states no points, so nothing was banked: the party did not ' +
+                    'finish the first tier. Zero here is a result rather than a figure still to arrive.'
+            )
         );
     }
 
     if (!analysis.tierKnown) {
         return line(
             'Banked',
-            'tier not seen yet',
+            withBest('—'),
             DIM,
-            'Tiers cleared are read off the tier on screen, and the In Progress card carries no tier. ' +
-                'Open the Trials tab beside it once — the tier is on the card there, and everything banked ' +
-                'follows from it. Nothing is lost meanwhile; this is what is not yet known, not zero.'
+            hover(
+                'Tiers cleared are read off the tier on screen, and the In Progress card carries no tier. ' +
+                    'Open the Trials tab beside it once — the tier is on the card there, and everything banked ' +
+                    'follows from it. Nothing is lost meanwhile; the “—” is what is not yet known, not zero.'
+            )
         );
     }
 
     if (analysis.tiersClearedSoFar === 0) {
         return line(
             'Banked',
-            `nothing yet · tier ${analysis.tier}`,
+            withBest(`0 · on T${analysis.tier}`),
             DIM,
-            'A trial starts at tier 1, so nothing is banked until the first tier completes.' + tierProvenance(analysis)
+            hover(
+                'A trial starts at tier 1, so nothing is banked until the first tier completes.' +
+                    tierProvenance(analysis)
+            )
         );
     }
 
     return line(
         'Banked',
-        `${analysis.tiersClearedSoFar} tier${analysis.tiersClearedSoFar === 1 ? '' : 's'}` +
-            (analysis.completed ? ' · finished' : ''),
+        withBest(`${analysis.tiersClearedSoFar}` + (analysis.completed ? ' · finished' : '')),
         DIM,
-        analysis.completed
-            ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
-                  'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
-                  'figure exact rather than inferred.'
-            : analysis.tierSource === 'card'
-              ? 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
-                'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
-                'So the tier being fought is one past the badge.'
-              : 'A trial climbs one tier at a time from the first, so everything below the tier in ' +
-                'progress is banked.' +
-                tierProvenance(analysis)
+        hover(
+            analysis.completed
+                ? 'This trial is over, so the tier on the card is the tier it reached — and the points it ' +
+                      'states are the ladder’s total for exactly that many tiers, which is what makes this ' +
+                      'figure exact rather than inferred.'
+                : analysis.tierSource === 'card'
+                  ? 'The tier on the card counts what this trial has *finished* — it read T1 after the first ' +
+                    'tier cleared and T2 after the second, while the pool on screen was the next one along. ' +
+                    'So the tier being fought is one past the badge.'
+                  : 'A trial climbs one tier at a time from the first, so everything below the tier in ' +
+                    'progress is banked.' +
+                    tierProvenance(analysis)
+        )
     );
 }
 
@@ -1366,6 +1342,7 @@ function bankedRow(analysis) {
  * Trials tab states about it and no rows about data that can no longer arrive.
  *
  * @param {Object} [options] - Context
+ * @param {Object|null} [options.pastRow] - The trial's row from `trialResultsHistory`, for the Banked row's best
  * @param {boolean|null} [options.participating] - Whether this character is in this trial
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`
  * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
@@ -1385,6 +1362,7 @@ export function renderTrialBlock(
         forecast = null,
         looseForecast = null,
         deadlineMs = null,
+        pastRow = null,
     } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
@@ -1459,7 +1437,7 @@ export function renderTrialBlock(
                 )
             );
         }
-        rows.push(bankedRow(analysis));
+        rows.push(bankedRow(analysis, pastTiersSummary(pastRow)));
         return rows.join('');
     }
 
@@ -1631,7 +1609,7 @@ export function renderTrialBlock(
         }
         rows.push(
             line(
-                analysis.kind === 'combat' ? 'Kill in' : 'Tier clears in',
+                analysis.kind === 'combat' ? 'Kill in' : 'Clears in',
                 analysis.etaMs === null ? '—' : formatEta(analysis.etaMs),
                 GOOD,
                 `${formatWithSeparator(Math.round(analysis.remaining || 0))} of ${formatWithSeparator(
@@ -1817,10 +1795,10 @@ export function renderTrialBlock(
         // Nothing: the final-tier line above already said why there is no next
         // tier, and a size for one would be the same claim contradicted
     } else if (analysis.next) {
-        const label = analysis.kind === 'combat' ? 'Next tier HP' : 'Next tier work';
+        const what = analysis.kind === 'combat' ? 'HP' : 'work';
         rows.push(
             line(
-                `${label} (T${analysis.next.tier})`,
+                `Next T${analysis.next.tier} ${what}`,
                 num(analysis.next.total),
                 DIM,
                 (analysis.next.growthPerTier
@@ -1838,7 +1816,7 @@ export function renderTrialBlock(
         rows.push(line('Next tier', 'awaits a full tier', DIM));
     }
 
-    rows.push(bankedRow(analysis));
+    rows.push(bankedRow(analysis, pastTiersSummary(pastRow)));
 
     return rows.join('');
 }
@@ -4492,15 +4470,15 @@ class GuildTrials {
                     anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
-                    html:
-                        renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
-                            participating: ownParticipation(tile.name),
-                            phase: tilePhase,
-                            startsInMs: status?.startsInMs ?? null,
-                            forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
-                            looseForecast: timing,
-                            deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
-                        }) + pastTiersLine(historyRowFor(pastTiers, tile.name)),
+                    html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
+                        participating: ownParticipation(tile.name),
+                        phase: tilePhase,
+                        startsInMs: status?.startsInMs ?? null,
+                        forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
+                        looseForecast: timing,
+                        deadlineMs: this._trialBudgetMs(tile.kind, now, tile.name),
+                        pastRow: historyRowFor(pastTiers, tile.name),
+                    }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
                     // screenshot was this block one card wide and a mile tall
@@ -5650,22 +5628,59 @@ class GuildTrials {
      */
     _renderTrialHistory(root, now = Date.now(), bonuses = null, history = null) {
         if (isInProgressView(root)) return false;
-        const { rows } = history || this._trialHistory(now, bonuses);
+        const { cycles, rows } = history || this._trialHistory(now, bonuses);
         // The cap of the server this is on: a cycle is a week on live, a few hours on the test server
         const kept = isTestServer() ? `the last ${resultCycleCap()} cycles` : `${resultCycleCap()} weeks`;
         if (!rows.length) return false;
+
+        // One grid for the header and every row: the name, a column per cycle (newest
+        // first), then the best. The same template on each row keeps the columns aligned
+        // at 412 px and on a phone without a side scroll
+        const shown = cycles.slice(0, TRIAL_HISTORY_COLUMNS);
+        const hidden = cycles.length - shown.length;
+        const grid =
+            `display:grid; grid-template-columns:minmax(0,2fr) repeat(${shown.length},minmax(0,1fr)) minmax(0,0.8fr); ` +
+            'column-gap:4px; align-items:baseline;';
+        const cell = (text, color, title = '', weight = 400) =>
+            `<span style="color:${color}; text-align:center; font-weight:${weight}; overflow-wrap:break-word;"` +
+            `${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeText(text)}</span>`;
+
+        const header =
+            `<div style="${grid} font-size:10px; margin-top:2px;">` +
+            '<span></span>' +
+            shown.map((cycle) => cell(cycle.label, GAME_COLORS.textDim, cycle.label)).join('') +
+            cell('Best', GAME_COLORS.textDim) +
+            '</div>';
 
         const html = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
                 'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
                 `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
-                'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle.">' +
+                'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle ' +
+                'and the date of its best.">' +
                 'Trial history</div>',
-            ...rows.map(
-                (row) =>
-                    `<div style="color:${DIM};" title="${escapeAttr(trialHistoryDetail(row))}">` +
-                    `<span style="color:#e8ecf5;">${escapeText(row.name)}</span> · ${escapeText(trialHistoryCells(row))}</div>`
-            ),
+            header,
+            ...rows.map((row) => {
+                const detail = trialHistoryDetail(row);
+                return (
+                    `<div style="${grid}" title="${escapeAttr(detail)}">` +
+                    `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(row.name)}</span>` +
+                    shown
+                        .map((cycle, index) => {
+                            const week = row.weeks[index];
+                            return cell(Number.isFinite(week?.tier) ? `T${week.tier}` : '—', GAME_COLORS.textDim);
+                        })
+                        .join('') +
+                    cell(trialHistoryBest(row), GAME_COLORS.text, '', 600) +
+                    '</div>'
+                );
+            }),
+            ...(hidden > 0
+                ? [
+                      `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
+                          `+${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover</div>`,
+                  ]
+                : []),
         ].join('');
 
         this._placeBlock(root, 'trial-history', {
