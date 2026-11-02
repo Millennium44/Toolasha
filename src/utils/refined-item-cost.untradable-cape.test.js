@@ -17,7 +17,11 @@ vi.mock('../core/data-manager.js', () => ({
         getActionDrinkSlots: () => [],
     },
 }));
-vi.mock('./untradable-cape.js', () => ({ isUntradableCape: (hrid) => CAPES.has(hrid) }));
+vi.mock('./untradable-cape.js', () => ({
+    isUntradableCape: (hrid) => CAPES.has(hrid),
+    getCapeBaseValueMode: () => 'mirror',
+    CAPE_BASE_VALUE_ZERO: 'zero',
+}));
 
 const { priceInputWithRefinementFallback } = await import('./refined-item-cost.js');
 
