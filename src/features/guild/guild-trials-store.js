@@ -1246,9 +1246,18 @@ export function mergeTrialRecords(base, incoming) {
     // entry per week, reason and cycle, as `archiveCycle` keeps them — the copy
     // that states more wins — so two sides archiving the same week at different
     // moments are one archive, not two
+    //
+    // A side naming another guild than the record's brings no archive and no
+    // results: its finished weeks are that guild's, and folded in here they
+    // would be filed as this guild's results on every later save. The record
+    // in hand is the base, as it is in every caller that knows which side is
+    // its own (a save drops a stored copy naming another guild before this —
+    // see `saveTrialRecord`)
+    const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
+    const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
     const history = [];
     const seenCycles = new Set();
-    for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
+    for (const cycle of [...(base.history || []), ...(incomingForeign ? [] : incoming.history || [])]) {
         if (!cycle) continue;
         if (Number.isFinite(cycle.weekStart)) {
             const same = history.findIndex(
@@ -1267,10 +1276,7 @@ export function mergeTrialRecords(base, incoming) {
         seenCycles.add(mark);
         history.push(cycle);
     }
-    // Each side's results with its own archive folded in. A side naming another
-    // guild than the record's contributes none: its weeks are not this guild's
-    const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
-    const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
+    // Each side's results with its own archive folded in
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
@@ -1711,9 +1717,14 @@ export async function saveTrialRecord(
         guildName: record?.guildName ?? guildName ?? null,
     };
     const fold = (stored, memory) => {
+        // A stored copy naming another guild is not folded in, as a load
+        // discards it: merged under this record, its archive and results
+        // would be filed as this guild's weeks
+        const foreign =
+            recordProvenance(stored, { guildId: stamped.guildId, guildName: stamped.guildName }) === 'foreign';
         // The merge is a union, so anything retired in memory would come
         // straight back from the stored copy without this
-        const unioned = mergeTrialRecords(stored, memory);
+        const unioned = foreign ? mergeTrialRecords(memory, null) : mergeTrialRecords(stored, memory);
         const merged = typeof scrub === 'function' ? scrub(unioned) : unioned;
         return {
             ...merged,

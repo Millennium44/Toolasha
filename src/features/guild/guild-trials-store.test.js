@@ -124,6 +124,7 @@ const { NOTICE_BOARD_KEY, NOTICE_BOARD_NAME, NOTICE_BOARD_PERSONAL, NOTICE_BOARD
 const { parseCurrentTrialsData, TRIAL_MAX_TIER, trialWeekStart } = await import('./guild-trials-math.js');
 const { tierTimingForecast } = await import('./guild-trial-tier-timing.js');
 const CLEARS = await import('./guild-trial-tier-clears.fixture.js');
+const { trialResultsOf } = await import('./guild-trial-results.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 const thisWeek = trialWeekStart(now);
@@ -2447,6 +2448,23 @@ describe('trial results — each trial’s tier kept after its week leaves the a
         const merged = mergeTrialRecords(own, foreign);
         expect(merged.trialResults.length).toBeGreaterThan(0);
         expect(merged.trialResults.some((r) => r.weekStart === weekOf(2))).toBe(false);
+        // …nor its archive, which the next fold would read them back off
+        expect(merged.history.some((cycle) => cycle.weekStart === weekOf(2))).toBe(false);
+        expect(trialResultsOf(merged).some((r) => r.weekStart === weekOf(2))).toBe(false);
+    });
+
+    test('a save never folds in a stored copy naming another guild', async () => {
+        game.store['guildTrials_Milky Way'] = rollRecordToWeek(
+            finishedWeek(weekOf(2), 9, { guildId: 'g2', guildName: 'Other' }),
+            thisWeek
+        );
+        const own = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
+        await saveTrialRecord('Milky Way', own, null, { guildId: 'g1' });
+
+        const stored = game.store['guildTrials_Milky Way'];
+        expect(stored.guildId).toBe('g1');
+        expect(trialResultsOf(stored).map((r) => r.weekStart)).not.toContain(weekOf(2));
+        expect(trialResultsOf(stored).filter((r) => r.trial === 'badger')).toMatchObject([{ cardTier: 6 }]);
     });
 
     test('a cycle archived off another guild’s record files no results', () => {

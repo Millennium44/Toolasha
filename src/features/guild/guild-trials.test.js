@@ -2170,6 +2170,13 @@ describe('the panel, end to end', () => {
 
                 const [summary] = guildTrials._pastWeekSummaries(now);
                 expect(summary).toMatchObject({ when: 'last week', combatTier: 6, skillingTier: 9 });
+                // …and each trial's tier history is read off the same archive
+                const rows = guildTrials._trialHistory(now).rows;
+                expect(rows.map((row) => [row.name, row.weeks[0].tier])).toEqual([
+                    ['Trial Badger', 6],
+                    ['Alchemy', 9],
+                ]);
+                expect(game.store[KEY].trialResults.map((r) => r.trial).sort()).toEqual(['alchemy', 'badger']);
                 expect(game.store[KEY].history).toHaveLength(1);
             });
 

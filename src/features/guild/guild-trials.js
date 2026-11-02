@@ -5654,7 +5654,7 @@ class GuildTrials {
         const html = [
             `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
                 'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
-                'its best. Kept for a year after the full cycle archive above is gone. &quot;—&quot; is a ' +
+                'its best. Kept for a year (120 cycles on the test server) after the full cycle archive above is gone. &quot;—&quot; is a ' +
                 'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle.">' +
                 'Trial history</div>',
             ...rows.map(
