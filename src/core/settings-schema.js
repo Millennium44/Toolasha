@@ -4320,11 +4320,11 @@ export const settingsGroups = {
                 id: 'guildTrialAutoOpenScoreboard',
                 label: 'Guild Trials: Open the trial damage board when a trial fight starts',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'Pops the per-player damage board open the moment a trial fight starts being watched, once ' +
-                    'per trial — closing it during that trial keeps it closed until the next one. A button beside ' +
-                    'the guild panel’s own tabs opens or closes it by hand at any time.',
+                    'per trial — closing it during that trial keeps it closed until the next one, reloads ' +
+                    'included. A button beside the guild panel’s own tabs opens or closes it by hand at any time.',
             },
             guildTrialDiagnosticTrace: {
                 id: 'guildTrialDiagnosticTrace',

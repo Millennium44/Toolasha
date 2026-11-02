@@ -26,7 +26,7 @@
  * must never look alike.
  */
 
-import { eligibleMemberTokens, trialWeekStart } from './guild-trials-math.js';
+import { eligibleMemberTokens, guildPoints, trialBasePoints, trialWeekStart } from './guild-trials-math.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** One trial week, in ms */
@@ -84,10 +84,49 @@ export function describeCycleAge(cycle, now = Date.now()) {
  * before tier 1, which is a zero rather than a gap; and a tile that says none
  * of these things says nothing.
  *
+ * The guild payload's `highestTier` (`serverTier`) counts the same thing and is
+ * stated for every party whether or not a card was read — a trial that ran with
+ * the Trials tab shut has nothing else. Where both say, the higher wins: a card
+ * read before the party's last clear is the card lagging, never the server.
+ *
  * @param {Object} tile - An archived tile
  * @returns {number|null} Tiers cleared, or null when the tile does not say
  */
 function clearedTier(tile) {
+    const card = cardClearedTier(tile);
+    const server = serverClearedTier(tile);
+    if (card === null) return server;
+    return server === null ? card : Math.max(card, server);
+}
+
+/**
+ * The tiers the guild payload stated an archived tile's party banked.
+ * @param {Object} tile - An archived tile
+ * @returns {number|null} `serverTier`, or null when the payload never stated one
+ */
+function serverClearedTier(tile) {
+    return Number.isFinite(tile?.serverTier) && tile.serverTier >= 0 ? tile.serverTier : null;
+}
+
+/**
+ * Whether the guild payload says a tile's party banked more than its card did —
+ * or the card said nothing — so the card's points, if any, are not the result.
+ * @param {Object} tile - An archived tile
+ * @returns {boolean}
+ */
+function serverAhead(tile) {
+    const server = serverClearedTier(tile);
+    if (server === null) return false;
+    const card = cardClearedTier(tile);
+    return card === null || server > card;
+}
+
+/**
+ * The tier an archived tile's card stated it finished on; see {@link clearedTier}.
+ * @param {Object} tile - An archived tile
+ * @returns {number|null} Tiers cleared, or null when the card did not say
+ */
+function cardClearedTier(tile) {
     if (Number.isFinite(tile?.tier)) return tile.tier;
 
     const quoted = Object.keys(tile?.pointsByTier || {})
@@ -203,9 +242,16 @@ export function pastCycles(history, now = Date.now()) {
  *
  * `points` is the sum of the Guild Points the cards themselves stated — the
  * figure the guild's own announcement paid — and stays null when no card ever
- * stated one. `tokens` is derived from it with the bonuses passed in, which are
- * the guild's *current* ones: close enough for this guild's own recent weeks,
- * marked `~` by the line, and never computed for a foreign cycle at all.
+ * stated one. A trial whose tier came from the guild payload alone (no card was
+ * read, or the card was read before the party's last clear) has no stated
+ * points: its tiers are priced off the ladder at the bonus passed in, which
+ * marks the sum `pointsDerived`. With no usable bonus, or on a foreign cycle,
+ * the card's own lower figure stands as a floor (also `pointsDerived`), and
+ * only a trial with no figure at all makes the sum null rather than a total
+ * missing that trial. `tokens` is
+ * derived from it with the bonuses passed in, which are the guild's *current*
+ * ones: close enough for this guild's own recent weeks, marked `~` by the line,
+ * and never computed for a foreign cycle at all.
  *
  * @param {Object} cycle - An archived cycle from `record.history`
  * @param {Object} [options] - Context
@@ -213,7 +259,8 @@ export function pastCycles(history, now = Date.now()) {
  * @param {number|null} [options.buildersHallBonus] - Builders Hall bonus fraction, null when unknown
  * @param {number|null} [options.treasuryBonus] - Treasury bonus fraction, null when unknown
  * @returns {{when: string|null, endedAt: number|null, combatTier: number|null, skillingTier: number|null,
- *   points: number|null, tokens: number|null, foreign: boolean, reason: string|null}} The summary
+ *   points: number|null, pointsDerived: boolean, tokens: number|null, foreign: boolean, reason: string|null}}
+ *   The summary
  */
 export function summariseArchivedCycle(
     cycle,
@@ -230,14 +277,41 @@ export function summariseArchivedCycle(
         return tiers.length ? Math.max(...tiers) : null;
     };
 
+    const hallUsable = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
     let points = null;
+    let pointsDerived = false;
+    let pointsMissing = false;
     for (const tile of tiles) {
-        if (statesPoints(tile)) points = (points ?? 0) + tile.points;
+        if (!serverAhead(tile)) {
+            if (statesPoints(tile)) points = (points ?? 0) + tile.points;
+            continue;
+        }
+        // The payload's tier with no card figure for it: the ladder's price, at
+        // today's Builder's Hall — a floor, since a part-cleared last tier pays
+        // a little on top. Without a usable bonus, a card that stated points
+        // for a lower tier is still a floor for this trial; only a trial with
+        // no figure at all leaves the total unknown
+        if (foreign || !hallUsable) {
+            if (Number.isFinite(tile?.points) && tile.points > 0) {
+                points = (points ?? 0) + tile.points;
+                pointsDerived = true;
+            } else {
+                pointsMissing = true;
+            }
+            continue;
+        }
+        const kind = tile?.kind === 'combat' ? 'combat' : 'skilling';
+        points = (points ?? 0) + guildPoints(trialBasePoints(kind, serverClearedTier(tile)), buildersHallBonus);
+        pointsDerived = true;
+    }
+    // A sum missing one trial is not the cycle's total
+    if (pointsMissing) {
+        points = null;
+        pointsDerived = false;
     }
 
     let tokens = null;
-    const bonusesUsable =
-        Number.isFinite(buildersHallBonus) && buildersHallBonus > -1 && Number.isFinite(treasuryBonus);
+    const bonusesUsable = hallUsable && Number.isFinite(treasuryBonus);
     if (!foreign && Number.isFinite(points) && bonusesUsable) {
         tokens = eligibleMemberTokens(points / (1 + buildersHallBonus), treasuryBonus);
     }
@@ -250,6 +324,7 @@ export function summariseArchivedCycle(
         combatTier: highest('combat'),
         skillingTier: highest('skilling'),
         points,
+        pointsDerived,
         tokens,
         foreign,
         reason: typeof cycle?.reason === 'string' ? cycle.reason : null,
@@ -261,7 +336,8 @@ export function summariseArchivedCycle(
  *
  * One compact line, ` · `-separated like the rest of the report, with every
  * slot always present so weeks line up under each other. "—" is what is not
- * known; a zero is a result and prints as one. The token figure carries a `~`
+ * known; a zero is a result and prints as one. Points priced off the ladder
+ * rather than stated by a card carry a `~` as well. The token figure carries a `~`
  * because it is derived from today's bonuses rather than stated by a card, and
  * a foreign cycle says whose week it was not.
  *
@@ -281,7 +357,7 @@ export function pastWeekLine(summary) {
         `${when}${ended}`,
         `combat ${tier(summary?.combatTier)}`,
         `skilling ${tier(summary?.skillingTier)}`,
-        `${Number.isFinite(summary?.points) ? formatWithSeparator(Math.round(summary.points)) : dash} pts`,
+        `${Number.isFinite(summary?.points) ? `${summary.pointsDerived ? '~' : ''}${formatWithSeparator(Math.round(summary.points))}` : dash} pts`,
         `${Number.isFinite(summary?.tokens) ? `~${formatWithSeparator(Math.round(summary.tokens))}` : dash} tokens each`,
     ];
     if (summary?.foreign) parts.push('another guild’s week');

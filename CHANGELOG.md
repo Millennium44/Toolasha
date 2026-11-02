@@ -13,6 +13,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Route marks for a room update as soon as it is revealed, instead of waiting for the next Path press.
 - A run keeps one identity when the game changes its start-time precision mid-run, so the ledger no longer files a phantom ended run and the damage trackers and room log no longer reset.
 
+### Guild trial results are recorded without opening the Trials tab
+
+- Each trial's banked tier is now recorded from the guild data the server sends (including at login), so results land and Past weeks can show them (points derived from the tier, marked ~) even if the Trials tab was never open.
+- A trial damage board closed by hand now stays closed for the rest of that trial, across reloads; for new players it no longer opens by itself (existing players keep their setting).
+
 ### Live party and stat sheet
 
 - Toolasha now follows party changes as they happen (not only at login or the next fight) and the server's own stat sheet after gear, level or buff changes, so Combat Sim exports, the party roster and the Labyrinth planner's combat level stay current without a reload.
@@ -20,7 +25,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Contributor checklist covers today's review themes
 
-- AGENTS.md's pre-PR questions now also ask about partial totals, caches built from another module's output, threading a new dimension through every reader, merges that drop a newer field, and code a fix wakes up.
+- AGENTS.md's pre-PR questions now also ask about partial totals, caches built from another module's output, threading a new dimension through every reader, merges that drop a newer field, code a fix wakes up, and queued work that outlives the setting that allowed it.
 
 ### Combat readers use the ability bar the game sends
 

@@ -129,6 +129,9 @@ push to `main` or merge.
     13. Does the fix wake code that never ran (a corrected field path, a loosened guard, a new subscription)?
         Review that path as new code. Does anything record only while a tab or panel is on screen when the
         server sends the same data without it?
+    14. Is a setting or condition checked when work is queued or scheduled but not again when it runs (turned
+        off in between, from any UI)? Does queued work keep why it was queued, and does a stronger reason
+        replace a weaker one when both ask?
 - **Review comments**: verify each point against the code first — some are wrong; reply with file:line
   for those. Fix every point of one review, then push once (each push triggers a full new review). Each
   fix gets a regression test that fails pre-fix and a one-line reply on its thread; then resolve it. A P2

@@ -22,6 +22,11 @@ describe('guild trial defaults', () => {
         expect(setting.help).toMatch(/large/i);
         expect(setting.help).toMatch(/participant names/i);
     });
+
+    test('the damage board does not pop open by itself unless asked to', () => {
+        // New installs only: a saved value is the player's and is never migrated
+        expect(getSettingDefinition('guildTrialAutoOpenScoreboard').default).toBe(false);
+    });
 });
 
 describe('labyrinth defaults', () => {

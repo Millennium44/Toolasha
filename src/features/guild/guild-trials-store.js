@@ -12,8 +12,9 @@
  * …" for as long as the player was willing to sit and stare at it. They are
  * written down instead, keyed by guild name — following the `guildXP_<name>`
  * precedent in `guild-xp-tracker.js`, because trial state belongs to the guild
- * and not to whichever alt happened to look at it — and thrown away when the
- * week rolls over, since last week's trials are a different ladder.
+ * and not to whichever alt happened to look at it — and put into the history
+ * when the week rolls over, since last week's trials are a different ladder
+ * (see `rollRecordToWeek`).
  *
  * ## Building bonuses
  *
@@ -329,15 +330,96 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         ...record,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
-        history: history.slice(-MAX_ARCHIVED_CYCLES),
+        history: capHistory(history),
     };
 }
 
 /** How many finished cycles are kept beside the live one */
 export const MAX_ARCHIVED_CYCLES = 4;
 
+/**
+ * When an archived cycle happened, for ordering: its week, then within the week
+ * the cycle it closed (test server) or when it was archived.
+ * @param {Object} cycle - An archived cycle
+ * @returns {number[]} `[week, within]`, compared in that order
+ */
+function cycleOrder(cycle) {
+    const week = Number.isFinite(cycle?.weekStart)
+        ? cycle.weekStart
+        : Number.isFinite(cycle?.archivedAt)
+          ? trialWeekStart(cycle.archivedAt)
+          : -Infinity;
+    const within = Number.isFinite(cycle?.cycleFrom)
+        ? cycle.cycleFrom
+        : Number.isFinite(cycle?.archivedAt)
+          ? cycle.archivedAt
+          : -Infinity;
+    return [week, within];
+}
+
+/**
+ * The archived cycles, oldest first, capped to the newest {@link MAX_ARCHIVED_CYCLES}.
+ *
+ * Sorted before the cap rather than trusting insertion order: a merge appends
+ * one side's history after the other's, and a stale device's record from weeks
+ * ago appended its older weeks last — the cap then kept those and dropped the
+ * newer weeks for good.
+ *
+ * @param {Array<Object>} history - Archived cycles, any order
+ * @returns {Array<Object>} A new array
+ */
+function capHistory(history) {
+    const sorted = [...history].sort((a, b) => {
+        const [aw, ai] = cycleOrder(a);
+        const [bw, bi] = cycleOrder(b);
+        return aw !== bw ? aw - bw : ai !== bi ? ai - bi : 0;
+    });
+    return sorted.slice(-MAX_ARCHIVED_CYCLES);
+}
+
 /** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
 const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
+
+/** The reason stamped on a week's tiles archived by {@link rollRecordToWeek} */
+export const WEEK_ROLLOVER_REASON = 'the week rolled over';
+
+/**
+ * Start a later week's record from an earlier week's, keeping the earlier week.
+ *
+ * Every rollover path — the panel's render, the guild payload's filing, a load
+ * of last week's stored record, and a merge of two records from different weeks
+ * — used to replace the earlier week with an empty record, history and all, so
+ * a guild's own finished week was never archived and "Past weeks" only ever
+ * showed another guild's cycles or a test-server earlier cycle. The week's tiles
+ * now go into `history` through {@link archiveCycle}, under one reason and
+ * stamped as archived the moment the week rolled: two tabs or devices rolling
+ * the same week write the same entry, and the archive's own rule keeps the copy
+ * that states more of it. The history cap ({@link MAX_ARCHIVED_CYCLES}) holds.
+ *
+ * The test server's earlier-cycle stamp (`cycleStart`) is the earlier week's
+ * and is not carried.
+ *
+ * @param {Object} record - A record of an earlier week (not mutated)
+ * @param {number} weekStart - The week to start, in ms
+ * @param {Object} [options] - Context
+ * @param {string|null} [options.guildId] - Provenance for a record that has none
+ * @param {string|null} [options.guildName] - Provenance for a record that has none
+ * @param {Object|null} [options.accuracy] - The week's attribution accuracy, see {@link archiveCycle}
+ * @returns {Object} The new week's record; the same object when it is not an earlier week's
+ */
+export function rollRecordToWeek(record, weekStart, { guildId = null, guildName = null, accuracy = null } = {}) {
+    if (!record || !Number.isFinite(record.weekStart) || !Number.isFinite(weekStart) || record.weekStart >= weekStart) {
+        return record;
+    }
+    const archived = archiveCycle(record, WEEK_ROLLOVER_REASON, weekStart, { accuracy });
+    return {
+        weekStart,
+        tiles: {},
+        guildId: record.guildId ?? guildId ?? null,
+        guildName: record.guildName ?? guildName ?? null,
+        history: archived.history,
+    };
+}
 
 /**
  * How far before an hour's stated start a stamp may sit and still be that
@@ -888,8 +970,14 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * for the analysis to read as a tier rung on any tab: the card that carries the
  * badge need not be on screen.
  *
- * Only a tile already on the record is written; the payload's keys are trial
- * hrids and the record is keyed by what the cards are called.
+ * A tile already on the record is written as it stands; the payload's keys are
+ * trial hrids and the record is keyed by what the cards are called, so the
+ * caller joins the two. With `create` the tile is started when the record has
+ * none — a trial whose card was never read, because nobody had the Trials tab
+ * open — under the same name and kind a card scrape files it by, so a later
+ * scrape lands on the same tile. Only `server*` fields and `tierSeenAt` are
+ * written either way: the card's own `tier`, `points` and `completed` stay the
+ * card's, and the readers that report a result take the higher of the two tiers.
  *
  * @param {Object} record - The week's record
  * @param {string} key - The tile's key on it
@@ -899,11 +987,24 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {Object} [stated.clears] - `{[tier]: clientMs}`, each tier's bank time on this client's clock
  * @param {number} stated.at - When the banked tier banked, on this client's clock; the payload's
  *   arrival only where no server stamp can be placed
+ * @param {{name: string, kind: string}|null} [stated.create] - Start the tile when the record has none
  * @returns {Object} The record, unchanged when there was nothing to write
  */
-export function recordServerTiers(record, key, { bankedTier = null, done = false, clears = {}, at } = {}) {
-    const existing = record?.tiles?.[key];
-    if (!existing || !Number.isFinite(at)) return record;
+export function recordServerTiers(
+    record,
+    key,
+    { bankedTier = null, done = false, clears = {}, at, create = null } = {}
+) {
+    if (!record || !Number.isFinite(at)) return record;
+    const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
+    let existing = record.tiles?.[key];
+    if (!existing) {
+        // Started only with a tier to put on it: a tile holding nothing is a
+        // card nobody saw a result on, which is what the archive must not fill with
+        if (!create?.name || !create?.kind || !tierStated) return record;
+        // The shape a card scrape starts a tile with, so `recordTileSample` can fold into it
+        existing = { name: create.name, kind: create.kind, samples: [], tiers: [], pointsByTier: {}, tierSeenAt: {} };
+    }
 
     const tierSeenAt = { ...(existing.tierSeenAt || {}) };
     let changed = false;
@@ -912,8 +1013,8 @@ export function recordServerTiers(record, key, { bankedTier = null, done = false
         tierSeenAt[tier] = when;
         changed = true;
     }
-    const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
     if (
+        record.tiles?.[key] &&
         !changed &&
         (!tierStated ||
             (existing.serverTier === bankedTier &&
@@ -926,7 +1027,7 @@ export function recordServerTiers(record, key, { bankedTier = null, done = false
     return {
         ...record,
         tiles: {
-            ...record.tiles,
+            ...(record.tiles || {}),
             [key]: {
                 ...existing,
                 tierSeenAt,
@@ -1040,6 +1141,46 @@ function latestServerTier(a, b) {
 }
 
 /**
+ * Two archives of the same week, reason and cycle, as one.
+ *
+ * The copy that states more is kept whole ({@link statesAsMuch}), but the guild
+ * payload can go on writing into an archived week after it is put away — the
+ * last hour of a cycle that ran past the rollover — and those statements are
+ * not what `statesAsMuch` weighs. So each tile takes the newer server
+ * statement of the two ({@link latestServerTier}) and both sides' clear
+ * stamps, and a tile only the other copy holds is kept.
+ *
+ * @param {Object} kept - The archive that states more
+ * @param {Object} other - The other copy
+ * @returns {Object} The archive
+ */
+function foldArchivedCycle(kept, other) {
+    const otherTiles = other?.tiles || {};
+    if (!Object.keys(otherTiles).length) return kept;
+    const tiles = { ...(kept.tiles || {}) };
+    let changed = false;
+    for (const [key, tile] of Object.entries(otherTiles)) {
+        const held = tiles[key];
+        if (!held) {
+            tiles[key] = tile;
+            changed = true;
+            continue;
+        }
+        const server = latestServerTier(held, tile);
+        const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
+        const same =
+            held.serverTier === server.serverTier &&
+            held.serverTierAt === server.serverTierAt &&
+            Boolean(held.serverDone) === Boolean(server.serverDone) &&
+            JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
+        if (same) continue;
+        tiles[key] = { ...held, ...server, tierSeenAt };
+        changed = true;
+    }
+    return changed ? { ...kept, tiles } : kept;
+}
+
+/**
  * Fold two records for the same week into one.
  *
  * Needed because the guild's name arrives *after* this feature starts. The
@@ -1086,14 +1227,35 @@ export function mergeTrialRecords(base, incoming) {
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
     if (incomingWeek === null) return whole(base);
-    if (baseWeek !== incomingWeek) return whole(baseWeek > incomingWeek ? base : incoming);
+    if (baseWeek !== incomingWeek) {
+        // The earlier week is archived onto the later one rather than dropped:
+        // a stale tab's or another device's copy of last week is that week's
+        // result, and the later side may never have seen it
+        const week = Math.max(baseWeek, incomingWeek);
+        return mergeTrialRecords(rollRecordToWeek(base, week), rollRecordToWeek(incoming, week));
+    }
 
     // Archived cycles unioned, not concatenated: both sides usually hold the
-    // same cycles, and doubling them up would push the oldest past the cap
+    // same cycles, and doubling them up would push the oldest past the cap. One
+    // entry per week, reason and cycle, as `archiveCycle` keeps them — the copy
+    // that states more wins — so two sides archiving the same week at different
+    // moments are one archive, not two
     const history = [];
     const seenCycles = new Set();
     for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
         if (!cycle) continue;
+        if (Number.isFinite(cycle.weekStart)) {
+            const same = history.findIndex(
+                (held) =>
+                    held.weekStart === cycle.weekStart &&
+                    held.reason === cycle.reason &&
+                    (held.cycleFrom ?? null) === (cycle.cycleFrom ?? null)
+            );
+            if (same === -1) history.push(cycle);
+            else if (statesAsMuch(history[same], cycle)) history[same] = foldArchivedCycle(history[same], cycle);
+            else history[same] = foldArchivedCycle(cycle, history[same]);
+            continue;
+        }
         const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;
         if (seenCycles.has(mark)) continue;
         seenCycles.add(mark);
@@ -1102,7 +1264,7 @@ export function mergeTrialRecords(base, incoming) {
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
-        history: history.slice(-MAX_ARCHIVED_CYCLES),
+        history: capHistory(history),
     };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
@@ -1196,12 +1358,27 @@ export function mergeTrialRecords(base, incoming) {
     // statement and no bar sample. Against any other archive only bar samples
     // count, as live has always had it: after a scheduled-phase archive the
     // zeroed cards are read again, and a badge read of one must not carry a
-    // stale copy's tile back past its archive.
+    // stale copy's tile back past its archive. A server statement of a tier
+    // banked after the archive was taken is the one exception: it is the party's
+    // own clear stamp, and a trial filed off the guild payload alone has no bar
+    // sample to be kept by. Only what is stamped since the archive stays, so a
+    // stale copy that heard the statement keeps none of its archived readings.
+    // An archive of another week is another week's trials, never a stale copy
+    // of this one's: the same trial runs under the same key every week
     const newestSample = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
     for (const cycle of provenance.history) {
+        if (Number.isFinite(cycle?.weekStart) && cycle.weekStart !== baseWeek) continue;
         const newestOf = Number.isFinite(cycle?.cycleFrom) ? newestTileStamp : newestSample;
         for (const [key, archived] of Object.entries(cycle?.tiles || {})) {
-            if (tiles[key] && newestOf(tiles[key]) <= newestOf(archived)) delete tiles[key];
+            if (!tiles[key] || newestOf(tiles[key]) > newestOf(archived)) continue;
+            const statedSince =
+                !Number.isFinite(cycle?.cycleFrom) &&
+                Number.isFinite(cycle?.archivedAt) &&
+                Number.isFinite(tiles[key].serverTierAt) &&
+                tiles[key].serverTierAt > cycle.archivedAt;
+            const since = statedSince ? currentCyclePart(tiles[key], cycle.archivedAt) : null;
+            if (since) tiles[key] = since;
+            else delete tiles[key];
         }
     }
 
@@ -1225,7 +1402,7 @@ registerSyncMerge({
 });
 
 /**
- * Read a guild's record, discarding one from a previous week.
+ * Read a guild's record, archiving one from a previous week into this week's history.
  *
  * "Absent" and "unreadable" are different answers. No record, or last week's,
  * is a fresh week and says so; a read that could not be made (the connection
@@ -1250,15 +1427,18 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
         const record = probe.found ? probe.value : null;
         if (!record || typeof record !== 'object') return fresh();
 
-        // A record from a previous week is last week's ladder, not this one's
-        if (record.weekStart !== weekStart) return fresh();
-
         // A record that names another guild cannot be this guild's, whatever key
         // it was filed under — which is exactly how the reported one survived
         if (recordProvenance(record, { guildId, guildName }) === 'foreign') {
             console.warn('[GuildTrialsStore] Discarding a trial record belonging to another guild');
             return fresh();
         }
+
+        // A record from a previous week is last week's ladder, not this one's —
+        // but it is last week's result, and goes into the history on the way
+        // (see `rollRecordToWeek` below). One with no week, or a later one, is
+        // nothing this week can use
+        if (!Number.isFinite(record.weekStart) || record.weekStart > weekStart) return fresh();
 
         // Self-heal on the way in. What is already stored was written by an
         // older build with a looser card filter, and a filter fixed today does
@@ -1293,7 +1473,8 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             // lose tiles a merge would bring straight back
             await saveTrialRecord(guildName, adopted.record, characterId, { guildId, overwrite: true });
         }
-        return adopted.record;
+        // Not written here: the next save merges the stored copy, which rolls it the same way
+        return rollRecordToWeek(adopted.record, weekStart, { guildId, guildName });
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
         return null;

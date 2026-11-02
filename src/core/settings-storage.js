@@ -102,7 +102,7 @@ const DEFAULT_REWRITES = [
 ];
 
 /**
- * Checkbox defaults that flipped false -> true for NEW players only.
+ * Checkbox defaults that flipped for NEW players only (mostly false -> true).
  *
  * Add the id here in the same change that flips a schema default, with
  * `previous` set to the value existing players were running on. A player who
@@ -128,6 +128,8 @@ const PINNED_PREVIOUS_DEFAULTS = [
     { batch: 'p1', id: 'enhanceSim_protectionMarketplaceButton', previous: false },
     { batch: 'p1', id: 'combatProfileButton', previous: false },
     { batch: 'p1', id: 'guildMembersShowGameMode', previous: false },
+    // The other way round: on by default until 2026-11, off for new players since
+    { batch: 'p2', id: 'guildTrialAutoOpenScoreboard', previous: true },
 ];
 
 /** The batch an entry belongs to when it does not name one */
@@ -1093,7 +1095,7 @@ class SettingsStorage {
     async applyPinnedPreviousDefaults(saved, characterKey) {
         // Runs on every load, with no "done" flag: a flag goes stale the moment a map is replaced
         // (an import, a copy from another character, a sync pull of an older map), and the check
-        // is six lookups. A map this install wrote holds every id, and a stored value is never
+        // is a handful of lookups. A map this install wrote holds every id, and a stored value is never
         // touched, so only an older map missing an id is ever pinned. No map yet pins nothing.
         if (!saved) return saved;
         let next = saved;
