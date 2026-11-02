@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth rooms fit a phone
+
+- On a phone the clear badge is one line without the % sign ("100 19s"), so longer times no longer run out of the room; the hover preview keeps the full reading. Shroud labels are smaller, so neighbors no longer overlap.
+
 ### Market history requests are paced
 
 - History requests now go out at about 5 a second, so the Goal Planner's first pricing finishes without the server refusing it and leaving volumes unmeasured. That first pricing can take a couple of minutes, and now shows a count such as "Pricing 40 of 339…".

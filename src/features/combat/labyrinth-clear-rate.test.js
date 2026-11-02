@@ -8246,3 +8246,143 @@ describe('path marks follow a reveal', () => {
         expect(overlay.dataset.pending).toBe('1');
     });
 });
+
+/**
+ * A room is 32 px wide on a phone at grid scale 1. The clear badge's longest readings and the path labels
+ * ("Shroud?" is 36 px at 8 px with 3 px padding) overflowed it. happy-dom does no layout, so these check the
+ * styles that keep the text whole and inside, not measured widths.
+ */
+describe('phone-sized room overlays', () => {
+    const setMobile = (on) => settings.map.set('mobileMode', on ? 'on' : 'off');
+    const badgeOf = (result) => {
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        labyrinthClearRate.appendTileBadge(cell, result);
+        return cell.querySelector('.mwi-labyrinth-tile-badge') ?? cell.firstElementChild;
+    };
+
+    afterEach(() => {
+        settings.map.delete('mobileMode');
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._labyrinth = null;
+        labyrinthClearRate._pathThreshold = null;
+    });
+
+    test.each([
+        [{ clearChance: 1, expectedSeconds: 19 }, '100', '19s'],
+        [{ clearChance: 0.88, expectedSeconds: 125 }, '88', '125s'],
+        [{ clearChance: 1, expectedSeconds: 5000 }, '100', '999+'],
+        [{ clearChance: 0, expectedSeconds: Infinity }, '0', '999+'],
+    ])('on a phone the badge for %j is one line with no percent sign', (result, pct, eta) => {
+        setMobile(true);
+        const badge = badgeOf(result);
+        expect(badge.style.flexWrap).toBe('');
+        expect(badge.style.padding).toBe('1px');
+        expect(badge.style.gap).toBe('2px');
+        expect(badge.style.maxWidth).toBe('calc(100% - 2px)');
+        expect(badge.style.overflow).toBe('');
+        expect(badge.style.textOverflow).toBe('');
+        expect([...badge.children].map((c) => c.textContent)).toEqual([pct, eta]);
+        // The floor is 6 px; the fix must not go lower
+        expect(Number.parseFloat(badge.children[1].style.fontSize)).toBeGreaterThanOrEqual(6);
+    });
+
+    test('on desktop the badge keeps its percent sign, padding and fonts', () => {
+        setMobile(false);
+        const badge = badgeOf({ clearChance: 1, expectedSeconds: 19 });
+        expect(badge.style.flexWrap).toBe('');
+        expect(badge.children[0].textContent).toBe('100%');
+        expect(badge.style.padding).toBe('1px 3px');
+        expect(badge.style.gap).toBe('2px');
+        expect(badge.children[0].style.fontSize).toBe('9px');
+        expect(badge.children[1].style.fontSize).toBe('8px');
+    });
+
+    test('the room still carries the full reading with its percent for the hover preview', () => {
+        setMobile(true);
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        const result = {
+            type: 'skilling',
+            skillHrid: '/skills/milking',
+            roomLevel: 10,
+            clearChance: 0.88,
+            expectedSeconds: 125,
+            workPower: 10,
+            progressPerSuccess: 10,
+            successChance: 0.9,
+            doubleChance: 0.1,
+            attempts: 20,
+            actionSeconds: 3,
+        };
+        labyrinthClearRate.appendTileBadge(cell, result);
+        expect(cell.__mwiPreviewResult).toBe(result);
+        const el = document.createElement('div');
+        labyrinthClearRate.renderPreviewContent(el, {
+            type: 'skilling',
+            skillHrid: '/skills/milking',
+            roomLevel: 10,
+            ...result,
+        });
+        expect(el.textContent).toContain('88.0%');
+    });
+
+    const firstDraw = (label) => {
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        labyrinthClearRate.appendPathOverlay(cell, '#ff5252', label, { index: 0 });
+        return cell.querySelector('.mwi-labyrinth-path-overlay > div');
+    };
+    const redraw = () => {
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('torchSpent'));
+        labyrinthClearRate._pathThreshold = 0.7;
+        const before = buildLabyrinthUpdated('torchSpent').labyrinth.roomData.flat();
+        const after = buildLabyrinthUpdated('beaconReveal').labyrinth.roomData.flat();
+        const index = after.findIndex((room, i) => room?.skillHrid && !before[i]);
+        const judge = vi.spyOn(labyrinthClearRate, 'computeSkillingRoomClear').mockReturnValue({ clearChance: 0.1 });
+        const overlay = document.createElement('div');
+        overlay.className = 'mwi-labyrinth-path-overlay';
+        overlay.dataset.tileIndex = String(index);
+        overlay.dataset.pending = '1';
+        document.body.appendChild(overlay);
+        labyrinthClearRate.onLabyrinthUpdated(buildLabyrinthUpdated('beaconReveal'));
+        judge.mockRestore();
+        return overlay.querySelector('div');
+    };
+
+    test('on a phone both draw paths use the 6 px, 1 px-padded label and keep the full text', () => {
+        setMobile(true);
+        vi.useFakeTimers();
+        try {
+            const first = firstDraw('Shroud?');
+            const second = redraw();
+            expect(first.textContent).toBe('Shroud?');
+            expect(second.textContent).toBe('Shroud');
+            for (const tag of [first, second]) {
+                expect(tag.style.fontSize).toBe('6px');
+                expect(tag.style.padding).toBe('0px 1px');
+                expect(tag.style.whiteSpace).toBe('nowrap');
+            }
+        } finally {
+            labyrinthClearRate.cancelAutoPath();
+            vi.useRealTimers();
+        }
+    });
+
+    test('on desktop both draw paths keep the 8 px, 3 px-padded label', () => {
+        setMobile(false);
+        vi.useFakeTimers();
+        try {
+            const first = firstDraw('Shroud?');
+            const second = redraw();
+            for (const tag of [first, second]) {
+                expect(tag.style.fontSize).toBe('8px');
+                expect(tag.style.padding).toBe('0px 3px');
+            }
+        } finally {
+            labyrinthClearRate.cancelAutoPath();
+            vi.useRealTimers();
+        }
+    });
+});

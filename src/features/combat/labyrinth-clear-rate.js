@@ -4960,14 +4960,32 @@ class LabyrinthClearRate {
             : `position:absolute; inset:0; border:2px solid ${color}; border-radius:6px; ` +
               'pointer-events:none; z-index:8; box-sizing:border-box;';
         if (label) {
-            const tag = document.createElement('div');
-            tag.style.cssText =
-                `position:absolute; top:1px; left:1px; padding:0 3px; border-radius:3px; background:${color}; ` +
-                'color:#000; font-size:8px; font-weight:700; line-height:1.4;';
-            tag.textContent = label;
-            overlay.appendChild(tag);
+            overlay.appendChild(this.buildPathTag(color, label));
         }
         cell.appendChild(overlay);
+    }
+
+    /**
+     * The colored word on a path-marked room ("Shroud", "Shroud?", "?", the exit flag). One builder for the
+     * first draw and the redraw after a reveal, so the two cannot drift apart.
+     *
+     * A room is 32 px wide on a phone at grid scale 1, and the overlay's 2 px border leaves 28 px inside it.
+     * "Shroud?" at 8 px bold with 3 px padding is about 36 px, so neighbors overlapped. On a phone the tag
+     * drops to the 6 px floor with 1 px padding (about 25 px for "Shroud?") and keeps its full text, so
+     * "Shroud" and "Shroud?" stay distinct; nothing is clipped.
+     * @param {string} color - Background color of the tag
+     * @param {string} label - Text to show
+     * @returns {HTMLDivElement}
+     */
+    buildPathTag(color, label) {
+        const mobile = isMobileMode();
+        const tag = document.createElement('div');
+        tag.style.cssText =
+            `position:absolute; top:1px; left:1px; padding:${mobile ? '0 1px' : '0 3px'}; border-radius:3px; ` +
+            `background:${color}; color:#000; font-size:${mobile ? 6 : 8}px; font-weight:700; line-height:1.4; ` +
+            'white-space:nowrap;';
+        tag.textContent = label;
+        return tag;
     }
 
     clearPathOverlays() {
@@ -5015,12 +5033,7 @@ class LabyrinthClearRate {
             overlay.style.border = `2px solid ${color}`;
             overlay.querySelector('div')?.remove();
             if (needsShroud) {
-                const tag = document.createElement('div');
-                tag.style.cssText =
-                    `position:absolute; top:1px; left:1px; padding:0 3px; border-radius:3px; background:${color}; ` +
-                    'color:#000; font-size:8px; font-weight:700; line-height:1.4;';
-                tag.textContent = 'Shroud';
-                overlay.appendChild(tag);
+                overlay.appendChild(this.buildPathTag(color, 'Shroud'));
             }
             delete overlay.dataset.pending;
         });
@@ -5678,29 +5691,29 @@ class LabyrinthClearRate {
         const chance = Math.min(1, Math.max(0, result.clearChance ?? 0));
         const pct = Math.round(chance * 100);
 
-        // On mobile the tiles are small and the browser inflates tiny fonts
-        // (text-size-adjust), so "100% 19s" grew wider than the badge and spilled
-        // out of its colored box past the tile edge. Pin the inflation off,
-        // shrink the fonts a step on a phone, and let the badge size to its text
-        // (max-width capped the box but not the nowrap text inside it) so the
-        // color always wraps the whole reading and it stays within the tile.
-        // On mobile the tile is small, so shrink the fonts a couple of steps and
-        // pin text inflation off — enough that "100% 19s" fits whole. Nothing is
-        // clipped: the earlier ellipsis cut the seconds down to a stray digit, so
-        // the badge sizes to its (now small) text instead of hiding part of it.
+        // On a phone a room is 32 px wide at grid scale 1 and the browser inflates tiny fonts
+        // (text-size-adjust), so pin the inflation off and drop the fonts a step. The box is capped at the
+        // room's width, and on one line "100% 19s" (30 px of text) spilled out of its left side. An ellipsis
+        // was tried and rejected (it cut the seconds down to a stray digit), and two rows were rejected as
+        // untidy. So on a phone the "%" sign is dropped and the padding and gap tightened: "100 125s" is
+        // about 29 px, inside the 30 px box, on one line with nothing clipped. The number beside a colored
+        // box is still read as a percent, and the room's hover preview shows the full "%" reading.
+        // Desktop is unchanged.
         const mobile = isMobileMode();
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
         badge.style.cssText =
-            'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
-            'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; gap:2px; ' +
+            `position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); ` +
+            `padding:${mobile ? '1px' : '1px 3px'}; ` +
+            `border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; ` +
+            'gap:2px; ' +
             'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
             '-webkit-text-size-adjust:100%; text-size-adjust:100%; ' +
             `background:${this.getTileBadgeColor(chance)};`;
 
         const chanceSpan = document.createElement('span');
         chanceSpan.style.cssText = `font-size:${mobile ? 7 : 9}px; font-weight:700; line-height:1; flex:0 0 auto;`;
-        chanceSpan.textContent = `${pct}%`;
+        chanceSpan.textContent = mobile ? `${pct}` : `${pct}%`;
 
         const etaSpan = document.createElement('span');
         etaSpan.style.cssText = `font-size:${mobile ? 6 : 8}px; font-weight:600; line-height:1; opacity:0.95; flex:0 0 auto;`;
