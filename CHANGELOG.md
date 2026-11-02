@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The Treasure panel and popup now look like the game's own panels: plain dark frame, white title, blue buttons, and one row per item under column headers.
 - Agent briefs now send logs and scratch files to the session scratchpad instead of the folder above the repo.
 
 <!-- shipped in 3.73.0 -->

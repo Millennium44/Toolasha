@@ -1460,8 +1460,7 @@ class TreasureTracker {
         const full = document.createElement('button');
         full.textContent = 'View full stats';
         styleGameButton(full, 'primary');
-        // On a touch screen the resize handle is 26 px, so the button sits clear above it
-        Object.assign(full.style, { marginTop: '8px', marginBottom: touch ? '18px' : '0', width: '100%' });
+        full.style.width = '100%';
         full.addEventListener('click', (event) => {
             // The popup stays. It is the thing you were reading when you decided
             // you wanted more, and closing it to answer that is taking away the
@@ -1469,7 +1468,12 @@ class TreasureTracker {
             event.stopPropagation();
             this.show();
         });
-        body.appendChild(full);
+        // Outside the scrolling body, so a popup squeezed above the dialog on a phone still shows it. On a touch
+        // screen the resize handle is 26 px, so the button sits clear above that.
+        const footer = document.createElement('div');
+        Object.assign(footer.style, { flexShrink: '0', padding: `0 9px ${touch ? '26px' : '8px'}` });
+        footer.appendChild(full);
+        popup.appendChild(footer);
 
         // Moving it says "here, for now" — it no longer flips the
         // follows-the-dialog setting, which lives in the settings gear alone.
