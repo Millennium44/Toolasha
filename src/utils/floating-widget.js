@@ -22,6 +22,7 @@
 
 import config from '../core/config.js';
 import storage from '../core/storage.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from './game-look.js';
 import { markToolashaSurface } from './surface-marker.js';
 
 const LABEL_CSS = 'display:flex; align-items:center; gap:6px; font-size:11px; white-space:nowrap;';
@@ -129,11 +130,11 @@ export function createFloatingWidget({
     id,
     top = '70px',
     right = '24px',
-    accent = '#9ec4ff',
-    background = 'rgba(12,16,30,0.94)',
-    border = 'rgba(74,158,255,0.45)',
-    text = '#e0e0e0',
-    dim = '#7d879c',
+    accent = GAME_COLORS.text,
+    background = GAME_FRAME.background,
+    border = GAME_COLORS.frame,
+    text = GAME_COLORS.text,
+    dim = GAME_COLORS.textDim,
     zIndex,
     positionKey = null,
     position = null,
@@ -148,9 +149,9 @@ export function createFloatingWidget({
     markToolashaSurface(element, 'panel');
     element.style.cssText =
         `position:fixed; top:${top}; right:${right}; z-index:${zIndex || config.Z_FLOATING_PANEL || 9000}; ` +
-        'display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:5px 9px; border-radius:7px; ' +
+        `display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:5px 9px; border-radius:${GAME_FRAME.borderRadius}; ` +
         `background:${background}; border:1px solid ${border}; color:${text}; font-size:12px; font-family:inherit; ` +
-        'box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none; ' +
+        `box-shadow:${GAME_FRAME.boxShadow}; user-select:none; ` +
         // Never wider than the screen less its 24px anchor and an 8px gutter. The
         // strip is pinned by its right edge, so on a phone a row wider than the
         // screen (the Bulk Sell strip is ~620px) ran off the left edge — the
@@ -187,8 +188,19 @@ export function createFloatingWidget({
     const main = document.createElement('button');
     main.className = `${id}-main${mainClass ? ` ${mainClass}` : ''}`;
     main.style.cssText =
-        `border:0; border-radius:5px; background:rgba(74,158,255,0.25); color:${accent}; font-weight:700; ` +
+        `border:0; border-radius:5px; color:${accent}; font-weight:700; ` +
         'font-size:12px; padding:3px 10px; cursor:pointer; font-family:inherit; white-space:nowrap;';
+    styleGameButton(main, 'primary');
+    // The game's blue, at the strip's own size and with the caller's text color
+    Object.assign(main.style, {
+        color: accent,
+        fontWeight: '700',
+        fontSize: '12px',
+        padding: '3px 10px',
+        height: '',
+        lineHeight: '',
+        boxSizing: '',
+    });
     shieldFromDrag(main);
 
     // Every label the button will ever carry, stacked in one grid cell with all
@@ -224,16 +236,20 @@ export function createFloatingWidget({
     gear.textContent = '⚙';
     gear.title = 'Show the settings this decides by';
     gear.style.cssText =
-        `border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:${text}; font-size:12px; ` +
+        `border:0; border-radius:5px; color:${text}; font-size:12px; ` +
         'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
+    styleGameButton(gear, 'quiet');
+    Object.assign(gear.style, { color: text, fontWeight: '', fontSize: '12px', padding: '3px 6px', height: '' });
     shieldFromDrag(gear);
 
     const close = document.createElement('button');
     close.className = `${id}-close${closeClass ? ` ${closeClass}` : ''}`;
     close.textContent = '✕';
     close.style.cssText =
-        `border:0; border-radius:5px; background:transparent; color:${dim}; font-size:12px; ` +
+        `border:0; border-radius:5px; color:${dim}; font-size:12px; ` +
         'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
+    styleGameButton(close, 'icon');
+    Object.assign(close.style, { color: dim, fontWeight: '', fontSize: '12px', padding: '3px 5px', height: '' });
     close.addEventListener('mouseenter', () => (close.style.color = text));
     close.addEventListener('mouseleave', () => (close.style.color = dim));
     shieldFromDrag(close);
@@ -307,14 +323,14 @@ export function createFloatingWidget({
 export function widgetNote(message) {
     const note = document.createElement('div');
     note.textContent = message;
-    note.style.cssText = 'color:#7d879c; font-size:11px; max-width:340px; white-space:normal;';
+    note.style.cssText = `color:${GAME_COLORS.textDim}; font-size:11px; max-width:340px; white-space:normal;`;
     return note;
 }
 
 /** A hairline above the first setting row, so the drawer reads as its own thing */
 export function widgetDivider() {
     const divider = document.createElement('div');
-    divider.style.cssText = 'border-top:1px solid rgba(74,158,255,0.25); margin-bottom:2px;';
+    divider.style.cssText = `border-top:1px solid ${GAME_COLORS.border}; margin-bottom:2px;`;
     return divider;
 }
 
@@ -335,7 +351,7 @@ export function widgetDivider() {
  */
 export function widgetNumberRow({ key, fallback, label, suffix = '', title = '', onChange }) {
     const line = document.createElement('label');
-    line.style.cssText = `${LABEL_CSS} color:#cfd8ea;`;
+    line.style.cssText = `${LABEL_CSS} color:${GAME_COLORS.text};`;
     if (title) line.title = title;
 
     const text = document.createElement('span');
@@ -348,8 +364,8 @@ export function widgetNumberRow({ key, fallback, label, suffix = '', title = '',
     input.className = `mwi-widget-setting-${key}`;
     input.value = String(config.getSettingValue(key, fallback));
     input.style.cssText =
-        'width:90px; border:1px solid rgba(74,158,255,0.35); border-radius:4px; background:rgba(20,26,44,0.95); ' +
-        'color:#cfd8ea; font-size:11px; padding:2px 4px; font-family:inherit;';
+        `width:90px; border:1px solid ${GAME_COLORS.border}; border-radius:4px; background:${GAME_COLORS.background}; ` +
+        `color:${GAME_COLORS.text}; font-size:11px; padding:2px 4px; font-family:inherit;`;
     input.addEventListener('change', () => {
         const value = Number(input.value);
         if (!Number.isFinite(value) || value < 0) {
@@ -363,7 +379,7 @@ export function widgetNumberRow({ key, fallback, label, suffix = '', title = '',
 
     const units = document.createElement('span');
     units.textContent = suffix;
-    units.style.cssText = 'color:#7d879c; width:38px;';
+    units.style.cssText = `color:${GAME_COLORS.textDim}; width:38px;`;
 
     line.append(text, input, units);
     return line;
@@ -380,7 +396,7 @@ export function widgetNumberRow({ key, fallback, label, suffix = '', title = '',
  */
 export function widgetCheckboxRow({ key, label, title = '', onChange }) {
     const line = document.createElement('label');
-    line.style.cssText = `${LABEL_CSS} color:#cfd8ea; white-space:normal;`;
+    line.style.cssText = `${LABEL_CSS} color:${GAME_COLORS.text}; white-space:normal;`;
     if (title) line.title = title;
 
     const box = document.createElement('input');
@@ -413,7 +429,7 @@ export function widgetCheckboxRow({ key, label, title = '', onChange }) {
  */
 export function widgetSelectRow({ key, fallback, label, options, title = '', onChange }) {
     const line = document.createElement('label');
-    line.style.cssText = `${LABEL_CSS} color:#cfd8ea;`;
+    line.style.cssText = `${LABEL_CSS} color:${GAME_COLORS.text};`;
     if (title) line.title = title;
 
     const text = document.createElement('span');
@@ -424,8 +440,8 @@ export function widgetSelectRow({ key, fallback, label, options, title = '', onC
     select.className = `mwi-widget-setting-${key}`;
     select.classList.add('toolasha-select');
     select.style.cssText =
-        'border:1px solid rgba(74,158,255,0.35); border-radius:4px; background:rgba(20,26,44,0.95); ' +
-        'color:#cfd8ea; font-size:11px; padding:2px 4px; cursor:pointer; font-family:inherit;';
+        `border:1px solid ${GAME_COLORS.border}; border-radius:4px; background:${GAME_COLORS.background}; ` +
+        `color:${GAME_COLORS.text}; font-size:11px; padding:2px 4px; cursor:pointer; font-family:inherit;`;
     for (const option of options || []) {
         const element = document.createElement('option');
         element.value = option.value;
@@ -454,7 +470,7 @@ export function widgetSelectRow({ key, fallback, label, options, title = '', onC
  */
 export function widgetReadOnlyRow({ label, value, hint = '', title = '' }) {
     const line = document.createElement('div');
-    line.style.cssText = `${LABEL_CSS} color:#cfd8ea; white-space:normal;`;
+    line.style.cssText = `${LABEL_CSS} color:${GAME_COLORS.text}; white-space:normal;`;
     if (title) line.title = title;
 
     const text = document.createElement('span');
@@ -463,13 +479,13 @@ export function widgetReadOnlyRow({ label, value, hint = '', title = '' }) {
 
     const reading = document.createElement('span');
     reading.textContent = value;
-    reading.style.cssText = 'color:#cfd8ea; font-weight:700;';
+    reading.style.cssText = `color:${GAME_COLORS.text}; font-weight:700;`;
 
     line.append(text, reading);
     if (hint) {
         const note = document.createElement('span');
         note.textContent = hint;
-        note.style.cssText = 'color:#7d879c; width:100%; font-size:10px; white-space:normal;';
+        note.style.cssText = `color:${GAME_COLORS.textDim}; width:100%; font-size:10px; white-space:normal;`;
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex; flex-direction:column; gap:1px;';
         wrap.append(line, note);

@@ -4,6 +4,7 @@
  */
 import { describe, test, expect, afterEach } from 'vitest';
 import { askChoice } from './choice-dialog.js';
+import { GAME_COLORS, GAME_FRAME } from './game-look.js';
 
 function backdrop() {
     return document.body.querySelector('div');
@@ -85,5 +86,40 @@ describe('askChoice', () => {
         expect(document.body.querySelector('button').title).toBe('Explains X');
         document.body.querySelector('button').click();
         await promise;
+    });
+});
+
+describe('askChoice look', () => {
+    test('the dialog uses the game frame and a white title', async () => {
+        const promise = askChoice({ title: 'Restore?', message: 'm', choices: [{ value: 'x', label: 'X' }] });
+        const dialog = backdrop().firstElementChild;
+        expect(dialog.style.background).toBe(GAME_FRAME.background);
+        expect(dialog.style.border).toContain('1px solid');
+        expect(dialog.style.boxShadow).not.toBe('');
+        expect(dialog.firstElementChild.style.color).toBe(GAME_COLORS.text);
+        document.body.querySelector('button').click();
+        await promise;
+    });
+
+    test('a danger choice is filled in the game warning color, the others blue, and the first stays focused', async () => {
+        const promise = askChoice({
+            title: 'T',
+            choices: [
+                { value: 'keep', label: 'Keep' },
+                { value: 'main', label: 'Main', tone: 'primary' },
+                { value: 'wipe', label: 'Wipe', tone: 'danger' },
+            ],
+        });
+        const [keep, main, wipe] = document.body.querySelectorAll('button');
+        expect(wipe.style.background).toContain('--color-warning');
+        expect(keep.style.background).toContain('--color-space-800');
+        expect(main.style.background).toContain('--color-primary');
+        wipe.dispatchEvent(new Event('mouseover'));
+        expect(wipe.style.background).toContain('--color-warning-hover');
+        wipe.dispatchEvent(new Event('mouseout'));
+        expect(wipe.style.background).toContain('--color-warning, ');
+        expect(document.activeElement).toBe(keep);
+        wipe.click();
+        expect(await promise).toBe('wipe');
     });
 });

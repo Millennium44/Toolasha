@@ -14,6 +14,7 @@
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { escapeText } from './damage-board.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from './game-look.js';
 import { markToolashaSurface } from './surface-marker.js';
 
 const DECISION_KEY = 'adoptionTargetCharacterId';
@@ -115,22 +116,23 @@ function showDialog(characters, recommendedId, currentId) {
             .join('');
 
         const card = document.createElement('div');
-        card.style.cssText =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:8px; ' +
-            'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
+        card.style.cssText = 'padding:16px 20px; max-width:420px; font-size:13px; line-height:1.5;';
+        Object.assign(card.style, { ...GAME_FRAME, color: GAME_COLORS.text });
         card.innerHTML =
             `<div style="font-weight:700; font-size:14px; margin-bottom:8px;">Toolasha — who owns the saved data?</div>` +
-            `<div style="color:#aaa; margin-bottom:10px;">Saved data from before per-character scoping was found ` +
+            `<div style="color:rgba(231, 231, 231, 0.6); margin-bottom:10px;">Saved data from before per-character scoping was found ` +
             `(watchlist, savings targets, trackers, panel state…). Choose which character should inherit it — ` +
             `nothing moves until you confirm.</div>` +
             rows +
             `<div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">` +
-            `<button id="mwi-adopt-later" style="background:#333; color:#ccc; border:1px solid #555; border-radius:4px; padding:4px 12px; cursor:pointer;">Not now</button>` +
-            `<button id="mwi-adopt-confirm" style="background:#4a6fdc; color:#fff; border:none; border-radius:4px; padding:4px 12px; cursor:pointer;">Confirm</button>` +
+            `<button id="mwi-adopt-later">Not now</button>` +
+            `<button id="mwi-adopt-confirm">Confirm</button>` +
             `</div>` +
-            `<div style="color:#777; margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
+            `<div style="color:rgba(231, 231, 231, 0.6); margin-top:8px; font-size:11px;">Applies as data is next read; reload to apply everywhere. ` +
             `Reopen later with Toolasha.debug.chooseDataOwner().</div>`;
 
+        styleGameButton(card.querySelector('#mwi-adopt-later'), 'quiet');
+        styleGameButton(card.querySelector('#mwi-adopt-confirm'), 'primary');
         overlay.appendChild(card);
         markToolashaSurface(overlay, 'modal');
         document.body.appendChild(overlay);

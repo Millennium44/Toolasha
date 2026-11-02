@@ -7,10 +7,10 @@
  */
 
 export const GAME_COLORS = {
-    // Measured from the game's Modal_modal: its near-black fill, thin light edge and faint glow
+    // Fill measured from the game's Modal_modal; the edge is its quieter divider line, by the maintainer's choice
     background: 'rgb(19, 20, 25)',
-    frame: 'rgb(208, 208, 208)',
-    frameGlow: 'rgba(208, 208, 208, 0.282) 0 0 4px 4px',
+    frame: 'var(--color-divider, #323450)',
+    frameGlow: '0 4px 12px rgba(0, 0, 0, 0.4)',
     border: 'var(--color-divider, #323450)',
     text: 'var(--color-text-dark-mode, #e7e7e7)',
     textDim: 'rgba(231, 231, 231, 0.6)',

@@ -4993,7 +4993,7 @@ export const settingsGroups = {
                 label: 'Script Accent Color',
                 type: 'color',
                 default: '#22c55e',
-                help: 'Primary accent color for script UI elements (buttons, headers, zone numbers, XP percentages, etc.)',
+                help: 'Primary accent color for script highlights (zone numbers, XP percentages, some buttons, etc.)',
             },
             color_remaining_xp: {
                 id: 'color_remaining_xp',

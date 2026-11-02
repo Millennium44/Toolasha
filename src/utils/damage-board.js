@@ -27,6 +27,7 @@
  */
 
 import { formatKMB, formatWithSeparator } from './formatters.js';
+import { BUTTON_LOOK, GAME_COLORS } from './game-look.js';
 
 /** The board's ink, matching what the trial panel already drew with */
 export const BOARD_COLORS = {
@@ -117,7 +118,7 @@ export function boardHeadHTML({
  * @returns {string} HTML
  */
 export function boardTabsHTML(tabs, active) {
-    const { accent, dim } = BOARD_COLORS;
+    const { dim } = BOARD_COLORS;
     return (
         `<div style="display:flex; gap:6px; margin:6px 0;">` +
         (tabs || [])
@@ -125,9 +126,9 @@ export function boardTabsHTML(tabs, active) {
                 const on = entry.key === active;
                 return (
                     `<button data-tab="${escapeText(entry.key)}" style="flex:1; cursor:pointer; padding:3px 0;` +
-                    `border:1px solid ${on ? accent : 'rgba(255,255,255,0.15)'};` +
-                    `border-radius:4px; background:${on ? 'rgba(143,211,255,0.15)' : 'transparent'};` +
-                    `color:${on ? accent : dim}; font-size:11px;">${escapeText(entry.label)}</button>`
+                    `border:1px solid ${on ? BUTTON_LOOK.primary.rest : GAME_COLORS.border};` +
+                    `border-radius:4px; background:${on ? BUTTON_LOOK.primary.rest : 'transparent'};` +
+                    `color:${on ? GAME_COLORS.text : dim}; font-size:11px;">${escapeText(entry.label)}</button>`
                 );
             })
             .join('') +
@@ -213,6 +214,9 @@ export function boardNoteHTML(text, { color = BOARD_COLORS.dim, strong = false }
 /**
  * A row of actions along the foot. Each carries `data-action`.
  *
+ * A button with no color, or the board's accent, is the game's quiet blue button. Any other color is a verdict
+ * (good, warn, bad) and keeps its outline.
+ *
  * @param {Array<{key: string, label: string, color?: string}>} actions - In display order
  * @returns {string} HTML
  */
@@ -221,12 +225,14 @@ export function boardButtonsHTML(actions) {
         `<div style="display:flex; gap:6px; margin-top:8px;">` +
         (actions || [])
             .map((action) => {
-                const color = action.color || BOARD_COLORS.dim;
-                return (
-                    `<button data-action="${escapeText(action.key)}" style="flex:1; cursor:pointer; padding:4px 0;` +
-                    ` border-radius:4px; border:1px solid ${color}66; background:transparent; color:${color};` +
-                    ` font-size:11px;">${escapeText(action.label)}</button>`
-                );
+                const verdict = action.color && action.color !== BOARD_COLORS.accent ? action.color : null;
+                return verdict
+                    ? `<button data-action="${escapeText(action.key)}" style="flex:1; cursor:pointer; padding:4px 0;` +
+                          ` border-radius:4px; border:1px solid ${verdict}66; background:transparent; color:${verdict};` +
+                          ` font-size:11px;">${escapeText(action.label)}</button>`
+                    : `<button data-action="${escapeText(action.key)}" style="flex:1; cursor:pointer; padding:4px 0;` +
+                          ` border-radius:4px; border:none; background:${BUTTON_LOOK.quiet.rest};` +
+                          ` color:${GAME_COLORS.text}; font-size:11px;">${escapeText(action.label)}</button>`;
             })
             .join('') +
         `</div>`

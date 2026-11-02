@@ -60,9 +60,11 @@ function showLoadErrorBanner(html) {
             el.id = 'toolasha-load-error';
             el.style.cssText =
                 'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:2147483647; ' +
-                'max-width:min(92vw,520px); padding:12px 16px; border-radius:8px; background:#2a1418; ' +
-                'border:1px solid #7a2e34; color:#f3d6d6; font:13px/1.5 system-ui,sans-serif; ' +
-                'box-shadow:0 6px 24px rgba(0,0,0,0.5);';
+                // The game's plain frame (values from utils/game-look.js; this banner runs before the
+                // libraries load and cannot import it), with the error hue on the edge only
+                'max-width:min(92vw,520px); padding:12px 16px; border-radius:0.25rem; background:rgb(19, 20, 25); ' +
+                'border:1px solid rgba(255, 82, 82, 0.8); color:#e7e7e7; font:13px/1.5 system-ui,sans-serif; ' +
+                'box-shadow:0 4px 12px rgba(0, 0, 0, 0.4);';
             (document.body || document.documentElement).appendChild(el);
         }
         el.innerHTML = html;
