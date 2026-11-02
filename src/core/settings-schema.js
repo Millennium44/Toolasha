@@ -3123,11 +3123,10 @@ export const settingsGroups = {
             },
             combatDeathRecapLabyrinth: {
                 id: 'combatDeathRecapLabyrinth',
-                label: 'Death Recap: Show Death recap in the labyrinth',
+                label: 'Death notification and recap in the labyrinth',
                 type: 'checkbox',
                 default: false,
-                help: 'A death inside the labyrinth is routine, so the death alert carries no "View death recap" link there unless this is on. A labyrinth death with this off also raises no Death recap chip or count. Needs the Death Recap setting above.',
-                dependencies: ['combatDeathRecap'],
+                help: 'A death inside the labyrinth is routine, so while this is off it raises no "You died" notification, no Death recap chip and no count there. Applies whether or not Death Recap is on; the recap itself is still kept in memory. Deaths anywhere else are unaffected.',
             },
             combatDropLuck: {
                 id: 'combatDropLuck',

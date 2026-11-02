@@ -64,6 +64,9 @@ class CombatDeathAlerts {
         this.battleSeen = false;
         /** Whether this life has already been announced from a tick; re-armed by a tick showing us alive */
         this.deadAnnounced = false;
+        /** Whether the fight on the latest tick was a labyrinth one (sticky within a battle) */
+        this.labFight = false;
+        this.battleId = null;
         /** Deaths announced from ticks that no counter reading has reconciled yet */
         this.tickDeaths = 0;
         this.unregisterHandlers = [];
@@ -118,6 +121,12 @@ class CombatDeathAlerts {
      */
     checkTick(data) {
         if (!config.getSetting(MASTER_SETTING)) return;
+        // Tracked here, not read from the recap module, so it holds with Death Recap switched off
+        if (data?.battleId !== this.battleId) {
+            this.battleId = data?.battleId;
+            this.labFight = false;
+        }
+        this.labFight = this.labFight || isLabyrinthFightActive();
         if (this.ownIndex === null) {
             // A new_battle that named no seat of ours is an answer (not our fight); only a missing one is a gap
             if (this.battleSeen) return;
@@ -151,7 +160,7 @@ class CombatDeathAlerts {
         const total = this.lastCount === null ? 0 : this.lastCount + this.tickDeaths;
         const message =
             total > 0 ? `You died in combat — ${this.totalText(total)} so far this session.` : 'You died in combat.';
-        this.announce(message, isLabyrinthFightActive());
+        this.announce(message);
     }
 
     /**
@@ -165,12 +174,12 @@ class CombatDeathAlerts {
     /**
      * Say it, with the recap one click away.
      * @param {string} message - Body text
-     * @param {boolean} [liveLabyrinth] - Whether the caller, on a tick, sees a labyrinth fight right now
      */
-    announce(message, liveLabyrinth = false) {
-        // Checked as the alert is about to be shown: a labyrinth death is routine, so it carries no recap link
-        // unless the player asked for one there. The recap is still recorded and the button still opens it
-        const offerRecap = config.getSetting(RECAP_SETTING) && !labyrinthDeathQuiet(liveLabyrinth);
+    announce(message) {
+        // Checked as the alert is about to be shown: a labyrinth death is routine, so it is not announced at all
+        // unless the player asked for it there. Independent of Death Recap; the recap is still recorded
+        if (labyrinthDeathQuiet(this.labFight)) return;
+        const offerRecap = config.getSetting(RECAP_SETTING);
         notificationService.notify(EVENT_KEY, message, {
             title: 'You died',
             // Only while the recap feature is on: with it off there is never a recap to open. Opened on
@@ -254,6 +263,8 @@ class CombatDeathAlerts {
         this.seatGuessed = false;
         this.battleSeen = false;
         this.deadAnnounced = false;
+        this.labFight = false;
+        this.battleId = null;
         this.tickDeaths = 0;
     }
 }
