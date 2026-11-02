@@ -331,8 +331,8 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
     if (liveSession) combatSessions.push(liveSession);
 
     return {
-        // Steps that setting changes caused are taken out, so they do not read as unexplained income
-        series: networthHistory.getGrowthHistory?.() || networthHistory.getHistory?.() || [],
+        // The recorded series, markers and all: the attribution names a setting-change step in its own line
+        series: networthHistory.getHistory?.() || [],
         // The item-level window, which prices each holding at the moment its
         // snapshot was taken and so is the only record here that can separate a
         // price change from a quantity change

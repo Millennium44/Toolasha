@@ -783,6 +783,7 @@ describe('setting-change markers on history points', () => {
         expect(second.marker.step).toBe(400);
         // The recorded line is the raw one
         expect(second.total).toBe(1450);
+        await vi.advanceTimersByTimeAsync(10_000);
         expect(storageMock.set.mock.calls.some(([key]) => key === 'networthMarkerState_char-1')).toBe(true);
     });
 

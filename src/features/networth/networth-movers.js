@@ -36,7 +36,7 @@ export const MOVERS_PREFIX = 'networthMovers';
 export const MOVERS_INDEX_PREFIX = 'networthMoversIndex';
 
 registerCharacterScopedPrefix(STORE_NAME, MOVERS_PREFIX);
-registerCharacterScopedPrefix(STORE_NAME, MOVERS_INDEX_PREFIX);
+// The index (`networthMoversIndex_<id>`) has no chunk segment, which the per-character count cannot read, so only the records are registered
 
 export const RECENT_READINGS = 24;
 export const MAX_JUMPS = 10;
@@ -164,6 +164,23 @@ export function buildRows(data) {
 }
 
 /**
+ * What the reading's exclusions hold back: items excluded by name (by amount, since they are not in the rows
+ * but are in the total), and whether a category or asset-type exclusion hides more that cannot be attributed.
+ * @param {Object} data - The calculator's result
+ * @returns {{ex: Record<string, number>, exOther: boolean}} Amounts by hrid, and the unattributable flag
+ */
+export function exclusionsOf(data) {
+    const ex = {};
+    let exOther = false;
+    for (const entry of data?.excluded?.items || []) {
+        if (entry?.type === 'item' && entry.value)
+            ex[entry.value] = (ex[entry.value] || 0) + Math.round(entry.amount || 0);
+        else if (entry?.type !== 'item' && (entry?.amount || 0) !== 0) exOther = true;
+    }
+    return { ex, exOther };
+}
+
+/**
  * The stored record for one reading.
  * @param {Object} params - Inputs
  * @param {string} params.characterId - Whose reading
@@ -191,6 +208,7 @@ export function buildRecord({ characterId, snapshot, data, prev, context }) {
         ic: context.ic,
         cut,
         rows,
+        ...exclusionsOf(data),
     };
 }
 

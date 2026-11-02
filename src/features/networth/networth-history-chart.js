@@ -584,6 +584,8 @@ class NetworthHistoryChart {
         if (config.getSetting('networth_forecast')) {
             this.forecastSection = createForecastSection({
                 getHistory: () => networthHistory.getGrowthHistory?.() ?? networthHistory.history,
+                // The forecast starts from where net worth really is; only its drift is read from the growth series
+                getCurrent: () => networthHistory.history.filter((point) => point.total > 0).at(-1)?.total ?? null,
             });
             modal.appendChild(this.forecastSection.element);
         }
@@ -1069,7 +1071,7 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showNonExcluded && hasNonExclStats) {
             const currentNE = this.networthFeature?.currentData?.totalNetworth ?? last.nonExcluded ?? last.total;
             const firstNE = first.nonExcluded ?? first.total;
-            const neSteps = stepsAfter(networthHistory.getHistory(), first.t).step;
+            const neSteps = stepsAfter(networthHistory.getHistory(), first.t).stepCounted;
             const neRate = hoursElapsed > 0 ? (currentNE - firstNE - neSteps) / hoursElapsed : 0;
 
             let neStatHtml = `<span style="color: #a78bfa;">Non-Excl</span>: <strong style="color: #a78bfa;">${networthFormatter(Math.round(currentNE))}</strong>`;
@@ -1099,7 +1101,7 @@ class NetworthHistoryChart {
                 firstVal -= first.gold ?? 0;
                 lastVal -= last.gold ?? 0;
             }
-            const catStep = cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t).step : 0;
+            const catStep = cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t).stepCounted : 0;
             const catChange = lastVal - firstVal - catStep;
             const rate = hoursElapsed > 0 ? catChange / hoursElapsed : 0;
             const rateColor = rate >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
@@ -1463,7 +1465,18 @@ class NetworthHistoryChart {
                 }
             }
             const currentTotal = Math.round(currentData.totalNetworth + (currentData.excluded?.total ?? 0));
-            const last24hChange = currentTotal - oldHourly.total;
+            // The headline above leaves out the steps setting changes caused; the item rows below hold them
+            // (a token now valued is a holding that gained value), so one row takes them back out
+            const steps = stepsAfter(history, oldHourly.t);
+            if (steps.step !== 0) {
+                otherTotal -= steps.step;
+                otherItems.push({
+                    name: 'Setting change (left out of the headline)',
+                    key: '_setting',
+                    value: -steps.step,
+                });
+            }
+            const last24hChange = currentTotal - oldHourly.total - steps.step;
             const residual = last24hChange - activityTotal - marketTotal - otherTotal;
             if (Math.abs(residual) > 0) {
                 otherTotal += residual;
@@ -1537,7 +1550,14 @@ class NetworthHistoryChart {
                     ? '<div style="padding-left:12px;">No effect on the total</div>'
                     : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(marker.step))} (left out of growth figures)</div>`;
         }
-        if ((marker.unseparated || []).length > 0) {
+        if ((marker.floor || []).length > 0) {
+            html +=
+                '<div style="padding-left:12px;">At least this much: some of what the setting adds had no price or was hidden by an exclusion</div>';
+        }
+        if (marker.small === true) {
+            const raw = Number.isFinite(marker.raw) ? ` (${networthFormatter(marker.raw)})` : '';
+            html += `<div style="padding-left:12px;">The reading moved within ordinary variation${esc(raw)}</div>`;
+        } else if ((marker.unseparated || []).length > 0) {
             const raw = Number.isFinite(marker.raw)
                 ? ` The reading moved ${networthFormatter(marker.raw)} in all.`
                 : '';

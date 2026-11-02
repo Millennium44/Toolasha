@@ -74,6 +74,7 @@ const SOURCE_COLORS = {
     skillingDrinks: '#a8a29e',
     marketTax: '#64748b',
     residual: '#4b5563',
+    settingChange: '#b45309',
 };
 
 const RESIDUAL_NOTE =
@@ -223,6 +224,10 @@ export function formatAttributionAsText(attribution) {
         const meta = SOURCE_META[key];
         const value = totals[key] || 0;
         lines.push(`  ${meta.label}: ${value > 0 ? '+' : ''}${networthFormatter(Math.round(value))}`);
+    }
+    const settingStep = attribution?.totals?.settingChange ?? 0;
+    if (settingStep !== 0) {
+        lines.push(`  Setting change: ${settingStep > 0 ? '+' : ''}${networthFormatter(Math.round(settingStep))}`);
     }
     const residual = attribution?.totals?.residual;
     lines.push(
@@ -411,6 +416,8 @@ export function buildBars(attribution) {
             if (row.residual > 0) positive += row.residual;
             else negative -= row.residual;
         }
+        if (row.settingChange > 0) positive += row.settingChange;
+        else if (row.settingChange < 0) negative -= row.settingChange;
         scale = Math.max(scale, positive, negative);
     }
     if (scale <= 0) scale = 1;
@@ -430,6 +437,7 @@ export function buildBars(attribution) {
 
         const segments = [];
         for (const key of SOURCE_KEYS) segments.push([key, row.sources[key]]);
+        if (row.settingChange) segments.push(['settingChange', row.settingChange]);
         if (Number.isFinite(row.residual)) segments.push(['residual', row.residual]);
 
         // Costs first so they read as a block on the left, then income
@@ -556,6 +564,19 @@ export function buildTotalsTable(attribution) {
         const basis =
             (key === 'combat' ? combatBasisLabel(combatBasis) : null) || (meta.measured ? 'Measured' : 'Estimated');
         addRow(key, meta.label, totals[key] || 0, sourceTooltip(key, attribution?.coverage, combatBasis), basis);
+    }
+
+    // Present only when a net worth setting was changed inside the window: its step is not income and not
+    // the market, so it is named here instead of sitting in the residual
+    const settingChange = attribution?.totals?.settingChange ?? 0;
+    if (settingChange !== 0) {
+        addRow(
+            'settingChange',
+            'Setting change',
+            settingChange,
+            'Turning a net worth setting on or off (for example including a token) changed the total without anything being earned. The step is taken out of the residual below.',
+            'Not income'
+        );
     }
 
     addRow('residual', 'Unexplained residual', residual, RESIDUAL_NOTE, 'Not attributed', true);

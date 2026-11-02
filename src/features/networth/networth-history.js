@@ -10,8 +10,15 @@ import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
 import { onSyncPullApplied, registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
-import networthMovers, { buildRows } from './networth-movers.js';
-import { diffSignatures, buildMarker, withoutSteps } from './networth-markers.js';
+import networthMovers, { buildRows, exclusionsOf } from './networth-movers.js';
+import {
+    diffSignatures,
+    buildMarker,
+    withoutSteps,
+    mergeMarkers,
+    markerIdentity,
+    relevanceContext,
+} from './networth-markers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 const STORE_NAME = 'networthHistory';
@@ -33,6 +40,8 @@ const MAX_DETAIL_SNAPSHOTS = 25; // ~24h of hourly snapshots + 1 buffer
  */
 const DETAIL_PREFIX = 'networthDetail';
 registerCharacterScopedPrefix(STORE_NAME, DETAIL_PREFIX);
+// `networthMarkerState_<id>` is one key a character and is not registered here: the per-character count reads
+// `<prefix>_<id>_<chunk>` keys only, so it would not be counted, and one small record does not need a budget
 
 /**
  * A detail snapshot key's character and time; anything else is null. The pre-split
@@ -200,6 +209,12 @@ export function pruneHistory(history, now = Date.now()) {
             recent.push(point);
             continue;
         }
+        // A point that carries a setting-change marker is the only record of its step: thinning must not
+        // drop it, or every older total would regain the step in a growth figure
+        if (point.marker) {
+            tail.push(point);
+            continue;
+        }
         const bucket = Math.floor(point.t / TAIL_BUCKET_MS);
         if (bucket !== lastBucket) {
             tail.push(point);
@@ -208,7 +223,23 @@ export function pruneHistory(history, now = Date.now()) {
     }
 
     const pruned = tail.concat(recent);
-    return pruned.length > MAX_HISTORY_POINTS ? pruned.slice(pruned.length - MAX_HISTORY_POINTS) : pruned;
+    if (pruned.length <= MAX_HISTORY_POINTS) return pruned;
+
+    // Over the cap the oldest go, and the steps their markers carry move to the oldest point that stays, so no
+    // surviving total regains one. A step already on that point (an identity it holds) is not added twice
+    const kept = pruned.slice(pruned.length - MAX_HISTORY_POINTS);
+    let carried = null;
+    for (const point of pruned.slice(0, pruned.length - MAX_HISTORY_POINTS)) {
+        if (point.marker) carried = mergeMarkers(carried, point.marker);
+    }
+    if (carried) {
+        const held = new Set((kept[0].marker ? markerIdentity(kept[0].marker) : '').split('&'));
+        const fresh = markerIdentity(carried)
+            .split('&')
+            .some((key) => !held.has(key));
+        if (fresh) kept[0] = { ...kept[0], marker: mergeMarkers(carried, kept[0].marker) };
+    }
+    return kept;
 }
 
 class NetworthHistory {
@@ -220,6 +251,8 @@ class NetworthHistory {
         this.networthFeature = null;
         /** `{t, settings}` of the last reading stored on this device, or null before the first */
         this.markerState = null;
+        /** The state to write once the point that moved it is on disk */
+        this._markerStateToPersist = null;
         /**
          * Bumped whenever the character changes. `initialize()` crosses several
          * awaits — a chunked-history load, the detail snapshots' IndexedDB round
@@ -331,20 +364,20 @@ class NetworthHistory {
     _markerFor(snapshot, data) {
         try {
             const signature = data.valuation;
+            this._markerStateToPersist = null;
             if (!signature) return null;
             const before = this.markerState;
+            // Advanced in memory now, so a second reading in this session cannot mark the change again; it is
+            // written to storage only once the point carrying the marker has landed (see takeSnapshot)
             this.markerState = { t: snapshot.t, settings: signature };
-            const key = `${MARKER_STATE_PREFIX}_${this.characterId}`;
-            Promise.resolve(storage.set(key, this.markerState, STORE_NAME)).catch(() => {});
+            this._markerStateToPersist = this.markerState;
             if (!before) return null;
 
-            let ironCow = false;
-            try {
-                ironCow = isIronCowCharacter() === true;
-            } catch {
-                ironCow = false;
-            }
-            const changes = diffSignatures(before.settings, signature, { ironCow }).filter(
+            const changes = diffSignatures(
+                before.settings,
+                signature,
+                relevanceContext(data, this._isIronCow())
+            ).filter(
                 (change) =>
                     !this.history.some(
                         (point) =>
@@ -361,13 +394,22 @@ class NetworthHistory {
             return buildMarker({
                 changes,
                 prevRecord,
-                rows: buildRows(data).rows,
+                current: { rows: buildRows(data).rows, ...exclusionsOf(data) },
                 prevTotal: prevPoint ? prevPoint.total : null,
                 total: snapshot.total,
             });
         } catch (error) {
             console.warn('[NetworthHistory] Marking a setting change failed:', error);
             return null;
+        }
+    }
+
+    /** @returns {boolean} Whether this is an Iron Cow character; false when it cannot be told */
+    _isIronCow() {
+        try {
+            return isIronCowCharacter() === true;
+        } catch {
+            return false;
         }
     }
 
@@ -378,7 +420,7 @@ class NetworthHistory {
      */
     pendingChanges(data = this.networthFeature?.currentData) {
         if (!this.markerState || !data?.valuation) return [];
-        return diffSignatures(this.markerState.settings, data.valuation, { ironCow: false });
+        return diffSignatures(this.markerState.settings, data.valuation, relevanceContext(data, this._isIronCow()));
     }
 
     /**
@@ -507,7 +549,22 @@ class NetworthHistory {
         // Only the current month's record is written; the rest have not moved.
         // Compaction and thinning can still take points out of an older month —
         // the store's per-chunk entry count catches that despite the hint.
-        seriesStore.save(this.characterId, this.history, { changedChunks: pointChunkId(snapshot) });
+        const stateToPersist = this._markerStateToPersist;
+        const characterId = this.characterId;
+        const generation = this._generation;
+        seriesStore.save(this.characterId, this.history, {
+            changedChunks: pointChunkId(snapshot),
+            // The remembered settings follow the point to disk. Written earlier, a failed save would leave the
+            // state saying a change was marked when no stored point carries it; written later, never, a
+            // retry marks it again (and the in-memory marker blocks a second one meanwhile)
+            onLanded: (landed) => {
+                if (landed !== true || !stateToPersist) return;
+                if (this._generation !== generation || this.characterId !== characterId) return;
+                Promise.resolve(storage.set(`${MARKER_STATE_PREFIX}_${characterId}`, stateToPersist, STORE_NAME)).catch(
+                    () => {}
+                );
+            },
+        });
 
         // The item map of this reading, from the breakdown just calculated. Local to this device, written
         // after the history point is on its way, and never throws
@@ -764,8 +821,37 @@ class NetworthHistory {
     async deleteSnapshot(timestamp) {
         const idx = this.history.findIndex((s) => s.t === timestamp);
         if (idx === -1) return;
-        this.history.splice(idx, 1);
+        const [removed] = this.history.splice(idx, 1);
+        if (removed.marker) this._carryMarker(removed, idx);
         await seriesStore.save(this.characterId, this.history);
+    }
+
+    /**
+     * A deleted point's marker moves to the next surviving point, merged with any marker there, so the step it
+     * recorded is still left out of growth. With no later point there is nowhere to carry it: the settings this
+     * device remembers go back to what they were before the change, so the next reading marks it again (without
+     * an item map for the reading before it, so as a step that could not be separated) and the stats row says
+     * "not yet marked" until then.
+     * @param {Object} removed - The point just taken out
+     * @param {number} idx - Where it was
+     * @private
+     */
+    _carryMarker(removed, idx) {
+        const next = this.history[idx];
+        if (next) {
+            // The same change already on the next point (marked by another device): count it once
+            const same = next.marker && markerIdentity(next.marker) === markerIdentity(removed.marker);
+            if (!same) this.history[idx] = { ...next, marker: mergeMarkers(removed.marker, next.marker) };
+            return;
+        }
+        if (networthMovers.last?.t === removed.t) networthMovers.last = null;
+        if (!this.markerState) return;
+        const settings = { ...this.markerState.settings };
+        for (const change of removed.marker.changes || []) settings[change.id] = change.from;
+        this.markerState = { t: this.history[this.history.length - 1]?.t ?? 0, settings };
+        Promise.resolve(storage.set(`${MARKER_STATE_PREFIX}_${this.characterId}`, this.markerState, STORE_NAME)).catch(
+            () => {}
+        );
     }
 
     /**

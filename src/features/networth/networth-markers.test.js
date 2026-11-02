@@ -3,7 +3,7 @@ import { describe, test, expect, vi } from 'vitest';
 const settings = vi.hoisted(() => ({ values: {} }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSettingValue: (id, fallback) => (id in settings.values ? settings.values[id] : fallback) },
+    default: { getSetting: (id, fallback) => (id in settings.values ? settings.values[id] : fallback) },
 }));
 vi.mock('../../utils/ironcow-valuation.js', () => ({ IRONCOW_VALUATION_SETTING: 'profitCalc_ironCowValuation' }));
 
@@ -16,6 +16,9 @@ const {
     withoutSteps,
     growthNote,
     describeChanges,
+    countedMarkerTimes,
+    mergeMarkers,
+    relevanceContext,
 } = await import('./networth-markers.js');
 
 const money = (n) => `${Math.round(n / 1e6)}M`;
@@ -101,7 +104,7 @@ describe('buildMarker', () => {
         const marker = buildMarker({
             changes: [change('networth_includeLabyrinthTokens', false, true)],
             prevRecord: prev,
-            rows,
+            current: { rows },
             prevTotal: 1_000_000_000,
             total: 1_363_100_000,
         });
@@ -115,7 +118,7 @@ describe('buildMarker', () => {
         const off = buildMarker({
             changes: [change('networth_includeTaskTokens', true, false)],
             prevRecord: prev,
-            rows: [tokenRow('/items/task_token', 10, 0, 1)],
+            current: { rows: [tokenRow('/items/task_token', 10, 0, 1)] },
             prevTotal: 100,
             total: 90,
         });
@@ -123,7 +126,7 @@ describe('buildMarker', () => {
         const zero = buildMarker({
             changes: [change('networth_includeGuildTokens', false, true)],
             prevRecord: { rows: [] },
-            rows: [],
+            current: { rows: [] },
             prevTotal: 100,
             total: 100,
         });
@@ -136,14 +139,14 @@ describe('buildMarker', () => {
         const credits = buildMarker({
             changes: [change('networth_includeGuildCredits', false, true)],
             prevRecord: prev,
-            rows,
+            current: { rows },
             prevTotal: 0,
             total: 1600,
         });
         const bells = buildMarker({
             changes: [change('networth_includeCowbells', false, true)],
             prevRecord: prev,
-            rows,
+            current: { rows },
             prevTotal: 0,
             total: 1600,
         });
@@ -155,7 +158,7 @@ describe('buildMarker', () => {
         const marker = buildMarker({
             changes: [change('networth_pricingMode', 'ask', 'bid')],
             prevRecord: { rows: [] },
-            rows: [],
+            current: { rows: [] },
             prevTotal: 1000,
             total: 1200,
         });
@@ -168,7 +171,7 @@ describe('buildMarker', () => {
         const marker = buildMarker({
             changes: [change('networth_includeLabyrinthTokens', false, true)],
             prevRecord: null,
-            rows: [],
+            current: { rows: [] },
             prevTotal: 1,
             total: 2,
         });
@@ -183,7 +186,7 @@ describe('buildMarker', () => {
                 change('networth_valueSource', 'orderBook', 'officialValue'),
             ],
             prevRecord: { rows: [tokenRow('/items/task_token', 5, 0, 1)] },
-            rows: [tokenRow('/items/task_token', 5, 250)],
+            current: { rows: [tokenRow('/items/task_token', 5, 250)] },
             prevTotal: 1000,
             total: 1900,
         });
@@ -195,7 +198,7 @@ describe('buildMarker', () => {
         const marker = buildMarker({
             changes: [change('networth_abilityBooksAsInventory', false, true)],
             prevRecord: { rows: [] },
-            rows: [],
+            current: { rows: [] },
             prevTotal: 5,
             total: 5,
         });
@@ -211,9 +214,11 @@ describe('leaving steps out of growth', () => {
         inventory: total - 10,
         ...(marker ? { marker } : {}),
     });
-    const m = (step, extra = {}) => ({
-        changes: [{ id: 'x', from: 1, to: 2 }],
+    /** A marker for a distinct change, so no two of them are taken for the same one */
+    const m = (step, id = 'x', extra = {}) => ({
+        changes: [{ id, from: 1, to: 2 }],
         step,
+        stepCounted: step,
         unseparated: [],
         raw: step,
         ...extra,
@@ -221,21 +226,26 @@ describe('leaving steps out of growth', () => {
 
     test('stepsAfter counts only markers after the baseline and separates the unseparable ones', () => {
         const history = [
-            point(1, 100, m(40)),
-            point(2, 200, m(60)),
-            point(3, 300, m(null, { unseparated: ['networth_pricingMode'] })),
+            point(1, 100, m(40, 'a')),
+            point(2, 200, m(60, 'b')),
+            point(3, 300, m(null, 'c', { unseparated: ['networth_pricingMode'] })),
             point(4, 400),
         ];
-        expect(stepsAfter(history, 1)).toEqual({ step: 60, count: 1, inexact: 1 });
-        expect(stepsAfter(history, 4)).toEqual({ step: 0, count: 0, inexact: 0 });
+        expect(stepsAfter(history, 1)).toMatchObject({ step: 60, count: 1, inexact: 1, floor: 0 });
+        expect(stepsAfter(history, 4)).toMatchObject({ step: 0, count: 0, inexact: 0 });
+    });
+
+    test('a small unseparated marker is not reported as unseparable', () => {
+        const history = [point(1, 100), point(2, 100, m(null, 'c', { unseparated: ['x'], small: true }))];
+        expect(stepsAfter(history, 1).inexact).toBe(0);
     });
 
     test('withoutSteps shifts later points by every earlier step and does not touch the recorded ones', () => {
         const history = [
             point(1, 1000),
-            point(2, 1363, m(363)),
+            point(2, 1363, m(363, 'a')),
             point(3, 1400),
-            point(4, 1500, m(-100)),
+            point(4, 1500, m(-100, 'b')),
             point(5, 1450),
         ];
         const out = withoutSteps(history);
@@ -247,14 +257,26 @@ describe('leaving steps out of growth', () => {
         expect(out[0]).toBe(history[0]);
     });
 
+    test('an excluded token moves the total but not the non-excluded line or inventory', () => {
+        const history = [point(1, 1000), point(2, 1400, m(400, 'a', { stepCounted: 0 }))];
+        const out = withoutSteps(history);
+        expect(out[1].total).toBe(1000);
+        expect(out[1].nonExcluded).toBe(1400);
+        expect(out[1].inventory).toBe(1390);
+        expect(stepsAfter(history, 1)).toMatchObject({ step: 400, stepCounted: 0 });
+    });
+
     test('no step to take out returns the very same array', () => {
-        const history = [point(1, 1), point(2, 2, m(0)), point(3, 3, m(null))];
+        const history = [point(1, 1), point(2, 2, m(0)), point(3, 3, m(null, 'z'))];
         expect(withoutSteps(history)).toBe(history);
     });
 
-    test('the note says how many and how much, and what was left in', () => {
+    test('the note says how many and how much, what was left in, and when a step is only a floor', () => {
         expect(growthNote({ step: 363e6, count: 1, inexact: 0 }, money)).toBe('excludes 1 setting change: +363M');
         expect(growthNote({ step: -5e6, count: 2, inexact: 1 }, money)).toContain('excludes 2 setting changes: -5M');
+        expect(growthNote({ step: 5e6, count: 1, inexact: 0, floor: 1 }, money)).toBe(
+            'excludes 1 setting change: at least +5M'
+        );
         expect(growthNote({ step: 0, count: 0, inexact: 1 }, money)).toBe(
             '1 setting change could not be separated from market movement and is left in'
         );
@@ -270,5 +292,224 @@ describe('leaving steps out of growth', () => {
                 ],
             })
         ).toBe('Include labyrinth tokens: off to on; Net worth pricing side: ask to bid');
+    });
+});
+
+describe('one change marked twice', () => {
+    const HOUR = 3_600_000;
+    const flip = (id, from, to) => ({ id, from, to });
+    const mark = (t, change, step = 363) => ({
+        t,
+        total: 1000 + step,
+        nonExcluded: 1000 + step,
+        marker: { changes: [change], step, stepCounted: step, unseparated: [], raw: step },
+    });
+    const on = flip('networth_includeLabyrinthTokens', false, true);
+    const off = flip('networth_includeLabyrinthTokens', true, false);
+
+    test('two devices marking the same change within the window count once, whichever order they merged in', () => {
+        const a = mark(10 * HOUR, on);
+        const b = mark(10 * HOUR + 40 * 60_000, on);
+        for (const history of [
+            [a, b],
+            [b, a],
+        ]) {
+            expect(stepsAfter(history, 0)).toMatchObject({ step: 363, count: 1 });
+            expect(countedMarkerTimes(history)).toEqual(new Set([a.t]));
+            const out = withoutSteps(history.slice().sort((x, y) => x.t - y.t));
+            expect(out.map((p) => p.total)).toEqual([1000, 1000]);
+        }
+    });
+
+    test('the same change a day apart is a real second change', () => {
+        const history = [mark(10 * HOUR, on), mark(40 * HOUR, on)];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 726, count: 2 });
+    });
+
+    test('a flip and a flip back inside the window are three real changes, not one counted twice', () => {
+        const history = [mark(10 * HOUR, on), mark(11 * HOUR, off, -363), mark(12 * HOUR, on)];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 363, count: 3 });
+    });
+
+    test('different changes at once are both counted', () => {
+        const history = [
+            mark(10 * HOUR, on),
+            mark(10 * HOUR + 1000, flip('networth_includeTaskTokens', false, true), 50),
+        ];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 413, count: 2 });
+    });
+});
+
+describe('mergeMarkers', () => {
+    test('joins changes without repeating one, adds the steps, keeps null only when both are', () => {
+        const a = {
+            changes: [{ id: 'a', from: 1, to: 2 }],
+            step: 10,
+            unseparated: [],
+            raw: 10,
+        };
+        const b = {
+            changes: [
+                { id: 'a', from: 1, to: 2 },
+                { id: 'b', from: 1, to: 2 },
+            ],
+            step: 5,
+            unseparated: ['b'],
+            raw: 5,
+            floor: ['b'],
+        };
+        const merged = mergeMarkers(a, b);
+        expect(merged.changes.map((c) => c.id)).toEqual(['a', 'b']);
+        expect(merged.step).toBe(15);
+        expect(merged.unseparated).toEqual(['b']);
+        expect(merged.floor).toEqual(['b']);
+        expect(mergeMarkers({ ...a, step: null }, { ...a, step: null }).step).toBe(null);
+        expect(mergeMarkers(null, b)).toBe(b);
+        expect(mergeMarkers(a, null)).toBe(a);
+    });
+});
+
+describe('a step is never an exact zero when it cannot be known', () => {
+    const row = (hrid, count, value, flags) =>
+        flags ? ['h', hrid, 0, count, value, flags] : ['h', hrid, 0, count, value];
+    const labOn = { id: 'networth_includeLabyrinthTokens', from: false, to: true };
+    const labOff = { id: 'networth_includeLabyrinthTokens', from: true, to: false };
+
+    test('turning a switch on over a token nothing prices is a floor, not an exact 0', () => {
+        const marker = buildMarker({
+            changes: [labOn],
+            prevRecord: { rows: [row('/items/labyrinth_token', 8, 0, 1)] },
+            current: { rows: [row('/items/labyrinth_token', 8, 0, 1)] },
+            prevTotal: 1000,
+            total: 1000,
+        });
+        expect(marker.step).toBe(0);
+        expect(marker.floor).toEqual(['networth_includeLabyrinthTokens']);
+    });
+
+    test('turning it off over rows that were only partly priced is a floor too', () => {
+        const marker = buildMarker({
+            changes: [labOff],
+            prevRecord: { rows: [row('/items/labyrinth_token', 8, 300, 2)] },
+            current: { rows: [row('/items/labyrinth_token', 8, 0, 1)] },
+            prevTotal: 1000,
+            total: 700,
+        });
+        expect(marker.step).toBe(-300);
+        expect(marker.floor).toEqual(['networth_includeLabyrinthTokens']);
+    });
+
+    test('turning it off, the unpriced zero rows of the new reading are not what was valued', () => {
+        const marker = buildMarker({
+            changes: [labOff],
+            prevRecord: { rows: [row('/items/labyrinth_token', 8, 300)] },
+            current: { rows: [row('/items/labyrinth_token', 8, 0, 1)] },
+            prevTotal: 1000,
+            total: 700,
+        });
+        expect(marker.floor).toBeUndefined();
+    });
+
+    test('a token excluded by name is not in the rows but is in the total: the total step has it, the counted one does not', () => {
+        const marker = buildMarker({
+            changes: [labOn],
+            prevRecord: { rows: [], ex: { '/items/labyrinth_token': 0 }, exOther: false },
+            current: { rows: [], ex: { '/items/labyrinth_token': 363 }, exOther: false },
+            prevTotal: 1000,
+            total: 1363,
+        });
+        expect(marker.step).toBe(363);
+        expect(marker.stepCounted).toBe(0);
+        expect(marker.floor).toBeUndefined();
+    });
+
+    test('a category exclusion may hide more of it: the step is a floor', () => {
+        const marker = buildMarker({
+            changes: [labOn],
+            prevRecord: { rows: [], ex: {}, exOther: true },
+            current: { rows: [], ex: {}, exOther: true },
+            prevTotal: 1000,
+            total: 1000,
+        });
+        expect(marker.floor).toEqual(['networth_includeLabyrinthTokens']);
+    });
+
+    test('an unseparated change in a reading that barely moved is on record as small, not as unseparable', () => {
+        const quiet = buildMarker({
+            changes: [{ id: 'enhanceSim_baseItemCraftingCost', from: false, to: true }],
+            prevRecord: { rows: [] },
+            current: { rows: [] },
+            prevTotal: 10_000_000_000,
+            total: 10_003_000_000,
+        });
+        expect(quiet.small).toBe(true);
+        expect(quiet.step).toBe(null);
+        const loud = buildMarker({
+            changes: [{ id: 'enhanceSim_baseItemCraftingCost', from: false, to: true }],
+            prevRecord: { rows: [] },
+            current: { rows: [] },
+            prevTotal: 10_000_000_000,
+            total: 10_200_000_000,
+        });
+        expect(loud.small).toBeUndefined();
+    });
+});
+
+describe('a setting that cannot matter is not a change', () => {
+    const base = { networth_valueSource: 'orderBook', networth_highEnhancementUseCost: false };
+
+    test('Iron Cow valuation off an Iron Cow, min level with the use-cost switch off, pricing mode under official value', () => {
+        expect(
+            diffSignatures(
+                { ...base, profitCalc_ironCowValuation: 'market' },
+                { ...base, profitCalc_ironCowValuation: 'vendor' },
+                { ironCow: false }
+            )
+        ).toEqual([]);
+        expect(
+            diffSignatures(
+                { ...base, networth_highEnhancementMinLevel: 13 },
+                { ...base, networth_highEnhancementMinLevel: 14 }
+            )
+        ).toEqual([]);
+        expect(
+            diffSignatures(
+                { ...base, networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 13 },
+                { ...base, networth_highEnhancementUseCost: true, networth_highEnhancementMinLevel: 14 }
+            )
+        ).toHaveLength(1);
+        const official = { networth_valueSource: 'officialValue' };
+        expect(
+            diffSignatures({ ...official, networth_pricingMode: 'ask' }, { ...official, networth_pricingMode: 'bid' })
+        ).toEqual([]);
+        expect(
+            diffSignatures({ ...base, networth_pricingMode: 'ask' }, { ...base, networth_pricingMode: 'bid' })
+        ).toHaveLength(1);
+    });
+
+    test('the guild token rate with none held, the cape base with no cape held', () => {
+        const rate = [
+            { ...base, guildTokenCreditRate: 1 },
+            { ...base, guildTokenCreditRate: 2 },
+        ];
+        expect(diffSignatures(...rate, { guildTokenHeld: false })).toEqual([]);
+        expect(diffSignatures(...rate, { guildTokenHeld: true })).toHaveLength(1);
+        // Not known: stays relevant
+        expect(diffSignatures(...rate, {})).toHaveLength(1);
+        const cape = [
+            { ...base, untradableCapeBaseValue: 'zero' },
+            { ...base, untradableCapeBaseValue: 'mirror' },
+        ];
+        expect(diffSignatures(...cape, { capeHeld: false })).toEqual([]);
+        expect(diffSignatures(...cape, { capeHeld: true })).toHaveLength(1);
+    });
+
+    test('relevanceContext reads what is held from the calculation', () => {
+        const held = {
+            currentAssets: { inventory: { breakdown: [{ itemHrid: '/items/guild_token' }] } },
+            valuationFacts: { capeHeld: false },
+        };
+        expect(relevanceContext(held, true)).toEqual({ ironCow: true, guildTokenHeld: true, capeHeld: false });
+        expect(relevanceContext({}, false)).toEqual({ ironCow: false });
     });
 });

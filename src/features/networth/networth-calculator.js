@@ -1593,6 +1593,8 @@ export async function calculateNetworth() {
     return {
         totalNetworth,
         valuation,
+        // What the character holds that decides whether some settings can matter at all
+        valuationFacts: { capeHeld: characterItems.some((item) => isUntradableCape(item.itemHrid)) },
         // Counted items valued on a crafting bill with an input nothing can price: the total
         // includes the priced inputs' cost, so it is a floor by this much of the picture
         partial: { count: partialItems.size, names: [...partialItems.values()] },
