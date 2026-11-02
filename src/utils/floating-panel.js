@@ -246,8 +246,8 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
         // Two hairlines reading as a corner, rather than an icon that would need
         // to be legible against whatever the panel's last row happens to be
         background:
-            'linear-gradient(135deg, transparent 0 45%, rgba(158, 196, 255, 0.55) 45% 55%, transparent 55% 72%, ' +
-            'rgba(158, 196, 255, 0.55) 72% 82%, transparent 82%)',
+            'linear-gradient(135deg, transparent 0 45%, rgba(231, 231, 231, 0.5) 45% 55%, transparent 55% 72%, ' +
+            'rgba(231, 231, 231, 0.5) 72% 82%, transparent 82%)',
         zIndex: '2',
     });
 

@@ -274,6 +274,13 @@ const ALLOWLIST = new Map([
         'stateless attribute stamp; no module state to share',
     ],
     [
+        'src/utils/game-look.js',
+        // Constants and one button-styling function with no imports: the only state is a resting fill
+        // stored on each button the caller hands in, so a second copy in another bundle styles the
+        // same way. Shared panel frames (simple-panel, damage-board, player-menu) and Treasure all read it.
+        'stateless style constants and per-button styling; no module state to share',
+    ],
+    [
         'src/utils/mirror-route.js',
         // Two constants and one pure function over its arguments (the Philosopher's Mirror
         // ladder arithmetic): no module state, so the enhancement panel's copy and the
