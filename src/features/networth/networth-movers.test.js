@@ -396,6 +396,7 @@ describe('sync ownership', () => {
         const entries = {
             networthMovers_c1_1000: {},
             networthMoversIndex_c1: [],
+            networthMarkerState_c1: {},
             networthDetail_c1_1000: {},
             networthSeries_c1_2026_11: {},
         };

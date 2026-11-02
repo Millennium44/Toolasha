@@ -34,6 +34,7 @@ import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js'
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { readValuationSignature } from './networth-markers.js';
 import { officialValueOverride } from '../../utils/official-value-override.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { validateNetworthCache } from './networth-cache-validation.js';
@@ -1038,6 +1039,9 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
  * @returns {Promise<Object>} Networth data with breakdowns
  */
 export async function calculateNetworth() {
+    // The settings this run is valued under, read before anything is awaited: the history notes a setting
+    // change against the settings a reading was actually valued with, not the ones set by the time it is stored
+    const valuation = readValuationSignature();
     // Where the time went, phase by phase, for the last run — readable at
     // `Toolasha.Market.networthCalculator.lastCalcPhases` when hunting a stall. Kept always-on
     // because recording eight numbers costs nothing and the 2026-08-29 stutter
@@ -1588,6 +1592,7 @@ export async function calculateNetworth() {
 
     return {
         totalNetworth,
+        valuation,
         // Counted items valued on a crafting bill with an input nothing can price: the total
         // includes the priced inputs' cost, so it is a floor by this much of the picture
         partial: { count: partialItems.size, names: [...partialItems.values()] },

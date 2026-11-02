@@ -10,9 +10,14 @@ import connectionState from '../../core/connection-state.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createChunkedHistory, registerCharacterScopedPrefix, timeChunkId } from '../../utils/chunked-history.js';
 import { onSyncPullApplied, registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
-import networthMovers from './networth-movers.js';
+import networthMovers, { buildRows } from './networth-movers.js';
+import { diffSignatures, buildMarker, withoutSteps } from './networth-markers.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
 
 const STORE_NAME = 'networthHistory';
+
+/** What this device last saw the valuation settings at, per character: `networthMarkerState_<id>`. Device-only. */
+const MARKER_STATE_PREFIX = 'networthMarkerState';
 const SNAPSHOT_INTERVAL = 60 * 60 * 1000; // 1 hour
 const MAX_DETAIL_SNAPSHOTS = 25; // ~24h of hourly snapshots + 1 buffer
 
@@ -213,6 +218,8 @@ class NetworthHistory {
         this.characterId = null;
         this.timerRegistry = createTimerRegistry();
         this.networthFeature = null;
+        /** `{t, settings}` of the last reading stored on this device, or null before the first */
+        this.markerState = null;
         /**
          * Bumped whenever the character changes. `initialize()` crosses several
          * awaits — a chunked-history load, the detail snapshots' IndexedDB round
@@ -280,6 +287,10 @@ class NetworthHistory {
         await networthMovers.load(this.characterId);
         if (this._generation !== generation) return;
 
+        // The valuation settings as of the last reading, to find a change made while the page was closed
+        this.markerState = await this._loadMarkerState(this.characterId);
+        if (this._generation !== generation) return;
+
         // Take an immediate first snapshot
         await this.takeSnapshot();
         if (this._generation !== generation) return;
@@ -287,6 +298,87 @@ class NetworthHistory {
         // Start hourly interval
         const intervalId = setInterval(() => this.takeSnapshot(), SNAPSHOT_INTERVAL);
         this.timerRegistry.registerInterval(intervalId);
+    }
+
+    /**
+     * @param {string} characterId - Whose state
+     * @returns {Promise<{t: number, settings: Object}|null>} The stored state, or null when none or unreadable
+     * @private
+     */
+    async _loadMarkerState(characterId) {
+        try {
+            const state = await storage.get(`${MARKER_STATE_PREFIX}_${characterId}`, STORE_NAME, null);
+            return state && Number.isFinite(state.t) && state.settings && typeof state.settings === 'object'
+                ? state
+                : null;
+        } catch (error) {
+            console.warn('[NetworthHistory] Reading the marker state failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The marker for the reading about to be stored, when the settings it was valued under differ from the
+     * last reading's. Also advances the remembered settings, so a change is marked once. Never throws.
+     *
+     * A change another device already marked at a later point (its point reached this one through a pull) is
+     * not marked again. A change flipped on and off between readings leaves no difference and no marker.
+     * @param {Object} snapshot - The point being taken (not yet in the history)
+     * @param {Object} data - The calculation it came from
+     * @returns {Object|null} The marker, or null
+     * @private
+     */
+    _markerFor(snapshot, data) {
+        try {
+            const signature = data.valuation;
+            if (!signature) return null;
+            const before = this.markerState;
+            this.markerState = { t: snapshot.t, settings: signature };
+            const key = `${MARKER_STATE_PREFIX}_${this.characterId}`;
+            Promise.resolve(storage.set(key, this.markerState, STORE_NAME)).catch(() => {});
+            if (!before) return null;
+
+            let ironCow = false;
+            try {
+                ironCow = isIronCowCharacter() === true;
+            } catch {
+                ironCow = false;
+            }
+            const changes = diffSignatures(before.settings, signature, { ironCow }).filter(
+                (change) =>
+                    !this.history.some(
+                        (point) =>
+                            point.t > before.t &&
+                            point.marker?.changes?.some((m) => m.id === change.id && m.to === change.to)
+                    )
+            );
+            if (changes.length === 0) return null;
+
+            const prevPoint = this.history[this.history.length - 1] || null;
+            const last = networthMovers.last;
+            // The reading before has to be the one the item map is of, or the step would measure something else
+            const prevRecord = prevPoint && last && last.t === prevPoint.t ? last : null;
+            return buildMarker({
+                changes,
+                prevRecord,
+                rows: buildRows(data).rows,
+                prevTotal: prevPoint ? prevPoint.total : null,
+                total: snapshot.total,
+            });
+        } catch (error) {
+            console.warn('[NetworthHistory] Marking a setting change failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Settings changed since the last stored reading, not yet marked on any point.
+     * @param {Object} [data] - The live calculation
+     * @returns {Array<{id: string, from: *, to: *}>} Changes; empty when none or nothing to compare
+     */
+    pendingChanges(data = this.networthFeature?.currentData) {
+        if (!this.markerState || !data?.valuation) return [];
+        return diffSignatures(this.markerState.settings, data.valuation, { ironCow: false });
     }
 
     /**
@@ -398,6 +490,9 @@ class NetworthHistory {
             snapshot.guildShrines = Math.round(shrineCost);
         }
 
+        const marker = this._markerFor(snapshot, data);
+        if (marker) snapshot.marker = marker;
+
         this.pushSnapshot(snapshot);
         this.history = pruneHistory(this.history);
 
@@ -501,7 +596,10 @@ class NetworthHistory {
         const runLength = this.history.length - runStart;
         // If run is 3+, remove all middle entries (keep first and last of run)
         if (runLength >= 3) {
-            this.history.splice(runStart + 1, runLength - 2);
+            // A point carrying a setting-change marker is the only record of it, so it stays
+            const middle = this.history.slice(runStart + 1, runStart + runLength - 1);
+            const kept = middle.filter((point) => point.marker);
+            this.history.splice(runStart + 1, runLength - 2, ...kept);
         }
     }
 
@@ -646,7 +744,17 @@ class NetworthHistory {
     recentSeries(hours) {
         if (!(hours > 0)) return [];
         const cutoff = Date.now() - hours * 60 * 60 * 1000;
-        return this.history.filter((point) => point.t >= cutoff);
+        // A trend reads play and the market, so the steps setting changes caused are taken out of it
+        return this.getGrowthHistory().filter((point) => point.t >= cutoff);
+    }
+
+    /**
+     * The history with the steps setting changes caused taken out, for figures that describe growth. The
+     * recorded points are untouched; this is the same array when no marker carries a step.
+     * @returns {Array<Object>} Points, oldest first
+     */
+    getGrowthHistory() {
+        return withoutSteps(this.history);
     }
 
     /**
@@ -676,6 +784,7 @@ class NetworthHistory {
         this.history = [];
         this.detailHistory = [];
         networthMovers.reset();
+        this.markerState = null;
         this.characterId = null;
         this.networthFeature = null;
     }

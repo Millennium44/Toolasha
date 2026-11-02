@@ -13,6 +13,7 @@ import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { openMoversPanel } from './networth-movers-panel.js';
+import { stepsAfter, growthNote, describeChanges } from './networth-markers.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -582,7 +583,7 @@ class NetworthHistoryChart {
         // costs thousands of Monte Carlo paths, so nothing runs until it is opened
         if (config.getSetting('networth_forecast')) {
             this.forecastSection = createForecastSection({
-                getHistory: () => networthHistory.history,
+                getHistory: () => networthHistory.getGrowthHistory?.() ?? networthHistory.history,
             });
             modal.appendChild(this.forecastSection.element);
         }
@@ -799,8 +800,11 @@ class NetworthHistoryChart {
                 borderColor: config.COLOR_ACCENT || '#22c55e',
                 backgroundColor: 'rgba(34, 197, 94, 0.1)',
                 borderWidth: 2,
-                pointRadius: filtered.length > 200 ? 0 : 2,
-                pointHoverRadius: 5,
+                pointRadius: (ctx) => (ctx.raw?._raw?.marker ? 6 : filtered.length > 200 ? 0 : 2),
+                pointStyle: (ctx) => (ctx.raw?._raw?.marker ? 'rectRot' : 'circle'),
+                pointBackgroundColor: (ctx) => (ctx.raw?._raw?.marker ? '#f59e0b' : undefined),
+                pointBorderColor: (ctx) => (ctx.raw?._raw?.marker ? '#fff' : undefined),
+                pointHoverRadius: 6,
                 tension: 0.1,
                 fill: true,
                 spanGaps: this.connectGaps,
@@ -1002,10 +1006,22 @@ class NetworthHistoryChart {
                 ? Math.round(liveData.totalNetworth + (liveData.excluded?.total ?? 0))
                 : last.total;
 
-            const rangeChange = currentTotal - first.total;
+            // Steps that setting changes caused after the first point are left out of growth; the line and the
+            // All-Time High stay as recorded
+            const steps = stepsAfter(networthHistory.getHistory(), first.t);
+            const rangeChange = currentTotal - first.total - steps.step;
             const rangePercent = first.total > 0 ? (rangeChange / first.total) * 100 : 0;
 
-            const ratePerHour = hoursElapsed > 0 ? (currentTotal - first.total) / hoursElapsed : 0;
+            const ratePerHour = hoursElapsed > 0 ? (currentTotal - first.total - steps.step) / hoursElapsed : 0;
+            const pending = networthHistory.pendingChanges?.() || [];
+            const noteText = [
+                growthNote(steps, networthFormatter),
+                pending.length > 0
+                    ? `${pending.length} setting change${pending.length === 1 ? '' : 's'} since the last reading not yet marked`
+                    : '',
+            ]
+                .filter(Boolean)
+                .join('; ');
 
             parts.push(
                 `<span>Current: <strong style="color: ${config.COLOR_ACCENT};">${networthFormatter(Math.round(currentTotal))}</strong></span>`
@@ -1031,6 +1047,10 @@ class NetworthHistoryChart {
                 );
             }
 
+            if (noteText) {
+                parts.push(`<span id="mwi-nw-steps-note" style="font-size: 11px; color: #aaa;">(${noteText})</span>`);
+            }
+
             // All-time high, off the whole recorded history rather than the
             // range currently plotted — see computeAllTimeExtremes
             const { high } = computeAllTimeExtremes(networthHistory.getHistory());
@@ -1049,12 +1069,13 @@ class NetworthHistoryChart {
         if (this.categoryVisibility.showNonExcluded && hasNonExclStats) {
             const currentNE = this.networthFeature?.currentData?.totalNetworth ?? last.nonExcluded ?? last.total;
             const firstNE = first.nonExcluded ?? first.total;
-            const neRate = hoursElapsed > 0 ? (currentNE - firstNE) / hoursElapsed : 0;
+            const neSteps = stepsAfter(networthHistory.getHistory(), first.t).step;
+            const neRate = hoursElapsed > 0 ? (currentNE - firstNE - neSteps) / hoursElapsed : 0;
 
             let neStatHtml = `<span style="color: #a78bfa;">Non-Excl</span>: <strong style="color: #a78bfa;">${networthFormatter(Math.round(currentNE))}</strong>`;
 
             if (filtered.length >= 2) {
-                const neChange = currentNE - firstNE;
+                const neChange = currentNE - firstNE - neSteps;
                 const neChangeColor = neChange >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
                 const neChangeSign = neChange >= 0 ? '+' : '';
                 neStatHtml += ` <span style="font-size: 11px; color: #aaa;">(${neChangeSign}<span style="color: ${neChangeColor};">${networthFormatter(Math.round(neChange))}</span> ${rangeLabel})</span>`;
@@ -1078,7 +1099,8 @@ class NetworthHistoryChart {
                 firstVal -= first.gold ?? 0;
                 lastVal -= last.gold ?? 0;
             }
-            const catChange = lastVal - firstVal;
+            const catStep = cat.key === 'inventory' ? stepsAfter(networthHistory.getHistory(), first.t).step : 0;
+            const catChange = lastVal - firstVal - catStep;
             const rate = hoursElapsed > 0 ? catChange / hoursElapsed : 0;
             const rateColor = rate >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             const rateSign = rate >= 0 ? '+' : '';
@@ -1501,6 +1523,30 @@ class NetworthHistoryChart {
     }
 
     /**
+     * The tooltip lines for a setting-change marker: what changed and how big the step was.
+     * @param {Object} marker - The point's marker
+     * @returns {string} HTML
+     */
+    _markerTooltipHtml(marker) {
+        const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+        let html = `<div style="color:#f59e0b; margin-top:6px;">&#9670; Setting change: ${esc(describeChanges(marker))}</div>`;
+        if (Number.isFinite(marker.step)) {
+            const sign = marker.step >= 0 ? '+' : '-';
+            html +=
+                marker.step === 0
+                    ? '<div style="padding-left:12px;">No effect on the total</div>'
+                    : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(marker.step))} (left out of growth figures)</div>`;
+        }
+        if ((marker.unseparated || []).length > 0) {
+            const raw = Number.isFinite(marker.raw)
+                ? ` The reading moved ${networthFormatter(marker.raw)} in all.`
+                : '';
+            html += `<div style="padding-left:12px;">Part of the move could not be separated from the market.${esc(raw)}</div>`;
+        }
+        return html;
+    }
+
+    /**
      * Render custom HTML tooltip with colored deltas
      */
     _renderCustomTooltip(context) {
@@ -1586,6 +1632,10 @@ class NetworthHistoryChart {
         for (const cat of categories) {
             const delta = this._formatDelta(cat.value, cat.prev);
             html += `<div style="color:#ccc; padding-left:12px;">${cat.label}: ${networthFormatter(cat.value)}${delta}</div>`;
+        }
+
+        if (raw.marker) {
+            html += this._markerTooltipHtml(raw.marker);
         }
 
         tooltipEl.innerHTML = html;

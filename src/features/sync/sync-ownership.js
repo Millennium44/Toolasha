@@ -111,9 +111,11 @@ export const DEVICE_ONLY_STORES = ['actionProgress'];
 export const DEVICE_ONLY_STORE_KEY_PREFIXES = {
     combatStats: ['latestCombatRun'],
     combatExport: ['spawnCensus'],
+    // `networthMarkerState`: the valuation settings as this device last stored a reading under them, which
+    // decides where a setting-change marker goes. Another device's copy would hide or double a marker.
     // The per-item maps behind the net worth chart's "what moved" view (networthMovers_<id>_<t> and the
     // index networthMoversIndex_<id>): up to ~1 MB a character, rebuilt by playing, and meant for one device
-    networthHistory: ['networthMovers'],
+    networthHistory: ['networthMovers', 'networthMarkerState'],
 };
 
 /**

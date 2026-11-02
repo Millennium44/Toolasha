@@ -739,3 +739,152 @@ describe('the item maps behind the "what moved" view', () => {
         expect(networthMovers.ready).toBe(false);
     });
 });
+
+describe('setting-change markers on history points', () => {
+    const TOKEN = '/items/labyrinth_token';
+    const LAB = 'networth_includeLabyrinthTokens';
+
+    /** A reading valued under the given labyrinth switch; tokens are valued 0 while it is off */
+    const reading = (labOn, { total = 1000, other = 50 } = {}) => {
+        const data = fakeNetworthData();
+        const tokenValue = labOn ? 400 : 0;
+        data.totalNetworth = total + tokenValue + other;
+        data.currentAssets.inventory.breakdown = [
+            { itemHrid: TOKEN, enhancementLevel: 0, count: 8, value: tokenValue },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 3, value: other },
+        ];
+        data.valuation = { [LAB]: labOn, networth_pricingMode: 'ask' };
+        return data;
+    };
+
+    const take = async (data) => {
+        networthHistory.networthFeature = { currentData: data };
+        vi.advanceTimersByTime(HOUR);
+        await networthHistory.takeSnapshot();
+        return networthHistory.history.at(-1);
+    };
+
+    const fresh = async () => {
+        const { default: networthMovers } = await import('./networth-movers.js');
+        networthMovers.reset();
+        await networthMovers.load('char-1');
+        networthHistory.markerState = null;
+        return networthMovers;
+    };
+
+    test('the first reading only sets the baseline; a later one valued under a changed switch carries the step', async () => {
+        await fresh();
+        const first = await take(reading(false));
+        expect(first.marker).toBeUndefined();
+        expect(networthHistory.markerState.settings[LAB]).toBe(false);
+
+        const second = await take(reading(true));
+        expect(second.marker.changes).toEqual([{ id: LAB, from: false, to: true }]);
+        expect(second.marker.step).toBe(400);
+        // The recorded line is the raw one
+        expect(second.total).toBe(1450);
+        expect(storageMock.set.mock.calls.some(([key]) => key === 'networthMarkerState_char-1')).toBe(true);
+    });
+
+    test('a change is marked once: the next reading under the same settings has none', async () => {
+        await fresh();
+        await take(reading(false));
+        await take(reading(true));
+        const third = await take(reading(true));
+        expect(third.marker).toBeUndefined();
+    });
+
+    test('flipped on and off between readings leaves no marker', async () => {
+        await fresh();
+        await take(reading(false));
+        // the switch was on for a while but no reading was taken under it
+        const next = await take(reading(false));
+        expect(next.marker).toBeUndefined();
+    });
+
+    test('a change made while the page was closed is found from the stored state, once', async () => {
+        const movers = await fresh();
+        const before = await take(reading(false));
+        networthHistory.markerState = null;
+        storageMock.get.mockImplementation(async (key, store, fallback) =>
+            key === 'networthMarkerState_char-1' ? { t: before.t, settings: { [LAB]: false } } : fallback
+        );
+        networthHistory.markerState = await networthHistory._loadMarkerState('char-1');
+        expect(movers.last.t).toBe(before.t);
+
+        const after = await take(reading(true));
+        expect(after.marker.step).toBe(400);
+        expect((await take(reading(true))).marker).toBeUndefined();
+    });
+
+    test('a change another device already marked at a later point is not marked again', async () => {
+        await fresh();
+        const base = await take(reading(false));
+        networthHistory.history.push({
+            t: base.t + 1,
+            total: 1400,
+            marker: { changes: [{ id: LAB, from: false, to: true }], step: 400, unseparated: [], raw: 400 },
+        });
+        const mine = await take(reading(true));
+        expect(mine.marker).toBeUndefined();
+    });
+
+    test('without the earlier reading item map the step is not invented', async () => {
+        const movers = await fresh();
+        await take(reading(false));
+        movers.last = null;
+        const next = await take(reading(true));
+        expect(next.marker.step).toBe(null);
+        expect(next.marker.unseparated).toEqual([LAB]);
+        expect(next.marker.raw).toBe(400);
+    });
+
+    test('an unrelated rise does not enter the step', async () => {
+        await fresh();
+        await take(reading(false, { other: 50 }));
+        const next = await take(reading(true, { other: 900 }));
+        expect(next.marker.step).toBe(400);
+        expect(next.marker.raw).toBe(400 + 850);
+    });
+
+    test('a point with a marker survives the compaction of identical totals', () => {
+        const marked = { t: 2, total: 5, marker: { changes: [], step: 0, unseparated: [], raw: 0 } };
+        networthHistory.history = [{ t: 1, total: 5 }, marked];
+        networthHistory.pushSnapshot({ t: 3, total: 5 });
+        expect(networthHistory.history.map((p) => p.t)).toEqual([1, 2, 3]);
+
+        networthHistory.history = [
+            { t: 1, total: 5 },
+            { t: 2, total: 5 },
+        ];
+        networthHistory.pushSnapshot({ t: 3, total: 5 });
+        expect(networthHistory.history.map((p) => p.t)).toEqual([1, 3]);
+    });
+
+    test('growth reads leave the step out and the stored history is not rewritten', () => {
+        const now = Date.now();
+        networthHistory.history = [
+            { t: now - 3 * HOUR, total: 1000 },
+            { t: now - 2 * HOUR, total: 1400, marker: { changes: [], step: 400, unseparated: [], raw: 400 } },
+            { t: now - HOUR, total: 1450 },
+        ];
+        expect(networthHistory.recentSeries(24).map((p) => p.total)).toEqual([1000, 1000, 1050]);
+        expect(networthHistory.getGrowthHistory().map((p) => p.total)).toEqual([1000, 1000, 1050]);
+        expect(networthHistory.history.map((p) => p.total)).toEqual([1000, 1400, 1450]);
+    });
+
+    test('pending changes show what moved since the last reading and is not yet marked', async () => {
+        await fresh();
+        await take(reading(false));
+        expect(networthHistory.pendingChanges(reading(true)).map((c) => c.id)).toEqual([LAB]);
+        expect(networthHistory.pendingChanges(reading(false))).toEqual([]);
+    });
+
+    test('leaving the character forgets the remembered settings', async () => {
+        await fresh();
+        await take(reading(false));
+        networthHistory.disable();
+        expect(networthHistory.markerState).toBe(null);
+        expect(networthHistory.pendingChanges(reading(true))).toEqual([]);
+    });
+});

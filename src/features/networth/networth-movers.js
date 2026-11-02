@@ -312,6 +312,8 @@ class NetworthMovers {
         this.index = [];
         this._generation = 0;
         this.ready = false;
+        /** The newest record, kept so the next reading's setting-change step can be measured against it */
+        this.last = null;
     }
 
     _recordKey(characterId, t) {
@@ -333,6 +335,7 @@ class NetworthMovers {
         this.characterId = characterId;
         this.index = [];
         this.ready = false;
+        this.last = null;
         if (!characterId) return;
         try {
             const stored = await storage.get(this._indexKey(characterId), STORE_NAME, null);
@@ -373,6 +376,12 @@ class NetworthMovers {
                 return !keep.has(t) || !have.has(t);
             });
             this.index = index.filter((entry) => keep.has(entry.t));
+            const newest = this.index.at(-1);
+            const newestRecord = newest
+                ? await storage.get(this._recordKey(characterId, newest.t), STORE_NAME, null)
+                : null;
+            if (this._generation !== generation || this.characterId !== characterId) return;
+            this.last = newestRecord && newestRecord.cid === characterId ? newestRecord : null;
             this.ready = true;
             for (const key of doomed) storage.delete(key, STORE_NAME).catch(() => {});
         } catch (error) {
@@ -396,6 +405,7 @@ class NetworthMovers {
             const generation = this._generation;
             const prev = this.index.filter((entry) => entry.t < snapshot.t).pop() || null;
             const record = buildRecord({ characterId, snapshot, data, prev, context: currentPricingContext() });
+            this.last = record;
 
             const index = this.index.filter((entry) => entry.t !== snapshot.t);
             index.push({ t: record.t, prevT: record.prevT, jump: record.jump, total: record.total });
@@ -458,6 +468,7 @@ class NetworthMovers {
         this.characterId = null;
         this.index = [];
         this.ready = false;
+        this.last = null;
     }
 }
 
