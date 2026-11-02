@@ -591,7 +591,12 @@ function currentCyclePart(tile, from) {
         pointsByTier: Number.isFinite(badgePoints) ? { [tile.tier]: badgePoints } : {},
         tierSeenAt,
         ...(stated
-            ? { serverTier: tile.serverTier, serverTierAt: tile.serverTierAt, serverDone: Boolean(tile.serverDone) }
+            ? {
+                  serverTier: tile.serverTier,
+                  serverTierAt: tile.serverTierAt,
+                  serverDone: Boolean(tile.serverDone),
+                  ...(Number.isFinite(tile.serverPoints) ? { serverPoints: tile.serverPoints } : {}),
+              }
             : {}),
     };
 }
@@ -623,7 +628,7 @@ function earlierCyclePart(tile, from) {
         for (const field of ['level', 'tier', 'points', 'signups', 'tierReadAt']) delete part[field];
     }
     if (stampedSince(tile.serverTierAt, from)) {
-        for (const field of ['serverTier', 'serverTierAt', 'serverDone']) delete part[field];
+        for (const field of ['serverTier', 'serverTierAt', 'serverDone', 'serverPoints']) delete part[field];
     }
     if (lastReadSince(tile, from)) {
         // The current part took the badge tier's points; see currentCyclePart.
@@ -1011,12 +1016,14 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {number} stated.at - When the banked tier banked, on this client's clock; the payload's
  *   arrival only where no server stamp can be placed
  * @param {{name: string, kind: string}|null} [stated.create] - Start the tile when the record has none
+ * @param {number|null} [stated.points] - The payload's Guild Points for the trial (`serverPoints`). Written
+ *   with a tier, or alone onto a tile that already carries this cycle's tier statement; never starts a tile
  * @returns {Object} The record, unchanged when there was nothing to write
  */
 export function recordServerTiers(
     record,
     key,
-    { bankedTier = null, done = false, clears = {}, at, create = null } = {}
+    { bankedTier = null, done = false, clears = {}, at, create = null, points = null } = {}
 ) {
     if (!record || !Number.isFinite(at)) return record;
     const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
@@ -1029,6 +1036,13 @@ export function recordServerTiers(
         existing = { name: create.name, kind: create.kind, samples: [], tiers: [], pointsByTier: {}, tierSeenAt: {} };
     }
 
+    // Alone, points are believed only for a tile this cycle's statement is already on:
+    // a payload that still reads `completed` outlives its cycle, and the statement's
+    // stamp is what tells which cycle a tile is in
+    const pointsStated =
+        Number.isFinite(points) && points > 0 && (tierStated || Number.isFinite(existing.serverTierAt));
+    const pointsChanged = pointsStated && existing.serverPoints !== points;
+
     const tierSeenAt = { ...(existing.tierSeenAt || {}) };
     let changed = false;
     for (const [tier, when] of Object.entries(clears || {})) {
@@ -1039,6 +1053,7 @@ export function recordServerTiers(
     if (
         record.tiles?.[key] &&
         !changed &&
+        !pointsChanged &&
         (!tierStated ||
             (existing.serverTier === bankedTier &&
                 existing.serverTierAt === at &&
@@ -1055,6 +1070,7 @@ export function recordServerTiers(
                 ...existing,
                 tierSeenAt,
                 ...(tierStated ? { serverTier: bankedTier, serverTierAt: at, serverDone: Boolean(done) } : {}),
+                ...(pointsStated ? { serverPoints: points } : {}),
             },
         },
     };
@@ -1142,14 +1158,21 @@ function latestTierReadAt(a, b) {
  * The later of two tiles' guild-payload statements, omitted when neither has one.
  * @param {Object} a - One side's tile
  * @param {Object} b - The other side's tile
- * @returns {{serverTier?: number, serverTierAt?: number, serverDone?: boolean}} Spreadable
+ * @returns {{serverTier?: number, serverTierAt?: number, serverDone?: boolean, serverPoints?: number}} Spreadable.
+ *   `serverPoints` rides with the statement it was written beside, and a tie goes to the higher figure: points
+ *   only climb within a cycle
  */
 function latestServerTier(a, b) {
     const stated = [a, b].filter((tile) => Number.isFinite(tile?.serverTier) && Number.isFinite(tile?.serverTierAt));
     if (!stated.length) return {};
     // One clear stated twice ties; the later statement is the one that banked
     // more or found the party done
-    const rank = (tile) => [tile.serverTierAt, tile.serverTier, tile.serverDone ? 1 : 0];
+    const rank = (tile) => [
+        tile.serverTierAt,
+        tile.serverTier,
+        tile.serverDone ? 1 : 0,
+        Number.isFinite(tile.serverPoints) ? tile.serverPoints : -1,
+    ];
     const newer = (x, y) => {
         const [a, b] = [rank(x), rank(y)];
         const at = a.findIndex((value, index) => value !== b[index]);
@@ -1160,6 +1183,7 @@ function latestServerTier(a, b) {
         serverTier: newest.serverTier,
         serverTierAt: newest.serverTierAt,
         serverDone: Boolean(newest.serverDone),
+        ...(Number.isFinite(newest.serverPoints) ? { serverPoints: newest.serverPoints } : {}),
     };
 }
 
@@ -1195,6 +1219,7 @@ function foldArchivedCycle(kept, other) {
             held.serverTier === server.serverTier &&
             held.serverTierAt === server.serverTierAt &&
             Boolean(held.serverDone) === Boolean(server.serverDone) &&
+            held.serverPoints === server.serverPoints &&
             JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
         if (same) continue;
         tiles[key] = { ...held, ...server, tierSeenAt };

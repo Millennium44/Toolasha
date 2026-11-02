@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Guild trial points now use the exact figures the game sends, so Past weeks matches the game's announced total, and a zeroed card no longer drops a trial.
 - Alchemy history now saves what inputs and catalysts cost as a session runs, so Net no longer drifts with the market; older sessions stay at today's price and are marked.
 - Refined capes show their real input cost in alchemy history again, so Net and Break-even are right; they had dropped to 0* with the base cape setting on Nothing.
 - Settings, What's New, the combat panels, market views, Net Worth History and task panels now use the game's plain dark frame and blue buttons, and Settings rows fit a phone better.

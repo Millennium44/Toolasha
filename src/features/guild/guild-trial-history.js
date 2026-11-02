@@ -110,6 +110,44 @@ export function serverClearedTier(tile) {
 }
 
 /**
+ * The Guild Points the guild payload stated for an archived tile's trial.
+ *
+ * The game's own figure (`currentTrialsData.points`), whose sum is what the guild's
+ * completion announcement states, so it needs no ladder and no Builder's Hall bonus.
+ * Believed over the card's unless the card reached a higher tier than the payload
+ * did, which is a payload that lagged the card.
+ *
+ * @param {Object} tile - An archived tile
+ * @returns {number|null} Guild Points, or null when the payload stated none for this tile
+ */
+export function payloadPoints(tile) {
+    if (!(Number.isFinite(tile?.serverPoints) && tile.serverPoints > 0)) return null;
+    const server = serverClearedTier(tile);
+    const card = cardClearedTier(tile);
+    if (server === null || (card !== null && card > server)) return null;
+    return tile.serverPoints;
+}
+
+/**
+ * The points a zeroed card had stated for the tier it finished on.
+ *
+ * A cycle's roll zeroes a card's `points` but keeps `pointsByTier`, the figure the
+ * badge's tier was quoted at while the card was on screen. For a card that reads 0
+ * points above tier 0 that quote is the result, and it is exact where the ladder is
+ * not: it includes the part-cleared tier on top. Alchemy T20 on the test server's
+ * 11/1 cycle read 0 and quoted 2,944 (ladder 2,940), and the six quotes sum to the
+ * 24,419 the guild's announcement stated.
+ *
+ * @param {Object} tile - An archived tile
+ * @returns {number|null} Guild Points, or null when the tile is not a zeroed card or quoted none
+ */
+export function zeroedCardPoints(tile) {
+    if (tile?.points !== 0 || !Number.isFinite(tile?.tier) || tile.tier <= 0) return null;
+    const quoted = Number(tile.pointsByTier?.[tile.tier]);
+    return Number.isFinite(quoted) && quoted > 0 ? quoted : null;
+}
+
+/**
  * Whether the guild payload says a tile's party banked more than its card did —
  * or the card said nothing — so the card's points, if any, are not the result.
  * @param {Object} tile - An archived tile
@@ -172,7 +210,9 @@ export function cycleWeight(cycle) {
     let tiered = 0;
     let samples = 0;
     for (const tile of Object.values(cycle?.tiles || {})) {
-        if (Number.isFinite(tile?.points)) points += tile.points;
+        const stated = payloadPoints(tile);
+        if (stated !== null) points += stated;
+        else if (Number.isFinite(tile?.points)) points += tile.points;
         if (clearedTier(tile) !== null) tiered += 1;
         samples += Array.isArray(tile?.samples) ? tile.samples.length : 0;
     }
@@ -286,6 +326,16 @@ export function summariseArchivedCycle(
         // A card zeroed by the cycle's roll keeps its tier and reads 0 points: a
         // tier above 0 always paid something, so that zero is a missing figure,
         // not a result, and is priced like a payload-only tier below
+        const stated = payloadPoints(tile);
+        if (stated !== null) {
+            points = (points ?? 0) + stated;
+            continue;
+        }
+        const quotedZero = zeroedCardPoints(tile);
+        if (quotedZero !== null && !serverAhead(tile)) {
+            points = (points ?? 0) + quotedZero;
+            continue;
+        }
         const zeroedCard = tile?.points === 0 && (clearedTier(tile) ?? 0) > 0;
         if (!serverAhead(tile) && !zeroedCard) {
             if (statesPoints(tile)) points = (points ?? 0) + tile.points;

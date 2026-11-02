@@ -52,6 +52,8 @@ import {
     cardClearedTier,
     cycleEndLabel,
     describeCycleAge,
+    payloadPoints,
+    zeroedCardPoints,
     serverClearedTier,
     statesPoints,
 } from './guild-trial-history.js';
@@ -133,10 +135,12 @@ export function resultsFromCycle(cycle) {
             kind: trial.kind,
             name: trial.name,
             cardTier,
-            points: statesPoints(tile) ? tile.points : null,
+            points: zeroedCardPoints(tile) ?? (statesPoints(tile) ? tile.points : null),
             completed: Boolean(tile.completed),
             serverTier,
             serverTierAt: serverTier !== null && Number.isFinite(tile.serverTierAt) ? tile.serverTierAt : null,
+            // The guild's own figure, an older build's record has none; read as absent
+            serverPoints: payloadPoints(tile),
         });
     }
     return results;
@@ -187,7 +191,11 @@ function mergeResult(held, other) {
     // tier. Known limit: a later statement of a lower tier (another party's,
     // filed under the same trial) would stand over an earlier higher one
     const stated = [held, other].filter((result) => Number.isFinite(result?.serverTier));
-    const rank = (result) => [Number.isFinite(result.serverTierAt) ? result.serverTierAt : -1, result.serverTier];
+    const rank = (result) => [
+        Number.isFinite(result.serverTierAt) ? result.serverTierAt : -1,
+        result.serverTier,
+        Number.isFinite(result.serverPoints) ? result.serverPoints : -1,
+    ];
     const server = stated.length
         ? stated.reduce((best, result) => (ahead(rank(result), rank(best)) ? result : best))
         : null;
@@ -197,6 +205,7 @@ function mergeResult(held, other) {
         archivedAt: stamps.length ? Math.min(...stamps) : null,
         serverTier: server ? server.serverTier : null,
         serverTierAt: server ? (server.serverTierAt ?? null) : null,
+        serverPoints: server && Number.isFinite(server.serverPoints) ? server.serverPoints : null,
     };
 }
 
@@ -326,6 +335,11 @@ export function resultTier(result) {
  * @returns {{points: number, derived: boolean}|null} The figure
  */
 export function resultPoints(result, buildersHallBonus = null) {
+    // The guild payload's own figure, where it stood: exact, so not derived, and
+    // it needs no bonus. A result an older build stored has none and falls through
+    if (Number.isFinite(result?.serverPoints) && result.serverPoints > 0) {
+        return { points: result.serverPoints, derived: false };
+    }
     const tier = resultTier(result);
     const cardSawIt = Number.isFinite(result?.cardTier) && result.cardTier === tier;
     // A zero above T0 is a card zeroed by the cycle's roll, not a result: every

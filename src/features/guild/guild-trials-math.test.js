@@ -1763,6 +1763,7 @@ describe('parseCurrentTrialsData', () => {
             tierStartedAtMs: 1_790_715_749_189,
             highestTierReachedAtMs: 1_790_715_749_189,
             done: false,
+            points: 980,
         });
         expect(read.skilling.trials['/guild_skilling/brewing'].highestTier).toBe(4);
         // No countdown on the kind itself: it is per party

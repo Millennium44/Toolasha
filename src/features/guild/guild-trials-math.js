@@ -238,7 +238,7 @@ export const TRIAL_BUDGET_MS = 3_600_000;
  * @param {string|Object} raw - `guild.currentTrialsData`, as it arrives
  * @returns {{combat: Object|null, skilling: Object|null}|null} Per kind:
  *   `{status, inProgress, allDone, parties, done, budgetRemainingMs, trials}`, where `trials` maps a
- *   party key to `{highestTier, budgetRemainingMs, tierStartedAtMs, highestTierReachedAtMs, done}` (the
+ *   party key to `{highestTier, budgetRemainingMs, tierStartedAtMs, highestTierReachedAtMs, done, points}` (the
  *   stamps on the server's clock); null when nothing usable could be read
  */
 export function parseCurrentTrialsData(raw) {
@@ -265,6 +265,13 @@ export function parseCurrentTrialsData(raw) {
     };
     const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
+    // The guild's own Guild Points per trial, keyed by trial hrid like `parties`.
+    // The sum of them is the figure the guild's completion announcement states
+    // (23,544 on the test server, 2026-11-02), so they are exact where the ladder
+    // and a card are not: a part-cleared tier is paid for in them, and a card
+    // read before the last clear is behind them
+    const pointsMap = parsed.points && typeof parsed.points === 'object' ? parsed.points : {};
+
     const read = (entry) => {
         if (!entry || typeof entry !== 'object') return null;
 
@@ -281,6 +288,7 @@ export function parseCurrentTrialsData(raw) {
                 tierStartedAtMs: finite(party.tierStartedAtMs),
                 highestTierReachedAtMs: finite(party.highestTierReachedAtMs),
                 done: party.done === true,
+                points: finite(pointsMap[key]) !== null && pointsMap[key] > 0 ? pointsMap[key] : null,
             };
         }
 
