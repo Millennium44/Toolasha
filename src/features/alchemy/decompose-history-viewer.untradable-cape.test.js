@@ -11,7 +11,7 @@ const REFINED = '/items/gatherer_cape_refined';
 const PLAIN = '/items/gatherer_cape';
 const SHARD = '/items/labyrinth_refinement_shard';
 
-const state = vi.hoisted(() => ({ calls: [], values: {} }));
+const state = vi.hoisted(() => ({ calls: [], values: {}, mode: 'mirror' }));
 
 vi.mock('./decompose-history-tracker.js', () => ({
     decomposeHistoryTracker: { on: () => {}, off: () => {}, loadSessions: async () => [] },
@@ -51,7 +51,11 @@ vi.mock('../../utils/market-data.js', () => {
         getPricingMode: () => 'ask',
     };
 });
-vi.mock('../../utils/untradable-cape.js', () => ({ isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN }));
+vi.mock('../../utils/untradable-cape.js', () => ({
+    isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN,
+    getCapeBaseValueMode: () => state.mode,
+    CAPE_BASE_VALUE_ZERO: 'zero',
+}));
 vi.mock('../enhancement/untradable-cape-value.js', () => ({
     getUntradableCapeValue: (hrid, level, options) => {
         state.calls.push([hrid, level, options]);
@@ -77,6 +81,7 @@ const session = (inputItemHrid, enhancementLevel = 0) => ({
 beforeEach(() => {
     state.calls = [];
     state.values = {};
+    state.mode = 'mirror';
 });
 
 describe('decompose history: untradable cape inputs use the shared cape value', () => {

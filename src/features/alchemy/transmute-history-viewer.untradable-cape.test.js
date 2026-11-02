@@ -11,7 +11,7 @@ const REFINED = '/items/gatherer_cape_refined';
 const PLAIN = '/items/gatherer_cape';
 const SHARD = '/items/labyrinth_refinement_shard';
 
-const state = vi.hoisted(() => ({ calls: [], values: {} }));
+const state = vi.hoisted(() => ({ calls: [], values: {}, mode: 'mirror', shardPrice: 1000 }));
 
 vi.mock('./transmute-history-tracker.js', () => ({
     transmuteHistoryTracker: { on: () => {}, off: () => {}, loadSessions: async () => [] },
@@ -41,7 +41,7 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 vi.mock('../../utils/market-data.js', () => {
-    const priceFor = (hrid) => (hrid === SHARD ? 1000 : null);
+    const priceFor = (hrid) => (hrid === SHARD ? state.shardPrice : null);
     return {
         getItemPrice: (hrid) => priceFor(hrid),
         getItemPriceInfo: (hrid) => {
@@ -51,7 +51,11 @@ vi.mock('../../utils/market-data.js', () => {
         getPricingMode: () => 'ask',
     };
 });
-vi.mock('../../utils/untradable-cape.js', () => ({ isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN }));
+vi.mock('../../utils/untradable-cape.js', () => ({
+    isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN,
+    getCapeBaseValueMode: () => state.mode,
+    CAPE_BASE_VALUE_ZERO: 'zero',
+}));
 vi.mock('../enhancement/untradable-cape-value.js', () => ({
     getUntradableCapeValue: (hrid, level, options) => {
         state.calls.push([hrid, level, options]);
@@ -77,6 +81,43 @@ const session = (inputItemHrid, enhancementLevel = 0) => ({
 beforeEach(() => {
     state.calls = [];
     state.values = {};
+    state.mode = 'mirror';
+    state.shardPrice = 1000;
+});
+
+describe('transmute history: base cape set to nothing (the default cape setting)', () => {
+    // The cape value is always a floor on this setting (the base counts as 0), whatever the shards cost
+    beforeEach(() => {
+        state.mode = 'zero';
+        state.values[`${REFINED}|0`] = { value: 10_000, partial: true };
+    });
+
+    test('a refined cape is costed at its refinement materials, never 0 and not flagged unpriced', () => {
+        const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
+        expect(detail.inputCost).toBe(10 * 10 * 1000);
+        expect(detail.inputUnpriced).toBe(false);
+        expect(detail.inputBasis).toContain('base cape counted as nothing');
+        expect(transmuteHistoryViewer.buildDataNote(session(REFINED), detail)).not.toContain('unpriced');
+    });
+
+    test('an unpriced refinement material still leaves it unpriced, not costed at 0', () => {
+        state.shardPrice = null;
+        const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
+        expect(detail.inputUnpriced).toBe(true);
+        expect(detail.inputBasis).toBeNull();
+    });
+
+    test('an unrefined cape costs a plain 0 by the setting, not an unpriced 0*', () => {
+        const detail = transmuteHistoryViewer.computeSessionProfit(session(PLAIN, 0));
+        expect(detail.inputCost).toBe(0);
+        expect(detail.inputUnpriced).toBe(false);
+        expect(detail.inputBasis).toContain('cape setting');
+    });
+
+    test('mirror setting with a partial value is unaffected and stays unpriced', () => {
+        state.mode = 'mirror';
+        expect(transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0)).inputUnpriced).toBe(true);
+    });
 });
 
 describe('transmute history: untradable cape inputs use the shared cape value', () => {
