@@ -14,6 +14,7 @@ import networthMovers, { buildRows, exclusionsOf } from './networth-movers.js';
 import {
     diffSignatures,
     buildMarker,
+    rebasedWithoutSteps,
     withoutSteps,
     mergeMarkers,
     markerIdentity,
@@ -814,6 +815,14 @@ class NetworthHistory {
      */
     getGrowthHistory() {
         return withoutSteps(this.history);
+    }
+
+    /**
+     * The growth series on the level net worth is at now, for a forecast reading percentage changes.
+     * @returns {Array<Object>} Points, oldest first
+     */
+    getForecastHistory() {
+        return rebasedWithoutSteps(this.history);
     }
 
     /**

@@ -583,8 +583,8 @@ class NetworthHistoryChart {
         // costs thousands of Monte Carlo paths, so nothing runs until it is opened
         if (config.getSetting('networth_forecast')) {
             this.forecastSection = createForecastSection({
-                getHistory: () => networthHistory.getGrowthHistory?.() ?? networthHistory.history,
-                // The forecast starts from where net worth really is; only its drift is read from the growth series
+                getHistory: () => networthHistory.getForecastHistory?.() ?? networthHistory.history,
+                // The forecast starts from where net worth really is; its drift reads the rebased growth series
                 getCurrent: () => networthHistory.history.filter((point) => point.total > 0).at(-1)?.total ?? null,
             });
             modal.appendChild(this.forecastSection.element);

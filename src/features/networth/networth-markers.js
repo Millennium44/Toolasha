@@ -420,6 +420,22 @@ export function withoutSteps(history) {
 }
 
 /**
+ * The series with its steps taken out and then moved back onto the level net worth is at now, for anything that
+ * reads percentage changes. Taking 900 of tokens out of a total of 1,000 leaves growth of 10 a day on 100, and
+ * reading that against the old 1,000 would shrink it tenfold. A point can land at or under zero here; a reader of
+ * returns skips those. Nothing stored is changed.
+ * @param {Array<Object>} history - Points, oldest first
+ * @returns {Array<Object>} The same points, or copies on the current level
+ */
+export function rebasedWithoutSteps(history) {
+    const shifted = withoutSteps(history);
+    if (shifted === history || !shifted.length) return history;
+    const gap = history.at(-1).total - shifted.at(-1).total;
+    if (!gap) return shifted;
+    return shifted.map((point) => ({ ...point, total: point.total + gap }));
+}
+
+/**
  * The counted setting-change steps that landed between two times, for a table that explains a change.
  * @param {Array<Object>} history - Points, any order
  * @param {number} fromT - Exclusive start

@@ -13,6 +13,7 @@ const {
     diffSignatures,
     buildMarker,
     stepsAfter,
+    rebasedWithoutSteps,
     withoutSteps,
     growthNote,
     describeChanges,
@@ -511,5 +512,38 @@ describe('a setting that cannot matter is not a change', () => {
         };
         expect(relevanceContext(held, true)).toEqual({ ironCow: true, guildTokenHeld: true, capeHeld: false });
         expect(relevanceContext({}, false)).toEqual({ ironCow: false });
+    });
+});
+
+describe('rebasedWithoutSteps', () => {
+    const switchedOff = [
+        { t: 1, total: 1000 },
+        { t: 2, total: 1010 },
+        { t: 3, total: 120, marker: { step: -900, changes: [{ setting: 'a', from: true, to: false }] } },
+        { t: 4, total: 130 },
+    ];
+
+    test('growth keeps its real scale after a large step down', () => {
+        const rebased = rebasedWithoutSteps(switchedOff);
+        expect(rebased.map((point) => point.total)).toEqual([100, 110, 120, 130]);
+        expect(Math.log(rebased[3].total / rebased[2].total)).toBeCloseTo(Math.log(130 / 120));
+    });
+
+    test('a step up lifts the earlier points onto the current level', () => {
+        const rebased = rebasedWithoutSteps([
+            { t: 1, total: 100 },
+            { t: 2, total: 1010, marker: { step: 900, changes: [{ setting: 'a', from: false, to: true }] } },
+        ]);
+        expect(rebased.map((point) => point.total)).toEqual([1000, 1010]);
+    });
+
+    test('a history with no step is the same array', () => {
+        const plain = [{ t: 1, total: 5 }];
+        expect(rebasedWithoutSteps(plain)).toBe(plain);
+    });
+
+    test('nothing stored is changed', () => {
+        rebasedWithoutSteps(switchedOff);
+        expect(switchedOff[0].total).toBe(1000);
     });
 });
