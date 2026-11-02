@@ -2029,6 +2029,56 @@ describe('the panel, end to end', () => {
             expect(guildTrials.currentTrials).toBeNull();
         });
 
+        test('a guild change without a reload does not file the left guild’s snapshot into the joined guild’s record', async () => {
+            // Milky Way's trial snapshot is fresh in hand: Alchemy banked T9
+            hear(
+                message(now, (payload) => {
+                    payload.skilling.parties['/guild_skilling/alchemy'].highestTier = 9;
+                })
+            );
+            await vi.advanceTimersByTimeAsync(10);
+            expect(guildTrials.record.tiles['skilling::alchemy']).toMatchObject({ serverTier: 9 });
+
+            // The character joins Andromeda; its first message carries no readable trial data
+            game.guildName = 'Andromeda';
+            vi.setSystemTime(now + 60_000);
+            hear({ guild: { name: 'Andromeda' } });
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.guildName).toBe('Andromeda');
+            expect(guildTrials.currentTrials).toBeNull();
+            expect(guildTrials.record.tiles).toEqual({});
+            expect(game.store['guildTrials_Andromeda']?.tiles ?? {}).toEqual({});
+            game.guildName = 'Milky Way';
+        });
+
+        test('a guild change whose message carries the joined guild’s trials keeps and files them', async () => {
+            hear(message(now));
+            await vi.advanceTimersByTimeAsync(10);
+            game.guildName = 'Andromeda';
+            vi.setSystemTime(now + 60_000);
+            const joined = message(now + 60_000, (payload) => {
+                payload.skilling.parties = {
+                    '/guild_skilling/cooking': payload.skilling.parties['/guild_skilling/cooking'],
+                };
+            });
+            joined.guild.name = 'Andromeda';
+            hear(joined);
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(guildTrials.currentTrials?.guildName).toBe('Andromeda');
+            expect(Object.keys(guildTrials.record.tiles)).toEqual(['skilling::cooking']);
+            game.guildName = 'Milky Way';
+        });
+
+        test('a held snapshot is never filed into a record of another guild', () => {
+            hear(message(now));
+            guildTrials.record = emptyRecord(trialWeekStart(now), { guildName: 'Andromeda' });
+            guildTrials.guildName = 'Andromeda';
+            expect(guildTrials._fileServerTrials(now)).toBe(false);
+            expect(guildTrials.record.tiles).toEqual({});
+        });
+
         test('a message naming another guild than the character’s own is not noted', () => {
             game.characterData = { guild: { id: 'g-own', name: 'Milky Way' } };
             const stray = message(now);

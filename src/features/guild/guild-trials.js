@@ -2826,6 +2826,44 @@ export function autoOpenTrialKey({ encounter, weekStart, cycleStart = null }) {
     return `${encounter}|${weekStart}${cycle}`;
 }
 
+/**
+ * The guild a trial snapshot was sent for, off the message that carried it.
+ * @param {Object} [data] - A `guild_updated` or `init_character_data` payload
+ * @returns {{guildId: string|null, guildName: string|null}} Spread onto the held snapshot
+ */
+function snapshotGuildOf(data) {
+    const guild = data?.guild;
+    const name = typeof guild?.name === 'string' && guild.name.trim() ? guild.name.trim() : null;
+    return { guildId: guild?.id ?? null, guildName: name };
+}
+
+/**
+ * Whether a held snapshot and a guild disagree on nothing both state.
+ * @param {Object|null} held - `currentTrials`
+ * @param {{guildId: *, guildName: *}} guild - The guild to compare with
+ * @returns {boolean} False only when an id or a name is stated on both sides and differs
+ */
+function snapshotMatchesGuild(held, guild) {
+    const heldId = held?.guildId ?? null;
+    const id = guild?.guildId ?? null;
+    if (heldId !== null && id !== null && String(heldId) !== String(id)) return false;
+    const heldName = held?.guildName ?? null;
+    const name = guild?.guildName ?? null;
+    if (heldName && name && String(heldName).toLowerCase() !== String(name).toLowerCase()) return false;
+    return true;
+}
+
+/**
+ * Whether a held snapshot positively names a guild: it states an id or a name, and none of it disagrees.
+ * @param {Object|null} held - `currentTrials`
+ * @param {{guildId: *, guildName: *}} guild - The guild
+ * @returns {boolean}
+ */
+function snapshotNamesGuild(held, guild) {
+    const states = (held?.guildId ?? null) !== null || Boolean(held?.guildName);
+    return states && snapshotMatchesGuild(held, guild);
+}
+
 class GuildTrials {
     constructor() {
         this.initialized = false;
@@ -3581,11 +3619,11 @@ class GuildTrials {
             const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
             const age = source === 'init' && Number.isFinite(serverNow) ? now - serverNow - offset : null;
             if (age !== null && age > INIT_PAYLOAD_FRESH_MS) {
-                this.currentTrials = { ...read, at: now - age, source };
+                this.currentTrials = { ...read, at: now - age, source, ...snapshotGuildOf(data) };
                 this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
                 return;
             }
-            this.currentTrials = { ...read, at: now, source };
+            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data) };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
             // A server clock reading is later than every stamp beside it, so it
@@ -3917,6 +3955,12 @@ class GuildTrials {
             }
             const provenance = recordProvenance(this.record, { guildId: this._guildId(), guildName: this.guildName });
             if (provenance === 'foreign') return false;
+            // The snapshot is filed only into the record of the guild it was sent for
+            const recordGuild = {
+                guildId: this.record.guildId ?? this._guildId(),
+                guildName: this.record.guildName ?? this.guildName,
+            };
+            if (!snapshotMatchesGuild(this.currentTrials, recordGuild)) return false;
 
             // The week rolled over with the tab shut: the same roll `_render` makes
             const rolled = this._rollWeek(now);
@@ -4021,6 +4065,16 @@ class GuildTrials {
                 guildTrialSkilling.reset?.();
                 // …and the Trial Stats modal cache, keyed the same fragile way
                 guildTrialStatsModal.reset?.();
+                // …and the guild payload's snapshot, unless it is already the
+                // joined guild's: a message with no readable trial data starts
+                // the adoption and leaves the left guild's snapshot in hand,
+                // which the filing would put into the joined guild's record
+                const joined = { guildId: this._guildId(), guildName: name };
+                if (!this.currentTrials || !snapshotNamesGuild(this.currentTrials, joined)) {
+                    this.currentTrials = null;
+                    this.serverTierClears = null;
+                    this.socketPhase = null;
+                }
             } else {
                 // The name is adopted either way; a record under it that could
                 // not be read now is folded in by the next save's re-read
