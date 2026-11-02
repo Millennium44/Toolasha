@@ -207,7 +207,7 @@ describe('a player’s per-ability breakdown', () => {
 });
 
 describe('the rest of the shell', () => {
-    test('the active tab is the only one drawn in the accent', () => {
+    test('the active tab is the only one drawn as selected (the game’s primary blue)', () => {
         const html = boardTabsHTML(
             [
                 { key: 'damage', label: 'Damage' },
@@ -218,7 +218,7 @@ describe('the rest of the shell', () => {
 
         expect(html).toContain('data-tab="damage"');
         expect(html).toContain('data-tab="taken"');
-        expect(html.split('rgba(143,211,255,0.15)')).toHaveLength(2);
+        expect(html.split('background:var(--color-primary, #4357af)')).toHaveLength(2);
     });
 
     test('a headline with no figure dashes rather than showing a zero', () => {

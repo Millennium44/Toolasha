@@ -21,6 +21,7 @@ import { CLASS_BUCKETS } from './class-inference.js';
 import { applyClassOverride, classOverrideFor, setClassOverride } from './class-override.js';
 import { classTagIconHTML } from './class-weapon.js';
 import { BOARD_COLORS, escapeText } from './damage-board.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from './game-look.js';
 import { registerEscapeClose } from './panel-escape.js';
 import { PLAYER_PALETTE, pickedColor, playerColor, setPlayerColor } from './player-colors.js';
 import { markToolashaSurface } from './surface-marker.js';
@@ -152,10 +153,11 @@ export function closePlayerMenu() {
 function menuButton(label, on) {
     const button = document.createElement('button');
     button.textContent = label;
-    const color = on ? BOARD_COLORS.accent : BOARD_COLORS.dim;
+    const fill = on ? BUTTON_LOOK.primary.rest : 'transparent';
     button.style.cssText =
-        `cursor:pointer; padding:2px 5px; border-radius:3px; font-size:10px; color:${color};` +
-        `border:1px solid ${on ? color : 'rgba(255,255,255,0.15)'}; background:${on ? `${color}22` : 'transparent'};`;
+        `cursor:pointer; padding:2px 5px; border-radius:3px; font-size:10px;` +
+        `color:${on ? GAME_COLORS.text : BOARD_COLORS.dim};` +
+        `border:1px solid ${on ? fill : GAME_COLORS.border}; background:${fill};`;
     return button;
 }
 
@@ -185,8 +187,8 @@ export function openPlayerMenu(anchor, name, onChange = () => {}) {
     menu.className = MENU_CLASS;
     menu.style.cssText =
         `position:fixed; z-index:${config.Z_POPUP + 1}; width:196px; padding:7px 8px; border-radius:6px;` +
-        'background:rgba(18,20,28,0.98); border:1px solid rgba(255,255,255,0.18); color:#e8ecf5;' +
-        'box-shadow:0 6px 20px rgba(0,0,0,0.5); font-size:11px; display:flex; flex-direction:column; gap:6px;';
+        `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; color:${GAME_COLORS.text};` +
+        `box-shadow:${GAME_FRAME.boxShadow}; font-size:11px; display:flex; flex-direction:column; gap:6px;`;
 
     const title = document.createElement('div');
     title.textContent = name;

@@ -26,6 +26,7 @@ import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '
 import { attachMinimize } from './panel-minimize.js';
 import { registerEscapeClose } from './panel-escape.js';
 import { ROW_COLORS } from './overlay-format.js';
+import { GAME_COLORS, GAME_FRAME } from './game-look.js';
 import { fitValueToBox } from './wrap-long-value.js';
 
 const DEFAULT_REFRESH_MS = 3000;
@@ -42,7 +43,8 @@ function listShape(select) {
  * @param {string} definition.title - Header text
  * @param {{width: number, height: number}} definition.size - Opening size
  * @param {Function} definition.draw - `(body, panel) => void`, called each refresh
- * @param {string} [definition.accent] - Header and title color
+ * @param {string} [definition.accent] - Accepted so callers keep working; the frame, header and title no longer
+ *   take a color from it (the game's own look is neutral)
  * @param {number} [definition.refreshMs] - How often to redraw
  * @returns {Object} A panel with `show`, `hide`, `toggle` and `setTitle`
  */
@@ -51,7 +53,8 @@ export function createPanel({
     title: openingTitle,
     size,
     draw,
-    accent = '#8fb4ff',
+    // Accepted so a caller that still passes one works; it no longer colors anything
+    accent: _accent,
     refreshMs = DEFAULT_REFRESH_MS,
 }) {
     // Not a constant: a panel that can be pointed at more than one subject has
@@ -166,11 +169,8 @@ export function createPanel({
             zIndex: String(config.Z_FLOATING_PANEL),
             width: `${size.width}px`,
             height: `${size.height}px`,
-            background: 'rgba(14, 16, 22, 0.97)',
-            border: `1px solid ${accent}55`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-            color: '#e8ecf5',
+            ...GAME_FRAME,
+            color: GAME_COLORS.text,
             fontSize: '12px',
             display: 'flex',
             flexDirection: 'column',
@@ -183,22 +183,21 @@ export function createPanel({
             alignItems: 'center',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: 'rgba(24, 24, 34, 0.9)',
-            borderBottom: `1px solid ${accent}55`,
+            borderBottom: `1px solid ${GAME_COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
         });
 
         headingEl = document.createElement('span');
         headingEl.textContent = title;
-        Object.assign(headingEl.style, { fontWeight: 'bold', color: accent, flex: '1' });
+        Object.assign(headingEl.style, { fontWeight: '600', color: GAME_COLORS.text, flex: '1' });
 
         const close = document.createElement('button');
         close.textContent = '✕';
         Object.assign(close.style, {
             background: 'none',
             border: 'none',
-            color: '#e8ecf5',
+            color: GAME_COLORS.text,
             cursor: 'pointer',
             fontSize: '13px',
             padding: '2px 4px',
@@ -420,10 +419,10 @@ export function createPanel({
  *
  * @param {HTMLElement} body - Where it goes
  * @param {string} [title] - Heading
- * @param {string} [accent] - Heading color
+ * @param {string} [_accent] - Accepted so callers keep working; the heading is plain text now
  * @returns {HTMLElement}
  */
-export function panelCard(body, title, accent = '#8fb4ff') {
+export function panelCard(body, title, _accent) {
     const card = document.createElement('div');
     Object.assign(card.style, {
         background: 'rgba(255, 255, 255, 0.04)',
@@ -438,7 +437,7 @@ export function panelCard(body, title, accent = '#8fb4ff') {
     if (title) {
         const heading = document.createElement('div');
         heading.textContent = title;
-        Object.assign(heading.style, { color: accent, fontWeight: 'bold', marginBottom: '3px' });
+        Object.assign(heading.style, { color: GAME_COLORS.text, fontWeight: '600', marginBottom: '3px' });
         card.appendChild(heading);
     }
     body.appendChild(card);
