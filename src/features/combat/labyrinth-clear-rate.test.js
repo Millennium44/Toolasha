@@ -175,7 +175,7 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { default: labyrinthClearRate, badgeNeedsStrip } = await import('./labyrinth-clear-rate.js');
 const { isBeaconReveal } = await import('./labyrinth-supplies.js');
 const { clampPrecisionPct } = await import('./labyrinth-sim-cache.js');
 const { default: configMock } = await import('../../core/config.js');
@@ -8305,6 +8305,54 @@ describe('phone-sized room overlays', () => {
         expect(badge.style.maxWidth).toBe('calc(100% - 2px)');
         expect(badge.children[0].style.fontSize).toBe('9px');
         expect(badge.children[1].style.fontSize).toBe('8px');
+    });
+
+    // A desktop tile is 46 px; the corner badge fits 7 characters ("100% 99s"), not 8 ("100% 102s").
+    test.each([
+        [{ clearChance: 1, expectedSeconds: 102 }, true, '100', '102s'],
+        [{ clearChance: 1, expectedSeconds: 5000 }, true, '100', '999+'],
+        [{ clearChance: 0.06, expectedSeconds: Infinity }, false, '6%', '999+'],
+        [{ clearChance: 0.994, expectedSeconds: 999 }, false, '99%', '999s'],
+        [{ clearChance: 0.994, expectedSeconds: 99 }, false, '99%', '99s'],
+        [{ clearChance: 1, expectedSeconds: 99 }, false, '100%', '99s'],
+        [{ clearChance: 0, expectedSeconds: NaN }, false, '0%', '999+'],
+        [{ clearChance: 0.1234, expectedSeconds: 1234 }, false, '12%', '999+'],
+        [{ clearChance: undefined, expectedSeconds: undefined }, false, '0%', '999+'],
+    ])('on desktop %j takes the strip form: %s (%s, %s)', (result, strip, pct, eta) => {
+        setMobile(false);
+        const badge = badgeOf(result);
+        const texts = [...badge.children].map((c) => c.textContent);
+        if (strip) {
+            expect(texts).toEqual([pct, '|', eta]);
+            expect(badge.style.left).toBe('0px');
+            expect(badge.style.right).toBe('0px');
+            expect(badge.style.width).toBe('100%');
+            expect(badge.style.maxWidth).toBe('100%');
+            // Desktop fonts are kept; only the layout changes
+            expect(badge.children[0].style.fontSize).toBe('9px');
+            expect(badge.children[2].style.fontSize).toBe('8px');
+        } else {
+            expect(texts).toEqual([pct, eta]);
+            expect(badge.style.maxWidth).toBe('calc(100% - 2px)');
+        }
+    });
+
+    test('badgeNeedsStrip decides from the length of the reading', () => {
+        expect(badgeNeedsStrip(100, '102s')).toBe(true);
+        expect(badgeNeedsStrip(100, '999+')).toBe(true);
+        expect(badgeNeedsStrip(100, '1234s')).toBe(true);
+        expect(badgeNeedsStrip(6, '999+')).toBe(false);
+        expect(badgeNeedsStrip(99, '999+')).toBe(false);
+        expect(badgeNeedsStrip(100, '99s')).toBe(false);
+    });
+
+    test('a long reading keeps the full reading on hover', () => {
+        setMobile(false);
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        const result = { clearChance: 1, expectedSeconds: 102 };
+        labyrinthClearRate.appendTileBadge(cell, result);
+        expect(cell.__mwiPreviewResult).toBe(result);
     });
 
     test('the room still carries the full reading with its percent for the hover preview', () => {

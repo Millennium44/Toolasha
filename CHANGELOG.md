@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The labyrinth clear badge stays inside its tile on desktop: long readings such as 100% and 102s use the compact 100|102s form, with the full reading on hover.
 - A death in the labyrinth no longer raises the death notification or recap chip, with a setting to bring them back. The Death recap chip can now be dismissed, clears when viewed or closed, and no longer covers the sidebar.
 - Task Go now fills the fight count the card quotes (never less than your confidence setting asks) and opens the zone at the tier you last ran it, instead of T0 when it is not in your queue.
 - About 30 panels, plus dialogs, toasts and the floating widgets, now share the game's plain dark frame and blue buttons. Your Script Accent Color still colors figures and highlights.
