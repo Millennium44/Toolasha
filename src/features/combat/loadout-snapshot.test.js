@@ -455,6 +455,56 @@ describe('the login data corrects a saved copy', () => {
         expect(neckOf(instance).enhancementLevel).toBe(5);
     });
 
+    test('one loadout changing keeps the worked-out level of the others, and of what stays worn', async () => {
+        const instance = new loadoutSnapshot.constructor();
+        const CAPE_SLOT = '/item_locations/back';
+        const wearing = (cape, neck) => ({
+            [CAPE_SLOT]: `char1::/item_locations/inventory::${cape}::0`,
+            [NECK]: `char1::/item_locations/inventory::${neck}::0`,
+        });
+        instance._onLoadoutsUpdated({
+            characterLoadoutMap: {
+                39837: serverLoadout(SOLD, { wearableMap: wearing(CAPE, SOLD) }),
+                40000: serverLoadout(WORN, { id: 40000, name: 'Ranged', wearableMap: wearing(CAPE, WORN) }),
+            },
+        });
+        const stored = JSON.parse(JSON.stringify(instance.snapshots));
+        for (const id of ['39837', '40000']) {
+            for (const equip of stored[id].equipment) equip.enhancementLevel = 7;
+        }
+        store.getJSON = async () => stored;
+        game.loadoutMap = {
+            39837: serverLoadout(WORN, { wearableMap: wearing(CAPE, WORN) }),
+            40000: serverLoadout(WORN, { id: 40000, name: 'Ranged', wearableMap: wearing(CAPE, WORN) }),
+        };
+
+        const { snapshots } = await fresh();
+        const levels = (id) => Object.fromEntries(snapshots[id].equipment.map((e) => [e.itemHrid, e.enhancementLevel]));
+
+        // The new necklace starts from what the game says; everything that stayed keeps its +7
+        expect(levels('39837')).toEqual({ [CAPE]: 7, [WORN]: 0 });
+        expect(levels('40000')).toEqual({ [CAPE]: 7, [WORN]: 7 });
+    });
+
+    test('a listener that throws neither stops the others nor the rest of startup', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const instance = new loadoutSnapshot.constructor();
+        const reached = [];
+        instance.onUpdate(() => {
+            throw new Error('a panel failed');
+        });
+        instance.onUpdate(() => reached.push('second'));
+
+        await instance.initialize();
+
+        expect(reached).toEqual(['second']);
+        expect(instance.characterInitializedHandler).toBeTypeOf('function');
+        vi.restoreAllMocks();
+    });
+
     test('a level the loadout is pinned to does count as a change', async () => {
         const instance = new loadoutSnapshot.constructor();
         instance._onLoadoutsUpdated({

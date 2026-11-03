@@ -191,7 +191,14 @@ class LoadoutSnapshot {
     }
 
     _emitUpdate() {
-        this.updateListeners.forEach((fn) => fn());
+        // One listener failing must not stop the others, nor `initialize()`, which now reaches this at login
+        for (const fn of this.updateListeners) {
+            try {
+                fn();
+            } catch (error) {
+                console.error('[LoadoutSnapshot] Update listener failed:', error);
+            }
+        }
     }
 
     /**
@@ -308,6 +315,19 @@ class LoadoutSnapshot {
             next[id] = buildSnapshot(loadout, id);
         }
         if (snapshotsFingerprint(next) === snapshotsFingerprint(this.snapshots)) return false;
+
+        // The wearable hash usually says +0, and `updateEnhancementLevel` keeps the real level of a "highest owned"
+        // item here for the readers that take it as stored. One loadout changing must not reset the rest.
+        for (const [id, snapshot] of Object.entries(next)) {
+            if (snapshot.useExactEnhancement) continue;
+            const previous = this.snapshots[id]?.useExactEnhancement ? null : this.snapshots[id];
+            for (const equip of snapshot.equipment) {
+                const kept = previous?.equipment?.find(
+                    (e) => e.itemLocationHrid === equip.itemLocationHrid && e.itemHrid === equip.itemHrid
+                );
+                if (kept) equip.enhancementLevel = kept.enhancementLevel;
+            }
+        }
 
         this.snapshots = next;
         storage.setJSON(getStorageKey(), this.snapshots, 'settings');
