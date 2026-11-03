@@ -12,10 +12,8 @@
  * not a second copy of it.
  */
 
-import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
-import marketAPI from '../../api/marketplace.js';
 import { formatDateTime, formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
@@ -23,9 +21,9 @@ import { isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import { resolveLoopItems } from './loop-items.js';
 import { cowbellPricing } from './starfruit-loop.js';
 import { bellBudget, walkQueueCoins } from './coin-reserve.js';
+import { onIronBellLive } from './ironbell-live.js';
 import {
     ESTIMATE_NOTE,
-    LIVE_EVENTS,
     UNQUOTED_NOTE,
     UNREADABLE_NOTE,
     keptNote,
@@ -196,15 +194,8 @@ class IronBellStrip {
     start() {
         if (this.active) return;
         this.active = true;
-        for (const event of LIVE_EVENTS) dataManager.on(event, this._schedule);
-        marketAPI.on?.(this._schedule);
-        this._offs.push(() => {
-            for (const event of LIVE_EVENTS) dataManager.off?.(event, this._schedule);
-            marketAPI.off?.(this._schedule);
-        });
-        // The queue walk reads this setting, so flipping it moves the reserve
-        const offSetting = config.onSettingChange?.('actionPanel_enhanceMatLimitProtections', this._schedule);
-        if (offSetting) this._offs.push(offSetting);
+        // The queue, the coins, the prices and the protection setting, on the one subscription the panel shares
+        this._offs.push(onIronBellLive(this._schedule));
         // The game remounts the header's action name; put the strip back under it
         const offDom = domObserver.onClass?.('IronBellStrip', 'Header_actionName', this._schedule, { debounce: true });
         if (offDom) this._offs.push(offDom);

@@ -30,7 +30,6 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import marketAPI from '../../api/marketplace.js';
 import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
@@ -53,7 +52,8 @@ import {
 } from './starfruit-loop.js';
 import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
 import { bellBudget, walkQueueCoins } from './coin-reserve.js';
-import { ESTIMATE_NOTE, LIVE_EVENTS, UNQUOTED_NOTE, UNREADABLE_NOTE, keptNote, stoppedNote } from './ironbell-cycle.js';
+import { ESTIMATE_NOTE, UNQUOTED_NOTE, UNREADABLE_NOTE, keptNote, stoppedNote } from './ironbell-cycle.js';
+import { onIronBellLive } from './ironbell-live.js';
 import ironBellStrip from './ironcow-action-strip.js';
 import {
     loadOverrides,
@@ -574,13 +574,8 @@ class IronCowFarmPanel {
             clearTimeout(this._liveTimer);
             this._liveTimer = setTimeout(() => this._onLiveChange(), LIVE_REDRAW_MS);
         };
-        for (const event of LIVE_EVENTS) dataManager.on(event, this._liveHandler);
-        marketAPI.on(this._liveHandler);
-        // The queue walk behind the reserve reads this setting, so flipping it moves the reserve
-        this._offProtectionSetting = config.onSettingChange(
-            'actionPanel_enhanceMatLimitProtections',
-            this._liveHandler
-        );
+        // (the strip under the action bar redraws on the same single subscription)
+        this._offLive = onIronBellLive(this._liveHandler);
     }
 
     /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
@@ -590,13 +585,9 @@ class IronCowFarmPanel {
     }
 
     _remove() {
-        this._offProtectionSetting?.();
-        this._offProtectionSetting = null;
-        if (this._liveHandler) {
-            for (const event of LIVE_EVENTS) dataManager.off(event, this._liveHandler);
-            marketAPI.off(this._liveHandler);
-            this._liveHandler = null;
-        }
+        this._offLive?.();
+        this._offLive = null;
+        this._liveHandler = null;
         clearTimeout(this._liveTimer);
         this._liveTimer = null;
         this.affordableEl = null;
