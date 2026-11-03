@@ -1252,6 +1252,11 @@ describe('frames from a replaced socket and out-of-order leaderboard frames', ()
         expect(guildXPTracker.leaderboardXPHistory.Rival).toHaveLength(1);
     });
 
+    test('once a socket is bound, a frame with no socket context is dropped like any other stranger', async () => {
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 500 }], 1));
+        expect(guildXPTracker.leaderboardXPHistory).toEqual({});
+    });
+
     test('an older leaderboard revision arriving late does not replace the newer figures', async () => {
         const live = { socket: newSocket };
         await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }], 5), live);

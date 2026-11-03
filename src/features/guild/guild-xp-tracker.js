@@ -1064,7 +1064,9 @@ class GuildXPTracker {
      * Whether a frame came from a socket the game has since replaced.
      *
      * After a character switch a late frame from the old character's socket can still arrive, and every store here
-     * is the new character's. Permissive when no socket has been seen, or the caller supplied no context.
+     * is the new character's. Permissive only while the data manager has bound no socket (or its check is not
+     * loaded yet, in the split build); once one is bound, a frame without a `{socket}` context is dropped. The
+     * websocket hook always passes the context.
      * @param {Object} [context] - What the websocket hook passed with the frame (`{socket}`)
      * @returns {boolean} True when the frame must be ignored
      */

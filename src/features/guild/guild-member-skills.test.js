@@ -870,7 +870,7 @@ describe('a profile from a socket the game has replaced', () => {
         expect(seen).toEqual(['changed']);
     });
 
-    test('a frame with no context at all is still taken (no socket bound yet)', () => {
+    test('a frame is still taken while the check is not there to say otherwise', () => {
         game.wsHandlers.profile_shared(profile('Bo', { '/skills/alchemy': 70 }));
         expect(guildMemberSkills.levelFor('Bo', '/skills/alchemy')).toBe(70);
     });
