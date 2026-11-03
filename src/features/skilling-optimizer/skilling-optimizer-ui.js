@@ -30,6 +30,7 @@ import { buildEnhancementLevelMap } from '../../utils/loadout-scraper.js';
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
@@ -294,12 +295,8 @@ class SkillingSimulatorUI {
             btn.type = 'button';
             btn.textContent = label;
             const active = this.currentMode === mode;
-            btn.style.cssText = `
-                padding: 4px 14px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer;
-                border: 1px solid ${active ? config.COLOR_ACCENT : 'rgba(255,255,255,0.2)'};
-                background: ${active ? config.COLOR_ACCENT + '22' : 'transparent'};
-                color: ${active ? config.COLOR_ACCENT : 'rgba(255,255,255,0.5)'};
-            `;
+            styleGameButton(btn, active ? 'primary' : 'quiet', true);
+            btn.style.padding = '0 14px';
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (this.currentMode !== mode) {
@@ -320,12 +317,8 @@ class SkillingSimulatorUI {
             const simulateBtn = document.createElement('button');
             simulateBtn.type = 'button';
             simulateBtn.textContent = 'Simulate';
-            simulateBtn.style.cssText = `
-                margin-top: 12px; padding: 6px 20px;
-                background: ${config.COLOR_ACCENT}; color: #000;
-                border: none; border-radius: 4px;
-                font-size: 12px; font-weight: 700; cursor: pointer;
-            `;
+            styleGameButton(simulateBtn, 'primary');
+            Object.assign(simulateBtn.style, { marginTop: '12px', padding: '0 20px' });
             simulateBtn.addEventListener('click', () => {
                 simulateBtn.textContent = 'Simulating…';
                 simulateBtn.disabled = true;
@@ -387,12 +380,8 @@ class SkillingSimulatorUI {
             const optimizeBtn = document.createElement('button');
             optimizeBtn.type = 'button';
             optimizeBtn.textContent = 'Optimize';
-            optimizeBtn.style.cssText = `
-                padding: 6px 20px;
-                background: ${config.COLOR_ACCENT}; color: #000;
-                border: none; border-radius: 4px;
-                font-size: 12px; font-weight: 700; cursor: pointer;
-            `;
+            styleGameButton(optimizeBtn, 'primary');
+            optimizeBtn.style.padding = '0 20px';
 
             const resultsArea = document.createElement('div');
             resultsArea.style.marginTop = '16px';
@@ -935,10 +924,10 @@ class SkillingSimulatorUI {
         const popup = document.createElement('div');
         popup.style.cssText = `
             position: fixed; z-index: 20000;
-            background: #1e1e1e; border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 6px; width: 260px; max-height: 300px;
+            background: ${GAME_FRAME.background}; border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius}; width: 260px; max-height: 300px;
             display: flex; flex-direction: column;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Position below anchor, flip up if too close to bottom
@@ -1092,9 +1081,9 @@ class SkillingSimulatorUI {
         const popup = document.createElement('div');
         popup.style.cssText = `
             position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10000;
-            background: #1e1e1e; border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 6px; max-height: 260px; overflow-y: auto;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5); font-size: 12px;
+            background: ${GAME_FRAME.background}; border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius}; max-height: 260px; overflow-y: auto;
+            box-shadow: ${GAME_FRAME.boxShadow}; font-size: 12px;
         `;
 
         const makeRow = (label, checked, disabled, onToggle) => {

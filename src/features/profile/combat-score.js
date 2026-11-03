@@ -31,6 +31,7 @@ import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
 import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { formatProfileAge } from '../../utils/shared-profile-status.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /**
  * Escape a string for safe interpolation into innerHTML.
@@ -405,15 +406,15 @@ class CombatScore {
         panel.id = 'mwi-combat-score-panel';
         panel.style.cssText = `
             position: fixed;
-            background: rgba(30, 30, 30, 0.98);
-            border: 1px solid #444;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 12px;
             min-width: 180px;
             max-width: 280px;
             font-size: 0.875rem;
             z-index: ${config.Z_FLOATING_PANEL};
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Build house breakdown HTML
@@ -473,8 +474,8 @@ class CombatScore {
             ? `<div id="mwi-view-card-wrapper" style="position: relative; display: flex; gap: 4px;">
                 <button id="mwi-character-card-btn" style="
                     padding: 8px 12px;
-                    background: ${config.COLOR_ACCENT};
-                    color: black;
+                    background: ${BUTTON_LOOK.primary.rest};
+                    color: ${GAME_COLORS.text};
                     border: none;
                     border-radius: 4px;
                     cursor: pointer;
@@ -484,8 +485,8 @@ class CombatScore {
                 ">View Card</button>
                 <button id="mwi-character-card-loadout-btn" style="
                     padding: 8px 10px;
-                    background: ${config.COLOR_ACCENT};
-                    color: black;
+                    background: ${BUTTON_LOOK.primary.rest};
+                    color: ${GAME_COLORS.text};
                     border: none;
                     border-radius: 4px;
                     cursor: pointer;
@@ -513,7 +514,7 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div id="mwi-score-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; cursor: move; user-select: none;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem; flex: 1;">${escapeHtml(playerName)}</div>
+                <div style="font-weight: bold; color: ${GAME_COLORS.text}; font-size: 0.9rem; flex: 1;">${escapeHtml(playerName)}</div>
                 ${breakdownLinkHTML}
                 <span id="mwi-score-close-btn" style="
                     cursor: pointer;
@@ -567,8 +568,8 @@ class CombatScore {
                 <div id="mwi-combat-sim-wrapper" style="position: relative; display: flex; gap: 4px;">
                     <button id="mwi-combat-sim-export-btn" style="
                         padding: 8px 12px;
-                        background: ${config.COLOR_ACCENT};
-                        color: black;
+                        background: ${BUTTON_LOOK.primary.rest};
+                        color: ${GAME_COLORS.text};
                         border: none;
                         border-radius: 4px;
                         cursor: pointer;
@@ -578,8 +579,8 @@ class CombatScore {
                     ">${SIM_EXPORT_FORMAT_LABELS[SIM_EXPORT_FORMATS.METZ]}</button>
                     <button id="mwi-combat-sim-format-btn" title="Sim export options" style="
                         padding: 8px 8px;
-                        background: ${config.COLOR_ACCENT};
-                        color: black;
+                        background: ${BUTTON_LOOK.primary.rest};
+                        color: ${GAME_COLORS.text};
                         border: none;
                         border-radius: 4px;
                         cursor: pointer;
@@ -636,8 +637,8 @@ class CombatScore {
                 </div>
                 <button id="mwi-sim-character-btn" style="
                     padding: 8px 12px;
-                    background: linear-gradient(135deg, #3a7bd5, #5f3dc4);
-                    color: white;
+                    background: ${BUTTON_LOOK.primary.rest};
+                    color: ${GAME_COLORS.text};
                     border: none;
                     border-radius: 4px;
                     cursor: pointer;
@@ -647,8 +648,8 @@ class CombatScore {
                 ">Sim Character</button>
                 <button id="mwi-milkonomy-export-btn" style="
                     padding: 8px 12px;
-                    background: ${config.COLOR_ACCENT};
-                    color: black;
+                    background: ${BUTTON_LOOK.primary.rest};
+                    color: ${GAME_COLORS.text};
                     border: none;
                     border-radius: 4px;
                     cursor: pointer;
@@ -1023,7 +1024,7 @@ class CombatScore {
                     simCharBtn.style.background = config.COLOR_LOSS;
                     this.timerRegistry.scheduleTimeout(() => {
                         simCharBtn.textContent = 'Sim Character';
-                        simCharBtn.style.background = 'linear-gradient(135deg, #3a7bd5, #5f3dc4)';
+                        simCharBtn.style.background = BUTTON_LOOK.primary.rest;
                     }, 3000);
                     return;
                 }
@@ -1161,16 +1162,16 @@ class CombatScore {
         panel.id = 'mwi-abilities-triggers-panel';
         panel.style.cssText = `
             position: fixed;
-            background: rgba(30, 30, 30, 0.98);
-            border: 1px solid #444;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 12px;
             min-width: 300px;
             max-width: 400px;
             max-height: 200px;
             font-size: 0.875rem;
             z-index: ${config.Z_FLOATING_PANEL};
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
             display: flex;
             flex-direction: column;
         `;
@@ -1178,7 +1179,7 @@ class CombatScore {
         // Create panel HTML
         panel.innerHTML = `
             <div id="mwi-abilities-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-shrink: 0; cursor: move; user-select: none;">
-                <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem;">${escapeHtml(playerName)} - Abilities & Triggers</div>
+                <div style="font-weight: bold; color: ${GAME_COLORS.text}; font-size: 0.9rem;">${escapeHtml(playerName)} - Abilities & Triggers</div>
                 <div style="display: flex; align-items: center; gap: 4px;">
                     <span id="mwi-abilities-expand-btn" style="
                         cursor: pointer;
@@ -1197,7 +1198,7 @@ class CombatScore {
                     " title="Close">×</span>
                 </div>
             </div>
-            <div style="cursor: pointer; font-weight: bold; margin-bottom: 8px; color: ${config.COLOR_ACCENT}; flex-shrink: 0;" id="mwi-abilities-toggle">
+            <div style="cursor: pointer; font-weight: bold; margin-bottom: 8px; color: ${GAME_COLORS.text}; flex-shrink: 0;" id="mwi-abilities-toggle">
                 + Show Details
             </div>
             <div id="mwi-abilities-details" style="display: none; overflow-y: auto; flex: 1; min-height: 0;">
@@ -1638,14 +1639,14 @@ class CombatScore {
             width: 250px;
             margin-top: 2px;
             padding: 8px 10px;
-            background: rgba(30, 30, 30, 0.98);
-            border: 1px solid #555;
-            border-radius: 4px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             font-size: 0.8rem;
             z-index: 10003;
         `;
         preview.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 4px; color: ${config.COLOR_ACCENT};">Export Full Party</div>
+            <div style="font-weight: bold; margin-bottom: 4px; color: ${GAME_COLORS.text};">Export Full Party</div>
             ${rows.join('')}
             ${note ? `<div style="color: #888; padding-top: 4px;">${note}</div>` : ''}
             <div style="color: #888; padding-top: 4px;">${pasteHint}</div>
@@ -1653,8 +1654,8 @@ class CombatScore {
                 margin-top: 8px;
                 padding: 6px 10px;
                 width: 100%;
-                background: ${config.COLOR_ACCENT};
-                color: black;
+                background: ${BUTTON_LOOK.primary.rest};
+                color: ${GAME_COLORS.text};
                 border: none;
                 border-radius: 4px;
                 cursor: pointer;
@@ -1912,17 +1913,11 @@ class CombatScore {
     refresh() {
         if (!this.currentPanel) return;
 
-        // Update title color
+        // The title and the buttons take the game's colors, not the accent, so there is nothing to repaint
         const titleElem = this.currentPanel.querySelector('div[style*="font-weight: bold"]');
         if (titleElem) {
-            titleElem.style.color = config.COLOR_ACCENT;
+            titleElem.style.color = GAME_COLORS.text;
         }
-
-        // Update all panel buttons
-        const buttons = this.currentPanel.querySelectorAll('#mwi-button-container button');
-        buttons.forEach((button) => {
-            button.style.background = config.COLOR_ACCENT;
-        });
     }
 
     /**
