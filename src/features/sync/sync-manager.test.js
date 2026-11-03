@@ -778,6 +778,87 @@ describe('pull', () => {
         expect(gist.writes).toHaveLength(0);
     });
 
+    describe('a stopped pull and the held-back marker a newer operation has moved', () => {
+        const newer = { exportedAt: '2026-03-01T00:00:00.000Z', hash: 'h:newer', keys: [] };
+        const startHeldPull = async (waitOn) => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.mergeHeld = [{ store: 'marketplace', key: 'market', label: 'market history' }];
+            let finish;
+            payload[waitOn] = new Promise((resolve) => {
+                finish = resolve;
+            });
+            return { oldPull: syncManager.pull(), finish: () => finish() };
+        };
+
+        test('torn down while weighing, it leaves a newer marker standing', async () => {
+            const { oldPull, finish } = await startHeldPull('hashWait');
+            await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+            // This pull's marker landed before the weighing; a newer operation then settled on its own
+            expect(stored.map.toolasha_sync_mergeHeld.exportedAt).toBe('2026-02-01T00:00:00.000Z');
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = newer;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toEqual(newer);
+        });
+
+        test('torn down while weighing, it does not bring back a marker a newer operation cleared', async () => {
+            const { oldPull, finish } = await startHeldPull('hashWait');
+            await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = null;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        });
+
+        test('torn down during the import, it leaves a marker that moved since it started', async () => {
+            const { oldPull, finish } = await startHeldPull('applyWait');
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = newer;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toEqual(newer);
+            expect(toasts.at(-1).message).toContain('Reload now');
+        });
+
+        test('torn down during the import, it replaces its own older marker when nothing else moved it', async () => {
+            const older = { exportedAt: '2026-01-15T00:00:00.000Z', hash: 'h:older', keys: [] };
+            stored.map.toolasha_sync_mergeHeld = older;
+            const { oldPull, finish } = await startHeldPull('applyWait');
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+                exportedAt: '2026-02-01T00:00:00.000Z',
+                keys: [{ store: 'marketplace', key: 'market' }],
+            });
+        });
+
+        test('a pull that held nothing back writes no marker whichever way it stops', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            let finish;
+            payload.applyWait = new Promise((resolve) => {
+                finish = resolve;
+            });
+            const oldPull = syncManager.pull();
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            finish();
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toBeUndefined();
+        });
+    });
+
     test('without Web Locks, a switch push cannot upload while a cancelled import is still finishing', async () => {
         // The busy flag is the only same-tab exclusion when the browser has no
         // Web Locks. Cleanup used to clear it, so the next character's switch

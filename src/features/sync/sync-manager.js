@@ -1772,7 +1772,10 @@ class SyncManager {
         // switch push and tell the new screen to reload, even though the old
         // operation no longer owns its normal success toast.
         if (!this._stillOwns(opToken)) {
-            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
+            if (pendingHeld && sameHeldMarker(await storage.get(KEY_MERGE_HELD, STORE, null), held)) {
+                await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+            }
+            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
 
         // A pull that wrote nothing must not move the stamp. Remembering the
@@ -1822,7 +1825,9 @@ class SyncManager {
         }
 
         // Worked out before the record is written, each a wait of its own: a takeover during them (the
-        // rebuild, the weighing above) leaves the stamp alone, as one during the import does
+        // rebuild, the weighing above) leaves the stamp alone, as one during the import does. Its marker
+        // landed above while this pull still owned the operation, so it is not written again: whatever is
+        // stored by now is the newer operation's, and putting this one back would only force a spurious retry
         const appliedHash = mergedRebuild
             ? contentHash(pushOwed ? payload : mergedRebuild)
             : mergeHeld?.length
@@ -1830,7 +1835,7 @@ class SyncManager {
               : contentHash(applied ?? payload);
         const pulledHashes = await wholeKeyHashesSliced(payload);
         if (!this._stillOwns(opToken)) {
-            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
+            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
 
         await this._remember({
@@ -2635,15 +2640,14 @@ class SyncManager {
 
     /**
      * The end of a pull whose import landed after another operation took over: the stamp is left for a
-     * retry, a hold is kept, and the new screen is told to reload when the import latched anything.
-     * @param {Object|null} pendingHeld - The held-back marker, when records were held
+     * retry, and the new screen is told to reload when the import latched anything. Keeping any hold is the
+     * caller's, which knows whether its marker has landed yet.
      * @param {{latched: number|undefined, complete: boolean, mergeFailed: Array|undefined,
      *   mergeHeld: Array|undefined}} imported - What the import reported
-     * @returns {Promise<{ok: false, reason: 'stopped-after-apply'}>} The pull's result
+     * @returns {{ok: false, reason: 'stopped-after-apply'}} The pull's result
      * @private
      */
-    async _stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld }) {
-        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+    _stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld }) {
         console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
         // A pull that landed only live-safe records latched nothing (see below), so a takeover has
         // nothing to reload for either. A result without the count is taken as having latched.
@@ -2925,6 +2929,21 @@ async function rememberLocal(entries) {
     if (written !== expected) {
         console.error(`[Sync] Only ${written}/${expected} sync bookkeeping keys were written`);
     }
+}
+
+/**
+ * Whether two held-back markers are the same one: the same download, holding the same records.
+ *
+ * What a pull reads at its start and finds still stored means no other operation has moved the marker, so the
+ * pull may still speak for it. It cannot tell a newer operation that wrote an equal marker from none at all, and
+ * in that case writing is the right answer: a marker too many costs a retry, one too few can let a push replace
+ * the records it holds back.
+ * @param {Object|null} a - A stored marker
+ * @param {Object|null} b - A stored marker
+ * @returns {boolean} Whether they are the same marker
+ */
+function sameHeldMarker(a, b) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 /**
