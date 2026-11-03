@@ -380,7 +380,8 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         battleButton.className = 'mwi-battleinfo-cycler';
         battleButton.textContent = `Open ${unit.name}\u2019s battle info`;
         styleGameButton(battleButton, 'quiet', true);
-        Object.assign(battleButton.style, { width: '100%', margin: '4px 0 0' });
+        // A full-width button on a narrow panel: a long name wraps, so the height grows instead of clipping
+        Object.assign(battleButton.style, { width: '100%', margin: '4px 0 0', height: 'auto', minHeight: '1.5rem' });
         battleButton.title =
             'Opens one fighting member\u2019s Battle Info popup per click, so the game sends their combat ' +
             'stat sheet. Only on offer while a fight is on screen \u2014 a profile cannot carry a combat sheet.';
@@ -411,7 +412,7 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
     button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
     button.disabled = !state.next;
     styleGameButton(button, state.next ? 'primary' : 'quiet', true);
-    Object.assign(button.style, { width: '100%', margin: '4px 0' });
+    Object.assign(button.style, { width: '100%', margin: '4px 0', height: 'auto', minHeight: '1.5rem' });
     if (!state.next) Object.assign(button.style, { cursor: 'default', opacity: '0.5' });
     button.title =
         'Opens one member\u2019s profile per click, so the game sends their skill levels and this can keep ' +
@@ -453,7 +454,7 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         redo.className = 'mwi-profile-redo';
         redo.textContent = `⟲ Redo all ${state.logged}`;
         styleGameButton(redo, 'quiet', true);
-        Object.assign(redo.style, { width: '100%', margin: '0 0 4px' });
+        Object.assign(redo.style, { width: '100%', margin: '0 0 4px', height: 'auto', minHeight: '1.5rem' });
         redo.title =
             'Marks every capture as due again, so the button above walks the roster once more. Nothing is ' +
             'thrown away — the levels already stored stand until a fresh profile replaces them.';

@@ -2013,6 +2013,8 @@ class TaskRerollWalk {
             if (!button) continue;
             button.className = `${button.className} ${TOOLBAR_BUTTON_CLASS}`.trim();
             button.style.cssText = '';
+            // The game-look hover handlers stay on the button; with no rest fill they hand the toolbar's own class back
+            button._restBg = '';
         }
         // No ✕ in the toolbar: the gear drawer's "Hide the walk" and the header 🎲 manage it there
         widget.close.remove();

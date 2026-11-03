@@ -45,6 +45,7 @@ const UNTRACKED_KEY = 'housesUntracked';
 const DEFAULT_PANEL = { width: 560, height: 420 };
 
 const COLORS = {
+    border: GAME_COLORS.border,
     text: GAME_COLORS.text,
     textDim: GAME_COLORS.textDim,
     // Marks data (a cost, a selected room), never the frame

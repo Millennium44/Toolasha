@@ -2507,7 +2507,7 @@ function missingMatsButton(actionHrid, upgradeBaseLevel = 0) {
     const button = document.createElement('button');
     button.textContent = 'Missing Mats Marketplace';
     styleGameButton(button, 'primary', true);
-    Object.assign(button.style, { marginTop: '4px', width: '100%' });
+    Object.assign(button.style, { marginTop: '4px', width: '100%', height: 'auto', minHeight: '1.5rem' });
     button.title = 'Open the marketplace on the materials this craft is short of.';
 
     button.addEventListener('click', async () => {
