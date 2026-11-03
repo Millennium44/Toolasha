@@ -282,6 +282,8 @@ class LabyrinthClearRate {
             config.onSettingChange('labyrinthAutoPathOnReveal', (value) => {
                 if (!value) this.withdrawRevealAutoPath();
             }),
+            // The stepper is built with the toolbar, which stays up while the setting flips
+            config.onSettingChange('labyrinthGridScaleControl', () => this.syncGridSizeControl()),
             // The four beacon planner settings are also editable from the Settings
             // page, which does not go through the toolbar's handlers
             ...BEACON_PLANNER_SETTINGS.map((key) =>
@@ -3786,16 +3788,7 @@ class LabyrinthClearRate {
 
         // The room grid's size stepper, which used to sit in the game's header
         // row; the grid scale module still owns the setting and the zoom
-        if (config.getSetting('labyrinthGridScaleControl')) {
-            const size = createScaleControl();
-            size.style.fontSize = '11px';
-            size.querySelectorAll('button').forEach((b) => {
-                b.style.cssText =
-                    'min-width:22px; height:20px; padding:0 6px; border:0; border-radius:5px; ' +
-                    'background:rgba(120,134,160,0.85); color:#fff; font-size:12px; font-weight:700; cursor:pointer;';
-            });
-            settingsPanel.insertBefore(size, autoButton);
-        }
+        this.syncGridSizeControl(settingsPanel);
         if (spreadButton) settingsPanel.appendChild(spreadButton);
 
         // Toggle and calculate share one nowrap line — a flex item of their own,
@@ -3826,6 +3819,35 @@ class LabyrinthClearRate {
         // running path rather than an idle button whose press cancels the wait
         this.syncTileCalcButton();
         this.setPathButtonRunning(!!this.pathCalcRunning);
+    }
+
+    /**
+     * Put the room grid's size stepper in the toolbar's gear panel, or take it out, to match the
+     * `labyrinthGridScaleControl` setting. Run when the panel is built and again when the setting changes,
+     * because the toolbar is only rebuilt when the map is: a stepper switched back on would otherwise stay
+     * missing until then. The grid scale module owns the setting and the zoom and keeps the readout current.
+     * @param {Element|null} [panel] - The gear panel; looked up in the page when omitted
+     */
+    syncGridSizeControl(panel = document.querySelector(`.${TILE_CONTROLS_CLASS}-settings-panel`)) {
+        if (!panel) return;
+        const existing = panel.querySelector(`.${TILE_CONTROLS_CLASS}-grid-size`);
+        if (!config.getSetting('labyrinthGridScaleControl')) {
+            existing?.remove();
+            return;
+        }
+        if (existing) return;
+
+        const size = createScaleControl();
+        size.classList.add(`${TILE_CONTROLS_CLASS}-grid-size`);
+        size.style.fontSize = '11px';
+        size.querySelectorAll('button').forEach((b) => {
+            b.style.cssText =
+                'min-width:22px; height:20px; padding:0 6px; border:0; border-radius:5px; ' +
+                'background:rgba(120,134,160,0.85); color:#fff; font-size:12px; font-weight:700; cursor:pointer;';
+        });
+        // Ahead of the auto-calc toggle, where it was drawn when the toolbar was built
+        const autoButton = panel.querySelector(`.${TILE_CONTROLS_CLASS}-auto-toggle`);
+        panel.insertBefore(size, autoButton?.parentNode === panel ? autoButton : null);
     }
 
     /**
