@@ -2011,10 +2011,12 @@ class GuildTrialDamage {
             const held = Object.fromEntries(
                 Object.entries(inMemory).filter(([, fight]) => this._savedFightInCycle(fight, now, scope.cycleAt))
             );
-            const open = openSavedFights({
-                trials: blob.trials,
-                unreconciled: { ...this._foldSavedFights(held, blob.unreconciled), ...(fights || {}) },
-            });
+            const candidates = this._foldSavedFights(held, blob.unreconciled);
+            for (const [encounter, fight] of Object.entries(fights || {})) {
+                // Null withdraws. A fight being saved meets the rest as the store's fold will meet it
+                candidates[encounter] = fight && fullerSavedFight(candidates[encounter], fight);
+            }
+            const open = openSavedFights({ trials: blob.trials, unreconciled: candidates });
             const paired = [];
             for (const [encounter, entry] of Object.entries(entries || {})) {
                 const fight = open[encounter];
@@ -2145,8 +2147,11 @@ class GuildTrialDamage {
      */
     _withdrawEndedFight() {
         const encounter = this.encounter;
-        if (!encounter || this.savedFights[encounter]?.endedAt !== this.endedAt) return;
+        const held = encounter ? this.savedFights[encounter] : null;
+        if (!held) return;
+        // The copy held may be another alt's or device's fuller one, of this same run; it ended no more than this did
         this.withdrawnFights.add(`${encounter}|${this.endedAt}`);
+        this.withdrawnFights.add(`${encounter}|${held.endedAt}`);
         delete this.savedFights[encounter];
         this._persistStats({}, { fights: { [encounter]: null } }).catch(() => {});
     }
@@ -2178,7 +2183,8 @@ class GuildTrialDamage {
         const cycleAt = this._statsCycleAt();
         return Object.entries(this.savedFights)
             .filter(([encounter, fight]) => {
-                if (encounter === this.encounter && fight?.endedAt === this.endedAt) return false;
+                // Whichever copy is kept, an ended fight of this encounter is the one on this board
+                if (encounter === this.encounter && Number.isFinite(this.endedAt)) return false;
                 return this._savedFightInCycle(fight, now, cycleAt);
             })
             .map(([encounter, fight]) => ({ encounter, endedAt: fight.endedAt }))

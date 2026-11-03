@@ -652,6 +652,50 @@ describe('memory and disk while a read is out', () => {
         expect(stored().unreconciled.swarm.guildId).toBe('later');
     });
 
+    describe('a fuller copy from another alt or device, of the fight this client watched part of', () => {
+        const fullerOnDisk = () => {
+            const at0 = Date.now();
+            const fuller = fightOf(9_000_000, at0 - 1);
+            game.disk.set(`guildHistory:${trialStatsStorageKey('SuperMoo', 900001)}`, {
+                weekStart: trialWeekStart(at0),
+                trials: {},
+                unreconciled: { swarm: fuller },
+            });
+        };
+
+        test('stands in memory as on disk, and is the one the game’s rows pair with', async () => {
+            fullerOnDisk();
+            watchSwarm();
+            await settle();
+            expect(guildTrialDamage.savedFights.swarm.measured.FixtureCharacter.damage).toBe(9_000_000);
+            expect(stored().unreconciled.swarm.measured.FixtureCharacter.damage).toBe(9_000_000);
+
+            vi.setSystemTime(Date.now() + 5 * 60_000);
+            watchJellyfish();
+            game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+            await settle();
+            expect(stored().trials.swarm.measured.FixtureCharacter.damage).toBe(9_000_000);
+        });
+
+        test('does not put a second line on the board for the fight already on it', async () => {
+            fullerOnDisk();
+            watchSwarm();
+            await settle();
+            expect(guildTrialDamage.breakdown().waitingFights).toEqual([]);
+        });
+
+        test('goes too when the fight turns out not to be over', async () => {
+            fullerOnDisk();
+            watchSwarm();
+            await settle();
+            vi.setSystemTime(Date.now() + 1_000);
+            game.wsHandlers.new_guild_battle(buildNewGuildBattle({ tier: 2 }));
+            await settle();
+            expect(guildTrialDamage.savedFights.swarm).toBeUndefined();
+            expect(stored().unreconciled).toBeUndefined();
+        });
+    });
+
     test.each([
         ['a stats frame', () => game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated())],
         ['a restore', () => guildTrialDamage._restoreStats()],
