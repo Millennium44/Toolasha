@@ -67,6 +67,18 @@ const KEY_REPEAT_MS = 1000;
 const ACKNOWLEDGED_MS = 60_000;
 
 /**
+ * Whether pressing this button starts or queues the alchemy action. Every enabled button in the panel's strip, the same
+ * rule the protected-category guard uses. Which buttons the real strip holds is not confirmed live: an exclusion by
+ * sprite, class or position goes here, and nothing else needs to change.
+ *
+ * @param {Element} button - The button pressed
+ * @returns {boolean} True when the check applies to it
+ */
+export function isActionButton(button) {
+    return !button.disabled && !!button.closest(BUTTONS_SELECTOR) && !!button.closest(ALCHEMY_PANEL_SELECTOR);
+}
+
+/**
  * What is in the panel's catalyst slot, from the sprite it draws.
  *
  * Told apart from "cannot read it" on purpose: an empty slot is the game's dashed placeholder, and anything else
@@ -230,10 +242,9 @@ class AlchemyCatalystCheck {
         }
 
         const button = event.target?.closest?.('button');
-        if (!button || button.disabled) return false;
+        if (!button || !isActionButton(button)) return false;
         const buttons = button.closest(BUTTONS_SELECTOR);
         const panel = button.closest(ALCHEMY_PANEL_SELECTOR);
-        if (!buttons || !panel) return false;
         if (this.skipped) return false;
 
         // The stronger guard's press, in whichever order the two listeners run

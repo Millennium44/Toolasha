@@ -92,6 +92,7 @@ const {
     judgeCatalystPress,
     readSlottedCatalyst,
     messageCanBeSeen,
+    isActionButton,
 } = await import('./alchemy-catalyst-check.js');
 const { default: protection } = await import('./alchemy-action-protection.js');
 const { settingsGroups } = await import('../../core/settings-schema.js');
@@ -443,7 +444,6 @@ describe('holding a press', () => {
         press();
         await pause();
         press();
-        check.acknowledged = { signature: check.acknowledged?.signature, at: Date.now() };
         for (const handler of state.settingHandlers.get('alchemyCatalystCheck')) handler(false);
         press();
         expect(game).toHaveBeenCalledTimes(1);
@@ -580,6 +580,26 @@ describe('holding a press', () => {
 
         expect(seen).toEqual(['click', 'click']);
         expect(game).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('which buttons count', () => {
+    test('one rule: the enabled buttons of the alchemy panel\'s strip', () => {
+        expect(isActionButton(start())).toBe(true);
+        expect(isActionButton(queue())).toBe(true);
+        expect(isActionButton(document.getElementById('elsewhere'))).toBe(false);
+        start().disabled = true;
+        expect(isActionButton(start())).toBe(false);
+    });
+
+    test('a strip outside the alchemy panel does not count', () => {
+        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').className = 'SkillActionDetail_other__x';
+        expect(isActionButton(start())).toBe(false);
+    });
+
+    test('the controls under the message do not count', () => {
+        press();
+        for (const control of message().querySelectorAll('button')) expect(isActionButton(control)).toBe(false);
     });
 });
 
