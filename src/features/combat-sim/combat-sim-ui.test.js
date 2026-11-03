@@ -735,7 +735,6 @@ const {
     bestiaryPlanZoneForRow,
     levelHoursPerStep,
     formatCompactHours,
-    triggerPricingStamp,
 } = await import('./combat-sim-ui.js');
 const { candidateKey } = await import('./upgrade-advisor.js');
 
@@ -3053,7 +3052,7 @@ describe('results outliving the character they were run for', () => {
         ).toBe('the alt’s own run');
     });
 
-    test('a remembered upgrade run carries the pricing and sale tax it was measured at, and a reload says when they moved', async () => {
+    test('a remembered upgrade run carries the pricing mode it was measured at, and a reload says when it moved', async () => {
         const { default: config } = await import('../../core/config.js');
         vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
             key === 'combatSim_rememberUpgradeResults' ? true : fallback
@@ -3063,16 +3062,15 @@ describe('results outliving the character they were run for', () => {
         ui.buildPanel();
         selectZone();
         await ui._onUpgradeAnalyze();
-        expect(mocks.store.get(KEY)).toMatchObject({ pricingLabel: 'Hybrid', saleTax: 0.04 });
+        expect(mocks.store.get(KEY)).toMatchObject({ pricingLabel: 'Hybrid' });
 
-        // Saved under another pricing and a 0% tax (an Iron Cow's), as an older day's run would be
-        mocks.store.set(KEY, { ...mocks.store.get(KEY), pricingLabel: 'Buy: Ask / Sell: Bid', saleTax: 0 });
+        // Saved under another pricing mode, as an earlier day's run would be
+        mocks.store.set(KEY, { ...mocks.store.get(KEY), pricingLabel: 'Buy: Ask / Sell: Bid' });
         ui.destroy();
         ui.buildPanel();
         await ui._restoreUpgradeResults();
         const text = ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
         expect(text).toContain('Costs were priced at Buy: Ask / Sell: Bid; prices are now set to Hybrid.');
-        expect(text).toContain('Profit was measured at a 0% sale tax; it is now 4%.');
     });
 
     test('an Ability order run with nothing to reorder replaces the remembered run, and a reload shows that', async () => {
@@ -9994,27 +9992,6 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
     });
 });
 
-describe('triggerPricingStamp', () => {
-    const dto = (hrid, gameMode) => ({ hrid, ...(gameMode ? { gameMode } : {}) });
-
-    test('records the live tax and the rate each simulated member pays, so a change of either changes the stamp', () => {
-        const party = [dto('player1'), dto('player2', 'ironcow'), dto('player3', 'standard'), dto('player4')];
-        const stamp = triggerPricingStamp(party, 'player1');
-        // The live character is priced at the live tax (null here, read when a row is priced); an Iron Cow
-        // teammate pays none; everyone else the market tax
-        expect(stamp.saleTax.live).toBe(0.04);
-        expect(stamp.saleTax.members).toEqual({ player1: null, player2: 0, player3: 0.04, player4: 0.04 });
-        // The same party with another member as the live character, or none, is a different stamp
-        expect(triggerPricingStamp(party, 'player4').saleTax.members).not.toEqual(stamp.saleTax.members);
-        expect(triggerPricingStamp(party, null).saleTax.members.player1).toBe(0.04);
-    });
-
-    test('an empty roster still stamps the live tax', () => {
-        expect(triggerPricingStamp([], null).saleTax).toEqual({ live: 0.04, members: {} });
-        expect(triggerPricingStamp().saleTax.members).toEqual({});
-    });
-});
-
 describe('remembered-run banner', () => {
     test('names the character and zone with tier when meta is present', () => {
         const html = ui._restoredUpgradeNote(null, {
@@ -10054,19 +10031,16 @@ describe('remembered-run banner', () => {
         expect(html).not.toContain('—');
     });
 
-    test('says nothing about pricing or tax when they are the ones in force, or were never stamped', () => {
-        const same = ui._restoredUpgradeNote(null, { pricingLabel: 'Hybrid', saleTax: 0.04 });
+    test('says nothing about pricing when it is the one in force, or was never stamped', () => {
+        const same = ui._restoredUpgradeNote(null, { pricingLabel: 'Hybrid' });
         expect(same).not.toContain('Costs were priced at');
-        expect(same).not.toContain('sale tax');
         const unstamped = ui._restoredUpgradeNote(null, { characterName: 'Milkman' });
         expect(unstamped).not.toContain('Costs were priced at');
-        expect(unstamped).not.toContain('sale tax');
     });
 
-    test('says when the sale tax moved, with a fractional rate shown plainly', () => {
-        const html = ui._restoredUpgradeNote(null, { pricingLabel: 'Hybrid', saleTax: 0.02 });
-        expect(html).toContain('Profit was measured at a 2% sale tax; it is now 4%.');
-        expect(html).not.toContain('Costs were priced at');
+    test('says which pricing mode the costs were read at when it is not the one set now', () => {
+        const html = ui._restoredUpgradeNote(null, { pricingLabel: 'Buy: Ask / Sell: Bid' });
+        expect(html).toContain('Costs were priced at Buy: Ask / Sell: Bid; prices are now set to Hybrid.');
     });
 
     test('escapes markup in the character name', () => {

@@ -7,7 +7,6 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import { outputTaxRate } from '../../utils/profit-helpers.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import {
     expectedValueCalculator,
@@ -318,21 +317,11 @@ const ABILITY_ORDER_TOP = 5;
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 /**
  * What the trigger search's profit figures were priced under: the market snapshot and the pricing
- * settings, and the sale tax each simulated player's drops were taxed at (the live character's own, and the
- * rate every other member pays). A remembered result taken under other prices or another tax is not offered as
- * unchanged.
- * @param {Array<Object>} [simDTOs] - Every simulated member
- * @param {string|null} [selfHrid] - The live character among them, or null when none of them is
+ * settings. A remembered result taken under other prices is not offered as unchanged.
  * @returns {Object}
  */
-export function triggerPricingStamp(simDTOs = [], selfHrid = null) {
+function triggerPricingStamp() {
     return {
-        saleTax: {
-            live: outputTaxRate(),
-            members: Object.fromEntries(
-                (simDTOs || []).map((dto) => [dto?.hrid, analyzedSaleTaxRate(simDTOs, dto?.hrid, selfHrid)])
-            ),
-        },
         scriptVersion: scriptVersion(),
         gameVersion: dataManager.getInitClientData?.()?.gameVersion ?? null,
         fetchedAt: marketAPI?.lastFetchTimestamp ?? null,
@@ -10959,10 +10948,9 @@ class CombatSimUI {
                     characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                     zoneName: getCombatZones().find((z) => z.hrid === zoneHrid)?.name || null,
                     difficultyTier,
-                    // What the costs and profit figures were read under, so a restored table can say when
-                    // today's pricing or sale tax is not the one it was measured at
+                    // What the costs were read under, so a restored table can say when today's pricing is not
+                    // the one it was measured at
                     pricingLabel: config.getPricingModeDisplayLabel?.() || null,
-                    saleTax: outputTaxRate(),
                 });
             }
         } catch (error) {
@@ -11113,7 +11101,7 @@ class CombatSimUI {
                 playerIndex: party.playerIndex,
                 dtoSignatures: runContext.signatures,
                 communityBuffs: getCommunityBuffs(),
-                pricing: triggerPricingStamp(party.simDTOs, party.selfHrid ?? null),
+                pricing: triggerPricingStamp(),
             });
             const cached = await loadTriggerResult(signature);
             // A later refresh, a run that started meanwhile, or a character switch owns the box now
@@ -11196,7 +11184,7 @@ class CombatSimUI {
             playerIndex,
             dtoSignatures: runContext.signatures,
             communityBuffs,
-            pricing: triggerPricingStamp(party.simDTOs, party.selfHrid ?? null),
+            pricing: triggerPricingStamp(),
         });
         const playerDTOs = structuredClone(party.simDTOs);
 
@@ -13586,7 +13574,6 @@ class CombatSimUI {
                 zoneName: payload.zoneName || null,
                 difficultyTier: payload.difficultyTier,
                 pricingLabel: payload.pricingLabel || null,
-                saleTax: Number.isFinite(payload.saleTax) ? payload.saleTax : null,
             };
             this._renderUpgradeResults(payload.data);
         } catch (error) {
@@ -13610,20 +13597,14 @@ class CombatSimUI {
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
         const stopped = meta?.stopped ? ` (${stoppedRunText(meta.stopped)})` : '';
-        // Costs and profit were read at the pricing and sale tax the run was saved under; said when either is no
-        // longer the one in force. A payload from before they were stamped says nothing
+        // Costs were read at the pricing mode the run was saved under; said when that is no longer the one set. A
+        // payload from before the label was stamped says nothing. (The sale tax needs no such line: it is fixed per
+        // character and build, and a record from another build is never restored.)
         const pricingNow = config.getPricingModeDisplayLabel?.() || null;
-        const pricingChanged = meta?.pricingLabel && pricingNow && meta.pricingLabel !== pricingNow;
-        const taxNow = outputTaxRate();
-        const taxChanged = Number.isFinite(meta?.saleTax) && Number.isFinite(taxNow) && meta.saleTax !== taxNow;
-        const percent = (rate) => `${Math.round(rate * 1000) / 10}%`;
         const repriced =
-            (pricingChanged
+            meta?.pricingLabel && pricingNow && meta.pricingLabel !== pricingNow
                 ? ` Costs were priced at ${escapeAttribute(meta.pricingLabel)}; prices are now set to ${escapeAttribute(pricingNow)}.`
-                : '') +
-            (taxChanged
-                ? ` Profit was measured at a ${percent(meta.saleTax)} sale tax; it is now ${percent(taxNow)}.`
-                : '');
+                : '';
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
