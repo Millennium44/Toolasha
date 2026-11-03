@@ -10,6 +10,7 @@ import { GAME } from '../../utils/selectors.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import { claimButtonsIn } from './task-card-state.js';
 
 const PROXY_BTN_ID = 'mwi-claim-proxy-btn';
 
@@ -98,12 +99,11 @@ class TaskClaimCollector {
     }
 
     /**
-     * Return all enabled Claim Reward buttons in the task list.
+     * Return all enabled Claim Reward buttons in the task list, found by the game's claim-button class rather
+     * than by the English label so a translated client still gets its proxy.
      */
     _getClaimableButtons(taskList) {
-        return Array.from(taskList.querySelectorAll(GAME.TASK_CLAIM_BUTTON)).filter(
-            (btn) => btn.textContent.trim() === 'Claim Reward' && !btn.disabled
-        );
+        return claimButtonsIn(taskList);
     }
 
     /**
