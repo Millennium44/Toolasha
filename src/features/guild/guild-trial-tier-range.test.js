@@ -65,6 +65,12 @@ describe('the Expected tier as a range — the rule of rates', () => {
         expect(fallingIntervals(null)).toBe(0);
     });
 
+    test('fallingIntervals restarts at the onset of a second decline, not the first', () => {
+        const rates = (...values) => values.map((sharePerMs) => ({ sharePerMs }));
+        expect(fallingIntervals(rates(1, 0.7, 1, 1, 0.7))).toBe(1);
+        expect(fallingIntervals(rates(1, 0.7, 1, 0.7, 0.6, 0.5))).toBe(3);
+    });
+
     test('one measured interval: six tiers either side, capped at the top', () => {
         const timing = forecast(1, [1]);
         expect(timing.range).toMatchObject({ state: 'one-interval', halfWidth: 6, falling: 0 });

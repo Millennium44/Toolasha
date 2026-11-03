@@ -132,7 +132,9 @@ export function fallingIntervals(rates) {
     let best = list[0];
     let onset = -1;
     for (let i = 1; i < list.length; i += 1) {
-        if (onset < 0 && list[i] < RANGE_ONSET_FRACTION * best) onset = i;
+        if (list[i] >= RANGE_ONSET_FRACTION * best)
+            onset = -1; // recovered: a later fall is a new decline
+        else if (onset < 0) onset = i;
         best = Math.max(best, list[i]);
     }
     if (onset < 0 || list[list.length - 1] >= RANGE_ONSET_FRACTION * best) return 0;
