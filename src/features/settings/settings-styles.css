@@ -416,12 +416,13 @@
         margin-right: 0;
     }
 
+    /* 16px keeps iOS from zooming the page when a field takes focus */
     .toolasha-text-input,
     .toolasha-number-input,
     .toolasha-select-input {
         min-height: 36px;
         box-sizing: border-box;
-        font-size: 14px;
+        font-size: 16px;
         max-width: 100%;
     }
 
@@ -431,5 +432,115 @@
 
     .toolasha-sync-button {
         min-width: 0;
+    }
+
+    /* Search row: the box, "Changed only", collapse, expand and Clear cannot share one 340px line without the
+       box shrinking to a sliver (or pushing the row wider than the card), so the box takes a line of its own */
+    .toolasha-search-container {
+        flex-wrap: wrap;
+    }
+
+    .toolasha-search-container .toolasha-search-input {
+        flex: 1 1 100% !important;
+        min-width: 0;
+        min-height: 40px;
+        box-sizing: border-box;
+        font-size: 16px !important;
+    }
+
+    .toolasha-search-container button {
+        min-height: 40px;
+        min-width: 40px;
+    }
+
+    /* Group headers are the thing tapped to fold a group */
+    .toolasha-settings-group-header {
+        min-height: 40px;
+        padding-bottom: 4px;
+    }
+
+    /* A group's content is clipped at max-height 5000px with no way to scroll it; at this width wrapped labels and
+       help text make the longer groups (Combat has over a hundred rows) taller than that, so the last rows were
+       unreachable. A collapsed group still folds to nothing. */
+    .toolasha-settings-group:not(.collapsed) > .toolasha-settings-group-content {
+        max-height: none;
+    }
+
+    /* Rows that take typed or chosen input put the label over the control, full width, instead of squeezing a
+       150px dropdown or a text box against a wrapped label. Switch rows and button rows stay on one line. */
+    .toolasha-setting[data-type='text'],
+    .toolasha-setting[data-type='password'],
+    .toolasha-setting[data-type='number'],
+    .toolasha-setting[data-type='select'],
+    .toolasha-setting[data-type='slider'],
+    .toolasha-setting[data-type='pricingSide'] {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+
+    .toolasha-setting[data-type='text'] .toolasha-setting-input,
+    .toolasha-setting[data-type='password'] .toolasha-setting-input,
+    .toolasha-setting[data-type='number'] .toolasha-setting-input,
+    .toolasha-setting[data-type='select'] .toolasha-setting-input,
+    .toolasha-setting[data-type='slider'] .toolasha-setting-input,
+    .toolasha-setting[data-type='pricingSide'] .toolasha-setting-input {
+        width: 100%;
+    }
+
+    .toolasha-setting[data-type='text'] .toolasha-text-input,
+    .toolasha-setting[data-type='password'] .toolasha-text-input,
+    .toolasha-setting[data-type='number'] .toolasha-number-input,
+    .toolasha-setting[data-type='select'] .toolasha-select-input {
+        width: 100%;
+    }
+
+    /* A text box with an Edit Template button beside it shares the line */
+    .toolasha-setting-input .toolasha-text-input {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .toolasha-setting-input {
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    /* Smaller type was hard to read here: label 12px to 13px, help 10px at half opacity to 11px at 65% */
+    .toolasha-setting-label {
+        font-size: 13px;
+    }
+
+    .toolasha-setting-help {
+        font-size: 11px;
+        line-height: 1.35;
+        color: rgba(255, 255, 255, 0.65);
+    }
+
+    /* Dependent rows lose less of a 340px line to their indent */
+    .toolasha-setting.has-dependency {
+        margin-left: 10px;
+    }
+
+    /* Tap targets: the switch is a 16px checkbox set inline, so it needs !important to grow */
+    .toolasha-setting {
+        min-height: 40px;
+    }
+
+    .toolasha-setting-input input[type='checkbox'] {
+        width: 24px !important;
+        height: 24px !important;
+    }
+
+    .toolasha-slider-input {
+        min-height: 32px;
+    }
+
+    .toolasha-setting-action-btn,
+    .toolasha-text-vars-btn,
+    .toolasha-template-edit-btn,
+    .toolasha-custom-price-edit-btn,
+    .toolasha-scroll-defaults-btn {
+        min-height: 36px;
     }
 }
