@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
 - Switching guilds keeps the new guild's trial start time.
 - Guild trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
 - The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.

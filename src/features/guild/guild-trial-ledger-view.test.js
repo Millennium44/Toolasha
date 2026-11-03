@@ -79,6 +79,7 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
         // A queued answer, optionally gated so a test can control which of two
         // concurrent reads resolves first; falls back to the plain `world.cycles`
         const next = world.cyclesQueue?.shift();
+        if (world.listingFailed) return { cycles: [], unreadWeeks: [], listingFailed: true };
         if (!next) return { cycles: world.cycles, unreadWeeks: world.unreadWeeks || [] };
         if (next.gate) await next.gate;
         return { cycles: next.value, unreadWeeks: world.unreadWeeks || [] };
@@ -178,6 +179,38 @@ beforeEach(() => {
 afterEach(() => {
     guildTrialLedgerPanel.hide({ remember: false });
     resetLedgerView();
+});
+
+describe('a ledger whose keys cannot be listed', () => {
+    afterEach(() => {
+        world.listingFailed = false;
+    });
+
+    test('with nothing read yet the panel says it could not read, not that nothing is recorded', async () => {
+        world.listingFailed = true;
+        await refreshLedgerView();
+        guildTrialLedgerPanel.show({ remember: false });
+        const text = guildTrialLedgerPanel.panel.textContent;
+        expect(text).toContain('The ledger could not be read just now');
+        expect(text).not.toContain('Nothing recorded yet');
+        expect(text).not.toContain('No cycles recorded yet');
+    });
+
+    test('the table already read stays, flagged, and the next good read clears the flag', async () => {
+        await refreshLedgerView();
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('could not be read just now, so this may be out');
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Alice');
+
+        world.listingFailed = false;
+        await refreshLedgerView();
+        guildTrialLedgerPanel.hide({ remember: false });
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).not.toContain('could not be read just now');
+    });
 });
 
 describe('buildLedgerTable', () => {
