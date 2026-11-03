@@ -41,12 +41,15 @@ import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT 
 import { addStyles } from '../../utils/dom.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
 const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
-const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+// The editor's pickers use the game's plain frame and blue buttons; ACCENT stays on the selected player tab,
+// current-item marker and figures.
+const GAME_BTN_CSS = `background:${BUTTON_LOOK.primary.rest}; color:${GAME_COLORS.text}; border:none;`;
 
 /**
  * Highest level a community buff reaches in game — a maxed one reads
@@ -1478,7 +1481,7 @@ export class SimEditor {
                     </div>
                     ${this._renderPartyNote()}
                     <button id="mwi-csim-import-btn" style="
-                        background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
+                        ${GAME_BTN_CSS}
                         padding:5px 14px; border-radius:5px; font-size:12px; cursor:pointer;
                         font-family:inherit; font-weight:600;">+ Import Player</button>
                     <div id="mwi-csim-import-area" style="display:none; margin-top:10px; text-align:left;">
@@ -1488,7 +1491,7 @@ export class SimEditor {
                             box-sizing:border-box;"></textarea>
                         <div style="display:flex; gap:6px; margin-top:4px;">
                             <button id="mwi-csim-import-go" style="
-                                background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
+                                ${GAME_BTN_CSS}
                                 padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;
                                 font-weight:600;">Import</button>
                             <button id="mwi-csim-import-cancel" style="
@@ -1627,14 +1630,13 @@ export class SimEditor {
                 ${
                     canReplace
                         ? `<button id="mwi-csim-import-replace" style="
-                    background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT};
+                    ${GAME_BTN_CSS}
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;
                     font-weight:600;" title="Replace ${escapeHtml(activeName)}'s build with the pasted one, keeping their slot">Replace ${escapeHtml(activeName)}</button>`
                         : ''
                 }
                 <button id="mwi-csim-import-go" style="
-                    background:${atCap ? 'rgba(255,255,255,0.02)' : ACCENT_BTN_BG};
-                    border:1px solid ${atCap ? '#333' : ACCENT_BTN_BORDER}; color:${atCap ? '#555' : ACCENT};
+                    ${atCap ? 'background:rgba(255,255,255,0.02); border:1px solid #333; color:#555;' : GAME_BTN_CSS}
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:${atCap ? 'default' : 'pointer'};
                     font-family:inherit; font-weight:600;"${atCap ? ' disabled' : ''}
                     title="${atCap ? `A party has ${MAX_PARTY_SIZE} players already — replace one instead` : 'Add the pasted build as a new member'}"
@@ -1975,18 +1977,17 @@ export class SimEditor {
         popup.id = 'mwi-csim-consumable-picker';
         popup.style.cssText =
             `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
-            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
-            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+            `font-family:'Segoe UI',sans-serif; color:${GAME_COLORS.text}; font-size:13px; box-shadow:${GAME_FRAME.boxShadow};`;
 
         const header = document.createElement('div');
-        header.style.cssText =
-            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            '<span style="font-weight:700; font-size:13px; color:#4a9eff;">Select ' +
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Select ` +
             (isFood ? 'Food' : 'Drink') +
             '</span>' +
-            '<button id="mwi-csim-picker-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>';
+            `<button id="mwi-csim-picker-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>`;
         popup.appendChild(header);
 
         const searchDiv = document.createElement('div');
@@ -2147,16 +2148,15 @@ export class SimEditor {
         popup.id = 'mwi-csim-equipment-picker';
         popup.style.cssText =
             `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
-            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
-            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+            `font-family:'Segoe UI',sans-serif; color:${GAME_COLORS.text}; font-size:13px; box-shadow:${GAME_FRAME.boxShadow};`;
 
         const header = document.createElement('div');
-        header.style.cssText =
-            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            `<span style="font-weight:700; font-size:13px; color:${ACCENT};">Select ${slotName}</span>` +
-            '<button id="mwi-csim-equip-picker-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>';
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Select ${slotName}</span>` +
+            `<button id="mwi-csim-equip-picker-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>`;
         popup.appendChild(header);
 
         const searchDiv = document.createElement('div');
@@ -2293,17 +2293,16 @@ export class SimEditor {
         popup.id = 'mwi-csim-ability-picker';
         popup.style.cssText =
             `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
-            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
             'width:350px; max-height:400px; display:flex; flex-direction:column;' +
-            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+            `font-family:'Segoe UI',sans-serif; color:${GAME_COLORS.text}; font-size:13px; box-shadow:${GAME_FRAME.boxShadow};`;
 
         const slotLabel = isSpecialSlot ? 'Special Ability' : `Ability Slot ${slotIndex}`;
         const header = document.createElement('div');
-        header.style.cssText =
-            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            `<span style="font-weight:700; font-size:13px; color:${ACCENT};">Select ${slotLabel}</span>` +
-            '<button id="mwi-csim-ability-picker-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>';
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Select ${slotLabel}</span>` +
+            `<button id="mwi-csim-ability-picker-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">\u00d7</button>`;
         popup.appendChild(header);
 
         const searchDiv = document.createElement('div');
@@ -2600,16 +2599,15 @@ export class SimEditor {
         popup.id = 'mwi-csim-trigger-editor';
         popup.style.cssText =
             `position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:${PANEL_Z_CAP + 2};` +
-            'background:rgba(10,10,20,0.97); border:2px solid rgba(74,158,255,0.5); border-radius:10px;' +
+            `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
             'width:400px; max-height:440px; display:flex; flex-direction:column;' +
-            "font-family:'Segoe UI',sans-serif; color:#e0e0e0; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.6);";
+            `font-family:'Segoe UI',sans-serif; color:${GAME_COLORS.text}; font-size:13px; box-shadow:${GAME_FRAME.boxShadow};`;
 
         const header = document.createElement('div');
-        header.style.cssText =
-            'display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            `<span style="font-weight:700; font-size:13px; color:${ACCENT};">Triggers — ${itemName}</span>` +
-            '<button id="mwi-csim-trigger-close" style="background:none; border:none; color:#aaa; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>';
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Triggers — ${itemName}</span>` +
+            `<button id="mwi-csim-trigger-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>`;
         popup.appendChild(header);
 
         const listEl = document.createElement('div');
@@ -2617,12 +2615,11 @@ export class SimEditor {
         popup.appendChild(listEl);
 
         const footer = document.createElement('div');
-        footer.style.cssText =
-            'display:flex; align-items:center; gap:6px; padding:8px 14px; border-top:1px solid rgba(74,158,255,0.3); flex-shrink:0;';
+        footer.style.cssText = `display:flex; align-items:center; gap:6px; padding:8px 14px; border-top:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         footer.innerHTML =
             `<button id="mwi-csim-trigger-add" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">+ Add</button>` +
             `<button id="mwi-csim-trigger-default" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Default</button>` +
-            `<button id="mwi-csim-trigger-save" style="margin-left:auto; background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT}; padding:3px 14px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit; font-weight:600;">Save</button>`;
+            `<button id="mwi-csim-trigger-save" style="margin-left:auto; ${GAME_BTN_CSS} padding:3px 14px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit; font-weight:600;">Save</button>`;
         popup.appendChild(footer);
 
         const selectStyle =

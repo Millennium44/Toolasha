@@ -33,6 +33,7 @@ import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { findEnhancingInput } from '../../utils/enhancing-inputs.js';
 import { cheapestWithMirror } from '../../utils/mirror-route.js';
 import { getIconHref } from '../../utils/game-lookups.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import {
     ensureEnhancementMobileStyles,
     releaseEnhancementMobileStyles,
@@ -318,7 +319,7 @@ function generateCostsByLevelTable(
     lines.push('<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">');
     lines.push('<div style="color: #ffa500; font-weight: bold; font-size: 0.95em;">Costs by Enhancement Level:</div>');
     lines.push(
-        '<button id="mwi-expand-costs-table-btn" style="background: rgba(0, 255, 234, 0.1); border: 1px solid #00ffe7; color: #00ffe7; cursor: pointer; font-size: 18px; font-weight: bold; padding: 4px 10px; border-radius: 4px; transition: all 0.15s ease;" title="View full table">⤢</button>'
+        `<button id="mwi-expand-costs-table-btn" style="background: ${BUTTON_LOOK.quiet.rest}; border: none; color: ${GAME_COLORS.text}; cursor: pointer; font-size: 18px; font-weight: bold; padding: 4px 10px; border-radius: var(--radius-sm, 0.25rem); transition: all 0.15s ease;" title="View full table">⤢</button>`
     );
     lines.push('</div>');
 
@@ -1832,14 +1833,10 @@ function injectDisplay(panel, html) {
             showCostsTableModal(container);
         });
         expandBtn.addEventListener('mouseenter', () => {
-            expandBtn.style.background = 'rgba(255, 0, 212, 0.2)';
-            expandBtn.style.borderColor = '#ff00d4';
-            expandBtn.style.color = '#ff00d4';
+            expandBtn.style.background = BUTTON_LOOK.quiet.hover;
         });
         expandBtn.addEventListener('mouseleave', () => {
-            expandBtn.style.background = 'rgba(0, 255, 234, 0.1)';
-            expandBtn.style.borderColor = '#00ffe7';
-            expandBtn.style.color = '#00ffe7';
+            expandBtn.style.background = BUTTON_LOOK.quiet.rest;
         });
     }
 }
@@ -1870,22 +1867,22 @@ function showCostsTableModal(container) {
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        backdropFilter: 'blur(4px)',
     });
 
     // Create modal
     const modal = document.createElement('div');
     modal.id = 'mwi-costs-table-modal';
     Object.assign(modal.style, {
-        background: 'rgba(5, 5, 15, 0.98)',
-        border: '2px solid #00ffe7',
-        borderRadius: '12px',
+        background: GAME_FRAME.background,
+        border: GAME_FRAME.border,
+        borderRadius: GAME_FRAME.borderRadius,
+        color: GAME_COLORS.text,
         padding: '20px',
         minWidth: '800px',
         maxWidth: '95vw',
         maxHeight: '90vh',
         overflow: 'auto',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.8)',
+        boxShadow: GAME_FRAME.boxShadow,
     });
 
     // Clone and style the table
@@ -1899,12 +1896,12 @@ function showCostsTableModal(container) {
     });
 
     modal.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(0, 255, 234, 0.4); padding-bottom: 10px;">
-            <h2 style="margin: 0; color: #00ffe7; font-size: 20px;">📊 Costs by Enhancement Level</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid ${GAME_COLORS.border}; padding-bottom: 10px;">
+            <h2 style="margin: 0; color: ${GAME_COLORS.text}; font-size: 20px;">📊 Costs by Enhancement Level</h2>
             <button id="mwi-close-costs-modal" style="
                 background: none;
                 border: none;
-                color: #e0f7ff;
+                color: ${GAME_COLORS.text};
                 cursor: pointer;
                 font-size: 28px;
                 padding: 0 8px;
@@ -1912,7 +1909,7 @@ function showCostsTableModal(container) {
                 transition: all 0.15s ease;
             " title="Close">×</button>
         </div>
-        <div style="color: #9b9bff; font-size: 0.9em; margin-bottom: 15px;">
+        <div style="color: ${GAME_COLORS.textDim}; font-size: 0.9em; margin-bottom: 15px;">
             Full breakdown of enhancement costs for all levels
         </div>
     `;
@@ -1929,10 +1926,10 @@ function showCostsTableModal(container) {
             backdrop.remove();
         });
         closeBtn.addEventListener('mouseenter', () => {
-            closeBtn.style.color = '#ff0055';
+            closeBtn.style.color = GAME_COLORS.bad;
         });
         closeBtn.addEventListener('mouseleave', () => {
-            closeBtn.style.color = '#e0f7ff';
+            closeBtn.style.color = GAME_COLORS.text;
         });
     }
 
