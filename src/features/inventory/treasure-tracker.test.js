@@ -662,6 +662,31 @@ describe('the header on a screen too narrow for it', () => {
         expect(hide).toHaveBeenCalled();
         hide.mockRestore();
     });
+
+    test('the gear stays lit under the pointer while its section is open, and goes bare again when closed', () => {
+        const render = vi.spyOn(treasureTracker, '_render').mockImplementation(() => {});
+        const gear = [...build().querySelectorAll('button')].find((b) => b.textContent === '⚙');
+        const under = () => {
+            gear.dispatchEvent(new Event('mouseover'));
+            const hover = gear.style.background;
+            gear.dispatchEvent(new Event('mouseout'));
+            return { hover, rest: gear.style.background };
+        };
+        treasureTracker.configMode = false;
+
+        gear.click();
+        const lit = under();
+        expect(lit.hover).toBe(lit.rest);
+
+        gear.click();
+        const bare = under();
+        expect(bare.hover).toBe('var(--color-space-800, #273366)');
+        expect(bare.hover).not.toBe(lit.hover);
+        expect(gear._restBg).toBe('transparent');
+
+        treasureTracker.configMode = false;
+        render.mockRestore();
+    });
 });
 
 describe('the popup’s header is the panel’s header', () => {

@@ -337,6 +337,10 @@ const KNOWN_SAFE = {
         'registry owns; the catalyst mark only makes sure it is up, because essence and crate drops read as ' +
         'unpriced without it, and redraws on its `expected_value_initialized` event. It shares one in-flight start ' +
         'between callers and holds price-derived caches it invalidates itself, not character data.',
+    'src/features/alchemy/alchemy-profit-display.js#expectedValueCalculator':
+        'Same as task-profit-display: a registered feature (`entrypoint.js` key `expectedValueCalculator`) the ' +
+        'registry owns; the Profitability panel only makes sure it is up before pricing essence and crate ' +
+        'outputs, and `disable()` removes the ready listener it registered.',
     'src/features/ui/command-palette.js#pformancePanel':
         'Deliberate, and documented at the call site: `disable()` would also take the panel off the page, and ' +
         'the palette’s `cleanup()` runs on every character switch — a diagnostic the user is watching must ' +

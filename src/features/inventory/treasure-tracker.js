@@ -45,7 +45,14 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
 import { isMobileMode } from '../../utils/mobile.js';
-import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
+import {
+    BUTTON_LOOK,
+    GAME_COLORS,
+    GAME_FRAME,
+    setButtonRest,
+    setButtonVariant,
+    styleGameButton,
+} from '../../utils/game-look.js';
 import {
     restoreGeometry,
     saveGeometry,
@@ -1773,7 +1780,9 @@ class TreasureTracker {
 
         const gear = this._headerButton('⚙', () => {
             this.configMode = !this.configMode;
-            setButtonRest(gear, this.configMode ? BUTTON_LOOK.quiet.hover : BUTTON_LOOK.icon.rest);
+            // Selected, it is the lit shade and stays lit under the pointer; unselected, it is a bare glyph again
+            if (this.configMode) setButtonRest(gear, BUTTON_LOOK.quiet.hover, BUTTON_LOOK.quiet.hover);
+            else setButtonVariant(gear, 'icon');
             this._render();
         });
         gear.title = 'Show or hide chests, and import or export your history';

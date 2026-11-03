@@ -14,6 +14,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Times under an hour show as "53m 40s" instead of "0h 53m 40s".
 - The labyrinth Size stepper reappears in the toolbar as soon as you turn the grid scale control back on.
 - Task Claim Reward button now appears on translated game clients, once a task is complete.
+- Selected buttons in the net worth chart and the treasure tracker's open gear now keep their color when the mouse is over them instead of darkening.
+- The alchemy Profitability panel now prices essence and crate drops even when the expected-value tooltip setting is off, instead of showing every figure as a minimum.
 - Toggling a scroll chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
 - Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
 - The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time.
