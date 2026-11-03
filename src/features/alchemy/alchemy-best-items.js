@@ -49,6 +49,7 @@ import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
 import selfUseWanted from '../market/self-use-wanted.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
 
 /** The setting that remembers which sort the table was last left on */
 const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
@@ -941,14 +942,15 @@ class AlchemyBestItems {
         // align-items: center hung the dialog off both edges (left edge -75px at 390px
         // wide), where nothing can scroll to the clipped part. Desktop still gets 500px.
         content.style.cssText = `
-            background: #2a2a2a;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 20px;
             min-width: min(500px, calc(100% - 56px));
             max-width: min(95vw, calc(100% - 56px));
             max-height: 90%;
             overflow: auto;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -957,7 +959,7 @@ class AlchemyBestItems {
             'display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;';
 
         const title = document.createElement('h3');
-        title.style.cssText = 'margin: 0; color: #fff;';
+        title.style.cssText = `margin: 0; color: ${GAME_COLORS.text};`;
         title.setAttribute('data-mwi-best-title', 'true');
         header.appendChild(title);
 
@@ -984,7 +986,8 @@ class AlchemyBestItems {
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
-        closeBtn.style.cssText = 'background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;';
+        styleGameButton(closeBtn, 'icon');
+        closeBtn.style.fontSize = '20px';
         closeBtn.addEventListener('click', () => this.closeModal());
         header.appendChild(closeBtn);
 
@@ -999,10 +1002,7 @@ class AlchemyBestItems {
             const tab = document.createElement('button');
             tab.textContent = type.charAt(0).toUpperCase() + type.slice(1);
             tab.setAttribute('data-mwi-type-tab', type);
-            tab.style.cssText = `
-                padding: 4px 12px; border-radius: 4px; cursor: pointer;
-                border: 1px solid #555; font-size: 0.8rem; color: #fff;
-            `;
+            styleGameButton(tab, 'quiet', true);
             tab.addEventListener('click', () => {
                 this.currentType = type;
                 this.loadRankings(type);
@@ -1026,10 +1026,7 @@ class AlchemyBestItems {
             btn.textContent = label;
             if (title) btn.title = title;
             btn.setAttribute('data-mwi-sort-btn', mode);
-            btn.style.cssText = `
-                padding: 3px 8px; border-radius: 4px; cursor: pointer;
-                border: 1px solid #555; font-size: 0.75rem; color: #fff;
-            `;
+            styleGameButton(btn, 'quiet', true);
             btn.addEventListener('click', () => this.chooseSortMode(mode));
             controls.appendChild(btn);
         }
@@ -1038,11 +1035,8 @@ class AlchemyBestItems {
         const profitToggle = document.createElement('button');
         profitToggle.setAttribute('data-mwi-profit-toggle', 'true');
         profitToggle.textContent = 'Profitable only';
-        profitToggle.style.cssText = `
-            padding: 3px 8px; border-radius: 4px; cursor: pointer;
-            border: 1px solid #555; font-size: 0.75rem; color: #fff;
-            margin-left: 4px;
-        `;
+        styleGameButton(profitToggle, 'quiet', true);
+        profitToggle.style.marginLeft = '4px';
         profitToggle.addEventListener('click', () => {
             this.profitableOnly = !this.profitableOnly;
             this.renderTable();
@@ -1301,13 +1295,13 @@ class AlchemyBestItems {
         // Update tab styling
         this.modal.querySelectorAll('[data-mwi-type-tab]').forEach((tab) => {
             const isActive = tab.getAttribute('data-mwi-type-tab') === this.currentType;
-            tab.style.background = isActive ? config.COLOR_ACCENT : 'transparent';
+            setButtonRest(tab, isActive ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
         });
 
         // Update sort button styling
         this.modal.querySelectorAll('[data-mwi-sort-btn]').forEach((btn) => {
             const isActive = btn.getAttribute('data-mwi-sort-btn') === sortMode;
-            btn.style.background = isActive ? '#555' : 'transparent';
+            setButtonRest(btn, isActive ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
             const onlyDecompose = SORT_MODES.find(
                 (m) => m.value === btn.getAttribute('data-mwi-sort-btn')
             )?.decomposeOnly;
@@ -1320,7 +1314,7 @@ class AlchemyBestItems {
         // Update profitable toggle styling
         const profitToggle = this.modal.querySelector('[data-mwi-profit-toggle]');
         if (profitToggle) {
-            profitToggle.style.background = this.profitableOnly ? '#555' : 'transparent';
+            setButtonRest(profitToggle, this.profitableOnly ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
         }
 
         // Build table

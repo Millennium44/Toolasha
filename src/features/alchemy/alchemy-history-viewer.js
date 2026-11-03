@@ -14,6 +14,8 @@
 import storage from '../../core/storage.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
+
 import { findAlchemyTablist, getAlchemyTabElements } from './alchemy-tabs.js';
 
 /** Switcher order, and the order panes sit in the window. */
@@ -383,15 +385,16 @@ class AlchemyHistoryViewer {
         // align-items: center hung the dialog off both edges (left edge -75px at 390px
         // wide), where nothing can scroll to the clipped part. Desktop still gets 500px.
         content.style.cssText = `
-            background: #2a2a2a;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 20px;
             width: fit-content;
             min-width: min(500px, calc(100% - 56px));
             max-width: min(95vw, calc(100% - 56px));
             max-height: 90%;
             overflow: auto;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -405,7 +408,7 @@ class AlchemyHistoryViewer {
 
         const title = document.createElement('h2');
         title.className = 'mwi-alchemy-history-title';
-        title.style.cssText = 'margin: 0; color: #fff;';
+        title.style.cssText = `margin: 0; color: ${GAME_COLORS.text};`;
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '✕';
@@ -470,9 +473,7 @@ class AlchemyHistoryViewer {
             btn.dataset.mwiAlchemyHistorySwitch = type;
             const active = type === this.activeType;
             btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-            btn.style.cssText = active
-                ? 'padding: 6px 14px; background: #4a90e2; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;'
-                : 'padding: 6px 14px; background: #3a3a3a; color: #ccc; border: none; border-radius: 4px; cursor: pointer;';
+            styleGameButton(btn, active ? 'primary' : 'quiet');
             btn.addEventListener('click', async () => {
                 // Clicking the shown type is a no-op, unless another type is still loading: then it is
                 // the way back, and must supersede that load
