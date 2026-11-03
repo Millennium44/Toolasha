@@ -81,7 +81,7 @@ describe('picking a target', () => {
 
     test('cycling walks the list and wraps', () => {
         const seen = TARGETS.map(() => cycleTarget().label);
-        expect(seen).toEqual(['3 days', '1 week', '8 hours', '1 day']);
+        expect(seen).toEqual(['3 days', '1 week', '2 weeks', '30 days', '8 hours', '1 day']);
     });
 
     test('and is written down as it goes', async () => {
@@ -98,6 +98,16 @@ describe('reading it back', () => {
         await loadTarget();
 
         expect(currentTarget().label).toBe('1 week');
+    });
+
+    test.each([
+        [14, '2 weeks'],
+        [30, '30 days'],
+    ])('a stored %i days reads back', async (days, label) => {
+        store.data[KEY] = { targetSeconds: days * 86400 };
+        await loadTarget();
+
+        expect(currentTarget().label).toBe(label);
     });
 
     test('nothing stored leaves the default alone', async () => {
