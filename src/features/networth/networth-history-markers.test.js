@@ -209,6 +209,42 @@ describe('deleting a marked point', () => {
     });
 });
 
+describe('the ability book switch with the asset type excluded', () => {
+    const SWITCH = 'networth_abilityBooksAsInventory';
+    const held = (asInventory) => ({
+        totalNetworth: asInventory ? 1900 : 1000,
+        coins: 100,
+        excluded: {
+            total: asInventory ? 0 : 900,
+            items: asInventory ? [] : [{ type: 'assetType', value: 'abilityBooks', name: 'All', amount: 900 }],
+        },
+        currentAssets: {
+            inventory: { value: asInventory ? 910 : 10, breakdown: [] },
+            equipped: { value: 0, breakdown: [] },
+            listings: { value: 0, breakdown: [] },
+        },
+        fixedAssets: {
+            houses: { totalCost: 0, breakdown: [] },
+            abilities: { totalCost: 0, breakdown: [] },
+            abilityBooks: { totalCost: 0, breakdown: [] },
+        },
+        valuation: { [SWITCH]: asInventory },
+        valuationFacts: { capeHeld: false, switchedBooks: { value: 900, partial: false } },
+    });
+
+    test('the reading after it is marked with the counted step, and Non-Excl growth reads flat', async () => {
+        await networthMovers.load('char-1');
+        await take(held(false));
+        const after = await take(held(true));
+        expect(after.marker.step).toBe(0);
+        expect(after.marker.stepCounted).toBe(900);
+        expect(after.nonExcluded - networthHistory.history[0].nonExcluded).toBe(900);
+        const growth = networthHistory.getGrowthHistory();
+        expect(growth[1].nonExcluded).toBe(growth[0].nonExcluded);
+        expect(growth[1].total).toBe(growth[0].total);
+    });
+});
+
 describe('pruning keeps the steps', () => {
     test('the daily thinning of year-old points keeps a marked point', () => {
         const now = Date.parse('2026-11-02T12:00:00Z');

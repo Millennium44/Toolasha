@@ -206,6 +206,102 @@ describe('buildMarker', () => {
             total: 5,
         });
         expect(marker.step).toBe(0);
+        expect(marker.stepCounted).toBe(0);
+    });
+
+    describe('ability books as inventory with the Ability Books asset type excluded', () => {
+        const SWITCH = 'networth_abilityBooksAsInventory';
+        const flip = (from, to, switchedBooks, others = []) =>
+            buildMarker({
+                changes: [change(SWITCH, from, to), ...others],
+                prevRecord: { rows: [], exOther: true },
+                current: { rows: [], switchedBooks },
+                prevTotal: 5000,
+                total: 5000,
+            });
+
+        test('turned on: the total does not move, the non-excluded line rises by what the books are worth', () => {
+            const marker = flip(false, true, { value: 900, partial: false });
+            expect(marker.step).toBe(0);
+            expect(marker.stepCounted).toBe(900);
+            expect(marker.changes[0]).toMatchObject({ step: 0, stepCounted: 900 });
+            expect(marker.floor).toBeUndefined();
+        });
+
+        test('turned off: the non-excluded line falls by the same', () => {
+            expect(flip(true, false, { value: 900, partial: false }).stepCounted).toBe(-900);
+        });
+
+        test('with no such books, or no exclusion, or a calculation without the fact, nothing counted moves', () => {
+            expect(flip(false, true, { value: 0, partial: false }).stepCounted).toBe(0);
+            expect(flip(false, true, undefined).stepCounted).toBe(0);
+            expect(flip(true, false, undefined).stepCounted).toBe(0);
+        });
+
+        test('books valued on a partial bill make the step a floor', () => {
+            expect(flip(false, true, { value: 900, partial: true }).floor).toEqual([SWITCH]);
+        });
+
+        test('it needs no item map for the reading before: the books are valued in this one', () => {
+            const marker = buildMarker({
+                changes: [change(SWITCH, false, true)],
+                prevRecord: null,
+                current: { rows: [], switchedBooks: { value: 900, partial: false } },
+                prevTotal: 5000,
+                total: 5000,
+            });
+            expect(marker.stepCounted).toBe(900);
+            expect(marker.unseparated).toEqual([]);
+        });
+
+        test('growth reads the rise as the setting it was, on the non-excluded and inventory lines', () => {
+            const before = { t: 1, total: 5000, nonExcluded: 4100, inventory: 1000 };
+            const after = {
+                t: 2,
+                total: 5000,
+                nonExcluded: 5000,
+                inventory: 1900,
+                marker: flip(false, true, { value: 900, partial: false }),
+            };
+            expect(stepsAfter([before, after], 1)).toMatchObject({ step: 0, stepCounted: 900, count: 1 });
+            const out = withoutSteps([before, after]);
+            expect(out[1].total).toBe(5000);
+            expect(out[1].nonExcluded).toBe(4100);
+            expect(out[1].inventory).toBe(1000);
+            // Nothing stored changed
+            expect(after.nonExcluded).toBe(5000);
+        });
+
+        test('two devices marking it, in differing batches, count the books once', () => {
+            const HOUR = 3_600_000;
+            const before = { t: 0, total: 5000, nonExcluded: 4100 };
+            const a = { t: HOUR, total: 5000, nonExcluded: 5000, marker: flip(false, true, { value: 900 }) };
+            const cowbells = { id: 'networth_includeCowbells', from: false, to: true };
+            const b = {
+                t: 2 * HOUR,
+                total: 5000,
+                nonExcluded: 5000,
+                marker: flip(false, true, { value: 950 }, [cowbells]),
+            };
+            expect(stepsAfter([before, a, b], 0).stepCounted).toBe(900);
+        });
+
+        test('a later reading under the same settings carries no marker, so nothing is shifted twice', () => {
+            const after = { t: 2, total: 5000, nonExcluded: 5000, marker: flip(false, true, { value: 900 }) };
+            const later = { t: 3, total: 5100, nonExcluded: 5100 };
+            expect(withoutSteps([after, later])[1].nonExcluded).toBe(4200);
+        });
+
+        test('an older marker, stepCounted 0, reads as it always did', () => {
+            const old = {
+                t: 2,
+                total: 5000,
+                nonExcluded: 5000,
+                marker: { changes: [change(SWITCH, false, true)], step: 0, stepCounted: 0, unseparated: [], raw: 0 },
+            };
+            const history = [old];
+            expect(withoutSteps(history)).toBe(history);
+        });
     });
 });
 

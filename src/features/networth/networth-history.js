@@ -390,7 +390,11 @@ class NetworthHistory {
             return buildMarker({
                 changes,
                 prevRecord,
-                current: { rows: buildRows(data).rows, ...exclusionsOf(data) },
+                current: {
+                    rows: buildRows(data).rows,
+                    ...exclusionsOf(data),
+                    switchedBooks: data.valuationFacts?.switchedBooks,
+                },
                 prevTotal: prevPoint ? prevPoint.total : null,
                 total: snapshot.total,
             });

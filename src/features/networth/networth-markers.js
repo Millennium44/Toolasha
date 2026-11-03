@@ -62,7 +62,10 @@ const SEPARABLE = {
     networth_includeCowbells: (hrid) => hrid === '/items/cowbell',
 };
 
-/** Moves value between Inventory and Abilities and leaves the total alone */
+/**
+ * Moves value between Inventory and Abilities and leaves the total alone. The non-excluded line moves only when the
+ * Ability Books asset type is excluded: then the switch is what decides whether those books count at all.
+ */
 const TOTAL_NEUTRAL = new Set(['networth_abilityBooksAsInventory']);
 
 const LABELS = {
@@ -202,7 +205,9 @@ const sumExcluded = (record, predicate) =>
  * @param {Object} params - Inputs
  * @param {Array<{id: string, from: *, to: *}>} params.changes - From {@link diffSignatures}
  * @param {Object|null} params.prevRecord - Item map of the reading before (networth-movers record), or null
- * @param {{rows: Array<Array>, ex?: Object, exOther?: boolean}} params.current - This reading's rows and exclusions
+ * @param {{rows: Array<Array>, ex?: Object, exOther?: boolean, switchedBooks?: {value: number, partial: boolean}}}
+ *   params.current - This reading's rows and exclusions, and the ability books whose counting hangs on the
+ *   "Ability books as inventory" switch, valued now (the calculation's `valuationFacts`)
  * @param {number|null} params.prevTotal - Total of the reading before, when known
  * @param {number} params.total - Total of this reading
  * @returns {Object} `{changes, step, stepCounted, unseparated, floor, small, raw}`; `step` is null when nothing could
@@ -218,8 +223,12 @@ export function buildMarker({ changes, prevRecord, current, prevTotal, total }) 
     for (const change of changes) {
         const predicate = SEPARABLE[change.id];
         if (TOTAL_NEUTRAL.has(change.id)) {
+            const moved = current?.switchedBooks;
+            const counted = Number.isFinite(moved?.value) ? (change.to === true ? moved.value : -moved.value) : 0;
+            stepCounted += counted;
             separated += 1;
-            shared.push({ ...change, step: 0, stepCounted: 0 });
+            shared.push({ ...change, step: 0, stepCounted: Math.round(counted) });
+            if (moved?.partial === true) floor.push(change.id);
         } else if (predicate && prevRecord) {
             const now = matching(current, predicate);
             const was = matching(prevRecord, predicate);
@@ -513,9 +522,11 @@ export function stepsAfter(history, afterT, untilT = Infinity) {
  * @returns {Array<Object>} The same points, or copies shifted by the steps made so far
  */
 export function withoutSteps(history) {
-    if (!Array.isArray(history) || !history.some((p) => Number.isFinite(p?.marker?.step) && p.marker.step !== 0)) {
-        return history;
-    }
+    // A step can sit wholly in the counted part (ability books moved past an excluded asset type) with a total of 0
+    const shifts = (p) =>
+        (Number.isFinite(p?.marker?.step) && p.marker.step !== 0) ||
+        (Number.isFinite(p?.marker?.stepCounted) && p.marker.stepCounted !== 0);
+    if (!Array.isArray(history) || !history.some(shifts)) return history;
     const shares = countedShares(history);
     let offset = 0;
     let offsetCounted = 0;
