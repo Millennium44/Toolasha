@@ -199,6 +199,18 @@ describe('the session memory', () => {
 });
 
 describe('row counts', () => {
+    test('a value that throws when inspected counts as not applicable', () => {
+        const hostile = new Proxy(
+            {},
+            {
+                getPrototypeOf() {
+                    throw new Error('no');
+                },
+            }
+        );
+        expect(countRows(hostile)).toBeNull();
+    });
+
     test('an array is its length, a plain object its own keys, a missing value 0, anything else not countable', () => {
         expect(countRows(['a', 'b', 'b', 'c'])).toBe(4);
         expect(countRows({ x: 1, y: 2, z: 3 })).toBe(3);

@@ -47,11 +47,16 @@ export const UNCHANGED_UNKNOWN = 'not reported — this pull result does not say
  * @returns {number|null} The row count, or null when the value has no rows to count
  */
 export function countRows(value) {
-    if (value === undefined || value === null) return 0;
-    if (Array.isArray(value)) return value.length;
-    if (typeof value === 'object') {
-        const proto = Object.getPrototypeOf(value);
-        if (proto === Object.prototype || proto === null) return Object.keys(value).length;
+    // Called inside the merge's own try: a count that throws must never read as a failed merge
+    try {
+        if (value === undefined || value === null) return 0;
+        if (Array.isArray(value)) return value.length;
+        if (typeof value === 'object') {
+            const proto = Object.getPrototypeOf(value);
+            if (proto === Object.prototype || proto === null) return Object.keys(value).length;
+        }
+    } catch {
+        return null;
     }
     return null;
 }
