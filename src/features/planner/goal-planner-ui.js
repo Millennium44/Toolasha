@@ -70,6 +70,7 @@ import { prepareRouteInput, routeCacheKey, runRouteSearch, ROUTE_OBJECTIVES } fr
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
@@ -86,13 +87,12 @@ function yieldToBrowser() {
 }
 
 const COLORS = {
-    background: 'rgba(10, 12, 20, 0.97)',
-    headerBg: 'rgba(18, 26, 40, 0.92)',
-    border: 'rgba(120, 170, 255, 0.32)',
+    border: GAME_COLORS.border,
     hairline: 'rgba(255, 255, 255, 0.10)',
     card: 'rgba(255, 255, 255, 0.04)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.55)',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Marks data (a progress fill), never the frame
     accent: '#7fb0ff',
     good: '#7fd6a3',
     bad: '#f0776c',
@@ -153,16 +153,9 @@ function button(label, onClick, style = {}) {
     const element = document.createElement('button');
     element.type = 'button';
     element.textContent = label;
-    Object.assign(element.style, {
-        background: 'rgba(255, 255, 255, 0.07)',
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: '3px',
-        color: COLORS.accent,
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 8px',
-        ...style,
-    });
+    // A caller asking for no fill is asking for a bare glyph, which only shows a fill on hover
+    styleGameButton(element, style.background === 'none' ? 'icon' : 'quiet', true);
+    Object.assign(element.style, style);
     element.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick(event);
@@ -715,10 +708,7 @@ class GoalPlannerPanel {
             zIndex: String(config.Z_FLOATING_PANEL),
             width: `min(${DEFAULT_PANEL.width}px, 94vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height, 0.82),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -774,13 +764,12 @@ class GoalPlannerPanel {
             gap: '8px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
         });
 
-        const title = span('Goal Planner', { fontWeight: 'bold', color: COLORS.accent });
+        const title = span('Goal Planner', { fontWeight: 'bold', color: COLORS.text });
 
         this.statusEl = span('', { color: COLORS.textDim, fontSize: '11px' });
 
@@ -959,7 +948,7 @@ class GoalPlannerPanel {
                 this._render();
             });
             if (this.formType === type) {
-                chip.style.background = 'rgba(127, 176, 255, 0.22)';
+                setButtonRest(chip, BUTTON_LOOK.primary.rest);
             }
             strip.appendChild(chip);
         }
@@ -1111,7 +1100,7 @@ class GoalPlannerPanel {
             marginBottom: '5px',
         });
 
-        const title = span(plan?.title || describeGoal(goal), { fontWeight: 'bold', color: COLORS.accent });
+        const title = span(plan?.title || describeGoal(goal), { fontWeight: 'bold', color: COLORS.text });
         heading.appendChild(title);
 
         if (plan) {
@@ -1711,7 +1700,7 @@ class GoalPlannerPanel {
                 state.objective = objective;
                 this._render();
             });
-            if (state.objective === objective) chip.style.background = 'rgba(127, 176, 255, 0.22)';
+            if (state.objective === objective) setButtonRest(chip, BUTTON_LOOK.primary.rest);
             if (!result.routes[objective]) chip.style.opacity = '0.6';
             chips.appendChild(chip);
         }

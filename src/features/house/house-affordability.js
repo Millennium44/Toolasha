@@ -32,6 +32,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { roomSkill } from '../../utils/room-skills.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /** The game's cap; a room at this level has nothing left to buy */
 const MAX_ROOM_LEVEL = 8;
@@ -44,11 +45,9 @@ const UNTRACKED_KEY = 'housesUntracked';
 const DEFAULT_PANEL = { width: 560, height: 420 };
 
 const COLORS = {
-    background: 'rgba(8, 10, 20, 0.96)',
-    headerBg: 'rgba(14, 30, 20, 0.85)',
-    border: 'rgba(120, 200, 150, 0.3)',
-    text: '#e6efe9',
-    textDim: 'rgba(230, 239, 233, 0.55)',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
+    // Marks data (a cost, a selected room), never the frame
     accent: '#7fd6a3',
     affordable: 'rgba(60, 140, 90, 0.35)',
     tooDear: 'rgba(120, 60, 60, 0.3)',
@@ -394,10 +393,7 @@ class HousesPanel {
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_PANEL.width}px, 92vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -466,14 +462,13 @@ class HousesPanel {
             gap: '10px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
-            borderBottom: `1px solid ${COLORS.border}`,
+            borderBottom: `1px solid ${GAME_COLORS.border}`,
             userSelect: 'none',
         });
 
         this.titleEl = document.createElement('span');
         this.titleEl.style.fontWeight = 'bold';
-        this.titleEl.style.color = COLORS.accent;
+        this.titleEl.style.color = COLORS.text;
 
         const close = document.createElement('button');
         close.textContent = '✕';

@@ -65,6 +65,7 @@ import {
 } from './ironcow-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import ironCowRuntime from './ironcow-runtime.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 // Side effect only: registers the "Iron Bell next step" overlay tile. Imported
 // here — rather than where the rest of the overlay's rows are wired in, a
 // bundle this feature does not otherwise touch — so the tile exists wherever
@@ -82,14 +83,11 @@ const DEFAULT_PANEL = { width: 520, height: 620 };
 const LIVE_REDRAW_MS = 300;
 
 const COLORS = {
-    background: 'rgba(10, 12, 20, 0.97)',
-    headerBg: 'rgba(18, 26, 40, 0.92)',
-    border: 'rgba(120, 170, 255, 0.32)',
+    border: GAME_COLORS.border,
     hairline: 'rgba(255, 255, 255, 0.10)',
     card: 'rgba(255, 255, 255, 0.04)',
-    text: '#e8ecf5',
-    textDim: 'rgba(232, 236, 245, 0.55)',
-    accent: '#7fb0ff',
+    text: GAME_COLORS.text,
+    textDim: GAME_COLORS.textDim,
     good: '#7fd6a3',
     bad: '#f0776c',
     warn: '#ffb020',
@@ -118,16 +116,9 @@ function button(label, onClick, style = {}) {
     const element = document.createElement('button');
     element.type = 'button';
     element.textContent = label;
-    Object.assign(element.style, {
-        background: 'rgba(255, 255, 255, 0.07)',
-        border: `1px solid ${COLORS.border}`,
-        borderRadius: '3px',
-        color: COLORS.accent,
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 8px',
-        ...style,
-    });
+    // A caller asking for no fill is asking for a bare glyph, which only shows a fill on hover
+    styleGameButton(element, style.background === 'none' ? 'icon' : 'quiet', true);
+    Object.assign(element.style, style);
     element.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick(event);
@@ -192,7 +183,7 @@ function card(title) {
         gap: '3px',
     });
     if (title) {
-        const heading = span(title, { color: COLORS.accent, fontWeight: 'bold', marginBottom: '2px' });
+        const heading = span(title, { color: COLORS.text, fontWeight: 'bold', marginBottom: '2px' });
         element.appendChild(heading);
     }
     return element;
@@ -528,10 +519,7 @@ class IronCowFarmPanel {
             zIndex: String(config.Z_FLOATING_PANEL),
             width: `min(${DEFAULT_PANEL.width}px, 94vw)`,
             height: panelHeightCap(DEFAULT_PANEL.height, 0.82),
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '8px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            ...GAME_FRAME,
             color: COLORS.text,
             fontSize: '12px',
             display: 'flex',
@@ -630,13 +618,12 @@ class IronCowFarmPanel {
             gap: '8px',
             cursor: 'move',
             padding: '7px 8px 7px 11px',
-            background: COLORS.headerBg,
             borderBottom: `1px solid ${COLORS.border}`,
             userSelect: 'none',
             flex: '0 0 auto',
         });
 
-        const title = span('Iron Bell Farming', { fontWeight: 'bold', color: COLORS.accent });
+        const title = span('Iron Bell Farming', { fontWeight: 'bold', color: COLORS.text });
         this.statusEl = span('', { color: COLORS.textDim, fontSize: '11px' });
 
         const spacer = document.createElement('div');
@@ -801,7 +788,7 @@ class IronCowFarmPanel {
         const bar = button(label, () => this.togglePlan(), {
             background: 'none',
             border: 'none',
-            color: COLORS.accent,
+            color: COLORS.text,
             fontWeight: 'bold',
             fontSize: '12px',
             padding: '0',
