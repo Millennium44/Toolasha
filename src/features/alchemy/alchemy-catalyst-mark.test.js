@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
     settingHandlers: new Map(),
     events: new Map(),
     markEnabled: true,
+    bookListeners: [],
+    priceVersion: 0,
+    evReady: false,
+    evInit: vi.fn(),
 }));
 
 const calculator = vi.hoisted(() => {
@@ -39,6 +43,25 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => state.charId,
         getInventory: () => state.inventory,
         getItemDetails: (hrid) => ({ name: hrid.split('/').pop().replace(/_/g, ' ') }),
+    },
+}));
+vi.mock('../../api/marketplace.js', () => ({
+    default: {
+        get priceVersion() {
+            return state.priceVersion;
+        },
+        on: (cb) => state.bookListeners.push(cb),
+        off: (cb) => {
+            state.bookListeners = state.bookListeners.filter((x) => x !== cb);
+        },
+    },
+}));
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: {
+        get isInitialized() {
+            return state.evReady;
+        },
+        initialize: () => state.evInit(),
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
@@ -110,6 +133,10 @@ beforeEach(() => {
     state.charId = 'char-1';
     state.pricingMode = 'hybrid';
     state.markEnabled = true;
+    state.bookListeners = [];
+    state.priceVersion = 0;
+    state.evReady = false;
+    state.evInit.mockReset();
     buildPanel();
     vi.spyOn(console, 'error').mockImplementation(() => {});
     mark.initialize();
@@ -234,6 +261,87 @@ describe('catalyst picker mark', () => {
         expect(banner().textContent).toContain('a floor: some drops have no price');
     });
 
+    test('an unpriced tea makes the figure a ceiling, and a drop plus a tea makes it incomplete', async () => {
+        const tea = { hasMissingPrices: true };
+        setAnswers('coinify', CHEESE, { none: profit(100, tea), typeSpecific: profit(300, tea), prime: profit(200) });
+        openCatalystMenu([CAT]);
+        await drawn();
+        expect(banner().textContent).toContain('a ceiling: a tea has no price');
+        expect(banner().textContent).not.toContain('floor');
+
+        const both = { hasMissingPrices: true, unpricedOutputs: ['/items/x'] };
+        setAnswers('coinify', CHEESE, { none: profit(100, both), typeSpecific: profit(300), prime: profit(200) });
+        mark.cache = null;
+        await drawn();
+        expect(banner().textContent).toContain('incomplete: a drop and a tea have no price');
+        expect(banner().textContent).not.toContain('floor');
+        expect(banner().textContent).not.toContain('ceiling');
+    });
+
+    test('a picker opened before the order book loads fills in when the book arrives', async () => {
+        // Nothing priced yet: the calculator answers null for every option
+        openCatalystMenu([CAT]);
+        await drawn();
+        expect(banner()).toBeNull();
+
+        // The book lands (no catalyst menu mutation, no dataManager event: only the market feed says so)
+        setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(300), prime: profit(200) });
+        state.priceVersion = 1;
+        expect(state.bookListeners).toHaveLength(1);
+        state.bookListeners[0]({ full: true });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(banner().textContent).toContain('Best catalyst: catalyst of coinification');
+    });
+
+    test('an empty answer is never cached, so the same input is asked again', async () => {
+        openCatalystMenu([CAT]);
+        await drawn();
+        const first = calculator.calculateCoinifyProfit.mock.calls.length;
+        setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(300), prime: profit(200) });
+        await drawn();
+        expect(calculator.calculateCoinifyProfit.mock.calls.length).toBeGreaterThan(first);
+        expect(banner()).not.toBeNull();
+    });
+
+    test('an open picker follows a book update, and a move that changed nothing is ignored', async () => {
+        setAnswers('coinify', CHEESE, { none: profit(1000), typeSpecific: profit(500), prime: profit(0) });
+        openCatalystMenu([CAT]);
+        await drawn();
+        expect(banner().textContent).toContain('Best catalyst: no catalyst');
+
+        setAnswers('coinify', CHEESE, { none: profit(1000), typeSpecific: profit(5000), prime: profit(0) });
+        state.bookListeners[0]({ full: false, keys: new Set() });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(banner().textContent).toContain('Best catalyst: no catalyst');
+
+        state.priceVersion = 2;
+        state.bookListeners[0]({ full: false, keys: new Set(['/items/holy_cheese:0']) });
+        await vi.advanceTimersByTimeAsync(100);
+        expect(banner().textContent).toContain('Best catalyst: catalyst of coinification, +5.0K/hr');
+    });
+
+    test('starts the expected-value calculator and redraws when it is ready', async () => {
+        setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(300), prime: profit(200) });
+        openCatalystMenu([CAT]);
+        await drawn();
+        expect(state.evInit).toHaveBeenCalled();
+
+        // Ready now: essence and crate drops price, so the answer differs
+        setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(9000), prime: profit(200) });
+        state.evReady = true;
+        state.events.get('expected_value_initialized')();
+        await vi.advanceTimersByTimeAsync(100);
+        expect(banner().textContent).toContain('+9.0K/hr');
+    });
+
+    test('a calculator that is already running is not started again', async () => {
+        state.evReady = true;
+        setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(300), prime: profit(200) });
+        openCatalystMenu([CAT]);
+        await drawn();
+        expect(state.evInit).not.toHaveBeenCalled();
+    });
+
     test('no input selected draws nothing', async () => {
         state.selection = null;
         openCatalystMenu([CAT]);
@@ -351,6 +459,8 @@ describe('catalyst picker mark', () => {
         expect(document.querySelector('.mwi-alchemy-catalyst-mark-tile')).toBeNull();
         expect(document.getElementById('mwi-alchemy-catalyst-mark-style')).toBeNull();
         expect(state.events.has('market_item_values_updated')).toBe(false);
+        expect(state.events.has('expected_value_initialized')).toBe(false);
+        expect(state.bookListeners).toHaveLength(0);
         expect(state.settingHandlers.size).toBe(0);
         expect(vi.getTimerCount()).toBe(0);
 

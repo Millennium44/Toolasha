@@ -13,15 +13,18 @@
  *
  * What it will not do is guess. An option the calculator cannot price is left out and named; fewer than
  * two priced options draws nothing; a profit that ties is called a tie rather than given a winner; a
- * figure with unpriced drops is labeled a floor.
+ * figure with unpriced drops is labeled a floor, one with an unpriced tea a ceiling, and one with both incomplete.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { readAlchemyPanelSelection } from './alchemy-profit.js';
 import { findCatalystMenu, activeAlchemyAction, menuTiles } from './alchemy-item-selector.js';
+import { pricesMoved } from '../../utils/price-change.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
@@ -112,6 +115,8 @@ class AlchemyCatalystMark {
         this.styleEl = null;
         this.timer = null;
         this.marketHandler = null;
+        this.bookHandler = null;
+        this.evHandler = null;
         this.settingUnsubscribers = [];
         /** One computed answer, for the input it was computed for */
         this.cache = null;
@@ -133,6 +138,20 @@ class AlchemyCatalystMark {
             this.schedule();
         };
         dataManager.on('market_item_values_updated', this.marketHandler);
+        // The order book loads and moves on its own feed: a picker opened before it loaded must fill in, and
+        // an open one must follow it
+        this.bookHandler = (change) => {
+            if (!pricesMoved(change)) return;
+            this.cache = null;
+            this.schedule();
+        };
+        marketAPI.on(this.bookHandler);
+        // Essence and crate values come from the expected-value calculator; redraw when it (re)publishes
+        this.evHandler = () => {
+            this.cache = null;
+            this.schedule();
+        };
+        dataManager.on('expected_value_initialized', this.evHandler);
         // Pricing mode and the valuation settings change every figure
         const onChange = () => {
             this.cache = null;
@@ -159,6 +178,10 @@ class AlchemyCatalystMark {
             this.timer = null;
             if (this.marketHandler) dataManager.off('market_item_values_updated', this.marketHandler);
             this.marketHandler = null;
+            if (this.bookHandler) marketAPI.off(this.bookHandler);
+            this.bookHandler = null;
+            if (this.evHandler) dataManager.off('expected_value_initialized', this.evHandler);
+            this.evHandler = null;
             for (const unsubscribe of this.settingUnsubscribers) unsubscribe?.();
             this.settingUnsubscribers = [];
             this.clearMarks();
@@ -226,7 +249,8 @@ class AlchemyCatalystMark {
 
     /**
      * Every catalyst choice's profit for the panel's current input, from the calculator.
-     * @returns {{options: Array, skipped: string[], partial: boolean}|null} null without an input or tab
+     * @returns {{options: Array, skipped: string[], missingOutput: boolean, missingTea: boolean}|null} null
+     *   without an input or tab
      */
     compute() {
         const action = activeAlchemyAction();
@@ -235,7 +259,19 @@ class AlchemyCatalystMark {
 
         const charId = dataManager.getCurrentCharacterId?.() || null;
         const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        const key = `${charId}|${action}|${selection.itemHrid}|${selection.enhancementLevel}|${pricingMode}`;
+        // Essence and crate outputs read as unpriced until the expected-value calculator has run, and it runs
+        // only when some other setting started it: ask for it (it shares one start between callers)
+        if (!expectedValueCalculator.isInitialized) this.requestExpectedValue();
+        // Every input that moves a figure: the book version and the calculator's readiness included
+        const key = [
+            charId,
+            action,
+            selection.itemHrid,
+            selection.enhancementLevel,
+            pricingMode,
+            marketAPI.priceVersion,
+            expectedValueCalculator.isInitialized,
+        ].join('|');
         if (this.cache?.key === key) return this.cache.answer;
 
         const choices = [
@@ -245,7 +281,8 @@ class AlchemyCatalystMark {
         ];
         const options = [];
         const skipped = [];
-        let partial = false;
+        let missingOutput = false;
+        let missingTea = false;
         for (const choice of choices) {
             let data = null;
             try {
@@ -257,7 +294,8 @@ class AlchemyCatalystMark {
                 if (choice.hrid) skipped.push(choice.hrid);
                 continue;
             }
-            if (data.unpricedOutputs?.length > 0 || data.hasMissingPrices) partial = true;
+            if (data.unpricedOutputs?.length > 0) missingOutput = true;
+            if (data.hasMissingPrices) missingTea = true;
             options.push({
                 ...choice,
                 profitPerHour: data.profitPerHour,
@@ -265,9 +303,19 @@ class AlchemyCatalystMark {
             });
         }
 
-        const answer = { options, skipped, partial };
-        this.cache = { key, answer };
+        const answer = { options, skipped, missingOutput, missingTea };
+        // An answer with nothing in it is "not loaded yet", not a result: never hold it
+        if (options.length > 0) this.cache = { key, answer };
         return answer;
+    }
+
+    /** Start the expected-value calculator if nothing has; its 'expected_value_initialized' event redraws us */
+    async requestExpectedValue() {
+        try {
+            await expectedValueCalculator.initialize?.();
+        } catch (error) {
+            console.error('[AlchemyCatalystMark] Expected value start failed:', error);
+        }
     }
 
     calculate(action, selection, choice) {
@@ -313,7 +361,16 @@ class AlchemyCatalystMark {
 
         const lines = [];
         const rate = (option) => `${signed(option.profitPerHour)}/hr`;
-        const floor = answer.partial ? ' (a floor: some drops have no price)' : '';
+        // An unpriced drop counts as 0 revenue (a floor); an unpriced tea counts as 0 cost (a ceiling); with both,
+        // neither bound holds. The same reading as the item tooltip's profit rows
+        const floor =
+            answer.missingOutput && answer.missingTea
+                ? ' (incomplete: a drop and a tea have no price)'
+                : answer.missingTea
+                  ? ' (a ceiling: a tea has no price)'
+                  : answer.missingOutput
+                    ? ' (a floor: some drops have no price)'
+                    : '';
 
         if (state === 'allTie') {
             lines.push([`Best catalyst: none of these changes profit (${rate(ranked[0])})${floor}.`, '']);
