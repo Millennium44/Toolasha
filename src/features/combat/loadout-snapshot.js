@@ -317,7 +317,9 @@ class LoadoutSnapshot {
         if (snapshotsFingerprint(next) === snapshotsFingerprint(this.snapshots)) return false;
 
         // The wearable hash usually says +0, and `updateEnhancementLevel` keeps the real level of a "highest owned"
-        // item here for the readers that take it as stored. One loadout changing must not reset the rest.
+        // item here for the readers that take it as stored. One loadout changing must not reset the rest, and an
+        // item with no earlier level starts from the best copy owned, not the hash's +0.
+        const owned = highestOwnedEnhancements();
         for (const [id, snapshot] of Object.entries(next)) {
             if (snapshot.useExactEnhancement) continue;
             const previous = this.snapshots[id]?.useExactEnhancement ? null : this.snapshots[id];
@@ -325,7 +327,7 @@ class LoadoutSnapshot {
                 const kept = previous?.equipment?.find(
                     (e) => e.itemLocationHrid === equip.itemLocationHrid && e.itemHrid === equip.itemHrid
                 );
-                if (kept) equip.enhancementLevel = kept.enhancementLevel;
+                equip.enhancementLevel = kept ? kept.enhancementLevel : resolveEnhancementLevel(snapshot, equip, owned);
             }
         }
 

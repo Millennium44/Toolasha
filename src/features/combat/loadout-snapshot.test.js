@@ -486,6 +486,36 @@ describe('the login data corrects a saved copy', () => {
         expect(levels('40000')).toEqual({ [CAPE]: 7, [WORN]: 7 });
     });
 
+    test('an item with no earlier level starts from the best copy owned, not the hash +0', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+        game.items = [owned(WORN, 10), owned(WORN, 3), owned(WORN, 0)];
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        expect(neckOf(await fresh()).enhancementLevel).toBe(10);
+    });
+
+    test('a loadout switched from a pinned level to highest owned does not keep the pinned level', async () => {
+        const instance = new loadoutSnapshot.constructor();
+        instance._onLoadoutsUpdated({
+            characterLoadoutMap: { 39837: serverLoadout(WORN, { useExactEnhancement: true }) },
+        });
+        store.getJSON = async () => JSON.parse(JSON.stringify(instance.snapshots));
+        game.items = [owned(WORN, 10)];
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        expect(neckOf(await fresh()).enhancementLevel).toBe(10);
+    });
+
+    test('an item nothing owns stays at what the game says', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+        game.items = [];
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        expect(neckOf(await fresh()).enhancementLevel).toBe(0);
+    });
+
     test('a listener that throws neither stops the others nor the rest of startup', async () => {
         const stored = saved(new loadoutSnapshot.constructor(), SOLD);
         store.getJSON = async () => stored;
