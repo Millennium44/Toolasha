@@ -1521,6 +1521,11 @@ class NetworthHistoryChart {
                 marker.step === 0
                     ? '<div style="padding-left:12px;">No effect on the total</div>'
                     : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(marker.step))} (left out of growth figures)</div>`;
+            // Ability books moved past their excluded asset type: nothing on the total, all of it on Non-Excl
+            if (marker.step === 0 && Number.isFinite(marker.stepCounted) && marker.stepCounted !== 0) {
+                const counted = `${marker.stepCounted > 0 ? '+' : '-'}${networthFormatter(Math.abs(marker.stepCounted))}`;
+                html += `<div style="padding-left:12px;">Non-Excl step: ${counted} (left out of growth figures)</div>`;
+            }
         }
         if ((marker.floor || []).length > 0) {
             html +=

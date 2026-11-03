@@ -278,6 +278,17 @@ describe('growth figures and setting-change markers', () => {
         ...extra,
     });
 
+    test('a step wholly on Non-Excl is named in the hover, and the total line still says nothing moved', () => {
+        const up = networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: 900_000_000 }));
+        expect(up).toContain('No effect on the total');
+        expect(up).toContain('Non-Excl step: +900.00M');
+        const down = networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: -900_000_000 }));
+        expect(down).toContain('Non-Excl step: -900.00M');
+        // The ordinary case says nothing of it: the books only moved between lines, or a token moved both figures
+        expect(networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: 0 }))).not.toContain('Non-Excl step');
+        expect(networthHistoryChart._markerTooltipHtml(marked(400, { stepCounted: 0 }))).not.toContain('Non-Excl step');
+    });
+
     test('Last range and Rate leave a marked step out and say so; All-Time High stays raw', async () => {
         getHistory.mockReturnValue([
             { t: now - 3 * 3_600_000, total: 10_000_000_000, nonExcluded: 10_000_000_000 },
