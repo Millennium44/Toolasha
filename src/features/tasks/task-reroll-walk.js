@@ -95,6 +95,7 @@ import { cardTaskKey } from './task-card-state.js';
 import { questForTaskCard } from './task-card-quest.js';
 import taskRerollProtection from './task-reroll-protection.js';
 import { getCowbellValue } from './task-profit-calculator.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { findRerollOptions } from './task-reroll-options.js';
 
 const CHIP_ID = 'mwi-task-reroll-walk-chip';
@@ -1926,7 +1927,7 @@ class TaskRerollWalk {
             id: CHIP_ID,
             top: '110px',
             right: '24px',
-            accent: config.COLOR_ACCENT || '#8ecfff',
+            accent: GAME_COLORS.text,
             positionKey: PANEL_POSITION_KEY,
             position: null,
             zIndex: CHIP_Z_INDEX,
@@ -2029,9 +2030,9 @@ class TaskRerollWalk {
             drawer.top = '100%';
             drawer.left = '0';
             drawer.zIndex = String(CHIP_Z_INDEX);
-            drawer.background = 'rgba(12,16,30,0.97)';
-            drawer.border = '1px solid rgba(74,158,255,0.45)';
-            drawer.borderRadius = '7px';
+            drawer.background = GAME_COLORS.background;
+            drawer.border = `1px solid ${GAME_COLORS.border}`;
+            drawer.borderRadius = 'var(--radius-sm, 0.25rem)';
             drawer.padding = '6px 9px';
             drawer.marginTop = '4px';
         }
@@ -2121,9 +2122,8 @@ class TaskRerollWalk {
         button.className = 'mwi-task-reroll-walk-sort';
         button.textContent = '↕ Sort';
         button.title = SORT_HELP;
-        button.style.cssText =
-            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#e0e0e0; font-size:11px; ' +
-            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit; white-space:nowrap;';
+        styleGameButton(button, 'quiet', true);
+        button.style.whiteSpace = 'nowrap';
         button.addEventListener('mousedown', (event) => event.stopPropagation());
         button.addEventListener('pointerdown', (event) => event.stopPropagation());
         button.addEventListener('click', () => this._sortBoard());
@@ -2250,8 +2250,7 @@ class TaskRerollWalk {
         if (widget.main.textContent !== label) widget.main.textContent = label;
         const disabled = this.state === 'waiting';
         if (widget.main.disabled !== disabled) widget.main.disabled = disabled;
-        const color =
-            this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : config.COLOR_ACCENT || '#8ecfff';
+        const color = this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : GAME_COLORS.text;
         if (this.widgetMode !== 'toolbar' && widget.main.style.color !== color) widget.main.style.color = color;
         const title = this._mainHelp();
         if (widget.main.title !== title) widget.main.title = title;
@@ -2337,9 +2336,7 @@ class TaskRerollWalk {
         button.textContent = 'ⓘ';
         button.setAttribute('aria-label', 'What these buttons do');
         button.setAttribute('aria-expanded', 'false');
-        button.style.cssText =
-            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#e0e0e0; font-size:12px; ' +
-            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
+        styleGameButton(button, 'quiet', true);
         const panel = document.createElement('div');
         panel.className = 'mwi-task-reroll-walk-info-panel';
         panel.style.cssText =

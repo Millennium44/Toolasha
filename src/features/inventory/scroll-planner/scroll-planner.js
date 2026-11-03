@@ -23,6 +23,7 @@ import { itemHridFromIcon } from '../../../utils/item-icon.js';
 import { skillIcon, spriteIcon } from '../../../utils/overlay-format.js';
 import { setReactInputValue } from '../../../utils/react-input.js';
 import { setScrollRunActive } from './scroll-planner-state.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../../utils/game-look.js';
 import {
     buildRun,
     describeScrollSkills,
@@ -635,12 +636,12 @@ class ScrollPlanner {
             left: 50%;
             transform: translateX(-50%);
             z-index: 10001;
-            background: #2a2a2a;
-            border: 1px solid #fbbf24;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 10px 14px;
-            color: #fff;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            color: ${GAME_COLORS.text};
+            box-shadow: ${GAME_FRAME.boxShadow};
             max-width: 92vw;
             ${CSS_FONT}
         `;
@@ -652,15 +653,7 @@ class ScrollPlanner {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = label;
-        button.style.cssText = `
-            padding: 4px 10px;
-            border-radius: 4px;
-            border: 1px solid ${primary ? '#fbbf24' : '#666'};
-            background: ${primary ? '#fbbf24' : '#3a3a3a'};
-            color: ${primary ? '#000' : '#fff'};
-            cursor: pointer;
-            ${CSS_FONT}
-        `;
+        styleGameButton(button, primary ? 'primary' : 'quiet', true);
         button.addEventListener('click', onClick);
         return button;
     }
@@ -831,8 +824,14 @@ class ScrollPlanner {
             button.dataset.actionType = actionTypeHrid;
             button.title = this.getSkillName(actionTypeHrid);
             button.setAttribute('aria-label', this.getSkillName(actionTypeHrid));
-            button.style.cssText = `display: inline-flex; align-items: center; justify-content: center; padding: 3px;
-                border-radius: 4px; border: 1px solid #555; background: #1f1f1f; cursor: pointer;`;
+            styleGameButton(button, 'quiet', true);
+            Object.assign(button.style, {
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: 'auto',
+                padding: '3px',
+            });
             button.appendChild(actionTypeIcon(actionTypeHrid, 20));
             button.addEventListener('click', () => {
                 hint.textContent = '';
@@ -853,9 +852,16 @@ class ScrollPlanner {
         clearAll.textContent = '✕';
         clearAll.title = 'Clear all';
         clearAll.setAttribute('aria-label', 'Clear all');
-        clearAll.style.cssText = `display: inline-flex; align-items: center; justify-content: center; min-width: 28px;
-            padding: 3px 6px; border-radius: 4px; border: 1px solid #555; background: #1f1f1f; color: #f87171;
-            cursor: pointer; ${CSS_FONT}`;
+        styleGameButton(clearAll, 'quiet', true);
+        Object.assign(clearAll.style, {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '28px',
+            height: 'auto',
+            padding: '3px 6px',
+            color: '#f87171',
+        });
         clearAll.addEventListener('click', () => {
             hint.textContent = '';
             this.clearAllRows();
@@ -905,8 +911,7 @@ class ScrollPlanner {
             const scrolls = this.scrollsForSkill(actionTypeHrid);
             const on = scrolls.length > 0 && scrolls.every((itemHrid) => this.quickSelected.has(itemHrid));
             button.setAttribute('aria-pressed', String(on));
-            button.style.borderColor = on ? '#fbbf24' : '#555';
-            button.style.background = on ? 'rgba(251,191,36,0.2)' : '#1f1f1f';
+            setButtonRest(button, on ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
         }
     }
 
@@ -954,8 +959,7 @@ class ScrollPlanner {
         input.type = 'number';
         input.min = '1';
         input.value = this.quickFill > 0 ? String(this.quickFill) : '';
-        input.style.cssText =
-            'width: 64px; padding: 2px 4px; background: #1f1f1f; color: #fff; border: 1px solid #fbbf24; border-radius: 4px;';
+        input.style.cssText = `width: 64px; padding: 2px 4px; background: #1f1f1f; color: #fff; border: 1px solid ${GAME_COLORS.border}; border-radius: 4px;`;
         const after = document.createElement('span');
         after.textContent = 'of each scroll you click';
         input.addEventListener('input', () => {
@@ -1004,15 +1008,16 @@ class ScrollPlanner {
         narrowStyle.textContent = NARROW_CSS;
         content.appendChild(narrowStyle);
         content.style.cssText = `
-            background: #2a2a2a;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             padding: 20px;
             min-width: min(360px, 90vw);
             max-width: 95vw;
             max-height: 90%;
             overflow: auto;
-            color: #fff;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            color: ${GAME_COLORS.text};
+            box-shadow: ${GAME_FRAME.boxShadow};
             ${CSS_FONT}
         `;
 
@@ -1020,7 +1025,7 @@ class ScrollPlanner {
         header.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
         const title = document.createElement('h3');
         title.textContent = TEXT.modalTitle;
-        title.style.cssText = 'margin: 0; color: #fff;';
+        title.style.cssText = `margin: 0; color: ${GAME_COLORS.text};`;
         header.appendChild(title);
         header.appendChild(this.makeButton('✕', () => this.closeModal()));
         content.appendChild(header);
@@ -1149,8 +1154,7 @@ class ScrollPlanner {
         const showSelected = () => {
             const selected = this.quickSelected.has(itemHrid);
             name.setAttribute('aria-pressed', String(selected));
-            name.style.background = selected ? 'rgba(251,191,36,0.2)' : 'transparent';
-            name.style.borderColor = selected ? '#fbbf24' : 'transparent';
+            name.style.background = selected ? BUTTON_LOOK.primary.rest : 'transparent';
             this.refreshSkillButtons();
         };
         const applyValue = () => {
