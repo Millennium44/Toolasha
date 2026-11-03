@@ -850,6 +850,74 @@ describe('extractPlayerAttacks — bleed chains and parry counters', () => {
         expect(byAbility.damageOverTime).toMatchObject({ hits: 3 });
     });
 
+    describe('a hit the game already named after a DoT ability', () => {
+        const A = MAIM;
+        const B = '/abilities/firestorm';
+        const player = { atkCounter: 50, isAutoAtk: true, dmgCounter: 25, cHP: 1208 };
+        const mon = (dmgCounter, cHP) => ({ atkCounter: 31, dmgCounter, cHP });
+
+        /** A named cast of `hit` at 874, then bleed ticks of the given sizes 3 s apart */
+        const named = (hit, ticks) => {
+            let hp = 4077;
+            const out = [
+                both(0, { ...player, atkCounter: 49, isAutoAtk: false, abilityHrid: A }, mon(49, hp)),
+                both(874, { ...player, atkCounter: 50 }, mon(50, (hp -= hit))),
+            ];
+            ticks.forEach((per, i) => out.push(both(3912 + i * 3000, player, mon(51 + i, (hp -= per)))));
+            return out;
+        };
+
+        test('a bleed only the other DoT ability would make is not filed as this hit’s bleed', () => {
+            // A: three ticks of a third (33 of 100); B: four ticks of a fifth (20). The hit is named A.
+            const dots = new Map([
+                [A, { ratio: 1, ticks: 3 }],
+                [B, { ratio: 0.8, ticks: 4 }],
+            ]);
+            const { byAbility } = extractPlayerAttacks(named(100, [20]), { dotAbilities: dots });
+            expect(byAbility[A]).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+            expect(byAbility[B]).toBeUndefined();
+            expect(byAbility.damageOverTime).toBeUndefined();
+            expect(byAbility.unattributed).toMatchObject({ hits: 1, damage: 20 });
+        });
+
+        test('its own bleed is still the bleed, and the hit stays under its name', () => {
+            const dots = new Map([
+                [A, { ratio: 1, ticks: 3 }],
+                [B, { ratio: 0.8, ticks: 4 }],
+            ]);
+            const { byAbility } = extractPlayerAttacks(named(90, [30, 30, 30]), { dotAbilities: dots });
+            expect(byAbility[A]).toMatchObject({ casts: 1, hits: 1, damage: 90 });
+            expect(byAbility.damageOverTime).toMatchObject({ hits: 3, damage: 90 });
+            expect(byAbility.unattributed).toBeUndefined();
+        });
+
+        test('the bleed chain runs for its own ability’s ticks, not the longest of those equipped', () => {
+            // Same tick size (a third of the hit) from both: A bleeds three times, B five times. A named
+            // cast of A ends its chain after three, so a fourth tick of that size is unexplained.
+            const dots = new Map([
+                [A, { ratio: 1, ticks: 3 }],
+                [B, { ratio: 5 / 3, ticks: 5 }],
+            ]);
+            const { byAbility } = extractPlayerAttacks(named(90, [30, 30, 30, 30]), { dotAbilities: dots });
+            expect(byAbility.damageOverTime).toMatchObject({ hits: 3, damage: 90 });
+            expect(byAbility.unattributed).toMatchObject({ hits: 1, damage: 30 });
+        });
+
+        test('a hit the game called an auto-attack is still told apart by the size of its bleed', () => {
+            const dots = new Map([
+                [A, { ratio: 1, ticks: 3 }],
+                [B, { ratio: 0.8, ticks: 4 }],
+            ]);
+            const ticks = named(100, [20, 20, 20, 20]);
+            // The cast tick carries no ability name: the game filed it as an ordinary swing
+            ticks[0] = both(0, { ...player, atkCounter: 49 }, mon(49, 4077));
+            const { byAbility } = extractPlayerAttacks(ticks, { dotAbilities: dots });
+            expect(byAbility[B]).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+            expect(byAbility.autoAttack).toBeUndefined();
+            expect(byAbility.damageOverTime).toMatchObject({ hits: 4, damage: 80 });
+        });
+    });
+
     test('a monster buff cast is not evidence of a parry (the swing belongs to the ability prepared a tick earlier)', () => {
         // Wire shape: precision is prepared on tick 1000; the counter advances on
         // tick 2000, by which time abilityHrid already advertises the NEXT action.

@@ -305,8 +305,12 @@ function extractAttacks(ticks, opts) {
                 // rewritten, and a tick whose only timing match is such a hit stays
                 // unattributed rather than being taken as a bleed on weak evidence.
                 if (h.label !== AUTO_ABILITY && h.label !== UNATTRIBUTED_ABILITY && !dotNames.has(h.label)) continue;
+                // A hit the game already named after a DoT ability is that ability's cast: only its own bleed
+                // can follow it, whatever size the other equipped DoT abilities would make
                 const matching = dotCandidates.filter(
-                    (cand) => Math.abs(per - h.dmg * cand.frac) <= Math.max(3, 0.02 * h.dmg) * cand.frac
+                    (cand) =>
+                        (!dotNames.has(h.label) || cand.name === h.label) &&
+                        Math.abs(per - h.dmg * cand.frac) <= Math.max(3, 0.02 * h.dmg) * cand.frac
                 );
                 if (!matching.length) continue;
                 const err = Math.abs(per - h.dmg * matching[0].frac);
