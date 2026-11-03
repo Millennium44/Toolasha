@@ -28,6 +28,7 @@ import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { getUntradableCapeBaseCost } from '../../utils/untradable-cape-cost.js';
+import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
 import {
@@ -1048,7 +1049,8 @@ class PhiloCalculator {
          * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
          * @returns {number} Coins per action
          */
-        const unpricedOutputs = new Set();
+        // Per book side: a drop with an ask and no bid leaves only the instant column a floor
+        const unpricedBySide = { bid: new Set(), ask: new Set() };
         const expectedValueFor = (sellType) => {
             let ev = 0;
             for (const drop of alchemy.transmuteDropTable) {
@@ -1068,16 +1070,21 @@ class PhiloCalculator {
                             this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid)
                         );
                     } else {
-                        // No quote: an untradable cape (a sibling ★ cape) takes the shared cape rule, as the
-                        // alchemy calculator does, untaxed because it is never sold; anything else nothing can
-                        // price is left out and flagged, so the row reads as a floor, never as an unflagged 0
-                        const cape = isUntradableCape(drop.itemHrid)
-                            ? getUntradableCapeBaseCost(drop.itemHrid, { mode: sellType })
-                            : null;
-                        if (cape?.value > 0 && !cape.partial) {
+                        // No quote, in the alchemy calculator's order: a shop conversion first (taxed, since turning
+                        // it into gold is a market sale), then an untradable cape (a sibling ★ cape) by the shared
+                        // cape rule, untaxed because it is never sold. Anything else nothing can price is left out
+                        // and flagged, so the row reads as a floor, never as an unflagged 0
+                        const shopValue = getAlchemyOutputShopValue(drop.itemHrid);
+                        const cape =
+                            !shopValue && isUntradableCape(drop.itemHrid)
+                                ? getUntradableCapeBaseCost(drop.itemHrid, { mode: sellType })
+                                : null;
+                        if (shopValue) {
+                            dropValue = calculatePriceAfterTax(shopValue.valuePerUnit);
+                        } else if (cape?.value > 0 && !cape.partial) {
                             dropValue = cape.value;
                         } else {
-                            unpricedOutputs.add(drop.itemHrid);
+                            unpricedBySide[sellType].add(drop.itemHrid);
                             continue;
                         }
                     }
@@ -1135,8 +1142,11 @@ class PhiloCalculator {
             name: this.getItemName(itemHrid),
             cost: costDerived(itemCost),
             needsPrice,
-            // Drops nothing could price: left out of the revenue, so the row is a floor
-            unpricedOutputs: [...unpricedOutputs],
+            // Drops nothing could price on the side the shown figures use: left out of the revenue, so the row is a
+            // floor. The paired Instant | Patient cell marks each of its halves by its own side
+            unpricedOutputs: [...unpricedBySide[this.getPriceType('sell') === 'bid' ? 'bid' : 'ask']],
+            unpricedOutputsInstant: [...unpricedBySide.bid],
+            unpricedOutputsPatient: [...unpricedBySide.ask],
             costSource,
             costFallbackLevel: fallbackLevel,
             // Displayed as the game shows them: conditional on a successful transmute
@@ -1882,9 +1892,9 @@ class PhiloCalculator {
      * @param {Object} row - Row data
      */
     renderPairedProfitCell(td, row) {
-        const part = (value) => {
+        const part = (value, unpriced) => {
             const span = document.createElement('span');
-            span.textContent = formatLargeNumber(Math.round(value));
+            span.textContent = formatLargeNumber(Math.round(value)) + (unpriced?.length ? ' †' : '');
             span.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             return span;
         };
@@ -1893,10 +1903,17 @@ class PhiloCalculator {
         separator.textContent = ' | ';
         separator.style.color = '#888';
 
-        td.appendChild(part(row.profitPerPhiloInstant));
+        td.appendChild(part(row.profitPerPhiloInstant, row.unpricedOutputsInstant));
         td.appendChild(separator);
-        td.appendChild(part(row.profitPerPhiloPatient));
-        td.title = 'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.';
+        td.appendChild(part(row.profitPerPhiloPatient, row.unpricedOutputsPatient));
+        const unpriced = [...new Set([...(row.unpricedOutputsInstant ?? []), ...(row.unpricedOutputsPatient ?? [])])];
+        td.title =
+            'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.' +
+            (unpriced.length
+                ? `
+† A floor on that side: ${unpriced.map((hrid) => this.getItemName(hrid)).join(', ')} ` +
+                  'has no price there, so it is left out of the revenue.'
+                : '');
     }
 
     /**

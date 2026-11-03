@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     // The shared cape rule's answer per hrid and book side, { value, partial }; absent = nothing prices it
     capeCosts: {},
+    // The shop conversion per hrid ({ valuePerUnit }); absent = the shop prices nothing
+    shopValues: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -140,6 +142,9 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../utils/untradable-cape-cost.js', () => ({
     getUntradableCapeBaseCost: (hrid, { mode } = {}) => mocks.capeCosts[hrid]?.[mode] ?? { value: null, partial: true },
 }));
+vi.mock('../../utils/alchemy-shop-value.js', () => ({
+    getAlchemyOutputShopValue: (hrid) => mocks.shopValues[hrid] ?? null,
+}));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
@@ -217,6 +222,7 @@ beforeEach(() => {
     mocks.capeMode = 'zero';
     mocks.itemDetails = {};
     mocks.capeCosts = {};
+    mocks.shopValues = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -1206,6 +1212,71 @@ describe('drops nothing quotes', () => {
         siblingCape();
         mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: true }, ask: { value: null, partial: true } };
         expect(calc.calculateRow(WIDGET_HRID, withDrop(SIBLING)).unpricedOutputs).toEqual([SIBLING]);
+    });
+
+    test('the flag follows the side the shown figure uses: an ask with no bid marks only the instant side', () => {
+        mocks.prices[`${GHOST}+0`] = { ask: 600, bid: -1 };
+        const details = withDrop(GHOST);
+
+        calc.pricingMode = 'conservative'; // sells into the bid
+        const instant = calc.calculateRow(WIDGET_HRID, details);
+        expect(instant.unpricedOutputs).toEqual([GHOST]);
+        expect(instant.unpricedOutputsInstant).toEqual([GHOST]);
+        expect(instant.unpricedOutputsPatient).toEqual([]);
+
+        calc.pricingMode = 'optimistic'; // lists at the ask
+        const patient = calc.calculateRow(WIDGET_HRID, details);
+        expect(patient.unpricedOutputs).toEqual([]);
+        expect(patient.unpricedOutputsInstant).toEqual([GHOST]);
+        expect(patient.unpricedOutputsPatient).toEqual([]);
+    });
+
+    test('a drop with a shop value and no quote is valued by the shop, taxed, and not flagged', () => {
+        mocks.shopValues[GHOST] = { valuePerUnit: 3000 };
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(GHOST));
+        const rate = row.effectiveTransmuteChance * 0.2;
+        expect(row.unpricedOutputs).toEqual([]);
+        expect(row.evInstant - plain.evInstant).toBeCloseTo(rate * 3000 * (1 - MARKET_TAX), 6);
+    });
+
+    test('the shop is asked before the cape rule, so a shop-valued cape never reaches the cape rule', () => {
+        siblingCape();
+        mocks.shopValues[SIBLING] = { valuePerUnit: 3000 };
+        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: false }, ask: { value: 2000, partial: false } };
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(SIBLING));
+        expect(row.evInstant - plain.evInstant).toBeCloseTo(
+            row.effectiveTransmuteChance * 0.2 * 3000 * (1 - MARKET_TAX),
+            6
+        );
+    });
+
+    test('the paired Instant | Patient cell marks only the half that is a floor, and its title says why', () => {
+        const spans = [];
+        const original = globalThis.document;
+        globalThis.document = {
+            createElement: () => {
+                const span = { style: {}, textContent: '' };
+                spans.push(span);
+                return span;
+            },
+        };
+        try {
+            const td = { children: [], appendChild: (child) => td.children.push(child), title: '' };
+            calc.renderPairedProfitCell(td, {
+                profitPerPhiloInstant: 1000,
+                profitPerPhiloPatient: 2000,
+                unpricedOutputsInstant: [GHOST],
+                unpricedOutputsPatient: [],
+            });
+            const [instant, , patient] = td.children;
+            expect(instant.textContent).toMatch(/†$/);
+            expect(patient.textContent).not.toContain('†');
+            expect(td.title).toContain('A floor on that side');
+        } finally {
+            globalThis.document = original;
+        }
     });
 
     test('the stone is taxed when sold and untaxed only under Keep the Philo', () => {
