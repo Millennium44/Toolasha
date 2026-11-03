@@ -37,8 +37,6 @@ const mocks = vi.hoisted(() => ({
     // Untradable capes setting ('zero' | 'mirror') and extra item data for getItemDetails
     capeMode: 'zero',
     itemDetails: {},
-    // The shared cape rule's answer per hrid and book side, { value, partial }; absent = nothing prices it
-    capeCosts: {},
     // The shop conversion per hrid ({ valuePerUnit }); absent = the shop prices nothing
     shopValues: {},
 }));
@@ -139,9 +137,6 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-vi.mock('../../utils/untradable-cape-cost.js', () => ({
-    getUntradableCapeBaseCost: (hrid, { mode } = {}) => mocks.capeCosts[hrid]?.[mode] ?? { value: null, partial: true },
-}));
 vi.mock('../../utils/alchemy-shop-value.js', () => ({
     getAlchemyOutputShopValue: (hrid) => mocks.shopValues[hrid] ?? null,
 }));
@@ -221,7 +216,6 @@ beforeEach(() => {
     mocks.drinkSlots = [];
     mocks.capeMode = 'zero';
     mocks.itemDetails = {};
-    mocks.capeCosts = {};
     mocks.shopValues = {};
 
     calc = new PhiloCalculator();
@@ -1042,14 +1036,9 @@ describe('untradable items with no price', () => {
         expect(row.costSource).toBe('capeSetting');
         expect(row.cost).toBeGreaterThan(0);
 
-        // "Nothing" is the player's own setting, so an unrefined cape costs a plain 0, not a missing price
         mocks.capeMode = 'zero';
-        const free = calc.calculateRow(CAPE_HRID, cape());
-        expect(free.needsPrice).toBe(false);
-        expect(free.costSource).toBe('capeZero');
-        expect(free.cost).toBe(0);
-        expect(free.profitPerHour).not.toBeNull();
-        // A mirror setting whose mirror has no price is a missing term, not a free one
+        expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
+        // A mirror setting whose mirror has no price is a missing term too
         mocks.capeMode = 'mirror';
         delete mocks.prices[`${MIRROR_HRID}+0`];
         expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
@@ -1168,8 +1157,6 @@ describe('untradable items with no price', () => {
 });
 
 describe('drops nothing quotes', () => {
-    const SIBLING = '/items/sibling_cape_refined';
-    const SIBLING_BASE = '/items/sibling_cape';
     const GHOST = '/items/unlisted_drop';
 
     function withDrop(hrid) {
@@ -1178,40 +1165,56 @@ describe('drops nothing quotes', () => {
         return details;
     }
 
-    function siblingCape() {
-        mocks.itemDetails[SIBLING] = { equipmentDetail: { type: '/equipment_types/back' } };
-        mocks.itemDetails[SIBLING_BASE] = { equipmentDetail: { type: '/equipment_types/back' } };
-        mocks.refineActions['/actions/refine_sibling'] = {
-            outputItems: [{ itemHrid: SIBLING }],
-            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
-            upgradeItemHrid: SIBLING_BASE,
+    test('the real refined cape row: itself at 0.9 and the stone at 0.1, 100 shards, nothing unpriced', () => {
+        const CAPE_STAR = '/items/artificer_cape_refined';
+        const BASE_CAPE = '/items/artificer_cape';
+        const SHARD = '/items/labyrinth_refinement_shard';
+        mocks.itemDetails[CAPE_STAR] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.itemDetails[BASE_CAPE] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.refineActions['/actions/tailoring/artificer_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
+            inputItems: [{ itemHrid: SHARD, count: 100 }],
+            outputItems: [{ itemHrid: CAPE_STAR, count: 1 }],
+            upgradeItemHrid: BASE_CAPE,
         };
-    }
+        mocks.prices[`${SHARD}+0`] = { ask: 200, bid: 100 };
+        const details = {
+            name: 'Artificer Cape (Refined)',
+            itemLevel: 50,
+            alchemyDetail: {
+                isCoinifiable: true,
+                decomposeItems: [
+                    { itemHrid: SHARD, count: 100 },
+                    { itemHrid: BASE_CAPE, count: 1 },
+                ],
+                bulkMultiplier: 1,
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: CAPE_STAR, dropRate: 0.9, minCount: 1, maxCount: 1 },
+                    { itemHrid: PHILO_HRID, dropRate: 0.1, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        calc.pricingMode = 'conservative';
+        const row = calc.calculateRow(CAPE_STAR, details);
 
-    test('a sibling cape drop is valued by the shared cape rule, untaxed, instead of skipped at 0', () => {
-        siblingCape();
-        // What the shared rule answers for the sibling: stones at each side of the book
-        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: false }, ask: { value: 2000, partial: false } };
-        const plain = calc.calculateRow(WIDGET_HRID, widget());
-        const row = calc.calculateRow(WIDGET_HRID, withDrop(SIBLING));
-        const rate = row.effectiveTransmuteChance * 0.2;
-        // 10 stones at the bid (100) on the instant column, at the ask (200) on the patient one
-        expect(row.evInstant - plain.evInstant).toBeCloseTo(rate * 1000, 6);
-        expect(row.evPatient - plain.evPatient).toBeCloseTo(rate * 2000, 6);
+        expect(row.needsPrice).toBe(false);
+        expect(row.cost).toBe(20_000);
         expect(row.unpricedOutputs).toEqual([]);
+        expect(row.unpricedOutputsInstant).toEqual([]);
+        expect(row.unpricedOutputsPatient).toEqual([]);
+        const chance = row.effectiveTransmuteChance;
+        expect(row.evInstant).toBeCloseTo(chance * (0.9 * 20_000 + 0.1 * 4_000_000 * (1 - MARKET_TAX)), 6);
+        expect(row.evPatient).toBeCloseTo(chance * (0.9 * 20_000 + 0.1 * 5_000_000 * (1 - MARKET_TAX)), 6);
     });
 
-    test('an output nothing can price flags the row as a floor instead of an unflagged 0', () => {
+    test('defensive, not seen in the game data: an output nothing can price flags the row as a floor instead of an unflagged 0', () => {
         const plain = calc.calculateRow(WIDGET_HRID, widget());
         const row = calc.calculateRow(WIDGET_HRID, withDrop(GHOST));
         expect(row.unpricedOutputs).toEqual([GHOST]);
         expect(row.evInstant).toBeCloseTo(plain.evInstant, 6);
         expect(plain.unpricedOutputs).toEqual([]);
-
-        // A sibling cape the shared rule cannot price (an unpriced stone, or a floor) is also flagged, never 0
-        siblingCape();
-        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: true }, ask: { value: null, partial: true } };
-        expect(calc.calculateRow(WIDGET_HRID, withDrop(SIBLING)).unpricedOutputs).toEqual([SIBLING]);
     });
 
     test('the flag follows the side the shown figure uses: an ask with no bid marks only the instant side', () => {
@@ -1238,18 +1241,6 @@ describe('drops nothing quotes', () => {
         const rate = row.effectiveTransmuteChance * 0.2;
         expect(row.unpricedOutputs).toEqual([]);
         expect(row.evInstant - plain.evInstant).toBeCloseTo(rate * 3000 * (1 - MARKET_TAX), 6);
-    });
-
-    test('the shop is asked before the cape rule, so a shop-valued cape never reaches the cape rule', () => {
-        siblingCape();
-        mocks.shopValues[SIBLING] = { valuePerUnit: 3000 };
-        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: false }, ask: { value: 2000, partial: false } };
-        const plain = calc.calculateRow(WIDGET_HRID, widget());
-        const row = calc.calculateRow(WIDGET_HRID, withDrop(SIBLING));
-        expect(row.evInstant - plain.evInstant).toBeCloseTo(
-            row.effectiveTransmuteChance * 0.2 * 3000 * (1 - MARKET_TAX),
-            6
-        );
     });
 
     test('the paired Instant | Patient cell marks only the half that is a floor, and its title says why', () => {

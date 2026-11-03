@@ -2304,7 +2304,7 @@ class TooltipPrices {
             html += '</div>';
         }
 
-        // An untradable cape has no market: say that its figure, and the ★ capes it can return, are assumed
+        // An untradable cape has no market: say that its figure, and the other capes it can return, are assumed
         for (const note of assumedCapeNotes(allProfits, itemHrid)) {
             html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${note}</div>`;
         }

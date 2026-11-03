@@ -27,7 +27,6 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
-import { getUntradableCapeBaseCost } from '../../utils/untradable-cape-cost.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
@@ -949,11 +948,6 @@ class PhiloCalculator {
             if (baseValue > 0) {
                 return { itemCost: baseValue, selfReturnUnitValue: baseValue, source: 'capeSetting', fallbackLevel: 0 };
             }
-            // On the "counts as nothing" setting it costs nothing because the player said so; with the mirror
-            // setting but no mirror price a term is missing, so that still asks for a price
-            if (getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO) {
-                return { itemCost: 0, selfReturnUnitValue: 0, source: 'capeZero', fallbackLevel: 0 };
-            }
         }
         return this.needsPriceBasis();
     }
@@ -1070,19 +1064,12 @@ class PhiloCalculator {
                             this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid)
                         );
                     } else {
-                        // No quote, in the alchemy calculator's order: a shop conversion first (taxed, since turning
-                        // it into gold is a market sale), then an untradable cape (a sibling ★ cape) by the shared
-                        // cape rule, untaxed because it is never sold. Anything else nothing can price is left out
-                        // and flagged, so the row reads as a floor, never as an unflagged 0
+                        // No quote: a shop conversion prices it (taxed, since turning it into gold is a market sale),
+                        // as in the alchemy calculator. Anything else nothing can price is left out and flagged,
+                        // so the row reads as a floor, never as an unflagged 0
                         const shopValue = getAlchemyOutputShopValue(drop.itemHrid);
-                        const cape =
-                            !shopValue && isUntradableCape(drop.itemHrid)
-                                ? getUntradableCapeBaseCost(drop.itemHrid, { mode: sellType })
-                                : null;
                         if (shopValue) {
                             dropValue = calculatePriceAfterTax(shopValue.valuePerUnit);
-                        } else if (cape?.value > 0 && !cape.partial) {
-                            dropValue = cape.value;
                         } else {
                             unpricedBySide[sellType].add(drop.itemHrid);
                             continue;
@@ -1786,12 +1773,6 @@ class PhiloCalculator {
                 title:
                     'Untradable, so valued from the Untradable capes setting rather than a listing. ' +
                     'Click to override this cost basis.',
-            },
-            capeZero: {
-                glyph: ' *',
-                title:
-                    'Untradable, and the Untradable capes setting counts the base cape as nothing, so it costs ' +
-                    'nothing by that setting. Click to override this cost basis.',
             },
             override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
             owned: {

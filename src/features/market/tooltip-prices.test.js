@@ -116,18 +116,37 @@ vi.mock('../../core/data-manager.js', () => {
             },
         },
         '/items/frenzy': { name: 'Frenzy' },
-        // A refined cape: untradable, back slot, returns itself, a sibling ★ cape or a Philosopher's Stone
+        // A refined cape as the game sends it: untradable, back slot, itself and a Philosopher's Stone
         '/items/gatherer_cape_refined': {
             name: 'Gatherer Cape (Refined)',
             equipmentDetail: { type: '/equipment_types/back' },
             alchemyDetail: {
+                isCoinifiable: true,
+                decomposeItems: [
+                    { itemHrid: '/items/labyrinth_refinement_shard', count: 100 },
+                    { itemHrid: '/items/gatherer_cape', count: 1 },
+                ],
                 bulkMultiplier: 1,
-                transmuteSuccessRate: 0.6,
+                transmuteSuccessRate: 0.5,
                 transmuteDropTable: [
                     { itemHrid: '/items/gatherer_cape_refined', dropRate: 0.9, minCount: 1, maxCount: 1 },
-                    { itemHrid: '/items/chance_cape_refined', dropRate: 0.04, minCount: 1, maxCount: 1 },
-                    { itemHrid: '/items/philosophers_stone', dropRate: 0.06, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/philosophers_stone', dropRate: 0.1, minCount: 1, maxCount: 1 },
                 ],
+            },
+        },
+        // An unrefined cape: untradable, back slot, the other three capes at 0.25 each and no stone
+        '/items/gatherer_cape': {
+            name: 'Gatherer Cape',
+            equipmentDetail: { type: '/equipment_types/back' },
+            alchemyDetail: {
+                bulkMultiplier: 1,
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: ['artificer', 'chance', 'culinary'].map((name) => ({
+                    itemHrid: `/items/${name}_cape`,
+                    dropRate: 0.25,
+                    minCount: 1,
+                    maxCount: 1,
+                })),
             },
         },
         '/items/seal_of_wisdom': {
@@ -2385,7 +2404,7 @@ describe('buildDetailedProfitDisplay materials table quotes', () => {
 
 describe('refined cape transmute line', () => {
     const CAPE = '/items/gatherer_cape_refined';
-    // The calculator's transmute result for a refined cape valued by its stones: 10 shards at 1,000
+    // The calculator's transmute result for a refined cape valued by its stones: 100 shards at 1,000
     const capeTransmute = (overrides = {}) => ({
         actionType: 'transmute',
         itemHrid: CAPE,
@@ -2393,16 +2412,13 @@ describe('refined cape transmute line', () => {
         profitPerHour: 1_500_000,
         profitPerAction: 1_700,
         actionsPerHour: 900,
-        successRate: 0.6,
-        requirementCosts: [{ itemHrid: CAPE, count: 1, price: 10_000 }],
+        successRate: 0.5,
+        requirementCosts: [{ itemHrid: CAPE, count: 1, price: 100_000 }],
         catalystCostPerHour: 0,
         totalTeaCostPerHour: 0,
         dropRevenues: [],
         unpricedOutputs: [],
-        assumedCapes: [
-            { itemHrid: CAPE, enhancementLevel: 0, value: 10_000, partial: false },
-            { itemHrid: '/items/chance_cape_refined', enhancementLevel: 0, value: 20_000, partial: false },
-        ],
+        assumedCapes: [{ itemHrid: CAPE, enhancementLevel: 0, value: 100_000, partial: false }],
         ...overrides,
     });
     const blockFor = async (hrid = CAPE, level = 0) => {
@@ -2418,8 +2434,8 @@ describe('refined cape transmute line', () => {
         expect(text).toContain('(1.7K/action)');
         expect(text).toContain('refinement stones alone');
         expect(text).toContain('never taxed');
-        expect(text).toContain('1 other untradable cape this can return is valued the same way');
-        // Only the actions the calculator found: no Coinify or Decompose row for this item
+        expect(text).not.toContain('other untradable');
+        // Only the actions the (mocked) calculator found
         expect(text).not.toContain('Coinify');
         expect(text).not.toContain('Decompose');
     });
@@ -2432,8 +2448,23 @@ describe('refined cape transmute line', () => {
         expect(text).not.toContain('stones alone');
     });
 
+    test('an unrefined cape counts the three it can return as assumed too, untaxed', async () => {
+        settings.capeMode = 'mirror';
+        const BASE = '/items/gatherer_cape';
+        alchemyState.profits = {
+            transmute: capeTransmute({
+                itemHrid: BASE,
+                assumedCapes: [BASE, '/items/artificer_cape', '/items/chance_cape', '/items/culinary_cape'].map(
+                    (itemHrid) => ({ itemHrid, enhancementLevel: 0, value: 500_000, partial: false })
+                ),
+            }),
+        };
+        const text = (await blockFor(BASE)).textContent;
+        expect(text).toContain('3 other untradable capes this can return are valued the same way, never taxed.');
+    });
+
     test('a row with an unpriced output is a floor and says so, never a plain figure', async () => {
-        alchemyState.profits = { transmute: capeTransmute({ unpricedOutputs: ['/items/chance_cape_refined'] }) };
+        alchemyState.profits = { transmute: capeTransmute({ unpricedOutputs: ['/items/philosophers_stone'] }) };
         const text = (await blockFor()).textContent;
         expect(text).toContain('≥ 1.5M/hr (unpriced output)');
     });
