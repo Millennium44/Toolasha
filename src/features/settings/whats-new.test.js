@@ -51,6 +51,8 @@ const mocks = vi.hoisted(() => ({
     saved: [],
     // Whether config's settings map was read from storage this load.
     settingsLoaded: true,
+    // What config.getSetting answers per id (anything absent reads as off)
+    settingValues: {},
 }));
 
 vi.mock('../../utils/choice-dialog.js', () => ({
@@ -65,7 +67,7 @@ vi.mock('../../core/config.js', () => ({
         setSetting: (id, value) => {
             mocks.written.push([id, value]);
         },
-        getSetting: () => false,
+        getSetting: (id) => mocks.settingValues[id] ?? false,
         get characterSettingsLoaded() {
             return mocks.settingsLoaded;
         },
@@ -189,6 +191,7 @@ beforeEach(() => {
     mocks.idsRead = { readable: true, ids: null };
     mocks.saved = [];
     mocks.settingsLoaded = true;
+    mocks.settingValues = {};
     whatsNew._pending = null;
     virtualChangelog.text = '';
     delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
@@ -820,5 +823,186 @@ describe('applyPolicy when storage does not answer', () => {
         expect(mocks.written).toEqual([]);
         expect(mocks.saved).toEqual([]);
         expect(whatsNew._pending).toBeNull();
+    });
+});
+
+describe('a re-offered setting: not new, off for this player, shown once, never switched on', () => {
+    const ID = 'simulateScrollEffects';
+    // The state record, not the snapshot the popup's Reopen reads
+    const saved = () => mocks.saved.filter(([key]) => key === 'whatsNew_state_char-1').at(-1)?.[1];
+    const state = (extra = {}) => ({ ...CURRENT, knownIds: [ID, 'other'], ...extra });
+
+    beforeEach(() => {
+        // A checkboxWithButton in the real schema; shipping on since the default flipped
+        mocks.definitions = {
+            [ID]: { type: 'checkboxWithButton', default: true, label: 'Simulate', help: 'h' },
+            other: { type: 'checkbox', default: false },
+        };
+        domWindow.Toolasha = { ...CURRENT };
+    });
+
+    test('an older state with no offered list: a player who has it off is offered it, and it is recorded', async () => {
+        mocks.stateRead = { found: true, value: state() };
+        mocks.settingValues = { [ID]: false };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.newIds).toEqual([]);
+        expect(saved().offeredIds).toEqual([ID]);
+        // Never the new-defaults machinery, and no value changed
+        expect(mocks.written).toEqual([]);
+    });
+
+    test('the same build with nothing else new still speaks, once', async () => {
+        mocks.stateRead = { found: true, value: state() };
+        await whatsNew.applyPolicy();
+        expect(whatsNew._pending.reoffered).toEqual([ID]);
+
+        // Next start reads the state just saved
+        mocks.stateRead = { found: true, value: saved() };
+        whatsNew._pending = null;
+        mocks.saved = [];
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending).toBeNull();
+        expect(mocks.saved).toEqual([]);
+    });
+
+    test('it is not offered again after a later update either', async () => {
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0', offeredIds: [ID] }) };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending.reoffered).toEqual([]);
+        expect(whatsNew._pending.headline).toContain('Updated 2.89.0');
+        expect(saved().offeredIds).toEqual([ID]);
+    });
+
+    test('a player who has it on is offered nothing, but it is marked so turning it off later does not offer it', async () => {
+        mocks.stateRead = { found: true, value: state() };
+        mocks.settingValues = { [ID]: true };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending).toBeNull();
+        expect(saved().offeredIds).toEqual([ID]);
+
+        mocks.stateRead = { found: true, value: saved() };
+        mocks.settingValues = { [ID]: false };
+        mocks.saved = [];
+        await whatsNew.applyPolicy();
+        expect(whatsNew._pending).toBeNull();
+    });
+
+    test('a first run (fresh install or fresh alt) is not re-offered anything: it has the current default', async () => {
+        mocks.answer = NO_CHANGE;
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending?.reoffered ?? []).toEqual([]);
+        expect(saved().offeredIds).toEqual([ID]);
+    });
+
+    test('a new version is a normal update with the offer alongside the new settings', async () => {
+        mocks.definitions.brandNew = { type: 'checkbox', default: false };
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0' }) };
+
+        await whatsNew.applyPolicy();
+
+        expect(whatsNew._pending.newIds).toEqual(['brandNew']);
+        expect(whatsNew._pending.reoffered).toEqual([ID]);
+    });
+
+    test('the new-settings hold-back never touches it, even with every other new switch held off', async () => {
+        mocks.definitions.brandNewOn = { type: 'checkbox', default: true };
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0' }) };
+        mocks.settingValues = { whatsNew_newDefaultsOff: true, [ID]: false };
+
+        await whatsNew.applyPolicy();
+
+        expect(mocks.written).toEqual([['brandNewOn', false]]);
+        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.turnedOff).toEqual(new Set(['brandNewOn']));
+    });
+
+    test('with the popup turned off nothing is built, the offer is still recorded, and Reopen can show it', async () => {
+        mocks.stateRead = { found: true, value: state() };
+        mocks.settingValues = { whatsNew_showPopup: false };
+        await whatsNew.applyPolicy();
+
+        whatsNew.maybeShow();
+
+        expect(whatsNew.panel).toBeNull();
+        expect(saved().offeredIds).toEqual([ID]);
+        expect(whatsNew._shownData.reoffered).toEqual([ID]);
+    });
+
+    test('a read that failed, or settings that fell back to defaults, record nothing', async () => {
+        mocks.stateRead = null;
+        await whatsNew.applyPolicy();
+        mocks.stateRead = { found: true, value: state() };
+        mocks.settingsLoaded = false;
+        await whatsNew.applyPolicy();
+
+        expect(mocks.saved).toEqual([]);
+        expect(whatsNew._pending).toBeNull();
+    });
+
+    test('an offered list from a newer build that names other ids is kept, not trimmed', async () => {
+        mocks.stateRead = { found: true, value: state({ offeredIds: ['futureSetting'] }) };
+
+        await whatsNew.applyPolicy();
+
+        expect(saved().offeredIds).toEqual(['futureSetting', ID]);
+    });
+
+    test('the popup shows it under "Worth another look" with a live switch that changes only that setting', () => {
+        whatsNew._buildPanel({
+            headline: 'x',
+            forkChanged: false,
+            newIds: [],
+            reoffered: [ID],
+            turnedOff: new Set(),
+            isNewcomer: false,
+        });
+        const section = whatsNew.panel.querySelector('.toolasha-whats-new-reoffered');
+
+        expect(section.textContent).toContain('Worth another look');
+        expect(section.textContent).toContain('Nothing was changed for you');
+        expect(whatsNew.panel.textContent).not.toContain('New settings');
+        const box = section.querySelector('input[type="checkbox"]');
+        expect(box).toBeTruthy();
+        expect(box.checked).toBe(false);
+        expect(mocks.written).toEqual([]);
+
+        box.checked = true;
+        box.dispatchEvent(new domWindow.Event('change'));
+
+        expect(mocks.written).toEqual([[ID, true]]);
+        whatsNew.close();
+    });
+
+    test('new settings and the re-offer sit in separate sections, and an empty re-offer draws none', () => {
+        const base = { headline: 'x', forkChanged: false, turnedOff: new Set(), isNewcomer: false };
+
+        whatsNew._buildPanel({ ...base, newIds: ['other'], reoffered: [ID] });
+        expect(whatsNew.panel.textContent).toContain('New settings');
+        expect(whatsNew.panel.querySelectorAll('.toolasha-whats-new-reoffered')).toHaveLength(1);
+
+        whatsNew._buildPanel({ ...base, newIds: ['other'], reoffered: [] });
+        expect(whatsNew.panel.querySelector('.toolasha-whats-new-reoffered')).toBeNull();
+
+        whatsNew._buildPanel({ ...base, newIds: ['other'] });
+        expect(whatsNew.panel.querySelector('.toolasha-whats-new-reoffered')).toBeNull();
+        whatsNew.close();
+    });
+
+    test('an id the schema no longer has draws nothing', () => {
+        mocks.definitions = {};
+        whatsNew._buildPanel({ headline: 'x', forkChanged: false, newIds: [], reoffered: [ID], turnedOff: new Set() });
+
+        expect(whatsNew.panel.querySelector('.toolasha-whats-new-reoffered')).toBeNull();
+        whatsNew.close();
     });
 });

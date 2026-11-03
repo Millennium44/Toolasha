@@ -1300,6 +1300,7 @@ describe('flipped checkbox defaults reach new players only', () => {
         'enhanceSim_protectionMarketplaceButton',
         'combatProfileButton',
         'guildMembersShowGameMode',
+        'simulateScrollEffects',
     ];
     const box = (id, isTrue) => ({ id, type: 'checkbox', isTrue });
 
@@ -1412,6 +1413,31 @@ describe('flipped checkbox defaults reach new players only', () => {
         const settings = await settingsStorage.loadSettings();
 
         expect(settings.combatProfileButton.isTrue).toBe(true);
+    });
+
+    test('simulateScrollEffects (a checkboxWithButton): new players get it on, existing players stay off', async () => {
+        const fresh = await settingsStorage.loadSettings();
+        expect(fresh.simulateScrollEffects.isTrue).toBe(true);
+
+        stored.clear();
+        // Never touched: no stored entry at all
+        stored.set(`json:${KEY}`, { someOther: box('someOther', true) });
+        const existing = await settingsStorage.loadSettings();
+        expect(existing.simulateScrollEffects.isTrue).toBe(false);
+        expect(stored.get(`json:${KEY}`).simulateScrollEffects.isTrue).toBe(false);
+
+        // Chosen: on stays on, off stays off, in the shape the settings panel writes
+        stored.clear();
+        stored.set(`json:${KEY}`, {
+            simulateScrollEffects: { id: 'simulateScrollEffects', type: 'checkboxWithButton', isTrue: true },
+        });
+        expect((await settingsStorage.loadSettings()).simulateScrollEffects.isTrue).toBe(true);
+
+        stored.clear();
+        stored.set(`json:${KEY}`, {
+            simulateScrollEffects: { id: 'simulateScrollEffects', type: 'checkboxWithButton', isTrue: false },
+        });
+        expect((await settingsStorage.loadSettings()).simulateScrollEffects.isTrue).toBe(false);
     });
 
     test('a default flipped the other way keeps existing players on, and a new player off', async () => {

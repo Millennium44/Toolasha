@@ -14,6 +14,10 @@ import {
     describeUpdate,
     newSettingIds,
     conservativeOverrides,
+    REOFFERED_SETTINGS,
+    unofferedSettingIds,
+    reofferedSettingIds,
+    markOffered,
 } from './whats-new-core.js';
 
 const MINE = { fork: 'Millennium44/Toolasha', version: '2.88.0' };
@@ -115,5 +119,52 @@ describe('the conservative policy', () => {
 
     test('an id the schema does not know is skipped rather than thrown on', () => {
         expect(conservativeOverrides(['ghost'], lookup)).toEqual([]);
+    });
+});
+
+describe('settings offered a second time', () => {
+    const LIST = ['a', 'b', 'c'];
+    const off = () => false;
+
+    test('the shipped list names the scroll simulation switch, and every id on it is a switch in the schema', async () => {
+        expect(REOFFERED_SETTINGS).toContain('simulateScrollEffects');
+        const { getSettingDefinition } = await import('../../core/settings-schema.js');
+        for (const id of REOFFERED_SETTINGS) {
+            // The popup draws a live checkbox for these; a number or select would need its own row
+            expect(['checkbox', 'checkboxWithButton'], id).toContain(getSettingDefinition(id)?.type);
+        }
+    });
+
+    test('a state with no offered list (written by an older build) has been offered nothing', () => {
+        expect(unofferedSettingIds(LIST, undefined)).toEqual(LIST);
+        expect(unofferedSettingIds(LIST, null)).toEqual(LIST);
+        expect(unofferedSettingIds(LIST, 'garbage')).toEqual(LIST);
+        expect(reofferedSettingIds(LIST, undefined, off)).toEqual(LIST);
+    });
+
+    test('what was offered is not offered again, whatever the setting says now', () => {
+        expect(reofferedSettingIds(LIST, ['a', 'c'], off)).toEqual(['b']);
+        expect(reofferedSettingIds(LIST, LIST, off)).toEqual([]);
+    });
+
+    test('a setting that is on has nothing to offer, but still counts as not yet offered for marking', () => {
+        const isOn = (id) => id === 'b';
+        expect(reofferedSettingIds(LIST, [], isOn)).toEqual(['a', 'c']);
+        expect(unofferedSettingIds(LIST, [])).toEqual(LIST);
+    });
+
+    test('marking adds the whole list once, keeps unknown ids, and never mutates its input', () => {
+        const recorded = ['future'];
+        expect(markOffered(recorded, LIST)).toEqual(['future', 'a', 'b', 'c']);
+        expect(recorded).toEqual(['future']);
+        expect(markOffered(['b'], LIST)).toEqual(['b', 'a', 'c']);
+        expect(markOffered(undefined, LIST)).toEqual(LIST);
+        expect(markOffered(markOffered(null, LIST), LIST)).toEqual(LIST);
+    });
+
+    test('an empty or missing list offers and marks nothing', () => {
+        expect(reofferedSettingIds([], [], off)).toEqual([]);
+        expect(reofferedSettingIds(undefined, [], off)).toEqual([]);
+        expect(markOffered(['x'], undefined)).toEqual(['x']);
     });
 });
