@@ -1068,14 +1068,16 @@ class GuildXPTracker {
         const epoch = this._epoch;
 
         // Mark the incoming identity before waiting for history, so readers can reject mixed guild/member data.
+        const previousSnapshotID = this.guildSnapshotID;
         if (guild.id != null) this.guildSnapshotID = String(guild.id);
 
         // Guild identity may arrive before the member update. Keep the old ID until that update can load its
         // history, but stop exposing the departed guild's roster under the arriving guild's name.
         if (guild.id != null && this.ownGuildID != null && String(guild.id) !== String(this.ownGuildID)) {
             this.memberMeta = {};
-            // The departed guild's schedule is not the arriving guild's
-            setScheduleHourOffset(null);
+            // The departed guild's schedule is not the arriving guild's. Once: `ownGuildID` stays the departed
+            // guild's until the roster arrives, and a second message of the arriving guild may not state the offset
+            if (String(guild.id) !== previousSnapshotID) setScheduleHourOffset(null);
         }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
@@ -1136,9 +1138,13 @@ class GuildXPTracker {
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
         // An initial history load may still be pending. Invalidate outgoing signups immediately on receipt.
+        // The offset held may already be this guild's: its `guild_updated` can arrive first (`guildSnapshotID`)
+        const clearDepartedSchedule = () => {
+            if (String(newGuildID) !== this.guildSnapshotID) setScheduleHourOffset(null);
+        };
         if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) {
             this.memberMeta = {};
-            setScheduleHourOffset(null);
+            clearDepartedSchedule();
         }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
@@ -1147,7 +1153,7 @@ class GuildXPTracker {
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
             // Readers must not pair the arriving guild ID with the departed guild's signups while history loads.
             this.memberMeta = {};
-            setScheduleHourOffset(null);
+            clearDepartedSchedule();
             // Guild switched — drop the old guild's member data and load the new
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
