@@ -11,6 +11,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Switching guilds keeps the new guild's trial start time.
 - Guild trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
 - Alchemy: a new optional check (off by default) stops the first Start or Queue press when a clearly more profitable catalyst exists, says which one and what your choice costs per hour; pressing again within 15 seconds goes ahead without asking again about that setup for a minute, and you can skip it until reload or turn it off from the message.
+- Whenever the profit shown assumes scrolls you are not using, the Profitability header says "Simulated, not active".
+- Scroll simulation now starts on for new players with no scrolls selected; existing players keep their setting and are offered it once in What's New, which says how many scrolls they already have selected.
+- The scroll chips now appear on every gathering and production action panel, including refined capes, directly under Action Speed & Time and Level Progress and above Profitability, so you can pick which scrolls those figures assume. Each chip shows how many of that scroll you own and has a Plan button that opens the Scroll Planner with it selected.
 - The alchemy catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action, and says when a figure is a floor or a ceiling. It only reads; nothing is clicked for you.
 - Refined cape item cards show their profit again (Transmute, plus Coinify and Decompose where the game allows them), with a note saying how the capes were valued.
 - The Philosopher's Stone calculator marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0, and prices a drop a shop converts.

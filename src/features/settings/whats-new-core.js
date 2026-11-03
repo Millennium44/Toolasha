@@ -109,3 +109,60 @@ export function conservativeOverrides(newIds, lookup) {
     }
     return overrides;
 }
+
+/**
+ * Settings that already existed, were off for the people who never turned them on, and are worth
+ * one more look after a change that makes them more useful. Each is offered once, in the update
+ * popup, with its live switch, and is never switched on for anyone.
+ *
+ * - `simulateScrollEffects`: the scroll chips now sit on every action panel. A new player starts with
+ *   nothing selected, but a player who chose scrolls in Defaults... or the Loadouts panel while it was
+ *   off has them applied the moment it is switched on, so the popup says how many are chosen.
+ *
+ * Not `newSettingIds`: those were never shown. These were, and nothing about them is new. Not
+ * `conservativeOverrides` either, which switches things off; nothing here changes a value.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const REOFFERED_SETTINGS = Object.freeze(['simulateScrollEffects']);
+
+/**
+ * The re-offered settings this player has not been shown yet.
+ *
+ * @param {Array<string>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
+ * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state; absent in a
+ *   state written before this field existed
+ * @returns {Array<string>} Ids not yet offered, in list order
+ */
+export function unofferedSettingIds(reoffered, offeredIds) {
+    const offered = new Set(Array.isArray(offeredIds) ? offeredIds : []);
+    return (reoffered || []).filter((id) => !offered.has(id));
+}
+
+/**
+ * Which re-offered settings to show now: never offered before, and off right now. One that is on
+ * has nothing to offer; it is still marked as offered (see `unofferedSettingIds`), so switching it
+ * off later does not bring the offer back.
+ *
+ * @param {Array<string>} reoffered - The list to offer (`REOFFERED_SETTINGS`)
+ * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state
+ * @param {(id: string) => boolean} isOn - Whether the setting is on for this character
+ * @returns {Array<string>} Ids to show, in list order
+ */
+export function reofferedSettingIds(reoffered, offeredIds, isOn) {
+    return unofferedSettingIds(reoffered, offeredIds).filter((id) => !isOn(id));
+}
+
+/**
+ * The offered list to save: what was recorded, plus everything on the list now.
+ *
+ * @param {Array<string>|undefined} offeredIds - Ids already offered, from the saved state
+ * @param {Array<string>} reoffered - The list (`REOFFERED_SETTINGS`)
+ * @returns {Array<string>} Union, recorded ids first. Ids no longer on the list are kept, so a
+ *   later build that reuses one does not offer it to someone who was already asked
+ */
+export function markOffered(offeredIds, reoffered) {
+    const result = Array.isArray(offeredIds) ? [...offeredIds] : [];
+    for (const id of reoffered || []) if (!result.includes(id)) result.push(id);
+    return result;
+}

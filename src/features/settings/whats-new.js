@@ -39,12 +39,16 @@ import {
     describeUpdate,
     newSettingIds,
     conservativeOverrides,
+    REOFFERED_SETTINGS,
+    reofferedSettingIds,
+    unofferedSettingIds,
+    markOffered,
 } from './whats-new-core.js';
 import { pricingRowsLocked } from './iron-cow-mode.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { openSettings } from '../ui/command-palette.js';
 import { askChoice } from '../../utils/choice-dialog.js';
-import { toolashaRoot } from '../../utils/bundle-bridge.js';
+import { scrollSimulator, toolashaRoot } from '../../utils/bundle-bridge.js';
 import { filterChangelogSince } from './changelog-markers.js';
 import {
     createPricingSideSelect,
@@ -287,6 +291,22 @@ function changelogPage(parsed, page, pageSize) {
     return parts.join('\n\n');
 }
 
+/**
+ * What switching a re-offered setting on does for this particular player, when that depends on
+ * saved state. Without it the popup could say "nothing changes" to someone it changes things for.
+ * @param {string} id - A setting on `REOFFERED_SETTINGS`
+ * @returns {string|null}
+ */
+function reofferDetail(id) {
+    if (id !== 'simulateScrollEffects') return null;
+    const count = scrollSimulator()?.getSelectedScrollCount?.();
+    if (!count) return null;
+    return (
+        `${count} scroll${count === 1 ? '' : 's'} already selected: switching this on applies ` +
+        `${count === 1 ? 'it' : 'them'} to your figures right away.`
+    );
+}
+
 class WhatsNew {
     constructor() {
         this.panel = null;
@@ -338,6 +358,7 @@ class WhatsNew {
             headline: data.headline,
             forkChanged: Boolean(data.forkChanged),
             newIds: Array.isArray(data.newIds) ? data.newIds : [],
+            reoffered: Array.isArray(data.reoffered) ? data.reoffered : [],
             turnedOff: [...(data.turnedOff || [])],
             isNewcomer: Boolean(data.isNewcomer),
             sinceVersion: data.sinceVersion || null,
@@ -355,6 +376,7 @@ class WhatsNew {
             headline: stored.headline || "Toolasha — what's new",
             forkChanged: Boolean(stored.forkChanged),
             newIds: Array.isArray(stored.newIds) ? stored.newIds : [],
+            reoffered: Array.isArray(stored.reoffered) ? stored.reoffered : [],
             turnedOff: new Set(stored.turnedOff || []),
             isNewcomer: Boolean(stored.isNewcomer),
             sinceVersion: stored.sinceVersion || null,
@@ -377,6 +399,7 @@ class WhatsNew {
                     headline: "Toolasha — what's new",
                     forkChanged: false,
                     newIds: [],
+                    reoffered: [],
                     turnedOff: new Set(),
                     isNewcomer: false,
                     sinceVersion: null,
@@ -458,13 +481,21 @@ class WhatsNew {
                         await this._offerCopyOnly(current);
                     }
                 }
-                await this._saveState(current, schemaIds);
+                // Everything on the re-offer list counts as offered: a first run (or a fresh alt)
+                // already has the current default, so there is nothing to look at again
+                await this._saveState(current, schemaIds, markOffered(null, REOFFERED_SETTINGS));
                 return;
             }
 
             const fresh = newSettingIds(schemaIds, stored.knownIds || []);
             const changed = identityChanged(stored, current);
-            if (!changed && fresh.length === 0) return;
+            // Settings that existed before and are worth another look: shown once, only to someone who
+            // has them off, and never switched on here. A state from before this field has offered none.
+            const unoffered = unofferedSettingIds(REOFFERED_SETTINGS, stored.offeredIds);
+            const reoffer = reofferedSettingIds(REOFFERED_SETTINGS, stored.offeredIds, (id) =>
+                Boolean(config.getSetting(id, getSettingDefinition(id)?.default ?? false))
+            );
+            if (!changed && fresh.length === 0 && unoffered.length === 0) return;
 
             let turnedOff = [];
             if (fresh.length > 0 && config.getSetting('whatsNew_newDefaultsOff')) {
@@ -472,22 +503,32 @@ class WhatsNew {
                 for (const id of turnedOff) config.setSetting(id, false);
             }
 
-            this._pending = {
-                headline: describeUpdate(stored, current),
-                forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
-                newIds: fresh,
-                turnedOff: new Set(turnedOff),
-                isNewcomer: false,
-                // What the changelog gets filtered against. Only within one
-                // fork: forks share version numbers, so "3.46.0" from another
-                // build names no point in this fork's history and would order
-                // against our markers as if it did.
-                sinceVersion: stored.fork === current.fork ? stored.version || null : null,
-            };
+            // A re-offer alone (nothing new, same build) still speaks; a mark with nothing to show does not
+            if (changed || fresh.length > 0 || reoffer.length > 0) {
+                this._pending = {
+                    // Only a re-offer to speak of on a build that did not change: "New in <version>" would
+                    // claim an update that did not happen
+                    headline:
+                        !changed && fresh.length === 0
+                            ? 'Settings worth another look'
+                            : describeUpdate(stored, current),
+                    forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
+                    newIds: fresh,
+                    reoffered: reoffer,
+                    turnedOff: new Set(turnedOff),
+                    isNewcomer: false,
+                    // What the changelog gets filtered against. Only within one
+                    // fork: forks share version numbers, so "3.46.0" from another
+                    // build names no point in this fork's history and would order
+                    // against our markers as if it did.
+                    sinceVersion: stored.fork === current.fork ? stored.version || null : null,
+                };
+            }
 
             // Recorded now rather than after the popup, so a closed tab cannot
-            // re-run the policy and flip a switch the user turned back on
-            await this._saveState(current, schemaIds);
+            // re-run the policy and flip a switch the user turned back on, or
+            // offer the same setting a second time
+            await this._saveState(current, schemaIds, markOffered(stored.offeredIds, REOFFERED_SETTINGS));
         } catch (error) {
             console.error('[WhatsNew] Reconciling the update state failed:', error);
         }
@@ -881,12 +922,15 @@ class WhatsNew {
     }
 
     /** @private */
-    async _saveState(identity, schemaIds) {
+    async _saveState(identity, schemaIds, offeredIds = []) {
         // Immediate: this sits on the startup path before features initialise,
         // and riding the 3-second write debounce held the whole start for it
         await storage.setJSON(
             this._stateKey(),
-            { ...identity, knownIds: schemaIds, seenAt: Date.now() },
+            // `offeredIds`: the re-offered settings already shown (see REOFFERED_SETTINGS). An older build
+            // reads only the identity and `knownIds` and ignores it; one that rewrites the record drops
+            // it, which at worst offers a setting that is still off once more.
+            { ...identity, knownIds: schemaIds, offeredIds, seenAt: Date.now() },
             'settings',
             true
         );
@@ -911,7 +955,7 @@ class WhatsNew {
     }
 
     /** @private */
-    _buildPanel({ headline, forkChanged, newIds, turnedOff, isNewcomer, sinceVersion }) {
+    _buildPanel({ headline, forkChanged, newIds, reoffered = [], turnedOff, isNewcomer, sinceVersion }) {
         this.close();
 
         // What the changelog box shows: the entries newer than the build this
@@ -987,6 +1031,37 @@ class WhatsNew {
                 const row = this._settingRow(id, turnedOff.has(id));
                 if (row) section.appendChild(row);
             }
+            body.appendChild(section);
+        }
+
+        // Settings that are not new but may be worth switching on now. Their switches are live like the
+        // rows above; showing them changes nothing.
+        const worthALook = reoffered
+            .map((id) => {
+                const row = this._settingRow(id, false);
+                const detail = row ? reofferDetail(id) : null;
+                if (detail) {
+                    const line = document.createElement('div');
+                    line.className = 'toolasha-whats-new-reoffer-detail';
+                    line.textContent = detail;
+                    Object.assign(line.style, { fontSize: '11px', color: '#ffa500', marginTop: '2px' });
+                    row.firstElementChild?.appendChild(line);
+                }
+                return row;
+            })
+            .filter(Boolean);
+        if (worthALook.length > 0) {
+            const section = document.createElement('div');
+            section.className = 'toolasha-whats-new-reoffered';
+            section.style.marginTop = newIds.length > 0 ? '10px' : '0';
+            section.innerHTML = `<div style="font-weight:700; color:${COLORS.accent}; margin-bottom:2px;">Worth another look</div>`;
+            const note = document.createElement('div');
+            note.textContent =
+                'Not new, and still off. Nothing was changed for you; switch one on to try it. ' +
+                'Anything already chosen for it applies as soon as it is on.';
+            Object.assign(note.style, { fontSize: '11px', color: COLORS.dim, marginBottom: '6px' });
+            section.appendChild(note);
+            for (const row of worthALook) section.appendChild(row);
             body.appendChild(section);
         }
 
@@ -1212,7 +1287,8 @@ class WhatsNew {
 
         const type = definition.type || 'checkbox';
         let control = null;
-        if (type === 'checkbox') {
+        // A checkbox with a Defaults... button in Settings is still a switch here
+        if (type === 'checkbox' || type === 'checkboxWithButton') {
             control = document.createElement('input');
             control.type = 'checkbox';
             control.checked = Boolean(config.getSetting(id, definition.default ?? false));

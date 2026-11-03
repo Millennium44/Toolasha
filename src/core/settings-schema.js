@@ -2571,8 +2571,8 @@ export const settingsGroups = {
                 label: 'Skills: Simulate missing scroll effects in calculations',
                 type: 'checkboxWithButton',
                 buttonLabel: 'Defaults...',
-                default: false,
-                help: 'When enabled, profit/XP/speed calculations show hypothetical results as if selected scrolls were active. Configure default scrolls with the button; override per-loadout from the Loadouts panel.',
+                default: true,
+                help: 'Adds scroll chips to gathering and production action panels. A chip you press makes the speed, XP and profit figures show hypothetical results as if that scroll were active (the scroll itself is never used). With no scrolls chosen every figure is the real one; scrolls already chosen with the Defaults button or in the Loadouts panel apply as soon as this is on.',
             },
             xpTracker: {
                 id: 'xpTracker',

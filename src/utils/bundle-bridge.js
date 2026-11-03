@@ -334,6 +334,15 @@ export function scrollSimulator() {
 }
 
 /**
+ * The Scroll Planner itself (not its registry record, which `Market.scrollPlanner` holds). It
+ * exists whether or not the planner's setting is on; ask `isRunning()` before offering a way in.
+ * @returns {Object|null} The planner, or null when the market bundle is absent
+ */
+export function scrollPlannerInstance() {
+    return toolashaRoot()?.Market?.scrollPlannerInstance || null;
+}
+
+/**
  * The labyrinth clear-rate singleton — its live-run roomData and recommendations
  * are fed by the websocket only in the combat bundle.
  * @returns {Object|null} The module, or null when the combat bundle is absent

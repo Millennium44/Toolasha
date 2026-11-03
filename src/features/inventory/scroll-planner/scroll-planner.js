@@ -112,6 +112,7 @@ const TEXT = {
     inventoryNotLoaded: 'Your inventory is not loaded yet. Try again in a moment.',
     barOpenMenuHint: 'Click the scroll in your inventory, then press the highlighted Open button.',
     barMenuReadyHint: 'Quantity is filled in. Press the highlighted Open button.',
+    selectedHint: 'Type how many to open next to "Open" and the highlighted scrolls are filled in.',
     showScroll: 'Show scroll',
     skip: 'Skip',
     stop: 'Stop',
@@ -173,6 +174,63 @@ class ScrollPlanner {
         dataManager.on('items_updated', this.onItemsUpdated);
 
         await this.resumeSavedRun();
+    }
+
+    /**
+     * Whether the planner is up: its setting was on when it initialized and nothing has torn it
+     * down since. Other features ask this before offering a way in, because the module object
+     * exists in every build whatever the setting says.
+     * @returns {boolean}
+     */
+    isRunning() {
+        return this.unregisterMenu !== null && this.characterId !== null;
+    }
+
+    /**
+     * Open the plan window with some scrolls already selected, as if their names had been
+     * pressed. Nothing is planned, opened or pressed: a selected scroll has no quantity until the
+     * player types one, and the guided run still ends at the game's own Open button.
+     *
+     * With the window already open the draft, the typed N and the quantities stay, and the
+     * scrolls are added to the selection (taking N, when one is typed).
+     * @param {string[]} itemHrids - Scroll item HRIDs; ones the planner has no row for are ignored
+     * @returns {boolean} False when the planner is not running or has no row for any of them
+     */
+    openWithSelection(itemHrids) {
+        if (!this.isRunning()) {
+            return false;
+        }
+        const known = new Set(this.getScrollHrids());
+        const wanted = (Array.isArray(itemHrids) ? itemHrids : []).filter((hrid) => known.has(hrid));
+        if (wanted.length === 0) {
+            return false;
+        }
+        if (!this.modal?.isConnected) {
+            this.openModal(wanted);
+            return true;
+        }
+        for (const hrid of wanted) {
+            this.quickSelected.add(hrid);
+        }
+        this.renderModal(TEXT.selectedHint, '#aaa');
+        if (this.quickFill > 0) {
+            for (const hrid of wanted) {
+                this.rowControls.get(hrid)?.setQuantity(this.quickFill);
+            }
+        }
+        this.revealRow(wanted[0]);
+        return true;
+    }
+
+    /**
+     * Bring a scroll's row into view inside the window.
+     * @param {string} itemHrid
+     */
+    revealRow(itemHrid) {
+        const row = [...(this.modal?.querySelectorAll('.toolasha-scroll-planner-row') || [])].find(
+            (candidate) => candidate.dataset.itemHrid === itemHrid
+        );
+        row?.scrollIntoView?.({ block: 'nearest' });
     }
 
     /**
@@ -748,7 +806,10 @@ class ScrollPlanner {
     // Plan modal
     // ---------------------------------------------------------------------
 
-    openModal() {
+    /**
+     * @param {string[]} [selected] - Scrolls to start selected (see {@link openWithSelection})
+     */
+    openModal(selected = []) {
         this.modal?.remove();
         this.modal = document.createElement('div');
         this.modal.className = MODAL_CLASS;
@@ -769,7 +830,13 @@ class ScrollPlanner {
         });
         document.body.appendChild(this.modal);
         this.resetQuickFill();
-        this.renderModal('');
+        for (const hrid of selected) {
+            this.quickSelected.add(hrid);
+        }
+        this.renderModal(selected.length > 0 ? TEXT.selectedHint : '', '#aaa');
+        if (selected.length > 0) {
+            this.revealRow(selected[0]);
+        }
     }
 
     closeModal() {
@@ -1229,4 +1296,5 @@ export default {
     cleanup: () => scrollPlanner.cleanup(),
 };
 
-export { ScrollPlanner };
+// The singleton itself, for other bundles: the default export above is the registry record
+export { ScrollPlanner, scrollPlanner as scrollPlannerInstance };

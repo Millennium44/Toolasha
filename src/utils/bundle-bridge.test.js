@@ -66,3 +66,30 @@ describe('guildXpTracker() reads the live tracker, not its registration record',
         }
     });
 });
+
+describe('scrollPlannerInstance() reads the live planner, not its registration record', () => {
+    test('the Market key it reads is bound to the planner singleton, which can say whether it is running', async () => {
+        const { readFileSync } = await import('node:fs');
+        const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+        const bridgeSource = read('./bundle-bridge.js');
+        const key = bridgeSource.match(/scrollPlannerInstance\(\)\s*\{[\s\S]*?Market\?\.(\w+)/)[1];
+        const market = read('../libraries/market.js');
+        const importLine = market.split('\n').find((line) => line.includes('scroll-planner/scroll-planner.js'));
+        // `Market.scrollPlanner` is the registry record { name, initialize, cleanup }; the chips need the singleton
+        expect(importLine).toContain('scrollPlannerInstance');
+        expect(key).toBe('scrollPlannerInstance');
+        expect(market).toMatch(/^\s+scrollPlannerInstance,$/m);
+
+        const { scrollPlannerInstance } = await import('../features/inventory/scroll-planner/scroll-planner.js');
+        for (const method of ['isRunning', 'openWithSelection']) {
+            expect(typeof scrollPlannerInstance[method]).toBe('function');
+        }
+        expect(scrollPlannerInstance.isRunning()).toBe(false);
+    });
+
+    test('hands back whatever the namespace holds', () => {
+        const planner = { isRunning: () => true };
+        globalThis.window = { Toolasha: { Market: { scrollPlannerInstance: planner } } };
+        expect(bridge.scrollPlannerInstance()).toBe(planner);
+    });
+});

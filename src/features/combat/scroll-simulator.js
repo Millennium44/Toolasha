@@ -167,6 +167,18 @@ class ScrollSimulator {
     }
 
     /**
+     * How many different scrolls are chosen anywhere (the defaults or any loadout), whether or not
+     * the simulation is switched on. Switching it on applies every one of them at once.
+     * @returns {number|null} null until the saved selections are loaded
+     */
+    getSelectedScrollCount() {
+        if (!this.initialized) return null;
+        const all = new Set();
+        for (const set of Object.values(this.scrollsByLoadout)) for (const hrid of set) all.add(hrid);
+        return all.size;
+    }
+
+    /**
      * Save scroll selections for a loadout (or global defaults).
      * @param {string|null} loadoutName - null for global defaults
      * @param {string[]} buffTypeHrids

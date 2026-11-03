@@ -26,7 +26,7 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
-import { buildScrollChips, watchForScrollChanges } from './scroll-chips.js';
+import { SCROLL_CHIPS_CLASS, getSimulatedScrollNames, watchForScrollChanges } from './scroll-chips.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import {
@@ -149,6 +149,27 @@ function scrollSpriteHtml(buffTypeHrid, size = 14) {
         `<svg width="${size}" height="${size}" style="vertical-align:middle;margin-right:3px">` +
         `<use href="${_spriteUrl}#${itemSuffix}"></use></svg>`
     );
+}
+
+/**
+ * Say, under the Profitability header and so also while it is collapsed, that the figures assume
+ * scrolls the player is not using. The chips row says it too, but the row can be absent (no room
+ * on the panel, a failed draw), and a hypothetical profit must never pass for the real one.
+ * @param {HTMLElement} profitSection - The section just built
+ * @param {string} actionType - Armed action type (this runs inside the armed calculation)
+ */
+function noteSimulatedScrolls(profitSection, actionType) {
+    const names = getSimulatedScrollNames(actionType);
+    if (names.length === 0) return;
+    const note = document.createElement('div');
+    note.className = 'mwi-scroll-simulated-note';
+    note.textContent = `Simulated, not active: ${names.join(', ')} ${names.length === 1 ? 'scroll' : 'scrolls'}`;
+    note.style.cssText = `margin-left:16px;font-size:0.85em;color:${config.COLOR_ACCENT};`;
+    const header = profitSection.querySelector('.mwi-section-header');
+    const summary = header?.nextElementSibling;
+    // After the summary line when there is one (it is found as the header's next sibling elsewhere)
+    const anchor = summary && !summary.classList.contains('mwi-section-content') ? summary : header;
+    anchor?.insertAdjacentElement('afterend', note);
 }
 
 export const getBonusDropPerHourTotals = (drop, efficiencyMultiplier = 1) => ({
@@ -656,14 +677,6 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
-    // Scroll toggles: a click saves the selection, then this same display runs again
-    const scrollChips = buildScrollChips({
-        actionTypeHrid: gatheringActionType,
-        spriteUrl: itemsSpriteUrl(),
-        onChange: () => displayGatheringProfit(panel, actionHrid, dropTableSelector),
-    });
-    if (scrollChips) topLevelContent.appendChild(scrollChips.element);
-
     const detailedBreakdownSection = createCollapsibleSection(
         '📊',
         'Per hour breakdown',
@@ -682,13 +695,11 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     // Add X actions breakdown section (updates dynamically with input)
     // Remove listeners from previous renders first so they don't accumulate on the panel
     clearPanelInputListeners(panel);
-    if (scrollChips) trackPanelInputListener(panel, scrollChips.dispose);
-    else {
-        trackPanelInputListener(
-            panel,
-            watchForScrollChanges(topLevelContent, () => displayGatheringProfit(panel, actionHrid, dropTableSelector))
-        );
-    }
+    // The scroll chips live in their own row on the panel; a change to the selection redraws this section
+    trackPanelInputListener(
+        panel,
+        watchForScrollChanges(topLevelContent, () => displayGatheringProfit(panel, actionHrid, dropTableSelector))
+    );
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;
@@ -725,6 +736,7 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
 
     // Get the summary div to update it dynamically
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
+    noteSimulatedScrolls(profitSection, gatheringActionType);
 
     // Set up listener to update summary with total profit when input changes
     if (profitSummaryDiv) {
@@ -791,9 +803,12 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
     if (insertionPoint) {
         // Insert after last collapsible section
+        // The scroll chips row sits inside this run (under Level Progress), so the profit section
+        // goes after it and the row stays above the section it belongs with
         while (
             insertionPoint.nextElementSibling &&
-            insertionPoint.nextElementSibling.className === 'mwi-collapsible-section'
+            (insertionPoint.nextElementSibling.className === 'mwi-collapsible-section' ||
+                insertionPoint.nextElementSibling.classList.contains(SCROLL_CHIPS_CLASS))
         ) {
             insertionPoint = insertionPoint.nextElementSibling;
         }
@@ -1365,14 +1380,6 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
-    // Scroll toggles: a click saves the selection, then this same display runs again
-    const scrollChips = buildScrollChips({
-        actionTypeHrid: productionActionType,
-        spriteUrl: itemsSpriteUrl(),
-        onChange: () => displayProductionProfit(panel, actionHrid, dropTableSelector),
-    });
-    if (scrollChips) topLevelContent.appendChild(scrollChips.element);
-
     const detailedBreakdownSection = createCollapsibleSection(
         '📊',
         'Per hour breakdown',
@@ -1391,13 +1398,11 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     // Add X actions breakdown section (updates dynamically with input)
     // Remove listeners from previous renders first so they don't accumulate on the panel
     clearPanelInputListeners(panel);
-    if (scrollChips) trackPanelInputListener(panel, scrollChips.dispose);
-    else {
-        trackPanelInputListener(
-            panel,
-            watchForScrollChanges(topLevelContent, () => displayProductionProfit(panel, actionHrid, dropTableSelector))
-        );
-    }
+    // The scroll chips live in their own row on the panel; a change to the selection redraws this section
+    trackPanelInputListener(
+        panel,
+        watchForScrollChanges(topLevelContent, () => displayProductionProfit(panel, actionHrid, dropTableSelector))
+    );
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;
@@ -1432,6 +1437,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     profitSection.dataset.mwiActionHrid = actionHrid;
     profitSection.dataset.mwiActionType = 'production';
     const profitSummaryDiv = profitSection.querySelector('.mwi-section-header + div');
+    noteSimulatedScrolls(profitSection, productionActionType);
 
     // Set up listener to update summary with total profit when input changes
     if (profitSummaryDiv) {
@@ -1499,9 +1505,12 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     let insertionPoint = panel.querySelector('.mwi-collapsible-section');
     if (insertionPoint) {
         // Insert after last collapsible section
+        // The scroll chips row sits inside this run (under Level Progress), so the profit section
+        // goes after it and the row stays above the section it belongs with
         while (
             insertionPoint.nextElementSibling &&
-            insertionPoint.nextElementSibling.className === 'mwi-collapsible-section'
+            (insertionPoint.nextElementSibling.className === 'mwi-collapsible-section' ||
+                insertionPoint.nextElementSibling.classList.contains(SCROLL_CHIPS_CLASS))
         ) {
             insertionPoint = insertionPoint.nextElementSibling;
         }
