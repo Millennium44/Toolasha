@@ -414,3 +414,73 @@ describe('getProductionCostDetailed before game data loads', () => {
         expect(getProductionCostDetailed('/items/late_mat').cost).toBe(200);
     });
 });
+
+describe('a refined untradable cape is its refinement stones alone', () => {
+    const CAPE = '/items/test_cape';
+    const REFINED = '/items/test_cape_refined';
+    const STONE = '/items/test_stone';
+
+    beforeEach(() => {
+        game.items[CAPE] = { name: 'Cape', equipmentDetail: { type: '/equipment_types/back' } };
+        game.items[REFINED] = { name: 'Cape R', equipmentDetail: { type: '/equipment_types/back' } };
+        game.items[STONE] = { name: 'Stone' };
+        // The real shape: a refinement is a production skill's recipe, the base cape its upgradeItemHrid
+        game.actions['/actions/tailoring/test_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
+            inputItems: [
+                { itemHrid: STONE, count: 10 },
+                { itemHrid: '/items/coin', count: 500 },
+            ],
+            outputItems: [{ itemHrid: REFINED, count: 1 }],
+            upgradeItemHrid: CAPE,
+        };
+        game.prices[`${STONE}:0`] = { ask: 100, bid: 90 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 7000, bid: 6000 };
+    });
+
+    test('stones plus the base by the setting: zero is complete, mirror adds one mirror price', async () => {
+        const { default: config } = await import('../core/config.js');
+        const costs = {};
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            costs[mode] = getProductionCostDetailed(REFINED, 'ask');
+            if (mode === 'mirror') expect(getProductionCostDetailed(REFINED, 'bid').cost).toBe(1400 + 6000);
+            spy.mockRestore();
+        }
+        expect(costs.zero).toEqual({ cost: 1500, partial: false });
+        expect(costs.mirror).toEqual({ cost: 1500 + 7000, partial: false });
+    });
+
+    test('a mirror setting with no mirror price is a flagged floor, zero is not', async () => {
+        const { default: config } = await import('../core/config.js');
+        delete game.prices['/items/mirror_of_protection:0'];
+        const results = {};
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            results[mode] = getProductionCostDetailed(REFINED, 'ask');
+            spy.mockRestore();
+        }
+        expect(results.zero).toEqual({ cost: 1500, partial: false });
+        expect(results.mirror).toEqual({ cost: 1500, partial: true });
+    });
+
+    test('an unpriced stone leaves the bill partial under either setting', async () => {
+        const { default: config } = await import('../core/config.js');
+        delete game.prices[`${STONE}:0`];
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            expect(getProductionCostDetailed(REFINED, 'ask').partial).toBe(true);
+            spy.mockRestore();
+        }
+    });
+});

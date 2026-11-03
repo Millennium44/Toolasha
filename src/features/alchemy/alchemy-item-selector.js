@@ -112,6 +112,30 @@ export function findAlchemizeMenu() {
 }
 
 /**
+ * The open catalyst ("Consumed Item") menu, if one is open.
+ *
+ * Read only; nothing here opens, clicks or fills it. It is the menu that is not the Alchemize Item one:
+ * inside the catalyst's own input container when the game nests it, labelled "Consumed Item" when it is
+ * portalled but still near its label, and otherwise the menu opened by a click outside the primary slot.
+ * Not confirmed against the live game: which of those three the real menu satisfies.
+ *
+ * @returns {HTMLElement|null}
+ */
+export function findCatalystMenu() {
+    trackSelectorClicks();
+    if (!document.querySelector(PRIMARY_SELECTOR) || !activeAlchemyAction()) return null;
+
+    const alchemize = findAlchemizeMenu();
+    for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
+        if (menu === alchemize || menu.closest(PRIMARY_SELECTOR)) continue;
+        if (menu.closest('[class*="catalystItemInputContainer"]')) return menu;
+        if (ownerLabel(menu) === CATALYST_LABEL) return menu;
+        if (lastOpened.at > 0 && !lastOpened.primary) return menu;
+    }
+    return null;
+}
+
+/**
  * Which alchemy action the page is showing.
  *
  * Read off the selected tab rather than tracked, because the tab bar is the

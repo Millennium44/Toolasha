@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     // Untradable capes setting ('zero' | 'mirror') and extra item data for getItemDetails
     capeMode: 'zero',
     itemDetails: {},
+    // The shop conversion per hrid ({ valuePerUnit }); absent = the shop prices nothing
+    shopValues: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -120,6 +122,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,
+        isFeatureEnabled: () => false,
         getSettingValue: (key, fallback) => {
             if (key === 'profitCalc_pricingMode') return mocks.globalPricingMode;
             if (key === 'profitCalc_patientTickBuy') return mocks.patientTickBuy;
@@ -134,6 +137,9 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+vi.mock('../../utils/alchemy-shop-value.js', () => ({
+    getAlchemyOutputShopValue: (hrid) => mocks.shopValues[hrid] ?? null,
+}));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
@@ -210,6 +216,7 @@ beforeEach(() => {
     mocks.drinkSlots = [];
     mocks.capeMode = 'zero';
     mocks.itemDetails = {};
+    mocks.shopValues = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -978,6 +985,8 @@ describe('untradable items with no price', () => {
 
     beforeEach(() => {
         mocks.itemDetails[CAPE_HRID] = { equipmentDetail: { type: '/equipment_types/back' } };
+        // The mirror setting with no mirror price: a missing term, so the row still asks for a price
+        mocks.capeMode = 'mirror';
     });
 
     test('needs a price: cost-derived figures are unknown, not computed from 0', () => {
@@ -1029,31 +1038,13 @@ describe('untradable items with no price', () => {
 
         mocks.capeMode = 'zero';
         expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
-    });
-
-    test('a refined cape craft counts the base at the setting, or needs a price', () => {
-        const REFINED = '/items/test_cape_refined';
-        mocks.refineActions['/actions/refine_cape'] = {
-            outputItems: [{ itemHrid: REFINED }],
-            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
-            upgradeItemHrid: CAPE_HRID,
-        };
-        calc.pricingMode = 'conservative';
-        const details = cape(REFINED);
-
-        const blank = calc.calculateRow(REFINED, details);
-        expect(blank.needsPrice).toBe(true);
-        expect(blank.profitPerHour).toBeNull();
-
+        // A mirror setting whose mirror has no price is a missing term too
         mocks.capeMode = 'mirror';
-        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
-        const valued = calc.calculateRow(REFINED, details);
-        expect(valued.needsPrice).toBe(false);
-        expect(valued.cost).toBeGreaterThan(10 * 200);
-        expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
+        delete mocks.prices[`${MIRROR_HRID}+0`];
+        expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
     });
 
-    test('an unresolved refined cape stays needs-price instead of taking the unrefined base value', () => {
+    function refinedCape(extraPrices = {}) {
         const REFINED = '/items/test_cape_refined';
         mocks.refineActions['/actions/refine_cape'] = {
             outputItems: [{ itemHrid: REFINED }],
@@ -1061,12 +1052,78 @@ describe('untradable items with no price', () => {
             upgradeItemHrid: CAPE_HRID,
         };
         mocks.itemDetails[REFINED] = { equipmentDetail: { type: '/equipment_types/back' } };
+        Object.assign(mocks.prices, extraPrices);
+        return { REFINED, details: cape(REFINED) };
+    }
+
+    test('a refined cape costs its stones plus the base by the setting: zero is complete, mirror adds a mirror', () => {
+        const { REFINED, details } = refinedCape({ [`${MIRROR_HRID}+0`]: { ask: 7000, bid: 6000 } });
+        calc.pricingMode = 'conservative';
+        // 10 shards at the ask (200)
+        mocks.capeMode = 'zero';
+        const zero = calc.calculateRow(REFINED, details);
+        expect(zero.needsPrice).toBe(false);
+        expect(zero.costSource).toBe('craft');
+        expect(zero.cost).toBe(2000);
+        expect(zero.profitPerHour).not.toBeNull();
+        expect(calc._craftBaseNotes[REFINED]).toBe('capeZero');
+
         mocks.capeMode = 'mirror';
-        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
-        delete mocks.prices[`${OTHER_HRID}+0`]; // a refinement material nobody lists
-        const row = calc.calculateRow(REFINED, cape(REFINED));
-        expect(row.needsPrice).toBe(true);
-        expect(row.profitPerHour).toBeNull();
+        const mirror = calc.calculateRow(REFINED, details);
+        expect(mirror.needsPrice).toBe(false);
+        expect(mirror.cost).toBe(2000 + 7000);
+        expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
+
+        // No mirror price: a missing term, not stones alone
+        delete mocks.prices[`${MIRROR_HRID}+0`];
+        const unpriced = calc.calculateRow(REFINED, details);
+        expect(unpriced.needsPrice).toBe(true);
+        expect(unpriced.cost).toBeNull();
+        expect(unpriced.profitPerHour).toBeNull();
+    });
+
+    test('the cost follows the table pricing mode on both settings', () => {
+        const { REFINED, details } = refinedCape({ [`${MIRROR_HRID}+0`]: { ask: 7000, bid: 6000 } });
+        for (const [mode, ask, bid] of [
+            ['zero', 2000, 1000],
+            ['mirror', 9000, 7000],
+        ]) {
+            mocks.capeMode = mode;
+            calc.pricingMode = 'conservative';
+            expect(calc.calculateRow(REFINED, details).cost).toBe(ask);
+            calc.pricingMode = 'optimistic';
+            expect(calc.calculateRow(REFINED, details).cost).toBe(bid);
+        }
+    });
+
+    test('an unpriced stone leaves a refined cape unpriced under either setting, never 0', () => {
+        const { REFINED, details } = refinedCape();
+        delete mocks.prices[`${OTHER_HRID}+0`]; // a refinement stone nobody lists
+        for (const mode of ['zero', 'mirror']) {
+            mocks.capeMode = mode;
+            mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.needsPrice).toBe(true);
+            expect(row.cost).toBeNull();
+            expect(row.profitPerHour).toBeNull();
+        }
+    });
+
+    test('a market listing below the stone bill still wins, and a manual override beats both', () => {
+        const { REFINED, details } = refinedCape({ [`${REFINED_HRID}+0`]: { ask: 500, bid: 400 } });
+        calc.pricingMode = 'conservative';
+        mocks.capeMode = 'zero';
+        const listed = calc.calculateRow(REFINED, details);
+        expect(listed.costSource).toBe('market');
+        expect(listed.cost).toBe(500);
+
+        mocks.prices[`${REFINED_HRID}+0`] = { ask: 9000, bid: 8000 };
+        expect(calc.calculateRow(REFINED, details).cost).toBe(2000);
+
+        calc.itemCostOverrides[REFINED] = 1234;
+        const pinned = calc.calculateRow(REFINED, details);
+        expect(pinned.costSource).toBe('override');
+        expect(pinned.cost).toBe(1234);
     });
 
     test('the cape stand-in is priced on the table own buy side, not the global one', () => {
@@ -1096,5 +1153,129 @@ describe('untradable items with no price', () => {
 
     test('a tradable item with no price is still dropped', () => {
         expect(calc.calculateRow(CAPE_HRID, cape(CAPE_HRID, true))).toBeNull();
+    });
+});
+
+describe('drops nothing quotes', () => {
+    const GHOST = '/items/unlisted_drop';
+
+    function withDrop(hrid) {
+        const details = widget();
+        details.alchemyDetail.transmuteDropTable.push({ itemHrid: hrid, dropRate: 0.2, minCount: 1, maxCount: 1 });
+        return details;
+    }
+
+    test('the real refined cape row: itself at 0.9 and the stone at 0.1, 100 shards, nothing unpriced', () => {
+        const CAPE_STAR = '/items/artificer_cape_refined';
+        const BASE_CAPE = '/items/artificer_cape';
+        const SHARD = '/items/labyrinth_refinement_shard';
+        mocks.itemDetails[CAPE_STAR] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.itemDetails[BASE_CAPE] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.refineActions['/actions/tailoring/artificer_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
+            inputItems: [{ itemHrid: SHARD, count: 100 }],
+            outputItems: [{ itemHrid: CAPE_STAR, count: 1 }],
+            upgradeItemHrid: BASE_CAPE,
+        };
+        mocks.prices[`${SHARD}+0`] = { ask: 200, bid: 100 };
+        const details = {
+            name: 'Artificer Cape (Refined)',
+            itemLevel: 50,
+            alchemyDetail: {
+                isCoinifiable: true,
+                decomposeItems: [
+                    { itemHrid: SHARD, count: 100 },
+                    { itemHrid: BASE_CAPE, count: 1 },
+                ],
+                bulkMultiplier: 1,
+                transmuteSuccessRate: 0.5,
+                transmuteDropTable: [
+                    { itemHrid: CAPE_STAR, dropRate: 0.9, minCount: 1, maxCount: 1 },
+                    { itemHrid: PHILO_HRID, dropRate: 0.1, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+        calc.pricingMode = 'conservative';
+        const row = calc.calculateRow(CAPE_STAR, details);
+
+        expect(row.needsPrice).toBe(false);
+        expect(row.cost).toBe(20_000);
+        expect(row.unpricedOutputs).toEqual([]);
+        expect(row.unpricedOutputsInstant).toEqual([]);
+        expect(row.unpricedOutputsPatient).toEqual([]);
+        const chance = row.effectiveTransmuteChance;
+        expect(row.evInstant).toBeCloseTo(chance * (0.9 * 20_000 + 0.1 * 4_000_000 * (1 - MARKET_TAX)), 6);
+        expect(row.evPatient).toBeCloseTo(chance * (0.9 * 20_000 + 0.1 * 5_000_000 * (1 - MARKET_TAX)), 6);
+    });
+
+    test('defensive, not seen in the game data: an output nothing can price flags the row as a floor instead of an unflagged 0', () => {
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(GHOST));
+        expect(row.unpricedOutputs).toEqual([GHOST]);
+        expect(row.evInstant).toBeCloseTo(plain.evInstant, 6);
+        expect(plain.unpricedOutputs).toEqual([]);
+    });
+
+    test('the flag follows the side the shown figure uses: an ask with no bid marks only the instant side', () => {
+        mocks.prices[`${GHOST}+0`] = { ask: 600, bid: -1 };
+        const details = withDrop(GHOST);
+
+        calc.pricingMode = 'conservative'; // sells into the bid
+        const instant = calc.calculateRow(WIDGET_HRID, details);
+        expect(instant.unpricedOutputs).toEqual([GHOST]);
+        expect(instant.unpricedOutputsInstant).toEqual([GHOST]);
+        expect(instant.unpricedOutputsPatient).toEqual([]);
+
+        calc.pricingMode = 'optimistic'; // lists at the ask
+        const patient = calc.calculateRow(WIDGET_HRID, details);
+        expect(patient.unpricedOutputs).toEqual([]);
+        expect(patient.unpricedOutputsInstant).toEqual([GHOST]);
+        expect(patient.unpricedOutputsPatient).toEqual([]);
+    });
+
+    test('a drop with a shop value and no quote is valued by the shop, taxed, and not flagged', () => {
+        mocks.shopValues[GHOST] = { valuePerUnit: 3000 };
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(GHOST));
+        const rate = row.effectiveTransmuteChance * 0.2;
+        expect(row.unpricedOutputs).toEqual([]);
+        expect(row.evInstant - plain.evInstant).toBeCloseTo(rate * 3000 * (1 - MARKET_TAX), 6);
+    });
+
+    test('the paired Instant | Patient cell marks only the half that is a floor, and its title says why', () => {
+        const spans = [];
+        const original = globalThis.document;
+        globalThis.document = {
+            createElement: () => {
+                const span = { style: {}, textContent: '' };
+                spans.push(span);
+                return span;
+            },
+        };
+        try {
+            const td = { children: [], appendChild: (child) => td.children.push(child), title: '' };
+            calc.renderPairedProfitCell(td, {
+                profitPerPhiloInstant: 1000,
+                profitPerPhiloPatient: 2000,
+                unpricedOutputsInstant: [GHOST],
+                unpricedOutputsPatient: [],
+            });
+            const [instant, , patient] = td.children;
+            expect(instant.textContent).toMatch(/†$/);
+            expect(patient.textContent).not.toContain('†');
+            expect(td.title).toContain('A floor on that side');
+        } finally {
+            globalThis.document = original;
+        }
+    });
+
+    test('the stone is taxed when sold and untaxed only under Keep the Philo', () => {
+        const sold = calc.calculateRow(WIDGET_HRID, widget());
+        calc.keepPhilo = true;
+        const kept = calc.calculateRow(WIDGET_HRID, widget());
+        const stones = sold.effectiveTransmuteChance * 0.01 * 1;
+        expect(kept.evInstant - sold.evInstant).toBeCloseTo(stones * 4_000_000 * MARKET_TAX, 6);
+        expect(kept.evInstant).toBeGreaterThan(sold.evInstant);
     });
 });

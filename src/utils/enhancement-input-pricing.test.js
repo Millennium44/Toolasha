@@ -657,8 +657,10 @@ describe('untradable capes', () => {
 
     function addRefineRecipe() {
         game.books[SHARD] = { ask: 100, bid: 90 };
-        game.actions['/actions/refine'] = {
-            type: '/action_types/alchemy',
+        // The real shape: a refinement is a production skill's recipe, the base cape its upgradeItemHrid
+        game.actions['/actions/tailoring/test_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
             inputItems: [{ itemHrid: SHARD, count: 10 }],
             outputItems: [{ itemHrid: REFINED, count: 1 }],
             upgradeItemHrid: CAPE,
@@ -704,19 +706,32 @@ describe('untradable capes', () => {
         expect(priceBase('/items/cloak').assumed).toBeUndefined();
     });
 
-    test('a refined cape is its refinement bill plus the base per the setting, and the setting is in the cost cache key', () => {
+    test('a refined cape is its stones plus the base by the setting: zero is complete, mirror adds one mirror', () => {
         addRefineRecipe();
-        // Nothing for the base: the bill is the materials only, and says it is a floor
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
+        // Nothing: the player's own choice, so the stones alone are a complete bill a buyer may use, flagged as
+        // counting no base cape; only the mirror setting makes it an assumption
+        const zero = priceBase(REFINED);
+        expect(zero).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
+        expect(zero.assumed).toBeUndefined();
+        game.craftingSetting = true;
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
         expect(priceBase(REFINED).assumed).toBeUndefined();
+        game.craftingSetting = false;
         game.capeMode = 'mirror';
-        // The mirror inside the bill is an assumption, not something a player could pay for
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
         game.craftingSetting = true;
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
         game.craftingSetting = false;
         game.capeMode = 'zero';
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
+    });
+
+    test('a mirror setting with no mirror price leaves a refined cape a flagged floor, not stones alone', () => {
+        addRefineRecipe();
+        game.capeMode = 'mirror';
+        delete game.books['/items/mirror_of_protection'];
         expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
+        game.capeMode = 'zero';
     });
 
     test('the cape setting is part of the pricing stamp, so cached enhancement costs are dropped when it moves', () => {

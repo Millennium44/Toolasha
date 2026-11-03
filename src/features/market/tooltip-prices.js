@@ -37,6 +37,7 @@ import { resolveItemPrice, calculatePriceAfterTax } from '../../utils/profit-hel
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import dom from '../../utils/dom.js';
 import { shortDuration } from '../../utils/overlay-format.js';
+import { describeAssumedCape } from '../../utils/untradable-cape.js';
 import { parseItemCount, parseGameNumber, gameDigitsSource } from '../../utils/number-parser.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
@@ -190,6 +191,30 @@ function buySideWord() {
 function formatInsteadUnitsPerHour(unitsPerHour) {
     if (unitsPerHour < 10) return unitsPerHour.toFixed(1);
     return unitsPerHour >= 1000 ? formatKMB(unitsPerHour) : String(Math.round(unitsPerHour));
+}
+
+/**
+ * The dim notes under an alchemy row that values untradable capes at an assumption: the cape being
+ * transmuted, and a count of the other capes the row values the same way.
+ * @param {Array<Object>} profits - Calculator results shown on the tooltip
+ * @param {string} itemHrid - The hovered item
+ * @returns {string[]} Escaped note lines (empty when no row used an assumed cape)
+ */
+function assumedCapeNotes(profits, itemHrid) {
+    const capes = profits.flatMap((profit) => (Array.isArray(profit.assumedCapes) ? profit.assumedCapes : []));
+    const notes = [];
+    const own = capes.find((entry) => entry.itemHrid === itemHrid);
+    if (own) {
+        const name = dataManager.getItemDetails(itemHrid)?.name || itemHrid;
+        notes.push(describeAssumedCape(own, name, (n) => formatKMB(Math.round(n))));
+    }
+    const others = new Set(capes.filter((entry) => entry.itemHrid !== itemHrid).map((entry) => entry.itemHrid)).size;
+    if (others > 0) {
+        notes.push(
+            `${others} other untradable cape${others === 1 ? '' : 's'} this can return ${others === 1 ? 'is' : 'are'} valued the same way, never taxed.`
+        );
+    }
+    return notes.map((text) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;'));
 }
 
 /** Most kept outputs a self-use label names before summarizing the rest */
@@ -2277,6 +2302,11 @@ class TooltipPrices {
             }
 
             html += '</div>';
+        }
+
+        // An untradable cape has no market: say that its figure, and the other capes it can return, are assumed
+        for (const note of assumedCapeNotes(allProfits, itemHrid)) {
+            html += `<div style="opacity: 0.6; font-size: 0.9em; margin-top: 2px;">${note}</div>`;
         }
 
         for (const line of selfUseLines) {

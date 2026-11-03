@@ -1389,6 +1389,13 @@ function registerFeatures() {
             concurrent: true,
         },
         {
+            key: 'alchemyCatalystMark',
+            name: 'Alchemy Catalyst Mark',
+            category: 'Alchemy',
+            module: Actions.alchemyCatalystMark,
+            async: false,
+        },
+        {
             key: 'teaRecommendation',
             name: 'Tea Recommendation',
             category: 'Actions',

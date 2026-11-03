@@ -27,9 +27,16 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
-import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
+import {
+    CAPE_BASE_VALUE_ZERO,
+    getCapeBaseValue,
+    getCapeBaseValueMode,
+    isRefinedCape,
+    isUntradableCape,
+} from '../../utils/untradable-cape.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
@@ -880,12 +887,17 @@ class PhiloCalculator {
                 this._craftBreakdowns[itemHrid] = resolved.breakdown;
             }
             const { itemCost, selfReturnUnitValue, source, fallbackLevel } = resolved;
-            // A craft whose base is an untradable cape leaves the cape itself out of the bill: a missing
-            // term, not a free one. Add it at the cape setting's value, or ask for a price.
+            // A craft whose base is an untradable cape leaves the cape itself out of the bill: add it at the
+            // cape setting's value. On "nothing" that is the player's choice, so the stones alone are the
+            // whole cost; a mirror setting with no mirror price is a missing term, which asks for a price.
             if (source === 'craft' && resolved.baseNote === 'untradable') {
                 const baseValue = this.capeBaseValue();
                 this._craftBaseNotes = this._craftBaseNotes || {};
                 if (!(baseValue > 0)) {
+                    if (getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO) {
+                        this._craftBaseNotes[itemHrid] = 'capeZero';
+                        return { itemCost, selfReturnUnitValue, source, fallbackLevel };
+                    }
                     this._craftBaseNotes[itemHrid] = 'needsPrice';
                     return this.needsPriceBasis();
                 }
@@ -914,8 +926,8 @@ class PhiloCalculator {
     untradableCostBasis(itemHrid, itemDetails) {
         const details = itemDetails ?? dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
         if (!details || details.isTradable === true) return null;
-        // Only an unrefined cape is worth the base value; an unresolved refined one is missing its
-        // materials too, so it stays a needs-price row
+        // Only an unrefined cape takes the setting; an unresolved refined one is missing its stones'
+        // price, so it stays a needs-price row
         if (isUntradableCape(itemHrid) && !isRefinedCape(itemHrid)) {
             const baseValue = this.capeBaseValue();
             if (baseValue > 0) {
@@ -1016,6 +1028,8 @@ class PhiloCalculator {
          * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
          * @returns {number} Coins per action
          */
+        // Per book side: a drop with an ask and no bid leaves only the instant column a floor
+        const unpricedBySide = { bid: new Set(), ask: new Set() };
         const expectedValueFor = (sellType) => {
             let ev = 0;
             for (const drop of alchemy.transmuteDropTable) {
@@ -1029,9 +1043,23 @@ class PhiloCalculator {
                 } else {
                     const book = ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0);
                     const quote = book?.[sellType];
-                    if (!(quote > 0)) continue;
-                    // Only the patient column (a sale at the ask) can move
-                    dropValue = calculatePriceAfterTax(this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid));
+                    if (quote > 0) {
+                        // Only the patient column (a sale at the ask) can move
+                        dropValue = calculatePriceAfterTax(
+                            this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid)
+                        );
+                    } else {
+                        // No quote: a shop conversion prices it (taxed, since turning it into gold is a market sale),
+                        // as in the alchemy calculator. Anything else nothing can price is left out and flagged,
+                        // so the row reads as a floor, never as an unflagged 0
+                        const shopValue = getAlchemyOutputShopValue(drop.itemHrid);
+                        if (shopValue) {
+                            dropValue = calculatePriceAfterTax(shopValue.valuePerUnit);
+                        } else {
+                            unpricedBySide[sellType].add(drop.itemHrid);
+                            continue;
+                        }
+                    }
                 }
 
                 const avgCount = (drop.minCount + drop.maxCount) / 2;
@@ -1086,6 +1114,11 @@ class PhiloCalculator {
             name: this.getItemName(itemHrid),
             cost: costDerived(itemCost),
             needsPrice,
+            // Drops nothing could price on the side the shown figures use: left out of the revenue, so the row is a
+            // floor. The paired Instant | Patient cell marks each of its halves by its own side
+            unpricedOutputs: [...unpricedBySide[this.getPriceType('sell') === 'bid' ? 'bid' : 'ask']],
+            unpricedOutputsInstant: [...unpricedBySide.bid],
+            unpricedOutputsPatient: [...unpricedBySide.ask],
             costSource,
             costFallbackLevel: fallbackLevel,
             // Displayed as the game shows them: conditional on a successful transmute
@@ -1670,6 +1703,11 @@ class PhiloCalculator {
                             `Base item: untradable — valued at ${formatLargeNumber(Math.round(value))} ` +
                                 '(Untradable capes setting), included above.'
                         );
+                    } else if (note === 'capeZero') {
+                        parts.push(
+                            'Base item: untradable — the Untradable capes setting counts it as nothing, ' +
+                                'so this is the refinement stones alone.'
+                        );
                     } else if (note === 'untradable') {
                         parts.push('Base item: untradable — you bring your own, no market cost.');
                     } else if (note === 'unpriced') {
@@ -1793,9 +1831,9 @@ class PhiloCalculator {
      * @param {Object} row - Row data
      */
     renderPairedProfitCell(td, row) {
-        const part = (value) => {
+        const part = (value, unpriced) => {
             const span = document.createElement('span');
-            span.textContent = formatLargeNumber(Math.round(value));
+            span.textContent = formatLargeNumber(Math.round(value)) + (unpriced?.length ? ' †' : '');
             span.style.color = value >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
             return span;
         };
@@ -1804,10 +1842,17 @@ class PhiloCalculator {
         separator.textContent = ' | ';
         separator.style.color = '#888';
 
-        td.appendChild(part(row.profitPerPhiloInstant));
+        td.appendChild(part(row.profitPerPhiloInstant, row.unpricedOutputsInstant));
         td.appendChild(separator);
-        td.appendChild(part(row.profitPerPhiloPatient));
-        td.title = 'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.';
+        td.appendChild(part(row.profitPerPhiloPatient, row.unpricedOutputsPatient));
+        const unpriced = [...new Set([...(row.unpricedOutputsInstant ?? []), ...(row.unpricedOutputsPatient ?? [])])];
+        td.title =
+            'Instant: stones sold into standing bids. Patient: stones listed at ask and waited out.' +
+            (unpriced.length
+                ? `
+† A floor on that side: ${unpriced.map((hrid) => this.getItemName(hrid)).join(', ')} ` +
+                  'has no price there, so it is left out of the revenue.'
+                : '');
     }
 
     /**
@@ -1921,11 +1966,15 @@ class PhiloCalculator {
                 // Format based on column type
                 switch (col.key) {
                     case 'name':
-                        td.textContent = value;
+                        td.textContent = row.unpricedOutputs?.length ? `${value} †` : value;
                         // The rest of the modal is about this item; the name is
                         // the way to it. Same pattern as the ledger's rows.
                         td.style.cursor = 'pointer';
-                        td.title = 'Open this item in the marketplace.';
+                        td.title = row.unpricedOutputs?.length
+                            ? 'Open this item in the marketplace.\nA floor: ' +
+                              row.unpricedOutputs.map((hrid) => this.getItemName(hrid)).join(', ') +
+                              ' has no price, so it is left out of the revenue.'
+                            : 'Open this item in the marketplace.';
                         td.addEventListener('mouseenter', () => (td.style.textDecoration = 'underline'));
                         td.addEventListener('mouseleave', () => (td.style.textDecoration = ''));
                         td.addEventListener('click', () => {

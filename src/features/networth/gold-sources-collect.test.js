@@ -87,7 +87,11 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: true, calculateExpectedValue: (hrid) => game.ev[hrid] ?? null },
 }));
 
-vi.mock('../../utils/untradable-cape.js', () => ({ isUntradableCape: (hrid) => hrid in game.capes }));
+vi.mock('../../utils/untradable-cape.js', () => ({
+    isUntradableCape: (hrid) => hrid in game.capes,
+    // No cape recipe is priced in this suite, so no base is ever plainly free
+    baseCapeIsPlainZero: () => false,
+}));
 vi.mock('../enhancement/untradable-cape-value.js', () => ({
     getUntradableCapeValue: (hrid, level, options) => {
         game.capeCalls.push([hrid, level, options]);

@@ -55,6 +55,8 @@ vi.mock('../../utils/untradable-cape.js', () => ({
     isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN,
     getCapeBaseValueMode: () => state.mode,
     CAPE_BASE_VALUE_ZERO: 'zero',
+    baseCapeIsPlainZero: (output, upgrade) =>
+        state.mode === 'zero' && output === REFINED && (upgrade === PLAIN || upgrade === REFINED),
 }));
 vi.mock('../enhancement/untradable-cape-value.js', () => ({
     getUntradableCapeValue: (hrid, level, options) => {
@@ -85,38 +87,35 @@ beforeEach(() => {
     state.shardPrice = 1000;
 });
 
-describe('transmute history: base cape set to nothing (the default cape setting)', () => {
-    // The cape value is always a floor on this setting (the base counts as 0), whatever the shards cost
-    beforeEach(() => {
-        state.mode = 'zero';
-        state.values[`${REFINED}|0`] = { value: 10_000, partial: true };
-    });
+describe('transmute history: a refined cape is its refinement stones alone, under either cape setting', () => {
+    // The shared cape value now reads a refined +0 cape as its stones (10 shards at 1000 = 10,000 a cape),
+    // complete, whatever the setting says; an unpriced stone comes back null and partial
+    for (const mode of ['zero', 'mirror']) {
+        test(`the stones are the cost on the ${mode} setting, not flagged unpriced`, () => {
+            state.mode = mode;
+            state.values[`${REFINED}|0`] = { value: 10_000, partial: false };
+            const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
+            expect(detail.inputCost).toBe(10 * 10_000);
+            expect(detail.inputUnpriced).toBe(false);
+            expect(detail.inputBasis).toBe('untradable-cape value');
+            expect(transmuteHistoryViewer.buildDataNote(session(REFINED), detail)).not.toContain('unpriced');
+        });
 
-    test('a refined cape is costed at its refinement materials, never 0 and not flagged unpriced', () => {
-        const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
-        expect(detail.inputCost).toBe(10 * 10 * 1000);
-        expect(detail.inputUnpriced).toBe(false);
-        expect(detail.inputBasis).toContain('base cape counted as nothing');
-        expect(transmuteHistoryViewer.buildDataNote(session(REFINED), detail)).not.toContain('unpriced');
-    });
-
-    test('an unpriced refinement material still leaves it unpriced, not costed at 0', () => {
-        state.shardPrice = null;
-        const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
-        expect(detail.inputUnpriced).toBe(true);
-        expect(detail.inputBasis).toBeNull();
-    });
+        test(`an unpriced refinement stone still leaves it unpriced on the ${mode} setting, not costed at 0`, () => {
+            state.mode = mode;
+            state.shardPrice = null;
+            const detail = transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0));
+            expect(detail.inputUnpriced).toBe(true);
+            expect(detail.inputBasis).toBeNull();
+        });
+    }
 
     test('an unrefined cape costs a plain 0 by the setting, not an unpriced 0*', () => {
+        state.mode = 'zero';
         const detail = transmuteHistoryViewer.computeSessionProfit(session(PLAIN, 0));
         expect(detail.inputCost).toBe(0);
         expect(detail.inputUnpriced).toBe(false);
         expect(detail.inputBasis).toContain('cape setting');
-    });
-
-    test('mirror setting with a partial value is unaffected and stays unpriced', () => {
-        state.mode = 'mirror';
-        expect(transmuteHistoryViewer.computeSessionProfit(session(REFINED, 0)).inputUnpriced).toBe(true);
     });
 });
 

@@ -2003,12 +2003,13 @@ describe('untradable capes', () => {
         expect(await calculateItemValueDetailed({ itemHrid: '/items/key' })).toEqual({ value: 0, partial: false });
     });
 
-    test('a refined cape counts its base through the recipe: mirror setting adds it, "nothing" leaves a flagged floor', async () => {
+    test('a refined cape counts its base through the recipe: mirror adds it, nothing is complete, no mirror price is a floor', async () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
-                '/actions/upgrade/refine': {
-                    type: '/action_types/alchemy',
+                '/actions/tailoring/test_cape_refined': {
+                    type: '/action_types/tailoring',
+                    retainAllEnhancement: true,
                     outputItems: [{ itemHrid: REFINED, count: 1 }],
                     inputItems: [{ itemHrid: '/items/shard', count: 10 }],
                     upgradeItemHrid: CAPE,
@@ -2020,12 +2021,26 @@ describe('untradable capes', () => {
 
         expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
             value: 1000,
-            partial: true,
+            partial: false,
         });
         mocks.settings.untradableCapeBaseValue = 'mirror';
         expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
             value: 2000,
             partial: false,
+        });
+        // A mirror setting whose mirror has no price is a missing term, not stones alone
+        const mirrorPrice = mocks.itemPrices[MIRROR];
+        delete mocks.itemPrices[MIRROR];
+        expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+            value: 1000,
+            partial: true,
+        });
+        mocks.itemPrices[MIRROR] = mirrorPrice;
+        // An unpriced stone is still a flagged floor, never a silent 0
+        delete mocks.itemPrices['/items/shard'];
+        expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+            value: 1000,
+            partial: true,
         });
     });
 
@@ -2052,8 +2067,9 @@ describe('untradable capes', () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
-                '/actions/upgrade/refine': {
-                    type: '/action_types/alchemy',
+                '/actions/tailoring/test_cape_refined': {
+                    type: '/action_types/tailoring',
+                    retainAllEnhancement: true,
                     outputItems: [{ itemHrid: REFINED, count: 1 }],
                     inputItems: [{ itemHrid: '/items/shard', count: 10 }],
                     upgradeItemHrid: CAPE,
@@ -2074,7 +2090,7 @@ describe('untradable capes', () => {
         };
 
         for (const [mode, expected] of [
-            ['zero', { price: 1000, partial: true }],
+            ['zero', { price: 1000, partial: false }],
             ['mirror', { price: 2000, partial: false }],
         ]) {
             mocks.settings.untradableCapeBaseValue = mode;

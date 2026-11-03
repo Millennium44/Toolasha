@@ -32,7 +32,7 @@ import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
-import { getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
+import { baseCapeIsPlainZero, getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { taskShopTokenPrice } from './task-shop-value.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
@@ -406,11 +406,11 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         }
         if (upgradeCraft.volatile) volatile = true;
         // An untradable cape has no market and no recipe: the base of a refined one is what the cape
-        // setting assumes (nothing by default, which stays a partial bill below)
+        // setting assumes. Nothing is the player's own choice, a complete bill; a mirror with no price is not
         if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
             upgradePrice = getCapeBaseValue({ mode });
         }
-        if (!(upgradePrice > 0)) partial = true;
+        if (!(upgradePrice > 0) && !baseCapeIsPlainZero(itemHrid, action.upgradeItemHrid)) partial = true;
         totalPrice += upgradePrice;
     }
 
