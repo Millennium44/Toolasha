@@ -1374,3 +1374,142 @@ describe('untradable capes in a chest', () => {
         expect(mocks.settingChangeCallbacks.get('untradableCapeBaseValue')?.size).toBeGreaterThan(0);
     });
 });
+
+describe('Task Tokens and Task Crystals in a chest', () => {
+    const TASK_TOKEN = '/items/task_token';
+    const TASK_CRYSTAL = '/items/task_crystal';
+    const SHOP_CHEST = '/items/large_test_chest';
+    const GIFT = '/items/test_gift';
+    const BAD_ROW = '/items/test_unlisted';
+
+    /** The shop sells the chest for 30 tokens and a crystal for 10, as the game's task shop map does */
+    const shop = () => ({
+        a: { itemHrid: SHOP_CHEST, costs: [{ itemHrid: TASK_TOKEN, count: 30 }], outputCount: 1 },
+        b: { itemHrid: TASK_CRYSTAL, costs: [{ itemHrid: TASK_TOKEN, count: 10 }], outputCount: 1 },
+    });
+    // 3 gems at 1000, taxed at MARKET_TAX once as a sale: the chest line's value, and so 96 a token
+    const CHEST_EV = 3000 * (1 - MARKET_TAX);
+    const PER_TOKEN = CHEST_EV / 30;
+
+    beforeEach(() => {
+        mocks.itemDetails[SHOP_CHEST] = { name: 'Large Test Chest', isOpenable: true };
+        mocks.itemDetails[GIFT] = { name: 'Test Gift', isOpenable: true };
+        mocks.itemDetails[TASK_TOKEN] = { name: 'Task Token', isTradable: false };
+        mocks.itemDetails[TASK_CRYSTAL] = { name: 'Task Crystal', isTradable: false };
+        mocks.itemDetails[BAD_ROW] = { name: 'Unlisted', isTradable: true };
+        mocks.initData = {
+            itemDetailMap: { [SHOP_CHEST]: { isOpenable: true } },
+            taskShopItemDetailMap: shop(),
+            openableLootDropMap: {
+                [SHOP_CHEST]: [{ itemHrid: GEM_HRID, dropRate: 1, minCount: 3, maxCount: 3 }],
+                // Five tokens and a crystal in every opening, and a gem
+                [GIFT]: [
+                    { itemHrid: TASK_TOKEN, dropRate: 1, minCount: 4, maxCount: 6 },
+                    { itemHrid: TASK_CRYSTAL, dropRate: 1, minCount: 1, maxCount: 1 },
+                    { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+                ],
+            },
+        };
+    });
+
+    test('a token is worth the best Task Shop line per token, net, before the calculator is marked ready', () => {
+        expect(expectedValueCalculator.isInitialized).toBe(false);
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN)).toEqual({
+            value: PER_TOKEN,
+            source: 'taskShop',
+            needsTax: false,
+            missingCount: 0,
+        });
+    });
+
+    test('a crystal is worth the tokens it costs', () => {
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).toMatchObject({
+            value: 10 * PER_TOKEN,
+            source: 'taskShop',
+            needsTax: false,
+            missingCount: 0,
+        });
+    });
+
+    test('a chest dropping them is fully priced: nothing missing, tokens and crystal untaxed, the gem taxed once', () => {
+        const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
+        expect(gift.missingCount).toBe(0);
+        expect(gift.isPartial).toBe(false);
+        expect(gift.expectedValue).toBeCloseTo(5 * PER_TOKEN + 10 * PER_TOKEN + 1000 * (1 - MARKET_TAX), 6);
+    });
+
+    test('the breakdown rows price them too, and the worker price map carries them as net values', () => {
+        const rows = expectedValueCalculator.getDropBreakdown(GIFT);
+        expect(rows.find((r) => r.itemHrid === TASK_TOKEN)).toMatchObject({ hasPriceData: true, priceEach: PER_TOKEN });
+        expect(rows.find((r) => r.itemHrid === TASK_CRYSTAL)).toMatchObject({ hasPriceData: true });
+        const map = expectedValueCalculator.buildPriceMap([GIFT], mocks.initData);
+        expect(map[TASK_TOKEN]).toMatchObject({ price: PER_TOKEN, canBeSold: false, missingCount: 0 });
+        expect(map[TASK_CRYSTAL]).toMatchObject({ price: 10 * PER_TOKEN, canBeSold: false });
+        expect(expectedValueCalculator.countUnpricedDrops(mocks.initData.openableLootDropMap[GIFT], map)).toBe(0);
+    });
+
+    test('with no Task Shop data they stay unpriced, so the chest is a floor rather than a firm figure', () => {
+        delete mocks.initData.taskShopItemDetailMap;
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN)).toBeNull();
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).toBeNull();
+        const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
+        expect(gift.missingCount).toBe(2);
+        expect(gift.isPartial).toBe(true);
+    });
+
+    test('a shop line whose own contents are partly unpriced makes the token, and the chest, a floor', () => {
+        mocks.initData.openableLootDropMap[SHOP_CHEST].push({
+            itemHrid: BAD_ROW,
+            dropRate: 1,
+            minCount: 1,
+            maxCount: 1,
+        });
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN).missingCount).toBe(1);
+        // The crystal rests on the same token value
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL).missingCount).toBe(1);
+        const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
+        expect(gift.isPartial).toBe(true);
+        expect(gift.missingCount).toBe(2);
+    });
+
+    test('a market quote for the item still wins over the shop valuation', () => {
+        mocks.prices[TASK_CRYSTAL] = 7000;
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).toMatchObject({
+            value: 7000,
+            source: 'market',
+        });
+    });
+
+    test('a shop chest that itself drops a token does not send the valuation round in a circle', () => {
+        mocks.initData.openableLootDropMap[SHOP_CHEST].push({
+            itemHrid: TASK_TOKEN,
+            dropRate: 1,
+            minCount: 1,
+            maxCount: 1,
+        });
+        const token = expectedValueCalculator.resolveSellSideValue(TASK_TOKEN);
+        // The inner ask is unpriced, so the line is valued on its gems alone and is a floor
+        expect(token).toMatchObject({ value: PER_TOKEN, missingCount: 1 });
+        // And the guard is released afterwards: the next ask is answered as usual
+        expect(expectedValueCalculator._pricingTaskShop).toBe(false);
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).not.toBeNull();
+    });
+
+    test('an Iron Cow character pays no tax on the shop line, and the token is not taxed on top of that', () => {
+        mocks.ironCow = true;
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN)).toMatchObject({
+            value: 3000 / 30,
+            needsTax: false,
+        });
+    });
+
+    test('a shop line that bundles several crystals splits its token price across them', () => {
+        mocks.initData.taskShopItemDetailMap.b.outputCount = 2;
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL).value).toBeCloseTo(5 * PER_TOKEN, 6);
+    });
+
+    test('nothing else is treated as a Task Shop item', () => {
+        expect(expectedValueCalculator.resolveTaskShopDrop(GEM_HRID)).toBeNull();
+        expect(expectedValueCalculator.resolveTaskShopDrop('/items/task_badge')).toBeNull();
+    });
+});

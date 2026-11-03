@@ -8,6 +8,12 @@ import { pricesMoved } from '../../utils/price-change.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import {
+    findBestTaskShopValue,
+    taskShopTokenPrice,
+    TASK_TOKEN_HRID,
+    TASK_CRYSTAL_HRID,
+} from '../../utils/task-shop-value.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { getCustomPrice } from '../settings/custom-price-overrides.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -52,6 +58,19 @@ class ExpectedValueCalculator {
             '/items/enchanted_token',
             '/items/pirate_token',
         ];
+
+        // Set while a Task Shop valuation is running, so a shop chest that itself drops a Task Token or Crystal
+        // cannot send the valuation round in a circle: the inner ask is answered "unpriced"
+        this._pricingTaskShop = false;
+        // What the Task Shop valuation prices an openable line with. `calculateExpectedValue` refuses to answer until
+        // this calculator is marked ready, which is after the first pass that needs the valuation; the container walk
+        // it wraps does not, and returns the same total and unpriced count.
+        this._taskShopPricer = {
+            calculateExpectedValue: (itemHrid) => {
+                const result = this.calculateContainerValue(itemHrid);
+                return result.expectedValue === null ? null : result;
+            },
+        };
 
         // Flag to track if initialized
         this.isInitialized = false;
@@ -640,6 +659,10 @@ class ExpectedValueCalculator {
         const priceInfo = getItemPriceInfo(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
         const dropPrice = priceInfo.price;
         if (!(dropPrice > 0)) {
+            // A Task Token or Task Crystal is never listed: it is worth what the Task Shop would have spent it on
+            const taskShop = this.resolveTaskShopDrop(itemHrid);
+            if (taskShop) return taskShop;
+
             // An untradable cape has no market at all: last resort is the cape setting's value for an
             // unrefined one. It is never sold, so it is never taxed, and it is an assumption by
             // construction (estimated). A refined cape's value is a refinement bill the chest worker
@@ -659,6 +682,44 @@ class ExpectedValueCalculator {
             estimated: Boolean(priceInfo.estimated),
             needsTax: Number.isFinite(context?.saleTaxRate) || !isIronCowCharacter(),
         };
+    }
+
+    /**
+     * What a Task Token or Task Crystal dropped from a chest is worth, through the Task Shop: a token at the best
+     * coins-per-token line the shop offers, a crystal at the tokens it costs. Both are the shop's own valuation
+     * (already net of tax for a market line, an expected value for a chest line), so neither is taxed again. Priced
+     * on demand through this calculator's container walk, so a first pass that has not marked it ready yet still values them, and a
+     * figure that rests on a partly unpriced shop line is flagged partial, as a nested chest's is.
+     *
+     * Known limit: the shop figure is net at the live character's tax whatever the traversal asks for, so a gross
+     * (personal-use) or other-player-tax pass takes it as it stands.
+     * @param {string} itemHrid - Item HRID
+     * @returns {{value: number, source: string, needsTax: boolean, missingCount: number}|null} Null for any other
+     *   item, when the shop cannot price it, or when this is a nested ask from inside a shop valuation
+     */
+    resolveTaskShopDrop(itemHrid) {
+        if (itemHrid !== TASK_TOKEN_HRID && itemHrid !== TASK_CRYSTAL_HRID) return null;
+        if (this._pricingTaskShop) return null;
+        this._pricingTaskShop = true;
+        try {
+            let value = null;
+            let partial = 0;
+            if (itemHrid === TASK_TOKEN_HRID) {
+                const best = findBestTaskShopValue(this._taskShopPricer);
+                value = best?.perToken ?? null;
+                partial = best?.partialDrops || 0;
+            } else {
+                const priced = taskShopTokenPrice(itemHrid, this._taskShopPricer);
+                value = priced?.price ?? null;
+                partial = priced?.partial ? 1 : 0;
+            }
+            return value > 0 ? { value, source: 'taskShop', needsTax: false, missingCount: partial } : null;
+        } catch (error) {
+            console.error('[ExpectedValueCalculator] Task Shop valuation failed for', itemHrid, error);
+            return null;
+        } finally {
+            this._pricingTaskShop = false;
+        }
     }
 
     /**
