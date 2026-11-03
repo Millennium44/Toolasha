@@ -2,7 +2,7 @@
  * An unqueued action set to Repeat ∞ is shown for what it can actually run.
  *
  * The panel used to print `Total time: ∞` / `Total profit: ∞` while the queue row for the very
- * same action, one click later, printed `[0h 06m 40s · mat: 40]`. Both were describing one run,
+ * same action, one click later, printed `[6m 40s · mat: 40]`. Both were describing one run,
  * so the fix is not a second calculation that happens to agree — it is the same calculation.
  * The load-bearing test here is `the panel figure is the queue figure`: it asserts the two
  * strings equal each other from one input rather than pinning two hardcoded literals that could
@@ -313,7 +313,7 @@ describe('the estimate itself', () => {
         expect(timing.limitLabel).toBe('mat');
         expect(timing.totalTime).toBe(400);
         expect(isBoundedEstimate(timing)).toBe(true);
-        expect(formatUnlimitedTimeText(timing)).toBe('0h 06m 40s · mat: 40');
+        expect(formatUnlimitedTimeText(timing)).toBe('6m 40s · mat: 40');
     });
 
     test('the synthetic action object is the unqueued, whole-bag shape', () => {
@@ -376,7 +376,7 @@ describe('the panel figure is the queue figure', () => {
         };
 
         expect(formatMaterialNote(estimated)).toBe('mat: ~40');
-        expect(formatUnlimitedTimeText(estimated)).toBe('0h 06m 40s · mat: ~40');
+        expect(formatUnlimitedTimeText(estimated)).toBe('6m 40s · mat: ~40');
     });
 });
 
@@ -410,14 +410,14 @@ describe('the alchemy panel draws the bounded time', () => {
     test('Repeat ∞ shows the materials-bounded time instead of ∞', () => {
         const section = alchemyDisplay.createActionSpeedTimeSection(alchemyProfitData(), repeatField('∞'), spec);
 
-        expect(sectionText(section)).toContain('Total time: 0h 06m 40s · mat: 40');
+        expect(sectionText(section)).toContain('Total time: 6m 40s · mat: 40');
         expect(sectionText(section)).not.toContain('Total time: ∞');
     });
 
     test('the collapsed summary shows the same bounded time', () => {
         const section = alchemyDisplay.createActionSpeedTimeSection(alchemyProfitData(), repeatField('∞'), spec);
 
-        expect(sectionText(section)).toContain('/hr | Total time: 0h 06m 40s · mat: 40');
+        expect(sectionText(section)).toContain('/hr | Total time: 6m 40s · mat: 40');
     });
 
     test('a truly unbounded action still reads ∞', () => {
@@ -439,7 +439,7 @@ describe('the alchemy panel draws the bounded time', () => {
         const section = alchemyDisplay.createActionSpeedTimeSection(alchemyProfitData(), repeatField('100'), spec);
 
         // 100 × 10s, with no material note: a counted request is what the player asked for
-        expect(sectionText(section)).toContain('Total time: 0h 16m 40s');
+        expect(sectionText(section)).toContain('Total time: 16m 40s');
         expect(sectionText(section)).not.toContain('mat:');
     });
 
@@ -453,15 +453,15 @@ describe('the alchemy panel draws the bounded time', () => {
         const field = repeatField('∞');
         const section = alchemyDisplay.createActionSpeedTimeSection(alchemyProfitData(), field, spec);
 
-        expect(sectionText(section)).toContain('Total time: 0h 06m 40s · mat: 40');
+        expect(sectionText(section)).toContain('Total time: 6m 40s · mat: 40');
 
         field.value = '100';
         field.dispatchEvent(new Event('input'));
-        expect(sectionText(section)).toContain('Total time: 0h 16m 40s');
+        expect(sectionText(section)).toContain('Total time: 16m 40s');
 
         field.value = '∞';
         field.dispatchEvent(new Event('input'));
-        expect(sectionText(section)).toContain('Total time: 0h 06m 40s · mat: 40');
+        expect(sectionText(section)).toContain('Total time: 6m 40s · mat: 40');
     });
 });
 
@@ -743,7 +743,7 @@ describe('redraw cost', () => {
         const profitText = buildUnlimitedProfitText(CRAFT_PLANK, totalsForCount); // as the profit line would
 
         expect(walk).toHaveBeenCalledTimes(1);
-        expect(formatUnlimitedTimeText(timing)).toBe('0h 06m 40s · mat: 40');
+        expect(formatUnlimitedTimeText(timing)).toBe('6m 40s · mat: 40');
         expect(profitText).toBe('40.00K · mat: 40');
 
         walk.mockRestore();

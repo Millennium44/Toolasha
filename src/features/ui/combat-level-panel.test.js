@@ -862,7 +862,7 @@ describe('the session starts when combat does', () => {
         vi.setSystemTime(new Date('2026-08-02T12:40:00Z'));
         combatLevelPanel.show();
 
-        expect(sessionText()).toContain('0h 30m 00s');
+        expect(sessionText()).toContain('30m 00s');
         expect(sessionText()).toContain('250,000');
         expect(sessionText()).not.toContain('measuring…');
     });
@@ -875,7 +875,7 @@ describe('the session starts when combat does', () => {
         // The session the character already had, ten minutes old, rather than a
         // new one started by a battle nobody asked to be watched
         combatLevelPanel.show();
-        expect(sessionText()).toContain('0h 10m 00s');
+        expect(sessionText()).toContain('10m 00s');
 
         // And the switch is read each time, not once at start-up
         vi.restoreAllMocks();
@@ -893,7 +893,7 @@ describe('the session starts when combat does', () => {
         grant('melee', 100_000);
 
         combatLevelPanel.show();
-        expect(sessionText()).toContain('0h 20m 00s');
+        expect(sessionText()).toContain('20m 00s');
         expect(sessionText()).toContain('200,000');
     });
 
@@ -922,7 +922,7 @@ describe('the session starts when combat does', () => {
         fire('new_battle');
 
         combatLevelPanel.show();
-        expect(sessionText()).toContain('0h 25m 00s');
+        expect(sessionText()).toContain('25m 00s');
     });
 
     test('Reset starts the clock again, and the run does not restart it', () => {
@@ -944,7 +944,7 @@ describe('the session starts when combat does', () => {
         grant('melee', 50_000);
         combatLevelPanel._render();
 
-        expect(sessionText()).toContain('0h 01m 00s');
+        expect(sessionText()).toContain('1m 00s');
         expect(sessionText()).toContain('50,000');
     });
 });

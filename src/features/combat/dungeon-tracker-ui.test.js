@@ -821,7 +821,7 @@ describe('the key runway beside the Keys figure', () => {
     test('keys times the average clear, for this dungeon, tier and exact team', async () => {
         world.runs = [clear(), clear(), clear()];
         await draw();
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~40m 00s)');
         expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
     });
 
@@ -830,7 +830,7 @@ describe('the key runway beside the Keys figure', () => {
         world.keysPerClear = 5;
         world.runs = [clear(), clear(), clear()];
         await draw();
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 08m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~8m 00s)');
     });
 
     test('an unknown reward table shows no runway rather than assuming one key a clear', async () => {
@@ -855,7 +855,7 @@ describe('the key runway beside the Keys figure', () => {
         expect(text('#mwi-dt-header-keys-runway')).toBe('');
         world.runs.push(clear());
         await draw();
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~40m 00s)');
     });
 
     test('a solo history of client-timed runs still gets a runway', async () => {
@@ -866,7 +866,7 @@ describe('the key runway beside the Keys figure', () => {
             clear({ validated: false, result: 'fail', duration: 99 * MIN }),
         ];
         await draw();
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~40m 00s)');
     });
 
     test('server-timed clears win over client-timed ones when both exist', async () => {
@@ -910,7 +910,7 @@ describe('the key runway beside the Keys figure', () => {
         expect(text('#mwi-dt-header-keys-runway')).toBe('(~2h 00m 00s)');
         world.baselines = { 'Friend,Marketcow::Pirate Cove': 3 * 86_400_000 };
         await draw();
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~40m 00s)');
         expect(titleOf('#mwi-dt-header-keys-runway')).toContain('last 3 clears');
     });
 
@@ -921,7 +921,7 @@ describe('the key runway beside the Keys figure', () => {
         world.currentRun = run({ keyCountsMap: team });
         world.settings.dungeonTrackerAverageWindow = 3;
         await ui.update(world.currentRun);
-        expect(text('#mwi-dt-header-keys-runway')).toBe('(~0h 40m 00s)');
+        expect(text('#mwi-dt-header-keys-runway')).toBe('(~40m 00s)');
 
         // Window widened: the setting listener rebuilds the cache without a completion
         world.settings.dungeonTrackerAverageWindow = 0;

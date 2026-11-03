@@ -4623,7 +4623,7 @@ describe('the all-zones table', () => {
 
             expect(cell('Pirate Cove', 'clearsPerDay').textContent).toBe('144.0');
             expect(cell('Pirate Cove', 'failsPerDay').textContent).toBe('48.0');
-            expect(cell('Pirate Cove', 'avgClearTime').textContent).toBe('0h 10m 00s');
+            expect(cell('Pirate Cove', 'avgClearTime').textContent).toBe('10m 00s');
         });
 
         test('a run with no dungeon rows at all hides the three dungeon-only columns', async () => {
@@ -6502,7 +6502,7 @@ describe('the summary at the top of the Results tab', () => {
             oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, maxWaveReached: 9 })
         ).textContent;
 
-        expect(shown).toContain('Avg clear0h 10m 00s');
+        expect(shown).toContain('Avg clear10m 00s');
         expect(shown).toContain('Success');
         expect(shown).toContain('75.0%');
         expect(shown).not.toContain('Kills/hr');

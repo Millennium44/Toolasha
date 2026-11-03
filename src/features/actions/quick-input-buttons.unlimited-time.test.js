@@ -221,7 +221,7 @@ describe('the general action panel draws the bounded time', () => {
 
         // 80 logs at 2 per plank pays for 40 crafts, 10s each — the same bound the queue row
         // and the Profitability line ("mat: 40") would show for this action.
-        expect(totalTimeLine(panel).textContent).toBe('Total time: 0h 06m 40s · mat: 40');
+        expect(totalTimeLine(panel).textContent).toBe('Total time: 6m 40s · mat: 40');
     });
 
     test('a truly unbounded action still reads ∞', () => {
@@ -257,7 +257,7 @@ describe('the general action panel draws the bounded time', () => {
 
         quickInputButtons.injectButtons(panel, context(panel, nameEl, CRAFT_PLANK, details));
 
-        expect(totalTimeLine(panel).textContent).toBe('Total time: 0h 16m 40s');
+        expect(totalTimeLine(panel).textContent).toBe('Total time: 16m 40s');
         expect(totalTimeLine(panel).textContent).not.toContain('mat:');
     });
 });
