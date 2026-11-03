@@ -200,12 +200,14 @@ function mergeResult(held, other) {
         ? stated.reduce((best, result) => (ahead(rank(result), rank(best)) ? result : best))
         : null;
     const stamps = [held.archivedAt, other.archivedAt].filter(Number.isFinite);
+    // The payload's figure only stands while the card has not outrun it, the rule `payloadPoints` applies
+    const outrun = server && Number.isFinite(card.cardTier) && card.cardTier > server.serverTier;
     return {
         ...card,
         archivedAt: stamps.length ? Math.min(...stamps) : null,
         serverTier: server ? server.serverTier : null,
         serverTierAt: server ? (server.serverTierAt ?? null) : null,
-        serverPoints: server && Number.isFinite(server.serverPoints) ? server.serverPoints : null,
+        serverPoints: server && !outrun && Number.isFinite(server.serverPoints) ? server.serverPoints : null,
     };
 }
 
