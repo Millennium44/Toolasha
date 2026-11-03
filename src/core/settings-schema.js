@@ -949,7 +949,7 @@ export const settingsGroups = {
                 id: 'itemTooltip_multiActionProfit',
                 label: 'Show profit comparison for all item actions',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Displays best profit/hr highlighted, with other alternative actions (craft, coinify, decompose, transmute) summarized below',
             },
             itemTooltip_selfUseAlchemy: {

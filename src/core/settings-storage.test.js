@@ -1301,6 +1301,7 @@ describe('flipped checkbox defaults reach new players only', () => {
         'combatProfileButton',
         'guildMembersShowGameMode',
         'simulateScrollEffects',
+        'itemTooltip_multiActionProfit',
     ];
     const box = (id, isTrue) => ({ id, type: 'checkbox', isTrue });
 

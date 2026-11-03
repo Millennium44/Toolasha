@@ -134,6 +134,7 @@ const PINNED_PREVIOUS_DEFAULTS = [
     // new player's figures are the real ones until they press a chip; existing players keep it off and are
     // offered it once in the update popup (whats-new-core.js REOFFERED_SETTINGS)
     { batch: 'p3', id: 'simulateScrollEffects', previous: false },
+    { batch: 'p3', id: 'itemTooltip_multiActionProfit', previous: false },
 ];
 
 /** The batch an entry belongs to when it does not name one */
