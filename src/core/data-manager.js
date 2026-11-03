@@ -1431,7 +1431,6 @@ class DataManager {
             this.emit('actions_updated', data);
         });
 
-        // Handle action_completed (action progress)
         // The login copy of the loadouts is what later readers trust, so it follows the game's updates
         this.webSocketHook.on('loadouts_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
@@ -1440,6 +1439,7 @@ class DataManager {
             }
         });
 
+        // Handle action_completed (action progress)
         this.webSocketHook.on('action_completed', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
 
