@@ -1236,14 +1236,21 @@ class TaskProfitDisplay {
                     ...(zoneInfo?.fightInfo?.bossSpawns || []),
                 ].map((m) => m.combatMonsterHrid)
             );
-            if (estimate.mergedBoss) {
+            if (Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
+                // The zone figure above already sums every open task, duplicates included, and covers the
+                // whole zone; a boss total of kills x10 would replace it with a far smaller count
+            } else if (estimate.mergedBoss) {
                 // Boss waves are arithmetic: the merge's own rule, ten fights a boss
                 fights = mergedKills * 10;
-            } else if (Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
-                // The zone figure above already sums every open task, duplicates included
             } else if (zoneMonsters.size === 1) {
                 fights = mergedKills;
-            } else if (Number.isFinite(estimate.killsPerFight) && estimate.killsPerFight > 0) {
+            } else if (
+                estimate.mode === 'zone' &&
+                Number.isFinite(estimate.killsPerFight) &&
+                estimate.killsPerFight > 0
+            ) {
+                // Only a Zone estimate simulated the whole spawn table, so only its kill rate is the zone's;
+                // a Solo estimate's rate comes from a table narrowed to the target and would over-convert
                 fights = padFightCount({
                     unpaddedFights: Math.ceil(mergedKills / estimate.killsPerFight),
                     thresholds: [
@@ -1258,7 +1265,7 @@ class TaskProfitDisplay {
                     floorPercent: bufferPercent,
                 }).fights;
             } else {
-                // No kill rate to convert with: filling the raw kills would under-fill, so fill nothing
+                // No zone-wide kill rate to convert with: filling the raw kills would under-fill, so fill nothing
                 fillsCount = false;
             }
         }

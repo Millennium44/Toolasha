@@ -402,6 +402,110 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
         expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(SMASHY_OWN, 0, { count: 240 }, 'char-a');
     });
 
+    function landOn(zoneName) {
+        const panel = document.createElement('div');
+        panel.className = 'SkillActionDetail_skillActionDetail__1a';
+        const name = document.createElement('div');
+        name.className = 'SkillActionDetail_name__1a';
+        name.textContent = zoneName;
+        panel.appendChild(name);
+        const box = document.createElement('div');
+        box.className = 'maxActionCountInput__1a';
+        const input = document.createElement('input');
+        box.appendChild(input);
+        panel.appendChild(box);
+        document.body.appendChild(panel);
+        return input;
+    }
+
+    test('a Solo estimate in a mixed zone has no zone-wide kill rate: the zone opens, no count is filled', async () => {
+        const input = landOn('Gobo Planet');
+
+        await taskProfitDisplay._applyGoEstimate(
+            {
+                zoneHrid: PLANET,
+                mode: 'solo',
+                predictedFights: 20,
+                killsNeeded: 60,
+                killsPerFight: 3, // the narrowed simulation: far above what the zone averages
+                monsterHrid: '/monsters/smashy',
+                mergedKills: 240,
+            },
+            'char-a'
+        );
+
+        expect(input.value).toBe('');
+        expect(openCombatZoneAtTierSequence).not.toHaveBeenCalled();
+    });
+
+    test('a Solo estimate whose zone differs from the landing still gets no raw or inflated count', async () => {
+        landOn('Smashy Own');
+        const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await taskProfitDisplay._applyGoEstimate(
+            {
+                zoneHrid: PLANET,
+                mode: 'zone',
+                predictedFights: 20,
+                killsNeeded: 60,
+                killsPerFight: null,
+                monsterHrid: '/monsters/smashy',
+                mergedKills: 240,
+            },
+            'char-a'
+        );
+
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 0, {}, 'char-a');
+        spy.mockRestore();
+    });
+
+    test('duplicate boss tasks keep the zone-wide figure the card quotes', async () => {
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(true);
+        landOn('Smashy Own');
+
+        await taskProfitDisplay._applyGoEstimate(
+            {
+                zoneHrid: PLANET,
+                mode: 'zone',
+                predictedFights: 400,
+                killsNeeded: 2,
+                killsPerFight: 0.01,
+                zoneFights: 500,
+                zoneMeanFights: 480,
+                zoneThresholds: [],
+                monsterHrid: '/monsters/smashy',
+                mergedKills: 2,
+                mergedBoss: true,
+            },
+            'char-a'
+        );
+
+        const count = openCombatZoneAtTierSequence.mock.calls[0][2].count;
+        expect(count).toBeGreaterThanOrEqual(500);
+        expect(count).not.toBe(20);
+    });
+
+    test('duplicate boss tasks in a boss-only zone keep the ten-fights-a-boss rule', async () => {
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(true);
+        landOn('Gobo Planet');
+
+        await taskProfitDisplay._applyGoEstimate(
+            {
+                zoneHrid: SMASHY_OWN,
+                mode: 'zone',
+                predictedFights: 20,
+                killsNeeded: 2,
+                killsPerFight: 0.1,
+                monsterHrid: '/monsters/smashy',
+                mergedKills: 2,
+                mergedBoss: true,
+            },
+            'char-a'
+        );
+
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(SMASHY_OWN, 0, { count: 20 }, 'char-a');
+    });
+
     test('the merge handler stands down when an estimate resolves, so its raw write cannot land', async () => {
         const cards = await board();
         fourSmashy();
