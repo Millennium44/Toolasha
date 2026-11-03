@@ -85,35 +85,6 @@ export function taskCardOf(node) {
 }
 
 /**
- * Labels of buttons that share the claim button's styling in some views but are not a claim. Only an
- * English guard: where it does not match, the other cues (the variant class, the card not being mid-flow)
- * are what decide.
- */
-const NOT_A_CLAIM_LABEL = /^(back|reroll)$/i;
-
-/**
- * The enabled Claim Reward buttons under a node.
- *
- * Found by the game's claim-button class on a card that is not mid-flow, never by the word "Claim Reward":
- * the label is translated with the rest of the game, so matching it left a player on another language with
- * nothing to press. The reroll chooser's paid options and the discard confirmation are drawn in the same
- * slot and can carry the same styling, which is why a card asking the player a question never offers one.
- *
- * @param {ParentNode|null|undefined} root - The task list, a card, or any node holding cards
- * @returns {HTMLElement[]} The claim buttons, in document order
- */
-export function claimButtonsIn(root) {
-    if (!root || typeof root.querySelectorAll !== 'function') return [];
-    return [...root.querySelectorAll(GAME.TASK_CLAIM_BUTTON)].filter((button) => {
-        if (button.disabled) return false;
-        const label = (button.textContent || '').trim();
-        if (!label || NOT_A_CLAIM_LABEL.test(label)) return false;
-        const card = taskCardOf(button);
-        return !(card && isCardInConfirmState(card));
-    });
-}
-
-/**
  * Is the node's own card mid-flow?
  *
  * The convenience form for the injectors, which are handed a node somewhere

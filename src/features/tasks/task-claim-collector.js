@@ -10,7 +10,7 @@ import { GAME } from '../../utils/selectors.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { clickThroughReact } from '../../utils/react-click.js';
-import { claimButtonsIn } from './task-card-state.js';
+import { claimButtonsIn } from './task-claim-buttons.js';
 
 const PROXY_BTN_ID = 'mwi-claim-proxy-btn';
 
