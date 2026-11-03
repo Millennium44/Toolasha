@@ -711,40 +711,91 @@ describe('a nested container nothing in it can be priced', () => {
     });
 });
 
-describe('a self-dropping openable in the worker price map', () => {
+describe('a self-dropping openable', () => {
+    // The live Purple's Gift drops itself at 2%: each copy is another opening, so the rest of its table is worth
+    // 1 / (1 - 0.02) of itself, not a partial figure
     const PURPLES_GIFT = '/items/purples_gift';
+    const SELF_RATE = 0.02;
 
-    test('the worker cache keeps the unpriced self-drop partial like the fallback', async () => {
+    beforeEach(() => {
         mocks.itemDetails[PURPLES_GIFT] = { name: "Purple's Gift", isOpenable: true, isTradable: true };
         mocks.itemDetails['/items/coin'] = { name: 'Gold', isTradable: false };
-        // These are rows from the live Purple's Gift drop table: its two coin
-        // entries and the 2% chance to drop the gift itself.
         mocks.initData.openableLootDropMap = {
             [PURPLES_GIFT]: [
                 { itemHrid: '/items/coin', dropRate: 1, minCount: 30000, maxCount: 60000 },
                 { itemHrid: '/items/coin', dropRate: 0.1, minCount: 150000, maxCount: 300000 },
-                { itemHrid: PURPLES_GIFT, dropRate: 0.02, minCount: 1, maxCount: 1 },
+                { itemHrid: PURPLES_GIFT, dropRate: SELF_RATE, minCount: 1, maxCount: 1 },
             ],
         };
         delete mocks.prices[PURPLES_GIFT];
+    });
 
-        const mainPath = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData).missingCount;
-        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
-        calculateEVBatch.mockReset();
-        calculateEVBatch.mockImplementation(async (containers) =>
-            containers.map(({ containerHrid }) => ({ containerHrid, ev: 100_000 }))
+    const rest = 45000 + 0.1 * 225000;
+
+    test('the self-drop is a geometric return, and the container is not partial for it', () => {
+        const gift = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData);
+        expect(gift.expectedValue).toBeCloseTo(rest / (1 - SELF_RATE), 6);
+        expect(gift.missingCount).toBe(0);
+        expect(gift.isPartial).toBe(false);
+        // Nothing was cut off, so it is cached for the next reader
+        expect(expectedValueCalculator.containerCache.get(PURPLES_GIFT)).toBeCloseTo(rest / (1 - SELF_RATE), 6);
+    });
+
+    test('a stack of copies per opening still converges, and one copy or more per opening stays unpriced', () => {
+        mocks.initData.openableLootDropMap[PURPLES_GIFT][2] = {
+            itemHrid: PURPLES_GIFT,
+            dropRate: 0.25,
+            minCount: 1,
+            maxCount: 3,
+        };
+        expect(expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData).expectedValue).toBeCloseTo(
+            rest / (1 - 0.5),
+            6
         );
-        await expectedValueCalculator.calculateNestedContainers(expectedValueCalculator.generation);
+        mocks.initData.openableLootDropMap[PURPLES_GIFT][2] = {
+            itemHrid: PURPLES_GIFT,
+            dropRate: 1,
+            minCount: 1,
+            maxCount: 1,
+        };
+        const never = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData);
+        expect(never.isPartial).toBe(true);
+    });
 
-        expect(mainPath).toBe(1);
-        expect(expectedValueCalculator.containerMissingCounts.get(PURPLES_GIFT)).toBe(mainPath);
-
+    test('the breakdown shows the self row at the full opening value and its total agrees', () => {
         expectedValueCalculator.isInitialized = true;
         try {
-            expect(expectedValueCalculator.calculateExpectedValue(PURPLES_GIFT).isPartial).toBe(true);
+            const ev = expectedValueCalculator.calculateExpectedValue(PURPLES_GIFT);
+            expect(ev.isPartial).toBe(false);
+            expect(ev.expectedValue).toBeCloseTo(rest / (1 - SELF_RATE), 6);
         } finally {
             expectedValueCalculator.isInitialized = false;
         }
+    });
+
+    test('the worker cache agrees with the main path and is not partial', async () => {
+        const mainPath = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData);
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        calculateEVBatch.mockReset();
+        calculateEVBatch.mockImplementation(async (containers) =>
+            containers.map(({ containerHrid }) => ({ containerHrid, ev: mainPath.expectedValue }))
+        );
+        await expectedValueCalculator.calculateNestedContainers(expectedValueCalculator.generation);
+
+        expect(expectedValueCalculator.containerMissingCounts.get(PURPLES_GIFT)).toBe(0);
+        // The price map hands the worker the full opening value for the self row
+        const map = expectedValueCalculator.buildPriceMap([PURPLES_GIFT], mocks.initData);
+        expect(map[PURPLES_GIFT].price).toBeCloseTo(rest / (1 - SELF_RATE), 6);
+    });
+
+    test('a gross pass and an explicit-rate pass scale the same way', () => {
+        const gross = expectedValueCalculator.calculateContainerValue(PURPLES_GIFT, mocks.initData, {
+            path: new Set(),
+            truncated: false,
+            gross: true,
+        });
+        expect(gross.expectedValue).toBeCloseTo(rest / (1 - SELF_RATE), 6);
+        expect(expectedValueCalculator.containerCache.has(PURPLES_GIFT)).toBe(false);
     });
 });
 
@@ -752,17 +803,23 @@ describe('truncation is per branch, not per traversal', () => {
     const PARENT = '/items/parent_chest';
     const CYCLIC = '/items/cyclic_chest';
     const SIBLING = '/items/sibling_crate';
+    const PARTNER = '/items/cyclic_partner';
 
     beforeEach(() => {
-        for (const hrid of [PARENT, CYCLIC, SIBLING]) {
+        for (const hrid of [PARENT, CYCLIC, SIBLING, PARTNER]) {
             mocks.itemDetails[hrid] = { name: hrid, isOpenable: true };
         }
         mocks.initData.openableLootDropMap[PARENT] = [
             { itemHrid: CYCLIC, dropRate: 1, minCount: 1, maxCount: 1 },
             { itemHrid: SIBLING, dropRate: 1, minCount: 1, maxCount: 1 },
         ];
-        // Contains itself: valuing it cuts a branch off
+        // Contains itself through another chest (a direct self-drop is a geometric sum, not a cycle): valuing
+        // it cuts a branch off
         mocks.initData.openableLootDropMap[CYCLIC] = [
+            { itemHrid: PARTNER, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        mocks.initData.openableLootDropMap[PARTNER] = [
             { itemHrid: CYCLIC, dropRate: 1, minCount: 1, maxCount: 1 },
             { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
         ];
@@ -1378,39 +1435,66 @@ describe('untradable capes in a chest', () => {
 describe('Task Tokens and Task Crystals in a chest', () => {
     const TASK_TOKEN = '/items/task_token';
     const TASK_CRYSTAL = '/items/task_crystal';
-    const SHOP_CHEST = '/items/large_test_chest';
-    const GIFT = '/items/test_gift';
+    const SHOP_CHEST = '/items/large_treasure_chest';
+    const ARTISAN = '/items/large_artisans_crate';
+    const CACHE = '/items/large_meteorite_cache';
+    const GIFT = '/items/purples_gift';
     const BAD_ROW = '/items/test_unlisted';
 
-    /** The shop sells the chest for 30 tokens and a crystal for 10, as the game's task shop map does */
+    /** The live Task Shop's four lines: `cost` (singular) in task tokens, no `outputCount` */
+    const line = (itemHrid, count) => ({
+        hrid: `/task_shop_items/${itemHrid.split('/').pop()}`,
+        name: itemHrid,
+        itemHrid,
+        cost: { itemHrid: TASK_TOKEN, count },
+        sortIndex: 1,
+    });
     const shop = () => ({
-        a: { itemHrid: SHOP_CHEST, costs: [{ itemHrid: TASK_TOKEN, count: 30 }], outputCount: 1 },
-        b: { itemHrid: TASK_CRYSTAL, costs: [{ itemHrid: TASK_TOKEN, count: 10 }], outputCount: 1 },
+        a: line(ARTISAN, 30),
+        b: line(CACHE, 30),
+        c: line(SHOP_CHEST, 30),
+        d: line(TASK_CRYSTAL, 50),
     });
     // 3 gems at 1000, taxed at MARKET_TAX once as a sale: the chest line's value, and so 96 a token
     const CHEST_EV = 3000 * (1 - MARKET_TAX);
     const PER_TOKEN = CHEST_EV / 30;
+    const CRYSTAL = 50 * PER_TOKEN;
+    // The live Purple's Gift: the same item in two rows, a crystal, a gem, and itself at 2%
+    const TOKENS_PER_OPENING = 1 * 7.5 + 0.1 * 37.5;
+    const CRYSTALS_PER_OPENING = 0.1;
+    const SELF = 0.02;
 
     beforeEach(() => {
-        mocks.itemDetails[SHOP_CHEST] = { name: 'Large Test Chest', isOpenable: true };
-        mocks.itemDetails[GIFT] = { name: 'Test Gift', isOpenable: true };
+        mocks.itemDetails[SHOP_CHEST] = { name: 'Large Treasure Chest', isOpenable: true };
+        mocks.itemDetails[ARTISAN] = { name: "Large Artisan's Crate", isOpenable: true };
+        mocks.itemDetails[CACHE] = { name: 'Large Meteorite Cache', isOpenable: true };
+        mocks.itemDetails[GIFT] = { name: "Purple's Gift", isOpenable: true, isTradable: true };
         mocks.itemDetails[TASK_TOKEN] = { name: 'Task Token', isTradable: false };
         mocks.itemDetails[TASK_CRYSTAL] = { name: 'Task Crystal', isTradable: false };
         mocks.itemDetails[BAD_ROW] = { name: 'Unlisted', isTradable: true };
+        delete mocks.prices[GIFT];
         mocks.initData = {
-            itemDetailMap: { [SHOP_CHEST]: { isOpenable: true } },
+            itemDetailMap: {
+                [SHOP_CHEST]: { isOpenable: true },
+                [ARTISAN]: { isOpenable: true },
+                [CACHE]: { isOpenable: true },
+            },
             taskShopItemDetailMap: shop(),
+            // The other two shop lines have no table of their own here: they stay unpriced and are skipped
             openableLootDropMap: {
                 [SHOP_CHEST]: [{ itemHrid: GEM_HRID, dropRate: 1, minCount: 3, maxCount: 3 }],
-                // Five tokens and a crystal in every opening, and a gem
                 [GIFT]: [
-                    { itemHrid: TASK_TOKEN, dropRate: 1, minCount: 4, maxCount: 6 },
-                    { itemHrid: TASK_CRYSTAL, dropRate: 1, minCount: 1, maxCount: 1 },
+                    { itemHrid: TASK_TOKEN, dropRate: 1, minCount: 5, maxCount: 10 },
+                    { itemHrid: TASK_TOKEN, dropRate: 0.1, minCount: 25, maxCount: 50 },
+                    { itemHrid: TASK_CRYSTAL, dropRate: 0.1, minCount: 1, maxCount: 1 },
                     { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+                    { itemHrid: GIFT, dropRate: SELF, minCount: 1, maxCount: 1 },
                 ],
             },
         };
     });
+
+    const GIFT_REST = (TOKENS_PER_OPENING + CRYSTALS_PER_OPENING * 50) * PER_TOKEN + 1000 * (1 - MARKET_TAX);
 
     test('a token is worth the best Task Shop line per token, net, before the calculator is marked ready', () => {
         expect(expectedValueCalculator.isInitialized).toBe(false);
@@ -1422,29 +1506,34 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         });
     });
 
-    test('a crystal is worth the tokens it costs', () => {
+    test('a crystal is worth the tokens it costs, and the crystal line itself never wins "best per token"', () => {
         expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).toMatchObject({
-            value: 10 * PER_TOKEN,
+            value: CRYSTAL,
             source: 'taskShop',
             needsTax: false,
             missingCount: 0,
         });
+        // The crystal is a line of the shop it is valued from: it has no price of its own to win with
+        expect(expectedValueCalculator._pricingTaskShop).toBe(false);
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN).value).toBe(PER_TOKEN);
     });
 
-    test('a chest dropping them is fully priced: nothing missing, tokens and crystal untaxed, the gem taxed once', () => {
+    test('Purple’s Gift as the game has it (duplicate token rows, a crystal, a self-drop) is fully priced', () => {
         const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
         expect(gift.missingCount).toBe(0);
         expect(gift.isPartial).toBe(false);
-        expect(gift.expectedValue).toBeCloseTo(5 * PER_TOKEN + 10 * PER_TOKEN + 1000 * (1 - MARKET_TAX), 6);
+        expect(gift.expectedValue).toBeCloseTo(GIFT_REST / (1 - SELF), 6);
     });
 
     test('the breakdown rows price them too, and the worker price map carries them as net values', () => {
         const rows = expectedValueCalculator.getDropBreakdown(GIFT);
-        expect(rows.find((r) => r.itemHrid === TASK_TOKEN)).toMatchObject({ hasPriceData: true, priceEach: PER_TOKEN });
+        const tokenRows = rows.filter((r) => r.itemHrid === TASK_TOKEN);
+        expect(tokenRows).toHaveLength(2);
+        for (const row of tokenRows) expect(row).toMatchObject({ hasPriceData: true, priceEach: PER_TOKEN });
         expect(rows.find((r) => r.itemHrid === TASK_CRYSTAL)).toMatchObject({ hasPriceData: true });
         const map = expectedValueCalculator.buildPriceMap([GIFT], mocks.initData);
         expect(map[TASK_TOKEN]).toMatchObject({ price: PER_TOKEN, canBeSold: false, missingCount: 0 });
-        expect(map[TASK_CRYSTAL]).toMatchObject({ price: 10 * PER_TOKEN, canBeSold: false });
+        expect(map[TASK_CRYSTAL]).toMatchObject({ price: CRYSTAL, canBeSold: false });
         expect(expectedValueCalculator.countUnpricedDrops(mocks.initData.openableLootDropMap[GIFT], map)).toBe(0);
     });
 
@@ -1453,7 +1542,8 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN)).toBeNull();
         expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).toBeNull();
         const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
-        expect(gift.missingCount).toBe(2);
+        // Three unpriced rows: both token rows and the crystal
+        expect(gift.missingCount).toBe(3);
         expect(gift.isPartial).toBe(true);
     });
 
@@ -1469,7 +1559,7 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL).missingCount).toBe(1);
         const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
         expect(gift.isPartial).toBe(true);
-        expect(gift.missingCount).toBe(2);
+        expect(gift.missingCount).toBe(3);
     });
 
     test('a market quote for the item still wins over the shop valuation', () => {
@@ -1480,7 +1570,8 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         });
     });
 
-    test('a shop chest that itself drops a token does not send the valuation round in a circle', () => {
+    test('a shop chest that itself dropped a token would not send the valuation round in a circle', () => {
+        // Not a table the game has today (only the Gift drops task items); the guard is for one that appears
         mocks.initData.openableLootDropMap[SHOP_CHEST].push({
             itemHrid: TASK_TOKEN,
             dropRate: 1,
@@ -1488,9 +1579,7 @@ describe('Task Tokens and Task Crystals in a chest', () => {
             maxCount: 1,
         });
         const token = expectedValueCalculator.resolveSellSideValue(TASK_TOKEN);
-        // The inner ask is unpriced, so the line is valued on its gems alone and is a floor
         expect(token).toMatchObject({ value: PER_TOKEN, missingCount: 1 });
-        // And the guard is released afterwards: the next ask is answered as usual
         expect(expectedValueCalculator._pricingTaskShop).toBe(false);
         expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL)).not.toBeNull();
     });
@@ -1503,9 +1592,30 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         });
     });
 
-    test('a shop line that bundles several crystals splits its token price across them', () => {
-        mocks.initData.taskShopItemDetailMap.b.outputCount = 2;
-        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL).value).toBeCloseTo(5 * PER_TOKEN, 6);
+    describe('under another tax than the live character’s', () => {
+        const ctx = (extra) => ({ path: new Set(), truncated: false, ...extra });
+
+        test('a gross (personal-use) pass values the shop line untaxed', () => {
+            expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN, 0, ctx({ gross: true })).value).toBeCloseTo(
+                3000 / 30,
+                6
+            );
+            const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData, ctx({ gross: true }));
+            const untaxedRest = (TOKENS_PER_OPENING + CRYSTALS_PER_OPENING * 50) * 100 + 1000;
+            expect(gift.expectedValue).toBeCloseTo(untaxedRest / (1 - SELF), 6);
+            expect(expectedValueCalculator.containerCache.has(GIFT)).toBe(false);
+        });
+
+        test('another player’s rate is applied to the shop line, and a rate of zero is untaxed', () => {
+            const at = (rate) =>
+                expectedValueCalculator.resolveSellSideValue(TASK_TOKEN, 0, ctx({ saleTaxRate: rate })).value;
+            expect(at(0.1)).toBeCloseTo((3000 * 0.9) / 30, 6);
+            expect(at(0)).toBeCloseTo(3000 / 30, 6);
+        });
+
+        test('the live character’s own pass is unchanged by those', () => {
+            expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN).value).toBe(PER_TOKEN);
+        });
     });
 
     test('nothing else is treated as a Task Shop item', () => {
