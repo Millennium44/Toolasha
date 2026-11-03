@@ -9,9 +9,11 @@
  * player's own click, left alone. No click is ever re-fired, no catalyst selected, no action started. The game ignores
  * untrusted clicks on spend buttons, and this never makes one.
  *
- * It does not guess. Figures that are not ready, an unpriced option, a drop or tea with no price, a tie, a catalyst
- * slot that cannot be read: each lets the press through with nothing on screen. So does a difference below the margin
- * (`MARGIN_MIN_COINS`, `MARGIN_RATIO`), and a press of the setup that is already running.
+ * It does not guess. Figures that are not ready, an unpriced option, a drop or tea with no price, a catalyst priced
+ * only by estimate, a tie, a catalyst slot that cannot be read: each lets the press through with nothing on screen. So
+ * does a difference below the margin (`MARGIN_MIN_COINS`, `MARGIN_RATIO`), a press of the setup that is already running
+ * or was gone ahead with in the last minute, a best catalyst an Iron Cow does not hold, and a message that could not be
+ * seen.
  *
  * ## With the protected-category guard
  *
@@ -417,7 +419,12 @@ class AlchemyCatalystCheck {
         pending.timer = setTimeout(() => this.clearPending(), CONFIRM_WINDOW_MS);
 
         const recheck = () => {
-            if (this.pending === pending && !this.stillArmed(pending, this.readContext(panel))) this.clearPending();
+            if (this.pending !== pending) return;
+            // A guard listening first stops the press before this check hears it, and draws its warning in the panel,
+            // which brings us here. Any button of the strip answers for the item.
+            const strip = panel.querySelector(`${BUTTONS_SELECTOR} button`);
+            const guarded = strip && alchemyActionProtection.protectedCategoryFor?.(strip);
+            if (guarded || !this.stillArmed(pending, this.readContext(panel))) this.clearPending();
         };
         // The panel holds the input and the slot, whose sprites change by attribute as well as by node
         const content = panel.closest('[class*="SkillActionDetail_skillActionDetail"]') || panel;

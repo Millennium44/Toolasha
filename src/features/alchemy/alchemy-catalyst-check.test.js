@@ -599,7 +599,7 @@ describe('holding a press', () => {
 });
 
 describe('which buttons count', () => {
-    test('one rule: the enabled buttons of the alchemy panel\'s strip', () => {
+    test("one rule: the enabled buttons of the alchemy panel's strip", () => {
         expect(isActionButton(start())).toBe(true);
         expect(isActionButton(queue())).toBe(true);
         expect(isActionButton(document.getElementById('elsewhere'))).toBe(false);
@@ -608,7 +608,8 @@ describe('which buttons count', () => {
     });
 
     test('a strip outside the alchemy panel does not count', () => {
-        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').className = 'SkillActionDetail_other__x';
+        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').className =
+            'SkillActionDetail_other__x';
         expect(isActionButton(start())).toBe(false);
     });
 
@@ -655,8 +656,9 @@ describe('reads the panel that was pressed', () => {
         press();
         setSlot(CAT);
         // setSlot edits the first slot in the document, here the decoy's, so the panel's own is set by hand
-        document.querySelector('[class*="SkillActionDetail_skillActionDetail"] [class*="catalystItemInputContainer"]').innerHTML =
-            slotHtml(PRIME);
+        document.querySelector(
+            '[class*="SkillActionDetail_skillActionDetail"] [class*="catalystItemInputContainer"]'
+        ).innerHTML = slotHtml(PRIME);
         await settle();
         expect(message()).toBeNull();
     });
@@ -677,11 +679,14 @@ describe('a figure this player cannot act on, or that is only an estimate', () =
         expect(message()).not.toBeNull();
     };
 
-    test.each(['ironcow', 'legacy_ironcow'])('%s: a best catalyst it does not own passes, since it cannot buy one', (mode) => {
-        state.gameMode = mode;
-        primeBest();
-        passes();
-    });
+    test.each(['ironcow', 'legacy_ironcow'])(
+        '%s: a best catalyst it does not own passes, since it cannot buy one',
+        (mode) => {
+            state.gameMode = mode;
+            primeBest();
+            passes();
+        }
+    );
 
     test('an Iron Cow whose inventory has not loaded passes: not known to own it', () => {
         state.gameMode = 'ironcow';
@@ -1351,24 +1356,44 @@ describe('with the protected-category guard', () => {
         expect(game).toHaveBeenCalledTimes(1);
     });
 
-    test('a held press gives way if its item comes under protection', async () => {
+    test.each([
+        [
+            'the guard listening first',
+            async () => {
+                await protection.initialize();
+                check.initialize();
+            },
+        ],
+        [
+            'this check listening first',
+            async () => {
+                check.initialize();
+                await protection.initialize();
+            },
+        ],
+    ])('a held press gives way if its item comes under protection, with %s', async (_name, start_) => {
         check.disable();
         protectCheese();
-        await protection.initialize();
-        check.initialize();
+        await start_();
         state.categories[CHEESE] = '/item_categories/resource';
         press();
+        expect(message()).not.toBeNull();
         await pause();
+
         state.categories[CHEESE] = '/item_categories/food';
         press();
         expect(game).not.toHaveBeenCalled();
         expect(warning()).not.toBeNull();
+        await settle();
+        // Its "press again" would be untrue: this press was the guard's, and the next one may be too
+        expect(message()).toBeNull();
+        expect(check.pending).toBeNull();
+        expect(check.acknowledged).toBeNull();
 
         await vi.advanceTimersByTimeAsync(3000);
         press();
         expect(game).toHaveBeenCalledTimes(1);
         expect(message()).toBeNull();
-        expect(check.pending).toBeNull();
     });
 
     test('the guard switched off leaves the item to this check', async () => {
