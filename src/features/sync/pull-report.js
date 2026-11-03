@@ -196,7 +196,7 @@ function timingLines(summary, lostTime) {
 
 /**
  * The trade ledger repair line.
- * @param {{charId?: string, runs?: number, cut?: number}|null|undefined} repair - From the ledger store's
+ * @param {{charId?: string, runs?: number, cut?: number, recording?: boolean}|null|undefined} repair - From the ledger store's
  *   `repairStats()` for the character on screen; undefined when the caller could not ask
  * @returns {string} Report line
  */
@@ -206,7 +206,9 @@ function repairLine(repair) {
     const who = /^[A-Za-z0-9_-]{1,32}$/.test(String(repair.charId ?? '')) ? ` (character ${repair.charId})` : '';
     if (!Number.isFinite(repair.runs) || !Number.isFinite(repair.cut))
         return `Ledger repair this session${who}: unknown`;
-    if (repair.runs <= 0) return `Ledger repair this session${who}: not run yet`;
+    if (repair.runs <= 0) {
+        return `Ledger repair this session${who}: not run yet${repair.recording === false ? ' (the trade ledger is off)' : ''}`;
+    }
     const runs = `${repair.runs} ${repair.runs === 1 ? 'run' : 'runs'}`;
     return `Ledger repair this session${who}: ${repair.cut} ${repair.cut === 1 ? 'listing' : 'listings'} cut (${runs})`;
 }
@@ -248,7 +250,7 @@ function keyLine(store, key, status, rows = null) {
  * @param {string|null} [env.version] - Script version, with the build stamp when there is one
  * @param {string|null} [env.host] - `location.hostname`
  * @param {Object|null} [env.lostTime] - `storage.diagnostics().lostTime`, to find stalls recorded since the pull
- * @param {{charId?: string, runs?: number, cut?: number}|null} [env.ledgerRepair] - The trade ledger store's
+ * @param {{charId?: string, runs?: number, cut?: number, recording?: boolean}|null} [env.ledgerRepair] - The trade ledger store's
  *   `repairStats()` for the character on screen; left out when the caller could not ask
  * @returns {string} The report
  */
@@ -287,6 +289,10 @@ export function buildPullReport(summary, { version = null, host = null, lostTime
     // Every key the pull did something to: [store, key, status, rank, rows]. A key is listed once, under the
     // strongest reason it has
     const keyed = [];
+    // Whether the summary says which keys latched: its count is known, and either nothing latched or the keys were
+    // named. A result from a caller that did neither cannot say a combined key stayed unlatched
+    const latchKnown =
+        latchedCount === 0 || (latchedCount !== null && summaryStores.some((s) => (s.latchedRecords || []).length > 0));
     for (const store of summaryStores) {
         const latched = new Set((store.latchedRecords || []).map((record) => record.key));
         const failed = new Set((store.overwrittenRecords || []).map((record) => record.key));
@@ -304,9 +310,11 @@ export function buildPullReport(summary, { version = null, host = null, lostTime
                 // A folded key that did not latch took the write without asking for a reload: the importer
                 // skips the latch for a registration whose readers fold storage under memory
                 record && !latched.has(key)
-                    ? describeSyncKey(store.store, key).liveSafe
-                        ? 'live-safe'
-                        : 'not latched'
+                    ? !latchKnown
+                        ? 'latch unknown'
+                        : describeSyncKey(store.store, key).liveSafe
+                          ? 'live-safe'
+                          : 'not latched'
                     : null,
             ];
             const rank = latched.has(key) ? 0 : failed.has(key) ? 1 : 2;

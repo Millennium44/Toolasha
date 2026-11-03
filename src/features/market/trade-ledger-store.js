@@ -430,12 +430,13 @@ class TradeLedgerStore {
      *
      * `runs: 0` is "has not run yet" (the ledger was not loaded, the open listings were not known, or the
      * archive could not be read), which is not the same as a run that cut nothing (`runs > 0, cut: 0`).
-     * @returns {{charId: string, runs: number, cut: number}} A copy; never the live entry
+     * `recording` says whether the ledger is on, so a report can tell "off" from "has not got there yet".
+     * @returns {{charId: string, runs: number, cut: number, recording: boolean}} A copy; never the live entry
      */
     repairStats() {
         const charId = ledgerCharId();
         const entry = this._repairStats.get(charId);
-        return { charId, runs: entry ? entry.runs : 0, cut: entry ? entry.cut : 0 };
+        return { charId, runs: entry ? entry.runs : 0, cut: entry ? entry.cut : 0, recording: this.isInitialized };
     }
 
     /**

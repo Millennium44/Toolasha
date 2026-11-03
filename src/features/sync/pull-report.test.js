@@ -260,6 +260,24 @@ describe('what the report says about each key the pull did something to', () => 
         expect(keyLines(buildPullReport(summary, {}))[0]).toContain('combined, not latched');
     });
 
+    test('a result that never said what latched does not claim a combined key stayed unlatched', () => {
+        const merged = [
+            {
+                store: 'settings',
+                key: 'reportPlain_12345',
+                label: 'plain records',
+                counts: { local: 1, pulled: 2, merged: 2 },
+            },
+        ];
+        // No latch count at all
+        const none = buildPullSummary({ merged, expected: { settings: 1 } });
+        expect(keyLines(buildPullReport(none, {}))[0]).toContain('combined, latch unknown');
+        expect(buildPullReport(none, {})).toContain('Reload advice shown: unknown (latched keys: unknown)');
+        // A count with no keys named
+        const unnamed = buildPullSummary({ merged, expected: { settings: 1 }, latched: 1 });
+        expect(keyLines(buildPullReport(unnamed, {}))[0]).toContain('combined, latch unknown');
+    });
+
     test('row counts: zero local, a non-array value, and a summary that predates them', () => {
         const summary = buildPullSummary({
             merged: [
@@ -515,6 +533,19 @@ describe('what the report says about the ledger repair', () => {
         expect(repairLine(buildPullReport(summary(), { ledgerRepair: { charId: '12345', runs: 2, cut: 0 } }))).toBe(
             'Ledger repair this session (character 12345): 0 listings cut (2 runs)'
         );
+    });
+
+    test('says when the ledger is off rather than only that the repair has not run', () => {
+        expect(
+            repairLine(
+                buildPullReport(summary(), { ledgerRepair: { charId: '12345', runs: 0, cut: 0, recording: false } })
+            )
+        ).toBe('Ledger repair this session (character 12345): not run yet (the trade ledger is off)');
+        expect(
+            repairLine(
+                buildPullReport(summary(), { ledgerRepair: { charId: '12345', runs: 0, cut: 0, recording: true } })
+            )
+        ).toBe('Ledger repair this session (character 12345): not run yet');
     });
 
     test('counts the listings cut, singular and plural', () => {

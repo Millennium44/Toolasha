@@ -1333,7 +1333,7 @@ describe('the repair count the sync pull report prints', () => {
     };
 
     test('says it has not run before the repair has', () => {
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 0, cut: 0 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 0, cut: 0 });
     });
 
     test('counts the listings a run cut, and a second run that finds nothing adds a run and no cuts', async () => {
@@ -1342,10 +1342,10 @@ describe('the repair count the sync pull report prints', () => {
         LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(6, 5), logRow(7, 5)]);
 
         await loadAndRepair();
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 2 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 2 });
 
         await tradeLedgerStore._repairOverRecorded();
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 2, cut: 2 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 2, cut: 2 });
     });
 
     test('a run that finds nothing over-recorded is a run that cut zero, not "not run"', async () => {
@@ -1354,7 +1354,7 @@ describe('the repair count the sync pull report prints', () => {
 
         await loadAndRepair();
 
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 0 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 0 });
     });
 
     test('a log naming nothing it may cut still counts as a run', async () => {
@@ -1390,14 +1390,14 @@ describe('the repair count the sync pull report prints', () => {
         seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
         LEDGER().set(LOG_KEY, [logRow(5, 10)]);
         await loadAndRepair();
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 1 });
 
         dataManagerMock.characterId = 'other77';
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'other77', runs: 0, cut: 0 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'other77', runs: 0, cut: 0 });
 
         // ...and the first character's count is still theirs on the way back
         dataManagerMock.characterId = 'market123';
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 1 });
     });
 
     test('a run stood down by a switch landing inside it is not counted', async () => {
@@ -1420,6 +1420,12 @@ describe('the repair count the sync pull report prints', () => {
         expect(tradeLedgerStore.repairStats().runs).toBe(0);
     });
 
+    test('says whether the ledger is recording, so "not run yet" can be told from "switched off"', () => {
+        expect(tradeLedgerStore.repairStats().recording).toBe(false);
+        tradeLedgerStore.isInitialized = true;
+        expect(tradeLedgerStore.repairStats().recording).toBe(true);
+    });
+
     test('the answer is a copy: reading it cannot change the count', async () => {
         seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
         LEDGER().set(LOG_KEY, [logRow(5, 10)]);
@@ -1427,6 +1433,6 @@ describe('the repair count the sync pull report prints', () => {
         const stats = tradeLedgerStore.repairStats();
         stats.cut = 99;
         stats.runs = 99;
-        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
+        expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 1 });
     });
 });
