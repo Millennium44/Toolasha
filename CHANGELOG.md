@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
 - Alchemy history now saves what inputs and catalysts cost as a session runs, so Net no longer drifts with the market; older sessions stay at today's price and are marked.
 - Guild trial totals now match a fight by guild and trial whenever Stats is opened, ignore another guild's, and the panel says when figures are still estimates.
 - The guild trial assignment shows each member's signed-up trial and role and flags a saved loadout view as out of date, and trial start times follow the guild's schedule.

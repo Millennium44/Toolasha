@@ -581,6 +581,12 @@ class TaskProfitDisplay {
         // re-render or `_runCombatSimEstimate` itself) so a failed re-run, or one
         // still in flight, never leaves a stale zone/count behind for Go to use.
         this._cardEstimates = new WeakMap();
+        // taskNode -> { zoneHrid, mode, monsterHrid, characterId }, what the last valid estimate named while
+        // a tier-change redo of it is in flight (or waiting in the queue). A redo only changes the tier and
+        // the count, never the zone, so Go keeps opening that zone meanwhile instead of falling to the
+        // game's own default. Dropped by anything that makes the zone untrustworthy: a reroll, a player
+        // re-run, a failure, the setting going off, and the redo finishing (the fresh estimate replaces it).
+        this._staleGoEstimates = new WeakMap();
         this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         // Bumped by disable() so an addProfitToTask() call already resumed from an await knows its
@@ -689,6 +695,7 @@ class TaskProfitDisplay {
         }
         if (key === 'taskCombatEstimate' && !value) {
             this._cardEstimates = new WeakMap();
+            this._staleGoEstimates = new WeakMap();
         }
         this.updateTaskProfits(true);
     }
@@ -924,6 +931,9 @@ class TaskProfitDisplay {
                     // card has since swapped it for a confirm step, this click
                     // is not a Go and nothing here applies to it
                     if (isConfirmPendingFor(goBtn)) return;
+                    // A card with a usable estimate fills its own count (the estimate's Go click handler);
+                    // this raw kill total would land after it and overwrite a fight count with kills
+                    if (this._resolveGoEstimate(taskNode)) return;
 
                     // Extract the quest for this task card from the fiber tree
                     const rootEl = document.getElementById('root');
@@ -1043,8 +1053,25 @@ class TaskProfitDisplay {
         // estimate is stored under its `RandomTask_taskInfo` node (the one the
         // estimate container sits in). Looked up by the outer card it was never
         // found, so Go never reached `_applyGoEstimate` at all.
-        const estimate = this._cardEstimates.get(this._estimateKeyNode(taskNode));
-        if (!estimate || !estimate.zoneHrid || !Number.isFinite(estimate.predictedFights)) return null;
+        const keyNode = this._estimateKeyNode(taskNode);
+        let estimate = this._cardEstimates.get(keyNode);
+        if (!estimate) {
+            // A tier-change redo is in flight: the zone it was drawn for still stands, the tier is whatever
+            // the zone is remembered at now, and there is no count to fill until the redo finishes
+            const stale = this._staleGoEstimates.get(keyNode);
+            if (stale?.zoneHrid && stale.characterId === dataManager.getCurrentCharacterId()) {
+                estimate = {
+                    zoneHrid: stale.zoneHrid,
+                    mode: stale.mode,
+                    monsterHrid: stale.monsterHrid,
+                    tier: this._resolveEstimateTier(stale.zoneHrid).tier,
+                    predictedFights: null,
+                    countless: true,
+                };
+            }
+        }
+        if (!estimate || !estimate.zoneHrid) return null;
+        if (!estimate.countless && !Number.isFinite(estimate.predictedFights)) return null;
 
         if (config.getSetting('taskGoMerge') && estimate.monsterHrid) {
             const allQuests = dataManager.characterQuests || [];
@@ -1054,7 +1081,14 @@ class TaskProfitDisplay {
                     q.category === '/quest_category/random_task' &&
                     q.monsterHrid === estimate.monsterHrid
             );
-            if (matchingQuests.length > 1) return null;
+            if (matchingQuests.length > 1) {
+                // The merge handler's own fill stands down when an estimate resolves (see the click
+                // handler above), so the zone, tier and count all come from here and nothing races.
+                // `mergedKills` is kills, not fights; `_applyGoEstimate` converts it.
+                const total = matchingQuests.reduce((sum, q) => sum + (q.goalCount - q.currentCount), 0);
+                const isBoss = dataManager.isBossMonster(estimate.monsterHrid);
+                return { ...estimate, mergedKills: total, mergedBoss: Boolean(isBoss) };
+            }
         }
 
         return estimate;
@@ -1153,6 +1187,9 @@ class TaskProfitDisplay {
                 dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo?.fightInfo
                     ?.randomSpawnInfo?.maxSpawnCount
             ) || null;
+        // A redo in flight has no count
+        const mergedKills = Number.isFinite(estimate.mergedKills) ? estimate.mergedKills : null;
+        let fillsCount = !estimate.countless;
         const { fights: ownFights } = padFightCount({
             unpaddedFights: estimate.predictedFights,
             thresholds: Number.isFinite(estimate.killsPerFight)
@@ -1176,7 +1213,7 @@ class TaskProfitDisplay {
         // whole zone rather than only this card's own kills, which would be a
         // fraction of what the summary tells the player to expect.
         let fights = ownFights;
-        if (Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
+        if (!estimate.countless && Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
             // The quoted figure is a quantile at the zone-estimate setting (it can be the median), so Go
             // also pads the zone the way a Task Statistics row does, from the means, by the confidence
             // setting with the flat buffer as a floor — and fills the larger: never less than the card
@@ -1189,6 +1226,49 @@ class TaskProfitDisplay {
             });
             fights = Math.max(Math.ceil(estimate.zoneFights), padded);
         }
+        if (mergedKills !== null && fillsCount) {
+            // Several tasks on one monster: the kill target is their sum, and a kill is not a fight
+            // wherever the zone spawns other monsters too.
+            const zoneInfo = dataManager.getInitClientData()?.actionDetailMap?.[estimate.zoneHrid]?.combatZoneInfo;
+            const zoneMonsters = new Set(
+                [
+                    ...(zoneInfo?.fightInfo?.randomSpawnInfo?.spawns || []),
+                    ...(zoneInfo?.fightInfo?.bossSpawns || []),
+                ].map((m) => m.combatMonsterHrid)
+            );
+            if (Number.isFinite(estimate.zoneFights) && estimate.zoneFights > 0) {
+                // The zone figure above already sums every open task, duplicates included, and covers the
+                // whole zone; a boss total of kills x10 would replace it with a far smaller count
+            } else if (estimate.mergedBoss) {
+                // Boss waves are arithmetic: the merge's own rule, ten fights a boss
+                fights = mergedKills * 10;
+            } else if (zoneMonsters.size === 1) {
+                fights = mergedKills;
+            } else if (
+                estimate.mode === 'zone' &&
+                Number.isFinite(estimate.killsPerFight) &&
+                estimate.killsPerFight > 0
+            ) {
+                // Only a Zone estimate simulated the whole spawn table, so only its kill rate is the zone's;
+                // a Solo estimate's rate comes from a table narrowed to the target and would over-convert
+                fights = padFightCount({
+                    unpaddedFights: Math.ceil(mergedKills / estimate.killsPerFight),
+                    thresholds: [
+                        {
+                            killsNeeded: mergedKills,
+                            killsPerFight: estimate.killsPerFight,
+                            slotsPerFight,
+                            deterministic: false,
+                        },
+                    ],
+                    confidencePercent,
+                    floorPercent: bufferPercent,
+                }).fights;
+            } else {
+                // No zone-wide kill rate to convert with: filling the raw kills would under-fill, so fill nothing
+                fillsCount = false;
+            }
+        }
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most
         // of the active tasks share. When the panel Go landed on is a
@@ -1196,7 +1276,12 @@ class TaskProfitDisplay {
         // there. Solo mode keeps the landed zone's behavior below.
         if (estimate.mode === 'zone' && panel && resolveDetailPanel(panel).actionHrid !== estimate.zoneHrid) {
             // Already inside runZoneOpenExclusive, so the unqueued sequence.
-            const result = await openCombatZoneAtTierSequence(estimate.zoneHrid, tier, { count: fights }, characterId);
+            const result = await openCombatZoneAtTierSequence(
+                estimate.zoneHrid,
+                tier,
+                fillsCount ? { count: fights } : {},
+                characterId
+            );
             if (!result.filled && !characterIdentityChanged(characterId)) {
                 console.warn(
                     '[TaskProfitDisplay] Go could not open the estimate zone; leaving the game landing as is:',
@@ -1211,6 +1296,7 @@ class TaskProfitDisplay {
         if (!tierConfirmed) return;
         if (characterIdentityChanged(characterId)) return;
 
+        if (!fillsCount) return;
         const inputEl = findActionInput(panel);
         if (!inputEl) return;
         setReactInputValue(inputEl, String(fights), { focus: false });
@@ -1269,6 +1355,7 @@ class TaskProfitDisplay {
                 // estimate for the old one must not stay primed for Go while the new rows are drawn
                 // or queued behind other simulations
                 this._cardEstimates.delete(taskNode);
+                this._staleGoEstimates.delete(taskNode);
 
                 // Remove ALL old profit displays (visible + hidden markers)
                 taskNode.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
@@ -1736,7 +1823,10 @@ class TaskProfitDisplay {
         // shown again (first render, or a Re-run) — Go must not fill a zone
         // or count computed for a task this card no longer describes.
         const cardTaskNode = container.closest(GAME.TASK_INFO);
-        if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+        if (cardTaskNode) {
+            this._cardEstimates.delete(cardTaskNode);
+            this._staleGoEstimates.delete(cardTaskNode);
+        }
         this._forgetCachedCombatEstimate(container);
 
         container.innerHTML = '';
@@ -1808,7 +1898,22 @@ class TaskProfitDisplay {
         // primed with — filled only from a currently-valid estimate, never a
         // stale one left over from before a re-run.
         const cardTaskNode = container.closest(GAME.TASK_INFO);
-        if (cardTaskNode) this._cardEstimates.delete(cardTaskNode);
+        if (cardTaskNode) {
+            const prior = this._cardEstimates.get(cardTaskNode);
+            this._cardEstimates.delete(cardTaskNode);
+            if (!automatic) {
+                // The player re-ran it: whatever the card said before is no longer something Go may use
+                this._staleGoEstimates.delete(cardTaskNode);
+            } else if (prior?.zoneHrid) {
+                // A tier-change redo changes the tier and the count, not the zone: Go keeps the zone
+                this._staleGoEstimates.set(cardTaskNode, {
+                    zoneHrid: prior.zoneHrid,
+                    mode: prior.mode,
+                    monsterHrid: prior.monsterHrid,
+                    characterId: dataManager.getCurrentCharacterId(),
+                });
+            }
+        }
         this._forgetCachedCombatEstimate(container);
 
         // Extract monster name from "Defeat - Monster Name" description
@@ -1836,12 +1941,14 @@ class TaskProfitDisplay {
                       )
                     : [],
             });
+            if (cardTaskNode) this._staleGoEstimates.delete(cardTaskNode);
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">Could not identify monster.</span>';
             return;
         }
 
         const zoneHrid = this._pickZoneForMonster(monsterHrid) || dataManager.getCombatZoneForMonster(monsterHrid);
         if (!zoneHrid) {
+            if (cardTaskNode) this._staleGoEstimates.delete(cardTaskNode);
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">No zone found for monster.</span>';
             return;
         }
@@ -2055,6 +2162,7 @@ class TaskProfitDisplay {
             // Cancelled by a simulation the player started: not a failure, and the caller runs it again
             if (automatic && /cancel/i.test(String(e?.message || ''))) return 'cancelled';
             console.error('[TaskProfit] Combat estimate failed:', e);
+            if (cardTaskNode) this._staleGoEstimates.delete(cardTaskNode);
             container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
             const retry = document.createElement('span');
             retry.textContent = 'Retry';
@@ -2135,6 +2243,7 @@ class TaskProfitDisplay {
      * @private
      */
     _storeCardEstimate(cardTaskNode, zoneHrid, monsterHrid, tier, figures, mode, zone = null) {
+        this._staleGoEstimates.delete(cardTaskNode);
         this._cardEstimates.set(cardTaskNode, {
             zoneHrid,
             mode,
@@ -2290,6 +2399,8 @@ class TaskProfitDisplay {
             if (entry.attempts < MAX_RETIER_ATTEMPTS) {
                 this._retierQueue.push(entry);
             } else {
+                const failedNode = container.closest(GAME.TASK_INFO);
+                if (failedNode) this._staleGoEstimates.delete(failedNode);
                 container.innerHTML = '<span style="color:#f87171; font-size:11px;">Estimate failed. </span>';
                 const retry = document.createElement('span');
                 retry.textContent = 'Retry';
