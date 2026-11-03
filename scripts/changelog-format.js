@@ -92,6 +92,8 @@ export function checkChangelogFormat(changelog) {
 
         if (MARKER_RE.test(line)) {
             closeEntry();
+            // Titles repeat across releases by design: "Small display fixes" can ship twice
+            seenTitles.clear();
             continue;
         }
 

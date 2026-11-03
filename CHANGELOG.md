@@ -2,7 +2,7 @@
 
 ## Fork Changelog (Millennium44/Toolasha)
 
-All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
+All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every change a player would notice is recorded here in the same commit that makes it. Upstream release history is preserved below.
 
 ## Unreleased — branch `main`
 
@@ -104,7 +104,7 @@ Trial points now use the exact figures the game sends, so Past weeks matches the
 
 ### Guild trial estimates and payouts
 
-Estimates show a range until the rate starts falling, payout figures follow, and trials now keep tier clear times so the estimate can be re-tested. The Trial payout section, Past weeks and Trial history can collapse, leaving a one-line summary in the heading.
+Estimates show a range until the rate starts falling, payout figures follow, and trials now keep tier clear times so the estimate can be re-tested. Past weeks and Trial history can collapse, and so can Trial payout, leaving a one-line summary in its heading.
 
 ### Guild trial assignment and cards
 
@@ -117,7 +117,7 @@ About 30 panels, plus dialogs, toasts and the floating widgets, now share the ga
 
 ### Script Accent Color tints less
 
-The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names. Your accent still colors figures and highlights across the other panels.
+The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names. Your accent still colors figures and highlights.
 
 ### Phone layout
 

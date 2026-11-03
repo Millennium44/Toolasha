@@ -61,6 +61,11 @@ describe('checkChangelogFormat', () => {
         expect(problems[0]).toContain('repeats the title');
     });
 
+    it('allows the same title in two different releases', () => {
+        const text = changelogWith('### Same\n\nBody.\n\n<!-- shipped in 9.9.9 -->\n\n### Same\n\nBody.');
+        expect(checkChangelogFormat(text)).toEqual([]);
+    });
+
     it('rejects a body past the length limit and accepts one at it', () => {
         const atLimit = 'x'.repeat(MAX_BODY_CHARS);
         expect(checkChangelogFormat(changelogWith(`### Fits\n\n${atLimit}`))).toEqual([]);
