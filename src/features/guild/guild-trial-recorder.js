@@ -95,8 +95,8 @@ export const GAP_AFTER_MS = 3 * SNAPSHOT_MS;
 /**
  * How long a closed session waits for the game's own end-of-trial totals.
  *
- * `guild_trial_stats_updated` lands after `end_guild_battle` — 28 s later in a
- * recorded 57-player trial — and a session is usually closed at the end. The
+ * `guild_trial_stats_updated` was measured 28 s after `end_guild_battle` in a
+ * recorded 57-player trial and, on 2026-11-02, not until Stats was opened — and a session is usually closed at the end. The
  * window counts from whichever is later, the close or the game's end, and is
  * checked on the recorder's 15 s tick, so it has to clear the delay by a few
  * ticks. Past it the stream's figures stand.
@@ -278,8 +278,8 @@ class GuildTrialRecorder {
          *
          * In-memory only until `_persist` started writing it down alongside the
          * session (see {@link _pendingForStorage}) — before that, a refresh
-         * between a trial ending and the stats arriving (28 s later in a
-         * recorded trial) lost it outright, and the ledger kept the stream
+         * between a trial ending and the stats arriving (28 s later in one
+         * recorded trial, only on a Stats click in another) lost it outright, and the ledger kept the stream
          * estimate forever. `_restoreFromStorage` re-arms it from what was on
          * disk when this session's `initialize` ran.
          */

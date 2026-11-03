@@ -12,6 +12,14 @@ import { buildListingPlaced, buildListingCancelled, buildOrderBooksUpdated } fro
 import { buildCharacterAction } from './character-actions.js';
 import { buildGuildMember } from './guild-members.js';
 import {
+    buildEndGuildBattle,
+    buildGuildBattleUpdated,
+    buildGuildTrialStatsUpdated,
+    buildGuildUpdated,
+    buildNewGuildBattle,
+    FIXTURE_GUILD_ID,
+} from './guild-trial.js';
+import {
     buildLabyrinthUpdated,
     buildLabyrinthRoomProgress,
     buildLabyrinthNewBattle,
@@ -236,5 +244,137 @@ describe('wire fixtures keep the captured field names', () => {
         for (const n of buildInfoNotices()) {
             expect(n).toEqual({ type: 'info', message: expect.stringMatching(/^infoNotification\./), variables: null });
         }
+    });
+});
+
+/**
+ * Provenance: a skilling then a combat guild trial on the TEST server, 2026-11-02. Nothing was measured on
+ * the live server; the same shapes are assumed there.
+ */
+describe('guild trial wire fixtures keep the captured shapes', () => {
+    test('guild_trial_stats_updated carries a numeric guildId and rows for every trial of the week', () => {
+        const m = buildGuildTrialStatsUpdated();
+        expect(Object.keys(m)).toEqual(['type', 'guildId', 'guildTrialStatList']);
+        expect(typeof m.guildId).toBe('number');
+        expect(m.guildId).toBe(FIXTURE_GUILD_ID);
+        expect(m.guildTrialStatList).toHaveLength(170);
+        for (const row of m.guildTrialStatList) {
+            expect(Object.keys(row)).toEqual([
+                'characterId',
+                'trialHrid',
+                'damageDealt',
+                'healingDone',
+                'premitigatedDamageTaken',
+                'workDone',
+            ]);
+        }
+        const hrids = new Set(m.guildTrialStatList.map((row) => row.trialHrid));
+        expect([...hrids].filter((h) => h.startsWith('/guild_combat/')).sort()).toEqual([
+            '/guild_combat/jellyfish',
+            '/guild_combat/swarm',
+        ]);
+        // Combat rows carry no work, skilling rows no damage: one message, two kinds of row
+        for (const row of m.guildTrialStatList) {
+            if (row.trialHrid.startsWith('/guild_combat/')) expect(row.workDone).toBe(0);
+            else expect(row.damageDealt).toBe(0);
+        }
+        // Both combat parties are in it, so it names people who were not in the fight you watched
+        const combatIds = (hrid) =>
+            new Set(m.guildTrialStatList.filter((row) => row.trialHrid === hrid).map((row) => row.characterId));
+        expect(combatIds('/guild_combat/swarm').size).toBeGreaterThan(0);
+        expect(combatIds('/guild_combat/jellyfish').size).toBeGreaterThan(0);
+    });
+
+    test('the stats builder can drop the guild id, keep chosen rows and swap the guild', () => {
+        expect(buildGuildTrialStatsUpdated({ guildId: null })).not.toHaveProperty('guildId');
+        expect(buildGuildTrialStatsUpdated({ guildId: 12 }).guildId).toBe(12);
+        const swarm = buildGuildTrialStatsUpdated({ keep: (row) => row.trialHrid === '/guild_combat/swarm' });
+        expect(swarm.guildTrialStatList.length).toBeGreaterThan(0);
+        expect(swarm.guildTrialStatList.length).toBeLessThan(170);
+    });
+
+    test('new_guild_battle opens a tier with the roster, the boss and its pack', () => {
+        const m = buildNewGuildBattle();
+        expect(Object.keys(m)).toEqual(['type', 'combatStartTime', 'battleId', 'wave', 'tier', 'players', 'monsters']);
+        expect([m.battleId, m.wave, m.tier]).toEqual([1, 1, 1]);
+        expect(Object.keys(m.players[0])).toEqual([
+            'isPlayer',
+            'character',
+            'hrid',
+            'name',
+            'currentHitpoints',
+            'maxHitpoints',
+            'currentManapoints',
+            'maxManapoints',
+            'isActive',
+            'leftCombat',
+            'difficultyTier',
+        ]);
+        expect(m.players[0].character).toHaveProperty('previousName');
+        expect(m.players[0].character.id).toBe(900001);
+        expect(m.players[0].character.name).toBe('FixtureCharacter');
+        expect(m.monsters).toHaveLength(4);
+        expect(m.monsters[0].isBoss).toBe(true);
+        expect(m.monsters.map((monster) => monster.hrid)).toContain('/monsters/trial_beetle');
+        // The monsters' character block is the game's zeroed placeholder
+        expect(m.monsters[0].character.id).toBe(0);
+    });
+
+    test('the stats rows and the roster name the same synthetic people', () => {
+        const roster = new Set(buildNewGuildBattle().players.map((p) => p.character.id));
+        const swarm = buildGuildTrialStatsUpdated().guildTrialStatList.filter(
+            (row) => row.trialHrid === '/guild_combat/swarm'
+        );
+        const named = swarm.filter((row) => roster.has(row.characterId));
+        expect(named.length).toBe(roster.size);
+        expect(Math.min(...swarm.map((row) => row.characterId))).toBe(900001);
+    });
+
+    test('end_guild_battle carries only the battle and the trial', () => {
+        expect(buildEndGuildBattle()).toEqual({
+            type: 'end_guild_battle',
+            battleId: 1,
+            trialHrid: '/guild_combat/swarm',
+        });
+    });
+
+    test('guild_battle_updated: the opening tick has every slot, a late one is a delta with one monster', () => {
+        const opening = buildGuildBattleUpdated('opening');
+        expect(Object.keys(opening)).toEqual(['type', 'battleId', 'tier', 'pMap', 'mMap']);
+        expect(opening.mMap).toEqual({});
+        expect(Object.keys(opening.pMap['0'])).toEqual([
+            'cHP',
+            'mHP',
+            'cMP',
+            'mMP',
+            'isActive',
+            'leftCombat',
+            'atkCounter',
+            'abilityHrid',
+            'int',
+            'dmgCounter',
+            'critCounter',
+        ]);
+        const late = buildGuildBattleUpdated('late');
+        expect(late.tier).toBe(21);
+        expect(Object.keys(late.mMap)).toHaveLength(1);
+    });
+
+    test('guild_updated carries the guild id and its trial status as a JSON string', () => {
+        const m = buildGuildUpdated();
+        expect(Object.keys(m)).toEqual([
+            'type',
+            'guild',
+            'guildWeeklyTrialSet',
+            'guildBuildingLevelMap',
+            'guildTrialScheduleHourOffset',
+        ]);
+        expect(m.guild.id).toBe(FIXTURE_GUILD_ID);
+        expect(m.guild.name).toBe('FixtureGuild');
+        expect(typeof m.guild.currentTrialsData).toBe('string');
+        const trials = JSON.parse(m.guild.currentTrialsData);
+        expect(trials.combat.status).toBe('completed');
+        expect(Object.keys(trials.combat.parties).sort()).toEqual(['/guild_combat/jellyfish', '/guild_combat/swarm']);
+        expect(m.guildWeeklyTrialSet.combatHrids.sort()).toEqual(['/guild_combat/jellyfish', '/guild_combat/swarm']);
     });
 });

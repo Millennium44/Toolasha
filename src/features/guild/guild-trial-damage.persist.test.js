@@ -81,6 +81,8 @@ vi.mock('./guild-xp-tracker.js', () => ({
 }));
 
 const { guildTrialDamage, GUILD_BATTLE_MESSAGE } = await import('./guild-trial-damage.js');
+const { buildEndGuildBattle, buildGuildTrialStatsUpdated, buildNewGuildBattle } =
+    await import('../../__fixtures__/wire/guild-trial.js');
 const { LIVE_SESSION_PERSIST_MS } = await import('../../utils/live-session-persist.js');
 
 const T0 = Date.parse('2026-09-12T12:00:00Z');
@@ -472,5 +474,95 @@ describe('a reconnect mid-trial', () => {
         game.wsHandlers.end_guild_battle({ battleId: 1, trialHrid: '/guild_trials/badger' });
         game.wsHandlers.init_character_data({ character: { id: 900001 } });
         expect(guildTrialDamage.breakdown().reconnects).toBe(0);
+    });
+});
+
+describe('the game’s totals after a reload between the end and the click (real wire shapes)', () => {
+    /** FixtureCharacter swings on the real roster, the game ends the trial, and it is written down */
+    function swarmEndedAndSaved() {
+        game.wsHandlers.new_guild_battle(buildNewGuildBattle());
+        for (const [atk, hp, dmg] of [
+            [1, 300_000, 0],
+            [2, 290_000, 1],
+        ]) {
+            game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+                battleId: 1,
+                tier: 1,
+                pMap: { 0: { atkCounter: atk, cHP: 1000, isAutoAtk: true } },
+                mMap: { 0: { cHP: hp, dmgCounter: dmg, critCounter: 0 } },
+            });
+            vi.advanceTimersByTime(1000);
+        }
+        game.wsHandlers.end_guild_battle(buildEndGuildBattle());
+        vi.advanceTimersByTime(LIVE_SESSION_PERSIST_MS);
+    }
+
+    test('stats opened 30 minutes after a reload pair with the restored fight', async () => {
+        swarmEndedAndSaved();
+        await reload({ shutMs: 10 * 60_000 });
+        expect(guildTrialDamage.breakdown().endedByGame).toBe(true);
+
+        vi.advanceTimersByTime(20 * 60_000);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported.FixtureCharacter).toBeDefined();
+        expect(report.reportedMeasured.FixtureCharacter).toBeDefined();
+    });
+
+    test('stats that land while the saved tally is still being read wait for it, then pair', async () => {
+        swarmEndedAndSaved();
+        guildTrialDamage.cleanup();
+        vi.advanceTimersByTime(60_000);
+        guildTrialDamage.statsScope = { guildName: null, characterId: null };
+        guildTrialDamage.storedRoster = null;
+        let release;
+        game.gate = new Promise((resolve) => (release = resolve));
+        open();
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+
+        release();
+        game.gate = null;
+        await settle();
+        const report = guildTrialDamage.breakdown();
+        expect(report.endedByGame).toBe(true);
+        expect(report.reported.FixtureCharacter).toBeDefined();
+    });
+
+    test('a stale read finishing under a newer start leaves the newer start’s held stats alone', async () => {
+        swarmEndedAndSaved();
+        guildTrialDamage.cleanup();
+        guildTrialDamage.statsScope = { guildName: null, characterId: null };
+        guildTrialDamage.storedRoster = null;
+        let release;
+        game.gate = new Promise((resolve) => (release = resolve));
+        // Disabled and re-enabled while the first read is still out
+        open();
+        guildTrialDamage.cleanup();
+        open();
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+
+        release();
+        game.gate = null;
+        await settle();
+        expect(guildTrialDamage.breakdown().reported.FixtureCharacter).toBeDefined();
+    });
+
+    test('a stats message held across a character switch is dropped, not paired with the new character', async () => {
+        swarmEndedAndSaved();
+        guildTrialDamage.cleanup();
+        guildTrialDamage.statsScope = { guildName: null, characterId: null };
+        guildTrialDamage.storedRoster = null;
+        let release;
+        game.gate = new Promise((resolve) => (release = resolve));
+        open();
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+        game.ownId = 900002;
+        release();
+        game.gate = null;
+        await settle();
+        game.ownId = 900001;
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
     });
 });

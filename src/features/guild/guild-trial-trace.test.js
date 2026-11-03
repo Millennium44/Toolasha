@@ -103,6 +103,8 @@ import trace, {
     formatGap,
 } from './guild-trial-trace.js';
 
+import { NEW_GUILD_BATTLE, GUILD_BATTLE_TICKS, END_GUILD_BATTLE } from './guild-trial-messages.fixture.js';
+
 function emit(type, payload) {
     for (const fn of bus.get(type) || []) fn(payload);
 }
@@ -1184,6 +1186,13 @@ describe('describeTraceStatus', () => {
 describe('traceGapWarning', () => {
     const status = (overrides) => ({ running: true, gapsOver5s: 1, maxGapMs: 40_000, ...overrides });
 
+    test('describes only the live chart once the totals are reconciled from the game', () => {
+        expect(traceGapWarning(status({ maxGapMs: 9 * 60_000 }), { reconciled: true })).toBe(
+            "live chart missing 9m; totals are from the game's stats"
+        );
+        expect(traceGapWarning(status({ gapsOver5s: 0 }), { reconciled: true })).toBe('');
+    });
+
     test('warns while a capture is running and a gap has happened', () => {
         expect(traceGapWarning(status())).toBe('recording gap 40s — attribution may undercount');
     });
@@ -1419,6 +1428,197 @@ describe('character switches', () => {
             await instance.clear();
 
             expect([...store.keys()].filter((key) => key.startsWith('trialTrace'))).toEqual([]);
+        } finally {
+            instance.cleanup();
+        }
+    });
+});
+
+describe('recording gaps are holes inside a running fight', () => {
+    const tickAt = (n) => ({ ...GUILD_BATTLE_TICKS[n % GUILD_BATTLE_TICKS.length], seq: n });
+    const combatData = (status, done = false) => ({
+        guild: {
+            currentTrialsData: JSON.stringify({
+                combat: { status, parties: { '/guild_combat/badger': { done } } },
+            }),
+        },
+    });
+    const skillingOnly = { guild: { currentTrialsData: JSON.stringify({ skilling: { status: 'in_progress' } }) } };
+    const fight = (n = 1) => {
+        emit('new_guild_battle', NEW_GUILD_BATTLE);
+        for (let i = 0; i < n; i++) emit('guild_battle_updated', tickAt(i));
+    };
+
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('quiet time before the first fight of a trace is not a gap', () => {
+        emit('guild_updated', skillingOnly);
+        vi.advanceTimersByTime(91 * 60_000);
+        fight(1);
+        vi.advanceTimersByTime(1000);
+        emit('guild_battle_updated', tickAt(5));
+        expect(trace.status().gapsOver5s).toBe(0);
+        expect(trace.status().maxGapMs).toBe(1000);
+        expect(traceGapWarning(trace.status())).toBe('');
+    });
+
+    test('a hole in the middle of a fight still warns', () => {
+        fight(1);
+        vi.advanceTimersByTime(40_000);
+        emit('guild_battle_updated', tickAt(5));
+        expect(trace.status().gapsOver5s).toBe(1);
+        expect(traceGapWarning(trace.status())).toBe('recording gap 40s — attribution may undercount');
+    });
+
+    test('a guild_updated during the fight does not hide a hole', () => {
+        fight(1);
+        vi.advanceTimersByTime(20_000);
+        emit('guild_updated', combatData('in_progress'));
+        vi.advanceTimersByTime(20_000);
+        emit('guild_battle_updated', tickAt(5));
+        expect(trace.status().maxGapMs).toBe(40_000);
+    });
+
+    test('a hole spanning a tier change is measured through the new tier start', () => {
+        fight(1);
+        vi.advanceTimersByTime(30_000);
+        emit('new_guild_battle', { ...NEW_GUILD_BATTLE, tier: 2 });
+        expect(trace.status().gapsOver5s).toBe(1);
+        expect(trace.status().maxGapMs).toBe(30_000);
+    });
+
+    test('quiet time after the end, and a new fight on the held trace, are not gaps', () => {
+        fight(2);
+        emit('end_guild_battle', END_GUILD_BATTLE);
+        vi.advanceTimersByTime(60 * 60_000);
+        emit('guild_updated', skillingOnly);
+        vi.advanceTimersByTime(30 * 60_000);
+        fight(1);
+        expect(trace.status().gapsOver5s).toBe(0);
+        expect(trace.status().maxGapMs).toBe(0);
+    });
+
+    test("an earlier fight's hole does not warn about the next one", () => {
+        fight(1);
+        vi.advanceTimersByTime(40_000);
+        emit('guild_battle_updated', tickAt(5));
+        emit('end_guild_battle', END_GUILD_BATTLE);
+        // The finished fight keeps its figures until another begins
+        expect(trace.status().maxGapMs).toBe(40_000);
+        // A repeated end changes nothing
+        emit('end_guild_battle', END_GUILD_BATTLE);
+        expect(trace.status().gapsOver5s).toBe(1);
+        vi.advanceTimersByTime(10 * 60_000);
+        fight(1);
+        expect(trace.status().gapsOver5s).toBe(0);
+        expect(traceGapWarning(trace.status())).toBe('');
+    });
+
+    test('the game ending the trial closes the fight when no end message arrived', () => {
+        fight(1);
+        vi.advanceTimersByTime(1000);
+        emit('guild_updated', combatData(''));
+        vi.advanceTimersByTime(45 * 60_000);
+        fight(1);
+        expect(trace.status().gapsOver5s).toBe(0);
+    });
+
+    test('every party done also closes the fight; an unreadable record does not', () => {
+        fight(1);
+        emit('guild_updated', { guild: { currentTrialsData: 'not json' } });
+        emit('guild_updated', skillingOnly);
+        vi.advanceTimersByTime(20_000);
+        emit('guild_battle_updated', tickAt(5));
+        expect(trace.status().gapsOver5s).toBe(1);
+        emit('guild_updated', combatData('in_progress', true));
+        vi.advanceTimersByTime(60_000);
+        emit('guild_battle_updated', tickAt(6));
+        expect(trace.status().gapsOver5s).toBe(0);
+    });
+
+    test('a spectator joining mid-fight: the first tick is not a gap', () => {
+        vi.advanceTimersByTime(10 * 60_000);
+        emit('guild_battle_updated', tickAt(0));
+        vi.advanceTimersByTime(1000);
+        emit('guild_battle_updated', tickAt(1));
+        expect(trace.status().gapsOver5s).toBe(0);
+    });
+
+    test('a dropped repeat tick still shows the feed was alive', () => {
+        emit('guild_battle_updated', tickAt(0));
+        vi.advanceTimersByTime(4000);
+        emit('guild_battle_updated', tickAt(0));
+        vi.advanceTimersByTime(4000);
+        emit('guild_battle_updated', tickAt(1));
+        expect(trace.status().duplicatesDiscarded).toBe(1);
+        expect(trace.status().gapsOver5s).toBe(0);
+        expect(trace.status().maxGapMs).toBe(4000);
+    });
+
+    test('a manifest written by an older build does not read quiet time as a gap', async () => {
+        store.set('trialTraceManifest_c1', {
+            traceId: 'old-build',
+            startedAt: Date.now() - 600_000,
+            chunkSeqs: [],
+            chunkStats: [],
+            eventCount: 1,
+            maxGapMs: 91 * 60_000,
+            gapsOver5s: 1,
+            firstEventType: 'guild_updated',
+            lastEventAt: Date.now() - 100_000,
+        });
+        const instance = new GuildTrialTrace();
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('new_guild_battle', NEW_GUILD_BATTLE);
+            expect(instance.status().gapsOver5s).toBe(0);
+            expect(instance.status().maxGapMs).toBeNull();
+        } finally {
+            instance.cleanup();
+        }
+    });
+
+    test('a reload before the fight is not a gap; a reload mid-fight is', async () => {
+        for (const [fightLastAt, expected] of [
+            [0, 0],
+            [Date.now() - 20_000, 1],
+        ]) {
+            store.clear();
+            store.set('trialTraceManifest_c1', {
+                traceId: 'held',
+                startedAt: Date.now() - 600_000,
+                chunkSeqs: [],
+                chunkStats: [],
+                eventCount: 1,
+                firstEventType: 'new_guild_battle',
+                lastEventAt: Date.now() - 20_000,
+                fightLastAt,
+            });
+            const instance = new GuildTrialTrace();
+            instance.initialize();
+            await instance.whenReady();
+            try {
+                emit('guild_battle_updated', tickAt(0));
+                expect(instance.status().gapsOver5s).toBe(expected);
+            } finally {
+                instance.cleanup();
+            }
+        }
+    });
+
+    test('the running fight is persisted so a reload can tell', async () => {
+        const instance = new GuildTrialTrace({ flushEvents: 1 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('new_guild_battle', NEW_GUILD_BATTLE);
+            await instance._settle();
+            expect(store.get('trialTraceManifest_c1').fightLastAt).toBe(Date.now());
+            emit('end_guild_battle', END_GUILD_BATTLE);
+            await instance._settle();
+            expect(store.get('trialTraceManifest_c1').fightLastAt).toBe(0);
         } finally {
             instance.cleanup();
         }

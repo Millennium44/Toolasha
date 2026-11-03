@@ -3,8 +3,8 @@
  *
  * `guild-trial-damage.js` measures a guild trial by watching the spectator
  * stream go past and splitting each tick between the players it names. At the
- * end of the fight the game sends its own per-member totals
- * (`guild_trial_stats_updated`), and those two figures are the only pair in the
+ * end of the fight the game has per-member totals of its own
+ * (`guild_trial_stats_updated`, which may reach this client only when Stats is opened), and those two figures are the only pair in the
  * whole feature where a measurement can be checked against an authority. That
  * check used to go one place — the export builder — where nobody reads it.
  *

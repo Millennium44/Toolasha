@@ -11,7 +11,7 @@
  *
  * A trial is over when the breakdown says so (`endedAt`, or `endedByGame`).
  * The game's own per-member totals (`guild_trial_stats_updated`) land on the
- * breakdown as `reported` some seconds later — 28 s in a recorded trial — and
+ * breakdown as `reported` later — 28 s in one recorded trial, only when Stats was opened in another — and
  * the recorder already patches its final snapshot with them. So a trial is
  * saved the moment `reported` is in hand, or {@link RECONCILE_WAIT_MS} after
  * the end without it. The stats message repeats every time the game's own

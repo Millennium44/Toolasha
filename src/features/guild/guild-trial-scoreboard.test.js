@@ -1106,7 +1106,7 @@ describe('a trial the game ended without sending its totals', () => {
     test('the live board says how to fetch them, and stops saying it once they are in', () => {
         game.breakdown = endedByGame(5 * 60_000);
         guildTrialScoreboard.open();
-        expect(panelText()).toContain('Open the game’s Combat Trial Stats to fetch the exact totals.');
+        expect(panelText()).toContain('These figures are estimates. Open Stats in the game to confirm them.');
         guildTrialScoreboard.close();
 
         game.breakdown = endedByGame(5 * 60_000, {
@@ -1114,18 +1114,18 @@ describe('a trial the game ended without sending its totals', () => {
             reported: { Tib: { damage: 600_000, healing: 0, taken: 0 } },
         });
         guildTrialScoreboard.open();
-        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+        expect(panelText()).not.toContain('Open Stats in the game to confirm');
     });
 
     test('not while the totals are still on their usual way, nor for a fight still running', () => {
         game.breakdown = endedByGame(10_000);
         guildTrialScoreboard.open();
-        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+        expect(panelText()).not.toContain('Open Stats in the game to confirm');
         guildTrialScoreboard.close();
 
         game.breakdown = breakdown({ source: 'spectated', endedAt: null, endedByGame: false });
         guildTrialScoreboard.open();
-        expect(panelText()).not.toContain('Combat Trial Stats to fetch');
+        expect(panelText()).not.toContain('Open Stats in the game to confirm');
     });
 });
 
@@ -1162,6 +1162,20 @@ describe('the trace recording warning', () => {
         guildTrialScoreboard.open();
 
         expect(text()).toContain('recording gap 40s — attribution may undercount');
+    });
+
+    test('calmer wording, not the warning color, once the totals are the game’s own', () => {
+        game.breakdown = breakdown({
+            source: 'spectated',
+            participants: 2,
+            encounter: 'swarm',
+            reported: { Tib: { damage: 500_000 }, Moo: { damage: 400_000 } },
+        });
+        game.traceStatus = tracing({ maxGapMs: 9 * 60_000 });
+        guildTrialScoreboard.open();
+
+        expect(text()).toContain("live chart missing 9m; totals are from the game's stats");
+        expect(text()).not.toContain('attribution may undercount');
     });
 
     test('nothing while the trace feature is off', () => {
