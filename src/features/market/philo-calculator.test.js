@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     // Untradable capes setting ('zero' | 'mirror') and extra item data for getItemDetails
     capeMode: 'zero',
     itemDetails: {},
+    // The shared cape rule's answer per hrid and book side, { value, partial }; absent = nothing prices it
+    capeCosts: {},
 }));
 
 const storageMock = vi.hoisted(() => {
@@ -120,6 +122,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: () => true,
+        isFeatureEnabled: () => false,
         getSettingValue: (key, fallback) => {
             if (key === 'profitCalc_pricingMode') return mocks.globalPricingMode;
             if (key === 'profitCalc_patientTickBuy') return mocks.patientTickBuy;
@@ -134,6 +137,9 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+vi.mock('../../utils/untradable-cape-cost.js', () => ({
+    getUntradableCapeBaseCost: (hrid, { mode } = {}) => mocks.capeCosts[hrid]?.[mode] ?? { value: null, partial: true },
+}));
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
@@ -210,6 +216,7 @@ beforeEach(() => {
     mocks.drinkSlots = [];
     mocks.capeMode = 'zero';
     mocks.itemDetails = {};
+    mocks.capeCosts = {};
 
     calc = new PhiloCalculator();
     calc.useCatalyst = false;
@@ -1151,5 +1158,62 @@ describe('untradable items with no price', () => {
 
     test('a tradable item with no price is still dropped', () => {
         expect(calc.calculateRow(CAPE_HRID, cape(CAPE_HRID, true))).toBeNull();
+    });
+});
+
+describe('drops nothing quotes', () => {
+    const SIBLING = '/items/sibling_cape_refined';
+    const SIBLING_BASE = '/items/sibling_cape';
+    const GHOST = '/items/unlisted_drop';
+
+    function withDrop(hrid) {
+        const details = widget();
+        details.alchemyDetail.transmuteDropTable.push({ itemHrid: hrid, dropRate: 0.2, minCount: 1, maxCount: 1 });
+        return details;
+    }
+
+    function siblingCape() {
+        mocks.itemDetails[SIBLING] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.itemDetails[SIBLING_BASE] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.refineActions['/actions/refine_sibling'] = {
+            outputItems: [{ itemHrid: SIBLING }],
+            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
+            upgradeItemHrid: SIBLING_BASE,
+        };
+    }
+
+    test('a sibling cape drop is valued by the shared cape rule, untaxed, instead of skipped at 0', () => {
+        siblingCape();
+        // What the shared rule answers for the sibling: stones at each side of the book
+        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: false }, ask: { value: 2000, partial: false } };
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(SIBLING));
+        const rate = row.effectiveTransmuteChance * 0.2;
+        // 10 stones at the bid (100) on the instant column, at the ask (200) on the patient one
+        expect(row.evInstant - plain.evInstant).toBeCloseTo(rate * 1000, 6);
+        expect(row.evPatient - plain.evPatient).toBeCloseTo(rate * 2000, 6);
+        expect(row.unpricedOutputs).toEqual([]);
+    });
+
+    test('an output nothing can price flags the row as a floor instead of an unflagged 0', () => {
+        const plain = calc.calculateRow(WIDGET_HRID, widget());
+        const row = calc.calculateRow(WIDGET_HRID, withDrop(GHOST));
+        expect(row.unpricedOutputs).toEqual([GHOST]);
+        expect(row.evInstant).toBeCloseTo(plain.evInstant, 6);
+        expect(plain.unpricedOutputs).toEqual([]);
+
+        // A sibling cape the shared rule cannot price (an unpriced stone, or a floor) is also flagged, never 0
+        siblingCape();
+        mocks.capeCosts[SIBLING] = { bid: { value: 1000, partial: true }, ask: { value: null, partial: true } };
+        expect(calc.calculateRow(WIDGET_HRID, withDrop(SIBLING)).unpricedOutputs).toEqual([SIBLING]);
+    });
+
+    test('the stone is taxed when sold and untaxed only under Keep the Philo', () => {
+        const sold = calc.calculateRow(WIDGET_HRID, widget());
+        calc.keepPhilo = true;
+        const kept = calc.calculateRow(WIDGET_HRID, widget());
+        const stones = sold.effectiveTransmuteChance * 0.01 * 1;
+        expect(kept.evInstant - sold.evInstant).toBeCloseTo(stones * 4_000_000 * MARKET_TAX, 6);
+        expect(kept.evInstant).toBeGreaterThan(sold.evInstant);
     });
 });

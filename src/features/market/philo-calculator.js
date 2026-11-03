@@ -27,6 +27,7 @@ import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
+import { getUntradableCapeBaseCost } from '../../utils/untradable-cape-cost.js';
 import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
 import {
@@ -1047,6 +1048,7 @@ class PhiloCalculator {
          * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
          * @returns {number} Coins per action
          */
+        const unpricedOutputs = new Set();
         const expectedValueFor = (sellType) => {
             let ev = 0;
             for (const drop of alchemy.transmuteDropTable) {
@@ -1060,9 +1062,25 @@ class PhiloCalculator {
                 } else {
                     const book = ironCowBook(drop.itemHrid) ?? marketAPI.getPrice(drop.itemHrid, 0);
                     const quote = book?.[sellType];
-                    if (!(quote > 0)) continue;
-                    // Only the patient column (a sale at the ask) can move
-                    dropValue = calculatePriceAfterTax(this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid));
+                    if (quote > 0) {
+                        // Only the patient column (a sale at the ask) can move
+                        dropValue = calculatePriceAfterTax(
+                            this.patientQuote(quote, 'sell', sellType, book, drop.itemHrid)
+                        );
+                    } else {
+                        // No quote: an untradable cape (a sibling ★ cape) takes the shared cape rule, as the
+                        // alchemy calculator does, untaxed because it is never sold; anything else nothing can
+                        // price is left out and flagged, so the row reads as a floor, never as an unflagged 0
+                        const cape = isUntradableCape(drop.itemHrid)
+                            ? getUntradableCapeBaseCost(drop.itemHrid, { mode: sellType })
+                            : null;
+                        if (cape?.value > 0 && !cape.partial) {
+                            dropValue = cape.value;
+                        } else {
+                            unpricedOutputs.add(drop.itemHrid);
+                            continue;
+                        }
+                    }
                 }
 
                 const avgCount = (drop.minCount + drop.maxCount) / 2;
@@ -1117,6 +1135,8 @@ class PhiloCalculator {
             name: this.getItemName(itemHrid),
             cost: costDerived(itemCost),
             needsPrice,
+            // Drops nothing could price: left out of the revenue, so the row is a floor
+            unpricedOutputs: [...unpricedOutputs],
             costSource,
             costFallbackLevel: fallbackLevel,
             // Displayed as the game shows them: conditional on a successful transmute
@@ -1990,11 +2010,15 @@ class PhiloCalculator {
                 // Format based on column type
                 switch (col.key) {
                     case 'name':
-                        td.textContent = value;
+                        td.textContent = row.unpricedOutputs?.length ? `${value} †` : value;
                         // The rest of the modal is about this item; the name is
                         // the way to it. Same pattern as the ledger's rows.
                         td.style.cursor = 'pointer';
-                        td.title = 'Open this item in the marketplace.';
+                        td.title = row.unpricedOutputs?.length
+                            ? 'Open this item in the marketplace.\nA floor: ' +
+                              row.unpricedOutputs.map((hrid) => this.getItemName(hrid)).join(', ') +
+                              ' has no price, so it is left out of the revenue.'
+                            : 'Open this item in the marketplace.';
                         td.addEventListener('mouseenter', () => (td.style.textDecoration = 'underline'));
                         td.addEventListener('mouseleave', () => (td.style.textDecoration = ''));
                         td.addEventListener('click', () => {
