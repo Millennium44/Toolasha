@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
 - Turning "Ability books as inventory" on or off with Ability Books excluded no longer counts as Non-Excl earnings, and the marker's hover shows that step.
 - A setting change marked in different batches on two devices no longer shows as an invented loss in net worth growth, the forecast or gold sources.
 - Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed, and adding a ninth aura option after another tab filled the list says it was not added.

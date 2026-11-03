@@ -47,9 +47,12 @@ const storageMock = vi.hoisted(() => {
             const held = storeFor(store).get(key);
             return held === undefined || held === null ? fallback : held;
         }),
-        set: vi.fn(async (key, value, store = 'settings') => {
+        // As the real one: a fold runs against what is stored when the write lands
+        set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
             if (mock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const held = storeFor(store).get(key);
+            const next = options?.fold && held !== undefined ? options.fold(structuredClone(held), value) : value;
+            storeFor(store).set(key, structuredClone(next));
             return true;
         }),
         setJSON: vi.fn(async (key, value, store = 'settings') => {
@@ -86,7 +89,7 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
-const { default: tracker } = await import('./task-reroll-tracker.js');
+const { default: tracker, mergeLiveMap } = await import('./task-reroll-tracker.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
@@ -100,6 +103,8 @@ beforeEach(() => {
     tracker.taskRerollData.clear();
     tracker.dataRecord.reset();
     tracker.historyRecord.reset();
+    tracker.knownTaskIds.clear();
+    tracker.droppedTaskIds.clear();
     dataManager.characterData = null;
     dataManager.characterQuests = [];
 });
@@ -238,6 +243,172 @@ describe('cleanup', () => {
         tracker.cleanup();
 
         expect(tracker.taskRerollData.size).toBe(0);
+    });
+});
+
+describe('the live map when another tab has written it', () => {
+    const KEY = 'taskRerollData_market123';
+    const row = (coinRerollCount, cowbellRerollCount = 0, extra = {}) => ({
+        coinRerollCount,
+        cowbellRerollCount,
+        monsterHrid: '/monsters/jerry',
+        actionHrid: '/actions/combat/jerry',
+        goalCount: 100,
+        ...extra,
+    });
+    const stored = () => spend().get(KEY);
+    const loaded = async (map) => {
+        spend().set(KEY, map);
+        await tracker.loadFromStorage();
+    };
+
+    test('a stale tab adding its own task keeps the task the other tab added', async () => {
+        await loaded({ 1: row(1) });
+        // The other tab draws task 2 and saves; this one has not heard
+        spend().set(KEY, { 1: row(1), 2: row(3) });
+
+        tracker.taskRerollData.set(5, row(1));
+        await tracker.saveToStorage();
+
+        expect(Object.keys(stored())).toEqual(['1', '2', '5']);
+        expect(stored()[2].coinRerollCount).toBe(3);
+    });
+
+    test('what it finds it takes in, so the badge reads the other tab’s spend', async () => {
+        await loaded({ 1: row(1) });
+        spend().set(KEY, { 1: row(4, 2), 2: row(3) });
+
+        tracker.taskRerollData.set(5, row(1));
+        await tracker.saveToStorage();
+
+        expect(tracker.taskRerollData.get(2).coinRerollCount).toBe(3);
+        expect(tracker.taskRerollData.get(1)).toMatchObject({ coinRerollCount: 4, cowbellRerollCount: 2 });
+    });
+
+    test('the same task in both: the higher count of each kind stands, whichever tab saved last', () => {
+        const a = { 7: row(5, 0, { seenAt: 100 }) };
+        const b = { 7: row(2, 3, { seenAt: 200 }) };
+        for (const merged of [mergeLiveMap(a, b), mergeLiveMap(b, a)]) {
+            expect(merged[7]).toMatchObject({ coinRerollCount: 5, cowbellRerollCount: 3, seenAt: 200 });
+        }
+    });
+
+    test('a task this tab retired is not brought back by the other tab’s stale copy', async () => {
+        await loaded({ 1: row(1), 2: row(2) });
+        dataManager.characterQuests = [{ id: 2 }];
+        tracker.cleanupOldTasks();
+        await vi.waitFor(() => expect(stored()[1]).toBeUndefined());
+
+        // The stale tab, still holding the retired task, writes its whole copy
+        spend().set(KEY, { 1: row(1), 2: row(2) });
+        tracker.taskRerollData.get(2).coinRerollCount = 3;
+        await tracker.saveToStorage();
+
+        expect(Object.keys(stored())).toEqual(['2']);
+        expect(stored()[2].coinRerollCount).toBe(3);
+        expect(tracker.taskRerollData.has(1)).toBe(false);
+    });
+
+    test('a task retired here and then named by the server again goes back on the map', async () => {
+        await loaded({ 1: row(1) });
+        tracker.taskRerollData.delete(1);
+        await tracker.saveToStorage();
+        expect(stored()[1]).toBeUndefined();
+
+        tracker.taskRerollData.set(1, row(2));
+        await tracker.saveToStorage();
+        expect(stored()[1].coinRerollCount).toBe(2);
+        // ...and a later copy of it is not treated as dropped
+        spend().set(KEY, { 1: row(6) });
+        await tracker.saveToStorage();
+        expect(stored()[1].coinRerollCount).toBe(6);
+    });
+
+    test('another tab retiring a task this one still holds: it stays until this tab retires it too', async () => {
+        await loaded({ 1: row(1), 2: row(2) });
+        spend().set(KEY, { 2: row(2) });
+
+        await tracker.saveToStorage();
+        expect(Object.keys(stored())).toEqual(['1', '2']);
+
+        dataManager.characterQuests = [{ id: 2 }];
+        tracker.cleanupOldTasks();
+        await vi.waitFor(() => expect(Object.keys(stored())).toEqual(['2']));
+    });
+
+    test('a pull from another device: this device’s next save folds it, and a replay changes nothing', async () => {
+        await loaded({ 1: row(1) });
+        // A pull writes the other device's whole map under the running page
+        const pulled = { 1: row(3), 9: row(1, 4) };
+        spend().set(KEY, pulled);
+
+        await tracker.saveToStorage();
+        const once = structuredClone(stored());
+        expect(once).toMatchObject({ 1: { coinRerollCount: 3 }, 9: { cowbellRerollCount: 4 } });
+
+        spend().set(KEY, pulled);
+        await tracker.saveToStorage();
+        expect(stored()).toEqual(once);
+        await tracker.saveToStorage();
+        expect(stored()).toEqual(once);
+    });
+
+    test('an edit followed by new data: a rise after the fold is kept, and an older copy cannot lower it', async () => {
+        await loaded({ 1: row(1) });
+        spend().set(KEY, { 1: row(3) });
+        await tracker.saveToStorage();
+
+        tracker.taskRerollData.get(1).coinRerollCount = 8;
+        await tracker.saveToStorage();
+        spend().set(KEY, { 1: row(3) });
+        await tracker.saveToStorage();
+        expect(stored()[1].coinRerollCount).toBe(8);
+    });
+
+    test('a write that lands between this tab’s read and its write is folded in the transaction', async () => {
+        await loaded({ 1: row(1) });
+        const { tryGet } = storageMock;
+        const pass = tryGet.getMockImplementation();
+        tryGet.mockImplementationOnce(async (...args) => {
+            const answer = await pass(...args);
+            spend().set(KEY, { 1: row(1), 2: row(5) });
+            return answer;
+        });
+
+        tracker.taskRerollData.set(3, row(1));
+        await tracker.saveToStorage();
+        expect(Object.keys(stored())).toEqual(['1', '2', '3']);
+    });
+
+    test('nothing stored, an empty map and a refused save each leave what they should', async () => {
+        await tracker.loadFromStorage();
+        await tracker.saveToStorage();
+        expect(stored()).toEqual({});
+
+        tracker.taskRerollData.set(1, row(1));
+        storageMock.unavailable = true;
+        await tracker.saveToStorage();
+        expect(stored()).toEqual({});
+        expect(tracker.taskRerollData.get(1).coinRerollCount).toBe(1);
+        storageMock.unavailable = false;
+    });
+
+    test('a character switch forgets what the departing character dropped', async () => {
+        await loaded({ 1: row(1) });
+        tracker.taskRerollData.delete(1);
+        await tracker.saveToStorage();
+        expect(tracker.droppedTaskIds.has('1')).toBe(true);
+
+        tracker.cleanup();
+        expect(tracker.droppedTaskIds.size).toBe(0);
+        expect(tracker.knownTaskIds.size).toBe(0);
+
+        // The arriving character happens to hold the same id: its row is its own
+        game.characterId = 'iron456';
+        spend().set('taskRerollData_iron456', { 1: row(9) });
+        await tracker.loadFromStorage();
+        await tracker.saveToStorage();
+        expect(spend().get('taskRerollData_iron456')[1].coinRerollCount).toBe(9);
     });
 });
 
