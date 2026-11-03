@@ -6614,6 +6614,29 @@ describe('the combat tier from the card alone', () => {
         expect(analysis.tier).toBe(2);
         expect(analysis.tierSource).toBe('socket');
 
+        // …but a part of a wave larger than the stated tier's is the tier having moved on, though one
+        // monster of four sits far under the old whole-wave target, and nothing else contradicts it
+        const later = { current: 300_000, max: 325_600, source: 'pool', slots: 1, waveCount: 4 };
+        const stale = {
+            ...record,
+            samples: [
+                { t: Date.now() - 10_000, readings: [{ ...later, current: 310_000 }] },
+                { t: Date.now(), readings: [later] },
+            ],
+        };
+        expect(analyseTrial(stale, { participants: 4, phase: 'live' }).tierSource).not.toBe('socket');
+
+        // Two monsters of four, stated for the same wave, agree
+        const two = { current: 450_000, max: 500_000, source: 'pool', slots: 2, waveCount: 4 };
+        const half = {
+            ...record,
+            samples: [
+                { t: Date.now() - 10_000, readings: [{ ...two, current: 460_000 }] },
+                { t: Date.now(), readings: [two] },
+            ],
+        };
+        expect(analyseTrial(half, { participants: 4, phase: 'live' }).tierSource).toBe('socket');
+
         // …and a whole-wave reading that disagrees still drops it: the tier has moved on
         const whole = { current: 1_900_000, max: 2_000_000, source: 'pool', slots: 4, waveCount: 4 };
         const moved = {

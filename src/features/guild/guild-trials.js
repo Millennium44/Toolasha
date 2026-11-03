@@ -442,6 +442,9 @@ export function waveLadderBase(base, reading, waveCount = null) {
     return monsters === null ? null : base * monsters;
 }
 
+/** How far a partial reading, scaled up to its wave, may sit from the target a tier was stated for */
+const PARTIAL_WAVE_MARGIN = 0.01;
+
 /**
  * How many monsters a combat reading stands for: 1 for an untagged reading,
  * the wave's count for one that summed the whole wave, null for a partial one.
@@ -612,9 +615,18 @@ export function analyseTrial(
     const fromBadge = badge !== null ? (completed || !earned ? badge : badge + 1) : null;
 
     const socketTarget = Number.isFinite(record?.liveTierTarget) ? record.liveTierTarget : null;
-    // A reading of part of a wave (one monster's max) cannot disagree with the whole wave's target
+    // A reading of part of a wave (one monster's max) is compared on the wave's scale, as `waveLadderBase`
+    // prices a wave: its monsters share one maximum (Swarm's four did, in the 2026-11-02 capture). Not a plain
+    // "the part cannot exceed the whole": one of four monsters stays under any earlier tier's target. A tier is
+    // 3% or more above the last, so the margin only covers rounding.
+    const partialWave = kind === 'combat' && latestMonsters === null;
+    const waveTotal = partialWave ? (total * (latest.waveCount ?? knownWave)) / latest.slots : total;
     const socketStale =
-        latestMonsters !== null && socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
+        socketTarget !== null &&
+        Number.isFinite(waveTotal) &&
+        (partialWave
+            ? Math.abs(waveTotal - socketTarget) > socketTarget * PARTIAL_WAVE_MARGIN
+            : total !== socketTarget);
     const fromSocket = !completed && !socketStale && Number.isFinite(record?.liveTier) ? record.liveTier : null;
 
     // The guild payload's `highestTier` for this trial's party ('server'): tiers
