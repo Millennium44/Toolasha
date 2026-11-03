@@ -7,6 +7,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ## Unreleased — branch `main`
 
 - Toggling a scroll chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
+- Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
+- The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time.
+- A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
+- Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
+- A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
+- Turning "Ability books as inventory" on or off with Ability Books excluded no longer counts as Non-Excl earnings, and the marker's hover shows that step.
+- A setting change marked in different batches on two devices no longer shows as an invented loss in net worth growth, the forecast or gold sources.
+- Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed, and adding a ninth aura option after another tab filled the list says it was not added.
+- Sync no longer loses a setting's change time if a tab closes or a sync reads mid-write during imports, migrations and copies between characters.
+- Hand-removing a catalyst from an alchemy session and resuming no longer undercosts the catalysts used afterward.
 - The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.
 - Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
 - The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.

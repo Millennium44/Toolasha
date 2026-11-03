@@ -200,14 +200,11 @@ export function buildFingerprint(dto) {
 }
 
 /**
- * A teammate's aura options as stored: each `{hrid, level}` with an ability hrid and a whole level of at least 1,
- * one per hrid (the last level given wins), at most {@link MAX_AURA_OPTIONS}. Whether a hrid is an aura, still
- * exists or has a level the game allows is judged against the game data when a sweep is planned, not here — the
- * roster outlives a game patch.
+ * The usable aura options in a list, one per hrid (the last level given wins), before any cap.
  * @param {*} value
  * @returns {Array<{hrid: string, level: number}>}
  */
-export function normalizeAuraOptions(value) {
+function usableAuraOptions(value) {
     if (!Array.isArray(value)) return [];
     const byHrid = new Map();
     for (const option of value) {
@@ -217,7 +214,34 @@ export function normalizeAuraOptions(value) {
         byHrid.delete(hrid);
         byHrid.set(hrid, { hrid, level });
     }
-    return [...byHrid.values()].slice(0, MAX_AURA_OPTIONS);
+    return [...byHrid.values()];
+}
+
+/**
+ * A teammate's aura options as stored: each `{hrid, level}` with an ability hrid and a whole level of at least 1,
+ * one per hrid (the last level given wins), at most {@link MAX_AURA_OPTIONS}. Whether a hrid is an aura, still
+ * exists or has a level the game allows is judged against the game data when a sweep is planned, not here — the
+ * roster outlives a game patch.
+ * @param {*} value
+ * @returns {Array<{hrid: string, level: number}>}
+ */
+export function normalizeAuraOptions(value) {
+    return usableAuraOptions(value).slice(0, MAX_AURA_OPTIONS);
+}
+
+/**
+ * A capped list after a sync fold: the most recently changed entries, the id breaking a tie. Chosen by what the
+ * entries are rather than by where they sit, so two full devices keep the same ones whichever copy is folded into
+ * which. The order is left alone: each device keeps its own, and only which entries survive has to agree.
+ * @param {Array<{id: string, updatedAt: number}>} list
+ * @param {number} max
+ * @returns {Array} The entries kept, in their order
+ */
+function keepMostRecent(list, max) {
+    if (list.length <= max) return list;
+    const ranked = [...list].sort((x, y) => y.updatedAt - x.updatedAt || (x.id < y.id ? -1 : 1));
+    const kept = new Set(ranked.slice(0, max).map((entry) => entry.id));
+    return list.filter((entry) => kept.has(entry.id));
 }
 
 /**
@@ -276,7 +300,8 @@ export function normalizeRoster(value, now = Date.now()) {
 /**
  * The sync fold: both copies' teammates by id, the later `updatedAt` winning each (a tie to the incoming copy),
  * both copies' tombstones, and every teammate deleted after it last changed dropped. This device's order first,
- * then teammates only the incoming copy has; the size cap applies to the teammates left.
+ * then teammates only the incoming copy has; the size cap applies to the teammates left and keeps the most recently
+ * changed ({@link keepMostRecent}), so two full devices end up holding the same ones.
  * @param {*} local - This device's stored roster
  * @param {*} incoming - The other side's
  * @returns {Object} The merged roster
@@ -294,18 +319,39 @@ export function mergeRoster(local, incoming) {
         const mine = byId.get(entry.id);
         if (!mine || entry.updatedAt >= mine.updatedAt) byId.set(entry.id, entry);
     }
-    const entries = [...byId.values()]
-        .filter((entry) => !(removed[entry.id] >= entry.updatedAt))
-        .slice(0, MAX_ROSTER_SIZE);
+    const entries = keepMostRecent(
+        [...byId.values()].filter((entry) => !(removed[entry.id] >= entry.updatedAt)),
+        MAX_ROSTER_SIZE
+    );
     const buildsById = new Map(a.builds.map((build) => [build.id, build]));
     for (const build of b.builds) {
         const mine = buildsById.get(build.id);
         if (!mine || build.updatedAt >= mine.updatedAt) buildsById.set(build.id, build);
     }
-    const builds = [...buildsById.values()]
-        .filter((build) => !(removed[build.id] >= build.updatedAt))
-        .slice(0, MAX_SAVED_BUILDS);
+    const builds = keepMostRecent(
+        [...buildsById.values()].filter((build) => !(removed[build.id] >= build.updatedAt)),
+        MAX_SAVED_BUILDS
+    );
     return { savedAt: Math.max(a.savedAt, b.savedAt), entries, builds, removed };
+}
+
+/**
+ * What a sync fold took off a full roster for want of room. Gone without a tombstone from a list that is now full:
+ * anything deleted carries a tombstone, and a list with room left dropped nothing to the cap.
+ * @param {{entries: Array, builds: Array, removed: Object}} before - The roster as held before the pull
+ * @param {{entries: Array, builds: Array, removed: Object}} after - The roster as it now stands
+ * @returns {{teammates: Array<string>, builds: Array<string>}} The names evicted, most of the time none
+ */
+export function evictedByCap(before, after) {
+    const lost = (key, max) => {
+        const left = after?.[key] || [];
+        if (left.length < max) return [];
+        const ids = new Set(left.map((entry) => entry.id));
+        return (before?.[key] || [])
+            .filter((entry) => !ids.has(entry.id) && !after?.removed?.[entry.id])
+            .map((entry) => entry.name);
+    };
+    return { teammates: lost('entries', MAX_ROSTER_SIZE), builds: lost('builds', MAX_SAVED_BUILDS) };
 }
 
 let idCounter = 0;
@@ -460,22 +506,36 @@ export async function replaceTeammateBuild(id, dto, gameMode) {
  *   stored one: `({auras, includeAsBuilt}) => ({auras, includeAsBuilt})`, run inside the write against what is
  *   stored then, so an edit drawn from an older copy (another tab saved since) is made on the current list
  * @param {boolean} [includeAsBuilt] - Also try them as built (with a list; a change function returns its own)
- * @returns {Promise<{ok: boolean, roster: Object, found: boolean}>}
+ * @returns {Promise<{ok: boolean, roster: Object, found: boolean, capped: boolean}>} `capped`: the change asked for
+ *   more than {@link MAX_AURA_OPTIONS}, so the newest went unsaved. The editor can only offer that when its copy is
+ *   older than what is stored (another tab filled the list), so it has to be told
  */
 export async function setTeammateAuras(id, auras, includeAsBuilt) {
     const result = await mutateRoster((roster, now) => {
         const entry = roster.entries.find((e) => e.id === id);
-        if (!entry) return { write: false, found: false };
+        if (!entry) return { write: false, found: false, capped: false };
         const next =
             typeof auras === 'function'
                 ? auras({ auras: entry.auras.map((o) => ({ ...o })), includeAsBuilt: entry.includeAsBuilt })
                 : { auras, includeAsBuilt };
-        entry.auras = normalizeAuraOptions(next?.auras);
-        entry.includeAsBuilt = next?.includeAsBuilt !== false;
+        const capped = usableAuraOptions(next?.auras).length > MAX_AURA_OPTIONS;
+        const kept = normalizeAuraOptions(next?.auras);
+        const asBuilt = next?.includeAsBuilt !== false;
+        // Nothing survived but what is already stored: an unchanged teammate must not win a sync as a newer edit
+        if (capped && asBuilt === entry.includeAsBuilt && stableStringify(kept) === stableStringify(entry.auras)) {
+            return { write: false, found: true, capped: true };
+        }
+        entry.auras = kept;
+        entry.includeAsBuilt = asBuilt;
         entry.updatedAt = now;
-        return { write: true, found: true };
+        return { write: true, found: true, capped };
     });
-    return { ok: result.ok, roster: result.roster, found: Boolean(result.outcome?.found) };
+    return {
+        ok: result.ok,
+        roster: result.roster,
+        found: Boolean(result.outcome?.found),
+        capped: Boolean(result.outcome?.capped),
+    };
 }
 
 /**

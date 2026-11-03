@@ -1558,6 +1558,66 @@ describe('the coins reported to the history', () => {
     });
 });
 
+describe('ability books and the switch that moves them', () => {
+    const BOOK = '/items/poke';
+    const SWORD = '/items/sword';
+
+    /** Five books at 100 each, plus a sword at 1,000 that no switch touches */
+    async function sweep(asInventory) {
+        mocks.settings.networth_abilityBooksAsInventory = asInventory;
+        mocks.itemDetails[BOOK] = { name: 'Poke', categoryHrid: '/item_categories/ability_book', sellPrice: 100 };
+        mocks.itemDetails[SWORD] = { name: 'Sword', categoryHrid: '/item_categories/equipment', sellPrice: 1000 };
+        mocks.itemPrices[BOOK] = { ask: 100, bid: 100 };
+        mocks.itemPrices[SWORD] = { ask: 1000, bid: 1000 };
+        mocks.batchPrices[`${BOOK}:0`] = { ask: 100, bid: 100 };
+        mocks.batchPrices[`${SWORD}:0`] = { ask: 1000, bid: 1000 };
+        mocks.combinedData = {
+            characterItems: [
+                { itemHrid: BOOK, enhancementLevel: 0, count: 5, itemLocationHrid: '/item_locations/inventory' },
+                { itemHrid: SWORD, enhancementLevel: 0, count: 1, itemLocationHrid: '/item_locations/inventory' },
+            ],
+            myMarketListings: [],
+            characterHouseRoomMap: {},
+            characterAbilities: [],
+            abilityCombatTriggersMap: {},
+            itemDetailMap: { [BOOK]: mocks.itemDetails[BOOK], [SWORD]: mocks.itemDetails[SWORD] },
+        };
+        return calculateNetworth();
+    }
+
+    test('with the asset type excluded, the books are the switch’s to move, on either side of it', async () => {
+        mocks.excluded.add('assetType:abilityBooks');
+        const off = await sweep(false);
+        expect(off.valuationFacts.switchedBooks).toEqual({ value: 500, partial: false });
+        expect(off.excluded.total).toBe(500);
+        expect(off.totalNetworth).toBe(1000);
+
+        const on = await sweep(true);
+        expect(on.valuationFacts.switchedBooks).toEqual({ value: 500, partial: false });
+        expect(on.excluded.total).toBe(0);
+        // The total the history records is unchanged; the non-excluded line rose by exactly the fact
+        expect(on.totalNetworth + on.excluded.total).toBe(off.totalNetworth + off.excluded.total);
+        expect(on.totalNetworth - off.totalNetworth).toBe(on.valuationFacts.switchedBooks.value);
+    });
+
+    test('without that exclusion the switch only moves them between lines', async () => {
+        const off = await sweep(false);
+        const on = await sweep(true);
+        expect(off.valuationFacts.switchedBooks.value).toBe(0);
+        expect(on.valuationFacts.switchedBooks.value).toBe(0);
+        expect(on.totalNetworth).toBe(off.totalNetworth);
+    });
+
+    test('books excluded by name or by category stay out either way, so the switch moves none of them', async () => {
+        mocks.excluded.add('assetType:abilityBooks');
+        mocks.excluded.add(`item:${BOOK}`);
+        expect((await sweep(true)).valuationFacts.switchedBooks.value).toBe(0);
+        mocks.excluded.delete(`item:${BOOK}`);
+        mocks.excluded.add('category:/item_categories/ability_book');
+        expect((await sweep(false)).valuationFacts.switchedBooks.value).toBe(0);
+    });
+});
+
 describe('a sweep with nothing to price with', () => {
     test('says so rather than handing back a plain zero', async () => {
         mocks.combinedData = null;

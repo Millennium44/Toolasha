@@ -15,7 +15,7 @@ import {
     noteCardTaskDrawn,
 } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
-import { createCuratedRecord, createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { createCuratedRecord, createPersistedRecord } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
@@ -35,9 +35,10 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
  * Both are kept through persisted records (`utils/persisted-record.js`), so a
  * read that cannot be made does not come back as an empty map or list and get
  * written over the stored one. The history folds stored entries under new
- * ones by task — a task retires once — so a second tab's entries survive; the
- * live map is curated: tasks are dropped from it on purpose when they retire,
- * so once it has been read back memory is the map and a drop sticks.
+ * ones by task — a task retires once — so a second tab's entries survive. The
+ * live map folds too ({@link mergeLiveMap}): its counters only ever rise, so
+ * the higher of two copies is right, and a task this tab dropped on purpose
+ * when it retired is the one row a stored copy may not bring back.
  */
 const DATA_KEY = 'taskRerollData';
 const HISTORY_KEY = 'taskRerollHistory';
@@ -96,18 +97,78 @@ export function calculateCowbellSpent(rerollCount) {
 }
 
 /**
- * Fold a stored history under the in-memory one: the union by task, oldest
- * first, capped at {@link HISTORY_CAP}.
+ * Two records of one task's retirement as one. A task retires once, so the earliest time is when it did and a later
+ * row is the same task seen again: a stale copy of the live map can bring it back with lower counts, and retire it a
+ * second time. Spend only ever rises, so the highest counts stand.
+ * @param {Object} held - One row
+ * @param {Object} row - The other, whose other fields win where it has them
+ * @returns {Object} The row to keep
+ */
+function foldHistoryRow(held, row) {
+    const times = [held.retiredAt, row.retiredAt].filter((at) => at > 0);
+    const merged = { ...held, ...row };
+    for (const field of ['coinRerollCount', 'cowbellRerollCount', 'goldSpent', 'cowbellsSpent']) {
+        merged[field] = Math.max(held[field] || 0, row[field] || 0);
+    }
+    for (const field of ['monsterHrid', 'actionHrid', 'goalCount']) {
+        merged[field] = row[field] || held[field] || merged[field];
+    }
+    if (times.length > 0) merged.retiredAt = Math.min(...times);
+    return merged;
+}
+
+/**
+ * Fold a stored history under the in-memory one: one row per task, oldest
+ * first, capped at {@link HISTORY_CAP}. The same answer whichever copy is which, and on a replay.
  * @param {Array} stored - Entries as read back
  * @param {Array} memory - Entries as held
  * @returns {Array} The merged, capped history
  */
 function mergeHistory(stored, memory) {
-    const merged = mergeById(
-        (entry) => entry?.taskId,
-        (a, b) => (a.retiredAt || 0) - (b.retiredAt || 0)
-    )(stored, memory);
+    const byTask = new Map();
+    for (const list of [stored, memory]) {
+        for (const entry of Array.isArray(list) ? list : []) {
+            const taskId = entry?.taskId;
+            if (taskId === null || taskId === undefined) continue;
+            const held = byTask.get(taskId);
+            byTask.set(taskId, held ? foldHistoryRow(held, entry) : entry);
+        }
+    }
+    const merged = [...byTask.values()].sort((a, b) => (a.retiredAt || 0) - (b.retiredAt || 0));
     return merged.length > HISTORY_CAP ? merged.slice(merged.length - HISTORY_CAP) : merged;
+}
+
+/**
+ * Fold one copy of the live map under another, so a second tab holding an older copy adds to the stored one rather
+ * than writing over it. Per task the higher counters stand, since a count only ever rises; the rest is the newer
+ * copy's. A stored task this tab does not hold is kept (the other tab drew it) unless this tab dropped it.
+ * @param {Object} stored - The map as read back
+ * @param {Object} memory - The map as held
+ * @param {Set<string>} dropped - Task ids this tab has taken off the map on purpose
+ * @returns {Object} The merged map
+ */
+export function mergeLiveMap(stored, memory, dropped = new Set()) {
+    const merged = {};
+    const held = memory && typeof memory === 'object' ? memory : {};
+    for (const [taskId, row] of Object.entries(stored && typeof stored === 'object' ? stored : {})) {
+        if (!Object.hasOwn(held, taskId) && !dropped.has(taskId)) merged[taskId] = row;
+    }
+    for (const [taskId, row] of Object.entries(held)) {
+        const other = stored?.[taskId];
+        if (!other) {
+            merged[taskId] = row;
+            continue;
+        }
+        const seenAt = Math.max(other.seenAt || 0, row.seenAt || 0);
+        merged[taskId] = {
+            ...other,
+            ...row,
+            coinRerollCount: Math.max(other.coinRerollCount || 0, row.coinRerollCount || 0),
+            cowbellRerollCount: Math.max(other.cowbellRerollCount || 0, row.cowbellRerollCount || 0),
+            ...(seenAt > 0 ? { seenAt } : {}),
+        };
+    }
+    return merged;
 }
 
 /*
@@ -115,9 +176,10 @@ function mergeHistory(stored, memory) {
  * instead of overwriting it. The history only ever gains rows — a task retires
  * once — so the whole-key write `importEverything` would otherwise do throws
  * away every reroll the receiving device paid for and the sending one never
- * saw, which is the entire point of a spend tracker. The live map above is
- * curated (tasks are dropped from it deliberately when they retire) and stays
- * a whole-key write.
+ * saw, which is the entire point of a spend tracker. The live map stays a
+ * whole-key write on a pull: tasks are dropped from it deliberately when they
+ * retire, and a fold in sync could not tell which side dropped one. The next
+ * save here folds what the pull wrote, as it does a second tab's write.
  *
  * Registration runs at import time, which is long before the earliest pull (the
  * staggered startup pull, 20s+ after load), so the registry is complete by the
@@ -138,10 +200,16 @@ class TaskRerollTracker {
         this.unregisterHandlers = [];
         this.isInitialized = false;
         this.storeName = STORE_NAME;
+        /** The task ids the map held when last read or written, to notice one this tab has since dropped */
+        this.knownTaskIds = new Set();
+        /** Task ids this tab has taken off the map, which a stored copy may not bring back */
+        this.droppedTaskIds = new Set();
         this.dataRecord = createCuratedRecord({
             base: DATA_KEY,
             store: STORE_NAME,
             empty: () => ({}),
+            merge: (stored, memory) => mergeLiveMap(stored, memory, this.droppedTaskIds),
+            keepMerging: true,
             immediate: true,
             label: 'TaskRerollTracker',
         });
@@ -205,6 +273,7 @@ class TaskRerollTracker {
     async loadFromStorage() {
         try {
             this.dataRecord.reset();
+            this.droppedTaskIds.clear();
             this.dataRecord.set(this._dataToSave());
             const readable = await this.dataRecord.load();
             if (!readable) return;
@@ -213,6 +282,7 @@ class TaskRerollTracker {
             for (const [taskId, data] of Object.entries(this.dataRecord.get())) {
                 this.taskRerollData.set(parseInt(taskId), data);
             }
+            this.knownTaskIds = new Set(Object.keys(this._dataToSave()));
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to load from storage:', error);
         }
@@ -221,13 +291,44 @@ class TaskRerollTracker {
     /**
      * Save task reroll data to IndexedDB. Skipped when storage cannot be read
      * first; the map in hand is kept and the next save retries.
+     *
+     * The save folds this tab's map with the stored one, so a second tab's rows and higher counts survive
+     * and are taken in here, where the badges read them. A task that was known and is gone from the map was
+     * dropped on purpose and stays dropped.
      */
     async saveToStorage() {
         try {
-            this.dataRecord.set(this._dataToSave());
-            await this.dataRecord.save();
+            const current = this._dataToSave();
+            for (const taskId of this.knownTaskIds) {
+                if (!Object.hasOwn(current, taskId)) this.droppedTaskIds.add(taskId);
+            }
+            for (const taskId of Object.keys(current)) this.droppedTaskIds.delete(taskId);
+            this.knownTaskIds = new Set(Object.keys(current));
+            this.dataRecord.set(current);
+            if (!(await this.dataRecord.save())) return;
+            this._adoptSaved();
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to save to storage:', error);
+        }
+    }
+
+    /**
+     * Take in what a save folded from the stored map: only ever adds a row or raises a count, so a save that a
+     * character switch overtook, whose record has been emptied since, changes nothing.
+     * @private
+     */
+    _adoptSaved() {
+        for (const [taskId, row] of Object.entries(this.dataRecord.get() || {})) {
+            const id = parseInt(taskId);
+            const held = this.taskRerollData.get(id);
+            if (
+                !held ||
+                (row.coinRerollCount || 0) > (held.coinRerollCount || 0) ||
+                (row.cowbellRerollCount || 0) > (held.cowbellRerollCount || 0)
+            ) {
+                this.taskRerollData.set(id, row);
+                this.knownTaskIds.add(taskId);
+            }
         }
     }
 
@@ -242,6 +343,8 @@ class TaskRerollTracker {
         // follows a character switch loads the arriving character's rows rather
         // than writing the departing character's out under their key.
         this.taskRerollData.clear();
+        this.knownTaskIds.clear();
+        this.droppedTaskIds.clear();
         this.dataRecord.reset();
         this.historyRecord.reset();
         document.getElementById('mwi-task-action-min-height')?.remove();

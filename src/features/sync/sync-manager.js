@@ -1601,7 +1601,15 @@ class SyncManager {
             // Settled: nothing in this version is news to this device. Deletes an earlier pull could not
             // land are still owed, and this path never reaches the retry in the apply
             await retryPendingDisplacedDeletes();
-            if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
+            // A held-back marker for a download older than this device's stamp has been overtaken: a later pull
+            // took the gist since (a pull stopped mid-import can write one that late). Nothing will retry it, as
+            // that download is gone from the gist, and left here it would refuse every push until another device
+            // happened to write
+            const settled = {
+                ...(seen ? { [KEY_GIST_VERSION]: { ...seen, current: true } } : {}),
+                ...(held && isNewer(lastSyncedAt, held.exportedAt) ? { [KEY_MERGE_HELD]: null } : {}),
+            };
+            if (Object.keys(settled).length) await rememberLocal(settled);
             if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'not-newer' };
         }
@@ -1772,8 +1780,18 @@ class SyncManager {
         // switch push and tell the new screen to reload, even though the old
         // operation no longer owns its normal success toast.
         if (!this._stillOwns(opToken)) {
-            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
+            if (pendingHeld && sameHeldMarker(await storage.get(KEY_MERGE_HELD, STORE, null), held)) {
+                await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+            }
+            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
+
+        // If rebuilding the post-import fingerprint fails, the pull has still
+        // applied other records. Leave a durable guard before that read, so a
+        // later push cannot replace the records this pull held back. Before the
+        // check below too: a store failing does not undo the hold, and the
+        // stopped path above keeps it the same way.
+        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
 
         // A pull that wrote nothing must not move the stamp. Remembering the
         // remote's `exportedAt` after a failed apply makes every later pull
@@ -1789,11 +1807,6 @@ class SyncManager {
             );
             return { ok: false, reason: 'incomplete-apply' };
         }
-
-        // If rebuilding the post-import fingerprint fails, the pull has still
-        // applied other records. Leave a durable guard before that read, so a
-        // later push cannot replace the records this pull held back.
-        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
 
         // The loop guard. An automatic merge goes back up only when this
         // device's copy, folded into the gist's the way the other device will
@@ -1822,7 +1835,9 @@ class SyncManager {
         }
 
         // Worked out before the record is written, each a wait of its own: a takeover during them (the
-        // rebuild, the weighing above) leaves the stamp alone, as one during the import does
+        // rebuild, the weighing above) leaves the stamp alone, as one during the import does. Its marker
+        // landed above while this pull still owned the operation, so it is not written again: whatever is
+        // stored by now is the newer operation's, and putting this one back would only force a spurious retry
         const appliedHash = mergedRebuild
             ? contentHash(pushOwed ? payload : mergedRebuild)
             : mergeHeld?.length
@@ -1830,7 +1845,7 @@ class SyncManager {
               : contentHash(applied ?? payload);
         const pulledHashes = await wholeKeyHashesSliced(payload);
         if (!this._stillOwns(opToken)) {
-            return this._stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld });
+            return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
 
         await this._remember({
@@ -2635,15 +2650,14 @@ class SyncManager {
 
     /**
      * The end of a pull whose import landed after another operation took over: the stamp is left for a
-     * retry, a hold is kept, and the new screen is told to reload when the import latched anything.
-     * @param {Object|null} pendingHeld - The held-back marker, when records were held
+     * retry, and the new screen is told to reload when the import latched anything. Keeping any hold is the
+     * caller's, which knows whether its marker has landed yet.
      * @param {{latched: number|undefined, complete: boolean, mergeFailed: Array|undefined,
      *   mergeHeld: Array|undefined}} imported - What the import reported
-     * @returns {Promise<{ok: false, reason: 'stopped-after-apply'}>} The pull's result
+     * @returns {{ok: false, reason: 'stopped-after-apply'}} The pull's result
      * @private
      */
-    async _stoppedAfterApply(pendingHeld, { latched, complete, mergeFailed, mergeHeld }) {
-        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+    _stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld }) {
         console.warn('[Sync] Pull import finished after cleanup; leaving the sync stamp for a retry.');
         // A pull that landed only live-safe records latched nothing (see below), so a takeover has
         // nothing to reload for either. A result without the count is taken as having latched.
@@ -2925,6 +2939,21 @@ async function rememberLocal(entries) {
     if (written !== expected) {
         console.error(`[Sync] Only ${written}/${expected} sync bookkeeping keys were written`);
     }
+}
+
+/**
+ * Whether two held-back markers are the same one: the same download, holding the same records.
+ *
+ * What a pull reads at its start and finds still stored means no other operation has moved the marker, so the
+ * pull may still speak for it. It cannot tell a newer operation that wrote an equal marker from none at all, and
+ * in that case writing is the right answer: a marker too many costs a retry, one too few can let a push replace
+ * the records it holds back.
+ * @param {Object|null} a - A stored marker
+ * @param {Object|null} b - A stored marker
+ * @returns {boolean} Whether they are the same marker
+ */
+function sameHeldMarker(a, b) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 /**
