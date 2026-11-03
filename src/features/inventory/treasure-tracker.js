@@ -600,6 +600,7 @@ class TreasureTracker {
         this.isDragging = false;
         this.popup = null;
         this._dialogRetry = null;
+        this._dialogWatch = null;
         this.settings = { ...DEFAULT_SETTINGS };
         this.configMode = false;
         /**
@@ -956,9 +957,11 @@ class TreasureTracker {
             if (quiet) return;
             if (tries >= DIALOG_TRIES) {
                 // No dialog to sit beside: the default corner it is, and shown
+                this._stopDialogWait();
                 this.popup.style.visibility = '';
                 return;
             }
+            if (tries === 0) this._watchForDialog();
             const retry = setTimeout(() => this._placeBesideDialog(tries + 1), DIALOG_RETRY_MS);
             this._dialogRetry = retry;
             return;
@@ -967,10 +970,14 @@ class TreasureTracker {
         const anchor = dialog.getBoundingClientRect();
         const self = this.popup.getBoundingClientRect();
         if (!self.width) {
-            if (!quiet) this.popup.style.visibility = '';
+            if (!quiet) {
+                this._stopDialogWait();
+                this.popup.style.visibility = '';
+            }
             return;
         }
 
+        this._stopDialogWait();
         const place = placeBesideDialog(anchor, self, { width: window.innerWidth, height: window.innerHeight });
         if (place.height) this.popup.style.height = `${place.height}px`;
         Object.assign(this.popup.style, {
@@ -979,6 +986,35 @@ class TreasureTracker {
             right: 'auto',
             visibility: '',
         });
+    }
+
+    /**
+     * Place the popup the moment the game's dialog is in the page. The retry timer alone left it
+     * behind whenever timers were running late, as they are just after returning to a hidden tab,
+     * while the dialog itself comes straight from the socket message. The timer stays for a chest
+     * opened by a route that raises no dialog.
+     */
+    _watchForDialog() {
+        this._dialogWatch?.disconnect();
+        const popup = this.popup;
+        this._dialogWatch = new MutationObserver(() => {
+            if (this.popup !== popup) {
+                this._stopDialogWait();
+                return;
+            }
+            if (document.querySelector(LOOT_DIALOG_SELECTOR)?.getBoundingClientRect().width) {
+                this._placeBesideDialog(DIALOG_TRIES);
+            }
+        });
+        this._dialogWatch.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /** Stop waiting for the dialog, by timer and by observer. */
+    _stopDialogWait() {
+        clearTimeout(this._dialogRetry);
+        this._dialogRetry = null;
+        this._dialogWatch?.disconnect();
+        this._dialogWatch = null;
     }
 
     /**
@@ -1638,8 +1674,7 @@ class TreasureTracker {
     }
 
     _removePopup() {
-        clearTimeout(this._dialogRetry);
-        this._dialogRetry = null;
+        this._stopDialogWait();
         clearTimeout(this._popupArm);
         this._popupArm = null;
         if (this._onOutsideClick) {

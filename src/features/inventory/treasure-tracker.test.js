@@ -1183,6 +1183,97 @@ describe('the popup is shown only once it has somewhere to be', () => {
         dm.dropTables = {};
     });
 
+    describe('without waiting for the retry timer', () => {
+        const flush = async () => {
+            for (let i = 0; i < 5; i++) await Promise.resolve();
+        };
+        const addDialog = (width = 400) => {
+            const dialog = document.createElement('div');
+            dialog.className = 'Modal_modal__1';
+            dialog.getBoundingClientRect = () => ({ left: 300, right: 700, top: 100, width, height: 300 });
+            document.body.appendChild(dialog);
+            return dialog;
+        };
+
+        beforeEach(() => {
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            treasureTracker.popup = fakePopup();
+        });
+
+        afterEach(() => treasureTracker._stopDialogWait());
+
+        test('the popup shows beside the dialog as soon as the dialog arrives, with no timer run', async () => {
+            treasureTracker._placeBesideDialog(0);
+            expect(treasureTracker.popup.style.visibility).toBe('hidden');
+
+            addDialog();
+            await flush();
+
+            expect(treasureTracker.popup.style.visibility).toBe('');
+            expect(treasureTracker.popup.style.left).toBe('712px');
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        test('something else entering the page leaves it hidden and the timer running', async () => {
+            treasureTracker._placeBesideDialog(0);
+
+            document.body.appendChild(document.createElement('div'));
+            await flush();
+
+            expect(treasureTracker.popup.style.visibility).toBe('hidden');
+            expect(vi.getTimerCount()).toBe(1);
+        });
+
+        test('a dialog with no size yet does not place it, and the timer still finds it once it has one', async () => {
+            treasureTracker._placeBesideDialog(0);
+
+            const dialog = addDialog(0);
+            await flush();
+            expect(treasureTracker.popup.style.visibility).toBe('hidden');
+
+            dialog.getBoundingClientRect = () => ({ left: 300, right: 700, top: 100, width: 400, height: 300 });
+            vi.advanceTimersByTime(60);
+
+            expect(treasureTracker.popup.style.visibility).toBe('');
+            expect(treasureTracker.popup.style.left).toBe('712px');
+        });
+
+        test('a dialog arriving after the popup was removed touches nothing', async () => {
+            treasureTracker._placeBesideDialog(0);
+            const gone = treasureTracker.popup;
+            gone.remove = () => {};
+            treasureTracker._removePopup();
+
+            addDialog();
+            await flush();
+
+            expect(gone.style.visibility).toBe('hidden');
+            expect(treasureTracker._dialogWatch).toBeNull();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        test('a popup replaced by a direct swap is not placed by the old watch, which stops', async () => {
+            treasureTracker._placeBesideDialog(0);
+            const replacement = fakePopup();
+            treasureTracker.popup = replacement;
+
+            addDialog();
+            await flush();
+
+            expect(replacement.style.visibility).toBe('hidden');
+            expect(treasureTracker._dialogWatch).toBeNull();
+        });
+
+        test('the corner fallback ends the watch', () => {
+            treasureTracker._placeBesideDialog(0);
+
+            vi.advanceTimersByTime(60 * 20);
+
+            expect(treasureTracker.popup.style.visibility).toBe('');
+            expect(treasureTracker._dialogWatch).toBeNull();
+        });
+    });
+
     test('stays hidden while the dialog is still rendering, then shows in the corner when it never comes', () => {
         vi.useFakeTimers();
         treasureTracker.popup = fakePopup();

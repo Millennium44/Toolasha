@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The Treasure popup now appears together with the game's Opened Loot dialog, instead of waiting on a timer that can run late, for example just after you switch back to the tab.
 - Saved loadouts are corrected from the game at login, so the Combat Sim, Lab Sim and labyrinth figures stop using gear you have since sold or swapped when a loadout update was missed.
 - The labyrinth path no longer counts shrouded rooms toward torches, so it stops warning about too few torches when you have enough.
 - A scroll chip shows your press at once and takes another straight away, instead of lagging behind the figures until its save finished.
