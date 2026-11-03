@@ -219,6 +219,29 @@ describe('labyrinth grid scale', () => {
         expect(toolbarCopy.isConnected).toBe(true);
     });
 
+    test('a toolbar docked inside the header keeps its stepper when a setting flips or the module restarts', () => {
+        const header = renderHeader();
+        config.setSetting('labyrinthClearRate', true);
+        initialize();
+        // The live page: the toolbar's container sits in the header, with its stepper nested in the gear panel
+        const toolbar = document.createElement('div');
+        const toolbarCopy = createScaleControl();
+        toolbar.appendChild(toolbarCopy);
+        header.appendChild(toolbar);
+
+        config.setSetting('labyrinthGridScaleControl', true);
+        expect(toolbarCopy.isConnected).toBe(true);
+
+        config.setSetting('labyrinthClearRate', false);
+        config.setSetting('labyrinthClearRate', true);
+        expect(toolbarCopy.isConnected).toBe(true);
+
+        initialize();
+        expect(toolbarCopy.isConnected).toBe(true);
+        cleanup();
+        expect(toolbarCopy.isConnected).toBe(true);
+    });
+
     test('a stepper built for the toolbar steps the size and applies the zoom', () => {
         config.settingsMap.labyrinthClearRate.isTrue = true;
         initialize();

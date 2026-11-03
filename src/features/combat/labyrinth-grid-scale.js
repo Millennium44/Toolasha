@@ -187,7 +187,8 @@ function syncControl() {
         }
         stopWatchingHeaders();
         // The header copies, and the toolbar's too when the control itself is switched off
-        const scope = config.getSetting(CONTROL_SETTING) ? '[class*="LabyrinthPanel_chargeLeft"] ' : '';
+        // A header copy is a direct child: the toolbar and its stepper can be docked inside the header too
+        const scope = config.getSetting(CONTROL_SETTING) ? '[class*="LabyrinthPanel_chargeLeft"] > ' : '';
         document.querySelectorAll(`${scope}.${CONTROL_CLASS}`).forEach((el) => el.remove());
     }
 }
@@ -231,7 +232,7 @@ export function cleanup() {
 
     removeStyles(STYLE_ID);
     // Header copies only: initialize() runs this too, and the toolbar's stepper is the toolbar's
-    document.querySelectorAll(`[class*="LabyrinthPanel_chargeLeft"] .${CONTROL_CLASS}`).forEach((el) => el.remove());
+    document.querySelectorAll(`[class*="LabyrinthPanel_chargeLeft"] > .${CONTROL_CLASS}`).forEach((el) => el.remove());
 }
 
 export default {
