@@ -7,9 +7,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ## Unreleased — branch `main`
 
 - The alchemy catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action, and says when a figure is a floor or a ceiling. It only reads; nothing is clicked for you.
-- Refined cape item cards show their Transmute profit again, with a note saying how the capes were valued.
-- The Philosopher's Stone calculator now values sibling cape and shop-valued drops, and marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0.
-- Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. Chests and the upgrade advisor still leave them unpriced.
+- Refined cape item cards show their profit again (Transmute, plus Coinify and Decompose where the game allows them), with a note saying how the capes were valued.
+- The Philosopher's Stone calculator marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0, and prices a drop a shop converts.
+- Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. The upgrade advisor prices one you do not hold at its stones alone on Nothing, and says so; chests still leave them unpriced.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.
 - Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
 - The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.
