@@ -325,6 +325,25 @@ describe('the goal list and a store that cannot be read', () => {
     });
 });
 
+describe('a stored goal that has no id', () => {
+    test('is never shown, and a save that folds in another tab prunes it as before rather than keeping it', async () => {
+        const key = `${GOALS_KEY}_market123`;
+        settings().set(key, [{ type: 'gold', amount: 500, createdAt: 1 }]);
+        expect(await loadGoals()).toEqual([]);
+
+        // Another tab adds a goal, so this tab's save has to fold rather than write its list as it is
+        settings().set(key, [
+            { type: 'gold', amount: 500, createdAt: 1 },
+            { id: 'goal-gold-2-1', type: 'gold', amount: 700, createdAt: 2 },
+        ]);
+        await saveGoals([{ type: 'gold', amount: 900 }]);
+
+        const stored = settings().get(key);
+        expect(stored.map((goal) => goal.amount).sort()).toEqual([700, 900]);
+        expect(stored.every((goal) => goal.id)).toBe(true);
+    });
+});
+
 describe('merging two devices goal lists', () => {
     const goal = (id, createdAt, extra = {}) => ({
         id,

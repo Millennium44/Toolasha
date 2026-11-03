@@ -121,7 +121,9 @@ const goalsRecord = createCuratedRecord({
     store: 'settings',
     empty: () => [],
     merge: mergeById((goal) => goal?.id),
-    threeWay: { idOf: (goal) => goal?.id },
+    // A stored goal with no id gets a fresh one every time it is read (see normalizeGoal), so its held copy
+    // never equals it: drop it from the fold, as mergeById did, rather than write it beside that copy
+    threeWay: { idOf: (goal) => goal?.id, keepUnidentified: false },
     migrate: 'discard',
     label: 'GoalPlanner',
 });

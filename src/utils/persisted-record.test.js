@@ -623,6 +623,24 @@ describe('mergeThreeWay', () => {
         expect(mergeThreeWay(['a', 'b', 'c'], ['a', 'c'], ['b', 'c'], { idOf })).toEqual(['c']);
     });
 
+    test('a stored element with no identity is kept unless told otherwise', () => {
+        const idOf = (g) => g.id;
+        const base = [{ id: 1 }, { name: 'loose' }];
+        const stored = [{ id: 1 }, { name: 'loose' }, { id: 2 }];
+        const held = [{ id: 1 }, { id: 3 }];
+        expect(mergeThreeWay(base, stored, held, { idOf })).toEqual([
+            { id: 1 },
+            { id: 3 },
+            { name: 'loose' },
+            { id: 2 },
+        ]);
+        expect(mergeThreeWay(base, stored, held, { idOf, keepUnidentified: false })).toEqual([
+            { id: 1 },
+            { id: 3 },
+            { id: 2 },
+        ]);
+    });
+
     test('keyed arrays of objects: one element edited in each tab keeps one row, not two', () => {
         const idOf = (g) => g.id;
         const base = [{ id: 1, qty: 5 }];
@@ -726,6 +744,85 @@ describe('curated record with threeWay, as two tabs', () => {
         settingsStore().set(FAV, { milk: true });
         expect(await a.save()).toBe(true);
         expect(settingsStore().get(FAV)).toEqual({});
+    });
+
+    test('the baseline is what was written, so an item taken in from the other tab is not revived when it removes it', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        // The other tab adds butter; a's save takes it into memory as it folds
+        b.get().butter = true;
+        await b.save();
+        a.get().eggs = true;
+        await a.save();
+        expect(a.get()).toEqual({ milk: true, butter: true, eggs: true });
+
+        // The other tab removes butter again; a's next edit must not count it as added here
+        await b.load({ authoritative: true });
+        delete b.get().butter;
+        await b.save();
+        a.get().jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, jam: true });
+    });
+
+    test('the same holds when saves are coalesced onto one write', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        b.get().butter = true;
+        await b.save();
+        a.get().eggs = true;
+        const first = a.save();
+        a.get().jam = true;
+        const second = a.save();
+        await Promise.all([first, second]);
+
+        await b.load({ authoritative: true });
+        delete b.get().butter;
+        await b.save();
+        a.get().tea = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, jam: true, tea: true });
+    });
+
+    test('the same holds for a record that folds and writes in one transaction', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab({ atomic: true, immediate: true });
+        const b = tab({ atomic: true, immediate: true });
+        await a.load();
+        await b.load();
+
+        b.get().butter = true;
+        await b.save();
+        a.get().eggs = true;
+        await a.save();
+        expect(a.get()).toEqual({ milk: true, butter: true, eggs: true });
+
+        await b.load({ authoritative: true });
+        delete b.get().butter;
+        await b.save();
+        a.get().jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, jam: true });
+    });
+
+    test('a clear states its value outright and the baseline follows it', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        await a.load();
+        a.get().eggs = true;
+        await a.save();
+        await a.clear();
+        a.get().jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ jam: true });
     });
 
     test('keyed lists: two stale tabs pin different items and unpin one another', async () => {

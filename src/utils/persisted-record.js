@@ -269,6 +269,10 @@ function snapshotOf(value) {
  * @param {*} held - What this tab holds
  * @param {Object} [options]
  * @param {(element: *) => *} [options.idOf] - Identity of an array element; null/undefined means none
+ * @param {boolean} [options.keepUnidentified=true] - Whether a stored element with no identity is kept
+ *   (unless the held side has an equal one). A list whose load gives every element an identity of its
+ *   own, so that the held copy of a stored element is no longer equal to it, sets this false: the held
+ *   copy stands for it, and keeping both would add one more on every save
  * @returns {*} The merged value; undefined means the value should not exist
  */
 export function mergeThreeWay(base, stored, held, options = {}) {
@@ -329,7 +333,7 @@ function mergeKeyedArrays(base, stored, held, options) {
     for (const element of stored) {
         const id = element == null ? null : options.idOf(element);
         if (id === null || id === undefined) {
-            if (!held.some((own) => valuesEqual(own, element))) out.push(element);
+            if (options.keepUnidentified !== false && !held.some((own) => valuesEqual(own, element))) out.push(element);
         } else if (!heldById.has(id) && !baseById.has(id)) {
             // Added by the other tab; one this tab removed is in base and stays removed
             out.push(element);
@@ -965,7 +969,7 @@ export function createPersistedRecord({
  *   to {@link mergeMaps} and is only consulted before the first readable load
  *   unless `keepMerging` is set
  * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
- * @param {boolean|{idOf?: (element: *) => *}} [options.threeWay=false] - Fold saves against the last
+ * @param {boolean|{idOf?: (element: *) => *, keepUnidentified?: boolean}} [options.threeWay=false] - Fold saves against the last
  *   known stored value; `idOf` names an array element's identity (see {@link mergeThreeWay})
  * @returns {Object} The record handle
  */
@@ -975,6 +979,11 @@ export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, 
     const threeWayOptions = typeof threeWay === 'object' && threeWay ? threeWay : {};
     /** What this record last read from or wrote to storage, when it could be copied */
     let baseline = null;
+    /**
+     * What the last fold of a save produced: the value that write puts down, which can hold what
+     * another tab added (a fold assigns it to memory). Taken by the save that lands it.
+     */
+    let folded = null;
     /** Bumped by every load and reset, so a save that began before one does not adopt its snapshot */
     let epoch = 0;
     const record = createPersistedRecord({
@@ -986,12 +995,16 @@ export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, 
                 return merge(stored, memory);
             }
             if (keepMerging) return merge(stored, memory);
-            return useThreeWay && baseline ? mergeThreeWay(baseline.value, stored, memory, threeWayOptions) : memory;
+            if (!useThreeWay || !baseline) return memory;
+            const merged = mergeThreeWay(baseline.value, stored, memory, threeWayOptions);
+            folded = snapshotOf(merged);
+            return merged;
         },
     });
     const { load, reset, save } = record;
     record.load = async (options) => {
         trustMemory = false;
+        folded = null;
         epoch += 1;
         const readable = await load(options);
         trustMemory = readable;
@@ -1000,20 +1013,33 @@ export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, 
     record.reset = () => {
         trustMemory = false;
         baseline = null;
+        folded = null;
         epoch += 1;
         reset();
     };
     if (useThreeWay) {
-        // The baseline moves only when a write is known to have landed, and to what this tab held when
-        // it asked for it: a write that failed leaves the edits unwritten and still "changed", and what
-        // another tab added meanwhile is not claimed as seen
+        // The baseline moves only when a write is known to have landed, and to the value that write put
+        // down: the fold's output, which holds what another tab added and this tab took in. Not to what
+        // this tab held when it asked, or the next save would count that addition as made here and bring it
+        // back after the other tab removed it. A write that failed leaves the edits unwritten and still
+        // "changed". A write that ran no fold (nothing stored yet, or a clear) put down what was held.
+        // Saves coalesced onto one write share its fold, so it is claimed once per write. A write that
+        // failed and that storage later lands from its requeue (a flush) moves nothing: its save already
+        // answered false. The next save of this record supersedes the requeued value and moves the
+        // baseline; until then the worst case is that another tab's later removal of an item is undone.
+        const claimed = new WeakMap();
         record.save = (options) => {
             const asked = trustMemory ? snapshotOf(record.get()) : null;
             const askedIn = epoch;
             const pending = save(options);
             if (!asked) return pending;
             return pending.then((written) => {
-                if (written && askedIn === epoch) baseline = asked;
+                if (!claimed.has(pending)) {
+                    claimed.set(pending, folded);
+                    folded = null;
+                }
+                const landed = options?.overwrite ? null : claimed.get(pending);
+                if (written && askedIn === epoch) baseline = landed || asked;
                 return written;
             });
         };
