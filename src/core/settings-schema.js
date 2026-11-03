@@ -4681,6 +4681,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Fires the moment your own character dies, read off your combat tick (HP reaching 0) — not when you respawn. Your deaths only, not the party’s. If a tick was missed (a throttled background tab), the server’s own death count rising on a later battle announces it instead; a death is never announced twice. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once. Deaths that happened before you switched this on are not announced.',
             },
+            notifications_partyStatus: {
+                id: 'notifications_partyStatus',
+                label: 'Notify when your party starts or stops fighting',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires when the party you are in goes into a fight or comes out of one, read off the party status messages the game sends, so it works whoever started or ended it. It cannot say why a party stopped — the message carries a status and no reason. Only a real change is announced: the first party status the tab sees after a login or a character switch is the game reporting where things stand, not a change, so a party that was already fighting when you arrived says nothing, and neither does a start that is the very first status the tab has seen. Your own party only; once per change.',
+            },
             notifications_skillLevelUp: {
                 id: 'notifications_skillLevelUp',
                 label: 'Notify when you hit a skill milestone',

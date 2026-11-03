@@ -50,6 +50,7 @@ describe('categories', () => {
         ['consumable-low:/action_types/cheesesmithing', 'consumables'],
         ['empty-queue', 'queue'],
         ['combat-death', 'combat'],
+        ['party-status:123:4', 'combat'],
         ['task-slots:full', 'tasks'],
         ['labyrinth-entry:9', 'labyrinth'],
         ['labyrinth-stopped:3', 'labyrinth'],

@@ -143,6 +143,7 @@ import bestiaryPointsAlerts from '../features/notifications/bestiary-points-aler
 import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
 import philoStoneAlerts from '../features/notifications/philo-stone-alerts.js';
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
+import partyStatusAlerts from '../features/notifications/party-status-alerts.js';
 import marketUndercutAlerts from '../features/notifications/market-undercut-alerts.js';
 import notificationService from '../features/notifications/notification-service.js';
 // The record of everything the service has announced, and the panel that reads
@@ -294,6 +295,7 @@ toolashaRoot.UI = {
     enhancementTargetAlerts,
     philoStoneAlerts,
     taskSlotAlerts,
+    partyStatusAlerts,
     marketUndercutAlerts,
     notificationService,
     noticeLogPanel,

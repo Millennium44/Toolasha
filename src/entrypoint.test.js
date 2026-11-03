@@ -1272,6 +1272,7 @@ describe('the registry entries the entrypoint hands over', () => {
         'enhancementTargetAlerts',
         'philoStoneAlerts',
         'taskSlotAlerts',
+        'partyStatusAlerts',
     ])('the %s alert is live-stopped, so switching it off drops its armed bits instead of freezing them', (key) => {
         const entry = registered.find((e) => e.key === key);
 
