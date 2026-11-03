@@ -430,6 +430,30 @@ export function statsPendingNote(breakdown, modalStats, now = Date.now()) {
     );
 }
 
+/**
+ * A line naming earlier fights this week that are still waiting for the game's totals.
+ *
+ * A later fight on this board has replaced them, so the note above no longer speaks for
+ * them. Their measurement is kept, and is compared with the game's figures on the
+ * ledger's accuracy card whenever Stats is opened. History and the attendance ledger
+ * keep the stream's figures for them.
+ *
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @returns {string} HTML, or an empty string
+ */
+export function waitingFightsNote(breakdown) {
+    const names = (breakdown?.waitingFights || []).map(({ encounter }) =>
+        String(encounter).replace(/^./, (letter) => letter.toUpperCase())
+    );
+    if (!names.length) return '';
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+    return (
+        `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+        `${escapeText(list)}: not compared with the game’s totals yet. Open Stats in the game to compare ` +
+        `${names.length === 1 ? 'it' : 'them'}.</div>`
+    );
+}
+
 /** How far a measured total may sit over the boss-HP ceiling before it is flagged. */
 const CEILING_MARGIN = 0.02;
 
@@ -1281,7 +1305,9 @@ class GuildTrialScoreboard {
         // line when the live tally kept counting through a refresh, a
         // reconnect, or both, so a number that looks lower than it should
         // is not mistaken for a tally that quietly restarted
-        const continuityNote = saved ? '' : this._continuityNote(breakdown) + statsPendingNote(breakdown, modalStats);
+        const continuityNote = saved
+            ? ''
+            : this._continuityNote(breakdown) + statsPendingNote(breakdown, modalStats) + waitingFightsNote(breakdown);
 
         // The two "damage taken" figures are different quantities and must not be
         // read as one: the game modal reports gross incoming *before* mitigation,

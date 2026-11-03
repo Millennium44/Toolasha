@@ -79,6 +79,7 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
         // A queued answer, optionally gated so a test can control which of two
         // concurrent reads resolves first; falls back to the plain `world.cycles`
         const next = world.cyclesQueue?.shift();
+        if (world.listingFailed) return { cycles: [], unreadWeeks: [], listingFailed: true };
         if (!next) return { cycles: world.cycles, unreadWeeks: world.unreadWeeks || [] };
         if (next.gate) await next.gate;
         return { cycles: next.value, unreadWeeks: world.unreadWeeks || [] };
@@ -180,6 +181,74 @@ afterEach(() => {
     resetLedgerView();
 });
 
+describe('a ledger whose keys cannot be listed', () => {
+    afterEach(() => {
+        world.listingFailed = false;
+    });
+
+    test('with nothing read yet the panel says it could not read, not that nothing is recorded', async () => {
+        world.listingFailed = true;
+        await refreshLedgerView();
+        guildTrialLedgerPanel.show({ remember: false });
+        const text = guildTrialLedgerPanel.panel.textContent;
+        expect(text).toContain('The ledger could not be read just now');
+        expect(text).not.toContain('Nothing recorded yet');
+        expect(text).not.toContain('No cycles recorded yet');
+    });
+
+    test('the table already read stays, flagged, and the next good read clears the flag', async () => {
+        await refreshLedgerView();
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('could not be read just now, so this may be out');
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('Alice');
+
+        world.listingFailed = false;
+        await refreshLedgerView();
+        guildTrialLedgerPanel.hide({ remember: false });
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).not.toContain('could not be read just now');
+    });
+
+    test('a guild change whose listing fails shows no rows of the guild left, even on going back', async () => {
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+
+        // The tracker’s own-guild notice: a refresh with no reset
+        world.guildName = 'Another Guild';
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+        guildTrialLedgerPanel.show({ remember: false });
+        const text = guildTrialLedgerPanel.panel.textContent;
+        expect(text).toContain('The ledger could not be read just now');
+        expect(text).not.toContain('Alice');
+        guildTrialLedgerPanel.hide({ remember: false });
+
+        // Rows are not kept per guild: back in the first, a failed read has none to fall back on
+        world.guildName = 'Nine Lives';
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+
+        // …and a good read brings them back
+        world.listingFailed = false;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+    });
+
+    test('a failed read in the same guild after an empty one stays empty, and flagged', async () => {
+        world.cycles = [];
+        await refreshLedgerView();
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('The ledger could not be read just now');
+    });
+});
+
 describe('buildLedgerTable', () => {
     test('folds the cycles and sorts by the chosen column', async () => {
         await refreshLedgerView();
@@ -264,6 +333,19 @@ describe('buildLedgerTable', () => {
 
         const table = buildLedgerTable();
         expect(table.rows.find((row) => row.name === 'Alice').damage).toBe(222);
+    });
+
+    test('a read outstanding across a guild change does not draw the departed guild’s ledger', async () => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        world.cyclesQueue = [{ gate, value: [cycle(WEEK, 1, { alice: { name: 'Alice', damage: 111 } })] }];
+        const read = refreshLedgerView();
+        world.guildName = 'Another Guild';
+        release();
+        await read;
+        expect(buildLedgerTable().rows.find((row) => row.name === 'Alice')).toBeUndefined();
     });
 
     // The staleness guard is a counter, and `resetLedgerView()` used to zero

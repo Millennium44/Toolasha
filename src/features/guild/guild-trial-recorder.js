@@ -742,6 +742,8 @@ class GuildTrialRecorder {
                 // breakdown at the close may already describe nothing
                 cycleAt: fold.context?.cycleAt ?? fold.session.cycleAt ?? null,
                 participation: this._participation(breakdown, fold.session),
+                retry: true,
+                stillWanted: () => Boolean(config.getSetting('guildTrialLedger')),
             });
         } catch (error) {
             console.error('[GuildTrialRecorder] Folding the session into the ledger failed:', error);

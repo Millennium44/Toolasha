@@ -11,7 +11,7 @@
  * being looked at.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { buildGuildMember } from '../../__fixtures__/wire/guild-members.js';
 
 const disk = vi.hoisted(() => ({ store: {}, failNextRead: false, failKeys: new Set(), writes: [], reads: 0 }));
@@ -52,11 +52,14 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         },
         getAllKeys: async () => Object.keys(disk.store),
+        // The real one answers null for a listing it could not make
+        tryGetAllKeys: async () => (disk.failListing ? null : Object.keys(disk.store)),
     },
 }));
 
 const {
     LEDGER_CSV_COLUMNS,
+    LEDGER_READ_RETRY_MS,
     MAX_LEDGER_CYCLES,
     accrueTrial,
     clearLedger,
@@ -69,6 +72,8 @@ const {
     ledgerScope,
     ledgerTotalsRow,
     loadLedgerCycles,
+    loadLedgerCyclesDetailed,
+    loadLedgerFirstRecordDetailed,
     observedCoverage,
     recordFinishedTrial,
     sessionContribution,
@@ -1105,6 +1110,145 @@ describe('the ledger on disk', () => {
             guildName: 'g',
         });
         expect(Object.keys(disk.store[key].members)).toEqual(expect.arrayContaining(['alice', 'bob']));
+    });
+
+    describe('a finished trial whose cycle cannot be read', () => {
+        beforeEach(() => vi.useFakeTimers());
+        afterEach(() => {
+            vi.useRealTimers();
+            disk.failKeys.clear();
+        });
+
+        const bob = () => session([[player('Bob', { damage: 9 })]], { startedAt: WEEK + 5000 });
+        const cycleKey = async () => {
+            await recordFinishedTrial({ session: session([[player('Alice', { damage: 7 })]]), guildName: 'g' });
+            return Object.keys(disk.store).find((k) => k.includes('guildTrialLedger'));
+        };
+
+        test('lands when a later read recovers, on top of what was stored', async () => {
+            const key = await cycleKey();
+            disk.failKeys.add(key);
+            const result = recordFinishedTrial({ session: bob(), guildName: 'g', retry: true });
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS[0]);
+            expect(disk.store[key].members.bob).toBeUndefined();
+            disk.failKeys.clear();
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS[1]);
+            await expect(result).resolves.not.toBeNull();
+            expect(Object.keys(disk.store[key].members)).toEqual(expect.arrayContaining(['alice', 'bob']));
+        });
+
+        test('is given up with nothing written once every read has failed', async () => {
+            const key = await cycleKey();
+            const before = structuredClone(disk.store[key]);
+            disk.writes.length = 0;
+            disk.failKeys.add(key);
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const result = recordFinishedTrial({ session: bob(), guildName: 'g', retry: true });
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS.reduce((sum, ms) => sum + ms, 0));
+            await expect(result).resolves.toBeNull();
+            expect(disk.writes).toEqual([]);
+            expect(disk.store[key]).toEqual(before);
+            expect(error).toHaveBeenCalled();
+            error.mockRestore();
+            warn.mockRestore();
+        });
+
+        test('the ledger turned off during the wait gives it up, though the read would now work', async () => {
+            const key = await cycleKey();
+            disk.failKeys.add(key);
+            let wanted = true;
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const result = recordFinishedTrial({
+                session: bob(),
+                guildName: 'g',
+                retry: true,
+                stillWanted: () => wanted,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            wanted = false;
+            disk.failKeys.clear();
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS[0]);
+            await expect(result).resolves.toBeNull();
+            expect(disk.store[key].members.bob).toBeUndefined();
+            warn.mockRestore();
+        });
+
+        test('a fold queued behind the wait gives up too, when the ledger was turned off meanwhile', async () => {
+            const key = await cycleKey();
+            disk.failKeys.add(key);
+            let wanted = true;
+            const stillWanted = () => wanted;
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const waiting = recordFinishedTrial({ session: bob(), guildName: 'g', retry: true, stillWanted });
+            const queued = recordFinishedTrial({
+                session: session([[player('Carol', { damage: 3 })]], { startedAt: WEEK + 6000 }),
+                guildName: 'g',
+                stillWanted,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            wanted = false;
+            disk.failKeys.clear();
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS[0]);
+            await expect(waiting).resolves.toBeNull();
+            await expect(queued).resolves.toBeNull();
+            expect(disk.store[key].members.carol).toBeUndefined();
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
+        test('turned off while the read is out, nothing is written', async () => {
+            const key = await cycleKey();
+            disk.writes.length = 0;
+            let asks = 0;
+            // True for the turn's own check, false from the check before the write
+            const stillWanted = () => asks++ < 1;
+            await expect(recordFinishedTrial({ session: bob(), guildName: 'g', stillWanted })).resolves.toBeNull();
+            expect(asks).toBe(2);
+            expect(disk.writes).toEqual([]);
+            expect(disk.store[key].members.bob).toBeUndefined();
+        });
+
+        test('without retry it still answers at once', async () => {
+            const key = await cycleKey();
+            disk.failKeys.add(key);
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            await expect(recordFinishedTrial({ session: bob(), guildName: 'g' })).resolves.toBeNull();
+            error.mockRestore();
+        });
+    });
+
+    describe('a ledger whose keys cannot be listed', () => {
+        afterEach(() => {
+            disk.failListing = false;
+        });
+
+        test('says so, rather than reading as an empty ledger', async () => {
+            await recordFinishedTrial({ session: session([[player('Alice', { damage: 7 })]]), guildName: 'g' });
+            disk.failListing = true;
+            await expect(loadLedgerCyclesDetailed('g')).resolves.toEqual({
+                cycles: [],
+                unreadWeeks: [],
+                listingFailed: true,
+            });
+            await expect(loadLedgerFirstRecordDetailed('g')).resolves.toEqual({
+                first: null,
+                unreadWeeks: [],
+                listingFailed: true,
+            });
+        });
+
+        test('an empty ledger that lists fine is not a failure', async () => {
+            await expect(loadLedgerCyclesDetailed('nobody')).resolves.toMatchObject({
+                cycles: [],
+                listingFailed: false,
+            });
+            await expect(loadLedgerFirstRecordDetailed('nobody')).resolves.toMatchObject({
+                first: null,
+                listingFailed: false,
+            });
+        });
     });
 
     test('two different trials finishing close together do not clobber each other', async () => {

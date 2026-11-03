@@ -80,6 +80,10 @@ const state = {
     firstRecord: null,
     /** Week stamps whose record could not be read: their cycles are unknown, not missed */
     unreadWeeks: [],
+    /** The ledger's keys could not be listed on the last read, so an empty table says nothing about what is held */
+    listingFailed: false,
+    /** `characterId|guild` the three fields above were read for; null before any read */
+    rowsScope: null,
     /** Whether a read has happened at all, so "empty" and "not looked yet" differ */
     loaded: false,
     /** Which {@link LEDGER_WINDOWS} key is selected */
@@ -118,6 +122,8 @@ export function resetLedgerView() {
     state.cycles = [];
     state.firstRecord = null;
     state.unreadWeeks = [];
+    state.listingFailed = false;
+    state.rowsScope = null;
     state.loaded = false;
     state.window = '4';
     state.sortKey = 'damageShare';
@@ -173,11 +179,15 @@ export async function refreshLedgerView() {
     const chosen = selectedWindow();
 
     try {
-        const { cycles, unreadWeeks: unreadCycleWeeks } = await loadLedgerCyclesDetailed(guild, characterId, {
+        const {
+            cycles,
+            unreadWeeks: unreadCycleWeeks,
+            listingFailed,
+        } = await loadLedgerCyclesDetailed(guild, characterId, {
             cycles: chosen.cycles,
         });
-        // A failed key read answers [] and so null, the same as an empty ledger; with cycles loaded the
-        // ledger is not empty, so that null is unreadable and the window is left unclamped (undefined)
+        // A failed key listing answers null, the same as an empty ledger; with cycles loaded the ledger is
+        // not empty, so that null is unreadable and the window is left unclamped (undefined)
         const { first: firstFound, unreadWeeks: unreadFirstWeeks } = await loadLedgerFirstRecordDetailed(
             guild,
             characterId
@@ -203,10 +213,24 @@ export async function refreshLedgerView() {
         // does not, would leave this writing one character's ledger into
         // another's panel.
         if (characterId !== (dataManager.getCurrentCharacterId?.() ?? null)) return;
+        // …and the guild: the same character can change guild with the panel open
+        if (guild !== guildName()) return;
 
-        state.cycles = cycles;
-        state.firstRecord = firstRecord;
-        state.unreadWeeks = unreadWeeks;
+        // Rows belong to the character and guild they were read for. A guild change arrives with no reset
+        const scope = `${characterId ?? ''}|${guild ?? ''}`;
+        if (state.rowsScope !== scope) {
+            state.cycles = [];
+            state.firstRecord = null;
+            state.unreadWeeks = [];
+            state.rowsScope = scope;
+        }
+        // A listing that failed keeps the table already read rather than blanking it
+        state.listingFailed = Boolean(listingFailed);
+        if (!listingFailed) {
+            state.cycles = cycles;
+            state.firstRecord = firstRecord;
+            state.unreadWeeks = unreadWeeks;
+        }
         state.loaded = true;
         state.accuracy = summarizeWeekAccuracy(stats?.trials);
         state.accuracyTrend = archivedAccuracyTrend(trialRecord?.history);
@@ -563,9 +587,11 @@ function drawTable(card, table) {
     if (!table.rows.length) {
         card.appendChild(
             panelNote(
-                state.loaded
-                    ? 'Nothing recorded yet. The ledger fills in as trials you have the guild panel open for finish.'
-                    : 'Reading the ledger…'
+                state.listingFailed
+                    ? 'The ledger could not be read just now. It tries again on the next refresh.'
+                    : state.loaded
+                      ? 'Nothing recorded yet. The ledger fills in as trials you have the guild panel open for finish.'
+                      : 'Reading the ledger…'
             )
         );
         return;
@@ -981,7 +1007,9 @@ export const guildTrialLedgerPanel = createPanel({
         header.appendChild(
             panelLine(
                 'Observed',
-                coverageLine(table.coverage),
+                state.listingFailed
+                    ? 'The ledger could not be read just now, so this may be out of date.'
+                    : coverageLine(table.coverage),
                 ROW_COLORS.dim,
                 'A cycle only reaches the ledger if the guild panel was open during its fight; ' +
                     'one with nothing recorded counts as missed. ' +

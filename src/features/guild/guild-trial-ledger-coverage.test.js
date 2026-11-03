@@ -35,6 +35,7 @@ vi.mock('../../core/storage.js', () => ({
             return true;
         },
         getAllKeys: async () => Object.keys(disk.store),
+        tryGetAllKeys: async () => Object.keys(disk.store),
     },
 }));
 

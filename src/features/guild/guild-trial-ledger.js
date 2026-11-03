@@ -1328,8 +1328,10 @@ async function readLedgerWeek(scope, stamp) {
  * @param {string|null} guildName - Guild name, or null before it is known
  * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
  * @param {Object} [options] - As {@link loadLedgerCycles}
- * @returns {Promise<{cycles: Array<Object>, unreadWeeks: Array<number>}>} The cycles read, and the stamps
- *   of the weeks that failed to read: absent from `cycles`, but not the same as a week nothing recorded
+ * @returns {Promise<{cycles: Array<Object>, unreadWeeks: Array<number>, listingFailed: boolean}>} The cycles
+ *   read, and the stamps of the weeks that failed to read: absent from `cycles`, but not the same as a week
+ *   nothing recorded. `listingFailed` says the ledger's keys could not be listed at all, so an empty `cycles`
+ *   says nothing about what is recorded
  */
 export async function loadLedgerCyclesDetailed(
     guildName,
@@ -1339,7 +1341,9 @@ export async function loadLedgerCyclesDetailed(
     const scope = ledgerScope(guildName, characterId);
     const unreadWeeks = [];
     try {
-        const keys = await storage.getAllKeys(LEDGER_STORE);
+        // `getAllKeys` answers [] for a listing that failed, which read as an empty ledger
+        const keys = await storage.tryGetAllKeys(LEDGER_STORE);
+        if (keys === null) return { cycles: [], unreadWeeks, listingFailed: true };
         const windowed = Number.isFinite(cycles) && cycles > 0;
         const perCycle = isTestServer();
         let stamps = ledgerCyclesInKeys(keys, scope);
@@ -1357,7 +1361,7 @@ export async function loadLedgerCyclesDetailed(
                 const record = await readWeek(stamp);
                 if (record) records.push(record);
             }
-            return { cycles: records, unreadWeeks };
+            return { cycles: records, unreadWeeks, listingFailed: false };
         }
 
         // A test-server week holds several cycles, so the window and the
@@ -1375,10 +1379,10 @@ export async function loadLedgerCyclesDetailed(
             const record = await readWeek(stamps[i]);
             if (record) split = [...ledgerCyclesByAnchor([record], { perCycle }).filter(inWindow), ...split];
         }
-        return { cycles: split.slice(-MAX_LEDGER_CYCLES), unreadWeeks };
+        return { cycles: split.slice(-MAX_LEDGER_CYCLES), unreadWeeks, listingFailed: false };
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger failed:', error);
-        return { cycles: [], unreadWeeks };
+        return { cycles: [], unreadWeeks, listingFailed: true };
     }
 }
 
@@ -1409,23 +1413,25 @@ export async function loadLedgerFirstRecord(guildName, characterId = null) {
  *
  * @param {string|null} guildName - Guild name, or null before it is known
  * @param {string|number|null} [characterId] - The viewing character, for the fallback scope
- * @returns {Promise<{first: number|null, unreadWeeks: Array<number>}>} The start, and any unread week
+ * @returns {Promise<{first: number|null, unreadWeeks: Array<number>, listingFailed: boolean}>} The start, and
+ *   any unread week. `listingFailed` says the keys could not be listed, so a null `first` is not an empty ledger
  */
 export async function loadLedgerFirstRecordDetailed(guildName, characterId = null) {
     const scope = ledgerScope(guildName, characterId);
     try {
-        const keys = await storage.getAllKeys(LEDGER_STORE);
+        const keys = await storage.tryGetAllKeys(LEDGER_STORE);
+        if (keys === null) return { first: null, unreadWeeks: [], listingFailed: true };
         const [oldest] = ledgerCyclesInKeys(keys, scope);
-        if (oldest === undefined) return { first: null, unreadWeeks: [] };
-        if (!isTestServer()) return { first: oldest, unreadWeeks: [] };
+        if (oldest === undefined) return { first: null, unreadWeeks: [], listingFailed: false };
+        if (!isTestServer()) return { first: oldest, unreadWeeks: [], listingFailed: false };
         const { record, unreadable } = await readLedgerWeek(scope, oldest);
-        if (unreadable) return { first: oldest, unreadWeeks: [oldest] };
+        if (unreadable) return { first: oldest, unreadWeeks: [oldest], listingFailed: false };
         const places = record ? ledgerCyclesByAnchor([record], { perCycle: true }) : [];
         const placed = places.flatMap((cycle) => cyclePlaces(cycle));
-        return { first: placed.length ? Math.min(...placed) : oldest, unreadWeeks: [] };
+        return { first: placed.length ? Math.min(...placed) : oldest, unreadWeeks: [], listingFailed: false };
     } catch (error) {
         console.error('[GuildTrialLedger] Reading the ledger start failed:', error);
-        return { first: null, unreadWeeks: [] };
+        return { first: null, unreadWeeks: [], listingFailed: true };
     }
 }
 
@@ -1473,6 +1479,9 @@ async function pruneLedger(scope, stamps) {
  */
 const ledgerWriteChains = new Map();
 
+/** How long to wait before each further read of a cycle that could not be read, when a fold asks to retry */
+export const LEDGER_READ_RETRY_MS = [5_000, 30_000, 120_000];
+
 /**
  * Fold a finished trial into the ledger and write the one record it touched.
  *
@@ -1493,6 +1502,10 @@ const ledgerWriteChains = new Map();
  *   {@link signupParticipation} and the server's own per-encounter stats. This
  *   is the only evidence the ledger ever gets about trials it did not watch,
  *   and without it a cycle can only say who it saw.
+ * @param {boolean} [options.retry=false] - Read the cycle again after {@link LEDGER_READ_RETRY_MS} when it
+ *   cannot be read, rather than dropping the trial. In this page only: a reload ends the wait
+ * @param {function(): boolean} [options.stillWanted] - Asked when the fold's turn comes, before each retry and
+ *   before the write; false gives the trial up
  * @returns {Promise<Object|null>} The contribution folded, or null when there was nothing to fold
  */
 export async function recordFinishedTrial({
@@ -1505,6 +1518,8 @@ export async function recordFinishedTrial({
     participants = null,
     cycleAt = null,
     participation = null,
+    retry = false,
+    stillWanted = () => true,
 } = {}) {
     const contribution = sessionContribution(session, { encounter, tier, roster, participants, cycleAt });
     if (!contribution) return null;
@@ -1514,8 +1529,19 @@ export async function recordFinishedTrial({
 
     const run = async () => {
         try {
-            // An unreadable record is not an empty one: a fresh cycle written over it would erase the week
-            const read = await storage.tryGet(key, LEDGER_STORE);
+            // This fold may have queued behind another's retries, for minutes
+            if (!stillWanted()) return null;
+            // An unreadable record is not an empty one: a fresh cycle written over it would erase the week.
+            // A read that fails is usually a moment's trouble, and a trial happens once a cycle
+            let read = await storage.tryGet(key, LEDGER_STORE);
+            for (const delayMs of retry ? LEDGER_READ_RETRY_MS : []) {
+                if (read) break;
+                console.warn(`[GuildTrialLedger] Could not read the cycle; trying again in ${delayMs} ms:`, key);
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+                // Turned off in the meantime: the player asked for no record
+                if (!stillWanted()) return null;
+                read = await storage.tryGet(key, LEDGER_STORE);
+            }
             if (!read) {
                 console.error('[GuildTrialLedger] Could not read the cycle, so the trial was not recorded:', key);
                 return null;
@@ -1528,6 +1554,8 @@ export async function recordFinishedTrial({
             // which is the normal case when a manual stop races the watcher
             if (next === cycle) return null;
 
+            // Turned off while the read was out
+            if (!stillWanted()) return null;
             await storage.set(key, next, LEDGER_STORE, true);
 
             const keys = await storage.getAllKeys(LEDGER_STORE);

@@ -92,6 +92,51 @@ describe('the schedule hour offset follows the guild messages', () => {
         expect(getScheduleHourOffset()).toBeNull();
     });
 
+    describe('a guild switch whose guild_updated arrives before the roster', () => {
+        const roster = (guildID) => ({
+            guildCharacterMap: { 9: { guildID, guildExperience: 1 } },
+            guildSharableCharacterMap: { 9: { name: 'Z' } },
+        });
+
+        test.each([
+            ['21', 21],
+            ['0, which is a stated value', 0],
+        ])('the arriving guild’s offset of %s survives its own roster', async (_label, offset) => {
+            guildXPTracker.guildSnapshotID = 'g1';
+            setScheduleHourOffset(5);
+            await guildXPTracker._onGuildUpdated({
+                guild: { id: 'g2', name: 'Other', trialScheduleHourOffset: offset },
+            });
+            expect(getScheduleHourOffset()).toBe(offset);
+            await guildXPTracker._onMembersUpdated(roster('g2'));
+            expect(getScheduleHourOffset()).toBe(offset);
+            expect(guildXPTracker.ownGuildID).toBe('g2');
+        });
+
+        test('nor does a second guild_updated that restates nothing clear it before the roster lands', async () => {
+            guildXPTracker.guildSnapshotID = 'g1';
+            await guildXPTracker._onGuildUpdated({ guild: { id: 'g2', name: 'Other', trialScheduleHourOffset: 7 } });
+            await guildXPTracker._onGuildUpdated({ guild: { id: 'g2', name: 'Other' } });
+            expect(getScheduleHourOffset()).toBe(7);
+        });
+
+        test('the roster first still drops the old offset, and the guild’s own message then states the new one', async () => {
+            guildXPTracker.guildSnapshotID = 'g1';
+            setScheduleHourOffset(5);
+            await guildXPTracker._onMembersUpdated(roster('g2'));
+            expect(getScheduleHourOffset()).toBeNull();
+            await guildXPTracker._onGuildUpdated({ guild: { id: 'g2', name: 'Other', trialScheduleHourOffset: 7 } });
+            expect(getScheduleHourOffset()).toBe(7);
+        });
+
+        test('a roster of a third guild is not excused by the second guild’s message', async () => {
+            guildXPTracker.guildSnapshotID = 'g1';
+            await guildXPTracker._onGuildUpdated({ guild: { id: 'g2', name: 'Other', trialScheduleHourOffset: 7 } });
+            await guildXPTracker._onMembersUpdated(roster('g3'));
+            expect(getScheduleHourOffset()).toBeNull();
+        });
+    });
+
     test('tearing the tracker down (a character switch) clears it', () => {
         setScheduleHourOffset(21);
         guildXPTracker.disable();
