@@ -58,6 +58,11 @@ export const MARGIN_RATIO = 0.05;
 const CONFIRM_WINDOW_MS = 15_000;
 /** A press this soon after the held one is the same double-click or double-tap, not a decision */
 const SAME_GESTURE_MS = 350;
+/**
+ * A keyboard click this soon after the last held press is the key still down: auto-repeat fires its first click about
+ * 500 ms in, past the double-click window, and keeps firing for as long as Enter is held
+ */
+const KEY_REPEAT_MS = 1000;
 
 /**
  * What is in the panel's catalyst slot, from the sprite it draws.
@@ -234,7 +239,7 @@ class AlchemyCatalystCheck {
         const pending = this.pending;
         if (pending) {
             if (this.stillArmed(pending, context, panel)) {
-                if (Date.now() - pending.at < SAME_GESTURE_MS) return true;
+                if (this.isSameGesture(pending, event)) return true;
                 this.clearPending();
                 return false;
             }
@@ -277,6 +282,21 @@ class AlchemyCatalystCheck {
             catalystHrid || 'none',
         ].join('|');
         return { action, selection, catalystHrid, signature };
+    }
+
+    /**
+     * Whether a press belongs to the gesture that was held, and so says nothing about the player's decision.
+     * @param {Object} pending - The held press
+     * @param {MouseEvent} event - The press; a keyboard's click has `detail` 0, a mouse's or a tap's its click count
+     * @returns {boolean} True when it should be held too
+     */
+    isSameGesture(pending, event) {
+        const now = Date.now();
+        const sameGesture =
+            now - pending.at < SAME_GESTURE_MS || (event.detail === 0 && now - pending.lastHeldAt < KEY_REPEAT_MS);
+        // Measured from the last repeat, not the first: the key can stay down for as long as it likes
+        if (sameGesture) pending.lastHeldAt = now;
+        return sameGesture;
     }
 
     /**
@@ -341,7 +361,8 @@ class AlchemyCatalystCheck {
             return false;
         }
 
-        const pending = { panel, node, signature: context.signature, at: Date.now(), timer: null, observers: [] };
+        const at = Date.now();
+        const pending = { panel, node, signature: context.signature, at, lastHeldAt: at, timer: null, observers: [] };
         this.pending = pending;
         pending.timer = setTimeout(() => this.clearPending(), CONFIRM_WINDOW_MS);
 

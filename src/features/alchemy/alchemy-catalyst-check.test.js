@@ -170,7 +170,12 @@ function mountPanel({ tab = 'Coinify', item = CHEESE, level = 0, catalyst = null
 const game = vi.fn();
 const start = () => document.getElementById('start');
 const queue = () => document.getElementById('queue');
-const press = (button = start()) => button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+/** A mouse click or tap: `detail` is the click count */
+const press = (button = start()) =>
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+/** Enter on a focused button: the browser's click carries `detail` 0, and repeats while the key is held */
+const pressKey = (button = start()) =>
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
 const message = () => document.querySelector('.mwi-alchemy-catalyst-check');
 const controlNamed = (name) => [...message().querySelectorAll('button')].find((b) => b.textContent === name);
 const setSlot = (catalyst) => {
@@ -360,6 +365,48 @@ describe('holding a press', () => {
         press();
         expect(game).not.toHaveBeenCalled();
         expect(message()).not.toBeNull();
+        await pause();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+    });
+
+    test('held Enter: the auto-repeat is one gesture however long it runs', async () => {
+        pressKey();
+        expect(message()).not.toBeNull();
+        // The first repeat lands about 500 ms in, past the double-click window, then about every 33 ms
+        await vi.advanceTimersByTimeAsync(500);
+        pressKey();
+        expect(game).not.toHaveBeenCalled();
+        for (let i = 0; i < 60; i += 1) {
+            await vi.advanceTimersByTimeAsync(33);
+            pressKey();
+        }
+        expect(game).not.toHaveBeenCalled();
+        expect(message()).not.toBeNull();
+    });
+
+    test('Enter let go and pressed again on purpose goes ahead', async () => {
+        pressKey();
+        await vi.advanceTimersByTimeAsync(500);
+        pressKey();
+        await vi.advanceTimersByTimeAsync(1100);
+        pressKey();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).toBeNull();
+    });
+
+    test('a keyboard click right after a held mouse press is not a decision either', async () => {
+        press();
+        await vi.advanceTimersByTimeAsync(600);
+        pressKey();
+        expect(game).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1100);
+        pressKey();
+        expect(game).toHaveBeenCalledTimes(1);
+    });
+
+    test('the keyboard window does not slow a mouse: a second click after the double-click window goes ahead', async () => {
+        pressKey();
         await pause();
         press();
         expect(game).toHaveBeenCalledTimes(1);
@@ -664,7 +711,7 @@ describe('every press that goes straight through shows nothing', () => {
 
     test('a disabled button is left alone', () => {
         start().disabled = true;
-        start().dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        press();
         expect(message()).toBeNull();
     });
 });
