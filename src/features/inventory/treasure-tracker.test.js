@@ -1904,6 +1904,13 @@ describe('placeBesideDialog never covers the game loot dialog', () => {
     describe('a dialog that fills the phone screen', () => {
         const viewport = { width: 412, height: 850 };
 
+        test('a very short screen: the written height never exceeds what the screen can show', () => {
+            const short = { width: 412, height: 100 };
+            const place = placeBesideDialog({ left: 4, right: 408, top: 10, bottom: 95 }, popup, short);
+            expect(place).toEqual({ left: 8, top: 8, height: 84 });
+            expect(place.top + place.height).toBeLessThanOrEqual(short.height - 8);
+        });
+
         test('no gap at all: pinned to the top at the minimum height, never a height of 0', () => {
             // above: 20 - 12 - 8 = 0; below: 850 - 830 - 12 - 8 = 0
             const place = placeBesideDialog({ left: 4, right: 408, top: 20, bottom: 830 }, popup, viewport);

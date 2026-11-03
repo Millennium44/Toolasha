@@ -557,13 +557,15 @@ export function placeBesideDialog(anchor, self, viewport) {
     // Neither gap holds it whole, so it shrinks to the larger gap and scrolls - but only down to a height worth
     // reading. A dialog that fills the screen leaves a gap of a few pixels (or none, which the caller read as
     // "no height given" and left the popup at its natural size, over the dialog), so below the floor it
-    // overlaps instead: pinned to the top edge at the floor height, which covers the dialog's top and leaves
-    // the Close button at its bottom reachable.
-    const minHeight = Math.min(MIN_POPUP_HEIGHT, self.height);
+    // overlaps instead: pinned to the top edge at the floor height, covering the top of the dialog. (An earlier
+    // phone report had the dialog's Close at its bottom, so the top is the part given up; that is not checked
+    // against the game's DOM.) No height is ever written taller than the screen can show.
+    const room = Math.max(1, viewport.height - 2 * EDGE_MARGIN);
+    const minHeight = Math.min(MIN_POPUP_HEIGHT, self.height, room);
     const larger = Math.max(above, below);
     if (larger < minHeight) return { left, top: EDGE_MARGIN, height: minHeight };
-    if (above >= below) return { left, top: EDGE_MARGIN, height: above };
-    return { left, top: anchor.bottom + DIALOG_GAP, height: below };
+    if (above >= below) return { left, top: EDGE_MARGIN, height: Math.min(above, room) };
+    return { left, top: anchor.bottom + DIALOG_GAP, height: Math.min(below, room) };
 }
 
 class TreasureTracker {
