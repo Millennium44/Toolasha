@@ -2021,7 +2021,6 @@ class GuildTrialDamage {
             for (const [encounter, entry] of Object.entries(entries || {})) {
                 const fight = open[encounter];
                 const fromFight =
-                    entry.measured === null &&
                     fight &&
                     !(guildId !== null && fight.guildId != null && String(guildId) !== String(fight.guildId)) &&
                     rowsDescribeMeasured(entry.reported, fight.measured);
@@ -2029,22 +2028,27 @@ class GuildTrialDamage {
                     console.info(`[GuildTrialDamage] The ${encounter} rows do not describe the saved fight; it waits.`);
                 }
                 if (fromFight || entry.measured !== null) paired.push(encounter);
-                if (fromFight) {
-                    blob.trials[encounter] = { ...entry, measured: fight.measured };
-                    console.info(`[GuildTrialDamage] Paired the game's totals with the saved ${encounter} fight.`);
-                    continue;
-                }
                 // A trial re-stated with nothing watched beside it — a
                 // re-delivery after a reset, or a later message carrying an
                 // earlier fight's rows again — must not erase the measurement
                 // this week already stored for the same encounter. The loaded
                 // blob is week-guarded, so a held pair is this week's by
-                // construction; its fresher roster still lands.
+                // construction; its fresher roster still lands. Nor may the held
+                // fight's own, when it watched less than a measurement already
+                // kept: another alt's or device's saved copy, or a pair made from
+                // one by an earlier click. A saved fight still open is newer than
+                // any stored pair (`openSavedFights`), so it answers instead of one.
                 const stored = blob.trials[encounter];
-                blob.trials[encounter] =
-                    entry.measured === null && stored?.measured !== null && stored?.measured !== undefined
-                        ? { ...entry, measured: stored.measured }
-                        : entry;
+                const own = entry.measured === null ? null : { measured: entry.measured, endedAt: entry.at };
+                const kept =
+                    stored?.measured === null || stored?.measured === undefined
+                        ? null
+                        : { measured: stored.measured, endedAt: stored.at };
+                const best = fullerSavedFight(own, fromFight ? fight : kept);
+                blob.trials[encounter] = best ? { ...entry, measured: best.measured } : entry;
+                if (fromFight && best === fight) {
+                    console.info(`[GuildTrialDamage] Paired the game's totals with the saved ${encounter} fight.`);
+                }
             }
             const unreconciled = { ...open };
             for (const encounter of paired) unreconciled[encounter] = null;

@@ -696,6 +696,108 @@ describe('memory and disk while a read is out', () => {
         });
     });
 
+    describe('Stats opened while this client’s own ended fight is still held', () => {
+        const key = () => `guildHistory:${trialStatsStorageKey('SuperMoo', 900001)}`;
+        const onDisk = (fight) =>
+            game.disk.set(key(), { weekStart: trialWeekStart(Date.now()), trials: {}, unreconciled: { swarm: fight } });
+        const click = async () => {
+            game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated());
+            await settle();
+        };
+        const pairedDamage = () => stored().trials.swarm.measured.FixtureCharacter.damage;
+
+        test('the saved copy is fuller: the pair keeps it, and it is settled, not lost', async () => {
+            onDisk(fightOf(9_000_000, Date.now() - 1));
+            watchSwarm();
+            await settle();
+            await click();
+            expect(pairedDamage()).toBe(9_000_000);
+            expect(stored().unreconciled).toBeUndefined();
+            expect(guildTrialDamage.savedFights.swarm).toBeUndefined();
+            expect(guildTrialDamage.breakdown().storedStats.swarm.measured.FixtureCharacter.damage).toBe(9_000_000);
+            // The board goes on comparing this client’s own tally
+            expect(guildTrialDamage.breakdown().reportedMeasured.FixtureCharacter.damage).toBeLessThan(9_000_000);
+        });
+
+        test('Stats opened again keeps the fuller pair, and refreshes the game’s figures', async () => {
+            onDisk(fightOf(9_000_000, Date.now() - 1));
+            watchSwarm();
+            await settle();
+            await click();
+            const later = buildGuildTrialStatsUpdated();
+            later.guildTrialStatList.find((row) => row.characterId === 900001 && row.trialHrid === SWARM).damageDealt =
+                7;
+            game.wsHandlers.guild_trial_stats_updated(later);
+            await settle();
+            expect(pairedDamage()).toBe(9_000_000);
+            expect(stored().trials.swarm.reported.FixtureCharacter.damage).toBe(7);
+        });
+
+        test('the held fight is fuller: the pair keeps its own, and the partial copy goes', async () => {
+            watchSwarm();
+            await settle();
+            const own = guildTrialDamage.savedFights.swarm.measured;
+            onDisk(fightOf(1, Date.now() - 1));
+            await click();
+            expect(stored().trials.swarm.measured).toEqual(own);
+            expect(stored().unreconciled).toBeUndefined();
+        });
+
+        test('held only: the pair is its own, with nothing left waiting', async () => {
+            watchSwarm();
+            await settle();
+            const own = guildTrialDamage.savedFights.swarm.measured;
+            await click();
+            expect(stored().trials.swarm.measured).toEqual(own);
+            expect(stored().unreconciled).toBeUndefined();
+        });
+
+        test('a fuller copy whose names the rows do not describe does not replace the held fight’s', async () => {
+            onDisk({ ...fightOf(0, Date.now() - 1), measured: { Stranger: { damage: 9_000_000 } } });
+            watchSwarm();
+            await settle();
+            guildTrialDamage.savedFights.swarm = {
+                ...fightOf(0, Date.now() - 1),
+                measured: { Stranger: { damage: 9_000_000 } },
+            };
+            await click();
+            expect(stored().trials.swarm.measured.Stranger).toBeUndefined();
+            expect(stored().trials.swarm.measured.FixtureCharacter).toBeDefined();
+        });
+
+        test('a fuller copy from a guild of another id does not replace it either', async () => {
+            game.trackerGuildId = String(GUILD_ID);
+            onDisk({ ...fightOf(9_000_000, Date.now() - 1), guildId: GUILD_ID + 1 });
+            watchSwarm();
+            await settle();
+            guildTrialDamage.savedFights.swarm = { ...fightOf(9_000_000, Date.now() - 1), guildId: GUILD_ID + 1 };
+            await click();
+            expect(pairedDamage()).toBeLessThan(9_000_000);
+        });
+
+        test('a resumed fight: the copy is gone, mid-fight rows pair with nothing, and the next end pairs its own', async () => {
+            onDisk(fightOf(9_000_000, Date.now() - 1));
+            watchSwarm();
+            await settle();
+            vi.setSystemTime(Date.now() + 1_000);
+            game.wsHandlers.new_guild_battle(buildNewGuildBattle({ tier: 2 }));
+            await settle();
+
+            await click();
+            expect(stored().trials.swarm.measured).toBe(null);
+            expect(guildTrialDamage.breakdown().reported).toBe(null);
+
+            swing(2, 3, 280_000, 2);
+            vi.setSystemTime(Date.now() + 500);
+            swing(2, 4, 270_000, 3);
+            game.wsHandlers.end_guild_battle(buildEndGuildBattle());
+            await settle();
+            await click();
+            expect(pairedDamage()).toBeLessThan(9_000_000);
+            expect(stored().unreconciled).toBeUndefined();
+        });
+    });
+
     test.each([
         ['a stats frame', () => game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated())],
         ['a restore', () => guildTrialDamage._restoreStats()],
