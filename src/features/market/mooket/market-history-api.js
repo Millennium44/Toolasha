@@ -204,6 +204,26 @@ const FAILURE_WINDOW_MS = COOLDOWN_BASE_MS;
  */
 export const REQUEST_PACE_MS = 200;
 
+/**
+ * The Web Lock every tab takes a turn on before sending to a pool (the source key is appended).
+ *
+ * {@link REQUEST_PACE_MS} spaces one tab's sends, but each tab kept its own clock, so N tabs sweeping at
+ * once sent N times the intended rate to the one shared pool. A Web Lock is the one primitive the browser
+ * shares between tabs of the origin and hands out in the order asked, so holding it for the pace interval
+ * after a send spaces every tab's sends from one queue. A lock dies with its tab, so a closed tab cannot
+ * wedge the others.
+ */
+export const PACE_LOCK_PREFIX = 'toolasha-market-history-pace:';
+
+/**
+ * The longest a request waits for its turn behind other tabs before sending anyway.
+ *
+ * A hidden tab's timers are throttled by the browser, so a turn it holds can outlast the interval by a long
+ * way. The wait is bounded so a slow holder can only make the pace looser for a moment, never stop a lookup
+ * (the same call the cross-tab price refresh lock makes).
+ */
+export const PACE_LOCK_MAX_WAIT_MS = 3000;
+
 class MarketHistoryAPI {
     constructor() {
         this.cache = new Map();
@@ -238,6 +258,8 @@ class MarketHistoryAPI {
         this.paceNextAt = new Map();
         /** Requests waiting for their turn, so a cool-down can end the wait at once */
         this.paceWaiters = new Set();
+        /** Requests queued on the cross-tab Web Lock, so a cool-down can end their wait too */
+        this.turnWaiters = new Set();
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -336,6 +358,30 @@ class MarketHistoryAPI {
             }
         }
 
+        // Cross-tab pace: this tab's own spacing is settled; take the shared turn so the other open tabs' sends
+        // and this one's come from one queue (see PACE_LOCK_PREFIX). Everything decided above is decided again
+        // after the wait, because other tabs' turns can take a while and none of it is what it was.
+        let endTurn = () => {};
+        const turn = this.takeSendTurn(source.key);
+        if (turn) {
+            endTurn = await turn;
+            if (!this.enabled || this.currentSource().key !== source.key) {
+                endTurn(false);
+                return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key });
+            }
+            if (Date.now() < this.cooldownUntil) {
+                endTurn(false);
+                return null;
+            }
+            if (!force) {
+                const cached = this.cache.get(key);
+                if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+                    endTurn(false);
+                    return cached.rows;
+                }
+            }
+        }
+
         const url =
             source.key === 'mooket1'
                 ? `${source.host}/market/item/history?name=${encodeURIComponent(itemHrid)}` +
@@ -346,7 +392,10 @@ class MarketHistoryAPI {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
         try {
-            const response = await fetch(url, { signal: controller.signal });
+            const request = fetch(url, { signal: controller.signal });
+            // Sent: the turn is held for the pace interval from here, not until the answer
+            endTurn(true);
+            const response = await request;
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const payload = await response.json();
             // mooket II already speaks the common row shape; mooket I is folded into it
@@ -368,7 +417,58 @@ class MarketHistoryAPI {
             return null;
         } finally {
             clearTimeout(timeout);
+            // Nothing went out if the send itself threw: the turn is given back, not held
+            endTurn(false);
         }
+    }
+
+    /**
+     * Take the shared turn to send to one pool, across every open tab.
+     *
+     * Resolves, once it is this request's turn, with `endTurn(sent)`: call it with `true` when the request has been
+     * sent and the turn is held for one pace interval from then, or with `false` when nothing went out and the
+     * turn is given back at once (the first call decides; later ones do nothing). When the turn does not come
+     * within {@link PACE_LOCK_MAX_WAIT_MS} it resolves with a no-op and the request goes out on this tab's own
+     * pace alone, as it did before the tabs shared one. With no Web Locks there is nothing to wait for and it
+     * returns null, so the caller does not even yield.
+     *
+     * @param {string} sourceKey - The pool
+     * @returns {Promise<Function>|null} `endTurn`, or null without Web Locks
+     */
+    takeSendTurn(sourceKey) {
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (typeof locks?.request !== 'function') return null;
+
+        return new Promise((resolve) => {
+            const controller = new AbortController();
+            const waitTimer = setTimeout(() => controller.abort(), PACE_LOCK_MAX_WAIT_MS);
+            let hold = () => {};
+            const held = new Promise((release) => {
+                hold = release;
+            });
+            let ended = false;
+            const endTurn = (sent = true) => {
+                if (ended) return;
+                ended = true;
+                if (sent && this.paceIntervalMs > 0) setTimeout(hold, this.paceIntervalMs);
+                else hold();
+            };
+            // A cool-down ends the wait for the turn, as it ends the wait for a slot
+            const waiter = { sourceKey, abort: () => controller.abort() };
+            this.turnWaiters.add(waiter);
+            const taken = locks.request(`${PACE_LOCK_PREFIX}${sourceKey}`, { signal: controller.signal }, () => {
+                clearTimeout(waitTimer);
+                this.turnWaiters.delete(waiter);
+                resolve(endTurn);
+                return held;
+            });
+            // An aborted wait (or a lock that cannot be had) is not a failure of the lookup
+            Promise.resolve(taken).catch(() => {
+                clearTimeout(waitTimer);
+                this.turnWaiters.delete(waiter);
+                resolve(() => {});
+            });
+        });
     }
 
     /**
@@ -416,6 +516,10 @@ class MarketHistoryAPI {
     releasePaceWaiters(sourceKey) {
         for (const waiter of [...this.paceWaiters]) {
             if (waiter.sourceKey === sourceKey) waiter.wake();
+        }
+        // Requests queued behind other tabs' turns end their wait too; each finds the cool-down and answers null
+        for (const waiter of [...this.turnWaiters]) {
+            if (waiter.sourceKey === sourceKey) waiter.abort();
         }
         this.paceNextAt.delete(sourceKey);
     }

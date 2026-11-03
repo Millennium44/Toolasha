@@ -77,6 +77,10 @@ const GEOMETRY_KEY = 'goalPlannerPanel';
 const DEFAULT_PANEL = { width: 560, height: 620 };
 /** Finished route searches kept for an identical second press */
 const ROUTE_CACHE_SIZE = 8;
+/** How many times in a row the planner prices again on its own after the history pool's cool-down ends */
+const MAX_VOLUME_RETRIES = 2;
+/** Added to the cool-down's end before the retry, so the pool is not asked at the very moment it lifts */
+const VOLUME_RETRY_MARGIN_MS = 1500;
 
 /**
  * Let the browser paint and take input between slices of a route search.
@@ -376,6 +380,9 @@ class GoalPlannerPanel {
         this.routes = new Map();
         /** Finished searches by their full input key, so an identical second press does not search again */
         this.routeCache = new Map();
+        /** The timer that prices again once the history pool's cool-down ends, and how many have fired in a row */
+        this.volumeRetryTimer = null;
+        this.volumeRetries = 0;
     }
 
     /**
@@ -399,6 +406,8 @@ class GoalPlannerPanel {
             return;
         }
         this._create();
+        // Closing cancelled the pending re-pricing; the pricing it was for is still owed
+        this._scheduleVolumeRetry();
     }
 
     /**
@@ -409,6 +418,7 @@ class GoalPlannerPanel {
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         // A search nobody can see is work for nothing: closing stops it, and reopening says so
         for (const state of this.routes.values()) this._stopRouteState(state);
+        this._clearVolumeRetry();
         this._remove();
     }
 
@@ -449,6 +459,8 @@ class GoalPlannerPanel {
     disable() {
         this.generation += 1;
         unregisterCommand('Goal Planner');
+        this._clearVolumeRetry();
+        this.volumeRetries = 0;
         this._remove();
         this.busy = false;
         // A route waiting on a pricing that disable abandoned wakes, sees the switch, and draws nothing
@@ -497,7 +509,53 @@ class GoalPlannerPanel {
      * @returns {Promise<void>}
      */
     async refresh() {
+        // A press is a fresh start for the automatic retries below
+        this.volumeRetries = 0;
         await this.replan({ reprice: true });
+    }
+
+    /** One automatic re-pricing; `replan` reports its own failures on the panel, this only keeps the call from throwing */
+    async _priceAgainQuietly() {
+        try {
+            await this.replan({ reprice: true });
+        } catch (error) {
+            console.error('[GoalPlanner] Pricing again after the history cool-down failed:', error);
+        }
+    }
+
+    /** Drop the pending automatic re-pricing, if any */
+    _clearVolumeRetry() {
+        if (this.volumeRetryTimer !== null) clearTimeout(this.volumeRetryTimer);
+        this.volumeRetryTimer = null;
+    }
+
+    /**
+     * Price again once the market-history pool's cool-down ends, when it is why some volumes were not measured.
+     *
+     * The step warnings say a volume "could not be checked" and ask for a Refresh; the pool answers again by
+     * itself a little later, so waiting for a press is waiting on nothing. At most {@link MAX_VOLUME_RETRIES}
+     * in a row, and only while the panel is open for the same character: a pool that keeps refusing is left
+     * to the warning and the button.
+     */
+    _scheduleVolumeRetry() {
+        this._clearVolumeRetry();
+        const at = this.context?.volumeRetryAt;
+        if (!Number.isFinite(at)) {
+            this.volumeRetries = 0;
+            return;
+        }
+        if (!this.panel || this.volumeRetries >= MAX_VOLUME_RETRIES) return;
+        const current = this._currentOperation();
+        this.volumeRetryTimer = setTimeout(
+            () => {
+                this.volumeRetryTimer = null;
+                // Turned off while it waited: the volumes it was for are no longer wanted
+                if (!current() || !this.panel || config.getSetting('market_pooledHistory') !== true) return;
+                this.volumeRetries += 1;
+                this._priceAgainQuietly();
+            },
+            Math.max(0, at - Date.now()) + VOLUME_RETRY_MARGIN_MS
+        );
     }
 
     /**
@@ -548,7 +606,8 @@ class GoalPlannerPanel {
         const gone = () => !current();
         let pricingFailed = false;
         try {
-            if (reprice || !this.context) {
+            const pricedNow = reprice || !this.context;
+            if (pricedNow) {
                 const context = await buildPlannerContext({
                     // Dropped once the panel is closed, the character changes, or this pass is over;
                     // `busy` is false the moment a pass finishes, and a newer one sets its own token
@@ -574,6 +633,9 @@ class GoalPlannerPanel {
             this.plans = planGoals(this.goals, this.context);
             this.rateNotes = this.context.rateNotes || [];
             this.combatStatus = this.context.combatStatus || null;
+            // Only a pricing that just ran says whether the pool still owes volumes: a replan on the old prices
+            // (a goal added) carries the old moment forward and must not arm a pricing nobody asked for
+            if (pricedNow) this._scheduleVolumeRetry();
             await saveSnapshot(this.plans, owner, this.pricedAt);
             await this._recordReservations(gone);
         } catch (error) {
@@ -1145,7 +1207,7 @@ class GoalPlannerPanel {
 
         if (goal.type === 'skill' && !plan.satisfied) {
             try {
-                card.appendChild(this._routeSection(goal));
+                card.appendChild(this._routeSection(goal, plan));
             } catch (error) {
                 console.error('[GoalPlanner] Drawing the leveling route failed:', error);
                 card.appendChild(
@@ -1642,9 +1704,10 @@ class GoalPlannerPanel {
     /**
      * The leveling-route part of a skill goal's card.
      * @param {Object} goal - A skill goal
+     * @param {Object|null} [plan] - The goal's plan, whose training step is the quick estimate the card shows
      * @returns {HTMLElement} The section
      */
-    _routeSection(goal) {
+    _routeSection(goal, plan = null) {
         const state = this.routes.get(goal.id) || null;
         const section = document.createElement('div');
         Object.assign(section.style, {
@@ -1715,7 +1778,7 @@ class GoalPlannerPanel {
             note(result.unavailable[state.objective] || 'No route.', COLORS.warn);
         } else {
             for (const stage of route.stages) section.appendChild(this._routeStageRow(stage));
-            section.appendChild(this._routeTotalsRow(route, result));
+            section.appendChild(this._routeTotalsRow(route, result, plan));
         }
 
         for (const line of result.notes) note(line, COLORS.warn);
@@ -1809,9 +1872,10 @@ class GoalPlannerPanel {
      * A route's bottom line, against the quick estimate's single action.
      * @param {Object} route - From `costRoute`
      * @param {Object} result - The search result
+     * @param {Object|null} [plan] - The goal's plan: its training step is the quick estimate on the card above
      * @returns {HTMLElement} The row group
      */
-    _routeTotalsRow(route, result) {
+    _routeTotalsRow(route, result, plan = null) {
         const wrapper = document.createElement('div');
         const row = document.createElement('div');
         Object.assign(row.style, {
@@ -1844,11 +1908,16 @@ class GoalPlannerPanel {
 
         const baseline = result.baseline;
         if (baseline) {
+            // The same single action, and the same bottom line as the quick estimate on the card above: the
+            // stages alone would call a route "the same" while its time and coins differ (the search prices
+            // every action afresh, volumes included, so the card's own figures can be older or looser)
+            const quickStep = plan?.steps?.find((step) => step.kind === 'train' && !step.done) || null;
             const same =
                 baseline.stages.length === route.stages.length &&
                 route.stages.length === 1 &&
                 baseline.stages[0].actionHrid === route.stages[0].actionHrid &&
-                baseline.stages[0].label === route.stages[0].label;
+                baseline.stages[0].label === route.stages[0].label &&
+                sameFigures(totals, quickStep);
             const text = same
                 ? 'Same as the quick estimate: one action the whole way.'
                 : `Quick estimate (${baseline.stages[0].label} the whole way): ${duration(baseline.totals.timeHours)}, ` +
@@ -1882,6 +1951,20 @@ class GoalPlannerPanel {
         this.bodyEl = null;
         this.statusEl = null;
     }
+}
+
+/**
+ * Whether two bottom lines read the same on the panel: the same time and the same coins, or both unknown.
+ * Compared as shown, so two costings of one route that differ only in floating-point noise are not told apart.
+ * @param {Object|null} a - A route's `totals` (`timeHours`, `goldDelta`, `costKnown`)
+ * @param {Object|null} b - A plan step (`timeHours`, `goldDelta`, `costKnown`); null when there is none to compare
+ * @returns {boolean}
+ */
+function sameFigures(a, b) {
+    if (!a || !b) return false;
+    if (duration(a.timeHours ?? null) !== duration(b.timeHours ?? null)) return false;
+    if (a.costKnown === false || b.costKnown === false) return a.costKnown === b.costKnown;
+    return signedCoins(a.goldDelta) === signedCoins(b.goldDelta);
 }
 
 /**

@@ -43,7 +43,7 @@ import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { calculateProductionProfit } from '../actions/production-profit.js';
 import { alchemyGoldRates } from '../alchemy/alchemy-rankings.js';
 import { loadCombatRates } from './combat-rates.js';
-import { applyLiquidityLimits } from './market-liquidity.js';
+import { applyLiquidityLimits, volumeCooldownMs } from './market-liquidity.js';
 import { computeBestCraftingPlan } from '../crafting-plan/crafting-plan-calculator.js';
 import {
     calculateEnhancementPath,
@@ -465,6 +465,47 @@ async function boundTrainingMargins(sales, trainingMargin, trainingSaleCap, onPr
 }
 
 /**
+ * One running count across several volume sweeps that run one after another.
+ *
+ * Each sweep reports `{done, total}` from zero and `null` when it ends. Forwarded as they come, a second
+ * sweep's first report puts the count back to the start, so the status looks as though the first sweep never
+ * finished. Here a sweep that ends hands its lookups to the next as a base (the next sweep's total is not known
+ * until it starts, so the total grows as it does), and the closing `null` goes out once, from {@link finish}.
+ * Nothing is reported when no sweep had anything to look up.
+ *
+ * @param {Function} [onProgress] - The caller's callback, told `{done, total}` and then `null`
+ * @returns {{sweep: Function, finish: Function}} `sweep` is what each sweep is given; `finish` closes the count
+ */
+function continuousProgress(onProgress) {
+    let carried = 0;
+    let running = 0;
+    let reported = false;
+    const tell = (value) => {
+        try {
+            onProgress(value);
+        } catch (error) {
+            console.error('[GoalPlanner] A pricing progress callback failed:', error);
+        }
+    };
+    return {
+        sweep: (progress) => {
+            if (typeof onProgress !== 'function') return;
+            if (progress === null) {
+                carried += running;
+                running = 0;
+                return;
+            }
+            running = progress.total;
+            reported = true;
+            tell({ done: carried + progress.done, total: carried + progress.total });
+        },
+        finish: () => {
+            if (reported && typeof onProgress === 'function') tell(null);
+        },
+    };
+}
+
+/**
  * Every action the character's levels allow, of a set of types.
  *
  * "Allow" means what the game itself would let you start right now: the base
@@ -540,6 +581,9 @@ function availableActions(types) {
  * @param {Function} [onProgress] - Told how far the volume lookups have got, see `applyLiquidityLimits`
  */
 async function measureGoldRates(onProgress) {
+    // Two volume sweeps run in turn (the rates, then the training margins): one count across both, so the
+    // second does not start over at zero and read as though the first never finished
+    const progress = continuousProgress(onProgress);
     const rates = [];
     const byAction = new Map();
     // Signed, and apart from `rates`: the rankings only want what pays, but training
@@ -651,7 +695,7 @@ async function measureGoldRates(onProgress) {
     // ranking it first is how the planner recommended a method that cannot be run.
     let liquidity;
     try {
-        liquidity = await applyLiquidityLimits(rates, { onProgress });
+        liquidity = await applyLiquidityLimits(rates, { onProgress: progress.sweep });
     } catch (error) {
         console.error('[GoalPlanner] Bounding rates by market volume failed:', error);
         liquidity = { rates, measured: false };
@@ -666,10 +710,22 @@ async function measureGoldRates(onProgress) {
 
     // Training sells its output through the same book, so its margin gets the same bound. Without
     // it a thin-market craft trained for XP counted every unit sold at the quoted price.
-    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap, onProgress);
+    await boundTrainingMargins(trainingSales, trainingMargin, trainingSaleCap, progress.sweep);
+    progress.finish();
 
     liquidity.rates.sort((a, b) => b.goldPerHour - a.goldPerHour);
+
+    // Volumes the history pool would not give (it was cooling down after refusing requests) leave rates
+    // counted at full price. When that is why, the pricing is worth redoing once the pool answers again: said
+    // as the moment it does, so the panel can ask again instead of leaving the warning for a manual Refresh
+    const volumeUnmeasured =
+        !liquidity.measured ||
+        liquidity.rates.some((rate) => (rate?.limits || []).some((limit) => limit.kind === 'unmeasured')) ||
+        [...trainingSaleCap.values()].some((cap) => cap.unmeasured);
+    const cooling = volumeUnmeasured ? volumeCooldownMs() : 0;
+
     return {
+        volumeRetryAt: cooling > 0 ? Date.now() + cooling : null,
         rates: liquidity.rates,
         byAction,
         trainingMargin,
@@ -1146,8 +1202,8 @@ function rescaleMaterialBill(bill, { attempts, fromAttempts, protectionCount, fr
  * @param {Object} [options] - Options
  * @param {boolean} [options.measureRates=true] - Rank every activity's income. Off for a
  *   redraw that only needs names and levels, since the ranking is the expensive part.
- * @param {Function} [options.onProgress] - Told `{done, total}` as market volumes are looked up and
- *   `null` when each sweep ends. Per call, so two builds never share it.
+ * @param {Function} [options.onProgress] - Told `{done, total}` as market volumes are looked up, counted across
+ *   the sweeps the pricing makes, and `null` when the lookups are over. Per call, so two builds never share it.
  * @returns {Promise<Object>} A context for `planGoal`
  */
 export async function buildPlannerContext({ measureRates = true, onProgress } = {}) {
@@ -1171,6 +1227,7 @@ export async function buildPlannerContext({ measureRates = true, onProgress } = 
               trainingSaleCap: new Map(),
               notes: [],
               combatStatus: null,
+              volumeRetryAt: null,
           };
     const rates = measured.rates;
     const goldByAction = measured.trainingMargin;
@@ -1198,6 +1255,10 @@ export async function buildPlannerContext({ measureRates = true, onProgress } = 
         // What a rate provider wants said out loud: a combat snapshot that is
         // missing or stale is a fact about the ranking, not a silent omission
         rateNotes: measured.notes,
+
+        // When the history pool, which had been refusing requests, may be asked again for the volumes this pricing
+        // could not measure; null when nothing is waiting on it
+        volumeRetryAt: measured.volumeRetryAt ?? null,
 
         // Which loadout the combat rates were judged against, and what else
         // could have been picked — the panel offers the choice when there is one

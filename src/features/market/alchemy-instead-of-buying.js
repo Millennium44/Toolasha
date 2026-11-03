@@ -886,23 +886,24 @@ function heldCandidates(actionType, hrid, bid) {
     const key = `${actionType}|${hrid}|${bid}`;
     if (heldCandidateCache.has(key)) return heldCandidateCache.get(key);
     let list = [];
-    const previous = alchemyProfitCalculator.inputBuyOverride;
-    alchemyProfitCalculator.inputBuyOverride = (itemHrid) => (itemHrid === hrid ? bid : null);
+    const heldBid = (itemHrid) => (itemHrid === hrid ? bid : null);
     try {
-        let raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid) ?? [];
+        let raw = alchemyProfitCalculator.calculateCandidateResults?.(actionType, hrid, heldBid) ?? [];
         if (raw.length === 0) {
             let single = null;
-            if (actionType === 'decompose') single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0);
-            else if (actionType === 'transmute') single = alchemyProfitCalculator.calculateTransmuteProfit(hrid);
-            else if (actionType === 'coinify') single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0);
+            if (actionType === 'decompose') {
+                single = alchemyProfitCalculator.calculateDecomposeProfit(hrid, 0, false, null, null, null, heldBid);
+            } else if (actionType === 'transmute') {
+                single = alchemyProfitCalculator.calculateTransmuteProfit(hrid, false, null, null, null, 0, heldBid);
+            } else if (actionType === 'coinify') {
+                single = alchemyProfitCalculator.calculateCoinifyProfit?.(hrid, 0, false, null, null, null, heldBid);
+            }
             raw = [single].filter(Boolean);
         }
         list = raw.filter(buyableSetup);
     } catch (error) {
         console.error('[AlchemyInstead] Held-item setups failed for', hrid, error);
         list = [];
-    } finally {
-        alchemyProfitCalculator.inputBuyOverride = previous;
     }
     heldCandidateCache.set(key, list);
     return list;

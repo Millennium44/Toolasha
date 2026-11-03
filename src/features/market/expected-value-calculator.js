@@ -8,6 +8,12 @@ import { pricesMoved } from '../../utils/price-change.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
+import {
+    findBestTaskShopValue,
+    taskShopTokenPrice,
+    TASK_TOKEN_HRID,
+    TASK_CRYSTAL_HRID,
+} from '../../utils/task-shop-value.js';
 import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { getCustomPrice } from '../settings/custom-price-overrides.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -52,6 +58,10 @@ class ExpectedValueCalculator {
             '/items/enchanted_token',
             '/items/pirate_token',
         ];
+
+        // Set while a Task Shop valuation is running, so a shop chest that itself drops a Task Token or Crystal
+        // cannot send the valuation round in a circle: the inner ask is answered "unpriced"
+        this._pricingTaskShop = false;
 
         // Flag to track if initialized
         this.isInitialized = false;
@@ -474,6 +484,9 @@ class ExpectedValueCalculator {
         let totalExpectedValue = 0;
         let missingCount = 0;
         let estimatedCount = 0;
+        // Copies of this very container an opening gives back (Purple's Gift drops itself at 2%). Each is worth
+        // another opening, so they are not priced one by one: see after the loop.
+        let selfReturn = 0;
         // Gross pass: contents are not market-taxed and the shared cache is neither read nor written
         const gross = Boolean(ctx.gross);
         // Explicit-rate pass: contents are netted at that rate and, like the gross pass, never cached
@@ -493,6 +506,11 @@ class ExpectedValueCalculator {
 
             // Calculate average drop count
             const avgCount = (minCount + maxCount) / 2;
+
+            if (itemHrid === containerHrid) {
+                selfReturn += avgCount * dropRate;
+                continue;
+            }
 
             // Get price for this drop.
             //
@@ -533,6 +551,14 @@ class ExpectedValueCalculator {
                         : calculatePriceAfterTax(avgCount * dropRate * price, this.MARKET_TAX)
                     : avgCount * dropRate * price;
             totalExpectedValue += dropValue;
+        }
+
+        // An opening that gives itself back worth `selfReturn` more openings: V = S + selfReturn * V, so the
+        // value of everything else, S, is scaled by 1 / (1 - selfReturn). That never converges at a return of one
+        // copy or more, so such a table stays unpriced rather than inventing a figure.
+        if (selfReturn > 0) {
+            if (selfReturn < 1) totalExpectedValue /= 1 - selfReturn;
+            else missingCount++;
         }
 
         // Cache the result for future lookups — but not when the cycle guard cut a
@@ -640,6 +666,10 @@ class ExpectedValueCalculator {
         const priceInfo = getItemPriceInfo(itemHrid, { enhancementLevel, context: 'profit', side: 'sell' });
         const dropPrice = priceInfo.price;
         if (!(dropPrice > 0)) {
+            // A Task Token or Task Crystal is never listed: it is worth what the Task Shop would have spent it on
+            const taskShop = this.resolveTaskShopDrop(itemHrid, context);
+            if (taskShop) return taskShop;
+
             // An untradable cape has no market at all: last resort is the cape setting's value for an
             // unrefined one. It is never sold, so it is never taxed, and it is an assumption by
             // construction (estimated). A refined cape's value is a refinement bill the chest worker
@@ -659,6 +689,67 @@ class ExpectedValueCalculator {
             estimated: Boolean(priceInfo.estimated),
             needsTax: Number.isFinite(context?.saleTaxRate) || !isIronCowCharacter(),
         };
+    }
+
+    /**
+     * What a Task Token or Task Crystal dropped from a chest is worth, through the Task Shop: a token at the best
+     * coins-per-token line the shop offers, a crystal at the tokens it costs. Both are the shop's own valuation
+     * (already net of tax for a market line, an expected value for a chest line), so neither is taxed again. Priced
+     * on demand through this calculator's container walk, so a first pass that has not marked it ready yet still
+     * values them, and a figure that rests on a partly unpriced shop line is flagged partial, as a nested chest's is.
+     *
+     * The shop lines are valued under the traversal's own terms, as the dungeon token is: untaxed in a gross
+     * (personal-use) pass or at a 0% rate, at the given rate for another player, else at the live character's tax.
+     * @param {string} itemHrid - Item HRID
+     * @param {{gross?: boolean, saleTaxRate?: number}|null} [context] - The traversal asking
+     * @returns {{value: number, source: string, needsTax: boolean, missingCount: number, estimatedCount: number}|null}
+     *   Null for any other
+     *   item, when the shop cannot price it, or when this is a nested ask from inside a shop valuation
+     */
+    resolveTaskShopDrop(itemHrid, context = null) {
+        if (itemHrid !== TASK_TOKEN_HRID && itemHrid !== TASK_CRYSTAL_HRID) return null;
+        if (this._pricingTaskShop) return null;
+        this._pricingTaskShop = true;
+        try {
+            let value = null;
+            let partial = 0;
+            let estimatedCount = 0;
+            const untaxed = Boolean(context?.gross) || context?.saleTaxRate === 0;
+            const rate = Number.isFinite(context?.saleTaxRate) ? context.saleTaxRate : undefined;
+            const tax = untaxed ? { untaxed: true } : rate !== undefined ? { rate } : null;
+            // The shop's chest lines are walked under the same terms (a fresh walk: nothing is cached for them)
+            const pricer = {
+                calculateExpectedValue: (shopItemHrid) => {
+                    const walked = this.calculateContainerValue(
+                        shopItemHrid,
+                        null,
+                        untaxed || rate !== undefined
+                            ? { path: new Set(), truncated: false, gross: untaxed, saleTaxRate: rate }
+                            : null
+                    );
+                    return walked.expectedValue === null ? null : walked;
+                },
+            };
+            if (itemHrid === TASK_TOKEN_HRID) {
+                const best = findBestTaskShopValue(pricer, tax);
+                value = best?.perToken ?? null;
+                partial = best?.partialDrops || 0;
+                estimatedCount = best?.estimatedDrops || 0;
+            } else {
+                const priced = taskShopTokenPrice(itemHrid, pricer, tax);
+                value = priced?.price ?? null;
+                partial = priced?.partial ? 1 : 0;
+                estimatedCount = priced?.estimatedDrops || 0;
+            }
+            return value > 0
+                ? { value, source: 'taskShop', needsTax: false, missingCount: partial, estimatedCount }
+                : null;
+        } catch (error) {
+            console.error('[ExpectedValueCalculator] Task Shop valuation failed for', itemHrid, error);
+            return null;
+        } finally {
+            this._pricingTaskShop = false;
+        }
     }
 
     /**

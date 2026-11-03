@@ -10948,6 +10948,9 @@ class CombatSimUI {
                     characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                     zoneName: getCombatZones().find((z) => z.hrid === zoneHrid)?.name || null,
                     difficultyTier,
+                    // What the costs were read under, so a restored table can say when today's pricing is not
+                    // the one it was measured at
+                    pricingLabel: config.getPricingModeDisplayLabel?.() || null,
                 });
             }
         } catch (error) {
@@ -13570,6 +13573,7 @@ class CombatSimUI {
                 characterName: payload.characterName || null,
                 zoneName: payload.zoneName || null,
                 difficultyTier: payload.difficultyTier,
+                pricingLabel: payload.pricingLabel || null,
             };
             this._renderUpgradeResults(payload.data);
         } catch (error) {
@@ -13593,11 +13597,19 @@ class CombatSimUI {
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
         const stopped = meta?.stopped ? ` (${stoppedRunText(meta.stopped)})` : '';
+        // Costs were read at the pricing mode the run was saved under; said when that is no longer the one set. A
+        // payload from before the label was stamped says nothing. (The sale tax needs no such line: it is fixed per
+        // character and build, and a record from another build is never restored.)
+        const pricingNow = config.getPricingModeDisplayLabel?.() || null;
+        const repriced =
+            meta?.pricingLabel && pricingNow && meta.pricingLabel !== pricingNow
+                ? ` Costs were priced at ${escapeAttribute(meta.pricingLabel)}; prices are now set to ${escapeAttribute(pricingNow)}.`
+                : '';
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.</span>` +
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.${repriced}</span>` +
             `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
             `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
             `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +

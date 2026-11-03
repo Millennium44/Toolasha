@@ -23,6 +23,8 @@ const {
     HISTORY_HOST,
     normaliseMooket1Rows,
     REQUEST_PACE_MS,
+    PACE_LOCK_PREFIX,
+    PACE_LOCK_MAX_WAIT_MS,
 } = await import('./market-history-api.js');
 
 /** Every socket this test opened, so "none" can be asserted */
@@ -69,9 +71,12 @@ beforeEach(() => {
     marketHistoryAPI.paceIntervalMs = 0;
     marketHistoryAPI.paceNextAt?.clear();
     marketHistoryAPI.paceWaiters?.clear();
+    // Node has real Web Locks; the suites below drive their own clocks, so no lock unless a suite installs one
+    Object.defineProperty(globalThis.navigator, 'locks', { value: undefined, configurable: true, writable: true });
 });
 
 afterEach(() => {
+    delete globalThis.navigator.locks;
     marketHistoryAPI.disconnect();
     globalThis.WebSocket = originalWebSocket;
     if (hadLocation) globalThis.location = originalLocation;
@@ -714,6 +719,339 @@ describe('request pacing', () => {
         expect(await marketHistoryAPI.fetchHistory('', 0, 7)).toBeNull();
         expect(mock).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
+    });
+});
+
+describe('request pacing across tabs', () => {
+    // Each tab keeps its own clock, so several open tabs together sent several times the intended rate to the one
+    // pool. The turn to send is now a Web Lock every tab queues on, held for one pace interval after a send.
+    const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+    const LOCK = `${PACE_LOCK_PREFIX}mooket2`;
+
+    /** A minimal first-in-first-out, exclusive Web Lock manager, with abort, as the browser's */
+    function installLocks() {
+        const queues = new Map();
+        const grants = [];
+        const queueOf = (name) => {
+            if (!queues.has(name)) queues.set(name, { held: false, waiters: [] });
+            return queues.get(name);
+        };
+        const next = (name) => {
+            const queue = queueOf(name);
+            const waiter = queue.waiters.shift();
+            if (waiter) waiter();
+        };
+        const manager = {
+            request(name, options, callback) {
+                return new Promise((resolve, reject) => {
+                    const queue = queueOf(name);
+                    const run = async () => {
+                        queue.held = true;
+                        grants.push({ name, at: Date.now() });
+                        try {
+                            resolve(await callback({ name }));
+                        } catch (error) {
+                            reject(error);
+                        } finally {
+                            queue.held = false;
+                            next(name);
+                        }
+                    };
+                    options?.signal?.addEventListener('abort', () => {
+                        const index = queue.waiters.indexOf(run);
+                        if (index < 0) return;
+                        queue.waiters.splice(index, 1);
+                        reject(new DOMException('aborted', 'AbortError'));
+                    });
+                    if (queue.held) queue.waiters.push(run);
+                    else run();
+                });
+            },
+        };
+        Object.defineProperty(globalThis.navigator, 'locks', { value: manager, configurable: true, writable: true });
+        return { manager, grants, queueOf };
+    }
+
+    /** Another tab holding the turn until `release()` */
+    function otherTabHolds(manager, name = LOCK) {
+        let release = () => {};
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        const granted = new Promise((resolve) => {
+            manager.request(name, {}, () => {
+                resolve();
+                return held;
+            });
+        });
+        return { release, granted };
+    }
+
+    function recordingFetch() {
+        const sentAt = [];
+        const mock = vi.fn(async (url) => {
+            sentAt.push({ url, at: Date.now() });
+            return { ok: true, json: async () => (url.includes('qi-e') ? { ask: [], bid: [] } : rows) };
+        });
+        return { mock, sentAt };
+    }
+
+    let locks;
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+        vi.useFakeTimers();
+        marketHistoryAPI.paceIntervalMs = REQUEST_PACE_MS;
+        locks = installLocks();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a request waits while another tab holds the turn, and goes once it is released', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(mock).not.toHaveBeenCalled();
+
+        other.release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mock).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS);
+        expect(await done).toEqual(rows);
+    });
+
+    test('the turn is held for one pace interval after the send, not until the answer', async () => {
+        let answer = () => {};
+        const mock = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    answer = () => resolve({ ok: true, json: async () => rows });
+                })
+        );
+        globalThis.fetch = mock;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mock).toHaveBeenCalledTimes(1);
+
+        // Another tab asks for the turn right after: it gets it one interval after the send, with the answer
+        // still outstanding
+        let otherGrantedAt = null;
+        const sentAt = Date.now();
+        locks.manager.request(LOCK, {}, () => {
+            otherGrantedAt = Date.now();
+        });
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS - 1);
+        expect(otherGrantedAt).toBeNull();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(otherGrantedAt).toBe(sentAt + REQUEST_PACE_MS);
+
+        answer();
+        expect(await done).toEqual(rows);
+    });
+
+    test('two tabs sweeping at once are spaced by the pace interval between every send', async () => {
+        const { mock, sentAt } = recordingFetch();
+        globalThis.fetch = mock;
+
+        // This tab's sweep, and a second tab's sends taken from the same queue
+        const mine = Promise.all(['a', 'b', 'c'].map((k) => marketHistoryAPI.fetchHistory(`/items/${k}`, 0, 7)));
+        const theirs = [];
+        for (let i = 0; i < 3; i += 1) {
+            theirs.push(
+                locks.manager.request(LOCK, {}, async () => {
+                    sentAt.push({ url: `other-${i}`, at: Date.now() });
+                    await new Promise((resolve) => setTimeout(resolve, REQUEST_PACE_MS));
+                })
+            );
+        }
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 12);
+        await Promise.all([mine, ...theirs]);
+
+        expect(sentAt).toHaveLength(6);
+        const times = sentAt.map((s) => s.at).sort((x, y) => x - y);
+        for (let i = 1; i < times.length; i += 1) {
+            expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(REQUEST_PACE_MS);
+        }
+    });
+
+    test('a request that waited too long for the turn sends anyway, and leaves nothing running', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(PACE_LOCK_MAX_WAIT_MS - 1);
+        expect(mock).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(await done).toEqual(rows);
+        expect(mock).toHaveBeenCalledTimes(1);
+
+        other.release();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('turning pooled history off while waiting for the turn sends nothing and gives the turn back', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        settings.market_pooledHistory = false;
+        other.release();
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2);
+
+        expect(await done).toBeNull();
+        expect(mock).not.toHaveBeenCalled();
+        expect(locks.queueOf(LOCK).held).toBe(false);
+    });
+
+    test('a cool-down that begins while waiting for the turn is honored, and the turn goes back', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.cooldownUntil = Date.now() + 30_000;
+        other.release();
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2);
+
+        expect(await done).toBeNull();
+        expect(mock).not.toHaveBeenCalled();
+        expect(locks.queueOf(LOCK).held).toBe(false);
+    });
+
+    test('an answer a twin cached while waiting for the turn is used instead of asking again', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.remember('mooket2:/items/a:0:7', rows);
+        other.release();
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2);
+
+        expect(await done).toEqual(rows);
+        expect(mock).not.toHaveBeenCalled();
+        expect(locks.queueOf(LOCK).held).toBe(false);
+    });
+
+    test('a turn that sent nothing is given back at once, not held for the pace interval', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.remember('mooket2:/items/a:0:7', rows);
+        other.release();
+        // A third tab asks for the turn as soon as this one has answered from the cache
+        let thirdGrantedAt = null;
+        const releasedAt = Date.now();
+        locks.manager.request(LOCK, {}, () => {
+            thirdGrantedAt = Date.now();
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await done).toEqual(rows);
+        expect(mock).not.toHaveBeenCalled();
+        expect(thirdGrantedAt).toBe(releasedAt);
+    });
+
+    test('a cool-down that begins ends the wait for the turn at once, without the holder letting go', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.cooldownUntil = Date.now() + 30_000;
+        marketHistoryAPI.releasePaceWaiters('mooket2');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await done).toBeNull();
+        expect(mock).not.toHaveBeenCalled();
+        expect(marketHistoryAPI.turnWaiters.size).toBe(0);
+        other.release();
+    });
+
+    test('a forced refresh still asks the pool even when an answer is cached', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        marketHistoryAPI.remember('mooket2:/items/a:0:7', [{ a: 1, b: 1, p: 1, v: 1, time: 0 }]);
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7, { force: true });
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS);
+        expect(await done).toEqual(rows);
+        expect(mock).toHaveBeenCalledTimes(1);
+    });
+
+    test('a source switch while waiting sends to the pool selected when the turn came, on that pool’s own turn', async () => {
+        const { mock, sentAt } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        settings.market_historySource = 'mooket1';
+        other.release();
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 3);
+        await done;
+
+        expect(sentAt).toHaveLength(1);
+        expect(sentAt[0].url).toContain('mooket.qi-e.top');
+    });
+
+    test('the other pool is not held up by a turn taken on this one', async () => {
+        const { mock, sentAt } = recordingFetch();
+        globalThis.fetch = mock;
+        settings.market_historySource = 'mooket1';
+        const other = otherTabHolds(locks.manager, LOCK);
+        await other.granted;
+
+        await vi.advanceTimersByTimeAsync(0);
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sentAt).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS);
+        await done;
+        other.release();
+    });
+
+    test('a failed request still hands the turn on', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        globalThis.fetch = vi.fn(async () => {
+            throw new TypeError('Failed to fetch');
+        });
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(REQUEST_PACE_MS * 2);
+        expect(await done).toBeNull();
+        expect(locks.queueOf(LOCK).held).toBe(false);
+    });
+
+    test('without Web Locks a request does not yield before sending, as before', async () => {
+        Object.defineProperty(globalThis.navigator, 'locks', { value: undefined, configurable: true, writable: true });
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        expect(mock).toHaveBeenCalledTimes(1);
+        expect(await done).toEqual(rows);
     });
 });
 

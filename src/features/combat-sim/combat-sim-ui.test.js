@@ -3052,6 +3052,27 @@ describe('results outliving the character they were run for', () => {
         ).toBe('the alt’s own run');
     });
 
+    test('a remembered upgrade run carries the pricing mode it was measured at, and a reload says when it moved', async () => {
+        const { default: config } = await import('../../core/config.js');
+        vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+            key === 'combatSim_rememberUpgradeResults' ? true : fallback
+        );
+        const KEY = 'combatExport:combatSimUpgradeResults_char1';
+        mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
+        ui.buildPanel();
+        selectZone();
+        await ui._onUpgradeAnalyze();
+        expect(mocks.store.get(KEY)).toMatchObject({ pricingLabel: 'Hybrid' });
+
+        // Saved under another pricing mode, as an earlier day's run would be
+        mocks.store.set(KEY, { ...mocks.store.get(KEY), pricingLabel: 'Buy: Ask / Sell: Bid' });
+        ui.destroy();
+        ui.buildPanel();
+        await ui._restoreUpgradeResults();
+        const text = ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
+        expect(text).toContain('Costs were priced at Buy: Ask / Sell: Bid; prices are now set to Hybrid.');
+    });
+
     test('an Ability order run with nothing to reorder replaces the remembered run, and a reload shows that', async () => {
         const { default: config } = await import('../../core/config.js');
         vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
@@ -10008,6 +10029,18 @@ describe('remembered-run banner', () => {
             'Showing results remembered from a previous session. Run a new analysis to refresh them.'
         );
         expect(html).not.toContain('—');
+    });
+
+    test('says nothing about pricing when it is the one in force, or was never stamped', () => {
+        const same = ui._restoredUpgradeNote(null, { pricingLabel: 'Hybrid' });
+        expect(same).not.toContain('Costs were priced at');
+        const unstamped = ui._restoredUpgradeNote(null, { characterName: 'Milkman' });
+        expect(unstamped).not.toContain('Costs were priced at');
+    });
+
+    test('says which pricing mode the costs were read at when it is not the one set now', () => {
+        const html = ui._restoredUpgradeNote(null, { pricingLabel: 'Buy: Ask / Sell: Bid' });
+        expect(html).toContain('Costs were priced at Buy: Ask / Sell: Bid; prices are now set to Hybrid.');
     });
 
     test('escapes markup in the character name', () => {

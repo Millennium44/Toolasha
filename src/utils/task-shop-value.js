@@ -12,6 +12,7 @@ import { calculatePriceAfterTax } from './profit-helpers.js';
 import { getItemPrice } from './market-data.js';
 
 export const TASK_TOKEN_HRID = '/items/task_token';
+export const TASK_CRYSTAL_HRID = '/items/task_crystal';
 
 /**
  * Value one Task Shop line is worth per task token.
@@ -19,20 +20,30 @@ export const TASK_TOKEN_HRID = '/items/task_token';
  * anything else tradable is worth its market price.
  * @param {string} itemHrid - Shop item
  * @param {Object} itemDetailMap - Game item details
- * @returns {{value: number, partialDrops: number}} Coins the item is worth (0 when unpriceable),
- *   and how many of its drops could not be priced — non-zero makes the value a lower bound
+ * @param {Object|null} [calculator] - The expected-value calculator to price an openable line with
+ * @param {{untaxed?: boolean, rate?: number}|null} [tax] - Who sells it: nothing is sold (`untaxed`), another
+ *   player's rate, or null for the live character's own
+ * @returns {{value: number, partialDrops: number, estimatedDrops: number}} Coins the item is worth (0 when unpriceable),
+ *   how many of its drops could not be priced (non-zero makes the value a lower bound), and how many rest on an
+ *   estimated price
  */
-function valueOfShopItem(itemHrid, itemDetailMap) {
+function valueOfShopItem(itemHrid, itemDetailMap, calculator, tax = null) {
     // Post-tax: this is what the shop item would fetch if sold, and every other sell-side
     // figure in the plugin is net of the marketplace cut. Quoting a token pre-tax while the
     // action profit it is compared against is post-tax overstated every task by the tax rate.
     const listed = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
-    let value = listed > 0 ? calculatePriceAfterTax(listed) : 0;
+    let value = 0;
+    if (listed > 0) {
+        if (tax?.untaxed) value = listed;
+        else if (Number.isFinite(tax?.rate)) value = listed * (1 - tax.rate);
+        else value = calculatePriceAfterTax(listed);
+    }
 
     let partialDrops = 0;
+    let estimatedDrops = 0;
 
     if (itemDetailMap?.[itemHrid]?.isOpenable) {
-        const evData = expectedValueCalculator()?.calculateExpectedValue(itemHrid);
+        const evData = calculator?.calculateExpectedValue(itemHrid);
         const expectedValue = evData?.expectedValue || 0;
         if (expectedValue > value) {
             value = expectedValue;
@@ -40,10 +51,12 @@ function valueOfShopItem(itemHrid, itemDetailMap) {
             // through it is a floor. Carried up so the panel can say so rather than
             // presenting an incomplete figure as the answer.
             partialDrops = evData?.missingCount || 0;
+            // Likewise a chest resting on value-map prices: a token valued through it is an estimate
+            estimatedDrops = evData?.estimatedCount || 0;
         }
     }
 
-    return { value, partialDrops };
+    return { value, partialDrops, estimatedDrops };
 }
 
 /**
@@ -64,10 +77,15 @@ function shopCosts(line) {
  * line that buys several of something is priced correctly — none of which a
  * hardcoded list of three chests at 30 tokens each could ever notice.
  *
+ * @param {Object|null} [calculator] - The expected-value calculator that prices the openable lines. Omitted, the
+ *   shared one is read through the bundle bridge. The calculator itself passes a pricer of its own while it is still
+ *   starting (it can price a line on demand before it is marked ready).
+ * @param {{untaxed?: boolean, rate?: number}|null} [tax] - As for `valueOfShopItem`; the calculator is expected to
+ *   price its openable lines under the same terms
  * @returns {{perToken: number, itemHrid: string, tokenCost: number, itemValue: number,
- *   partialDrops: number}|null}
+ *   partialDrops: number, estimatedDrops: number}|null}
  */
-export function findBestTaskShopValue() {
+export function findBestTaskShopValue(calculator = expectedValueCalculator(), tax = null) {
     const gameData = dataManager.getInitClientData();
     const shopMap = gameData?.taskShopItemDetailMap;
     if (!shopMap) {
@@ -89,14 +107,18 @@ export function findBestTaskShopValue() {
         const tokenCost = costs[0].count || 0;
         if (tokenCost <= 0) continue;
 
-        const { value: unitValue, partialDrops } = valueOfShopItem(itemHrid, itemDetailMap);
+        const {
+            value: unitValue,
+            partialDrops,
+            estimatedDrops,
+        } = valueOfShopItem(itemHrid, itemDetailMap, calculator, tax);
         if (unitValue <= 0) continue;
 
         // One purchase can hand over several of something, and the shop says so
         const itemValue = unitValue * (line.outputCount || 1);
         const perToken = itemValue / tokenCost;
         if (!best || perToken > best.perToken) {
-            best = { perToken, itemHrid, tokenCost, itemValue, partialDrops };
+            best = { perToken, itemHrid, tokenCost, itemValue, partialDrops, estimatedDrops };
         }
     }
 
@@ -115,10 +137,15 @@ export function findBestTaskShopValue() {
  * could not all be priced).
  *
  * @param {string} itemHrid - The item
+ * @param {Object|null} [calculator] - A calculator the caller vouches for, used as it stands (the calculator pricing
+ *   its own chests while still starting). Omitted, the shared one is used and must already be ready.
+ * @param {{untaxed?: boolean, rate?: number}|null} [tax] - See `findBestTaskShopValue`
  * @returns {{price: number, partial: boolean, tokenCost: number}|null} Coins per unit bought
  */
-export function taskShopTokenPrice(itemHrid) {
-    if (!itemHrid || !expectedValueCalculator()?.isInitialized) return null;
+export function taskShopTokenPrice(itemHrid, calculator = null, tax = null) {
+    if (!itemHrid) return null;
+    const pricer = calculator || expectedValueCalculator();
+    if (!calculator && !pricer?.isInitialized) return null;
     const shopMap = dataManager.getInitClientData()?.taskShopItemDetailMap;
     if (!shopMap) return null;
 
@@ -126,12 +153,13 @@ export function taskShopTokenPrice(itemHrid) {
     if (!line) return null;
 
     const tokenCost = shopCosts(line)[0].count;
-    const best = findBestTaskShopValue();
+    const best = findBestTaskShopValue(pricer, tax);
     if (!(best?.perToken > 0)) return null;
 
     return {
         price: (tokenCost * best.perToken) / (line.outputCount || 1),
         partial: best.partialDrops > 0,
+        estimatedDrops: best.estimatedDrops || 0,
         tokenCost,
     };
 }
