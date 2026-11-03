@@ -6,72 +6,165 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### What's New shows only what is new
+
+After an update, What's New lists only the changes since the version you were running. A recent release's notes had no titles, which made the panel show the whole recent history instead.
+
+### Treasure popup icon spacing
+
+The Treasure popup now leaves a small gap between an item's icon and its quantity.
+
 <!-- shipped in 3.74.0 -->
 
-- The sync report now lists every record a pull combined with its row counts, when the pull ran and how long it took, and whether the trade ledger repair has run, so sync problems can be traced from one paste.
-- The Consumables panel can now plan stock for 2 weeks or 30 days, on top of 8 hours, 1 day, 3 days and 1 week.
-- The Treasure popup now appears together with the game's Opened Loot dialog, instead of waiting on a timer that can run late, for example just after you switch back to the tab.
-- Saved loadouts are corrected from the game at login, so the Combat Sim, Lab Sim and labyrinth figures stop using gear you have since sold or swapped when a loadout update was missed.
-- The labyrinth path no longer counts shrouded rooms toward torches, so it stops warning about too few torches when you have enough.
-- A scroll chip shows your press at once and takes another straight away, instead of lagging behind the figures until its save finished.
-- A guild trial's measurement is now kept until someone opens Stats, even past a later fight, a reload or a character switch, and the trial board names fights still waiting.
-- The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
-- Switching guilds keeps the new guild's trial start time.
-- Guild trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
-- Alchemy: a new optional check (off by default) stops the first Start or Queue press when a clearly more profitable catalyst exists, says which one and what your choice costs per hour; pressing again within 15 seconds goes ahead without asking again about that setup for a minute, and you can skip it until reload or turn it off from the message.
-- Whenever the profit shown assumes scrolls you are not using, the Profitability header says "Simulated, not active".
-- Scroll simulation now starts on for new players with no scrolls selected; existing players keep their setting and are offered it once in What's New, which says how many scrolls they already have selected.
-- The scroll chips now appear on every gathering and production action panel, including refined capes, directly under Action Speed & Time and Level Progress and above Profitability, so you can pick which scrolls those figures assume. Each chip shows how many of that scroll you own and has a Plan button that opens the Scroll Planner with it selected.
-- The alchemy catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action, and says when a figure is a floor or a ceiling. It only reads; nothing is clicked for you.
-- With "Show profit comparison for all item actions" on, refined cape item cards show their Transmute, Coinify and Decompose profit, with a note saying how the capes were valued. That setting now starts on for new players; existing players keep theirs.
+### Scroll chips on every action panel
+
+Scroll chips now appear on every gathering and production action panel, refined capes included, directly under Action Speed & Time and Level Progress, so you can pick which scrolls those figures assume. Each chip shows how many of that scroll you own and has a Plan button that opens the Scroll Planner with it selected.
+
+### Profitability says when scrolls are only simulated
+
+Whenever the profit shown assumes scrolls you are not using, the Profitability header says "Simulated, not active".
+
+### Scroll simulation starts on for new players
+
+New players start with scroll simulation on and no scrolls selected. Existing players keep their setting and are offered it once in What's New, which says how many scrolls they already have selected.
+
+### Scroll chips respond at once
+
+A scroll chip shows your press at once and takes another straight away, instead of lagging behind the figures until its save finished. Toggling a chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
+
+### Alchemy picks the best catalyst
+
+The catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action, and says when a figure is a floor or a ceiling. It only reads; nothing is clicked for you.
+
+### Optional check before a worse catalyst
+
+A new optional check (off by default) stops the first Start or Queue press when a clearly more profitable catalyst exists, says which one and what your choice costs per hour. Pressing again within 15 seconds goes ahead without asking again about that setup for a minute, and you can skip it until reload or turn it off from the message.
+
+### Alchemy Profitability and Philosopher's Stone figures
+
+- The Profitability panel prices essence and crate drops even when the expected-value tooltip setting is off, instead of showing every figure as a minimum.
 - The Philosopher's Stone calculator marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0, and prices a drop a shop converts.
-- Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. The upgrade advisor prices one you do not hold at its stones alone on Nothing, and says so; chests still leave them unpriced.
-- The treasure popup keeps a readable height when the loot dialog fills a phone screen.
-- Times under an hour show as "53m 40s" instead of "0h 53m 40s".
-- The labyrinth Size stepper reappears in the toolbar as soon as you turn the grid scale control back on.
-- Task Claim Reward button now appears on translated game clients, once a task is complete.
-- Selected buttons in the net worth chart and the treasure tracker's open gear now keep their color when the mouse is over them instead of darkening.
-- The alchemy Profitability panel now prices essence and crate drops even when the expected-value tooltip setting is off, instead of showing every figure as a minimum.
-- Toggling a scroll chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
-- Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
-- The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time.
-- A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
-- Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
-- A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
+
+### Alchemy history costs stay put
+
+- History saves what inputs and catalysts cost as a session runs, so Net no longer drifts with the market; older sessions stay at today's price and are marked.
+- Refined capes show their real input cost in history again, so Net and Break-even are right; they had dropped to 0* with the base cape setting on Nothing.
+- Hand-removing a catalyst from a session and resuming no longer undercosts the catalysts used afterward.
+
+### Refined capes are valued by their parts
+
+Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting, in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. The upgrade advisor prices one you do not hold at its stones alone on Nothing, and says so; chests still leave them unpriced.
+
+### Refined cape profit comparison
+
+With "Show profit comparison for all item actions" on, refined cape item cards show their Transmute, Coinify and Decompose profit, with a note saying how the capes were valued. That setting now starts on for new players; existing players keep theirs.
+
+### Purple's Gift is valued in full
+
+Purple's Gift, the one chest that drops Task Tokens and Task Crystals, is now valued in full, so Treasure and tooltips no longer show it unpriced. Task reward values rise a little because the Gift's tokens now count.
+
+### Treasure panel and popup match the game
+
+The Treasure panel and popup now look like the game's own panels: plain dark frame, white title, blue buttons, and one row per item under column headers. The popup also appears together with the game's Opened Loot dialog, instead of waiting on a timer that can run late, for example just after you switch back to the tab.
+
+### Net Worth History shows what moved
+
+- A What moved button on chart points lists the top 10 items behind a change, and whether quantity or price caused it. It is kept for recent readings and big jumps.
+- A setting change is marked on the chart, and its step is left out of the gain and rate figures.
+
+### Setting changes no longer distort net worth
+
 - Turning "Ability books as inventory" on or off with Ability Books excluded no longer counts as Non-Excl earnings, and the marker's hover shows that step.
 - A setting change marked in different batches on two devices no longer shows as an invented loss in net worth growth, the forecast or gold sources.
-- Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed, and adding a ninth aura option after another tab filled the list says it was not added.
-- Sync no longer loses a setting's change time if a tab closes or a sync reads mid-write during imports, migrations and copies between characters.
-- Hand-removing a catalyst from an alchemy session and resuming no longer undercosts the catalysts used afterward.
-- Goal Planner: it prices again by itself after the market history cool-down ends, its pricing count no longer restarts halfway, and a route is called the same as the quick estimate only when its time and coins match.
-- Several open tabs now share one market history request pace, so fewer requests get refused for going too fast.
-- Purple's Gift, the one chest that drops Task Tokens and Task Crystals, is now valued in full, so Treasure and tooltips no longer show it unpriced; task reward values rise a little because the Gift's tokens now count.
-- Combat Sim: a restored Upgrade table says when the pricing mode has changed since it was run.
-- The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.
-- Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
-- The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.
-- The Combat Simulator, Lab Simulator, loadout editor pickers, Labyrinth log, Enhancement Tracker, XPH calculator and costs table now use the game's own plain frame, white titles and blue buttons.
-- The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.
-- Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
-- The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.
-- Guild trial estimates show a range until the rate starts falling, payout figures follow, Past weeks and Trial history can collapse, and trials now keep tier clear times so the estimate can be re-tested.
-- Guild trial points now use the exact figures the game sends, so Past weeks matches the game's announced total, and a zeroed card no longer drops a trial.
-- Performance panel exports now include timer counts, leak and heap readings, GM traffic and the tab census.
-- Alchemy history now saves what inputs and catalysts cost as a session runs, so Net no longer drifts with the market; older sessions stay at today's price and are marked.
-- Guild trial totals now match a fight by guild and trial whenever Stats is opened, ignore another guild's, and the panel says when figures are still estimates.
-- The guild trial assignment shows each member's signed-up trial and role and flags a saved loadout view as out of date, and trial start times follow the guild's schedule.
-- Refined capes show their real input cost in alchemy history again, so Net and Break-even are right; they had dropped to 0* with the base cape setting on Nothing.
-- Settings, What's New, the combat panels, market views, Net Worth History and task panels now use the game's plain dark frame and blue buttons, and Settings rows fit a phone better.
-- Guild trial cards line up and read Banked 18 · Best T20 with details on hover, Trial history is a table, finished cycles no longer say This week, and a missing point figure no longer reads as 0.
-- Net Worth History marks a setting change on the chart and leaves its step out of the gain and rate figures.
-- Net Worth History has a What moved button on chart points: the top 10 items behind a change, and whether quantity or price caused it. Kept for recent readings and big jumps.
-- The Dungeon Tracker opened with no dungeon running now shows your real run history with Export and Import, and has a close button that stays closed for that dungeon action.
-- The labyrinth clear badge stays inside its tile on desktop: long readings such as 100% and 102s use the compact 100|102s form, with the full reading on hover.
+
+### Dungeon Tracker shows your history
+
+The Dungeon Tracker opened with no dungeon running now shows your real run history with Export and Import, and has a close button that stays closed for that dungeon action.
+
+### Labyrinth torches and toolbar
+
+The labyrinth path no longer counts shrouded rooms toward torches, so it stops warning about too few torches when you have enough. The Size stepper reappears in the toolbar as soon as you turn the grid scale control back on.
+
+### Labyrinth clear badge and deaths
+
+- The clear badge stays inside its tile on desktop: long readings such as 100% and 102s use the compact 100|102s form, with the full reading on hover.
 - A death in the labyrinth no longer raises the death notification or recap chip, with a setting to bring them back. The Death recap chip can now be dismissed, clears when viewed or closed, and no longer covers the sidebar.
+
+### Guild trial measurements are kept
+
+A guild trial's measurement is now kept until someone opens Stats, even past a later fight, a reload or a character switch, and the trial board names fights still waiting. The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
+
+### Guild trial tiers and start times
+
+Switching guilds keeps the new guild's trial start time. Trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
+
+### Guild trial totals match the game
+
+Trial points now use the exact figures the game sends, so Past weeks matches the game's announced total, and a zeroed card no longer drops a trial. Totals match a fight by guild and trial whenever Stats is opened, ignore another guild's, and the panel says when figures are still estimates.
+
+### Guild trial estimates and payouts
+
+Estimates show a range until the rate starts falling, payout figures follow, and trials now keep tier clear times so the estimate can be re-tested. The Trial payout section, Past weeks and Trial history can collapse, leaving a one-line summary in the heading.
+
+### Guild trial assignment and cards
+
+- The assignment shows each member's signed-up trial and role, flags a saved loadout view as out of date, and follows the guild's schedule for start times.
+- Cards line up and read Banked 18 · Best T20 with details on hover, Trial history is a table, finished cycles no longer say This week, and a missing point figure no longer reads as 0.
+
+### Panels share the game's dark frame
+
+About 30 panels, plus dialogs, toasts and the floating widgets, now share the game's plain dark frame, white titles and blue buttons. That includes Settings, What's New, the combat and market panels, Net Worth History, the task panels, the Combat and Lab Simulators, the loadout editor pickers, the Labyrinth log, the Enhancement Tracker, the XPH calculator and the costs table.
+
+### Script Accent Color tints less
+
+The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names. Your accent still colors figures and highlights across the other panels.
+
+### Phone layout
+
+- The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.
+- The treasure popup keeps a readable height when the loot dialog fills a phone screen.
+
+### Task Go goes where you mean
+
 - Task Go now fills the fight count the card quotes (never less than your confidence setting asks) and opens the zone at the tier you last ran it, instead of T0 when it is not in your queue.
-- About 30 panels, plus dialogs, toasts and the floating widgets, now share the game's plain dark frame and blue buttons. Your Script Accent Color still colors figures and highlights.
-- The Treasure panel and popup now look like the game's own panels: plain dark frame, white title, blue buttons, and one row per item under column headers.
-- Agent briefs now send logs and scratch files to the session scratchpad instead of the folder above the repo.
+- It keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
+
+### Task reroll walk and Claim Reward
+
+The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button. The task Claim Reward button now appears on translated game clients, once a task is complete.
+
+### Sync pushes and reports
+
+- The sync report lists every record a pull combined with its row counts, when the pull ran and how long it took, and whether the trade ledger repair has run, so sync problems can be traced from one paste.
+- Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
+- A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
+
+### Reset to defaults and setting times
+
+- Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
+- A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
+- Sync no longer loses a setting's change time if a tab closes or a sync reads mid-write during imports, migrations and copies between characters.
+
+### Party Finder rosters across devices
+
+Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed. The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time, and adding a ninth aura option after another tab filled the list says it was not added.
+
+### Goal Planner and market history requests
+
+The Goal Planner prices again by itself after the market history cool-down ends, its pricing count no longer restarts halfway, and a route is called the same as the quick estimate only when its time and coins match. Several open tabs now share one market history request pace, so fewer requests get refused for going too fast.
+
+### Saved loadouts and the Combat Sim table
+
+Saved loadouts are corrected from the game at login, so the Combat Sim, Lab Sim and labyrinth figures stop using gear you have since sold or swapped when a loadout update was missed. A restored Combat Sim Upgrade table says when the pricing mode has changed since it was run.
+
+### Consumables panel plans longer stocks
+
+The Consumables panel can now plan stock for 2 weeks or 30 days, on top of 8 hours, 1 day, 3 days and 1 week.
+
+### Small display fixes
+
+- Times under an hour show as "53m 40s" instead of "0h 53m 40s".
+- Selected buttons in the net worth chart and the treasure tracker's open gear now keep their color when the mouse is over them instead of darkening.
 
 <!-- shipped in 3.73.0 -->
 
