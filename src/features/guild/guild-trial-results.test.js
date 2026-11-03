@@ -338,4 +338,39 @@ describe('trialResultsHistory', () => {
         expect(historyRowFor(trialResultsHistory([], { now }), 'Trial Badger')).toBeNull();
         expect(historyRowFor({ rows: [] }, 'Guild Experience')).toBeNull();
     });
+
+    test('a merge never revives payload points a newer card outran', () => {
+        const base = { weekStart: thisWeek, trial: 'badger', kind: 'combat', name: 'Trial Badger' };
+        const payloadOnly = {
+            ...base,
+            cardTier: null,
+            points: null,
+            completed: false,
+            serverTier: 4,
+            serverTierAt: 1000,
+            serverPoints: 1100,
+        };
+        const card = {
+            ...base,
+            cardTier: 5,
+            points: 1500,
+            completed: false,
+            serverTier: null,
+            serverTierAt: null,
+            serverPoints: null,
+        };
+        for (const lists of [
+            [[payloadOnly], [card]],
+            [[card], [payloadOnly]],
+        ]) {
+            const [merged] = mergeResults(...lists);
+            expect(merged.cardTier).toBe(5);
+            expect(merged.serverPoints).toBeNull();
+            expect(resultPoints(merged)).toEqual({ points: 1500, derived: false });
+            expect(mergeResults([merged], lists[0], lists[1])).toEqual([merged]);
+        }
+        // A payload that kept up with the card still has its figure
+        const [kept] = mergeResults([{ ...payloadOnly, serverTier: 5 }], [card]);
+        expect(kept.serverPoints).toBe(1100);
+    });
 });

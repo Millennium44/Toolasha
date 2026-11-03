@@ -3903,9 +3903,14 @@ class GuildTrials {
             let next = record;
             for (const kind of ['skilling', 'combat']) {
                 const entry = held[kind];
-                if (!entry?.inProgress) continue;
+                if (!entry) continue;
+                // A kind that is no longer in progress still states its trials' final
+                // Guild Points (a part-cleared last tier is paid in them, and they
+                // arrive with the status flip), so it is read for those and nothing else
+                const finished = !entry.inProgress;
                 for (const [partyKey, party] of Object.entries(entry.trials || {})) {
                     if (!party) continue;
+                    if (finished && !(party.points > 0)) continue;
                     const joined = Object.entries(next.tiles || {}).find(
                         ([, tile]) =>
                             (tile?.kind === 'combat' ? 'combat' : 'skilling') === kind &&
@@ -3919,6 +3924,14 @@ class GuildTrials {
                         key = tileKey(trial);
                         create = { name: trial.name, kind: trial.kind };
                     } else if (joined[1]?.completed) {
+                        continue;
+                    }
+                    if (finished) {
+                        // Only onto a tile this cycle's tier statement is already on, and fresh
+                        // within the cycle: a completed payload outlives its cycle
+                        const stampedAt = joined?.[1]?.serverTierAt;
+                        if (!joined || !Number.isFinite(stampedAt) || now - stampedAt > 2 * TRIAL_ACTIVE_MS) continue;
+                        next = recordServerTiers(next, key, { points: party.points, at: stampedAt });
                         continue;
                     }
 
@@ -3956,6 +3969,7 @@ class GuildTrials {
                         deadlineAt,
                         // Null while the sign-up sheet or level map has not been loaded: unknown, not empty
                         signupLevels: this._signupLevelsFor(partyKey, kind, record.guildId ?? this._guildId()),
+                        points: party.points,
                     });
                 }
             }
@@ -5881,7 +5895,9 @@ class GuildTrials {
                 'The last few finished cycles, kept when the week rolled over. Newest first. ' +
                     '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
                     'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
-                    'derived from today’s building bonuses, which is what the ~ marks.',
+                    'derived from today’s building bonuses, which is what the ~ marks. Points the guild’s own ' +
+                    'payload stated are exact. Tokens each is what every eligible member receives; members ' +
+                    'who took part receive a further half of it, rounded up.',
                 collapsed
             ),
         ];
