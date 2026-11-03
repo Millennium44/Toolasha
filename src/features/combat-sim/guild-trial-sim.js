@@ -4,6 +4,8 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { createPanel, panelCard, panelNote, panelLine } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
+
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { loadoutViewStatus } from '../guild/guild-trial-signups.js';
@@ -35,7 +37,6 @@ import {
 } from '../guild/guild-trial-simulation-inputs.js';
 import { TrialAssignPlanner } from './guild-trial-assign-ui.js';
 
-const ACCENT = '#b9a6ff';
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
 const EXTRA_BUFFS = [
     ['damage', 'Damage %', true],
@@ -52,8 +53,8 @@ function button(parent, label, handler, disabled = false) {
     element.type = 'button';
     element.textContent = label;
     element.disabled = disabled;
-    element.style.cssText =
-        'padding:5px 9px;border:1px solid #655881;border-radius:5px;background:#302941;color:#eee;cursor:pointer;';
+    styleGameButton(element, 'quiet', true);
+    if (disabled) Object.assign(element.style, { cursor: 'default', opacity: '0.5' });
     element.addEventListener('click', handler);
     parent.appendChild(element);
     return element;
@@ -213,7 +214,6 @@ export class GuildTrialSim {
             id: 'toolasha-guild-trial-sim',
             title: 'Guild Trial Simulator · Experimental',
             size: { width: 760, height: 660 },
-            accent: ACCENT,
             refreshMs: 3_600_000,
             draw: (body) => this.draw(body),
         });
@@ -842,7 +842,7 @@ export class GuildTrialSim {
     draw(body) {
         // Let setup sections keep their content height; the panel body handles scrolling.
         body.style.display = 'block';
-        body.style.backgroundColor = '#0e1016';
+        body.style.backgroundColor = GAME_COLORS.background;
         // The planner's search or check counts too: switching mode mid-run would orphan it
         const busy = Boolean(this.controller || this.loading || this.assign.controller);
         body.appendChild(
@@ -1044,8 +1044,7 @@ export class GuildTrialSim {
     drawCombat(body, busy) {
         const roster = panelCard(
             body,
-            `Combat roster · ${this.combatMembers.length} ${this.combatMembers.length === 1 ? 'member' : 'members'}`,
-            ACCENT
+            `Combat roster · ${this.combatMembers.length} ${this.combatMembers.length === 1 ? 'member' : 'members'}`
         );
         roster.style.maxHeight = '260px';
         roster.style.overflowY = 'auto';
@@ -1104,7 +1103,7 @@ export class GuildTrialSim {
                     'Add your current build, captured trial loadouts with known profile levels, or imported combat builds. Missing members are not substituted with level 1 characters.'
                 )
             );
-        const rules = panelCard(body, 'Combat assumptions and buffs', ACCENT);
+        const rules = panelCard(body, 'Combat assumptions and buffs');
         field(
             row(rules),
             'Participants for boss scaling',
@@ -1198,8 +1197,7 @@ export class GuildTrialSim {
         );
         const roster = panelCard(
             body,
-            `Skilling roster · ${this.skillingMembers.length} ${this.skillingMembers.length === 1 ? 'member' : 'members'}`,
-            ACCENT
+            `Skilling roster · ${this.skillingMembers.length} ${this.skillingMembers.length === 1 ? 'member' : 'members'}`
         );
         roster.style.maxHeight = '300px';
         roster.style.overflowY = 'auto';
@@ -1236,7 +1234,7 @@ export class GuildTrialSim {
             busy
         );
         for (const [i, member] of this.skillingMembers.entries()) {
-            const card = panelCard(roster, '', ACCENT);
+            const card = panelCard(roster, '');
             const identity = row(card);
             field(
                 identity,
@@ -1353,7 +1351,7 @@ export class GuildTrialSim {
 
     drawResult(body) {
         const result = this.result;
-        const card = panelCard(body, 'Simulation results', ACCENT);
+        const card = panelCard(body, 'Simulation results');
         card.dataset.trialSimResults = 'true';
         const format = (n, digits = 1) => Number(n).toLocaleString('en-US', { maximumFractionDigits: digits });
         const bound = result.lowerBound ? ' (lower bound)' : '';

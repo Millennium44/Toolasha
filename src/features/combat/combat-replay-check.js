@@ -219,6 +219,7 @@ import { newTakenState, attributeIncoming, foldTaken } from '../../utils/damage-
 import { registerRow } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { setButtonRest, styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
@@ -361,8 +362,6 @@ const HISTORY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_DROP_ROWS = 8;
 
 const DISCARD_LEGACY = { migrate: 'discard' };
-
-const ACCENT = '#8fd0ff';
 
 /**
  * Which unit the target box is counting in while it is empty.
@@ -2910,7 +2909,7 @@ function drawComparison(body, comparison) {
             )
         );
     }
-    const card = panelCard(body, 'Observed vs predicted', ACCENT);
+    const card = panelCard(body, 'Observed vs predicted');
     const rows = [...comparison.metrics, ...(comparison.experience ? [comparison.experience] : [])];
 
     for (const metric of rows) {
@@ -2970,7 +2969,7 @@ function drawComparison(body, comparison) {
  * @param {Object} observed - From `aggregateObservations`
  */
 function drawProvenance(body, observed) {
-    const card = panelCard(body, 'The recording', ACCENT);
+    const card = panelCard(body, 'The recording');
     card.appendChild(panelLine('Zone', zoneName(observed.zoneHrid)));
     card.appendChild(
         panelLine(
@@ -3095,15 +3094,7 @@ function drawSuggestion(card, observed) {
         `Sets the record target to a band. The recording stops itself once the sample's margin is under ` +
         `±${NOISE_QUIET_PCT}%, measured at the end of a fight from the spread of the fights so far — about ` +
         `${suggestion.needed} more at this zone's current spread, but it is the band that decides, not the count.`;
-    Object.assign(ask.style, {
-        background: 'none',
-        border: `1px solid ${ACCENT}`,
-        borderRadius: '4px',
-        color: ACCENT,
-        padding: '2px 8px',
-        cursor: 'pointer',
-        fontSize: '11px',
-    });
+    styleGameButton(ask, 'quiet', true);
     ask.addEventListener('click', async () => {
         await setRecordTarget({ value: NOISE_QUIET_PCT, unit: 'noise' });
         replayCheckPanel.render();
@@ -3132,15 +3123,7 @@ function drawSaveButton(card) {
         'Writes one JSON file: these observations with their per-fight numbers and loadout snapshots, the last ' +
         'comparison, and the recording itself — raw payloads for the segments still held, per-fight summaries ' +
         'for the ones rotation has taken. The file lists what it does and does not contain.';
-    Object.assign(save.style, {
-        background: 'none',
-        border: `1px solid ${ROW_COLORS.dim}`,
-        borderRadius: '4px',
-        color: ROW_COLORS.dim,
-        padding: '2px 8px',
-        cursor: 'pointer',
-        fontSize: '11px',
-    });
+    styleGameButton(save, 'quiet', true);
     save.addEventListener('click', () => {
         downloadExport();
         replayCheckPanel.render();
@@ -3151,16 +3134,8 @@ function drawSaveButton(card) {
     sanitized.title =
         'The same file with player identities hashed and character ids stripped — use this one when attaching ' +
         'the recording to a public bug report. The kit, the fights and the numbers are untouched.';
-    Object.assign(sanitized.style, {
-        background: 'none',
-        border: `1px solid ${ROW_COLORS.dim}`,
-        borderRadius: '4px',
-        color: ROW_COLORS.dim,
-        padding: '2px 8px',
-        marginLeft: '4px',
-        cursor: 'pointer',
-        fontSize: '11px',
-    });
+    styleGameButton(sanitized, 'quiet', true);
+    sanitized.style.marginLeft = '4px';
     sanitized.addEventListener('click', () => {
         downloadExport({ sanitized: true });
         replayCheckPanel.render();
@@ -3261,14 +3236,14 @@ function drawDecomposition(body, comparison) {
     );
     if (!comparison.decomposition?.length) {
         if (legacy > 0) {
-            const card = panelCard(body, 'Where the damage difference is', ACCENT);
+            const card = panelCard(body, 'Where the damage difference is');
             card.appendChild(legacyNote);
             card.appendChild(panelNote('Every fight on hand is one of those. Record new fights to see the breakdown.'));
         }
         return;
     }
 
-    const card = panelCard(body, 'Where the damage difference is', ACCENT);
+    const card = panelCard(body, 'Where the damage difference is');
     if (legacy > 0) card.appendChild(legacyNote);
     for (const metric of comparison.decomposition) {
         const deviation =
@@ -3358,7 +3333,7 @@ const UPTIME_MISMATCH_TEXT = {
 function drawUptime(body, uptime) {
     if (!uptime) return;
 
-    const card = panelCard(body, 'Incoming damage by ability', ACCENT);
+    const card = panelCard(body, 'Incoming damage by ability');
     if (uptime.empty) {
         card.appendChild(
             panelNote('No tick recording on hand — the decomposition needs the recorder running during the fights.')
@@ -3456,7 +3431,7 @@ function drawUptime(body, uptime) {
 
 function drawGains(body, comparison) {
     if (comparison.experienceBySkill?.length) {
-        const card = panelCard(body, 'Experience by skill', ACCENT);
+        const card = panelCard(body, 'Experience by skill');
         for (const row of comparison.experienceBySkill) {
             const deviation =
                 row.deviationPct === null
@@ -3479,7 +3454,7 @@ function drawGains(body, comparison) {
 
     if (!comparison.drops?.length) return;
 
-    const card = panelCard(body, 'Drops observed (not compared)', ACCENT);
+    const card = panelCard(body, 'Drops observed (not compared)');
     for (const drop of comparison.drops.slice(0, MAX_DROP_ROWS)) {
         card.appendChild(
             panelLine(
@@ -3535,7 +3510,7 @@ function drawHistory(body, history) {
     const entries = pruneHistory(history);
     if (entries.length < 2) return;
 
-    const card = panelCard(body, 'Past checks', ACCENT);
+    const card = panelCard(body, 'Past checks');
     // Rows from a different script version were predicted by a different
     // engine, and an engine fix between rows reads exactly like drift. The
     // newest row's version is "current" for this table — steadier than the
@@ -3669,14 +3644,12 @@ function recordButton() {
     const button = document.createElement('button');
     button.textContent = state.label;
     button.title = state.title;
-    Object.assign(button.style, {
-        background: state.recording ? 'rgba(248, 113, 113, 0.18)' : 'none',
-        border: `1px solid ${state.recording ? ROW_COLORS.bad : ROW_COLORS.dim}`,
-        borderRadius: '4px',
-        color: state.recording ? ROW_COLORS.bad : ROW_COLORS.dim,
-        padding: '5px 10px',
-        cursor: 'pointer',
-    });
+    styleGameButton(button, 'quiet');
+    // Red while recording is a status, so it keeps its tint
+    if (state.recording) {
+        setButtonRest(button, 'rgba(248, 113, 113, 0.18)');
+        button.style.color = ROW_COLORS.bad;
+    }
     button.addEventListener('click', () => {
         toggleRecording();
         replayCheckPanel.render();
@@ -3740,15 +3713,7 @@ function targetControl() {
         'What the number means: fights, minutes, or the noise band to record down to. ' +
         `Switching to ±% with an empty box sets ±${NOISE_QUIET_PCT}%, which is where differences start being ` +
         'findings rather than sampling.';
-    Object.assign(toggle.style, {
-        background: 'none',
-        border: `1px solid ${ROW_COLORS.dim}`,
-        borderRadius: '4px',
-        color: ROW_COLORS.dim,
-        padding: '4px 6px',
-        cursor: 'pointer',
-        fontSize: '11px',
-    });
+    styleGameButton(toggle, 'quiet', true);
     toggle.addEventListener('click', async () => {
         const order = Object.keys(UNIT_LABELS);
         lastTargetUnit = order[(order.indexOf(lastTargetUnit) + 1) % order.length];
@@ -3770,7 +3735,6 @@ export const replayCheckPanel = createPanel({
     id: 'replayCheck',
     title: 'Sim Accuracy',
     size: { width: 440, height: 460 },
-    accent: ACCENT,
     refreshMs: 2000,
     draw: (body) => {
         replayCheck.ensureWatching();
@@ -3788,16 +3752,8 @@ export const replayCheckPanel = createPanel({
         const run = document.createElement('button');
         run.textContent = replayCheck.running ? `Simulating… ${replayCheck.progress}%` : `Run ${SIM_HOURS}h check`;
         run.disabled = replayCheck.running || !observed;
-        Object.assign(run.style, {
-            background: ACCENT,
-            color: '#0e1016',
-            border: 'none',
-            borderRadius: '4px',
-            padding: '5px 10px',
-            cursor: run.disabled ? 'default' : 'pointer',
-            fontWeight: 'bold',
-            opacity: run.disabled ? '0.5' : '1',
-        });
+        styleGameButton(run, 'primary');
+        Object.assign(run.style, { cursor: run.disabled ? 'default' : 'pointer', opacity: run.disabled ? '0.5' : '1' });
         run.addEventListener('click', async () => {
             await replayCheck.check();
             replayCheckPanel.render();
@@ -3805,14 +3761,7 @@ export const replayCheckPanel = createPanel({
 
         const forget = document.createElement('button');
         forget.textContent = 'Forget';
-        Object.assign(forget.style, {
-            background: 'none',
-            border: `1px solid ${ROW_COLORS.dim}`,
-            borderRadius: '4px',
-            color: ROW_COLORS.dim,
-            padding: '5px 10px',
-            cursor: 'pointer',
-        });
+        styleGameButton(forget, 'quiet');
         forget.addEventListener('click', async () => {
             await replayCheck.forget();
             replayCheckPanel.render();

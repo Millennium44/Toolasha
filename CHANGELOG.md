@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.
 - Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
 - The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.
