@@ -106,6 +106,9 @@ function signed(value) {
     return `${rounded < 0 ? '-' : '+'}${formatKMB(Math.abs(rounded))}`;
 }
 
+/** What changes the figures through the character rather than the market */
+const CHARACTER_EVENTS = ['items_updated', 'consumables_updated', 'buffs_updated', 'skills_updated'];
+
 class AlchemyCatalystMark {
     constructor() {
         this.isInitialized = false;
@@ -152,6 +155,12 @@ class AlchemyCatalystMark {
             this.schedule();
         };
         dataManager.on('expected_value_initialized', this.evHandler);
+        // The calculator reads the character's own skills, gear, drinks and buffs, and none of that is in the key
+        this.characterHandler = () => {
+            this.cache = null;
+            this.schedule();
+        };
+        for (const event of CHARACTER_EVENTS) dataManager.on(event, this.characterHandler);
         // Pricing mode and the valuation settings change every figure
         const onChange = () => {
             this.cache = null;
@@ -182,6 +191,10 @@ class AlchemyCatalystMark {
             this.bookHandler = null;
             if (this.evHandler) dataManager.off('expected_value_initialized', this.evHandler);
             this.evHandler = null;
+            if (this.characterHandler) {
+                for (const event of CHARACTER_EVENTS) dataManager.off(event, this.characterHandler);
+            }
+            this.characterHandler = null;
             for (const unsubscribe of this.settingUnsubscribers) unsubscribe?.();
             this.settingUnsubscribers = [];
             this.clearMarks();

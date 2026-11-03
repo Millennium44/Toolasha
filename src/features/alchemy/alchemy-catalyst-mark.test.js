@@ -293,6 +293,29 @@ describe('catalyst picker mark', () => {
         expect(banner().textContent).toContain('Best catalyst: catalyst of coinification');
     });
 
+    test.each(['items_updated', 'consumables_updated', 'buffs_updated', 'skills_updated'])(
+        'an open picker follows %s: the character changed, and nothing in the cache key says so',
+        async (event) => {
+            setAnswers('coinify', CHEESE, { none: profit(100), typeSpecific: profit(300), prime: profit(200) });
+            openCatalystMenu([CAT]);
+            await drawn();
+            expect(banner().textContent).toContain('Best catalyst: catalyst of coinification');
+
+            setAnswers('coinify', CHEESE, { none: profit(500), typeSpecific: profit(300), prime: profit(200) });
+            state.events.get(event)();
+            await vi.advanceTimersByTimeAsync(100);
+
+            expect(banner().textContent).toContain('Best catalyst: no catalyst');
+        }
+    );
+
+    test('turning it off stops following the character', async () => {
+        mark.disable();
+        for (const event of ['items_updated', 'consumables_updated', 'buffs_updated', 'skills_updated']) {
+            expect(state.events.has(event)).toBe(false);
+        }
+    });
+
     test('an empty answer is never cached, so the same input is asked again', async () => {
         openCatalystMenu([CAT]);
         await drawn();
