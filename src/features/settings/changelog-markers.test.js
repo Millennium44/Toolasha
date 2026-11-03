@@ -334,3 +334,158 @@ describe('against the real CHANGELOG.md, across release states', () => {
         expect(result.text).not.toContain('shipped in');
     });
 });
+
+/**
+ * The shape the real file took for 3.74.0: flat `- ` bullets between two
+ * markers, with no `###` title anywhere above the baseline marker. The filter
+ * counted only `###` lines as entries, so a player coming from the older
+ * release saw "zero newer entries", took the "nothing newer" fallback, and was
+ * shown the whole shipped slice.
+ */
+describe('filterChangelogSince with content above the baseline that is not a ### entry', () => {
+    const FLAT = `## Unreleased — branch \`main\`
+
+<!-- shipped in 3.74.0 -->
+
+- First flat change.
+- Second flat change.
+
+<!-- shipped in 3.73.0 -->
+
+### Went out in 3.73.0
+
+Body.
+
+<!-- shipped in 3.72.0 -->
+
+### Went out in 3.72.0
+
+Body.
+
+${NOTE}
+`;
+
+    it('ships exactly the flat lines above the baseline marker, not the whole slice', () => {
+        const result = filterChangelogSince(FLAT, '3.73.0');
+        expect(result.filtered).toBe(true);
+        expect(result.text).toContain('- First flat change.');
+        expect(result.text).toContain('- Second flat change.');
+        expect(result.text).not.toContain('Went out in 3.73.0');
+        expect(result.text).not.toContain('Went out in 3.72.0');
+        expect(result.text).not.toContain('not shown here');
+        expect(result.text).not.toContain('shipped in');
+        expect(result.text.startsWith('## Unreleased')).toBe(true);
+        expect(result.shownEntries).toBe(0);
+    });
+
+    it('does the same for a player two releases back', () => {
+        const result = filterChangelogSince(FLAT, '3.72.0');
+        expect(result.filtered).toBe(true);
+        expect(result.text).toContain('- Second flat change.');
+        expect(result.text).toContain('### Went out in 3.73.0');
+        expect(result.text).not.toContain('### Went out in 3.72.0');
+    });
+
+    it('mixes flat bullets and titled entries above the baseline', () => {
+        const mixed = `## Unreleased — branch \`main\`
+
+### Titled and new
+
+Body.
+
+<!-- shipped in 3.74.0 -->
+
+- A flat change from 3.74.0.
+
+### Titled from 3.74.0
+
+Body.
+
+<!-- shipped in 3.73.0 -->
+
+### Went out in 3.73.0
+
+Body.
+`;
+        const result = filterChangelogSince(mixed, '3.73.0');
+        expect(result.filtered).toBe(true);
+        expect(result.shownEntries).toBe(2);
+        expect(result.text).toContain('### Titled and new');
+        expect(result.text).toContain('- A flat change from 3.74.0.');
+        expect(result.text).toContain('### Titled from 3.74.0');
+        expect(result.text).not.toContain('Went out in 3.73.0');
+    });
+
+    it('ships flat bullets that sit above the newest marker', () => {
+        const unreleased = `## Unreleased — branch \`main\`
+
+- A flat change nobody has released yet.
+
+<!-- shipped in 3.74.0 -->
+
+### Went out in 3.74.0
+
+Body.
+
+<!-- shipped in 3.73.0 -->
+
+### Went out in 3.73.0
+
+Body.
+`;
+        const result = filterChangelogSince(unreleased, '3.74.0');
+        expect(result.filtered).toBe(true);
+        expect(result.text).toContain('- A flat change nobody has released yet.');
+        expect(result.text).not.toContain('Went out in 3.74.0');
+    });
+
+    it('also holds back flat bullets that sit below the baseline marker', () => {
+        const allFlat = `## Unreleased — branch \`main\`
+
+<!-- shipped in 3.74.0 -->
+
+- Newer flat change.
+
+<!-- shipped in 3.73.0 -->
+
+- Older flat change.
+`;
+        const result = filterChangelogSince(allFlat, '3.73.0');
+        expect(result.filtered).toBe(true);
+        expect(result.text).toContain('- Newer flat change.');
+        expect(result.text).not.toContain('Older flat change');
+    });
+
+    it('still falls back to the whole slice when nothing at all sits above the baseline', () => {
+        const quiet = FLAT.replace('- First flat change.\n- Second flat change.\n\n', '');
+        const result = filterChangelogSince(quiet, '3.73.0');
+        expect(result.filtered).toBe(false);
+        expect(result.text).toContain('### Went out in 3.73.0');
+    });
+
+    it('still shows everything when the player is older than every marker', () => {
+        const result = filterChangelogSince(FLAT, '3.0.0');
+        expect(result.filtered).toBe(false);
+        expect(result.text).toContain('- First flat change.');
+        expect(result.text).toContain('### Went out in 3.72.0');
+    });
+
+    it('still shows everything with no stored version or no markers', () => {
+        expect(filterChangelogSince(FLAT, null).filtered).toBe(false);
+        expect(filterChangelogSince(stripMarkers(FLAT), '3.73.0').filtered).toBe(false);
+    });
+
+    it('keeps the omission line when the baseline is the oldest marker and nothing older is shown', () => {
+        const tail = `## Unreleased — branch \`main\`
+
+- Flat.
+
+<!-- shipped in 3.74.0 -->
+
+${NOTE}
+`;
+        const result = filterChangelogSince(tail, '3.74.0');
+        expect(result.filtered).toBe(false);
+        expect(result.text).toContain('not shown here');
+    });
+});

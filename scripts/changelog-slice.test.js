@@ -330,3 +330,49 @@ describe('slicing by release boundary', () => {
         expect(three.shownEntries).toBe(27);
     });
 });
+
+describe('flat bullets between two markers (the shape 3.74.0 shipped in)', () => {
+    const FLAT_CHANGELOG = [
+        '# Changelog',
+        '',
+        '## Unreleased — branch `main`',
+        '',
+        '<!-- shipped in 3.74.0 -->',
+        '',
+        '- Flat change one.',
+        '- Flat change two.',
+        '',
+        '<!-- shipped in 3.73.0 -->',
+        '',
+        '### Titled older change',
+        '',
+        'Body.',
+        '',
+        '<!-- shipped in 3.72.0 -->',
+        '',
+        '### Titled oldest change',
+        '',
+        'Body.',
+        '',
+        '## [3.47.0](https://example.invalid) (2026-09-10)',
+        '',
+    ].join('\n');
+
+    test('ships the flat bullets and every marker around them', () => {
+        const slice = sliceForkChangelog(FLAT_CHANGELOG);
+        expect(slice.text).toContain('- Flat change one.');
+        expect(slice.text).toContain('- Flat change two.');
+        expect(slice.markerVersions).toEqual(['3.74.0', '3.73.0', '3.72.0']);
+    });
+
+    test('does not count flat bullets as entries, and ships them whatever the entry budget', () => {
+        const slice = sliceForkChangelog(FLAT_CHANGELOG, { minEntries: 1, releasesBack: 0 });
+        expect(slice.totalEntries).toBe(2);
+        // Nothing titled sits above the newest marker, so the floor of one
+        // entry decides; the flat bullets ride in the head either way.
+        expect(slice.shownEntries).toBe(1);
+        expect(slice.omittedEntries).toBe(1);
+        expect(slice.text).toContain('- Flat change two.');
+        expect(slice.text).toContain('<!-- shipped in 3.73.0 -->');
+    });
+});

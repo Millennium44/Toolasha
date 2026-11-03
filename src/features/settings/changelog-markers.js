@@ -121,6 +121,17 @@ function noteOmissionsAreRecent(text) {
 }
 
 /**
+ * A line that carries content: not blank, not a marker, not a heading.
+ * Entry bodies, flat `- ` bullets and any other prose count; the section
+ * heading and the `###` titles do not (titles are counted as entries).
+ * @param {string} line - One line of the changelog
+ * @returns {boolean}
+ */
+function isBodyLine(line) {
+    return line.trim() !== '' && markerVersion(line) === null && !/^#{1,6}\s/.test(line);
+}
+
+/**
  * @typedef {object} FilteredChangelog
  * @property {string} text - Markdown to show, always marker-free
  * @property {boolean} filtered - Whether anything was held back as already-seen
@@ -143,12 +154,14 @@ function noteOmissionsAreRecent(text) {
  *   of their own in it. All of it is new to them — and so is some of what the
  *   slice left out, which is why the omission line is reworded to say so
  *   rather than calling those entries "earlier".
- * - **Nothing newer.** A rebuild at the same version with no entries above its
- *   marker would leave an empty box under an "Updated x → y" heading, which
- *   says less than showing the recent history does.
+ * - **Nothing newer.** A rebuild at the same version with nothing above its
+ *   marker (no `###` entry and no other content line, such as a flat bullet)
+ *   would leave an empty box under an "Updated x → y" heading, which says less
+ *   than showing the recent history does.
  *
  * The remaining case is the one this exists for: the player's version has a
- * marker, and there are entries above it. Those entries ship; the rest do not.
+ * marker, and there is content above it. Exactly the lines above that marker
+ * ship, whether they are `###` entries or not; the rest do not.
  * Entries above the newest marker are the not-yet-released ones — they are
  * above every marker, so they are always kept. The omission line goes with the
  * entries it was talking about: everything since their build is on screen, so
@@ -175,7 +188,7 @@ export function filterChangelogSince(text, sinceVersion) {
         shownEntries: entryStarts.length,
     });
 
-    if (!sinceVersion || markers.length === 0 || entryStarts.length === 0) return all();
+    if (!sinceVersion || markers.length === 0) return all();
 
     // The newest release the player already had. Markers run newest-first, but
     // pick by comparison rather than by position so a hand-edited changelog
@@ -189,11 +202,21 @@ export function filterChangelogSince(text, sinceVersion) {
     // release the oldest marker names, whose entries the slice did not carry.
     if (!baseline) return all(noteOmissionsAreRecent(source));
 
+    // What is newer is whatever sits above the player's marker, `###` entries or
+    // not. Entries are not the only shape a release has had: 3.74.0 shipped as
+    // flat `- ` bullets with no title, and counting only `###` lines made that
+    // look like "nothing newer", which showed the player the whole slice.
     const shownEntries = entryStarts.filter((start) => start < baseline.line).length;
-    if (shownEntries === 0) return all(); // Nothing newer than their build
-    if (shownEntries === entryStarts.length) return all(); // Nothing to hold back
+    const newerContent = lines.slice(0, baseline.line).some(isBodyLine);
+    if (shownEntries === 0 && !newerContent) return all(); // Nothing newer than their build
 
-    const kept = lines.slice(0, entryStarts[shownEntries]);
+    // Nothing to hold back when no entry and no content sits below the player's
+    // marker. The omission line is not content: `all` keeps it, as it always did.
+    const olderContent = lines.slice(baseline.line + 1).some((line) => isBodyLine(line) && !OMISSION_RE.test(line));
+    if (shownEntries === entryStarts.length && !olderContent) return all();
+
+    // Ship exactly the lines above the player's marker.
+    const kept = lines.slice(0, baseline.line);
     return {
         text: `${stripMarkers(kept.join('\n')).replace(/\s+$/, '')}\n`,
         filtered: true,
