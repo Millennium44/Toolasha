@@ -168,6 +168,7 @@ import {
 } from './lab-skilling-goals.js';
 import { labyrinthClearRate, loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
 
@@ -474,10 +475,16 @@ export function orderDisplayEntries(orders) {
         .map((entry) => entry.order);
 }
 const ACCENT = '#4a9eff';
-const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
-const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
+// The window follows the game's plain look: the frame, dividers and selected states are neutral and the
+// action buttons are the game's blue. ACCENT and the tinted ACCENT_BTN_* stay for chips, figures and the
+// progress fill, which mark data rather than the frame.
+const ACCENT_BORDER = GAME_COLORS.border;
+const ACCENT_BG = 'rgba(255, 255, 255, 0.06)';
 const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+/** The game's blue button as inline CSS (and the hover swap) for buttons written as HTML strings */
+const GAME_BTN_CSS = `background:${BUTTON_LOOK.primary.rest}; color:${GAME_COLORS.text}; border:none; border-radius:var(--radius-sm, 0.25rem); font-weight:600; cursor:pointer; font-family:inherit;`;
+const GAME_BTN_HOVER = `onmouseover="this.style.background='${BUTTON_LOOK.primary.hover}'" onmouseout="this.style.background='${BUTTON_LOOK.primary.rest}'"`;
 
 /** Shared styling for the small inputs and buttons inside an upgrade chip. */
 const CHIP_INPUT_STYLE =
@@ -958,9 +965,9 @@ class LabSimUI {
             top: 60px;
             right: 60px;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: rgba(10, 10, 20, 0.97);
-            border: 2px solid ${ACCENT_BORDER};
-            border-radius: 10px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: min(900px, 96vw);
             height: min(700px, 84vh);
             min-width: min(400px, 92vw);
@@ -970,9 +977,9 @@ class LabSimUI {
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
-            color: #e0e0e0;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -983,15 +990,13 @@ class LabSimUI {
             align-items: center;
             padding: 10px 14px;
             cursor: grab;
-            background: ${ACCENT_BG};
             border-bottom: 1px solid ${ACCENT_BORDER};
-            border-radius: 8px 8px 0 0;
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT}; flex:1;">Lab Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${GAME_COLORS.text}; flex:1;">Lab Simulator</span>
             <button id="mwi-labsim-close" style="
-                background:none; border:none; color:#aaa; font-size:22px;
+                background:none; border:none; color:${GAME_COLORS.text}; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">\u00d7</button>
         `;
         this._setupDrag(header);
@@ -1011,7 +1016,7 @@ class LabSimUI {
             font-family: inherit;
             transition: all 0.1s;
             background: ${active ? ACCENT_BG : 'transparent'};
-            color: ${active ? ACCENT : '#888'};
+            color: ${active ? GAME_COLORS.text : GAME_COLORS.textDim};
             border-bottom: 2px solid ${active ? ACCENT : 'transparent'};
         `;
         tabBar.innerHTML = `
@@ -1162,14 +1167,9 @@ class LabSimUI {
         `;
         maxLevelControls.innerHTML = `
             <button id="mwi-labsim-run" style="
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;">Simulate</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Simulate</button>
             <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Binary search for highest beatable level at the specified win rate threshold">
                 <input type="checkbox" id="mwi-labsim-findmax" style="margin:0; cursor:pointer;">
                 Find Max \u2265
@@ -1270,15 +1270,9 @@ class LabSimUI {
             </label>
             <button id="mwi-labsim-upgrade-run" style="
                 margin-left: auto; flex-shrink: 0;
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;
-                font-family: inherit;">Analyze</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Analyze</button>
             <button id="mwi-labsim-upgrade-stop" style="
                 display:none;
                 background:rgba(244, 67, 54, 0.2);
@@ -1495,15 +1489,9 @@ class LabSimUI {
                 border-radius:4px; padding:4px 6px; font-size:11px; font-family:inherit;">
             <button id="mwi-labsim-skilling-calc" style="
                 margin-left: auto;
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;
-                font-family: inherit;">Calculate</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Calculate</button>
             <button id="mwi-labsim-skilling-upgrade" title="Sims token upgrades one level up and each equipment piece at its next enhancement breakpoint — when a breakpoint doesn't move the clear rate, the target keeps ticking up one level at a time until it has a positive impact (which is why some rows show a higher level than the next breakpoint)" style="
                 background: rgba(255,255,255,0.04);
                 border: 1px solid #333;
@@ -2897,9 +2885,11 @@ class LabSimUI {
         const tabUpgrade = this.panel.querySelector('#mwi-labsim-tab-upgrade');
         const tabSkilling = this.panel.querySelector('#mwi-labsim-tab-skilling');
 
-        const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
+        const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${GAME_COLORS.text}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
-            'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:#888; border-bottom:2px solid transparent;';
+            'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:' +
+            GAME_COLORS.textDim +
+            '; border-bottom:2px solid transparent;';
 
         configureContent.style.display = 'none';
         maxLevelContent.style.display = 'none';
