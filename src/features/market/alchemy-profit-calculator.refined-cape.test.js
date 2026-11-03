@@ -1,8 +1,8 @@
 /**
  * A refined (★) cape's transmute profit, through the real pricing chain.
  *
- * The input is valued by its refinement stones alone (enhancement-input-pricing / the production
- * bill), the other refined capes it can return are valued the same way (untaxed, they cannot be
+ * The input is valued by its refinement stones plus the base cape by the setting (enhancement-input-pricing /
+ * the production bill), the other refined capes it can return are valued the same way (untaxed, they cannot be
  * sold), and a stone nothing prices leaves the cape unvalued. The market feed, the settings and the
  * action stats are faked; the calculator, the cape valuation and the input pricing rule are real.
  */
@@ -176,16 +176,28 @@ beforeEach(() => {
 });
 
 describe('a refined cape transmute', () => {
-    test('is valued from its stones alone, whatever the cape setting says', () => {
-        for (const mode of ['zero', 'mirror']) {
-            game.capeMode = mode;
-            game.buffVersion++;
-            const result = calculator.calculateTransmuteProfit(GATHERER_STAR);
-            expect(result).not.toBeNull();
-            // 10 shards at the ask
-            expect(result.requirementCosts[0].price).toBe(10_000);
-            expect(result.assumedCapes[0]).toMatchObject({ itemHrid: GATHERER_STAR, value: 10_000, partial: false });
-        }
+    test('is valued from its stones alone on the "nothing" setting', () => {
+        const result = calculator.calculateTransmuteProfit(GATHERER_STAR);
+        expect(result).not.toBeNull();
+        // 10 shards at the ask
+        expect(result.requirementCosts[0].price).toBe(10_000);
+        expect(result.assumedCapes[0]).toMatchObject({ itemHrid: GATHERER_STAR, value: 10_000, partial: false });
+    });
+
+    test('adds one mirror to its stones on the "mirror" setting', () => {
+        game.capeMode = 'mirror';
+        game.books['/items/mirror_of_protection'] = { ask: 500_000, bid: 450_000 };
+        game.buffVersion++;
+        const result = calculator.calculateTransmuteProfit(GATHERER_STAR);
+        expect(result).not.toBeNull();
+        expect(result.requirementCosts[0].price).toBe(510_000);
+        expect(result.assumedCapes[0]).toMatchObject({ itemHrid: GATHERER_STAR, value: 510_000, partial: false });
+    });
+
+    test('with no mirror price on the "mirror" setting it is left unvalued, not stones alone', () => {
+        game.capeMode = 'mirror';
+        game.buffVersion++;
+        expect(calculator.calculateTransmuteProfit(GATHERER_STAR)).toBeNull();
     });
 
     test('a sibling ★ cape it can return is valued by its own stones, untaxed, and marked assumed', () => {
