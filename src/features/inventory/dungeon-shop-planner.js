@@ -33,6 +33,8 @@ import { itemDailyVolume } from '../../utils/liquidity-cap.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { calculatePriceAfterTax, outputTaxRate } from '../../utils/profit-helpers.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
+
 import { openShopTab, setShopFilter } from '../../utils/tester-shop-nav.js';
 import { DUNGEON_TOKEN_HRIDS, dungeonShopOffers, ownedTokenCount } from './dungeon-shop-offers.js';
 import {
@@ -54,7 +56,6 @@ export const HOLD_SETTING = 'dungeonShopPlanner_holdPercent';
 export const DUNGEON_TAB_LABEL = /^\s*dungeons?\s*$/i;
 
 const BUTTON_CLASS = 'toolasha-dungeon-plan-spend';
-const ACCENT = '#8fb4ff';
 const MUTED = 'rgba(232, 236, 245, 0.5)';
 const WARN = '#ffb74d';
 
@@ -102,7 +103,6 @@ class DungeonShopPlanner {
             id: 'dungeon-shop-planner',
             title: 'Dungeon token spend plan',
             size: { width: 470, height: 440 },
-            accent: ACCENT,
             refreshMs: 5000,
             draw: (body) => this.draw(body),
         });
@@ -610,16 +610,8 @@ function createPlanButton(onClick) {
     button.type = 'button';
     button.textContent = 'Plan spend';
     button.title = 'Plan what to buy with your dungeon tokens, capped by market volume';
-    Object.assign(button.style, {
-        margin: '4px 8px',
-        padding: '3px 10px',
-        background: 'rgba(143, 180, 255, 0.15)',
-        border: `1px solid ${ACCENT}`,
-        borderRadius: '4px',
-        color: '#e8ecf5',
-        cursor: 'pointer',
-        fontSize: '12px',
-    });
+    styleGameButton(button, 'primary', true);
+    button.style.margin = '4px 8px';
     button.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick();

@@ -87,6 +87,7 @@ import {
     pricingStamp,
 } from '../../utils/enhancement-input-pricing.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';
 import {
@@ -1896,15 +1897,7 @@ function slotPicker(slot) {
     const watch = document.createElement('button');
     watch.textContent = '\u{1F441} Watch';
     watch.dataset.pickAdd = 'true';
-    Object.assign(watch.style, {
-        background: 'rgba(255, 207, 92, 0.18)',
-        border: '1px solid #ffcf5c',
-        borderRadius: '3px',
-        color: '#ffcf5c',
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(watch, 'primary', true);
     watch.disabled = !editing.itemHrid;
     watch.style.opacity = editing.itemHrid ? '1' : '0.4';
     watch.addEventListener('click', () => {
@@ -2513,18 +2506,8 @@ function targetCard(target) {
 function missingMatsButton(actionHrid, upgradeBaseLevel = 0) {
     const button = document.createElement('button');
     button.textContent = 'Missing Mats Marketplace';
-    Object.assign(button.style, {
-        background: 'linear-gradient(180deg, rgba(91, 141, 239, 0.2) 0%, rgba(91, 141, 239, 0.1) 100%)',
-        border: '1px solid rgba(91, 141, 239, 0.4)',
-        borderRadius: '5px',
-        color: '#e8ecf5',
-        cursor: 'pointer',
-        fontSize: '11px',
-        fontWeight: 'bold',
-        marginTop: '4px',
-        padding: '4px 8px',
-        width: '100%',
-    });
+    styleGameButton(button, 'primary', true);
+    Object.assign(button.style, { marginTop: '4px', width: '100%' });
     button.title = 'Open the marketplace on the materials this craft is short of.';
 
     button.addEventListener('click', async () => {
@@ -2967,7 +2950,7 @@ function abilityCard(goal) {
  * @param {Array<Object>} goals - From `watchedAbilityGoals`
  */
 function abilitySection(body, goals) {
-    const card = panelCard(body, 'Ability Levels', '#c084fc');
+    const card = panelCard(body, 'Ability Levels');
 
     for (const goal of goals) card.appendChild(abilityCard(goal));
 
@@ -2983,16 +2966,8 @@ function abilitySection(body, goals) {
         const add = document.createElement('button');
         add.textContent = '+ Add ability level';
         add.dataset.addAbility = 'true';
-        Object.assign(add.style, {
-            background: 'rgba(192, 132, 252, 0.15)',
-            border: '1px solid #c084fc',
-            borderRadius: '3px',
-            color: '#c084fc',
-            cursor: 'pointer',
-            fontSize: '11px',
-            marginTop: '4px',
-            padding: '3px 9px',
-        });
+        styleGameButton(add, 'quiet', true);
+        add.style.marginTop = '4px';
         add.title = 'Save towards a level of one of your abilities.';
         add.addEventListener('click', () => {
             editing.addingAbility = true;
@@ -3129,7 +3104,7 @@ function houseCard(goal) {
  * @param {Array<Object>} goals - From `watchedHouseGoals`
  */
 function houseSection(body, goals) {
-    const card = panelCard(body, 'House Levels', HOUSE_ACCENT);
+    const card = panelCard(body, 'House Levels');
 
     for (const goal of goals) card.appendChild(houseCard(goal));
 
@@ -3145,16 +3120,8 @@ function houseSection(body, goals) {
         const add = document.createElement('button');
         add.textContent = '+ Add house level';
         add.dataset.addHouse = 'true';
-        Object.assign(add.style, {
-            background: 'rgba(245, 158, 11, 0.15)',
-            border: `1px solid ${HOUSE_ACCENT}`,
-            borderRadius: '3px',
-            color: HOUSE_ACCENT,
-            cursor: 'pointer',
-            fontSize: '11px',
-            marginTop: '4px',
-            padding: '3px 9px',
-        });
+        styleGameButton(add, 'quiet', true);
+        add.style.marginTop = '4px';
         add.title = 'Save towards a level of one of your house rooms.';
         add.addEventListener('click', () => {
             editing.addingHouse = true;
@@ -3349,15 +3316,7 @@ function housePicker() {
     const save = document.createElement('button');
     save.textContent = '\u{1F441} Watch';
     save.dataset.saveHouse = 'true';
-    Object.assign(save.style, {
-        background: 'rgba(245, 158, 11, 0.18)',
-        border: `1px solid ${HOUSE_ACCENT}`,
-        borderRadius: '3px',
-        color: HOUSE_ACCENT,
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(save, 'primary', true);
     const ready = Boolean(chosen) && editing.houseLevel > 0;
     save.disabled = !ready;
     save.style.opacity = ready ? '1' : '0.4';
@@ -3384,15 +3343,7 @@ function housePicker() {
 
     const cancel = document.createElement('button');
     cancel.textContent = 'Cancel';
-    Object.assign(cancel.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        borderRadius: '3px',
-        color: 'rgba(232, 236, 245, 0.6)',
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(cancel, 'quiet', true);
     cancel.addEventListener('click', () => {
         editing.addingHouse = false;
         equipmentSavingsPanel.render();
@@ -3563,15 +3514,7 @@ function abilityPicker() {
     const save = document.createElement('button');
     save.textContent = '\u{1F441} Watch';
     save.dataset.saveAbility = 'true';
-    Object.assign(save.style, {
-        background: 'rgba(192, 132, 252, 0.18)',
-        border: '1px solid #c084fc',
-        borderRadius: '3px',
-        color: '#c084fc',
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(save, 'primary', true);
     const ready = Boolean(chosen) && editing.abilityLevel > 0;
     save.disabled = !ready;
     save.style.opacity = ready ? '1' : '0.4';
@@ -3598,15 +3541,7 @@ function abilityPicker() {
 
     const cancel = document.createElement('button');
     cancel.textContent = 'Cancel';
-    Object.assign(cancel.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        borderRadius: '3px',
-        color: 'rgba(232, 236, 245, 0.6)',
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(cancel, 'quiet', true);
     cancel.addEventListener('click', () => {
         editing.addingAbility = false;
         equipmentSavingsPanel.render();
@@ -3634,7 +3569,6 @@ export const equipmentSavingsPanel = createPanel({
     id: 'equipmentWatch',
     title: 'Equipment Watch',
     size: { width: 420, height: 420 },
-    accent: '#6495ed',
     draw: (body) => {
         const plan = everything();
 
@@ -3651,7 +3585,7 @@ export const equipmentSavingsPanel = createPanel({
             headlines[0];
         if (watched) body.appendChild(headline(watched));
 
-        const purse = panelCard(body, undefined, '#6495ed');
+        const purse = panelCard(body, undefined);
         Object.assign(purse.style, { flexDirection: 'row', alignItems: 'center', gap: '10px', flexWrap: 'wrap' });
 
         const coins = document.createElement('span');
@@ -3690,7 +3624,7 @@ export const equipmentSavingsPanel = createPanel({
         // Every figure in the panel is only as current as the prices behind it,
         // and a saving that has not moved in a day is usually a price that has
         // not moved rather than a run of bad luck
-        const market = panelCard(body, undefined, '#6495ed');
+        const market = panelCard(body, undefined);
         Object.assign(market.style, { flexDirection: 'row', alignItems: 'center', gap: '8px' });
 
         const age = marketAPI.getDataAge?.();
@@ -3717,7 +3651,7 @@ export const equipmentSavingsPanel = createPanel({
         market.append(stamp, refresh);
 
         // EWatch's two switches, each changing what the figures below mean
-        const switches = panelCard(body, undefined, '#6495ed');
+        const switches = panelCard(body, undefined);
         Object.assign(switches.style, { flexDirection: 'row', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
 
         const explain = document.createElement('span');
@@ -3772,7 +3706,7 @@ export const equipmentSavingsPanel = createPanel({
         // for and how far along — which is what the panel is for almost all of
         // the time. Unlocked opens every slot up so targets can be changed, and
         // is a great deal longer, which is why it is not the resting state.
-        const list = panelCard(body, undefined, '#6495ed');
+        const list = panelCard(body, undefined);
 
         const watching = plan.targets.length + plan.abilities.length + plan.houses.length;
 
@@ -3806,7 +3740,7 @@ export const equipmentSavingsPanel = createPanel({
         if (!watching) return;
 
         // One at a time answers the wrong question when you want three pieces
-        const all = panelCard(body, 'Everything', '#6495ed');
+        const all = panelCard(body, 'Everything');
         const line = document.createElement('div');
         Object.assign(line.style, { display: 'flex', alignItems: 'center', gap: '7px' });
         line.appendChild(progressBar(plan.fraction));
