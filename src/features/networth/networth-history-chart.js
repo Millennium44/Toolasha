@@ -14,7 +14,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
 import { openMoversPanel } from './networth-movers-panel.js';
-import { stepsAfter, growthNote, describeChanges } from './networth-markers.js';
+import { stepsAfter, growthNote, describeChanges, countedShares, floorsOnTotal } from './networth-markers.js';
 
 const RANGE_MS = {
     '24h': 24 * 60 * 60 * 1000,
@@ -1510,31 +1510,49 @@ class NetworthHistoryChart {
     /**
      * The tooltip lines for a setting-change marker: what changed and how big the step was.
      * @param {Object} marker - The point's marker
+     * @param {{step: number|null, stepCounted: number, unseparated: Array<string>, floor: Array<string>}|null} [share] -
+     *   What the marker counts for in the history (`countedShares`), null when all of it repeats an earlier reading;
+     *   the whole marker when not given
      * @returns {string} HTML
      */
-    _markerTooltipHtml(marker) {
+    _markerTooltipHtml(
+        marker,
+        share = {
+            step: marker.step,
+            stepCounted: marker.stepCounted ?? marker.step ?? 0,
+            unseparated: marker.unseparated || [],
+            floor: marker.floor || [],
+        }
+    ) {
         const esc = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
         let html = `<div style="color:#f59e0b; margin-top:6px;">&#9670; Setting change: ${esc(describeChanges(marker))}</div>`;
-        if (Number.isFinite(marker.step)) {
-            const sign = marker.step >= 0 ? '+' : '-';
+        if (share === null) {
+            return `${html}<div style="padding-left:12px;">Already counted at an earlier reading, on another device or tab</div>`;
+        }
+        if (Number.isFinite(share.step)) {
+            const sign = share.step >= 0 ? '+' : '-';
             html +=
-                marker.step === 0
+                share.step === 0
                     ? '<div style="padding-left:12px;">No effect on the total</div>'
-                    : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(marker.step))} (left out of growth figures)</div>`;
+                    : `<div style="padding-left:12px;">Step: ${sign}${networthFormatter(Math.abs(share.step))} (left out of growth figures)</div>`;
             // Ability books moved past their excluded asset type: nothing on the total, all of it on Non-Excl
-            if (marker.step === 0 && Number.isFinite(marker.stepCounted) && marker.stepCounted !== 0) {
-                const counted = `${marker.stepCounted > 0 ? '+' : '-'}${networthFormatter(Math.abs(marker.stepCounted))}`;
-                html += `<div style="padding-left:12px;">Non-Excl step: ${counted} (left out of growth figures)</div>`;
+            if (share.step === 0 && share.stepCounted !== 0) {
+                const atLeast = share.floor.length > floorsOnTotal(share.floor).length ? 'at least ' : '';
+                const counted = `${share.stepCounted > 0 ? '+' : '-'}${networthFormatter(Math.abs(share.stepCounted))}`;
+                html += `<div style="padding-left:12px;">Non-Excl step: ${atLeast}${counted} (left out of growth figures)</div>`;
             }
         }
-        if ((marker.floor || []).length > 0) {
+        if (Number.isFinite(marker.step) && share.step !== marker.step) {
+            html += '<div style="padding-left:12px;">The rest was already counted at an earlier reading</div>';
+        }
+        if (floorsOnTotal(share.floor).length > 0) {
             html +=
                 '<div style="padding-left:12px;">At least this much: some of what the setting adds had no price or was hidden by an exclusion</div>';
         }
         if (marker.small === true) {
             const raw = Number.isFinite(marker.raw) ? ` (${networthFormatter(marker.raw)})` : '';
             html += `<div style="padding-left:12px;">The reading moved within ordinary variation${esc(raw)}</div>`;
-        } else if ((marker.unseparated || []).length > 0) {
+        } else if (share.unseparated.length > 0) {
             const raw = Number.isFinite(marker.raw)
                 ? ` The reading moved ${networthFormatter(marker.raw)} in all.`
                 : '';
@@ -1632,7 +1650,8 @@ class NetworthHistoryChart {
         }
 
         if (raw.marker) {
-            html += this._markerTooltipHtml(raw.marker);
+            const shares = countedShares(networthHistory.getHistory());
+            html += this._markerTooltipHtml(raw.marker, shares.get(raw.t) ?? null);
         }
 
         tooltipEl.innerHTML = html;

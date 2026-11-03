@@ -289,6 +289,107 @@ describe('growth figures and setting-change markers', () => {
         expect(networthHistoryChart._markerTooltipHtml(marked(400, { stepCounted: 0 }))).not.toContain('Non-Excl step');
     });
 
+    test('a partial bill on books moved past their exclusion is a floor on the Non-Excl line, not the total', () => {
+        const SWITCH = 'networth_abilityBooksAsInventory';
+        const html = networthHistoryChart._markerTooltipHtml({
+            changes: [{ id: SWITCH, from: false, to: true }],
+            step: 0,
+            stepCounted: 900_000_000,
+            unseparated: [],
+            floor: [SWITCH],
+            raw: 0,
+        });
+        expect(html).toContain('No effect on the total');
+        expect(html).toContain('Non-Excl step: at least +900.00M');
+        expect(html).not.toContain('At least this much');
+    });
+
+    describe('a marker part of which repeats an earlier reading', () => {
+        const batch = {
+            changes: [
+                { id: 'networth_includeLabyrinthTokens', from: false, to: true, step: 100, stepCounted: 100 },
+                { id: 'networth_includeCowbells', from: false, to: true, step: 50, stepCounted: 50 },
+            ],
+            step: 150,
+            stepCounted: 150,
+            unseparated: [],
+            raw: 150,
+        };
+
+        test('hovers what counted, and says the rest was counted already', () => {
+            const html = networthHistoryChart._markerTooltipHtml(batch, {
+                step: 50,
+                stepCounted: 50,
+                unseparated: [],
+                floor: [],
+            });
+            expect(html).toContain('Step: +50');
+            expect(html).not.toContain('Step: +150');
+            expect(html).toContain('The rest was already counted');
+        });
+
+        test('the hover over a point in the chart reads the history', () => {
+            const t = (hours) => now - hours * 3_600_000;
+            const first = {
+                t: t(3),
+                total: 1000,
+                marker: {
+                    changes: [batch.changes[0]],
+                    step: 100,
+                    stepCounted: 100,
+                    unseparated: [],
+                    raw: 100,
+                },
+            };
+            const second = { t: t(2), total: 1150, marker: batch };
+            getHistory.mockReturnValue([first, second]);
+            const parent = document.createElement('div');
+            document.body.appendChild(parent);
+            const hover = (raw, dataIndex) =>
+                networthHistoryChart._renderCustomTooltip({
+                    chart: { canvas: { parentElement: parent, offsetLeft: 0, offsetTop: 0 } },
+                    tooltip: {
+                        opacity: 1,
+                        caretX: 0,
+                        caretY: 0,
+                        dataPoints: [
+                            {
+                                dataset: { label: 'Total Net Worth', data: [{ _raw: first }, { _raw: second }] },
+                                dataIndex,
+                                raw: { x: raw.t, _raw: raw },
+                            },
+                        ],
+                    },
+                });
+            hover(second, 1);
+            const shown =
+                parent.querySelector('#mwi-nw-chart-tooltip') ?? document.getElementById('mwi-nw-chart-tooltip');
+            expect(shown.textContent).toContain('Step: +50');
+            expect(shown.textContent).toContain('The rest was already counted');
+            hover(first, 0);
+            expect(shown.textContent).toContain('Step: +100');
+            parent.remove();
+        });
+
+        test('all of it repeated claims no step', () => {
+            const html = networthHistoryChart._markerTooltipHtml(batch, null);
+            expect(html).toContain('Already counted at an earlier reading');
+            expect(html).not.toContain('Step:');
+        });
+
+        test('nothing repeated says nothing of it, and a floor or unseparated part that repeated is not repeated', () => {
+            const whole = networthHistoryChart._markerTooltipHtml(batch);
+            expect(whole).toContain('Step: +150');
+            expect(whole).not.toContain('already counted');
+            const html = networthHistoryChart._markerTooltipHtml(
+                { ...batch, floor: ['networth_includeCowbells'], unseparated: ['networth_pricingMode'] },
+                { step: 50, stepCounted: 50, unseparated: [], floor: [] }
+            );
+            expect(html).not.toContain('At least this much');
+            expect(html).not.toContain('could not be separated');
+        });
+    });
+
     test('Last range and Rate leave a marked step out and say so; All-Time High stays raw', async () => {
         getHistory.mockReturnValue([
             { t: now - 3 * 3_600_000, total: 10_000_000_000, nonExcluded: 10_000_000_000 },

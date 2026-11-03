@@ -499,6 +499,16 @@ export function withoutChangesHeldBy(marker, other) {
 }
 
 /**
+ * The floors that are about the total. A floor on a change that leaves the total alone is about the non-excluded
+ * step only: "at least +0" on the total would say something unknown is hiding there, and nothing is.
+ * @param {Array<string>} floor - Setting ids whose step is only a floor
+ * @returns {Array<string>} Those whose floor is on the total
+ */
+export function floorsOnTotal(floor) {
+    return (floor || []).filter((id) => !TOTAL_NEUTRAL.has(id));
+}
+
+/**
  * The steps in a history that growth figures leave out, after a point in time.
  * @param {Array<Object>} history - Points, any order
  * @param {number} afterT - Only markers made after this time count (the baseline already holds earlier ones)
@@ -521,7 +531,7 @@ export function stepsAfter(history, afterT, untilT = Infinity) {
             step += share.step;
             stepCounted += share.stepCounted;
             count += 1;
-            if (share.floor.length > 0) floor += 1;
+            if (floorsOnTotal(share.floor).length > 0) floor += 1;
         }
         if (share.unseparated.length > 0 && marker.small !== true) inexact += 1;
     }

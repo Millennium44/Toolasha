@@ -242,6 +242,27 @@ describe('buildMarker', () => {
             expect(flip(false, true, { value: 900, partial: true }).floor).toEqual([SWITCH]);
         });
 
+        test('that floor is on the Non-Excl step alone: the total row does not read "at least +0"', () => {
+            const point = {
+                t: 2,
+                total: 5000,
+                nonExcluded: 5000,
+                marker: flip(false, true, { value: 900, partial: true }),
+            };
+            const steps = stepsAfter([point], 1);
+            expect(steps).toMatchObject({ step: 0, stepCounted: 900, count: 1, floor: 0 });
+            expect(growthNote(steps, money)).not.toContain('at least');
+        });
+
+        test('a floor on another change in the same marker still reads as one', () => {
+            const token = { id: 'networth_includeLabyrinthTokens', from: false, to: true };
+            const marker = {
+                ...flip(false, true, { value: 900, partial: true }, [token]),
+                floor: [SWITCH, token.id],
+            };
+            expect(stepsAfter([{ t: 2, total: 5000, marker }], 1).floor).toBe(1);
+        });
+
         test('it needs no item map for the reading before: the books are valued in this one', () => {
             const marker = buildMarker({
                 changes: [change(SWITCH, false, true)],
