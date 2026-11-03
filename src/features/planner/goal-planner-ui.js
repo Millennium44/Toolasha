@@ -409,6 +409,8 @@ class GoalPlannerPanel {
             return;
         }
         this._create();
+        // Closing cancelled the pending re-pricing; the pricing it was for is still owed
+        this._scheduleVolumeRetry();
     }
 
     /**
@@ -607,7 +609,8 @@ class GoalPlannerPanel {
         const gone = () => !current();
         let pricingFailed = false;
         try {
-            if (reprice || !this.context) {
+            const pricedNow = reprice || !this.context;
+            if (pricedNow) {
                 const context = await buildPlannerContext({
                     // Dropped once the panel is closed, the character changes, or this pass is over;
                     // `busy` is false the moment a pass finishes, and a newer one sets its own token
@@ -633,7 +636,9 @@ class GoalPlannerPanel {
             this.plans = planGoals(this.goals, this.context);
             this.rateNotes = this.context.rateNotes || [];
             this.combatStatus = this.context.combatStatus || null;
-            this._scheduleVolumeRetry();
+            // Only a pricing that just ran says whether the pool still owes volumes: a replan on the old prices
+            // (a goal added) carries the old moment forward and must not arm a pricing nobody asked for
+            if (pricedNow) this._scheduleVolumeRetry();
             await saveSnapshot(this.plans, owner, this.pricedAt);
             await this._recordReservations(gone);
         } catch (error) {

@@ -1523,6 +1523,31 @@ describe('pricing again after the market-history cool-down', () => {
         expect(plannerContext.builds).toBe(1);
     });
 
+    test('reopening the panel arms the pending re-pricing again', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        goalPlannerPanel.hide();
+        expect(vi.getTimerCount()).toBe(0);
+
+        goalPlannerPanel.show();
+        expect(vi.getTimerCount()).toBe(1);
+        await vi.advanceTimersByTimeAsync(WAIT_MS + MARGIN_MS);
+        expect(plannerContext.builds).toBe(2);
+    });
+
+    test('a replan on the old prices does not arm a pricing the pricing itself did not ask for', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        // A context left over from an earlier pricing, with the moment the pool was due carried on it
+        goalPlannerPanel.context = coolingContext();
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(plannerContext.builds).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
     test('adding goals while it waits keeps one timer, not one per replan', async () => {
         plannerContext.onBuild = () => coolingContext();
         goalPlannerPanel.show();
