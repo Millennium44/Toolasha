@@ -109,6 +109,44 @@ export function judgeCatalystPress(answer, currentHrid) {
     return { hold: true, reason: 'better', best: top, current, gap };
 }
 
+/**
+ * Whether a message just placed on the page can actually be seen. A press is only worth holding if it can: the worst
+ * thing this feature can do is swallow a press with nothing on screen, so anything doubtful answers false and the press
+ * goes through.
+ *
+ * Measured after the scroll into view. It cannot see something drawn on top of the message, only a message with no box,
+ * hidden by style, or clipped away by a scroller or by the window. A browser without the layout calls has no way to
+ * say, and answers true.
+ *
+ * @param {Element} node - The message
+ * @returns {boolean} True when it is on screen
+ */
+export function messageCanBeSeen(node) {
+    if (!node.isConnected) return false;
+    if (node.checkVisibility?.({ checkVisibilityCSS: true, visibilityProperty: true }) === false) return false;
+    const rects = node.getClientRects?.();
+    if (!rects) return true;
+    if (!Array.from(rects).some((rect) => rect.width > 0 && rect.height > 0)) return false;
+
+    let { left, top, right, bottom } = node.getBoundingClientRect();
+    const clipTo = (edges) => {
+        left = Math.max(left, edges.left);
+        top = Math.max(top, edges.top);
+        right = Math.min(right, edges.right);
+        bottom = Math.min(bottom, edges.bottom);
+        return right > left && bottom > top;
+    };
+    for (let el = node.parentElement; el && el !== document.body; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (/hidden|clip|auto|scroll/.test(`${style.overflow} ${style.overflowX} ${style.overflowY}`)) {
+            if (!clipTo(el.getBoundingClientRect())) return false;
+        }
+        // What is above a fixed element does not clip it
+        if (style.position === 'fixed') break;
+    }
+    return clipTo({ left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });
+}
+
 class AlchemyCatalystCheck {
     constructor() {
         this.isInitialized = false;
@@ -216,8 +254,7 @@ class AlchemyCatalystCheck {
         );
         if (!verdict.hold) return false;
 
-        this.hold(panel, buttons, context, verdict);
-        return true;
+        return this.hold(panel, buttons, context, verdict);
     }
 
     /**
@@ -279,18 +316,30 @@ class AlchemyCatalystCheck {
     }
 
     /**
-     * Arm the second press and say why this one did nothing.
+     * Say why this press did nothing and arm the second one, if the player can see the saying.
      * @param {Element} panel - The alchemy panel
      * @param {Element} buttons - The panel's button strip
      * @param {{signature: string}} context - What was pressed for
      * @param {Object} verdict - From {@link judgeCatalystPress}
+     * @returns {boolean} True when the press is held, false when the message could not be shown and it goes through
      */
     hold(panel, buttons, context, verdict) {
         const node = this.buildMessage(verdict);
         // After the strip, never in it: the protected-category guard takes every button in there for an action press
         buttons.insertAdjacentElement('afterend', node);
-        // The strip can be pinned to the bottom of a scrolling panel, with whatever follows it out of sight
-        node.scrollIntoView?.({ block: 'nearest' });
+        let seen = false;
+        try {
+            // The strip can be pinned to the bottom of a scrolling panel, with whatever follows it out of sight.
+            // Instant, since the measure below has to find it where it ends up.
+            node.scrollIntoView?.({ block: 'nearest', behavior: 'instant' });
+            seen = messageCanBeSeen(node);
+        } catch (error) {
+            console.error('[AlchemyCatalystCheck] Could not show the message:', error);
+        }
+        if (!seen) {
+            node.remove();
+            return false;
+        }
 
         const pending = { panel, node, signature: context.signature, at: Date.now(), timer: null, observers: [] };
         this.pending = pending;
@@ -316,6 +365,7 @@ class AlchemyCatalystCheck {
             tabObserver.observe(tabs, { attributes: true, subtree: true, attributeFilter: ['aria-selected'] });
             pending.observers.push(tabObserver);
         }
+        return true;
     }
 
     /** Disarm the held press: its timer, observers and message. */

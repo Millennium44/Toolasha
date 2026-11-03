@@ -87,7 +87,12 @@ vi.mock('../actions/action-panel-sort.js', () => ({
     default: { isPinned: () => false, togglePin: async () => {} },
 }));
 
-const { default: check, judgeCatalystPress, readSlottedCatalyst } = await import('./alchemy-catalyst-check.js');
+const {
+    default: check,
+    judgeCatalystPress,
+    readSlottedCatalyst,
+    messageCanBeSeen,
+} = await import('./alchemy-catalyst-check.js');
 const { default: protection } = await import('./alchemy-action-protection.js');
 const { settingsGroups } = await import('../../core/settings-schema.js');
 const { SETTING_PRESETS, resolvePresetValues } = await import('../settings/setting-presets.js');
@@ -176,6 +181,17 @@ const selectTab = (name) => {
         tab.setAttribute('aria-selected', String(tab.textContent === name));
     }
 };
+/** Happy-dom has no layout, so a test says what the browser would measure */
+const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+/** Lay out everything at a normal on-screen size, optionally overriding one element */
+function layOut(override = () => null) {
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function () {
+        return override(this)?.[0] ?? box(0, 0, 300, 100);
+    });
+    vi.spyOn(Element.prototype, 'getClientRects').mockImplementation(function () {
+        return override(this) ?? [box(0, 0, 300, 100)];
+    });
+}
 /** Let a held press settle into a decision, past the same-gesture window */
 const pause = () => vi.advanceTimersByTimeAsync(400);
 /** Let mutation observers report */
@@ -195,6 +211,7 @@ beforeEach(async () => {
     state.evReady = true;
     state.evInit.mockReset();
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    layOut();
     clearWinner();
     mountPanel();
     check.initialize();
@@ -419,6 +436,108 @@ describe('holding a press', () => {
 
         expect(seen).toEqual(['click', 'click']);
         expect(game).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('a message nobody can see never costs a press', () => {
+    const isMessage = (el) => el.classList?.contains('mwi-alchemy-catalyst-check');
+    const passesUnseen = () => {
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).toBeNull();
+        expect(check.pending).toBeNull();
+        expect(vi.getTimerCount()).toBe(0);
+    };
+
+    test('no layout box: a display:none ancestor gives the message no rects', () => {
+        layOut((el) => (isMessage(el) ? [] : null));
+        passesUnseen();
+    });
+
+    test('a box with no size', () => {
+        layOut((el) => (isMessage(el) ? [box(0, 0, 300, 0)] : null));
+        passesUnseen();
+    });
+
+    test('a hidden ancestor, by inline style', () => {
+        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').style.display = 'none';
+        passesUnseen();
+    });
+
+    test('visibility:hidden on an ancestor', () => {
+        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').style.visibility = 'hidden';
+        passesUnseen();
+    });
+
+    test('a zero-height clipping panel', () => {
+        const panel = document.querySelector('[class*="SkillActionDetail_skillActionDetail"]');
+        panel.style.overflow = 'hidden';
+        layOut((el) => (el === panel ? [box(0, 0, 300, 0)] : null));
+        passesUnseen();
+    });
+
+    test('a clipping container the message sits wholly outside of', () => {
+        const panel = document.querySelector('[class*="SkillActionDetail_skillActionDetail"]');
+        panel.style.overflowY = 'auto';
+        layOut((el) => (el === panel ? [box(0, 500, 300, 100)] : null));
+        passesUnseen();
+    });
+
+    test('off the bottom of the window', () => {
+        layOut((el) => (isMessage(el) ? [box(0, window.innerHeight + 10, 300, 100)] : null));
+        passesUnseen();
+    });
+
+    test('a zero-height parent that does not clip leaves the message showing', () => {
+        const panel = document.querySelector('[class*="SkillActionDetail_skillActionDetail"]');
+        layOut((el) => (el === panel ? [box(0, 0, 300, 0)] : null));
+        press();
+        expect(game).not.toHaveBeenCalled();
+        expect(message()).not.toBeNull();
+    });
+
+    test('a fixed panel is not clipped by what is above it', () => {
+        const panel = document.querySelector('[class*="SkillActionDetail_skillActionDetail"]');
+        const root = document.getElementById('game-root');
+        panel.style.position = 'fixed';
+        root.style.overflow = 'hidden';
+        layOut((el) => (el === root ? [box(0, 0, 0, 0)] : null));
+        press();
+        expect(game).not.toHaveBeenCalled();
+        expect(message()).not.toBeNull();
+    });
+
+    test('a scroll that throws leaves no node behind and costs no press', () => {
+        const scroll = vi.fn(() => {
+            throw new Error('no scrolling');
+        });
+        const original = Element.prototype.scrollIntoView;
+        Element.prototype.scrollIntoView = scroll;
+        try {
+            passesUnseen();
+        } finally {
+            Element.prototype.scrollIntoView = original;
+        }
+        expect(scroll).toHaveBeenCalled();
+        console.error.mockClear();
+    });
+
+    test('a press that was let through this way is judged afresh next time', () => {
+        layOut((el) => (isMessage(el) ? [] : null));
+        passesUnseen();
+        layOut();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).not.toBeNull();
+    });
+
+    test('the measure itself: not connected, and a browser without the layout calls', () => {
+        const node = document.createElement('div');
+        expect(messageCanBeSeen(node)).toBe(false);
+        document.body.appendChild(node);
+        expect(messageCanBeSeen(node)).toBe(true);
+        node.getClientRects = undefined;
+        expect(messageCanBeSeen(node)).toBe(true);
     });
 });
 
