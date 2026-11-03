@@ -1503,7 +1503,25 @@ describe('Task Tokens and Task Crystals in a chest', () => {
             source: 'taskShop',
             needsTax: false,
             missingCount: 0,
+            estimatedCount: 0,
         });
+    });
+
+    test('a shop line resting on value-map prices makes tokens, crystals and the Gift estimates too', () => {
+        const ESTIMATED = '/items/estimated_gem';
+        mocks.itemDetails[ESTIMATED] = { name: 'Estimated Gem', isTradable: true };
+        mocks.prices[ESTIMATED] = 1000;
+        mocks.estimatedPrices.add(ESTIMATED);
+        mocks.initData.openableLootDropMap[SHOP_CHEST] = [
+            { itemHrid: ESTIMATED, dropRate: 1, minCount: 3, maxCount: 3 },
+        ];
+
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_TOKEN).estimatedCount).toBe(1);
+        expect(expectedValueCalculator.resolveSellSideValue(TASK_CRYSTAL).estimatedCount).toBe(1);
+        // The gem in the Gift's own table is a listed price: only the shop's estimate can mark it
+        const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
+        expect(gift.estimatedCount).toBeGreaterThan(0);
+        expect(expectedValueCalculator.getDropBreakdown(GIFT).some((row) => row.estimatedCount > 0)).toBe(true);
     });
 
     test('a crystal is worth the tokens it costs, and the crystal line itself never wins "best per token"', () => {
@@ -1522,6 +1540,7 @@ describe('Task Tokens and Task Crystals in a chest', () => {
         const gift = expectedValueCalculator.calculateContainerValue(GIFT, mocks.initData);
         expect(gift.missingCount).toBe(0);
         expect(gift.isPartial).toBe(false);
+        expect(gift.estimatedCount).toBe(0);
         expect(gift.expectedValue).toBeCloseTo(GIFT_REST / (1 - SELF), 6);
     });
 

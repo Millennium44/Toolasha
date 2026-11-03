@@ -702,7 +702,8 @@ class ExpectedValueCalculator {
      * (personal-use) pass or at a 0% rate, at the given rate for another player, else at the live character's tax.
      * @param {string} itemHrid - Item HRID
      * @param {{gross?: boolean, saleTaxRate?: number}|null} [context] - The traversal asking
-     * @returns {{value: number, source: string, needsTax: boolean, missingCount: number}|null} Null for any other
+     * @returns {{value: number, source: string, needsTax: boolean, missingCount: number, estimatedCount: number}|null}
+     *   Null for any other
      *   item, when the shop cannot price it, or when this is a nested ask from inside a shop valuation
      */
     resolveTaskShopDrop(itemHrid, context = null) {
@@ -712,6 +713,7 @@ class ExpectedValueCalculator {
         try {
             let value = null;
             let partial = 0;
+            let estimatedCount = 0;
             const untaxed = Boolean(context?.gross) || context?.saleTaxRate === 0;
             const rate = Number.isFinite(context?.saleTaxRate) ? context.saleTaxRate : undefined;
             const tax = untaxed ? { untaxed: true } : rate !== undefined ? { rate } : null;
@@ -732,12 +734,16 @@ class ExpectedValueCalculator {
                 const best = findBestTaskShopValue(pricer, tax);
                 value = best?.perToken ?? null;
                 partial = best?.partialDrops || 0;
+                estimatedCount = best?.estimatedDrops || 0;
             } else {
                 const priced = taskShopTokenPrice(itemHrid, pricer, tax);
                 value = priced?.price ?? null;
                 partial = priced?.partial ? 1 : 0;
+                estimatedCount = priced?.estimatedDrops || 0;
             }
-            return value > 0 ? { value, source: 'taskShop', needsTax: false, missingCount: partial } : null;
+            return value > 0
+                ? { value, source: 'taskShop', needsTax: false, missingCount: partial, estimatedCount }
+                : null;
         } catch (error) {
             console.error('[ExpectedValueCalculator] Task Shop valuation failed for', itemHrid, error);
             return null;

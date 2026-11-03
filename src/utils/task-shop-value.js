@@ -23,8 +23,9 @@ export const TASK_CRYSTAL_HRID = '/items/task_crystal';
  * @param {Object|null} [calculator] - The expected-value calculator to price an openable line with
  * @param {{untaxed?: boolean, rate?: number}|null} [tax] - Who sells it: nothing is sold (`untaxed`), another
  *   player's rate, or null for the live character's own
- * @returns {{value: number, partialDrops: number}} Coins the item is worth (0 when unpriceable),
- *   and how many of its drops could not be priced — non-zero makes the value a lower bound
+ * @returns {{value: number, partialDrops: number, estimatedDrops: number}} Coins the item is worth (0 when unpriceable),
+ *   how many of its drops could not be priced (non-zero makes the value a lower bound), and how many rest on an
+ *   estimated price
  */
 function valueOfShopItem(itemHrid, itemDetailMap, calculator, tax = null) {
     // Post-tax: this is what the shop item would fetch if sold, and every other sell-side
@@ -39,6 +40,7 @@ function valueOfShopItem(itemHrid, itemDetailMap, calculator, tax = null) {
     }
 
     let partialDrops = 0;
+    let estimatedDrops = 0;
 
     if (itemDetailMap?.[itemHrid]?.isOpenable) {
         const evData = calculator?.calculateExpectedValue(itemHrid);
@@ -49,10 +51,12 @@ function valueOfShopItem(itemHrid, itemDetailMap, calculator, tax = null) {
             // through it is a floor. Carried up so the panel can say so rather than
             // presenting an incomplete figure as the answer.
             partialDrops = evData?.missingCount || 0;
+            // Likewise a chest resting on value-map prices: a token valued through it is an estimate
+            estimatedDrops = evData?.estimatedCount || 0;
         }
     }
 
-    return { value, partialDrops };
+    return { value, partialDrops, estimatedDrops };
 }
 
 /**
@@ -79,7 +83,7 @@ function shopCosts(line) {
  * @param {{untaxed?: boolean, rate?: number}|null} [tax] - As for `valueOfShopItem`; the calculator is expected to
  *   price its openable lines under the same terms
  * @returns {{perToken: number, itemHrid: string, tokenCost: number, itemValue: number,
- *   partialDrops: number}|null}
+ *   partialDrops: number, estimatedDrops: number}|null}
  */
 export function findBestTaskShopValue(calculator = expectedValueCalculator(), tax = null) {
     const gameData = dataManager.getInitClientData();
@@ -103,14 +107,18 @@ export function findBestTaskShopValue(calculator = expectedValueCalculator(), ta
         const tokenCost = costs[0].count || 0;
         if (tokenCost <= 0) continue;
 
-        const { value: unitValue, partialDrops } = valueOfShopItem(itemHrid, itemDetailMap, calculator, tax);
+        const {
+            value: unitValue,
+            partialDrops,
+            estimatedDrops,
+        } = valueOfShopItem(itemHrid, itemDetailMap, calculator, tax);
         if (unitValue <= 0) continue;
 
         // One purchase can hand over several of something, and the shop says so
         const itemValue = unitValue * (line.outputCount || 1);
         const perToken = itemValue / tokenCost;
         if (!best || perToken > best.perToken) {
-            best = { perToken, itemHrid, tokenCost, itemValue, partialDrops };
+            best = { perToken, itemHrid, tokenCost, itemValue, partialDrops, estimatedDrops };
         }
     }
 
@@ -151,6 +159,7 @@ export function taskShopTokenPrice(itemHrid, calculator = null, tax = null) {
     return {
         price: (tokenCost * best.perToken) / (line.outputCount || 1),
         partial: best.partialDrops > 0,
+        estimatedDrops: best.estimatedDrops || 0,
         tokenCost,
     };
 }
