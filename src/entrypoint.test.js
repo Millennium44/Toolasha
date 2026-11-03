@@ -1243,6 +1243,13 @@ describe('the registry entries the entrypoint hands over', () => {
         expect(entry.liveStop).toBe(true);
     });
 
+    test('the catalyst check is live-stopped, so clearing its setting takes its press-holding listener off', () => {
+        const entry = registered.find((e) => e.key === 'alchemyCatalystCheck');
+
+        expect(entry, 'alchemyCatalystCheck is no longer registered').toBeTruthy();
+        expect(entry.liveStop).toBe(true);
+    });
+
     test('the undercut alerts are live-stopped, so clearing both of its consumers stops the sightings', () => {
         const entry = registered.find((e) => e.key === 'marketUndercutAlerts');
 

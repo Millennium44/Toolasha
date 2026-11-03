@@ -39,12 +39,12 @@ const TILE_CLASS = 'mwi-alchemy-catalyst-mark-tile';
 const STAR_CLASS = 'mwi-alchemy-catalyst-mark-star';
 
 /** The catalyst each choice slots, per tab (the calculator's own constants) */
-const TYPE_CATALYSTS = {
+export const TYPE_CATALYSTS = {
     coinify: '/items/catalyst_of_coinification',
     decompose: '/items/catalyst_of_decomposition',
     transmute: '/items/catalyst_of_transmutation',
 };
-const PRIME_CATALYST = '/items/prime_catalyst';
+export const PRIME_CATALYST = '/items/prime_catalyst';
 /** A difference smaller than this many coins an hour is a tie, not a winner */
 const TIE_EPSILON = 0.5;
 
@@ -77,7 +77,7 @@ const CSS = `
  * @param {HTMLElement} tile - An item tile
  * @returns {string} Item hrid, or ''
  */
-function iconHrid(tile) {
+export function iconHrid(tile) {
     const use = tile?.querySelector?.('use');
     const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
     const name = href.split('#')[1];
@@ -101,13 +101,111 @@ export function rankCatalystOptions(options) {
 }
 
 /** @param {number} value - Coins @returns {string} Signed short figure */
-function signed(value) {
+export function signed(value) {
     const rounded = Math.round(value);
     return `${rounded < 0 ? '-' : '+'}${formatKMB(Math.abs(rounded))}`;
 }
 
 /** What changes the figures through the character rather than the market */
 const CHARACTER_EVENTS = ['items_updated', 'consumables_updated', 'buffs_updated', 'skills_updated'];
+
+/**
+ * One catalyst choice's profit from the calculator, live gear and drinks with the slot forced.
+ * @param {string} action - The alchemy tab: coinify, decompose or transmute
+ * @param {{itemHrid: string, enhancementLevel: number}} selection - The panel's input
+ * @param {'none'|'typeSpecific'|'prime'} choice - The catalyst to force
+ * @returns {Object|null} The calculator's answer
+ */
+function calculateChoice(action, selection, choice) {
+    const { itemHrid, enhancementLevel } = selection;
+    if (action === 'coinify') {
+        return alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel, true, null, null, choice);
+    }
+    if (action === 'decompose') {
+        return alchemyProfitCalculator.calculateDecomposeProfit(itemHrid, enhancementLevel, true, null, null, choice);
+    }
+    return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true, null, choice, null, enhancementLevel);
+}
+
+/**
+ * Every catalyst choice's profit for an input, freshly from the calculator. Uncached: the mark keeps its own
+ * cache around this, and a caller acting on the figures at one moment asks at that moment.
+ *
+ * @param {string} action - The alchemy tab: coinify, decompose or transmute
+ * @param {{itemHrid: string, enhancementLevel: number}} selection - The panel's input
+ * @returns {{options: Array, skipped: string[], missingOutput: boolean, missingTea: boolean}} What could be
+ *   priced, the catalysts that could not, and whether any figure has an unpriced drop or tea
+ */
+export function computeCatalystAnswer(action, selection) {
+    const choices = [
+        { key: 'none', hrid: null },
+        { key: 'typeSpecific', hrid: TYPE_CATALYSTS[action] },
+        { key: 'prime', hrid: PRIME_CATALYST },
+    ];
+    const options = [];
+    const skipped = [];
+    let missingOutput = false;
+    let missingTea = false;
+    for (const choice of choices) {
+        let data = null;
+        try {
+            data = calculateChoice(action, selection, choice.key);
+        } catch (error) {
+            console.error('[AlchemyCatalystMark] Calculator failed:', error);
+        }
+        if (!data || !Number.isFinite(data.profitPerHour)) {
+            if (choice.hrid) skipped.push(choice.hrid);
+            continue;
+        }
+        if (data.unpricedOutputs?.length > 0) missingOutput = true;
+        if (data.hasMissingPrices) missingTea = true;
+        options.push({
+            ...choice,
+            profitPerHour: data.profitPerHour,
+            profitPerAction: data.profitPerAction,
+        });
+    }
+    return { options, skipped, missingOutput, missingTea };
+}
+
+/**
+ * Start the expected-value calculator if nothing has. Essence and crate outputs read as unpriced until it has
+ * run, and it runs only when some other setting started it. It shares one start between callers.
+ * @returns {Promise<void>}
+ */
+export async function requestExpectedValue() {
+    try {
+        await expectedValueCalculator.initialize?.();
+    } catch (error) {
+        console.error('[AlchemyCatalystMark] Expected value start failed:', error);
+    }
+}
+
+/**
+ * How many of a catalyst the player holds in the bag.
+ * @param {string} hrid - Catalyst item hrid
+ * @returns {number} The count; 0 also when the inventory has not loaded
+ */
+export function ownedCatalystCount(hrid) {
+    return (dataManager.getInventory?.() || [])
+        .filter(
+            (item) =>
+                item.itemHrid === hrid &&
+                !(item.enhancementLevel > 0) &&
+                (!item.itemLocationHrid || item.itemLocationHrid === '/item_locations/inventory')
+        )
+        .reduce((sum, item) => sum + (item.count || 0), 0);
+}
+
+/**
+ * A catalyst option's display name.
+ * @param {{hrid: string|null}} option - A priced option
+ * @returns {string} The item's name, or "no catalyst"
+ */
+export function catalystName(option) {
+    if (!option.hrid) return 'no catalyst';
+    return dataManager.getItemDetails(option.hrid)?.name || option.hrid;
+}
 
 class AlchemyCatalystMark {
     constructor() {
@@ -272,9 +370,8 @@ class AlchemyCatalystMark {
 
         const charId = dataManager.getCurrentCharacterId?.() || null;
         const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
-        // Essence and crate outputs read as unpriced until the expected-value calculator has run, and it runs
-        // only when some other setting started it: ask for it (it shares one start between callers)
-        if (!expectedValueCalculator.isInitialized) this.requestExpectedValue();
+        // Its 'expected_value_initialized' event redraws us
+        if (!expectedValueCalculator.isInitialized) requestExpectedValue();
         // Every input that moves a figure: the book version and the calculator's readiness included
         const key = [
             charId,
@@ -287,83 +384,19 @@ class AlchemyCatalystMark {
         ].join('|');
         if (this.cache?.key === key) return this.cache.answer;
 
-        const choices = [
-            { key: 'none', hrid: null },
-            { key: 'typeSpecific', hrid: TYPE_CATALYSTS[action] },
-            { key: 'prime', hrid: PRIME_CATALYST },
-        ];
-        const options = [];
-        const skipped = [];
-        let missingOutput = false;
-        let missingTea = false;
-        for (const choice of choices) {
-            let data = null;
-            try {
-                data = this.calculate(action, selection, choice.key);
-            } catch (error) {
-                console.error('[AlchemyCatalystMark] Calculator failed:', error);
-            }
-            if (!data || !Number.isFinite(data.profitPerHour)) {
-                if (choice.hrid) skipped.push(choice.hrid);
-                continue;
-            }
-            if (data.unpricedOutputs?.length > 0) missingOutput = true;
-            if (data.hasMissingPrices) missingTea = true;
-            options.push({
-                ...choice,
-                profitPerHour: data.profitPerHour,
-                profitPerAction: data.profitPerAction,
-            });
-        }
-
-        const answer = { options, skipped, missingOutput, missingTea };
+        const answer = computeCatalystAnswer(action, selection);
         // An answer with nothing in it is "not loaded yet", not a result: never hold it
-        if (options.length > 0) this.cache = { key, answer };
+        if (answer.options.length > 0) this.cache = { key, answer };
         return answer;
-    }
-
-    /** Start the expected-value calculator if nothing has; its 'expected_value_initialized' event redraws us */
-    async requestExpectedValue() {
-        try {
-            await expectedValueCalculator.initialize?.();
-        } catch (error) {
-            console.error('[AlchemyCatalystMark] Expected value start failed:', error);
-        }
-    }
-
-    calculate(action, selection, choice) {
-        const { itemHrid, enhancementLevel } = selection;
-        if (action === 'coinify') {
-            return alchemyProfitCalculator.calculateCoinifyProfit(itemHrid, enhancementLevel, true, null, null, choice);
-        }
-        if (action === 'decompose') {
-            return alchemyProfitCalculator.calculateDecomposeProfit(
-                itemHrid,
-                enhancementLevel,
-                true,
-                null,
-                null,
-                choice
-            );
-        }
-        return alchemyProfitCalculator.calculateTransmuteProfit(itemHrid, true, null, choice, null, enhancementLevel);
     }
 
     /** How many of a catalyst the player holds in the bag */
     ownedCount(hrid) {
-        return (dataManager.getInventory?.() || [])
-            .filter(
-                (item) =>
-                    item.itemHrid === hrid &&
-                    !(item.enhancementLevel > 0) &&
-                    (!item.itemLocationHrid || item.itemLocationHrid === '/item_locations/inventory')
-            )
-            .reduce((sum, item) => sum + (item.count || 0), 0);
+        return ownedCatalystCount(hrid);
     }
 
     nameOf(option) {
-        if (!option.hrid) return 'no catalyst';
-        return dataManager.getItemDetails(option.hrid)?.name || option.hrid;
+        return catalystName(option);
     }
 
     /** The lines the banner shows, as `[text, className]` pairs. Empty when there is nothing to say. */

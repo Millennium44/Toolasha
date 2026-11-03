@@ -593,6 +593,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'When you open the catalyst picker, adds a line at the top saying which catalyst earns the most per hour for the item and action you have selected (none, the type catalyst or Prime Catalyst), what it earns, and whether you own it, and puts a star on its tile. It only shows information: it never picks or fills the slot for you. Uses your pricing mode and the same profit figures as the Profitability section.',
             },
+            alchemyCatalystCheck: {
+                id: 'alchemyCatalystCheck',
+                label: 'Alchemy panel: Check the catalyst when you press Start or Queue',
+                type: 'checkbox',
+                default: false,
+                help: 'Off by default because it holds a button press. When you press an alchemy Start or Queue button without the most profitable catalyst selected, that press does nothing and a message says which catalyst is best and what your choice costs per hour; one more press goes ahead. It only speaks up when the best option earns at least 10K coins an hour more than your choice and at least 5% of the best figure. It stays quiet when the figures are not loaded or have an unpriced item, when options tie, and when this same setup is already running. Items in a protected category keep their own confirmation instead. Under the message, Skip until reload stops it until you reload or switch character, and Turn this check off clears this setting. It never picks a catalyst or starts anything for you. Uses your pricing mode and the same profit figures as the Profitability section.',
+            },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
                 label: 'Alchemy panel: Sort item picker by profit or XP',

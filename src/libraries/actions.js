@@ -48,6 +48,7 @@ import alchemyBestItems from '../features/alchemy/alchemy-best-items.js';
 import alchemyItemPins from '../features/alchemy/alchemy-item-pins.js';
 import alchemyItemSort from '../features/alchemy/alchemy-item-sort.js';
 import alchemyCatalystMark from '../features/alchemy/alchemy-catalyst-mark.js';
+import alchemyCatalystCheck from '../features/alchemy/alchemy-catalyst-check.js';
 import { describeAlchemyMenus } from '../features/alchemy/alchemy-item-selector.js';
 
 // Skilling optimizer
@@ -109,6 +110,7 @@ toolashaRoot.Actions = {
     alchemyItemPins,
     alchemyItemSort,
     alchemyCatalystMark,
+    alchemyCatalystCheck,
     teaRecommendation,
     inventoryCountDisplay,
     pinnedActionsPage,
