@@ -2289,6 +2289,92 @@ describe('settings change stamps, for the sync merge', () => {
     });
 });
 
+describe('the defaults map can be stored', () => {
+    const MAP = 'script_settingsMap_alice';
+    const SHARED = 'script_settingsMap_shared';
+
+    /** As IndexedDB does: a value it cannot clone fails the whole transaction */
+    const storeLikeIndexedDb = () => {
+        const passMany = storage.setMany.getMockImplementation();
+        const passOne = storage.setJSON.getMockImplementation();
+        storage.setMany.mockImplementation((entries, ...rest) => {
+            try {
+                structuredClone(entries);
+            } catch {
+                return Promise.resolve(false);
+            }
+            return passMany(entries, ...rest);
+        });
+        storage.setJSON.mockImplementation((key, value, ...rest) => {
+            try {
+                structuredClone(value);
+            } catch {
+                return Promise.resolve(false);
+            }
+            return passOne(key, value, ...rest);
+        });
+        return () => {
+            storage.setMany.mockImplementation(passMany);
+            storage.setJSON.mockImplementation(passOne);
+        };
+    };
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('nothing in it is something storage cannot clone', () => {
+        expect(() => structuredClone(settingsStorage.buildDefaults())).not.toThrow();
+    });
+
+    test('a list worked out when the panel draws is left out, and a fixed list stays', () => {
+        const defaults = settingsStorage.buildDefaults();
+        expect(defaults.combatSim_defaultLoadout.options).toBeUndefined();
+        expect(defaults.combatSim_defaultLoadout.value).toBe('');
+        const withOptions = Object.values(defaults).filter((entry) => Array.isArray(entry.options));
+        expect(withOptions.length).toBeGreaterThan(0);
+    });
+
+    test('Reset to defaults lands: the map, the account-wide settings and their stamps', async () => {
+        const restore = storeLikeIndexedDb();
+        try {
+            stored.set(`json:${SHARED}`, {
+                sync_gistId: { id: 'sync_gistId', type: 'text', value: 'kept-by-mistake' },
+            });
+            await settingsStorage.resetToDefaults();
+            const ok = await settingsStorage.saveSettings(
+                settingsStorage.buildDefaults(),
+                settingsStorage.SAVE_ALL_KEYS
+            );
+            expect(ok).toBe(true);
+            expect(stored.get(`json:${MAP}`).combatSim_defaultLoadout.value).toBe('');
+            expect(stored.get(`json:${SHARED}`).sync_token.value).toBe('');
+            expect(stored.get(`json:settings_changedAt_${MAP}`).combatSim_defaultLoadout.at).toBeGreaterThan(0);
+        } finally {
+            restore();
+        }
+    });
+
+    test('a save before settings load lands too', async () => {
+        const restore = storeLikeIndexedDb();
+        try {
+            expect(await settingsStorage.saveSettingsKeepingStored(settingsStorage.buildDefaults())).toBe(true);
+            expect(stored.has(`json:${MAP}`)).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test('a setting whose list is a function still reads its stored choice', async () => {
+        stored.set(`json:${MAP}`, { combatSim_defaultLoadout: { id: 'combatSim_defaultLoadout', value: 'Tank' } });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings.combatSim_defaultLoadout.value).toBe('Tank');
+    });
+});
+
 describe('every settings-map write lands with its stamps in one transaction', () => {
     const MAP = 'script_settingsMap_alice';
     const STAMPS = `settings_changedAt_${MAP}`;

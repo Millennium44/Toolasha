@@ -1312,7 +1312,10 @@ class SettingsStorage {
                     settings[settingId].value = settingDef.default ?? '';
                 }
 
-                if (settingDef.options) {
+                // This map gets stored: Reset to defaults and a save before settings load both write it. A
+                // function (a list worked out when the panel draws) cannot be stored, and one in the map
+                // fails the whole write, as `loadSettings` above already allows for.
+                if (settingDef.options && typeof settingDef.options !== 'function') {
                     settings[settingId].options = settingDef.options;
                 }
                 if (settingDef.min !== undefined) {
