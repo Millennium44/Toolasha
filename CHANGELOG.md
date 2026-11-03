@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The alchemy catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action. It only reads; nothing is clicked for you.
 - Refined cape item cards show their Transmute profit again, with a note saying how the capes were valued.
 - The Philosopher's Stone calculator now values sibling cape drops by the same rule, and marks a row as a floor when a drop has no price instead of counting it as 0.
 - Refined capes are now valued the same everywhere: their refinement stones plus the base cape by your Untradable capes setting, with no partial flag on Nothing and a flagged floor when Mirror has no price.

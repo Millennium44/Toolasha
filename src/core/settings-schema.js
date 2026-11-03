@@ -586,6 +586,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
+            alchemyCatalystMark: {
+                id: 'alchemyCatalystMark',
+                label: 'Alchemy panel: Mark the best catalyst in the catalyst picker',
+                type: 'checkbox',
+                default: true,
+                help: 'When you open the catalyst picker, adds a line at the top saying which catalyst earns the most per hour for the item and action you have selected (none, the type catalyst or Prime Catalyst), what it earns, and whether you own it, and puts a star on its tile. It only shows information: it never picks or fills the slot for you. Uses your pricing mode and the same profit figures as the Profitability section.',
+            },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
                 label: 'Alchemy panel: Sort item picker by profit or XP',
