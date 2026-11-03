@@ -258,6 +258,7 @@ beforeEach(() => {
     tradeLedgerStore._statesChain = null;
     tradeLedgerStore._writtenDays = new Map();
     tradeLedgerStore._repairStats = new Map();
+    tradeLedgerStore._pullCaps = null;
     archiveMock.rows = [];
     archiveMock.reads = 0;
     for (const fn of [
@@ -1018,13 +1019,21 @@ describe('fills recorded past what a finished listing filled are cut back', () =
         expect(quantities(6)).toEqual([5]);
     });
 
-    test('a day left with nothing is deleted', async () => {
+    test('a day left with nothing stays as an empty record, which every reader reads as no fills', async () => {
         seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
         LEDGER().set(LOG_KEY, [logRow(5, 10)]);
 
         await loadAndRepair();
 
-        expect(LEDGER().has(REC(T3))).toBe(false);
+        expect(LEDGER().get(REC(T3))).toEqual([]);
+        expect(quantities(5)).toEqual([5, 5]);
+        // A reload reads the empty day without complaint and writes nothing for it
+        tradeLedgerStore.records = [];
+        tradeLedgerStore.isLoaded = false;
+        await tradeLedgerStore.load();
+        await tradeLedgerStore._recordsChain;
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(LEDGER().get(REC(T3))).toEqual([]);
         expect(LEDGER().has(REC(T2))).toBe(true);
     });
 
@@ -1434,5 +1443,205 @@ describe('the repair count the sync pull report prints', () => {
         stats.cut = 99;
         stats.runs = 99;
         expect(tradeLedgerStore.repairStats()).toMatchObject({ charId: 'market123', runs: 1, cut: 1 });
+    });
+});
+
+/**
+ * The repair leaves no tombstone, so a gist that still holds the doubled rows hands them back on a pull. The pull
+ * folds a day record through the registration's `mergeForPull`; these run that real fold against a day the repair
+ * has just cut, and against the same day with the cut rows brought back.
+ */
+describe('a sync pull that only brings back rows the repair cuts reads as unchanged', () => {
+    const LOG_KEY = 'marketListingTimestamps_market123';
+    const T1 = DAY1 + 3600e3;
+    const T2 = DAY2 + 3600e3;
+    const T3 = DAY3 + 3600e3;
+    const logRow = (id, filledQuantity, status = 'filled') => ({
+        id,
+        timestamp: T1,
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        price: 100,
+        orderQuantity: filledQuantity,
+        filledQuantity,
+        isSell: true,
+        status,
+    });
+    const registration = (t) => mergeForKey('marketListings', REC(t));
+    /** The day record as storage holds it, the way the pull reads it */
+    const stored = (t) => structuredClone(LEDGER().get(REC(t)));
+    const pull = (t, incoming) => {
+        const local = stored(t);
+        return { local, result: registration(t).mergeForPull(local, incoming) };
+    };
+    const loadAndRepair = async () => {
+        dataManagerMock.characterData ||= {};
+        await tradeLedgerStore.load();
+        await tradeLedgerStore._recordsChain;
+    };
+    const listingsOf = (rows, id) => rows.filter((r) => r.listingId === id);
+
+    test('the registration folds a pull through the store and an upload through the plain union', () => {
+        expect(registration(T1).mergeForPull).not.toBe(registration(T1).merge);
+        expect(registration(T1).merge).toBe(mergeRecords);
+    });
+
+    test("doubled rows the gist still holds: the pulled day is this device's own copy, not a change", async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(5, T3 + 1), fill(5, T3 + 2), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const gist = [fill(5, T3), fill(5, T3 + 1), fill(5, T3 + 2), fill(6, T3 + 3)];
+
+        const { local, result } = pull(T3, gist);
+
+        // Identity, not equality: the pull judges "unchanged" on the very array it passed in
+        expect(local.map((r) => r.listingId)).toEqual([6]);
+        expect(result).toBe(local);
+        // Folding again, as the write-time refold does, gives the same answer
+        expect(registration(T3).mergeForPull(local, gist)).toBe(local);
+    });
+
+    test('the same pull through the plain union (an upload) does bring them back', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+
+        const folded = registration(T3).merge(stored(T3), [fill(5, T3), fill(6, T3 + 3)]);
+
+        expect(listingsOf(folded, 5)).toHaveLength(1);
+    });
+
+    test('a day the repair emptied stays a record, so the pull folds it instead of writing it back whole', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+
+        expect(LEDGER().get(REC(T3))).toEqual([]);
+        const { local, result } = pull(T3, [fill(5, T3)]);
+        expect(result).toBe(local);
+    });
+
+    test('a listing spanning two days is cut by the whole ledger, not by the day alone', async () => {
+        // Day 2 alone holds 10 of a 10-unit listing, so a day-only cut would keep both rows
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T2 + 1000)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        expect(stored(T2).map((r) => r.t)).toEqual([T2]);
+
+        const { local, result } = pull(T2, [fill(5, T2), fill(5, T2 + 1000)]);
+
+        expect(result).toBe(local);
+    });
+
+    test('a real new fill arriving with the doubled rows survives, and they still go', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const fresh = fill(7, T3 + 5000, { quantity: 2, coins: 190 });
+
+        const { local, result } = pull(T3, [fill(5, T3), fill(6, T3 + 3), fresh]);
+
+        expect(result).not.toBe(local);
+        expect(result.map((r) => [r.listingId, r.t])).toEqual([
+            [6, T3 + 3],
+            [7, T3 + 5000],
+        ]);
+    });
+
+    test('the trimmed row beside its untrimmed original is one row, and a pull of the original is unchanged', async () => {
+        const row = (t) => fill(5, t, { quantity: 4, coins: 380 });
+        seedSplit([row(T1), row(T2), row(T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        expect(stored(T3)).toEqual([expect.objectContaining({ trimmed: true, quantity: 2 })]);
+
+        const { local, result } = pull(T3, [row(T3)]);
+
+        expect(result).toBe(local);
+    });
+
+    test('a listing not known as ended is never cut: open on the book, or logged as expired', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(8, T1), fill(9, T1)]);
+        // Listing 9 is open on the book and has a log row that would otherwise cap it
+        LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(8, 5, 'expired'), logRow(9, 5)]);
+        dataManagerMock.listings = [{ id: 9, status: '/market_listing_status/active' }];
+        await loadAndRepair();
+
+        const incoming = [fill(5, T3), fill(8, T3 + 1), fill(9, T3 + 2), fill(9, T3 + 3)];
+        const { result } = pull(T3, incoming);
+
+        expect(listingsOf(result, 5)).toHaveLength(0);
+        expect(listingsOf(result, 8)).toHaveLength(1);
+        expect(listingsOf(result, 9)).toHaveLength(2);
+    });
+
+    test('before any repair has run the pull is the plain union, as it was', () => {
+        LEDGER().set(REC(T3), [fill(6, T3 + 3)]);
+        tradeLedgerStore.records = [fill(5, T1), fill(5, T2), fill(6, T3 + 3)];
+        tradeLedgerStore.isLoaded = true;
+
+        const { local, result } = pull(T3, [fill(5, T3), fill(6, T3 + 3)]);
+
+        expect(result).not.toBe(local);
+        expect(listingsOf(result, 5)).toHaveLength(1);
+    });
+
+    test("another character's caps, a ledger switched off, and a store still on the single key cut nothing", async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const incoming = [fill(5, T3), fill(6, T3 + 3)];
+        const doubled = (r) => listingsOf(r, 5).length;
+
+        expect(doubled(pull(T3, incoming).result)).toBe(0);
+
+        dataManagerMock.characterId = 'someoneElse';
+        expect(doubled(pull(T3, incoming).result)).toBe(1);
+        dataManagerMock.characterId = 'market123';
+
+        tradeLedgerStore._legacy = true;
+        expect(doubled(pull(T3, incoming).result)).toBe(1);
+        tradeLedgerStore._legacy = false;
+
+        tradeLedgerStore.isLoaded = false;
+        expect(doubled(pull(T3, incoming).result)).toBe(1);
+        tradeLedgerStore.isLoaded = true;
+
+        tradeLedgerStore.disable();
+        expect(doubled(pull(T3, incoming).result)).toBe(1);
+    });
+
+    test('a character switch forgets the caps', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        expect(tradeLedgerStore._pullCaps?.caps.get(5)).toBe(10);
+
+        dataManagerMock.characterId = 'other456';
+        await tradeLedgerStore.handleCharacterSwitch();
+
+        // Nothing of the departing character's caps is held for the arriving one
+        expect(tradeLedgerStore._pullCaps?.caps.has(5) ?? false).toBe(false);
+        expect(tradeLedgerStore._pullCaps?.charId ?? 'other456').toBe('other456');
+    });
+
+    test("a day whose rows differ only in order is this device's own copy", () => {
+        // The repair rewrites a day with its repaired listings last, so a stored day is not always in time order
+        const a = fill(8, T1 + 2000);
+        const b = fill(9, T1 + 1000);
+        LEDGER().set(REC(T1), [a, b]);
+
+        const { local, result } = pull(T1, [b, a]);
+
+        expect(result).toBe(local);
+    });
+
+    test('a pull of rows this device lacks is still a union', () => {
+        LEDGER().set(REC(T1), [fill(8, T1)]);
+
+        const { local, result } = pull(T1, [fill(8, T1), fill(9, T1 + 5)]);
+
+        expect(result).not.toBe(local);
+        expect(result.map((r) => r.listingId)).toEqual([8, 9]);
     });
 });

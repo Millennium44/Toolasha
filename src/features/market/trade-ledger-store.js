@@ -176,6 +176,33 @@ export function mergeRecords(base, fresh) {
 }
 
 /**
+ * A row as text with its keys sorted, so two rows holding the same fields compare equal whatever order they were
+ * written in.
+ * @param {Object} row - Fill record
+ * @returns {string} Canonical text
+ */
+function rowSignature(row) {
+    return JSON.stringify(
+        Object.keys(row || {})
+            .sort()
+            .map((key) => [key, row[key]])
+    );
+}
+
+/**
+ * Whether two day records hold the same rows, whatever order they list them in.
+ * @param {Array<Object>} a - One day record
+ * @param {Array<Object>} b - The other
+ * @returns {boolean} True when each holds exactly the other's rows
+ */
+function sameRows(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    const left = a.map(rowSignature).sort();
+    const right = b.map(rowSignature).sort();
+    return left.every((signature, index) => signature === right[index]);
+}
+
+/**
  * One listing's baseline from two copies of it.
  *
  * A listing only ever moves forward: its fill count grows and its end is final. So the copy that is further
@@ -337,10 +364,18 @@ registerSyncMerge({
     merge: mergeRecords,
     label: 'Trade ledger fills',
 });
+/*
+ * A pull folds a day record through the store's `_foldPulledDay`, not the plain union: the over-recorded repair
+ * cuts doubled fills on load and leaves no tombstone, so the union with a gist that still holds them brought the
+ * cut rows back on every pull, wrote the day, latched it and asked for a reload that cut them again. Uploads keep
+ * the plain union (`merge`): the gist is every device's copy, and this device's cut is not another device's to
+ * inherit.
+ */
 registerSyncMerge({
     store: LEDGER_STORE,
     prefix: `${RECORD_PREFIX}_`,
     merge: mergeRecords,
+    pull: (local, incoming) => tradeLedgerStore._foldPulledDay(local, incoming),
     label: 'Trade ledger fills (daily)',
 });
 registerSyncMerge({
@@ -410,6 +445,77 @@ class TradeLedgerStore {
          * @type {Map<string, {runs: number, cut: number}>}
          */
         this._repairStats = new Map();
+        /**
+         * What the last repair run knew about ended listings, for the sync pull fold: `{charId, caps}`, `caps`
+         * being listing id to final filled quantity, exactly as the repair derived it ({@link _endedFills}).
+         * A fold is synchronous and the caps come from an async read, so the pull uses the last ones held here.
+         * Only ever grows for one character (a listing that ended cannot fill more), and dropped on a switch or
+         * when the ledger is switched off; null until a repair has run, which makes the pull fold a plain union.
+         * @type {{charId: string, caps: Map<number, number>}|null}
+         */
+        this._pullCaps = null;
+    }
+
+    /**
+     * Remember the caps a repair run derived, for {@link _foldPulledDay}.
+     * @param {string} charId - The character the run began under
+     * @param {Map<number, number>} caps - Listing id to final filled quantity of an ended listing
+     * @private
+     */
+    _noteCaps(charId, caps) {
+        const held = this._pullCaps && this._pullCaps.charId === charId ? this._pullCaps.caps : new Map();
+        for (const [id, cap] of caps) {
+            if (!(held.get(id) >= cap)) held.set(id, cap);
+        }
+        this._pullCaps = { charId, caps: held };
+    }
+
+    /**
+     * The fold a sync pull applies to one day record: the union with the downloaded copy, less the rows the
+     * over-recorded repair would cut again.
+     *
+     * The repair leaves no tombstone, so a gist that still holds the doubled rows hands them back; folded
+     * plainly, that read as news on every pull. The union is run through the same repair here, with the caps
+     * the last repair run held (`_pullCaps`) and the rest of the ledger from memory as the other days' share of
+     * each listing, so a listing whose fills span two days is cut exactly as the whole-ledger repair would cut
+     * this day: earliest fills first, never below what the log says the listing filled. A real new fill in the
+     * same download, or a row of a listing not known as ended, is kept.
+     *
+     * Falls back to the plain union, as before, when the caps are not known yet, are another character's (or were
+     * dropped because the ledger was switched off), the ledger is not loaded or still the single key, or the
+     * rows span more than one day. A result holding
+     * exactly this device's rows (in any order) is this device's own array, so the pull reads it as unchanged.
+     * @param {Array<Object>} local - This device's day record
+     * @param {Array<Object>} incoming - The downloaded day record
+     * @returns {Array<Object>} The folded day record
+     */
+    _foldPulledDay(local, incoming) {
+        let result = mergeRecords(local, incoming);
+        try {
+            result = this._cutPulledDay(result);
+        } catch (error) {
+            console.error('[TradeLedger] Could not apply the repair to a pulled day; keeping the union:', error);
+        }
+        return Array.isArray(local) && sameRows(result, local) ? local : result;
+    }
+
+    /**
+     * One folded day's rows with the repair applied (see {@link _foldPulledDay}).
+     * @param {Array<Object>} rows - The union of the two copies of one day
+     * @returns {Array<Object>} `rows` itself when nothing is cut, else the day's rows after the cut
+     * @private
+     */
+    _cutPulledDay(rows) {
+        const held = this._pullCaps;
+        if (!held || held.caps.size === 0 || held.charId !== ledgerCharId()) return rows;
+        if (!this.isLoaded || this._legacy || rows.length === 0) return rows;
+        if (!rows.some((row) => held.caps.has(row.listingId))) return rows;
+        const day = bucketOf(rows[0]);
+        if (rows.some((row) => bucketOf(row) !== day)) return rows;
+        const others = this.records.filter((record) => bucketOf(record) !== day);
+        const { records, repairedIds } = repairOverRecorded([...others, ...rows], held.caps);
+        if (repairedIds.size === 0) return rows;
+        return records.filter((record) => bucketOf(record) === day);
     }
 
     /**
@@ -697,7 +803,8 @@ class TradeLedgerStore {
      * does not know as ended, and a listing already at or under its count is left byte for byte as it was.
      * Nothing is stored beyond the day records themselves, so there is no tombstone to sync: the cut is a pure
      * function of the rows and the log, and a pull that brings an old device's rows back is cut again by the
-     * next load. The rewrite replaces the repaired listings' rows inside the write's own transaction (so the
+     * next load, or by the pull's own fold when it lands ({@link _foldPulledDay}). A day left with nothing is
+     * kept as an empty record so that fold runs on it. The rewrite replaces the repaired listings' rows inside the write's own transaction (so the
      * removed rows do not come back through the union that the other writes use) and leaves every other row
      * of the day alone.
      *
@@ -730,6 +837,7 @@ class TradeLedgerStore {
                 const caps = await this._endedFills(charId, openIds);
                 // Stood down (a switch landed) or deferred (the archive could not be read): the repair did not run
                 if (!current() || caps === null) return 0;
+                this._noteCaps(charId, caps);
                 if (caps.size === 0) {
                     this._noteRepair(charId, 0);
                     return 0;
@@ -760,21 +868,20 @@ class TradeLedgerStore {
                     // Nothing stored and nothing to put: nothing to do
                     if (next.length === 0 && !probe.found) continue;
                     // Immediate and awaited: a debounced write still pending when the next save reads would let that
-                    // save fold the removed rows straight back in. Emptiness is judged inside the write's own
-                    // transaction, on what is stored when it lands: the key is deleted (the storage layer's fold
-                    // delete) only if nothing is left there, so a fill another tab stored after the read above
-                    // survives, and a day record that is gone is read as no fills, as before
+                    // save fold the removed rows straight back in. The fold runs inside the write's own transaction,
+                    // on what is stored when it lands, so a fill another tab stored after the read above survives.
+                    // A day left with nothing stays as an empty record rather than being deleted: a key that is
+                    // gone is one a pull writes back whole from a gist that still holds the cut rows (no fold runs
+                    // for a key this device lacks), where an empty record is folded like any other day and, with
+                    // nothing new in it, left alone. Every reader treats it as a day with no fills
                     await storage.set(key, next, LEDGER_STORE, true, {
-                        fold: (now, held) => {
-                            const merged =
-                                Array.isArray(now) && Array.isArray(held)
-                                    ? mergeRecords(
-                                          now.filter((record) => !mine(record)),
-                                          held
-                                      )
-                                    : held;
-                            return merged.length === 0 && storage.FOLD_DELETE ? storage.FOLD_DELETE : merged;
-                        },
+                        fold: (now, held) =>
+                            Array.isArray(now) && Array.isArray(held)
+                                ? mergeRecords(
+                                      now.filter((record) => !mine(record)),
+                                      held
+                                  )
+                                : held,
                     });
                 }
                 return repairedIds.size;
@@ -1212,6 +1319,7 @@ class TradeLedgerStore {
                 this.updateHandler = null;
             }
             this.isInitialized = false;
+            this._pullCaps = null;
         } catch (error) {
             console.error('[Trade Ledger] Disable failed part-way:', error);
         } finally {
@@ -1226,6 +1334,7 @@ class TradeLedgerStore {
         this.disable();
         this._generation += 1;
         this._writtenDays = new Map();
+        this._pullCaps = null;
         this.records = [];
         this.states = {};
         this.isLoaded = false;
