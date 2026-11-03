@@ -495,7 +495,10 @@ class TaskCraftingTrain {
         button.textContent = 'Merged crafting walk';
         button.style.marginLeft = '8px';
         button.addEventListener('click', () => this._openChooser());
-        header.appendChild(button);
+        // After the reroll walk's docked control when it is already here, so that sits first
+        const walk = header.querySelector('[data-toolasha-docked="true"]');
+        if (walk) walk.after(button);
+        else header.appendChild(button);
     }
 
     /**

@@ -526,6 +526,18 @@ describe('initialize', () => {
     });
 });
 
+describe('header order', () => {
+    test('the button goes after the reroll walk control when that is already docked', () => {
+        const header = document.createElement('div');
+        const walk = document.createElement('span');
+        walk.dataset.toolashaDocked = 'true';
+        header.appendChild(walk);
+        taskCraftingTrain._addButton(header);
+
+        expect(walk.nextElementSibling?.id).toBe('mwi-task-train-button');
+    });
+});
+
 describe('disable', () => {
     test('takes its header button and chooser panel off the page', () => {
         const header = document.createElement('div');

@@ -2277,9 +2277,59 @@ describe('toolbar docking', () => {
         expect(el.style.background).toBe('transparent');
         expect(el.style.padding).toBe('0px');
         expect(el.style.boxShadow).toBe('none');
-        for (const button of [mainBtn(), el.querySelector('.mwi-task-reroll-walk-sort')]) {
+        for (const button of [mainBtn(), el.querySelector('[class*="-gear"]')]) {
             expect(button.className).toContain('Button_button__1Fe9z Button_small__3fqC7');
         }
+    });
+
+    test('docked has no second Sort and no ✕, and the main button comes before the gear', async () => {
+        oneCard();
+        await walk.start();
+
+        const el = chipEl();
+        expect(el.querySelector('.mwi-task-reroll-walk-sort')).toBeNull();
+        expect(el.querySelector('.mwi-task-reroll-walk-stop')).toBeNull();
+        const gear = el.querySelector('[class*="-gear"]');
+        expect(mainBtn().compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    test('the reroll control sits before the Merged crafting walk button, whichever arrives first', async () => {
+        oneCard();
+        const merged = document.createElement('button');
+        merged.id = 'mwi-task-train-button';
+        toolbarOf().appendChild(merged);
+        await walk.start();
+        expect(chipEl().nextElementSibling).toBe(merged);
+    });
+
+    test('undocked keeps its own Sort and ✕, and its drawer has no Hide row', async () => {
+        settings.values.tasks_rerollWalkBarPosition = 'floating';
+        oneCard();
+        await walk.start();
+
+        expect(document.querySelector('.mwi-task-reroll-walk-sort')).toBeTruthy();
+        expect(document.querySelector('.mwi-task-reroll-walk-stop')).toBeTruthy();
+        document.querySelector('[class*="-gear"]').click();
+        expect(document.querySelector('.mwi-task-reroll-walk-hide')).toBeNull();
+    });
+
+    test('the drawer hides the walk when docked, in every state, and the header 🎲 brings it back', async () => {
+        oneCard();
+        await walk.start();
+        const gear = () => chipEl().querySelector('[class*="-gear"]');
+
+        gear().click();
+        document.querySelector('.mwi-task-reroll-walk-hide').click();
+        expect(chipEl()).toBeNull();
+        expect(walk.hidden).toBe(true);
+        walk.toggleWidget();
+        expect(chipEl()).not.toBeNull();
+
+        walk.state = 'done';
+        walk._render();
+        expect(gear().style.display).toBe('');
+        gear().click();
+        expect(document.querySelector('.mwi-task-reroll-walk-hide')).toBeTruthy();
     });
 
     test('the label is the action and its cost; the rest lives in the title', async () => {
@@ -2531,17 +2581,19 @@ describe('the walk help without a hover', () => {
         expect(infoPanel().style.position).toBe('absolute');
         expect(infoButton().className).toContain('Button_small__3fqC7');
         infoButton().click();
-        expect(infoPanel().textContent).toContain('Sort the board now');
+        expect(infoPanel().textContent).not.toContain('Sort the board now');
+        expect(infoPanel().textContent).toContain('Hide the walk');
     });
 });
 
 describe('the walk buttons on a touch screen', () => {
     const oneCard = () => board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
-    const buttons = () => [
-        document.querySelector('.mwi-task-reroll-walk-advance'),
-        document.querySelector('.mwi-task-reroll-walk-sort'),
-        document.querySelector('.mwi-task-reroll-walk-stop'),
-    ];
+    const buttons = (mode) =>
+        [
+            document.querySelector('.mwi-task-reroll-walk-advance'),
+            document.querySelector('.mwi-task-reroll-walk-sort'),
+            document.querySelector('.mwi-task-reroll-walk-stop'),
+        ].filter((button) => mode === 'floating' || button?.matches('.mwi-task-reroll-walk-advance'));
 
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -2553,7 +2605,7 @@ describe('the walk buttons on a touch screen', () => {
             settings.values.tasks_rerollWalkBarPosition = mode;
             oneCard();
             await walk.start();
-            for (const button of buttons()) expect(button.style.minHeight).toBe('32px');
+            for (const button of buttons(mode)) expect(button.style.minHeight).toBe('32px');
         });
 
         test(`a fine pointer leaves them as they were (${mode})`, async () => {
@@ -2561,7 +2613,7 @@ describe('the walk buttons on a touch screen', () => {
             settings.values.tasks_rerollWalkBarPosition = mode;
             oneCard();
             await walk.start();
-            for (const button of buttons()) expect(button.style.minHeight).toBe('');
+            for (const button of buttons(mode)) expect(button.style.minHeight).toBe('');
         });
     }
 });

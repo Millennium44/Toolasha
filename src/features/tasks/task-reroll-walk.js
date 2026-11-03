@@ -103,6 +103,8 @@ const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 /** The game's own small toolbar button, as the Merged crafting walk button wears it */
 const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
+/** The Merged crafting walk button's id (src/features/crafting-plan/task-crafting-train.js) */
+const MERGED_WALK_BUTTON_ID = 'mwi-task-train-button';
 
 /**
  * The walk's hover help, kept as text so a device with no hover can read it too: the info control
@@ -1932,7 +1934,9 @@ class TaskRerollWalk {
             closeClass: 'mwi-task-reroll-walk-stop',
         });
         widget.main.addEventListener('click', () => this._onMainClick());
-        widget.extras.appendChild(this._buildSortButton());
+        // Docked, the board's own Sort Tasks button is beside it and does the same forced sort; the
+        // walk's copy is for the floating panel, which has no such button.
+        if (!docked) widget.extras.appendChild(this._buildSortButton());
         widget.close.title = CLOSE_HELP;
         widget.close.addEventListener('click', () => this.stop());
         // After the shell's own toggle, so the drawer is rebuilt with whatever
@@ -2004,11 +2008,13 @@ class TaskRerollWalk {
 
         // The toolbar's own button look, as "Merged crafting walk" uses it
         const sort = widget.extras.querySelector('.mwi-task-reroll-walk-sort');
-        for (const button of [widget.main, widget.gear, widget.close, sort, widget.info?.button]) {
+        for (const button of [widget.main, widget.gear, sort, widget.info?.button]) {
             if (!button) continue;
             button.className = `${button.className} ${TOOLBAR_BUTTON_CLASS}`.trim();
             button.style.cssText = '';
         }
+        // No ✕ in the toolbar: the gear drawer's "Hide the walk" and the header 🎲 manage it there
+        widget.close.remove();
         // One line, shortened by the label rules; ellipsis is the narrow-pane safety
         widget.main.style.whiteSpace = 'nowrap';
         widget.main.style.minWidth = '0';
@@ -2029,7 +2035,10 @@ class TaskRerollWalk {
             drawer.padding = '6px 9px';
             drawer.marginTop = '4px';
         }
-        header.appendChild(widget.element);
+        // Before the Merged crafting walk button, which the task-crafting module keeps after this one
+        const merged = header.querySelector(`#${MERGED_WALK_BUTTON_ID}`);
+        if (merged) header.insertBefore(widget.element, merged);
+        else header.appendChild(widget.element);
     }
 
     /**
@@ -2160,6 +2169,13 @@ class TaskRerollWalk {
         const widget = this.widget;
         if (!widget || !widget.settingsOpen) return;
 
+        // Docked there is no ✕, so the drawer carries the way to put the walk away
+        const hideRow = this.widgetMode === 'toolbar' ? [this._buildHideRow()] : [];
+        if (this.state === 'done') {
+            widget.settings.replaceChildren(widgetDivider(), ...hideRow);
+            return;
+        }
+
         const cap = this._liveCapBlock();
         widget.settings.replaceChildren();
         widget.settings.append(
@@ -2194,8 +2210,25 @@ class TaskRerollWalk {
                 onChange: () => {
                     if (this.state === 'ready') this._replan();
                 },
-            })
+            }),
+            ...hideRow
         );
+    }
+
+    /**
+     * The docked bar's way to put the walk away, in place of the ✕ it does not have: the same stop the
+     * ✕ runs. The header 🎲 shows the walk again.
+     * @returns {HTMLElement}
+     * @private
+     */
+    _buildHideRow() {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `mwi-task-reroll-walk-hide ${TOOLBAR_BUTTON_CLASS}`;
+        button.textContent = 'Hide the walk';
+        button.title = `${CLOSE_HELP} The 🎲 in the task panel header shows it again.`;
+        button.addEventListener('click', () => this.stop());
+        return button;
     }
 
     /** @private */
@@ -2227,7 +2260,9 @@ class TaskRerollWalk {
         const done = this.state === 'done';
         const collapsed = done ? 'none' : '';
         if (widget.extras.style.display !== collapsed) widget.extras.style.display = collapsed;
-        if (widget.gear.style.display !== collapsed) widget.gear.style.display = collapsed;
+        // Docked, the gear stays through Done: its drawer is then the only way to hide the walk
+        const gearCollapsed = this.widgetMode === 'toolbar' ? '' : collapsed;
+        if (widget.gear.style.display !== gearCollapsed) widget.gear.style.display = gearCollapsed;
         if (done && widget.settingsOpen) widget.setSettingsOpen(false);
         this._renderInfo();
     }
@@ -2376,9 +2411,13 @@ class TaskRerollWalk {
         const info = this.widget?.info;
         if (!info) return;
         const done = this.state === 'done';
+        const docked = this.widgetMode === 'toolbar';
         const lines = [[null, this._mainHelp()]];
-        if (!done) lines.push(['↕ Sort', SORT_HELP]);
-        lines.push(['✕', CLOSE_HELP], ['🎲', TOGGLE_HELP]);
+        if (!done && !docked) lines.push(['↕ Sort', SORT_HELP]);
+        lines.push(docked ? ['⚙', `Settings, and Hide the walk. ${CLOSE_HELP}`] : ['✕', CLOSE_HELP], [
+            '🎲',
+            TOGGLE_HELP,
+        ]);
         if (!done) {
             lines.push(
                 ['Block rerolls at', this._capHelp(this._liveCapBlock())],

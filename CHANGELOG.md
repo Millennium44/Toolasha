@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.
 - Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
 - The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.
 - Guild trial estimates show a range until the rate starts falling, payout figures follow, Past weeks and Trial history can collapse, and trials now keep tier clear times so the estimate can be re-tested.
