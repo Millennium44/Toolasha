@@ -42,6 +42,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { normalizeTaskDamageMode } from './engine/task-damage-mode.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
@@ -183,10 +184,16 @@ import {
 
 const PANEL_ID = 'mwi-combat-sim-panel';
 const ACCENT = '#4a9eff';
-const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
-const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
-const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
+// The window follows the game's plain look: the frame, dividers and selected states are neutral and the
+// action buttons are the game's blue. ACCENT stays blue for figures, headings and the progress fill.
+const ACCENT_BORDER = GAME_COLORS.border;
+const ACCENT_BG = 'rgba(255, 255, 255, 0.06)';
+// Marks a chosen chip or a section's left rule, never a frame
 const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+const PROGRESS_FILL_START = 'rgba(74, 158, 255, 0.2)';
+/** The game's blue button as inline CSS (and the hover swap) for buttons written as HTML strings */
+const GAME_BTN_CSS = `background:${BUTTON_LOOK.primary.rest}; color:${GAME_COLORS.text}; border:none; border-radius:var(--radius-sm, 0.25rem); font-weight:600; cursor:pointer; font-family:inherit;`;
+const GAME_BTN_HOVER = `onmouseover="this.style.background='${BUTTON_LOOK.primary.hover}'" onmouseout="this.style.background='${BUTTON_LOOK.primary.rest}'"`;
 
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
@@ -3226,9 +3233,9 @@ class CombatSimUI {
             top: 60px;
             right: 60px;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: rgba(10, 10, 20, 0.97);
-            border: 2px solid ${ACCENT_BORDER};
-            border-radius: 10px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: min(600px, 92vw);
             height: min(600px, 80vh);
             min-width: min(400px, 92vw);
@@ -3238,9 +3245,9 @@ class CombatSimUI {
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
-            color: #e0e0e0;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -3251,15 +3258,13 @@ class CombatSimUI {
             align-items: center;
             padding: 10px 14px;
             cursor: grab;
-            background: ${ACCENT_BG};
             border-bottom: 1px solid ${ACCENT_BORDER};
-            border-radius: 8px 8px 0 0;
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT}; flex:1;">Combat Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${GAME_COLORS.text}; flex:1;">Combat Simulator</span>
             <button id="mwi-csim-close" style="
-                background:none; border:none; color:#aaa; font-size:22px;
+                background:none; border:none; color:${GAME_COLORS.text}; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">×</button>
         `;
         this._setupDrag(header);
@@ -3285,7 +3290,7 @@ class CombatSimUI {
             font-family: inherit;
             transition: all 0.1s;
             background: ${active ? ACCENT_BG : 'transparent'};
-            color: ${active ? ACCENT : '#888'};
+            color: ${active ? GAME_COLORS.text : GAME_COLORS.textDim};
             border-bottom: 2px solid ${active ? ACCENT : 'transparent'};
         `;
         tabBar.innerHTML = `
@@ -3328,14 +3333,9 @@ class CombatSimUI {
             <input id="mwi-csim-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" style="${inputStyle}">
             <button id="mwi-csim-run" style="
                 margin-left: auto;
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;">Simulate</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Simulate</button>
         `;
 
         // All Zones controls row
@@ -3479,7 +3479,7 @@ class CombatSimUI {
                     <div id="mwi-csim-progress-fill" style="
                         height:100%;
                         width:0%;
-                        background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT});
+                        background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT});
                         border-radius:3px;
                         transition:width 0.2s ease;"></div>
                     <span id="mwi-csim-progress-text" style="
@@ -3558,15 +3558,9 @@ class CombatSimUI {
                 border:1px solid #444; border-radius:4px;
                 padding:3px 6px; font-size:12px; text-align:center;">
             <button id="mwi-csim-seek-run" style="
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;
-                font-family: inherit;">Seek</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Seek</button>
             <button id="mwi-csim-seek-stop" style="
                 display:none;
                 background:rgba(244, 67, 54, 0.2);
@@ -3597,7 +3591,7 @@ class CombatSimUI {
         seekProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
-                    <div id="mwi-csim-seek-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
+                    <div id="mwi-csim-seek-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-csim-seek-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0%</span>
                 </div>
             </div>
@@ -3642,15 +3636,9 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab.">Hours</label>
             <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <button id="mwi-csim-upgrade-run" style="
-                background: ${ACCENT_BTN_BG};
-                color: ${ACCENT};
-                border: 1px solid ${ACCENT_BTN_BORDER};
-                border-radius: 6px;
+                ${GAME_BTN_CSS}
                 padding: 5px 14px;
-                font-size: 12px;
-                font-weight: 600;
-                cursor: pointer;
-                font-family: inherit;">Analyze</button>
+                font-size: 12px;" ${GAME_BTN_HOVER}>Analyze</button>
             <button id="mwi-csim-upgrade-stop" style="
                 display:none;
                 background:rgba(244, 67, 54, 0.2);
@@ -3709,7 +3697,7 @@ class CombatSimUI {
         upgradeProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
-                    <div id="mwi-csim-upgrade-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
+                    <div id="mwi-csim-upgrade-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-csim-upgrade-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0 / 0</span>
                 </div>
             </div>
@@ -5649,7 +5637,7 @@ class CombatSimUI {
                 <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
-                <button id="mwi-csim-bestiary-plan-btn" style="background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:#8ab4f8; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Plan</button>
+                <button id="mwi-csim-bestiary-plan-btn" style="${GAME_BTN_CSS} padding:2px 8px; font-size:11px;" ${GAME_BTN_HOVER}>Plan</button>
                 <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
                 ${
                     // A run-scope option for an ordinary sweep: it adds every
@@ -6740,9 +6728,11 @@ class CombatSimUI {
         const partyContent = this.panel.querySelector('#mwi-csim-party-content');
         const tabParty = this.panel.querySelector('#mwi-csim-tab-party');
 
-        const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${ACCENT}; border-bottom:2px solid ${ACCENT};`;
+        const activeStyle = `flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:${ACCENT_BG}; color:${GAME_COLORS.text}; border-bottom:2px solid ${ACCENT};`;
         const inactiveStyle =
-            'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:#888; border-bottom:2px solid transparent;';
+            'flex:1; padding:7px 0; text-align:center; font-size:12px; font-weight:600; cursor:pointer; border:none; font-family:inherit; transition:all 0.1s; background:transparent; color:' +
+            GAME_COLORS.textDim +
+            '; border-bottom:2px solid transparent;';
 
         configureContent.style.display = 'none';
         resultsContent.style.display = 'none';
@@ -7979,7 +7969,7 @@ class CombatSimUI {
             for (const { hrid, name } of playerInfo) {
                 const isActive = hrid === activeTab;
                 const tabStyle = isActive
-                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT}; font-weight:700;`
+                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT}; font-weight:700;`
                     : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
                 html += `<button data-tab="${hrid}" style="
                     ${tabStyle}

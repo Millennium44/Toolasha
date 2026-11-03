@@ -53,6 +53,7 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { clearRecord, clearedAtOf, mergeClearable } from '../../utils/cleared-record.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /** The game's roll-up entry in the skill list; its experience already contains every other skill's */
 const TOTAL_LEVEL_SKILL_HRID = '/skills/total_level';
@@ -158,6 +159,12 @@ const FIGHT_STALE_MS = 4000;
  * seconds, and only then goes into the long-term record.
  */
 const XP_GRACE_MS = 4000;
+
+// The panel's small controls: the game's quiet blue at rest, its primary blue when switched on
+const CHIP_BG = BUTTON_LOOK.quiet.rest;
+const CHIP_ON_BG = BUTTON_LOOK.primary.rest;
+// Inner cards sit on the frame as faint lifts with the divider line for an edge
+const CARD_BG = 'rgba(255, 255, 255, 0.04)';
 
 const OUTCOME_COLORS = {
     success: '#3ddc84',
@@ -1866,13 +1873,13 @@ class LabyrinthRoomLogs {
         panel.id = PANEL_ID;
         panel.style.cssText =
             'position:fixed; top:90px; right:14px; width:340px; max-height:60vh; display:none; flex-direction:column; ' +
-            'border:1px solid rgba(128,170,255,0.5); border-radius:8px; background:rgba(10,14,22,0.97); color:#f2f7ff; ' +
-            `box-shadow:0 10px 24px rgba(0,0,0,0.55); z-index:${config.Z_FLOATING_PANEL}; user-select:none;`;
+            `border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius}; background:${GAME_FRAME.background}; ` +
+            `color:${GAME_COLORS.text}; box-shadow:${GAME_FRAME.boxShadow}; z-index:${config.Z_FLOATING_PANEL}; user-select:none;`;
 
         const header = document.createElement('div');
         header.style.cssText =
             'display:flex; align-items:center; justify-content:space-between; gap:8px 10px; flex-wrap:wrap; ' +
-            'padding:8px 10px 6px; border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
+            `padding:8px 10px 6px; border-bottom:1px solid ${GAME_COLORS.border}; cursor:move;`;
 
         const tabs = document.createElement('div');
         tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
@@ -1890,13 +1897,21 @@ class LabyrinthRoomLogs {
 
         this.clearButton = document.createElement('button');
         this.clearButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.clearButton.addEventListener('click', () => this.onClearClicked());
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '×';
         closeBtn.style.cssText =
-            'width:18px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:13px; line-height:1; cursor:pointer;';
+            'width:18px; height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:13px; line-height:1; cursor:pointer;';
         closeBtn.addEventListener('click', () => {
             panel.style.display = 'none';
             this.syncTabButton();
@@ -1906,7 +1921,11 @@ class LabyrinthRoomLogs {
         this.exportButton.textContent = 'Export';
         this.exportButton.title = 'Copy the whole fight record as text, so it can be looked at somewhere else';
         this.exportButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
         // The export for public bug reports: the full record as JSON — raw
@@ -1918,7 +1937,11 @@ class LabyrinthRoomLogs {
             'Download the whole accuracy record as JSON with character names hashed and character ids ' +
             'stripped — use this one when attaching the record to a public bug report.';
         this.sanitizedButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.sanitizedButton.addEventListener('click', () => this.exportSanitized());
 
         this.recomputeButton = document.createElement('button');
@@ -1927,7 +1950,11 @@ class LabyrinthRoomLogs {
             'Throw away every cached clear-chance sim and simulate the rooms again. Use this after changing ' +
             'gear or a loadout — a plain equip does not always refresh a sim, so a cached result can be stale.';
         this.recomputeButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
 
         // A slow, timeout-heavy room (a hard combat tile) stops its sim on the
@@ -1956,7 +1983,11 @@ class LabyrinthRoomLogs {
             'build. Replay explains exclusions; a room needs three attempts before it is simulated at all, ' +
             'and five clean ones before the comparison states a verdict.';
         this.replayButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
 
         // Which cohorts that press spends its simulations on. Left alone, the
@@ -1968,7 +1999,11 @@ class LabyrinthRoomLogs {
             'Choose which recorded builds and rooms the next Replay compares. Left alone it picks the ones ' +
             'with the most fights.';
         this.cohortsButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            'height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.cohortsButton.addEventListener('click', () => this.onCohortsClicked());
 
         // Raw tick capture: the moment-to-moment feed behind a rate mismatch —
@@ -2046,8 +2081,8 @@ class LabyrinthRoomLogs {
                 'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; ' +
                 'padding:0 7px; white-space:nowrap; flex-shrink:0; ' +
                 (on
-                    ? 'background:rgba(77,151,255,0.95); color:#fff;'
-                    : 'background:rgba(255,255,255,0.1); color:#9ec4ff;');
+                    ? 'background:' + CHIP_ON_BG + '; color:' + GAME_COLORS.text + ';'
+                    : 'background:' + CHIP_BG + '; color:' + GAME_COLORS.text + ';');
         }
         if (!this.clearButton) return;
 
@@ -2058,9 +2093,7 @@ class LabyrinthRoomLogs {
         // The picker only means anything beside the replay it configures
         if (this.cohortsButton) {
             this.cohortsButton.style.display = accuracy ? '' : 'none';
-            this.cohortsButton.style.background = this.cohortPickerOpen
-                ? 'rgba(77,151,255,0.55)'
-                : 'rgba(255,255,255,0.12)';
+            this.cohortsButton.style.background = this.cohortPickerOpen ? CHIP_ON_BG : CHIP_BG;
         }
         if (this.sanitizedButton) this.sanitizedButton.style.display = accuracy ? '' : 'none';
         // The pool is read-only browsing; it is cleared from Accuracy's own
@@ -2070,7 +2103,7 @@ class LabyrinthRoomLogs {
         this.clearButton.title = accuracy
             ? 'Throw away every recorded fight and start the accuracy record over'
             : 'Clear the room log';
-        this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+        this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : CHIP_BG;
         this.paintUncapped();
         this.paintReplay();
         this.paintCapture();
@@ -2149,11 +2182,13 @@ class LabyrinthRoomLogs {
                 ? 'background:rgba(255,110,110,0.85); color:#fff;'
                 : holding
                   ? 'background:rgba(255,190,80,0.85); color:#222;'
-                  : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+                  : 'background:' + CHIP_BG + '; color:' + GAME_COLORS.text + ';');
         if (this.captureDiscardButton) {
             this.captureDiscardButton.style.cssText =
                 'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
-                'white-space:nowrap; flex-shrink:0; background:rgba(255,255,255,0.12); color:#ffb3b3; ' +
+                'white-space:nowrap; flex-shrink:0; background:' +
+                CHIP_BG +
+                '; color:#ffb3b3; ' +
                 (holding ? '' : 'display:none;');
         }
     }
@@ -2165,8 +2200,8 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
             'white-space:nowrap; flex-shrink:0; ' +
             (this.uncapped
-                ? 'background:rgba(77,151,255,0.95); color:#fff;'
-                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+                ? 'background:' + CHIP_ON_BG + '; color:' + GAME_COLORS.text + ';'
+                : 'background:' + CHIP_BG + '; color:' + GAME_COLORS.text + ';');
     }
 
     /**
@@ -2341,7 +2376,11 @@ class LabyrinthRoomLogs {
     renderCohortPicker() {
         const box = document.createElement('div');
         box.style.cssText =
-            'border:1px solid rgba(146,182,255,0.35); border-radius:6px; background:rgba(18,26,40,0.95); ' +
+            'border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:6px; background:' +
+            CARD_BG +
+            '; ' +
             'padding:7px 8px; margin-bottom:8px; font-size:11px; line-height:1.35;';
 
         const title = document.createElement('div');
@@ -2653,8 +2692,11 @@ class LabyrinthRoomLogs {
             'Download the whole recorded pool as JSON with this summary embedded. The file always carries ' +
             'every attempt, whatever the gear filter above shows.';
         save.style.cssText =
-            'margin-top:3px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
-            'color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'margin-top:3px; height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px;';
         save.addEventListener('click', () => {
             const wrote = labFightRecorder.downloadRecording({ poolSummary: groups, ...this.exportIdentity() });
             this.flashButton(save, wrote ? 'Saved ✓' : 'Nothing yet', 'Save pool');
@@ -2932,7 +2974,11 @@ class LabyrinthRoomLogs {
     renderReplayResult(result) {
         const box = document.createElement('div');
         box.style.cssText =
-            'border:1px solid rgba(146,182,255,0.35); border-radius:6px; background:rgba(18,26,40,0.95); ' +
+            'border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:6px; background:' +
+            CARD_BG +
+            '; ' +
             'padding:7px 8px; margin-bottom:8px; font-size:11px; line-height:1.35;';
 
         const title = document.createElement('div');
@@ -3075,8 +3121,12 @@ class LabyrinthRoomLogs {
         const save = document.createElement('button');
         save.textContent = 'Save comparison';
         save.style.cssText =
-            'margin-top:6px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
-            'color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'margin-top:6px; height:18px; border:0; border-radius:4px; background:' +
+            CHIP_BG +
+            '; ' +
+            'color:' +
+            GAME_COLORS.text +
+            '; font-size:10px; cursor:pointer; padding:0 6px;';
         save.title =
             'Download the recorded attempts together with this replay comparison — observed vs sim per rate, ' +
             'and the verdict — so the whole accuracy check can be handed over or kept';
@@ -3095,7 +3145,11 @@ class LabyrinthRoomLogs {
     renderSessionCard(session) {
         const card = document.createElement('div');
         card.style.cssText =
-            'border:1px solid rgba(146,182,255,0.25); border-radius:5px; background:rgba(22,31,45,0.92); padding:6px 7px; font-size:11px; line-height:1.3;';
+            'border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:5px; background:' +
+            CARD_BG +
+            '; padding:6px 7px; font-size:11px; line-height:1.3;';
 
         const header = document.createElement('div');
         header.style.cssText = 'display:flex; align-items:center; gap:6px; margin-bottom:3px; font-weight:700;';
@@ -3899,7 +3953,11 @@ class LabyrinthRoomLogs {
 
         const card = document.createElement('div');
         card.style.cssText =
-            'border:1px solid rgba(146,182,255,0.25); border-radius:5px; background:rgba(22,31,45,0.92); ' +
+            'border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:5px; background:' +
+            CARD_BG +
+            '; ' +
             'padding:6px 7px; font-size:11px; line-height:1.35; margin-left:10px;';
 
         const header = document.createElement('div');

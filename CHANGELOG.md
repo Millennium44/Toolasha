@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Refined cape item cards show their profit again (Transmute, plus Coinify and Decompose where the game allows them), with a note saying how the capes were valued.
 - The Philosopher's Stone calculator marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0, and prices a drop a shop converts.
 - Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. The upgrade advisor prices one you do not hold at its stones alone on Nothing, and says so; chests still leave them unpriced.
+- The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.
+- Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
+- The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.
+- The Combat Simulator, Lab Simulator, loadout editor pickers, Labyrinth log, Enhancement Tracker, XPH calculator and costs table now use the game's own plain frame, white titles and blue buttons.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.
 - Task Go keeps going to the planet while a card re-simulates, and for several tasks on one monster, instead of opening the game's default zone.
 - The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.

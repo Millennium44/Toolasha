@@ -73,6 +73,8 @@ import {
 } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { closePlayerMenu, playerMarkersHTML, playerRowColor, wirePlayerMenu } from '../../utils/player-menu.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
+
 import { resolveRosterColors } from '../../utils/player-colors.js';
 import { savedTrialGraphHTML, trialDpsGraphHTML, wireTrialDpsGraph } from './trial-dps-graph.js';
 import { flushTrialHistory } from './trial-history.js';
@@ -102,6 +104,13 @@ const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
 const GOOD = '#4ade80';
 const WARN = '#f0a830';
+
+/** The game's blue buttons, as inline CSS for the buttons that are written into HTML strings */
+const BUTTON_CSS =
+    'flex:1; cursor:pointer; padding:4px 0; border:none; border-radius:var(--radius-sm, 0.25rem); font-size:11px;' +
+    `font-weight:600; color:${GAME_COLORS.text};`;
+const PRIMARY_BUTTON_CSS = `${BUTTON_CSS} background:${BUTTON_LOOK.primary.rest};`;
+const QUIET_BUTTON_CSS = `${BUTTON_CSS} background:${BUTTON_LOOK.quiet.rest};`;
 
 /**
  * Bar color per damage type.
@@ -728,16 +737,16 @@ class GuildTrialScoreboard {
         container.className = PANEL_CLASS;
         container.style.cssText =
             'position:fixed; top:80px; right:24px; width:320px; z-index:9000;' +
-            'background:rgba(18,20,28,0.97); border:1px solid rgba(255,255,255,0.12); border-radius:8px;' +
-            'box-shadow:0 6px 24px rgba(0,0,0,0.45); font-size:12px; color:#e8ecf5;' +
+            `background:${GAME_FRAME.background}; border:${GAME_FRAME.border}; border-radius:${GAME_FRAME.borderRadius};` +
+            `box-shadow:${GAME_FRAME.boxShadow}; font-size:12px; color:${GAME_COLORS.text};` +
             'display:flex; flex-direction:column; max-height:70vh;';
 
         const header = document.createElement('div');
         header.className = `${PANEL_CLASS}__header`;
         header.style.cssText =
             'display:flex; align-items:center; justify-content:space-between; gap:8px;' +
-            'padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.08); cursor:move;';
-        header.innerHTML = `<span style="font-weight:700; color:${ACCENT};">Trial damage</span>`;
+            `padding:8px 10px; border-bottom:1px solid ${GAME_COLORS.border}; cursor:move;`;
+        header.innerHTML = `<span style="font-weight:700; color:${GAME_COLORS.text};">Trial damage</span>`;
 
         const close = document.createElement('button');
         close.textContent = '×';
@@ -751,9 +760,8 @@ class GuildTrialScoreboard {
             history.textContent = 'History';
             history.dataset.historyToggle = '';
             history.title = 'Saved trials: open a finished trial again, read-only.';
-            history.style.cssText =
-                `margin-left:auto; background:none; border:1px solid ${ACCENT}55; border-radius:3px; color:${ACCENT};` +
-                'font-size:10px; line-height:1.4; cursor:pointer; padding:0 6px;';
+            styleGameButton(history, 'quiet', true);
+            Object.assign(history.style, { marginLeft: 'auto', fontSize: '10px' });
             history.addEventListener('click', () => {
                 this.mode = this.mode === 'list' ? 'live' : 'list';
                 this.viewing = null;
@@ -953,8 +961,7 @@ class GuildTrialScoreboard {
         body.innerHTML =
             historyListHTML(index, { type: 'trial', ...historyUiState('trial') }) +
             `<div style="display:flex; gap:6px; margin-top:8px;">` +
-            `<button data-action="live" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-            `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+            `<button data-action="live" style="${PRIMARY_BUTTON_CSS}">` +
             'Back to live</button></div>';
 
         wireHistoryList(body, {
@@ -1508,23 +1515,19 @@ class GuildTrialScoreboard {
 
         const savedButtons =
             `<div style="display:flex; gap:6px; margin-top:8px;">` +
-            `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-            `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM}; font-size:11px;">` +
+            `<button data-action="copy" style="${QUIET_BUTTON_CSS}">` +
             'Copy stats</button>' +
-            `<button data-action="history" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-            `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+            `<button data-action="history" style="${PRIMARY_BUTTON_CSS}">` +
             'History</button></div>';
         const buttons = saved
             ? savedButtons
             : `<div style="display:flex; gap:6px; margin-top:8px;">` +
-              `<button data-action="copy" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-              `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM}; font-size:11px;">` +
+              `<button data-action="copy" style="${QUIET_BUTTON_CSS}">` +
               'Copy stats</button>' +
-              `<button data-action="report" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-              `border:1px solid ${ACCENT}66; background:transparent; color:${ACCENT}; font-size:11px;">` +
+              `<button data-action="report" style="${PRIMARY_BUTTON_CSS}">` +
               'Copy guild report</button>' +
-              `<button data-action="restart" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-              `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
+              // The warning tint stays: ending a trial early is not a routine press
+              `<button data-action="restart" style="${QUIET_BUTTON_CSS} color:${WARN};">` +
               'End &amp; start new</button></div>';
 
         return (

@@ -39,6 +39,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatLargeNumber, numberFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { spriteIcon, skillIcon, ROW_COLORS, shortDuration } from '../../utils/overlay-format.js';
@@ -60,8 +61,6 @@ export const PANEL_ID = 'lootLogPivot';
 
 /** One row per Labyrinth run instead of one total over every run */
 export const SPLIT_LABYRINTH_SETTING = 'lootLogPivotSplitLabyrinth';
-
-const ACCENT = '#8fd0a0';
 
 /** Nothing on the table moves unless a loot message lands, so the timer is slow */
 const REFRESH_MS = 15_000;
@@ -540,16 +539,8 @@ function drawToolbar(body, rowCount) {
         const exportBtn = document.createElement('button');
         exportBtn.textContent = 'Export CSV';
         exportBtn.title = 'Save the whole pivot table as a spreadsheet — one row per action, raw numbers.';
-        Object.assign(exportBtn.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            color: ROW_COLORS.dim,
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '11px',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-        });
+        styleGameButton(exportBtn, 'quiet', true);
+        exportBtn.style.whiteSpace = 'nowrap';
         exportBtn.addEventListener('click', () => {
             try {
                 const rows = buildPivotCsvRows(aggregatedViews());
@@ -635,13 +626,13 @@ export function draw(body) {
         Object.assign(th.style, {
             textAlign: 'left',
             padding: '4px 6px',
-            borderBottom: `1px solid ${ACCENT}55`,
+            borderBottom: `1px solid ${GAME_COLORS.border}`,
             color: ROW_COLORS.dim,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
             position: 'sticky',
             top: '0',
-            background: 'rgba(14, 16, 22, 0.97)',
+            background: GAME_COLORS.background,
         });
         th.addEventListener('click', () => sortBy(column.key));
         headRow.appendChild(th);
@@ -660,16 +651,8 @@ export function draw(body) {
         more.textContent = `Show ${Math.min(PAGE_SIZE, views.length - rowLimit)} more of ${numberFormatter(
             views.length
         )}`;
-        Object.assign(more.style, {
-            background: 'rgba(255, 255, 255, 0.06)',
-            color: ROW_COLORS.dim,
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '11px',
-            cursor: 'pointer',
-            flex: '0 0 auto',
-        });
+        styleGameButton(more, 'quiet', true);
+        more.style.flex = '0 0 auto';
         more.addEventListener('click', () => {
             rowLimit += PAGE_SIZE;
             lootLogPivotPanel.render();
@@ -687,7 +670,6 @@ export const lootLogPivotPanel = createPanel({
     id: PANEL_ID,
     title: '📊 Loot & XP Analytics',
     size: { width: 640, height: 480 },
-    accent: ACCENT,
     refreshMs: REFRESH_MS,
     draw,
 });
@@ -710,16 +692,8 @@ export function injectPivotButton(anchor) {
     button.className = 'mwi-loot-log-pivot-btn';
     button.textContent = '📊';
     button.title = 'Loot & XP Analytics — what every recorded action actually paid, per hour';
-    Object.assign(button.style, {
-        marginLeft: '8px',
-        background: 'none',
-        border: '1px solid rgba(255, 255, 255, 0.2)',
-        borderRadius: '4px',
-        cursor: 'pointer',
-        fontSize: '1em',
-        padding: '2px 8px',
-        lineHeight: '1.4',
-    });
+    styleGameButton(button, 'quiet', true);
+    Object.assign(button.style, { marginLeft: '8px', fontSize: '1em' });
     button.addEventListener('click', () => lootLogPivotPanel.toggle());
     refresh.insertAdjacentElement('afterend', button);
 }

@@ -25,6 +25,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -55,8 +56,6 @@ import {
     traceGapAccuracyPairing,
 } from './guild-trial-accuracy.js';
 import { loadTrialRecord, loadTrialStats } from './guild-trials-store.js';
-
-const ACCENT = '#b0d8ff';
 
 /** Ink per check status, so the checklist reads at a glance */
 const STATUS_COLOR = {
@@ -481,9 +480,7 @@ function controlButton(label, title, onClick) {
     const button = document.createElement('button');
     button.textContent = label;
     button.title = title;
-    button.style.cssText =
-        'background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); color: #e8ecf5; ' +
-        'border-radius: 5px; padding: 4px 8px; cursor: pointer; font-size: 12px;';
+    styleGameButton(button, 'quiet', true);
     button.addEventListener('click', onClick);
     return button;
 }
@@ -589,7 +586,7 @@ function drawTable(card, table) {
             textAlign: column.numeric ? 'right' : 'left',
             padding: '2px 5px',
             cursor: 'pointer',
-            color: active ? ACCENT : 'rgba(232, 236, 245, 0.6)',
+            color: active ? GAME_COLORS.text : 'rgba(232, 236, 245, 0.6)',
             whiteSpace: 'nowrap',
             borderBottom: '1px solid rgba(255,255,255,0.12)',
         });
@@ -637,7 +634,7 @@ function drawTable(card, table) {
                 textAlign: column.numeric ? 'right' : 'left',
                 padding: '3px 5px',
                 whiteSpace: 'nowrap',
-                color: ACCENT,
+                color: GAME_COLORS.text,
                 borderTop: '1px solid rgba(255,255,255,0.18)',
                 fontWeight: '600',
             });
@@ -782,7 +779,7 @@ function drawTrialAccuracy(card, entry) {
  * @param {HTMLElement} body - The panel body
  */
 function drawAccuracy(body) {
-    const card = panelCard(body, 'Attribution accuracy', ACCENT);
+    const card = panelCard(body, 'Attribution accuracy');
 
     card.appendChild(
         panelNote(
@@ -870,7 +867,7 @@ function drawAccuracy(body) {
 
 /** Draw the composition planner section */
 function drawPlanner(body) {
-    const card = panelCard(body, 'Roster composition', ACCENT);
+    const card = panelCard(body, 'Roster composition');
 
     if (!state.rosterSeeded && !state.rosterText) {
         const seeded = lastCycleParticipants(state.cycles);
@@ -942,7 +939,7 @@ function drawPlanner(body) {
         abilityDetailMap,
     });
 
-    card.appendChild(panelLine('Status', compositionStatusLine(lint), ACCENT, lint.coverage.line));
+    card.appendChild(panelLine('Status', compositionStatusLine(lint), GAME_COLORS.text, lint.coverage.line));
 
     for (const entry of lint.checks) {
         const line = panelLine(
@@ -976,12 +973,11 @@ export const guildTrialLedgerPanel = createPanel({
     id: 'guildTrialLedger',
     title: 'Trial Ledger',
     size: { width: 520, height: 520 },
-    accent: ACCENT,
     draw: (body) => {
         const guild = guildName();
         const table = buildLedgerTable();
 
-        const header = panelCard(body, guild || 'Guild trials', ACCENT);
+        const header = panelCard(body, guild || 'Guild trials');
         header.appendChild(
             panelLine(
                 'Observed',
@@ -1003,7 +999,7 @@ export const guildTrialLedgerPanel = createPanel({
         );
         drawControls(header, table);
 
-        const ledger = panelCard(body, `Attendance and contribution (${table.rows.length})`, ACCENT);
+        const ledger = panelCard(body, `Attendance and contribution (${table.rows.length})`);
         drawTable(ledger, table);
 
         // Between the table and the planner on purpose: the accuracy card is a

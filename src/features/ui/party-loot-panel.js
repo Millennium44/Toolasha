@@ -40,6 +40,7 @@ import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS, GLYPHS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
@@ -60,8 +61,6 @@ import {
 const ENTRY_KEY_HRIDS = new Set(Object.values(DUNGEON_CHEST_ENTRY_KEYS));
 /** Every chest-key hrid a dungeon chest (regular or refinement) implies */
 const CHEST_KEY_HRIDS = new Set(Object.values(DUNGEON_CHEST_CHEST_KEYS));
-
-const ACCENT = '#e0b978';
 
 /** Past this a drop list is a scrollbar rather than an answer */
 const MAX_ITEMS = 14;
@@ -583,8 +582,9 @@ function playerBreakdown(stats, banked) {
  * @param {Object} stats - From `calculatePlayerStats`
  */
 function drawPlayer(body, stats) {
-    const accent = stats.isCurrentPlayer ? ROW_COLORS.gold : ACCENT;
-    const card = panelCard(body, null, accent);
+    // The current player's name is the one highlight; the frame and the others stay plain
+    const nameColor = stats.isCurrentPlayer ? ROW_COLORS.gold : GAME_COLORS.text;
+    const card = panelCard(body, null);
 
     const nameKey = stats.name || 'You';
     const expanded = expandedNames.has(nameKey);
@@ -594,7 +594,7 @@ function drawPlayer(body, stats) {
         display: 'flex',
         alignItems: 'center',
         gap: '4px',
-        color: accent,
+        color: nameColor,
         fontWeight: 'bold',
         marginBottom: '3px',
         cursor: 'pointer',
@@ -774,16 +774,8 @@ function drawTopBar(body, party) {
         const copyBtn = document.createElement('button');
         copyBtn.textContent = '⧉';
         copyBtn.title = 'Copy this view as plain text — banked, daily rate and every drop, per player.';
-        Object.assign(copyBtn.style, {
-            marginLeft: 'auto',
-            background: 'rgba(255, 255, 255, 0.06)',
-            color: ROW_COLORS.dim,
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '11px',
-            cursor: 'pointer',
-        });
+        styleGameButton(copyBtn, 'quiet', true);
+        copyBtn.style.marginLeft = 'auto';
         copyBtn.addEventListener('click', () => {
             const label = picker.selectedOptions[0]?.textContent || 'Party Loot';
             const summary = buildSummaryText(party, label);
@@ -805,16 +797,8 @@ function drawTopBar(body, party) {
         const exportBtn = document.createElement('button');
         exportBtn.textContent = 'Export CSV';
         exportBtn.title = 'Save every archived run as a spreadsheet — one row per session, raw numbers.';
-        Object.assign(exportBtn.style, {
-            marginLeft: 'auto',
-            background: 'rgba(255, 255, 255, 0.06)',
-            color: ROW_COLORS.dim,
-            border: '1px solid rgba(255, 255, 255, 0.15)',
-            borderRadius: '4px',
-            padding: '2px 6px',
-            fontSize: '11px',
-            cursor: 'pointer',
-        });
+        styleGameButton(exportBtn, 'quiet', true);
+        exportBtn.style.marginLeft = 'auto';
         exportBtn.addEventListener('click', () => {
             try {
                 const rows = buildSessionHistoryRows(sessions);
@@ -886,7 +870,6 @@ export const partyLootPanel = createPanel({
     id: 'partyLoot',
     title: 'Party Loot',
     size: { width: 420, height: 520 },
-    accent: ACCENT,
     refreshMs: 5000,
     draw: (body) => {
         refreshSessions();
@@ -916,7 +899,7 @@ export const partyLootPanel = createPanel({
             );
             const perDay = party.reduce((sum, stats) => sum + stats.dailyProfit.value, 0);
 
-            const card = panelCard(body, `Party of ${party.length}`, ACCENT);
+            const card = panelCard(body, `Party of ${party.length}`);
             const line = document.createElement('div');
             Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
 

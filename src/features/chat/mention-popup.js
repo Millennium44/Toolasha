@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import { markAsProfileLink } from './chat-profile-link.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /** The copy button at rest — what a flash restores it to */
 const COPY_BUTTON_GLYPH = '⧉';
@@ -146,10 +147,10 @@ class MentionPopup {
             display: flex;
             flex-direction: column;
             max-height: calc(var(--toolasha-visual-viewport-height, 100vh) * 0.9);
-            background: rgba(0, 0, 0, 0.92);
-            border: 2px solid ${config.COLOR_ACCENT};
-            border-radius: 8px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
             user-select: none;
@@ -163,10 +164,8 @@ class MentionPopup {
             align-items: center;
             justify-content: space-between;
             padding: 10px 14px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid ${GAME_COLORS.border};
             cursor: grab;
-            border-radius: 6px 6px 0 0;
-            background: rgba(255,255,255,0.05);
             /* The whole point of the bound above is that the header stays on
                screen and at full size; the list below it is what gives. */
             flex-shrink: 0;
@@ -177,7 +176,7 @@ class MentionPopup {
         title.style.cssText = `
             font-size: 0.9rem;
             font-weight: 600;
-            color: ${config.COLOR_ACCENT};
+            color: ${GAME_COLORS.text};
         `;
         title.textContent = `Mentions — ${channelDisplayName}`;
 

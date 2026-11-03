@@ -56,6 +56,7 @@ import {
     buildFingerprint,
 } from './party-roster.js';
 import { tuneTemplate, clearTunerCache } from './party-template-tuner.js';
+import { BUTTON_LOOK, GAME_COLORS } from '../../utils/game-look.js';
 import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeammateName } from './party-templates.js';
 import {
     planSweep,
@@ -86,8 +87,7 @@ import {
 } from './party-finder.js';
 
 const ACCENT = '#4a9eff';
-const ACCENT_BTN_BG = 'rgba(74, 158, 255, 0.2)';
-const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
+const PROGRESS_FILL_START = 'rgba(74, 158, 255, 0.2)';
 const RED = '#f44336';
 const GREEN = '#4caf50';
 
@@ -103,7 +103,7 @@ const RENDER_THROTTLE_MS = 1000;
 
 const INPUT_STYLE =
     'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;';
-const BTN_STYLE = `background:${ACCENT_BTN_BG}; color:${ACCENT}; border:1px solid ${ACCENT_BTN_BORDER}; border-radius:4px; padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
+const BTN_STYLE = `background:${BUTTON_LOOK.primary.rest}; color:${GAME_COLORS.text}; border:none; border-radius:var(--radius-sm, 0.25rem); padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
 const SMALL_BTN_STYLE = `background:transparent; color:#aaa; border:1px solid #444; border-radius:3px; padding:1px 6px; font-size:11px; cursor:pointer; font-family:inherit;`;
 
 /**
@@ -544,7 +544,7 @@ export class PartyFinderTab {
                 <div data-pf="confirm" style="display:none; margin-top:6px; padding:6px; border:1px solid rgba(255,152,0,0.5); border-radius:4px; font-size:12px; color:#ffb74d;"></div>
                 <div data-pf="progress" style="display:none; margin-top:6px;">
                     <div style="background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
-                        <div data-pf="progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); transition:width 0.2s ease;"></div>
+                        <div data-pf="progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); transition:width 0.2s ease;"></div>
                         <span data-pf="progress-text" style="position:absolute; inset:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;"></span>
                     </div>
                 </div>`

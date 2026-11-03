@@ -47,6 +47,7 @@ import { isFromActiveSocket, isLabyrinthFightActive } from '../combat/labyrinth-
 import webSocketHook from '../../core/websocket.js';
 import { seatFromBattle, seatFromTick, guessContradicted, rosterHp } from './own-seat.js';
 import { attributeIncoming, newTakenState, seedTakenState, resolveName } from '../../utils/damage-taken.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 /** Setting that gates the whole module */
 export const SETTING = 'combatDeathRecap';
@@ -575,10 +576,8 @@ function renderRecap(recap) {
         maxHeight: '80vh',
         overflowY: 'auto',
         zIndex: '1195',
-        background: 'rgba(20, 14, 14, 0.98)',
-        color: '#e6d6d6',
-        border: '1px solid rgba(255, 82, 82, 0.8)',
-        borderRadius: '8px',
+        ...GAME_FRAME,
+        color: GAME_COLORS.text,
         padding: '12px',
         fontSize: '13px',
         lineHeight: '1.4',
@@ -611,6 +610,8 @@ function renderRecap(recap) {
             button.type = 'button';
             button.textContent = label;
             button.disabled = !target;
+            styleGameButton(button, 'quiet', true);
+            if (!target) Object.assign(button.style, { cursor: 'default', opacity: '0.5' });
             if (target) button.addEventListener('click', () => openRecap(target.id));
             nav.appendChild(button);
         };
@@ -643,6 +644,7 @@ function renderRecap(recap) {
     const close = document.createElement('button');
     close.type = 'button';
     close.textContent = 'Close';
+    styleGameButton(close, 'quiet', true);
     close.style.marginTop = '8px';
     close.addEventListener('click', () => {
         closeModal();

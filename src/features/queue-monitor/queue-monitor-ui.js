@@ -13,14 +13,11 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import queueSnapshot from './queue-snapshot.js';
 import { queueTimeLeft } from './queue-projection.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const PANEL_ID = 'toolasha-queue-monitor';
 const UPDATE_INTERVAL = 30_000; // 30 seconds
 const STALE_THRESHOLD = 24 * 60 * 60 * 1000; // 24 hours
-
-const ACCENT = '#4a9eff';
-const ACCENT_BORDER = 'rgba(74, 158, 255, 0.5)';
-const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
 
 class QueueMonitorUI {
     constructor() {
@@ -135,15 +132,15 @@ class QueueMonitorUI {
             bottom: 20px;
             right: 20px;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: rgba(10, 10, 20, 0.95);
-            border: 1px solid ${ACCENT_BORDER};
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             min-width: 220px;
             max-width: 320px;
             font-family: 'Segoe UI', sans-serif;
-            color: #e0e0e0;
+            color: ${GAME_COLORS.text};
             font-size: 12px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
             display: flex;
             flex-direction: column;
         `;
@@ -156,13 +153,11 @@ class QueueMonitorUI {
             align-items: center;
             padding: 6px 10px;
             cursor: grab;
-            background: ${ACCENT_BG};
-            border-bottom: 1px solid ${ACCENT_BORDER};
-            border-radius: 7px 7px 0 0;
+            border-bottom: 1px solid ${GAME_COLORS.border};
             user-select: none;
         `;
         header.innerHTML = `
-            <span style="font-weight:600; font-size:12px; color:${ACCENT};">Queue Monitor</span>
+            <span style="font-weight:600; font-size:12px; color:${GAME_COLORS.text};">Queue Monitor</span>
             <button id="toolasha-qm-toggle" style="
                 background:none; border:none; color:#aaa; font-size:16px;
                 cursor:pointer; padding:0; line-height:1;">${this.collapsed ? '+' : '−'}</button>

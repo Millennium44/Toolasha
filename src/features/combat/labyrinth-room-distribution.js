@@ -23,7 +23,6 @@ import { labyrinthGridSize } from './labyrinth-formulas.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 
 const PANEL_ID = 'labyrinth-room-distribution';
-const ACCENT = '#8fb4ff';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** Bin widths offered in the panel, in percentage points */
@@ -313,7 +312,7 @@ function draw(body) {
     controls.append(label, select);
     body.appendChild(controls);
 
-    const card = panelCard(body, `Floor ${summary.floor} clear chance`, ACCENT);
+    const card = panelCard(body, `Floor ${summary.floor} clear chance`);
     if (summary.judged === 0) {
         card.appendChild(
             panelNote(
@@ -329,7 +328,7 @@ function draw(body) {
         card.appendChild(panelLine('Room levels', `Lv.${summary.minLevel}-${summary.maxLevel}`));
     }
 
-    const counts = panelCard(body, 'Rooms', ACCENT);
+    const counts = panelCard(body, 'Rooms');
     counts.appendChild(panelLine('Judged', String(summary.judged)));
     if (summary.pending) {
         counts.appendChild(
@@ -364,7 +363,6 @@ export function toggleRoomDistribution(getFloor) {
             id: PANEL_ID,
             title: 'Labyrinth win-rate distribution',
             size: { width: 340, height: 380 },
-            accent: ACCENT,
             draw,
         });
     }

@@ -38,6 +38,7 @@ import {
     isUntradableCape,
 } from '../../utils/untradable-cape.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
@@ -311,24 +312,8 @@ class PhiloCalculator {
             const button = document.createElement('button');
             button.className = 'mwi-philo-calc-button';
             button.textContent = 'Philo Gamba';
-            button.style.cssText = `
-                margin: 10px;
-                padding: 8px 16px;
-                background: #4a90e2;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-                font-size: 14px;
-            `;
-
-            button.addEventListener('mouseenter', () => {
-                button.style.background = '#357abd';
-            });
-
-            button.addEventListener('mouseleave', () => {
-                button.style.background = '#4a90e2';
-            });
+            styleGameButton(button, 'primary');
+            button.style.margin = '10px';
 
             button.addEventListener('click', () => {
                 this.openModal();
@@ -1269,9 +1254,10 @@ class PhiloCalculator {
 
         const dialog = document.createElement('div');
         dialog.style.cssText = `
-            background: #2a2a2a;
-            color: #ffffff;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            color: ${GAME_COLORS.text};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: 95%;
             /* The table carries fifteen columns; 1200px clipped the last two
                (Time/Philo and Profit/Hr) on a wide screen while leaving the
@@ -1282,7 +1268,7 @@ class PhiloCalculator {
             max-height: 90vh;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -1292,7 +1278,7 @@ class PhiloCalculator {
             justify-content: space-between;
             align-items: center;
             padding: 16px 20px;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid ${GAME_COLORS.border};
         `;
         header.innerHTML = `
             <span style="font-size: 18px; font-weight: bold;">Philosopher's Stone Calculator</span>
@@ -1582,21 +1568,7 @@ class PhiloCalculator {
         // Refresh prices button
         const refreshBtn = document.createElement('button');
         refreshBtn.textContent = 'Refresh Prices';
-        refreshBtn.style.cssText = `
-            padding: 4px 12px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-        `;
-        refreshBtn.addEventListener('mouseenter', () => {
-            refreshBtn.style.background = '#357abd';
-        });
-        refreshBtn.addEventListener('mouseleave', () => {
-            refreshBtn.style.background = '#4a90e2';
-        });
+        styleGameButton(refreshBtn, 'primary', true);
         refreshBtn.addEventListener('click', async () => {
             refreshBtn.disabled = true;
             refreshBtn.textContent = 'Refreshing...';
@@ -1620,21 +1592,7 @@ class PhiloCalculator {
         const copyBtn = document.createElement('button');
         copyBtn.textContent = 'Copy Table';
         copyBtn.title = 'Copy the visible rows as tab-separated text.';
-        copyBtn.style.cssText = `
-            padding: 4px 12px;
-            background: #4a90e2;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-        `;
-        copyBtn.addEventListener('mouseenter', () => {
-            copyBtn.style.background = '#357abd';
-        });
-        copyBtn.addEventListener('mouseleave', () => {
-            copyBtn.style.background = '#4a90e2';
-        });
+        styleGameButton(copyBtn, 'primary', true);
         copyBtn.addEventListener('click', async () => {
             const original = copyBtn.textContent;
             await this.copyTableAsText();
@@ -1823,7 +1781,7 @@ class PhiloCalculator {
             padding: 2px 4px;
             background: #1a1a1a;
             color: #fff;
-            border: 1px solid #4a90e2;
+            border: 1px solid ${GAME_COLORS.text};
             border-radius: 3px;
             font-size: 12px;
             text-align: right;

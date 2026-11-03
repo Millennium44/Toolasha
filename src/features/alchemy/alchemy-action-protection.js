@@ -17,6 +17,7 @@ import { parseItemHash } from '../../utils/item-hash.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { readAlchemyTabType } from './alchemy-tabs.js';
 
 const STORAGE_KEY_PREFIX = 'alchemyProtectedCategories';
@@ -581,33 +582,33 @@ class AlchemyActionProtection {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #1e1e2e;
-            border: 2px solid #555;
-            border-radius: 8px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             padding: 20px;
             z-index: ${PANEL_Z_CAP + 2};
             min-width: 340px;
             max-width: 500px;
             max-height: 90vh;
             overflow-y: auto;
-            color: #ccc;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
         `;
 
         const header = document.createElement('div');
         header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;';
-        header.innerHTML = `<h3 style="margin:0; font-size:16px; color:#eee;">Alchemy Action Protection</h3>`;
+        header.innerHTML = `<h3 style="margin:0; font-size:16px; color:${GAME_COLORS.text};">Alchemy Action Protection</h3>`;
 
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '\u2715';
-        closeBtn.style.cssText =
-            'background:#a33; color:#fff; border:none; cursor:pointer; font-size:16px; padding:2px 8px; border-radius:4px;';
+        styleGameButton(closeBtn, 'icon', true);
         closeBtn.addEventListener('click', () => this._closeConfigPopup());
         header.appendChild(closeBtn);
         popup.appendChild(header);
 
         const desc = document.createElement('p');
-        desc.style.cssText = 'color:#999; margin:0 0 10px 0; font-size:12px;';
+        desc.style.cssText = `color:${GAME_COLORS.textDim}; margin:0 0 10px 0; font-size:12px;`;
         desc.textContent =
             'Select which item categories to protect from each alchemy action. Protected items require a 3-second confirmation before the action proceeds.';
         popup.appendChild(desc);
@@ -623,7 +624,7 @@ class AlchemyActionProtection {
             section.style.cssText = 'margin-bottom: 10px;';
 
             const typeHeader = document.createElement('div');
-            typeHeader.style.cssText = 'font-weight:bold; margin-bottom:6px; text-transform:capitalize; color:#ddd;';
+            typeHeader.style.cssText = `font-weight:bold; margin-bottom:6px; text-transform:capitalize; color:${GAME_COLORS.text};`;
             typeHeader.textContent = type;
             section.appendChild(typeHeader);
 

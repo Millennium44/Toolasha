@@ -29,6 +29,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 /** Storage key the panel's user-dragged size is remembered under. */
 const GEOMETRY_KEY = 'enhancementTrackerPanel';
@@ -46,18 +47,19 @@ const DEFAULT_SIZE = { width: 350, height: 200 };
  */
 const EXPANDED_CONTENT_MAX_HEIGHT = '3000px';
 
-// UI Style Constants (matching Ultimate Enhancement Tracker)
+// UI Style Constants: the game's plain look. `accent` marks the live row, status and blessed counts;
+// good/bad stay green/red and gold stays on costs.
 const STYLE = {
     colors: {
-        primary: '#00ffe7',
-        background: 'rgba(5, 5, 15, 0.95)',
-        border: 'rgba(0, 255, 234, 0.4)',
-        textPrimary: '#e0f7ff',
-        textSecondary: '#9b9bff',
-        accent: '#ff00d4',
-        danger: '#ff0055',
-        success: '#00ff99',
-        headerBg: 'rgba(15, 5, 35, 0.7)',
+        primary: GAME_COLORS.frame,
+        background: GAME_COLORS.background,
+        border: GAME_COLORS.border,
+        textPrimary: GAME_COLORS.text,
+        textSecondary: GAME_COLORS.textDim,
+        accent: '#9ec4ff',
+        danger: GAME_COLORS.bad,
+        success: GAME_COLORS.good,
+        headerBg: 'transparent',
         gold: '#FFD700',
     },
     borderRadius: {
@@ -90,7 +92,7 @@ const compactHeaderStyle = `
 
 const compactCellStyle = `
     padding: 3px 6px;
-    border: 1px solid rgba(0, 255, 234, 0.2);
+    border: 1px solid ${GAME_COLORS.border};
     color: ${STYLE.colors.textPrimary};
 `;
 
@@ -486,15 +488,14 @@ class EnhancementUI {
             zIndex: String(config.Z_FLOATING_PANEL),
             fontSize: '14px',
             padding: '0',
-            borderRadius: STYLE.borderRadius.medium,
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+            borderRadius: GAME_FRAME.borderRadius,
+            boxShadow: GAME_FRAME.boxShadow,
             overflow: 'hidden',
             // Clamped so the first open on a phone is not wider than the screen
             width: `min(${DEFAULT_SIZE.width}px, 92vw)`,
             minHeight: 'auto',
-            background: 'rgba(25, 0, 35, 0.92)',
-            backdropFilter: 'blur(12px)',
-            border: `1px solid ${STYLE.colors.primary}`,
+            background: GAME_FRAME.background,
+            border: GAME_FRAME.border,
             color: STYLE.colors.textPrimary,
             display: 'flex',
             flexDirection: 'column',
@@ -665,7 +666,7 @@ class EnhancementUI {
 
         button.addEventListener('mouseover', () => {
             button.style.color = STYLE.colors.accent;
-            button.style.background = 'rgba(255, 0, 212, 0.1)';
+            button.style.background = 'rgba(255, 255, 255, 0.1)';
         });
         button.addEventListener('mouseout', () => {
             button.style.color = STYLE.colors.textPrimary;
@@ -703,7 +704,7 @@ class EnhancementUI {
 
         button.addEventListener('mouseover', () => {
             button.style.color = STYLE.colors.accent;
-            button.style.background = 'rgba(255, 0, 212, 0.1)';
+            button.style.background = 'rgba(255, 255, 255, 0.1)';
         });
         button.addEventListener('mouseout', () => {
             button.style.color = STYLE.colors.textPrimary;
@@ -756,7 +757,7 @@ class EnhancementUI {
 
         button.addEventListener('mouseover', () => {
             button.style.color = STYLE.colors.danger;
-            button.style.background = 'rgba(255, 0, 0, 0.1)';
+            button.style.background = 'rgba(248, 113, 113, 0.15)';
         });
         button.addEventListener('mouseout', () => {
             button.style.color = STYLE.colors.textPrimary;
@@ -793,7 +794,7 @@ class EnhancementUI {
 
         button.addEventListener('mouseover', () => {
             button.style.color = STYLE.colors.accent;
-            button.style.background = 'rgba(255, 0, 212, 0.1)';
+            button.style.background = 'rgba(255, 255, 255, 0.1)';
         });
         button.addEventListener('mouseout', () => {
             button.style.color = STYLE.colors.textPrimary;
@@ -830,7 +831,7 @@ class EnhancementUI {
         button.addEventListener('mouseover', () => {
             if (this.mergeMode) return;
             button.style.color = STYLE.colors.accent;
-            button.style.background = 'rgba(255, 0, 212, 0.1)';
+            button.style.background = 'rgba(255, 255, 255, 0.1)';
         });
         button.addEventListener('mouseout', () => {
             this.styleMergeButton(button);
@@ -852,7 +853,7 @@ class EnhancementUI {
         if (!button) return;
         if (this.mergeMode) {
             button.style.color = STYLE.colors.accent;
-            button.style.background = 'rgba(255, 0, 212, 0.18)';
+            button.style.background = 'rgba(255, 255, 255, 0.16)';
         } else {
             button.style.color = STYLE.colors.textPrimary;
             button.style.background = 'none';
@@ -1798,8 +1799,7 @@ class EnhancementUI {
 
             const rowStyle = isCurrent
                 ? `
-                background: linear-gradient(90deg, rgba(126, 87, 194, 0.25), rgba(0, 242, 255, 0.1));
-                box-shadow: 0 0 12px rgba(126, 87, 194, 0.5), inset 0 0 6px rgba(0, 242, 255, 0.3);
+                background: rgba(255, 255, 255, 0.06);
                 border-left: 3px solid ${STYLE.colors.accent};
                 font-weight: bold;
             `
@@ -1876,7 +1876,7 @@ class EnhancementUI {
         // Material costs
         if (hasMaterials) {
             html +=
-                '<div style="margin-bottom: 8px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">';
+                '<div style="margin-bottom: 8px; padding: 5px; background: rgba(255, 255, 255, 0.04); border-radius: 4px;">';
             html +=
                 '<div style="font-weight: bold; margin-bottom: 3px; color: ${STYLE.colors.textSecondary};">Materials:</div>';
 
@@ -1898,7 +1898,7 @@ class EnhancementUI {
         // Coin costs
         if (hasCoins) {
             html += `
-                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(255, 255, 255, 0.04); border-radius: 4px;">
                     <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">Coins (${session.coinCount || 0}×):</span>
                     <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.coinCost)}</span>
                 </div>
@@ -1912,7 +1912,7 @@ class EnhancementUI {
                 const protectionItemName = hrid ? gameData?.itemDetailMap?.[hrid]?.name || 'Protection' : 'Protection';
 
                 html += `
-                <div class="enh-protection-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                <div class="enh-protection-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(255, 255, 255, 0.04); border-radius: 4px;">
                     <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${entry.count || 0}×):</span>
                     <span style="color: ${STYLE.colors.gold};">${this.formatNumber(entry.totalCost || 0)}</span>
                 </div>
@@ -1925,7 +1925,7 @@ class EnhancementUI {
             const mirrorName = gameData?.itemDetailMap?.[PHILOSOPHERS_MIRROR_HRID]?.name || "Philosopher's Mirror";
 
             html += `
-                <div class="enh-mirror-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                <div class="enh-mirror-row" style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(255, 255, 255, 0.04); border-radius: 4px;">
                     <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${mirrorName} (${mirrors.count}×):</span>
                     <span style="color: ${STYLE.colors.gold};">${this.formatNumber(mirrors.cost)}</span>
                 </div>
@@ -2014,7 +2014,7 @@ class EnhancementUI {
             top: '6px',
             right: '6px',
             zIndex: '5',
-            background: 'rgba(25, 0, 35, 0.85)',
+            background: GAME_COLORS.background,
             border: `1px solid ${STYLE.colors.primary}`,
             color: STYLE.colors.textPrimary,
             cursor: 'pointer',
@@ -2043,7 +2043,7 @@ class EnhancementUI {
         if (!button || !document.body.contains(button)) return;
         const visible = !!this.floatingUI && this.floatingUI.style.display !== 'none';
         button.style.opacity = visible ? '1' : '0.6';
-        button.style.boxShadow = visible ? `0 0 8px ${STYLE.colors.primary}` : 'none';
+        button.style.boxShadow = visible ? `0 0 8px ${BUTTON_LOOK.primary.rest}` : 'none';
     }
 
     /**

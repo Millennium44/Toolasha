@@ -143,7 +143,7 @@ function drawNetworth(body, data) {
     const counted = data.characters.filter((character) => Number.isFinite(character.networth));
     const total = counted.reduce((sum, character) => sum + character.networth, 0);
 
-    const card = panelCard(body, 'Combined networth', ACCENT);
+    const card = panelCard(body, 'Combined networth');
     card.appendChild(
         panelLine(
             `Total (${counted.length} of ${data.characters.length} characters)`,
@@ -185,7 +185,7 @@ function drawNetworth(body, data) {
  * @param {Object} data - The account
  */
 function drawCharacters(body, data) {
-    const card = panelCard(body, 'Characters', ACCENT);
+    const card = panelCard(body, 'Characters');
 
     for (const character of data.characters) {
         card.appendChild(
@@ -298,7 +298,7 @@ function drawNeedsAttention(body, data) {
         now: data.at,
     });
 
-    const card = panelCard(body, 'Needs attention', ACCENT);
+    const card = panelCard(body, 'Needs attention');
 
     const { busy, quiet, unknown, next } = rankAttention(entries, data.at);
 
@@ -334,7 +334,6 @@ export const accountPanel = createPanel({
     id: 'accountView',
     title: 'Account',
     size: { width: 420, height: 520 },
-    accent: ACCENT,
     draw: (body) => {
         const data = account();
         if (!data) {

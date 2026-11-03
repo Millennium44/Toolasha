@@ -25,6 +25,7 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -301,10 +302,10 @@ class XPHCalculator {
         btn.className = BTN_CLASS;
         btn.textContent = 'XPH Calc';
         btn.style.cssText = `
-            background: linear-gradient(180deg, rgba(0,200,150,0.2) 0%, rgba(0,200,150,0.1) 100%);
-            color: #e0e0e0;
-            border: 1px solid rgba(0,200,150,0.4);
-            border-radius: 6px;
+            background: ${BUTTON_LOOK.primary.rest};
+            color: ${GAME_COLORS.text};
+            border: none;
+            border-radius: var(--radius-sm, 0.25rem);
             padding: 5px 12px;
             font-size: 12px;
             font-weight: 600;
@@ -312,6 +313,8 @@ class XPHCalculator {
             margin: 4px 8px;
             display: block;
         `;
+        btn.addEventListener('mouseover', () => (btn.style.background = BUTTON_LOOK.primary.hover));
+        btn.addEventListener('mouseout', () => (btn.style.background = BUTTON_LOOK.primary.rest));
         btn.addEventListener('click', () => this._toggle());
         panel.insertBefore(btn, panel.firstChild);
     }
@@ -331,17 +334,17 @@ class XPHCalculator {
             top: 60px;
             right: 60px;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: rgba(10, 10, 20, 0.97);
-            border: 2px solid rgba(0, 200, 150, 0.5);
-            border-radius: 10px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: 560px;
             max-height: 580px;
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
-            color: #e0e0e0;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         // Header
@@ -352,15 +355,13 @@ class XPHCalculator {
             align-items: center;
             padding: 10px 14px;
             cursor: grab;
-            background: rgba(0,200,150,0.12);
-            border-bottom: 1px solid rgba(0,200,150,0.3);
-            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid ${GAME_COLORS.border};
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:#00c896;">Enhancement XPH Calculator</span>
+            <span style="font-weight:700; font-size:14px; color:${GAME_COLORS.text};">Enhancement XPH Calculator</span>
             <button id="mwi-xph-close" style="
-                background:none; border:none; color:#aaa; font-size:22px;
+                background:none; border:none; color:${GAME_COLORS.text}; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">×</button>
         `;
         this._setupDrag(header);
@@ -389,10 +390,10 @@ class XPHCalculator {
             <input id="mwi-xph-protect" type="number" min="0" max="19" value="${defaultProtect}" style="${inputStyle}">
             <button id="mwi-xph-run" style="
                 margin-left: auto;
-                background: rgba(0,200,150,0.2);
-                color: #00c896;
-                border: 1px solid rgba(0,200,150,0.4);
-                border-radius: 6px;
+                background: ${BUTTON_LOOK.primary.rest};
+                color: ${GAME_COLORS.text};
+                border: none;
+                border-radius: var(--radius-sm, 0.25rem);
                 padding: 5px 14px;
                 font-size: 12px;
                 font-weight: 600;
@@ -414,8 +415,8 @@ class XPHCalculator {
                 <label style="color:#888; font-size:12px;">to +</label>
                 <input id="mwi-xph-item-target" type="number" min="1" max="20" value="${defaultMax}" style="${inputStyle}">
                 <button id="mwi-xph-item-route" style="
-                    background: rgba(0,200,150,0.2); color: #00c896; border: 1px solid rgba(0,200,150,0.4);
-                    border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;">Route</button>
+                    background: ${BUTTON_LOOK.primary.rest}; color: ${GAME_COLORS.text}; border: none;
+                    border-radius: var(--radius-sm, 0.25rem); padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;">Route</button>
             </div>
             <div id="mwi-xph-item-route-out" style="display:none; margin-top:8px; max-height:240px; overflow-y:auto;
                 background:rgba(0,0,0,0.25); border:1px solid #222; border-radius:6px; padding:8px; font-size:12px;"></div>

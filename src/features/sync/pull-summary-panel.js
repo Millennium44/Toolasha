@@ -9,6 +9,7 @@
  */
 
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { scriptBuildLabel } from '../../utils/bundle-bridge.js';
 import { buildPullReport } from './pull-report.js';
@@ -99,7 +100,8 @@ function drawReportControls(body, card) {
     button.type = 'button';
     button.className = 'toolasha-pull-report-copy';
     button.textContent = Date.now() - copiedAt < COPIED_MS ? 'Copied' : 'Copy report';
-    button.style.cssText = 'margin-top:6px;padding:4px 10px;cursor:pointer;';
+    styleGameButton(button, 'quiet', true);
+    button.style.marginTop = '6px';
     button.title = 'Copies key names and counts only, no saved values.';
     button.addEventListener('click', () => {
         copyPullReport(body);

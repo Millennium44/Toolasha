@@ -40,6 +40,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 
 const STRIP_ID = 'mwi-crafting-walk-strip';
@@ -585,9 +586,9 @@ class CraftingPlanWalk {
             position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
             z-index: 150; display: flex; align-items: center; gap: 10px;
             max-width: calc(100vw - 24px); padding: 6px 12px;
-            border: 1px solid var(--border-color, #60a5fa); border-radius: 999px;
-            background: var(--bg-color-tertiary, #1a1a2e); color: var(--text-color-primary, #fff);
-            font-size: 0.85em; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+            border: ${GAME_FRAME.border}; border-radius: 999px;
+            background: ${GAME_FRAME.background}; color: ${GAME_COLORS.text};
+            font-size: 0.85em; box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         const label = document.createElement('span');
@@ -613,11 +614,8 @@ class CraftingPlanWalk {
         const button = document.createElement('button');
         button.type = 'button';
         button.textContent = text;
-        button.style.cssText = `
-            flex-shrink: 0; padding: 1px 8px; cursor: pointer;
-            background: transparent; color: var(--text-color-secondary, #ccc);
-            border: 1px solid var(--border-color, #444); border-radius: 3px; font-size: 0.95em;
-        `;
+        styleGameButton(button, 'quiet', true);
+        button.style.flexShrink = '0';
         button.addEventListener('click', onClick);
         return button;
     }

@@ -30,6 +30,7 @@ import webSocketHook from '../../core/websocket.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS, glyph } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { newManaTally, recordCast, recordFight, manaSummary } from '../../utils/mana-spend.js';
 import { buildMpCandidates, findBestOptimAllocation, findMaxMpAllocation } from '../../utils/mp-optimizer.js';
@@ -459,7 +460,7 @@ function drawMpSupply(body) {
     const regen = naturalRegenPerMinute();
     const target = optimTarget ?? (measured === null ? null : Math.ceil(Math.max(0, measured - (regen ?? 0))));
 
-    const card = panelCard(body, 'Cheapest MP supply', '#8fd6ff');
+    const card = panelCard(body, 'Cheapest MP supply');
 
     const controls = document.createElement('div');
     Object.assign(controls.style, { display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '3px' });
@@ -500,15 +501,7 @@ function drawMpSupply(body) {
     const go = document.createElement('button');
     go.textContent = 'Calculate';
     go.dataset.mpCalculate = 'true';
-    Object.assign(go.style, {
-        background: 'rgba(255, 255, 255, 0.08)',
-        border: '1px solid rgba(255, 255, 255, 0.10)',
-        borderRadius: '3px',
-        color: '#e8ecf5',
-        cursor: 'pointer',
-        fontSize: '11px',
-        padding: '2px 10px',
-    });
+    styleGameButton(go, 'quiet', true);
     go.addEventListener('click', apply);
 
     controls.append(label, input, go);
@@ -567,7 +560,7 @@ function drawMpSupply(body) {
     }
 
     if (plan.max && (target === null || !plan.best || plan.max.mpPerMinute > plan.best.mpPerMinute + 1e-9)) {
-        const max = panelCard(body, 'Most MP the slots allow', '#8fd6ff');
+        const max = panelCard(body, 'Most MP the slots allow');
         drawAllocation(max, plan.max);
     }
 
@@ -586,11 +579,10 @@ export const manaPanel = createPanel({
     id: 'manaPanel',
     title: 'Mana',
     size: { width: 400, height: 560 },
-    accent: '#8fd6ff',
     draw: (body) => {
         const summary = manaSpend();
 
-        const run = panelCard(body, 'This run', '#8fd6ff');
+        const run = panelCard(body, 'This run');
         run.append(
             panelLine('Fights', formatWithSeparator(summary.fights)),
             panelLine('Mana spent', formatWithSeparator(Math.round(summary.mana)), ROW_COLORS.accent),
@@ -605,17 +597,8 @@ export const manaPanel = createPanel({
         const reset = document.createElement('button');
         reset.textContent = 'Reset';
         reset.dataset.resetMana = 'true';
-        Object.assign(reset.style, {
-            background: 'rgba(255, 255, 255, 0.08)',
-            border: '1px solid rgba(255, 255, 255, 0.10)',
-            borderRadius: '3px',
-            color: '#e8ecf5',
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '2px 10px',
-            marginTop: '4px',
-            alignSelf: 'flex-start',
-        });
+        styleGameButton(reset, 'quiet', true);
+        Object.assign(reset.style, { marginTop: '4px', alignSelf: 'flex-start' });
         reset.addEventListener('click', () => {
             resetManaTally();
             manaPanel.render();
@@ -629,7 +612,7 @@ export const manaPanel = createPanel({
             return;
         }
 
-        const byAbility = panelCard(body, 'Where it goes', '#8fd6ff');
+        const byAbility = panelCard(body, 'Where it goes');
         for (const ability of summary.abilities) {
             const share = summary.mana > 0 ? (ability.mana / summary.mana) * 100 : 0;
             byAbility.appendChild(

@@ -38,8 +38,6 @@ import { TRIAL_SKILLS, parseCurrentTrialsData, trialWeekStart } from '../guild/g
 import { currentSignup, loadoutViewStatus, roleLabel } from '../guild/guild-trial-signups.js';
 import { VIEW_LOADOUT_CONTEXT, getLoadout } from '../../utils/view-loadout.js';
 
-const ACCENT = '#b9a6ff';
-
 /** Skilling trials drawn per cycle */
 export const SKILLING_TRIALS_PER_CYCLE = 4;
 
@@ -774,7 +772,7 @@ export class TrialAssignPlanner {
             )
         );
 
-        const setup = panelCard(body, 'Cycle', ACCENT);
+        const setup = panelCard(body, 'Cycle');
         setup.dataset.trialAssign = 'setup';
         const settings = row(setup);
         select(
@@ -884,7 +882,7 @@ export class TrialAssignPlanner {
         );
 
         if (context.trials.length) {
-            const assumptions = panelCard(body, 'Members without a reading', ACCENT);
+            const assumptions = panelCard(body, 'Members without a reading');
             assumptions.appendChild(
                 panelNote(
                     'Work power is effective level × (1 + efficiency); only your own trial reading states efficiency and work time, so everyone else is given these. Effective level is the base skill level plus the level bonus below, which defaults to what your own reading shows over your base level — an assumption that their gear adds what yours does. No consumables in trials.'
@@ -986,11 +984,7 @@ export class TrialAssignPlanner {
         const { select } = ui;
         const label = (trial) => trialLabel(trial, context.clientData);
         const covered = context.members.filter((m) => context.trials.some((t) => m.coverage[t].kind !== 'missing'));
-        const roster = panelCard(
-            body,
-            `Eligible members · ${context.members.length} · ${covered.length} with data`,
-            ACCENT
-        );
+        const roster = panelCard(body, `Eligible members · ${context.members.length} · ${covered.length} with data`);
         roster.dataset.trialAssign = 'roster';
         roster.style.maxHeight = '300px';
         roster.style.overflowY = 'auto';
@@ -1098,7 +1092,7 @@ export class TrialAssignPlanner {
         const { result, context, unplaced, belowMinimum = [] } = this.result;
         const label = (trial) => trialLabel(trial, context.clientData);
         const format = (n, digits = 0) => Number(n).toLocaleString('en-US', { maximumFractionDigits: digits });
-        const card = panelCard(body, 'Recommended sign-ups', ACCENT);
+        const card = panelCard(body, 'Recommended sign-ups');
         card.dataset.trialAssign = 'result';
         card.appendChild(
             panelLine(
@@ -1200,7 +1194,7 @@ export class TrialAssignPlanner {
             );
 
         if (result.moves.length) {
-            const moves = panelCard(card, `Moves · ${result.moves.length}`, ACCENT);
+            const moves = panelCard(card, `Moves · ${result.moves.length}`);
             for (const move of result.moves.slice(0, 30)) {
                 moves.appendChild(
                     panelNote(
@@ -1216,7 +1210,7 @@ export class TrialAssignPlanner {
             names: trial.memberIds.map((id) => result.members.find((m) => m.id === id)?.name).filter(Boolean),
         }));
         const messages = signupMessages(groups);
-        const text = panelCard(card, 'Sign-up text for chat', ACCENT);
+        const text = panelCard(card, 'Sign-up text for chat');
         for (const [i, message] of messages.entries()) {
             const area = document.createElement('textarea');
             area.readOnly = true;
@@ -1228,7 +1222,7 @@ export class TrialAssignPlanner {
         }
 
         if (this.check) {
-            const check = panelCard(card, 'Simulator check', ACCENT);
+            const check = panelCard(card, 'Simulator check');
             check.dataset.trialAssign = 'check';
             for (const { trialHrid, summary } of this.check) {
                 check.appendChild(

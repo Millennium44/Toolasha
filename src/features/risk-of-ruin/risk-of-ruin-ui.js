@@ -42,6 +42,7 @@ import { marketDepthCap } from '../../utils/bundle-bridge.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -371,17 +372,17 @@ class RiskOfRuinUI {
             top: 60px;
             right: 60px;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: rgba(10, 10, 20, 0.97);
-            border: 2px solid rgba(200, 60, 60, 0.5);
-            border-radius: 10px;
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
             width: 460px;
             max-height: 620px;
             display: none;
             flex-direction: column;
             font-family: 'Segoe UI', sans-serif;
-            color: #e0e0e0;
+            color: ${GAME_COLORS.text};
             font-size: 13px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         const header = document.createElement('div');
@@ -391,14 +392,12 @@ class RiskOfRuinUI {
             align-items: center;
             padding: 10px 14px;
             cursor: grab;
-            background: rgba(200,60,60,0.12);
-            border-bottom: 1px solid rgba(200,60,60,0.3);
-            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid ${GAME_COLORS.border};
             flex-shrink: 0;
         `;
         const heading = document.createElement('span');
         heading.textContent = 'Risk of Ruin Calculator';
-        heading.style.cssText = 'font-weight:700; font-size:14px; color:#e05c5c;';
+        heading.style.cssText = `font-weight:700; font-size:14px; color:${GAME_COLORS.text};`;
 
         const controls = document.createElement('div');
         controls.style.cssText = 'display:flex; align-items:center;';
@@ -442,7 +441,7 @@ class RiskOfRuinUI {
             body: [body, status],
             panelKey: PANEL_KEY,
             beforeEl: close,
-            accent: '#e05c5c',
+            accent: GAME_COLORS.text,
         });
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(PANEL_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
@@ -501,10 +500,10 @@ class RiskOfRuinUI {
 
             <button id="mwi-ror-run" style="
                 width: 100%;
-                background: rgba(200,60,60,0.2);
-                color: #e05c5c;
-                border: 1px solid rgba(200,60,60,0.4);
-                border-radius: 6px;
+                background: ${BUTTON_LOOK.primary.rest};
+                color: ${GAME_COLORS.text};
+                border: none;
+                border-radius: var(--radius-sm, 0.25rem);
                 padding: 8px 14px;
                 font-size: 13px;
                 font-weight: 600;
@@ -1180,7 +1179,7 @@ class RiskOfRuinUI {
         return `<span style="color:#888; font-style:italic;" title="This item has no market price, but it is a known substitute for this enhancement-protection item, so it has real value - click Apply to use that as its price.">≈ ${fmtGold(suggestion.price)} via ${viaName}</span>
         <button type="button" class="mwi-ror-apply-substitute-price" data-item-hrid="${drop.itemHrid}" data-suggested-price="${suggestion.price}" style="
             margin-left:4px; font-size:10px; padding:1px 5px; cursor:pointer;
-            background:rgba(96,165,250,0.15); border:1px solid rgba(96,165,250,0.4); border-radius:4px; color:#60a5fa;
+            background:${BUTTON_LOOK.quiet.rest}; border:none; border-radius:var(--radius-sm, 0.25rem); color:${GAME_COLORS.text};
         ">Apply</button>`;
     }
 
