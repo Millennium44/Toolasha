@@ -82,6 +82,8 @@ const state = {
     unreadWeeks: [],
     /** The ledger's keys could not be listed on the last read, so an empty table says nothing about what is held */
     listingFailed: false,
+    /** `characterId|guild` the three fields above were read for; null before any read */
+    rowsScope: null,
     /** Whether a read has happened at all, so "empty" and "not looked yet" differ */
     loaded: false,
     /** Which {@link LEDGER_WINDOWS} key is selected */
@@ -121,6 +123,7 @@ export function resetLedgerView() {
     state.firstRecord = null;
     state.unreadWeeks = [];
     state.listingFailed = false;
+    state.rowsScope = null;
     state.loaded = false;
     state.window = '4';
     state.sortKey = 'damageShare';
@@ -213,6 +216,14 @@ export async function refreshLedgerView() {
         // …and the guild: the same character can change guild with the panel open
         if (guild !== guildName()) return;
 
+        // Rows belong to the character and guild they were read for. A guild change arrives with no reset
+        const scope = `${characterId ?? ''}|${guild ?? ''}`;
+        if (state.rowsScope !== scope) {
+            state.cycles = [];
+            state.firstRecord = null;
+            state.unreadWeeks = [];
+            state.rowsScope = scope;
+        }
         // A listing that failed keeps the table already read rather than blanking it
         state.listingFailed = Boolean(listingFailed);
         if (!listingFailed) {

@@ -211,6 +211,42 @@ describe('a ledger whose keys cannot be listed', () => {
         guildTrialLedgerPanel.show({ remember: false });
         expect(guildTrialLedgerPanel.panel.textContent).not.toContain('could not be read just now');
     });
+
+    test('a guild change whose listing fails shows no rows of the guild left, even on going back', async () => {
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+
+        // The tracker’s own-guild notice: a refresh with no reset
+        world.guildName = 'Another Guild';
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+        guildTrialLedgerPanel.show({ remember: false });
+        const text = guildTrialLedgerPanel.panel.textContent;
+        expect(text).toContain('The ledger could not be read just now');
+        expect(text).not.toContain('Alice');
+        guildTrialLedgerPanel.hide({ remember: false });
+
+        // Rows are not kept per guild: back in the first, a failed read has none to fall back on
+        world.guildName = 'Nine Lives';
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+
+        // …and a good read brings them back
+        world.listingFailed = false;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(2);
+    });
+
+    test('a failed read in the same guild after an empty one stays empty, and flagged', async () => {
+        world.cycles = [];
+        await refreshLedgerView();
+        world.listingFailed = true;
+        await refreshLedgerView();
+        expect(buildLedgerTable().trialsRun).toBe(0);
+        guildTrialLedgerPanel.show({ remember: false });
+        expect(guildTrialLedgerPanel.panel.textContent).toContain('The ledger could not be read just now');
+    });
 });
 
 describe('buildLedgerTable', () => {
