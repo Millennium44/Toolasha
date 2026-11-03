@@ -235,6 +235,19 @@ function assumedCapeBase(options) {
 }
 
 /**
+ * Whether a crafted price is a refined (★) untradable cape's bill, which is never a price anyone could pay:
+ * the cape cannot be bought, and the bill covers its refinement stones plus the base cape only as the
+ * setting values it (one mirror, or nothing). Flagged `assumed` on both settings, so a reader that would BUY
+ * the piece (the upgrade advisor) leaves it unpriced, as it did when the "nothing" setting made the bill
+ * partial. To let the advisor quote stones-only on "nothing", return false for that mode here.
+ * @param {string} itemHrid - The priced item
+ * @returns {boolean}
+ */
+function craftedCapeBillIsAssumed(itemHrid) {
+    return isRefinedCape(itemHrid) && isUntradableCape(itemHrid);
+}
+
+/**
  * Price an item bought as a mirror, protection item or base copy: the resolver's figure through
  * the inflation guard.
  * @param {string} itemHrid - The item
@@ -265,11 +278,9 @@ export function priceGuarded(itemHrid, options = {}) {
         partial = craft.cost === price && craft.partial;
     }
     const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
-    // A refined cape's craft cost includes its base cape at the setting's value: an assumption, not a
-    // price anyone could pay (a cape cannot be bought)
-    if (guarded.price > 0 && resolved.production && isRefinedCape(itemHrid) && isUntradableCape(itemHrid)) {
-        if (getCapeBaseValueMode() === 'mirror') guarded.assumed = true;
-    }
+    // A refined cape's craft cost includes its base cape at the setting's value (one mirror, or nothing): an
+    // assumption, not a price anyone could pay (a cape cannot be bought)
+    if (guarded.price > 0 && resolved.production && craftedCapeBillIsAssumed(itemHrid)) guarded.assumed = true;
     return guarded.unpriced ? { ...guarded, custom: Boolean(resolved.custom) } : guarded;
 }
 
@@ -336,9 +347,7 @@ export function priceBase(itemHrid, options = {}) {
             partial: craftPartial(itemHrid, side),
             crafted: true,
             // A refined cape's craft cost carries its base at the cape setting's value: an assumption
-            ...(isRefinedCape(itemHrid) && isUntradableCape(itemHrid) && getCapeBaseValueMode() === 'mirror'
-                ? { assumed: true }
-                : {}),
+            ...(craftedCapeBillIsAssumed(itemHrid) ? { assumed: true } : {}),
         };
     }
     return { ...bought, crafted: false };

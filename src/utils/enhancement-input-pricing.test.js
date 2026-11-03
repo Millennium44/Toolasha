@@ -657,8 +657,10 @@ describe('untradable capes', () => {
 
     function addRefineRecipe() {
         game.books[SHARD] = { ask: 100, bid: 90 };
-        game.actions['/actions/refine'] = {
-            type: '/action_types/alchemy',
+        // The real shape: a refinement is a production skill's recipe, the base cape its upgradeItemHrid
+        game.actions['/actions/tailoring/test_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
             inputItems: [{ itemHrid: SHARD, count: 10 }],
             outputItems: [{ itemHrid: REFINED, count: 1 }],
             upgradeItemHrid: CAPE,
@@ -706,17 +708,19 @@ describe('untradable capes', () => {
 
     test('a refined cape is its stones plus the base by the setting: zero is complete, mirror adds one mirror', () => {
         addRefineRecipe();
-        // Nothing: the player's own choice, so the stones alone are a complete bill
-        const zero = priceBase(REFINED);
-        expect(zero).toMatchObject({ price: 1000, partial: false });
-        expect(zero.assumed).toBeUndefined();
+        // Nothing: the player's own choice, so the stones alone are a complete bill, yet still not a price a
+        // buyer could pay (a cape cannot be bought), so it is flagged assumed on both settings
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
+        game.craftingSetting = true;
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
+        game.craftingSetting = false;
         game.capeMode = 'mirror';
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
         game.craftingSetting = true;
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
         game.craftingSetting = false;
         game.capeMode = 'zero';
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false });
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
     });
 
     test('a mirror setting with no mirror price leaves a refined cape a flagged floor, not stones alone', () => {
