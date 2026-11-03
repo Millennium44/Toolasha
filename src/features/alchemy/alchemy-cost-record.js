@@ -235,6 +235,16 @@ export function resolveBulk(session, itemDetails) {
 }
 
 /**
+ * The per-catalyst counters coinify and decompose sessions keep beside `catalystsUsed`, and read from.
+ * Repeats the trackers' `LEGACY_CATALYST_FIELDS` (this module is the pure half and imports no tracker).
+ */
+const LEGACY_CATALYST_FIELD = {
+    '/items/catalyst_of_coinification': 'catalystOfCoinificationUsed',
+    '/items/catalyst_of_decomposition': 'catalystOfDecompositionUsed',
+    '/items/prime_catalyst': 'primeCatalystUsed',
+};
+
+/**
  * Scale a session's saved costs down to what its counts now say it consumed.
  *
  * Done when a hand-corrected count is imported, so the record is right from then on and the ticks recorded
@@ -268,8 +278,18 @@ export function rescaleCosts(session) {
     if (costs.catalysts && session.catalystsUsed && typeof session.catalystsUsed === 'object') {
         out.catalysts = { ...costs.catalysts };
         for (const [hrid, entry] of Object.entries(costs.catalysts)) {
-            if (!Object.hasOwn(session.catalystsUsed, hrid)) continue;
-            const needed = Math.max(0, num(session.catalystsUsed[hrid]));
+            // A map that is there and does not name a catalyst says none was consumed. Keeping its coverage
+            // would add the ticks of a resumed run to a saved cost for catalysts the session no longer has. The
+            // coinify and decompose readers count from their legacy fields, so one of those still answers.
+            const listed = Object.hasOwn(session.catalystsUsed, hrid);
+            const needed = Math.max(
+                0,
+                num(listed ? session.catalystsUsed[hrid] : session[LEGACY_CATALYST_FIELD[hrid]])
+            );
+            if (!listed && needed === 0) {
+                delete out.catalysts[hrid];
+                continue;
+            }
             const covered = num(entry?.count);
             if (covered > needed && covered > 0) {
                 const f = needed / covered;

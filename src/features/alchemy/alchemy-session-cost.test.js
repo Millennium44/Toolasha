@@ -465,4 +465,112 @@ describe('review follow-ups', () => {
         expect(resolved.cost).toBe(500 + 1000);
         expect(rescaleCosts({ ...session }).input.cost).toBe(1500);
     });
+
+    describe('a hand edit that takes a catalyst out of catalystsUsed', () => {
+        const OTHER = '/items/catalyst_of_transmutation';
+        const THIRD = '/items/catalyst_of_coinification';
+        const base = {
+            id: 's1',
+            startTime: 1,
+            inputItemHrid: GEM,
+            totalAttempts: 30,
+            totalSuccesses: 15,
+            bulkMultiplier: 1,
+            lastActivityTime: 100,
+        };
+        const stored = () => ({
+            ...base,
+            catalystsUsed: { [PRIME]: 10, [OTHER]: 4 },
+            costs: {
+                catalysts: {
+                    [PRIME]: { cost: 1000, count: 10 },
+                    [OTHER]: { cost: 40, count: 4 },
+                },
+            },
+        });
+        /** The file as a person corrected it: the prime catalyst gone from the counts, its costs left alone */
+        const corrected = () => ({ ...stored(), catalystsUsed: { [OTHER]: 4 } });
+
+        test('its coverage goes too, so a resumed run is costed at what it paid', () => {
+            const [session] = planAlchemyImportMerge([stored()], [corrected()], 5).merged;
+            expect(session.costs.catalysts[PRIME]).toBeUndefined();
+            expect(session.costs.catalysts[OTHER]).toEqual({ cost: 40, count: 4 });
+
+            // The run resumes: five more prime catalysts at 200 each, 1,000 in all
+            mocks.prices[PRIME] = 200;
+            session.catalystsUsed[PRIME] = 5;
+            recordCatalystCost(session, PRIME, 5);
+            expect(resolveCatalystCost(session, PRIME, 5, today(PRIME)).cost).toBe(1000);
+        });
+
+        test('the catalyst read back with nothing consumed asks for no price at all', () => {
+            const [session] = planAlchemyImportMerge([stored()], [corrected()], 5).merged;
+            expect(resolveCatalystCost(session, PRIME, 0, () => null)).toEqual({
+                cost: 0,
+                unpriced: false,
+                pricedToday: false,
+            });
+        });
+
+        test('three catalysts, one left out: only that one goes, and a zero count stays a zero record', () => {
+            const edited = {
+                ...base,
+                catalystsUsed: { [OTHER]: 2, [THIRD]: 0 },
+                costs: {
+                    catalysts: {
+                        [PRIME]: { cost: 1000, count: 10 },
+                        [OTHER]: { cost: 40, count: 4 },
+                        [THIRD]: { cost: 90, count: 3 },
+                    },
+                },
+            };
+            expect(rescaleCosts(edited).catalysts).toEqual({
+                [OTHER]: { cost: 20, count: 2 },
+                [THIRD]: { cost: 0, count: 0 },
+            });
+        });
+
+        test('with no catalystsUsed at all nothing is said about catalysts, and the record stands', () => {
+            const { catalystsUsed: _gone, ...older } = stored();
+            expect(rescaleCosts(older).catalysts).toEqual(stored().costs.catalysts);
+        });
+
+        test('coinify and decompose read their legacy counters, so one of those still holds the coverage', () => {
+            const legacy = { ...corrected(), primeCatalystUsed: 6 };
+            expect(rescaleCosts(legacy).catalysts[PRIME]).toEqual({ cost: 600, count: 6 });
+            expect(rescaleCosts({ ...corrected(), primeCatalystUsed: 0 }).catalysts[PRIME]).toBeUndefined();
+        });
+
+        test('two devices: the correction wins a pull in either order, costs and all', () => {
+            const [edited] = planAlchemyImportMerge([stored()], [corrected()], 500).merged;
+            const unedited = stored();
+            for (const merged of [mergeSessionCopies(edited, unedited), mergeSessionCopies(unedited, edited)]) {
+                expect(merged.catalystsUsed).toEqual({ [OTHER]: 4 });
+                expect(merged.costs.catalysts[PRIME]).toBeUndefined();
+            }
+        });
+
+        test('a replay of the pull changes nothing, and neither does a re-import of the stored copy', () => {
+            const [edited] = planAlchemyImportMerge([stored()], [corrected()], 500).merged;
+            expect(mergeSessionCopies(edited, edited)).toEqual(edited);
+            expect(planAlchemyImportMerge([edited], [edited], 900).merged[0]).toBe(edited);
+        });
+
+        test('an edit followed by new data: a device that recorded past the correction keeps its own whole', () => {
+            const [edited] = planAlchemyImportMerge([stored()], [corrected()], 500).merged;
+            const resumed = structuredClone(edited);
+            resumed.lastActivityTime = 900;
+            resumed.catalystsUsed[PRIME] = 5;
+            recordCatalystCost(resumed, PRIME, 5);
+            const merged = mergeSessionCopies(edited, resumed);
+            expect(merged.catalystsUsed[PRIME]).toBe(5);
+            expect(merged.costs.catalysts[PRIME].count).toBe(5);
+        });
+
+        test('an older build reads the new record: the entry is simply absent, as on a session without one', () => {
+            const [session] = planAlchemyImportMerge([stored()], [corrected()], 5).merged;
+            expect(validateCosts(session.costs)).toBeNull();
+            expect(mergeCosts(session.costs, undefined).catalysts).toEqual({ [OTHER]: { cost: 40, count: 4 } });
+        });
+    });
 });
