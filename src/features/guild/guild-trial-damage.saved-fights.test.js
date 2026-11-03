@@ -37,6 +37,12 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, storeName, fallback) => {
             const id = `${storeName}:${key}`;
+            // What the read found is decided first, as a transaction's would be, then held open
+            const found = game.disk.has(id) ? structuredClone(game.disk.get(id)) : fallback;
+            if (game.readGate) {
+                await game.readGate;
+                return found;
+            }
             return game.disk.has(id) ? structuredClone(game.disk.get(id)) : fallback;
         },
         tryGet: async (key, storeName) => {
@@ -87,7 +93,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getMemberMeta: (id) => (game.members[id] ? { name: game.members[id] } : null),
         getOwnGuildName: () => game.guildName,
-        getOwnGuildID: () => null,
+        getOwnGuildID: () => game.trackerGuildId,
         getCurrentWeekStartAt: () => game.gameWeek,
     },
 }));
@@ -181,6 +187,8 @@ beforeEach(async () => {
     game.unreadable = false;
     game.testServer = false;
     game.gameWeek = '2026-11-02T00:00:00Z';
+    game.trackerGuildId = null;
+    game.readGate = null;
     game.members = {};
     guildTrialDamage.cleanup();
     guildTrialDamage.statsScope = { guildName: null, characterId: null };
@@ -548,6 +556,159 @@ describe('whose fight it is', () => {
 
         guildTrialDamage.setGuildName('SuperMoo', 900001);
         await settle();
+        expect(stored().unreconciled.swarm).toBeDefined();
+    });
+});
+
+describe('memory and disk while a read is out', () => {
+    /** Holds every stats read open until the returned function is called */
+    const holdReads = () => {
+        let release;
+        game.readGate = new Promise((resolve) => {
+            release = resolve;
+        });
+        return () => {
+            game.readGate = null;
+            release();
+        };
+    };
+
+    const fightOf = (damage, endedAt) => ({
+        measured: { FixtureCharacter: { damage, healing: 0, taken: 0 } },
+        endedAt,
+        cycleAt: null,
+        weekStartAt: null,
+        guildId: null,
+    });
+
+    test('a fight saved during the read is neither dropped from memory nor from disk', async () => {
+        watchSwarm();
+        await settle();
+        const release = holdReads();
+        const frame = buildGuildTrialStatsUpdated({ keep: (row) => row.trialHrid === JELLYFISH });
+        for (const id of idsOf(JELLYFISH).slice(0, 3)) game.members[id] = `Jelly${id}`;
+        game.wsHandlers.guild_trial_stats_updated(frame);
+        await settle();
+        // Saved while that read is held open
+        guildTrialDamage.savedFights = { ...guildTrialDamage.savedFights, badger: fightOf(5, Date.now()) };
+        release();
+        await settle();
+        expect(Object.keys(guildTrialDamage.savedFights).sort()).toEqual(['badger', 'swarm']);
+        expect(Object.keys(stored().unreconciled).sort()).toEqual(['badger', 'swarm']);
+    });
+
+    test('a fight withdrawn during the read does not come back from what that read found', async () => {
+        watchSwarm();
+        await settle();
+        expect(stored().unreconciled.swarm).toBeDefined();
+        const release = holdReads();
+        for (const id of idsOf(JELLYFISH).slice(0, 3)) game.members[id] = `Jelly${id}`;
+        game.wsHandlers.guild_trial_stats_updated(
+            buildGuildTrialStatsUpdated({ keep: (row) => row.trialHrid === JELLYFISH })
+        );
+        await settle();
+        // The fight goes on: its end is taken back, and that write finishes, while the read above is out
+        game.readGate = null;
+        vi.setSystemTime(Date.now() + 1_000);
+        game.wsHandlers.new_guild_battle(buildNewGuildBattle({ tier: 2 }));
+        await settle();
+        expect(stored().unreconciled).toBeUndefined();
+        release();
+        await settle();
+        expect(guildTrialDamage.savedFights.swarm).toBeUndefined();
+        expect(stored().unreconciled).toBeUndefined();
+    });
+
+    test('newer memory beats the older copy on disk, and the fuller of two wins either way round', async () => {
+        const at0 = Date.now();
+        const key = `guildHistory:${trialStatsStorageKey('SuperMoo', 900001)}`;
+        const weekStart = trialWeekStart(at0);
+        // Disk: a partial watch of the fight, from another alt or device
+        game.disk.set(key, { weekStart, trials: {}, unreconciled: { swarm: fightOf(100, at0 - 1) } });
+        watchSwarm();
+        await settle();
+        // This client measured the whole of it; a later write of something else must not lose that to the disk copy
+        game.disk.set(key, { weekStart, trials: {}, unreconciled: { swarm: fightOf(100, at0 + 5) } });
+        guildTrialDamage._persistStats({}, { fights: { badger: fightOf(1, at0) } });
+        await settle();
+        expect(stored().unreconciled.swarm.measured.FixtureCharacter.damage).toBeGreaterThan(100);
+        expect(guildTrialDamage.savedFights.swarm.measured.FixtureCharacter.damage).toBeGreaterThan(100);
+
+        // …and the fuller copy on disk is not replaced by a partial one arriving here
+        game.disk.set(key, { weekStart, trials: {}, unreconciled: { swarm: fightOf(5000, at0 - 1) } });
+        await saveTrialStats(
+            { weekStart, trials: {}, unreconciled: { swarm: fightOf(100, at0 + 5) } },
+            { guildName: 'SuperMoo', characterId: 900001 }
+        );
+        await settle();
+        expect(stored().unreconciled.swarm.measured.FixtureCharacter.damage).toBe(5000);
+
+        // On equal totals, the later
+        await saveTrialStats(
+            { weekStart, trials: {}, unreconciled: { swarm: { ...fightOf(5000, at0 + 9), guildId: 'later' } } },
+            { guildName: 'SuperMoo', characterId: 900001 }
+        );
+        await settle();
+        expect(stored().unreconciled.swarm.guildId).toBe('later');
+    });
+
+    test.each([
+        ['a stats frame', () => game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated())],
+        ['a restore', () => guildTrialDamage._restoreStats()],
+    ])('%s still reading at cleanup leaves the stopped module empty', async (_label, start) => {
+        watchSwarm();
+        await settle();
+        game.members = { 900001: 'FixtureCharacter', 900002: 'Player02' };
+        const release = holdReads();
+        start();
+        await settle();
+        guildTrialDamage.cleanup();
+        const before = guildTrialDamage.storedStats;
+        release();
+        await settle();
+        expect(guildTrialDamage.savedFights).toEqual({});
+        // The read's merged copy does not land in memory
+        expect(guildTrialDamage.storedStats).toBe(before);
+    });
+});
+
+describe('a fight saved with a real guild id, from the tracker', () => {
+    const replaced = async () => {
+        watchSwarm();
+        await settle();
+        vi.setSystemTime(Date.now() + 5 * 60_000);
+        watchJellyfish();
+        await settle();
+    };
+
+    test('carries the id and pairs with its own guild’s frame, whatever type the id arrived as', async () => {
+        game.trackerGuildId = String(GUILD_ID);
+        await replaced();
+        expect(stored().unreconciled.swarm.guildId).toBe(String(GUILD_ID));
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: GUILD_ID }));
+        await settle();
+        expect(stored().unreconciled).toBeUndefined();
+        expect(stored().trials.swarm.measured.FixtureCharacter).toBeDefined();
+    });
+
+    test('does not pair with another guild’s frame, and stays waiting', async () => {
+        game.trackerGuildId = String(GUILD_ID);
+        await replaced();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: GUILD_ID + 1 }));
+        await settle();
+        expect(warn).toHaveBeenCalled();
+        expect(stored().trials.swarm).toBeUndefined();
+        expect(stored().unreconciled.swarm).toBeDefined();
+    });
+
+    test('nor, once this client is in another guild of the same name, with that guild’s frame', async () => {
+        game.trackerGuildId = String(GUILD_ID);
+        await replaced();
+        game.trackerGuildId = String(GUILD_ID + 1);
+        game.wsHandlers.guild_trial_stats_updated(buildGuildTrialStatsUpdated({ guildId: GUILD_ID + 1 }));
+        await settle();
+        expect(stored().trials.swarm.measured).toBe(null);
         expect(stored().unreconciled.swarm).toBeDefined();
     });
 });

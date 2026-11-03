@@ -139,6 +139,7 @@ import {
 import { compactAccuracySummary, joinTrialStats } from './guild-trial-accuracy.js';
 import {
     COMBAT_ENCOUNTERS,
+    fullerSavedFight,
     parseCurrentTrialsData,
     TRIAL_ACTIVE_MS,
     tierFromLevel,
@@ -988,6 +989,8 @@ class GuildTrialDamage {
          * {@link reset} like `storedStats`, and has its scope. See {@link _saveEndedFight}.
          */
         this.savedFights = {};
+        /** `encounter|endedAt` of saved fights taken back in this scope; see {@link _foldSavedFights} */
+        this.withdrawnFights = new Set();
         /**
          * Whose week `storedStats` is: the guild, and the character for the
          * fallback key before the guild is known. Set by {@link setGuildName}.
@@ -1253,6 +1256,7 @@ class GuildTrialDamage {
         };
         this.storedStats = {};
         this.savedFights = {};
+        this.withdrawnFights = new Set();
         this._restoreStats();
         // …and the live tally a refresh interrupted, held until the stream shows the same fight
         this.pendingLive = null;
@@ -1335,6 +1339,7 @@ class GuildTrialDamage {
         this.serverClockOffsetMs = null;
         this.ownGuildId = null;
         this.savedFights = {};
+        this.withdrawnFights = new Set();
         this.initialized = false;
         this.reset();
     }
@@ -1376,6 +1381,7 @@ class GuildTrialDamage {
         this.statsScope = next;
         this.storedStats = {};
         this.savedFights = carryFights || {};
+        this.withdrawnFights = new Set();
         // A saved live tally belongs to the character it was read for
         if (String(previous.characterId ?? '') !== String(next.characterId ?? '')) {
             this.pendingLive = null;
@@ -1987,8 +1993,10 @@ class GuildTrialDamage {
         // back into memory
         const scope = { ...this.statsScope, cycleAt: this._statsCycleAt(entries) };
         const scopeKey = statsScopeKey(scope);
-        // A saved fight whose own write is still queued, or was refused, is only in memory
-        const inMemory = { ...this.savedFights };
+        // Whether memory is still this scope's, on a module still running: `cleanup` leaves the scope as it is
+        const ownsMemory = () => this.initialized && statsScopeKey(this.statsScope) === scopeKey;
+        // The departing scope's copy, should memory move on during the read
+        const departing = { ...this.savedFights };
         // With no fight held, on the test server, arrival time would name the cycle (see `_statsCycleAt`), and a
         // click hours after the fight would file as a cycle of its own, leaving the fight behind in the last one
         const namesNoFight = isTestServer() && this._statsCycleAt() === undefined;
@@ -1997,12 +2005,15 @@ class GuildTrialDamage {
             const now = Date.now();
             const blob = await loadTrialStats(now, scope);
             blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
+            // Read only now, with no await from here to the write: a saved fight whose own write is still queued, or
+            // was refused, is only in memory, and one saved or withdrawn during the read must count
+            const inMemory = ownsMemory() ? this.savedFights : departing;
             const held = Object.fromEntries(
                 Object.entries(inMemory).filter(([, fight]) => this._savedFightInCycle(fight, now, scope.cycleAt))
             );
             const open = openSavedFights({
                 trials: blob.trials,
-                unreconciled: { ...held, ...(blob.unreconciled || {}), ...(fights || {}) },
+                unreconciled: { ...this._foldSavedFights(held, blob.unreconciled), ...(fights || {}) },
             });
             const paired = [];
             for (const [encounter, entry] of Object.entries(entries || {})) {
@@ -2042,19 +2053,38 @@ class GuildTrialDamage {
             if (Object.keys(unreconciled).length) blob.unreconciled = unreconciled;
             // The write still lands under the scope the entries arrived in, where
             // they belong; memory takes the merged blob only if nobody switched
-            if (statsScopeKey(this.statsScope) === scopeKey) {
+            if (ownsMemory()) {
                 this.storedStats = blob.trials;
                 this.savedFights = { ...open };
             }
             const saved = await saveTrialStats(blob, scope);
             // A pair that could not be written leaves its fight waiting, here as on disk
-            if (saved === false || statsScopeKey(this.statsScope) !== scopeKey) return;
+            if (saved === false || !ownsMemory()) return;
             for (const encounter of paired) {
                 if (this.savedFights[encounter] === open[encounter]) delete this.savedFights[encounter];
             }
         } catch (error) {
             console.error('[GuildTrialDamage] Saving trial stats failed:', error);
         }
+    }
+
+    /**
+     * Memory's saved fights and a stored copy as one, per encounter.
+     *
+     * The fuller measurement stands, wherever it was. A fight withdrawn in this page
+     * stays withdrawn: a copy on disk read before that write landed does not bring it back.
+     *
+     * @param {Object} memory - Encounter → fight
+     * @param {Object} [stored] - The blob's `unreconciled`
+     * @returns {Object} Encounter → fight
+     */
+    _foldSavedFights(memory, stored) {
+        const fights = { ...memory };
+        for (const [encounter, fight] of Object.entries(stored || {})) {
+            if (!fight || this.withdrawnFights.has(`${encounter}|${fight.endedAt}`)) continue;
+            fights[encounter] = fullerSavedFight(fights[encounter], fight);
+        }
+        return fights;
     }
 
     /**
@@ -2116,6 +2146,7 @@ class GuildTrialDamage {
     _withdrawEndedFight() {
         const encounter = this.encounter;
         if (!encounter || this.savedFights[encounter]?.endedAt !== this.endedAt) return;
+        this.withdrawnFights.add(`${encounter}|${this.endedAt}`);
         delete this.savedFights[encounter];
         this._persistStats({}, { fights: { [encounter]: null } }).catch(() => {});
     }
@@ -2201,10 +2232,14 @@ class GuildTrialDamage {
         const scopeKey = statsScopeKey(scope);
         try {
             const blob = await loadTrialStats(Date.now(), scope);
-            if (statsScopeKey(this.statsScope) !== scopeKey) return;
+            // `cleanup` leaves the scope as it is, so a stopped module is told apart by itself
+            if (!this.initialized || statsScopeKey(this.statsScope) !== scopeKey) return;
             const trials = blob?.trials && typeof blob.trials === 'object' ? blob.trials : {};
             this.storedStats = { ...trials, ...this.storedStats };
-            this.savedFights = { ...openSavedFights(blob), ...this.savedFights };
+            this.savedFights = openSavedFights({
+                trials,
+                unreconciled: this._foldSavedFights(this.savedFights, blob?.unreconciled),
+            });
         } catch {
             // Unreadable: memory keeps whatever arrived under this scope since
         }

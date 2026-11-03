@@ -1799,6 +1799,27 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
 /**
+ * Which of two saved measurements of one trial to keep, for the same encounter in the same cycle.
+ *
+ * Two alts or two devices can each have watched it, one of them only part of it: the
+ * one that saw more damage is the fuller. On equal totals, the later (a name settled, a
+ * fight ended a second time).
+ *
+ * @param {Object|null|undefined} a - `{measured: {name: {damage}}, endedAt}`
+ * @param {Object|null|undefined} b - The same
+ * @returns {Object|null|undefined} One of the two, whichever is there when only one is
+ */
+export function fullerSavedFight(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    const total = (fight) =>
+        Object.values(fight.measured || {}).reduce((sum, row) => sum + (Number(row?.damage) || 0), 0);
+    const difference = total(b) - total(a);
+    if (difference) return difference > 0 ? b : a;
+    return (Number(b.endedAt) || 0) >= (Number(a.endedAt) || 0) ? b : a;
+}
+
+/**
  * The most recent Friday 00:00 UTC at or before `now`.
  * @param {number} [now] - Clock, in ms
  * @returns {number} Week start, in ms

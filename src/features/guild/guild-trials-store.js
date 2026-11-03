@@ -45,6 +45,7 @@ import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import config from '../../core/config.js';
 import {
     BUILDING_BONUS_PER_LEVEL,
+    fullerSavedFight,
     GUILD_BUILDING_MAX_LEVEL,
     isTrialName,
     MAX_TRIAL_NAME_CHARS,
@@ -2249,7 +2250,8 @@ export async function loadTrialStats(now = Date.now(), { guildName = null, chara
  * `unreconciled` holds ended fights still waiting for the game's totals, by encounter: `{measured, endedAt, ...}`,
  * as `guild-trial-damage.js` writes them. Beside `trials` rather than in it, because every reader of `trials`
  * (an older build's included) takes an entry there as the game's figures. It has the same scope, week and cycle
- * as the blob, and goes with it. Unioned like `trials`; a null in the copy being written withdraws an encounter.
+ * as the blob, and goes with it. Unioned, the fuller measurement of an encounter standing
+ * ({@link fullerSavedFight}); a null in the copy being written withdraws an encounter.
  *
  * @param {{weekStart: number, trials: Object, cycleAt?: number, unreconciled?: Object}} blob - The comparison, keyed
  *   by encounter
@@ -2283,7 +2285,10 @@ export async function saveTrialStats(blob, { guildName = null, characterId = nul
         if (Number.isFinite(stored.cycleAt) && Number.isFinite(held.cycleAt)) {
             merged.cycleAt = Math.min(stored.cycleAt, held.cycleAt);
         }
-        merged.unreconciled = { ...(stored.unreconciled || {}), ...(held.unreconciled || {}) };
+        merged.unreconciled = { ...(stored.unreconciled || {}) };
+        for (const [encounter, fight] of Object.entries(held.unreconciled || {})) {
+            merged.unreconciled[encounter] = fullerSavedFight(merged.unreconciled[encounter], fight);
+        }
         for (const encounter of withdrawn) delete merged.unreconciled[encounter];
         return settledUnreconciled(merged);
     };
