@@ -406,6 +406,79 @@ describe('setting up', () => {
         await flush();
         expect(tab.root.querySelector('[data-pf-name]').textContent).toBe('From another device');
     });
+
+    describe('a pull that dropped entries to the cap', () => {
+        const full = (prefix, count = 40) =>
+            Array.from({ length: count }, (_, i) => [`${prefix}${i}`, `${prefix.toUpperCase()}${i}`, build(80)]);
+
+        test('says who, the first few and how many more', async () => {
+            seedRoster(full('old'));
+            await mountTab();
+            seedRoster([...full('new', 37), ...full('old', 3)]);
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            const note = el('roster-note').textContent;
+            expect(note).toContain('kept the most recently changed');
+            expect(note).toContain('40 teammates kept, OLD3, OLD4, OLD5, OLD6, OLD7 and 32 more dropped');
+            expect(note).not.toContain('saved builds');
+        });
+
+        test('one or two names are named whole, and saved builds are told apart', async () => {
+            const savedBuild = (id) => ({ id, name: id, dto: build(70), addedAt: 1, updatedAt: 1 });
+            seedRoster(full('old'));
+            state.db.builds = Array.from({ length: 40 }, (_, i) => savedBuild(`b${i}`));
+            await mountTab();
+            seedRoster(full('old', 40));
+            state.db.builds = [...Array.from({ length: 39 }, (_, i) => savedBuild(`b${i}`)), savedBuild('newer')];
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            expect(el('roster-note').textContent).toContain('40 saved builds kept, b39 dropped');
+            expect(el('roster-note').textContent).not.toContain('teammates');
+        });
+
+        test('a deletion from another device is not called a drop', async () => {
+            seedRoster(full('old'));
+            await mountTab();
+            seedRoster([...full('old', 39), ['newer', 'Newer', build(80)]]);
+            state.db.removed = { old39: Date.now() };
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            expect(el('roster-note').textContent).toBe('');
+        });
+
+        test('a list with room left dropped nothing to the cap', async () => {
+            seedRoster(full('old', 5));
+            await mountTab();
+            seedRoster(full('old', 4));
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            expect(el('roster-note').textContent).toBe('');
+        });
+
+        test('a replay of the pull says nothing more, and an ordinary read back says nothing', async () => {
+            seedRoster(full('old'));
+            await mountTab();
+            expect(el('roster-note').textContent).toBe('');
+            seedRoster(full('new'));
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            expect(el('roster-note').textContent).toContain('dropped');
+            tab._rosterNote('');
+            announceSyncPullApplied({ settings: ['combatSimPartyRoster'] });
+            await flush();
+            expect(el('roster-note').textContent).toBe('');
+        });
+
+        test('the tab shut before the read comes back draws nothing', async () => {
+            seedRoster(full('old'));
+            await mountTab();
+            seedRoster(full('new'));
+            const reading = tab._reloadRoster({ pulled: true });
+            tab.root = null;
+            await reading;
+            expect(tab._roster.entries[0].id).toBe('old0');
+        });
+    });
 });
 
 describe('every way a search can end', () => {

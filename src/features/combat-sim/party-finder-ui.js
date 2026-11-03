@@ -42,6 +42,7 @@ import {
     PARTY_ROSTER_KEY,
     MAX_ROSTER_SIZE,
     MAX_SAVED_BUILDS,
+    evictedByCap,
     loadRoster,
     saveBuild,
     renameBuild,
@@ -228,6 +229,16 @@ function readInt(input, fallback, min, max) {
 }
 
 /**
+ * Names for a note, the first few and how many more.
+ * @param {Array<string>} names
+ * @returns {string}
+ */
+function lostNames(names) {
+    const shown = names.slice(0, 5).join(', ');
+    return names.length > 5 ? `${shown} and ${names.length - 5} more` : shown;
+}
+
+/**
  * Format "1m 05s" from seconds.
  * @param {number} seconds
  * @returns {string}
@@ -364,7 +375,7 @@ export class PartyFinderTab {
         container.appendChild(this.root);
         this._wire();
         this._unsubscribePull = onSyncPullApplied((written) => {
-            if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster();
+            if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster({ pulled: true });
         });
         this._reloadRoster();
         this._loadScoreWeight();
@@ -672,12 +683,30 @@ export class PartyFinderTab {
         }
     }
 
-    /** @private */
-    async _reloadRoster() {
+    /**
+     * Read the roster back.
+     * @param {{pulled?: boolean}} [options] - `pulled`: a sync pull wrote it, so a fold may have dropped entries for
+     *   want of room, and only the player's roster on screen can say which
+     * @private
+     */
+    async _reloadRoster({ pulled = false } = {}) {
+        const before = this._roster;
         const roster = await loadRoster();
         if (!this.root) return;
         this._roster = roster;
         this._renderRoster();
+        if (!pulled) return;
+        const { teammates, builds } = evictedByCap(before, roster);
+        const parts = [
+            teammates.length ? `${MAX_ROSTER_SIZE} teammates kept, ${lostNames(teammates)} dropped` : '',
+            builds.length ? `${MAX_SAVED_BUILDS} saved builds kept, ${lostNames(builds)} dropped` : '',
+        ].filter(Boolean);
+        if (parts.length) {
+            this._rosterNote(
+                `Sync joined two full lists and kept the most recently changed: ${parts.join('; ')}.`,
+                true
+            );
+        }
     }
 
     /**

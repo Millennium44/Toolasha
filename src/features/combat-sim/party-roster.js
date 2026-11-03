@@ -335,6 +335,25 @@ export function mergeRoster(local, incoming) {
     return { savedAt: Math.max(a.savedAt, b.savedAt), entries, builds, removed };
 }
 
+/**
+ * What a sync fold took off a full roster for want of room. Gone without a tombstone from a list that is now full:
+ * anything deleted carries a tombstone, and a list with room left dropped nothing to the cap.
+ * @param {{entries: Array, builds: Array, removed: Object}} before - The roster as held before the pull
+ * @param {{entries: Array, builds: Array, removed: Object}} after - The roster as it now stands
+ * @returns {{teammates: Array<string>, builds: Array<string>}} The names evicted, most of the time none
+ */
+export function evictedByCap(before, after) {
+    const lost = (key, max) => {
+        const left = after?.[key] || [];
+        if (left.length < max) return [];
+        const ids = new Set(left.map((entry) => entry.id));
+        return (before?.[key] || [])
+            .filter((entry) => !ids.has(entry.id) && !after?.removed?.[entry.id])
+            .map((entry) => entry.name);
+    };
+    return { teammates: lost('entries', MAX_ROSTER_SIZE), builds: lost('builds', MAX_SAVED_BUILDS) };
+}
+
 let idCounter = 0;
 
 /**
