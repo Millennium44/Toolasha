@@ -342,9 +342,9 @@ describe('holding a press', () => {
         press();
         expect(game).not.toHaveBeenCalled();
         const text = message().textContent;
-        expect(text).toContain('Best catalyst: catalyst of coinification, +1.5M/hr');
+        expect(text).toContain('Best: catalyst of coinification, +1.5M/hr');
         expect(text).toContain('Your choice, no catalyst: +1.0M/hr, which is 500.0K/hr less');
-        expect(text).toContain('Press again to go ahead');
+        expect(text).toContain('Press again within 15 s to go ahead');
         expect(text).not.toContain('You have none');
     });
 
@@ -529,7 +529,7 @@ describe('holding a press', () => {
     test('names a best catalyst the player does not own', async () => {
         setAnswers('coinify', CHEESE, { none: profit(1e6), typeSpecific: profit(1.1e6), prime: profit(2e6) });
         press();
-        expect(message().textContent).toContain('Best catalyst: prime catalyst');
+        expect(message().textContent).toContain('Best: prime catalyst');
         expect(message().textContent).toContain('You have none of the best one');
     });
 
@@ -543,7 +543,7 @@ describe('holding a press', () => {
         setAnswers('coinify', CHEESE, { none: profit(500_000), typeSpecific: profit(-300_000), prime: profit(-9e5) });
         mountPanel({ catalyst: CAT });
         press();
-        expect(message().textContent).toContain('Best catalyst: no catalyst, +500.0K/hr');
+        expect(message().textContent).toContain('Best: no catalyst, +500.0K/hr');
         expect(message().textContent).toContain('Your choice, catalyst of coinification: -300.0K/hr');
         expect(message().textContent).not.toContain('You have none');
     });
@@ -552,14 +552,14 @@ describe('holding a press', () => {
         setAnswers('decompose', CHEESE, { none: profit(1e6), typeSpecific: profit(2e6), prime: profit(1.5e6) });
         mountPanel({ tab: 'Decompose', catalyst: PRIME });
         press();
-        expect(message().textContent).toContain('Best catalyst: catalyst of decomposition');
+        expect(message().textContent).toContain('Best: catalyst of decomposition');
         expect(message().textContent).toContain('Your choice, prime catalyst');
 
         setAnswers('transmute', CHEESE, { none: profit(1e6), typeSpecific: profit(1.1e6), prime: profit(3e6) });
         check.clearPending();
         mountPanel({ tab: 'Transmute', catalyst: '/items/catalyst_of_transmutation' });
         press();
-        expect(message().textContent).toContain('Best catalyst: prime catalyst');
+        expect(message().textContent).toContain('Best: prime catalyst');
     });
 
     test('a nonzero enhancement level is priced at that level', () => {
@@ -1402,8 +1402,11 @@ describe('the setting', () => {
         expect(definition.default).toBe(false);
         expect(definition.type).toBe('checkbox');
         expect(definition.help).toContain('10K coins an hour');
-        expect(definition.help).toContain('5%');
-        expect(definition.help).toContain('one more press goes ahead');
+        expect(definition.help).toContain("at least 5% of the best option's hourly figure, gain or loss");
+        expect(definition.help).toContain('an Iron Cow does not own the best catalyst');
+        expect(definition.help).toContain('empty order book');
+        expect(definition.help).toContain('one more press within 15 seconds goes ahead');
+        expect(definition.help).toContain('not asked about again for a minute');
     });
 
     test('the margin in the help is the margin in the code', async () => {

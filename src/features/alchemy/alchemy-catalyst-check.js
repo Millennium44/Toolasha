@@ -479,7 +479,7 @@ class AlchemyCatalystCheck {
             if (color) row.style.color = color;
             node.appendChild(row);
         };
-        line(`Best catalyst: ${catalystName(best)}, ${rate(best)}.`, GAME_COLORS.good);
+        line(`Best: ${catalystName(best)}, ${rate(best)}.`, GAME_COLORS.good);
         line(
             `Your choice, ${catalystName(current)}: ${rate(current)}, which is ${formatKMB(Math.round(gap))}/hr less.`
         );
@@ -487,7 +487,7 @@ class AlchemyCatalystCheck {
         if (best.hrid && dataManager.getInventory?.() && ownedCatalystCount(best.hrid) === 0) {
             line('You have none of the best one. Its figure counts buying it.', GAME_COLORS.textDim);
         }
-        line('Press again to go ahead.');
+        line(`Press again within ${CONFIRM_WINDOW_MS / 1000} s to go ahead.`);
 
         const controls = document.createElement('div');
         Object.assign(controls.style, { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' });
