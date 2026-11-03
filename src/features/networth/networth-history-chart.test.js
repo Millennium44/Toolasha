@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { BUTTON_LOOK } from '../../utils/game-look.js';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -278,6 +279,118 @@ describe('growth figures and setting-change markers', () => {
         ...extra,
     });
 
+    test('a step wholly on Non-Excl is named in the hover, and the total line still says nothing moved', () => {
+        const up = networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: 900_000_000 }));
+        expect(up).toContain('No effect on the total');
+        expect(up).toContain('Non-Excl step: +900.00M');
+        const down = networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: -900_000_000 }));
+        expect(down).toContain('Non-Excl step: -900.00M');
+        // The ordinary case says nothing of it: the books only moved between lines, or a token moved both figures
+        expect(networthHistoryChart._markerTooltipHtml(marked(0, { stepCounted: 0 }))).not.toContain('Non-Excl step');
+        expect(networthHistoryChart._markerTooltipHtml(marked(400, { stepCounted: 0 }))).not.toContain('Non-Excl step');
+    });
+
+    test('a partial bill on books moved past their exclusion is a floor on the Non-Excl line, not the total', () => {
+        const SWITCH = 'networth_abilityBooksAsInventory';
+        const html = networthHistoryChart._markerTooltipHtml({
+            changes: [{ id: SWITCH, from: false, to: true }],
+            step: 0,
+            stepCounted: 900_000_000,
+            unseparated: [],
+            floor: [SWITCH],
+            raw: 0,
+        });
+        expect(html).toContain('No effect on the total');
+        expect(html).toContain('Non-Excl step: at least +900.00M');
+        expect(html).not.toContain('At least this much');
+    });
+
+    describe('a marker part of which repeats an earlier reading', () => {
+        const batch = {
+            changes: [
+                { id: 'networth_includeLabyrinthTokens', from: false, to: true, step: 100, stepCounted: 100 },
+                { id: 'networth_includeCowbells', from: false, to: true, step: 50, stepCounted: 50 },
+            ],
+            step: 150,
+            stepCounted: 150,
+            unseparated: [],
+            raw: 150,
+        };
+
+        test('hovers what counted, and says the rest was counted already', () => {
+            const html = networthHistoryChart._markerTooltipHtml(batch, {
+                step: 50,
+                stepCounted: 50,
+                unseparated: [],
+                floor: [],
+            });
+            expect(html).toContain('Step: +50');
+            expect(html).not.toContain('Step: +150');
+            expect(html).toContain('The rest was already counted');
+        });
+
+        test('the hover over a point in the chart reads the history', () => {
+            const t = (hours) => now - hours * 3_600_000;
+            const first = {
+                t: t(3),
+                total: 1000,
+                marker: {
+                    changes: [batch.changes[0]],
+                    step: 100,
+                    stepCounted: 100,
+                    unseparated: [],
+                    raw: 100,
+                },
+            };
+            const second = { t: t(2), total: 1150, marker: batch };
+            getHistory.mockReturnValue([first, second]);
+            const parent = document.createElement('div');
+            document.body.appendChild(parent);
+            const hover = (raw, dataIndex) =>
+                networthHistoryChart._renderCustomTooltip({
+                    chart: { canvas: { parentElement: parent, offsetLeft: 0, offsetTop: 0 } },
+                    tooltip: {
+                        opacity: 1,
+                        caretX: 0,
+                        caretY: 0,
+                        dataPoints: [
+                            {
+                                dataset: { label: 'Total Net Worth', data: [{ _raw: first }, { _raw: second }] },
+                                dataIndex,
+                                raw: { x: raw.t, _raw: raw },
+                            },
+                        ],
+                    },
+                });
+            hover(second, 1);
+            const shown =
+                parent.querySelector('#mwi-nw-chart-tooltip') ?? document.getElementById('mwi-nw-chart-tooltip');
+            expect(shown.textContent).toContain('Step: +50');
+            expect(shown.textContent).toContain('The rest was already counted');
+            hover(first, 0);
+            expect(shown.textContent).toContain('Step: +100');
+            parent.remove();
+        });
+
+        test('all of it repeated claims no step', () => {
+            const html = networthHistoryChart._markerTooltipHtml(batch, null);
+            expect(html).toContain('Already counted at an earlier reading');
+            expect(html).not.toContain('Step:');
+        });
+
+        test('nothing repeated says nothing of it, and a floor or unseparated part that repeated is not repeated', () => {
+            const whole = networthHistoryChart._markerTooltipHtml(batch);
+            expect(whole).toContain('Step: +150');
+            expect(whole).not.toContain('already counted');
+            const html = networthHistoryChart._markerTooltipHtml(
+                { ...batch, floor: ['networth_includeCowbells'], unseparated: ['networth_pricingMode'] },
+                { step: 50, stepCounted: 50, unseparated: [], floor: [] }
+            );
+            expect(html).not.toContain('At least this much');
+            expect(html).not.toContain('could not be separated');
+        });
+    });
+
     test('Last range and Rate leave a marked step out and say so; All-Time High stays raw', async () => {
         getHistory.mockReturnValue([
             { t: now - 3 * 3_600_000, total: 10_000_000_000, nonExcluded: 10_000_000_000 },
@@ -327,5 +440,50 @@ describe('growth figures and setting-change markers', () => {
         await networthHistoryChart.openModal();
         const text = document.getElementById('mwi-nw-chart-stats').textContent;
         expect(text).not.toContain('setting change');
+    });
+});
+
+describe('a button promoted to the selected look hovers to the selected look', () => {
+    const PRIMARY = BUTTON_LOOK.primary;
+    const QUIET = BUTTON_LOOK.quiet;
+
+    /**
+     * @param {HTMLElement} el - A styled button
+     * @returns {{hover: string, rest: string}} Its fill under the pointer, then back at rest
+     */
+    const fills = (el) => {
+        el.dispatchEvent(new Event('mouseover'));
+        const hover = el.style.background;
+        el.dispatchEvent(new Event('mouseout'));
+        return { hover, rest: el.style.background };
+    };
+
+    const rangeButton = (range) => document.querySelector(`.mwi-nw-range-btn[data-range="${range}"]`);
+
+    test('picking a range makes it hover to the primary fill, and the one it replaced to the quiet fill', async () => {
+        await networthHistoryChart.openModal();
+        const was = rangeButton('all');
+        const now = rangeButton('7d');
+
+        now.click();
+
+        expect(fills(now)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+        expect(fills(was)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
+    });
+
+    test('the Connect Gaps and Show Bars toggles follow their state both ways', async () => {
+        await networthHistoryChart.openModal();
+        const gaps = document.querySelector('.mwi-nw-gap-toggle');
+        const bars = document.querySelector('.mwi-nw-bar-toggle');
+
+        gaps.click();
+        bars.click();
+        expect(fills(gaps)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+        expect(fills(bars)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+
+        gaps.click();
+        bars.click();
+        expect(fills(gaps)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
+        expect(fills(bars)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
     });
 });

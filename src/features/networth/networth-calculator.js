@@ -42,7 +42,7 @@ import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { getArtisanBonus } from '../../utils/artisan-bonus.js';
-import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape, baseCapeIsPlainZero } from '../../utils/untradable-cape.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
@@ -603,7 +603,10 @@ function craftingBill(itemHrid) {
     let upgradeCost = 0;
     if (action.upgradeItemHrid) {
         const upgrade = priceWithPartial(action.upgradeItemHrid, 0, null);
-        if (upgrade.partial || !(upgrade.price > 0)) partial = true;
+        // A base cape the "nothing" setting counts as free is a complete bill, not a missing price
+        if (!baseCapeIsPlainZero(itemHrid, action.upgradeItemHrid) && (upgrade.partial || !(upgrade.price > 0))) {
+            partial = true;
+        }
         upgradeCost = upgrade.price;
     }
 
@@ -1249,6 +1252,10 @@ export async function calculateNetworth() {
     // Separate ability books for Fixed Assets section
     let abilityBooksValue = 0;
     const abilityBooksBreakdown = [];
+    // With the Ability Books asset type excluded, "Ability books as inventory" decides whether these count at all:
+    // held back while it is off, counted as inventory while it is on. The history's marker for that switch needs
+    // this much, since the step shows in the non-excluded line and never in the total.
+    const switchedBooks = { value: 0, partial: false };
 
     // Track gold coins separately for header display
     let coinCount = 0;
@@ -1332,9 +1339,13 @@ export async function calculateNetworth() {
             trackExcluded('category', categoryHrid, `${categoryName} (category)`, value);
             continue;
         }
-        if (isAbilityBook && !booksAsInventory && isExcluded('assetType', 'abilityBooks')) {
-            trackExcluded('assetType', 'abilityBooks', 'All Ability Books', value);
-            continue;
+        if (isAbilityBook && isExcluded('assetType', 'abilityBooks')) {
+            switchedBooks.value += value;
+            if (itemData.partial) switchedBooks.partial = true;
+            if (!booksAsInventory) {
+                trackExcluded('assetType', 'abilityBooks', 'All Ability Books', value);
+                continue;
+            }
         }
 
         if (tokenEntries.has(item.itemHrid)) tokenEntries.get(item.itemHrid).counted = true;
@@ -1594,7 +1605,7 @@ export async function calculateNetworth() {
         totalNetworth,
         valuation,
         // What the character holds that decides whether some settings can matter at all
-        valuationFacts: { capeHeld: characterItems.some((item) => isUntradableCape(item.itemHrid)) },
+        valuationFacts: { capeHeld: characterItems.some((item) => isUntradableCape(item.itemHrid)), switchedBooks },
         // Counted items valued on a crafting bill with an input nothing can price: the total
         // includes the priced inputs' cost, so it is a floor by this much of the picture
         partial: { count: partialItems.size, names: [...partialItems.values()] },

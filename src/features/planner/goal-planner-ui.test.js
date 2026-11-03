@@ -1242,6 +1242,26 @@ describe('the leveling route', () => {
         for (const label of ['Fastest', 'Cheapest', 'Within budget']) expect(buttonNamed(label)).toBeTruthy();
     });
 
+    test('a route that is the quick estimate says so only when the money is the same too', async () => {
+        route.rates = [cookingRate('Stew')];
+        await open();
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('Route total');
+        expect(text()).toContain('Same as the quick estimate: one action the whole way.');
+        expect(text()).not.toContain('Quick estimate (Stew the whole way)');
+    });
+
+    test('the same single action costed differently is not called the same as the quick estimate', async () => {
+        await open();
+        // The route search then reads Stew at twice the cost per hour the card's quick estimate was priced at:
+        // one stage, one action, two different bottom lines
+        route.rates = [cookingRate('Stew', { goldPerHour: -7200 })];
+        await goalPlannerPanel.optimizeRoute('g-cook');
+        expect(text()).toContain('Route total');
+        expect(text()).not.toContain('Same as the quick estimate');
+        expect(text()).toContain('Quick estimate (Stew the whole way)');
+    });
+
     test('an identical second press reuses the search; a refresh marks the route out of date', async () => {
         await open();
         await goalPlannerPanel.optimizeRoute('g-cook');
@@ -1393,5 +1413,165 @@ describe('the leveling route', () => {
         plannerContext.value.skill = () => ({ level: 10, experience: 10_000 });
         await open();
         expect(buttonNamed('Optimize route')).toBeUndefined();
+    });
+});
+
+describe('pricing again after the market-history cool-down', () => {
+    // The pool that serves market volumes refuses requests for a while after a burst. A pricing taken then
+    // counts those sales at full price and says so; the pool answers again by itself, so the panel asks again.
+    const WAIT_MS = 5000;
+    const MARGIN_MS = 1500;
+    const coolingContext = () => ({ ...fixtureContext(), volumeRetryAt: Date.now() + WAIT_MS });
+
+    beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('prices once more when the cool-down ends, and stops once the volumes are measured', async () => {
+        plannerContext.onBuild = () => (plannerContext.builds === 1 ? coolingContext() : fixtureContext());
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        expect(plannerContext.builds).toBe(1);
+
+        await vi.advanceTimersByTimeAsync(WAIT_MS + MARGIN_MS - 1);
+        expect(plannerContext.builds).toBe(1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(plannerContext.builds).toBe(2);
+
+        // The second pricing measured everything: nothing further is scheduled
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(plannerContext.builds).toBe(2);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('a pool that keeps refusing is asked twice more and then left to the warning and the button', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        await vi.advanceTimersByTimeAsync(10 * (WAIT_MS + MARGIN_MS));
+        expect(plannerContext.builds).toBe(3);
+        expect(vi.getTimerCount()).toBe(0);
+
+        // A press starts the allowance again
+        await goalPlannerPanel.refresh();
+        expect(plannerContext.builds).toBe(4);
+        await vi.advanceTimersByTimeAsync(10 * (WAIT_MS + MARGIN_MS));
+        expect(plannerContext.builds).toBe(6);
+    });
+
+    test('a pricing that was not waiting on the pool schedules nothing', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(goalPlannerPanel.context.volumeRetryAt).toBeUndefined();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('closing the panel cancels it', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        expect(vi.getTimerCount()).toBe(1);
+
+        goalPlannerPanel.hide();
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(plannerContext.builds).toBe(1);
+    });
+
+    test('a different character logging in cancels it, and it never prices them', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        character.id = 'char2';
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(plannerContext.builds).toBe(1);
+    });
+
+    test('pooled history being turned off while it waits cancels it', async () => {
+        const { default: config } = await import('../../core/config.js');
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        const setting = vi.spyOn(config, 'getSetting').mockReturnValue(false);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(plannerContext.builds).toBe(1);
+        setting.mockRestore();
+    });
+
+    test('the feature switching off cancels it', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        goalPlannerPanel.disable();
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(plannerContext.builds).toBe(1);
+    });
+
+    test('reopening the panel arms the pending re-pricing again', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+        goalPlannerPanel.hide();
+        expect(vi.getTimerCount()).toBe(0);
+
+        goalPlannerPanel.show();
+        expect(vi.getTimerCount()).toBe(1);
+        await vi.advanceTimersByTimeAsync(WAIT_MS + MARGIN_MS);
+        expect(plannerContext.builds).toBe(2);
+    });
+
+    test('a replan on the old prices does not arm a pricing the pricing itself did not ask for', async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        // A context left over from an earlier pricing, with the moment the pool was due carried on it
+        goalPlannerPanel.context = coolingContext();
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+
+        expect(plannerContext.builds).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test('adding goals while it waits keeps one timer, not one per replan', async () => {
+        plannerContext.onBuild = () => coolingContext();
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 900_000_000 });
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 950_000_000 });
+        expect(vi.getTimerCount()).toBe(1);
+    });
+
+    test('a retry whose pricing fails is reported on the panel and does not throw', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        plannerContext.onBuild = () => {
+            if (plannerContext.builds === 1) return coolingContext();
+            throw new Error('market down');
+        };
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        await vi.advanceTimersByTimeAsync(WAIT_MS + MARGIN_MS);
+        expect(plannerContext.builds).toBe(2);
+        expect(text()).toContain('Pricing failed');
+        vi.restoreAllMocks();
     });
 });

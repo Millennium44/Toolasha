@@ -778,6 +778,170 @@ describe('pull', () => {
         expect(gist.writes).toHaveLength(0);
     });
 
+    describe('a stopped pull and the held-back marker a newer operation has moved', () => {
+        const newer = { exportedAt: '2026-03-01T00:00:00.000Z', hash: 'h:newer', keys: [] };
+        const startHeldPull = async (waitOn) => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.mergeHeld = [{ store: 'marketplace', key: 'market', label: 'market history' }];
+            let finish;
+            payload[waitOn] = new Promise((resolve) => {
+                finish = resolve;
+            });
+            return { oldPull: syncManager.pull(), finish: () => finish() };
+        };
+
+        test('torn down while weighing, it leaves a newer marker standing', async () => {
+            const { oldPull, finish } = await startHeldPull('hashWait');
+            await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+            // This pull's marker landed before the weighing; a newer operation then settled on its own
+            expect(stored.map.toolasha_sync_mergeHeld.exportedAt).toBe('2026-02-01T00:00:00.000Z');
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = newer;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toEqual(newer);
+        });
+
+        test('torn down while weighing, it does not bring back a marker a newer operation cleared', async () => {
+            const { oldPull, finish } = await startHeldPull('hashWait');
+            await vi.waitFor(() => expect(payload.hashCalls).toBe(1));
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = null;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        });
+
+        test('torn down during the import, it leaves a marker that moved since it started', async () => {
+            const { oldPull, finish } = await startHeldPull('applyWait');
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            stored.map.toolasha_sync_mergeHeld = newer;
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toEqual(newer);
+            expect(toasts.at(-1).message).toContain('Reload now');
+        });
+
+        test('torn down during the import, it replaces its own older marker when nothing else moved it', async () => {
+            const older = { exportedAt: '2026-01-15T00:00:00.000Z', hash: 'h:older', keys: [] };
+            stored.map.toolasha_sync_mergeHeld = older;
+            const { oldPull, finish } = await startHeldPull('applyWait');
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            finish();
+
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+                exportedAt: '2026-02-01T00:00:00.000Z',
+                keys: [{ store: 'marketplace', key: 'market' }],
+            });
+        });
+
+        describe('a marker overtaken by a later pull', () => {
+            const E1 = '2026-02-01T00:00:00.000Z';
+            const E2 = '2026-03-01T00:00:00.000Z';
+            const overtaken = () => {
+                stored.map.toolasha_sync_gistId = 'abc';
+                stored.map.toolasha_sync_lastSyncedAt = E2;
+                stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+                stored.map.toolasha_sync_mergeHeld = {
+                    exportedAt: E1,
+                    hash: 'h:{"older":1}',
+                    keys: [{ store: 'marketplace', key: 'market' }],
+                };
+                gist.read = remote(E2);
+            };
+
+            test('a pull that finds nothing new clears it, silent or pressed', async () => {
+                overtaken();
+                expect(await syncManager.pull({ silent: true })).toMatchObject({ skipped: true, reason: 'not-newer' });
+                expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+
+                overtaken();
+                expect(await syncManager.pull()).toMatchObject({ skipped: true, reason: 'not-newer' });
+                expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+            });
+
+            test('so pushes stop being refused; before that they are held back', async () => {
+                overtaken();
+                expect(await syncManager.push({ silent: true })).toMatchObject({ ok: false, reason: 'held-back' });
+                await syncManager.pull({ silent: true });
+                expect(await syncManager.push({ silent: true })).not.toMatchObject({ reason: 'held-back' });
+            });
+
+            test('the whole way there: a stopped pull writes it late, and the next pull clears it', async () => {
+                const { oldPull, finish } = await startHeldPull('applyWait');
+                await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+                syncManager.cleanup();
+                // A newer operation pulled and moved the gist on, holding nothing back
+                stored.map.toolasha_sync_lastSyncedAt = E2;
+                stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+                gist.read = remote(E2);
+                finish();
+                await oldPull;
+                expect(stored.map.toolasha_sync_mergeHeld.exportedAt).toBe(E1);
+
+                payload.mergeHeld = [];
+                expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-newer' });
+                expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+            });
+
+            test('a marker for the stamp this device holds still stands: its download may yet come back', async () => {
+                overtaken();
+                const own = { ...stored.map.toolasha_sync_mergeHeld, exportedAt: E2 };
+                stored.map.toolasha_sync_mergeHeld = own;
+                gist.read = remote('2026-01-01T00:00:00.000Z');
+                expect(await syncManager.pull({ silent: true })).toMatchObject({ reason: 'not-newer' });
+                expect(stored.map.toolasha_sync_mergeHeld).toEqual(own);
+            });
+        });
+
+        test('a pull a store failed on keeps its hold, so a push cannot replace what it held back', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.mergeHeld = [{ store: 'marketplace', key: 'market', label: 'market history' }];
+            payload.complete = false;
+            payload.failed = [{ store: 'guildHistory' }];
+
+            expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'incomplete-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toMatchObject({
+                exportedAt: '2026-02-01T00:00:00.000Z',
+                keys: [{ store: 'marketplace', key: 'market' }],
+            });
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+            expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'held-back' });
+
+            // The retry that lands clears it
+            payload.complete = true;
+            payload.failed = [];
+            payload.mergeHeld = [];
+            await syncManager.pull();
+            expect(payload.applyOptions).toMatchObject({ retryHeld: true });
+            expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
+        });
+
+        test('a pull that held nothing back writes no marker whichever way it stops', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            let finish;
+            payload.applyWait = new Promise((resolve) => {
+                finish = resolve;
+            });
+            const oldPull = syncManager.pull();
+            await vi.waitFor(() => expect(payload.applyCalls).toBe(1));
+            syncManager.cleanup();
+            finish();
+            expect(await oldPull).toMatchObject({ ok: false, reason: 'stopped-after-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld).toBeUndefined();
+        });
+    });
+
     test('without Web Locks, a switch push cannot upload while a cancelled import is still finishing', async () => {
         // The busy flag is the only same-tab exclusion when the browser has no
         // Web Locks. Cleanup used to clear it, so the next character's switch

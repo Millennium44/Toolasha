@@ -19,8 +19,10 @@ import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import {
+    CAPE_BASE_VALUE_MIRROR,
     CAPE_BASE_VALUE_SETTING,
     getCapeBaseValue,
+    getCapeBaseValueMode,
     isRefinedCape,
     isUntradableCape,
 } from '../../utils/untradable-cape.js';
@@ -1399,16 +1401,23 @@ class AlchemyBestItems {
             }
             // An untradable cape has no market price: its value in this row is an assumption
             if (isUntradableCape(item.itemHrid)) {
-                const baseValue = isRefinedCape(item.itemHrid) ? 0 : getCapeBaseValue();
+                const refined = isRefinedCape(item.itemHrid);
+                const baseValue = getCapeBaseValue();
                 const marker = document.createElement('span');
                 marker.textContent = '*';
                 marker.setAttribute('data-mwi-assumed-value', 'true');
                 marker.style.cssText = 'color: #fbbf24; margin-left: 2px; cursor: help;';
                 marker.title =
                     'Not on the market, so its value here is an assumption: ' +
+                    // Worded by the setting: a refined cape on "nothing" is complete, and a mirror setting whose mirror
+                    // has no price is a floor on any cape, not a base that "counts as nothing"
                     (baseValue > 0
                         ? `the base cape counts as ${formatWithSeparator(Math.round(baseValue))} coins (the untradable-cape setting)`
-                        : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
+                        : getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR
+                          ? 'the untradable-cape setting values the base cape as a Mirror of Protection, which has no price, so this is a floor'
+                          : refined
+                            ? 'the base cape counts as nothing (the untradable-cape setting)'
+                            : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
                     ', plus refinement and your own enhancing cost. Never taxed.';
                 nameTd.appendChild(marker);
             }

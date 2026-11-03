@@ -54,6 +54,24 @@ export function isRefinedCape(itemHrid) {
 }
 
 /**
+ * Whether a recipe's base cape is plainly free by the player's setting: a refined (★) cape upgraded from an
+ * untradable cape, on the "nothing" setting. Then the bill is the refinement stones alone, a complete figure
+ * (the 0 is the player's choice, not a missing price), so neither bill flags it partial. On the mirror
+ * setting the base is one mirror price, and with no mirror price the bill is an unpriced floor. The one rule
+ * both bills (the production bill and net worth's) share.
+ * @param {string} outputHrid - The item the recipe makes
+ * @param {string} upgradeItemHrid - The recipe's upgrade item
+ * @returns {boolean} True for a refined cape on the "nothing" setting
+ */
+export function baseCapeIsPlainZero(outputHrid, upgradeItemHrid) {
+    return (
+        getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO &&
+        isRefinedCape(outputHrid) &&
+        isUntradableCape(upgradeItemHrid)
+    );
+}
+
+/**
  * The unrefined cape behind a refined one.
  * @param {string} itemHrid - Item HRID
  * @returns {string} The hrid without its refined suffix (unchanged when not refined)
@@ -96,6 +114,23 @@ export function getCapeBaseValue({ context = 'profit', mode } = {}) {
  */
 export function describeAssumedCape(entry, name, formatValue) {
     const level = entry.enhancementLevel > 0 ? ` +${entry.enhancementLevel}` : '';
-    const floor = entry.partial ? ' The base cape counts as nothing, so this is a floor.' : '';
-    return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} from the untradable-cape setting (plus refinement and your own enhancing cost where it has them), never taxed.${floor}`;
+    const mirror = getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR;
+    const refined = isRefinedCape(entry.itemHrid);
+    // Whose floor it is depends on the setting: nothing is the player's choice (so a refined cape is only a floor
+    // for an input nothing prices), and a mirror setting is a floor when the mirror itself has no price
+    let floor = '';
+    if (entry.partial) {
+        if (mirror) floor = ' The Mirror of Protection or another input has no price, so this is a floor.';
+        else if (refined) floor = ' An input has no price, so this is a floor.';
+        else floor = ' The base cape counts as nothing, so this is a floor.';
+    }
+    // Your own enhancing cost is part of the figure only when the cape is enhanced
+    const enhancing = entry.enhancementLevel > 0 ? ` (plus your own enhancing cost at +${entry.enhancementLevel})` : '';
+    // A refined cape is its refinement stones plus its base cape as the setting values it (a Mirror of Protection, or nothing)
+    const source = refined
+        ? mirror
+            ? `from its refinement stones plus a Mirror of Protection for the base cape${enhancing}`
+            : `from its refinement stones alone, the base cape counting as nothing${enhancing}`
+        : 'from the untradable-cape setting (plus refinement and your own enhancing cost where it has them)';
+    return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} ${source}, never taxed.${floor}`;
 }

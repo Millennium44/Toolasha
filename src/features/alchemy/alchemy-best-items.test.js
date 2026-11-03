@@ -505,10 +505,26 @@ describe('calculateRankings eligibility', () => {
         game.initClientData.itemDetailMap['/items/b'].alchemyDetail.decomposeItems = [{ itemHrid: '/items/x' }];
 
         bestItems.calculateRankings('coinify');
-        expect(calculator.coinify).toHaveBeenCalledWith('/items/a', 0, false, null, expect.any(Object));
+        expect(calculator.coinify).toHaveBeenCalledWith(
+            '/items/a',
+            0,
+            false,
+            null,
+            expect.any(Object),
+            null,
+            expect.any(Function)
+        );
 
         bestItems.calculateRankings('decompose');
-        expect(calculator.decompose).toHaveBeenCalledWith('/items/b', 0, false, null, expect.any(Object));
+        expect(calculator.decompose).toHaveBeenCalledWith(
+            '/items/b',
+            0,
+            false,
+            null,
+            expect.any(Object),
+            null,
+            expect.any(Function)
+        );
     });
 
     test('transmute is asked with the hrid and the sweep context and no level', () => {
@@ -517,7 +533,15 @@ describe('calculateRankings eligibility', () => {
         };
 
         bestItems.calculateRankings('transmute');
-        expect(calculator.transmute).toHaveBeenCalledWith('/items/c', false, null, null, expect.any(Object));
+        expect(calculator.transmute).toHaveBeenCalledWith(
+            '/items/c',
+            false,
+            null,
+            null,
+            expect.any(Object),
+            0,
+            expect.any(Function)
+        );
     });
 
     test('an item the calculator throws on is dropped, not allowed to sink the table', () => {
@@ -2060,21 +2084,13 @@ describe('Include shop prices', () => {
         market.prices['/items/cheese'] = 200;
         shop.offers['/items/cheese'] = { coins: 80, units: 1 };
         // The calculator pays whatever the ranking told it to; the stand-in reads the override as the real one does
-        calculator.coinify.mockImplementation((hrid) => {
-            const override = calculatorMock.inputBuyOverride?.(hrid);
+        calculator.coinify.mockImplementation((hrid, _level, _live, _tea, _ctx, _catalyst, inputBuyOverride) => {
+            const override = inputBuyOverride?.(hrid);
             return profit({ profitPerHour: 1000 - (override ?? 200) });
         });
     });
 
-    const calculatorMock = {
-        get inputBuyOverride() {
-            return calculatorRef.value?.inputBuyOverride;
-        },
-    };
-    const calculatorRef = { value: null };
-
     test('is on by default: the cheaper shop price is the row price and carries the shop tag', async () => {
-        calculatorRef.value = (await import('../market/alchemy-profit-calculator.js')).default;
         const [row] = bestItems.calculateRankings('coinify');
 
         expect(row.itemPrice).toBe(80);
@@ -2083,7 +2099,6 @@ describe('Include shop prices', () => {
     });
 
     test('off restores the market price and the old figures', async () => {
-        calculatorRef.value = (await import('../market/alchemy-profit-calculator.js')).default;
         settings.values[KEY] = false;
         const [row] = bestItems.calculateRankings('coinify');
 
@@ -2167,6 +2182,24 @@ describe('untradable capes in the table', () => {
         expect(marks[0].textContent).toBe('*');
         expect(marks[0].closest('tr').textContent).toContain('Gatherer Cape');
         expect(marks[0].title).toContain('floor');
+    });
+
+    test('the marker is worded by the setting: refined on nothing is complete, mirror with no mirror price is a floor', () => {
+        draw([entry(CAPE, 'Gatherer Cape'), entry(`${CAPE}_refined`, 'Gatherer Cape (Refined)')]);
+        let [plain, refined] = [...bestItems.modal.querySelectorAll('[data-mwi-assumed-value]')];
+        expect(plain.title).toContain('floor');
+        expect(refined.title).toContain('counts as nothing');
+        expect(refined.title).not.toContain('floor');
+
+        settings.values.untradableCapeBaseValue = 'mirror';
+        delete market.prices['/items/mirror_of_protection'];
+        draw([entry(CAPE, 'Gatherer Cape'), entry(`${CAPE}_refined`, 'Gatherer Cape (Refined)')]);
+        [plain, refined] = [...bestItems.modal.querySelectorAll('[data-mwi-assumed-value]')];
+        for (const mark of [plain, refined]) {
+            expect(mark.title).toContain('Mirror of Protection, which has no price, so this is a floor');
+            expect(mark.title).not.toContain('counts as nothing');
+        }
+        delete settings.values.untradableCapeBaseValue;
     });
 
     test('on the mirror setting the marker names the base value it assumed, and a refined cape still gets one', () => {

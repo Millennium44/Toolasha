@@ -7980,6 +7980,60 @@ describe('labyrinth toolbar layout', () => {
         expect(settings.map.get('labyrinthSimCaps')).toBe('precision');
     });
 
+    describe('the Size stepper follows its setting without waiting for the toolbar to be rebuilt', () => {
+        const watcher = () => settingWatchers.find((w) => w.key === 'labyrinthGridScaleControl');
+        const flip = (on) => {
+            configMock.getSetting.mockImplementation(
+                (key) => key === 'labyrinthRoomDistribution' || (key === 'labyrinthGridScaleControl' && on)
+            );
+            watcher().cb(on);
+        };
+
+        beforeEach(() => {
+            settingWatchers.length = 0;
+            labyrinthClearRate.watchHalfSettings();
+        });
+
+        afterEach(() => {
+            labyrinthClearRate._settingUnsubs?.forEach((unsub) => unsub());
+            labyrinthClearRate._settingUnsubs = null;
+        });
+
+        test('switched back on, the stepper appears in the open toolbar ahead of the auto-calc toggle', () => {
+            flip(false);
+            labyrinthClearRate.injectTileControls();
+            expect(panel().querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+
+            flip(true);
+
+            const size = panel().querySelector('.mwi-labyrinth-grid-scale');
+            expect(size).not.toBeNull();
+            expect(before(size, q('auto-toggle'))).toBe(true);
+            expect(panel().lastElementChild.textContent).toBe('Spread');
+            // Working, not just drawn: it moves the grid size setting
+            size.querySelector('[data-role="larger"]').click();
+            expect(settings.map.get('labyrinthGridScale')).toBe(1.25);
+        });
+
+        test('switched back on again and again it is drawn once; switched off it goes', () => {
+            flip(false);
+            labyrinthClearRate.injectTileControls();
+
+            flip(true);
+            flip(true);
+            expect(panel().querySelectorAll('.mwi-labyrinth-grid-scale')).toHaveLength(1);
+
+            flip(false);
+            expect(panel().querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+        });
+
+        test('with no toolbar on the page a change draws nothing and throws nothing', () => {
+            document.body.innerHTML = '';
+            expect(() => flip(true)).not.toThrow();
+            expect(document.querySelector('.mwi-labyrinth-grid-scale')).toBeNull();
+        });
+    });
+
     test('collapsing the bar closes the panel and hides the gear with the rest', () => {
         labyrinthClearRate.injectTileControls();
         q('settings-button').click();

@@ -55,6 +55,8 @@ vi.mock('../../utils/untradable-cape.js', () => ({
     isUntradableCape: (hrid) => hrid === REFINED || hrid === PLAIN,
     getCapeBaseValueMode: () => state.mode,
     CAPE_BASE_VALUE_ZERO: 'zero',
+    baseCapeIsPlainZero: (output, upgrade) =>
+        state.mode === 'zero' && output === REFINED && (upgrade === PLAIN || upgrade === REFINED),
 }));
 vi.mock('../enhancement/untradable-cape-value.js', () => ({
     getUntradableCapeValue: (hrid, level, options) => {

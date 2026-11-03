@@ -8,6 +8,7 @@ import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import alchemyProfit, { readAlchemyTabType } from './alchemy-profit.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
+import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { formatWithSeparator, formatPercentage, formatLargeNumber, timeReadable } from '../../utils/formatters.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -78,6 +79,27 @@ class AlchemyProfitDisplay {
         this._alchemyTargetLevel = null;
         this.pricingUnsubscribers = []; // config listener unregister functions
         this.catalystWhatIfUnsubscribe = null;
+        this.expectedValueHandler = null; // dataManager 'expected_value_initialized' listener
+        this.expectedValueStart = null; // In-flight request to start the expected-value calculator
+    }
+
+    /**
+     * Start the expected-value calculator if its own setting left it off. Essence and crate outputs are
+     * priced from its cache; without it they read as unpriced and every figure reads as a floor. The
+     * calculator shares one in-flight start between callers, and a start that found no data yet is
+     * retried by the next draw. The panel is not held up: it draws now and redraws on the ready event.
+     */
+    ensureExpectedValueStarted() {
+        if (expectedValueCalculator.isInitialized || this.expectedValueStart) return;
+        this.expectedValueStart = (async () => {
+            try {
+                await expectedValueCalculator.initialize();
+            } catch (error) {
+                console.error('[Alchemy Profit Display] Expected value start failed:', error);
+            } finally {
+                this.expectedValueStart = null;
+            }
+        })();
     }
 
     /**
@@ -128,6 +150,13 @@ class AlchemyProfitDisplay {
             }, 300);
         };
         dataManager.on('consumables_updated', this.consumablesChangeHandler);
+
+        // Essence and crate outputs are priced from the expected-value cache; redraw when it fills or refills
+        this.expectedValueHandler = () => {
+            this.lastFingerprint = null;
+            if (this.isActive) this.checkAndUpdateDisplay();
+        };
+        dataManager.on('expected_value_initialized', this.expectedValueHandler);
 
         // Pricing settings: the figures and the "Pricing Mode:" line both follow
         // them, and the state fingerprint does not include them
@@ -435,6 +464,8 @@ class AlchemyProfitDisplay {
     async updateDisplay(infoContainer) {
         try {
             const containerWasLive = infoContainer.isConnected;
+
+            this.ensureExpectedValueStarted();
 
             // Get current action HRID to determine action type
             const actionHrid = alchemyProfit.getCurrentActionHrid();
@@ -2002,6 +2033,11 @@ class AlchemyProfitDisplay {
             if (this.consumablesChangeHandler) {
                 dataManager.off('consumables_updated', this.consumablesChangeHandler);
                 this.consumablesChangeHandler = null;
+            }
+
+            if (this.expectedValueHandler) {
+                dataManager.off('expected_value_initialized', this.expectedValueHandler);
+                this.expectedValueHandler = null;
             }
 
             if (this.contentObserver) {

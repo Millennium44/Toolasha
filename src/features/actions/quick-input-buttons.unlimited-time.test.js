@@ -221,7 +221,7 @@ describe('the general action panel draws the bounded time', () => {
 
         // 80 logs at 2 per plank pays for 40 crafts, 10s each — the same bound the queue row
         // and the Profitability line ("mat: 40") would show for this action.
-        expect(totalTimeLine(panel).textContent).toBe('Total time: 0h 06m 40s · mat: 40');
+        expect(totalTimeLine(panel).textContent).toBe('Total time: 6m 40s · mat: 40');
     });
 
     test('a truly unbounded action still reads ∞', () => {
@@ -257,7 +257,7 @@ describe('the general action panel draws the bounded time', () => {
 
         quickInputButtons.injectButtons(panel, context(panel, nameEl, CRAFT_PLANK, details));
 
-        expect(totalTimeLine(panel).textContent).toBe('Total time: 0h 16m 40s');
+        expect(totalTimeLine(panel).textContent).toBe('Total time: 16m 40s');
         expect(totalTimeLine(panel).textContent).not.toContain('mat:');
     });
 });
@@ -274,5 +274,55 @@ describe('a scroll selection change drops the memoized Repeat infinity estimate'
         quickInputButtons._onScrollSelectionChanged();
 
         expect(estimateUnlimitedAction({ actionHrid: CRAFT_PLANK }).count).toBe(20);
+    });
+});
+
+describe('the "Do ... times" rows', () => {
+    // Counted by the row's own text node: an emptied row still carries it, which is the bug
+    const rowCount = (panel) =>
+        [...panel.querySelectorAll('div')].filter((el) =>
+            [...el.childNodes].some((node) => node.nodeType === 3 && node.textContent.trim() === 'times')
+        ).length;
+
+    function preparePanel() {
+        const built = buildPanel('Plank');
+        built.nameEl.className = 'SkillActionDetail_name__x';
+        game.actionDetails[CRAFT_PLANK].experienceGain = { skillHrid: '/skills/crafting', value: 10 };
+        quickInputButtons.injectButtons(
+            built.panel,
+            context(built.panel, built.nameEl, CRAFT_PLANK, game.actionDetails[CRAFT_PLANK])
+        );
+        return built;
+    }
+
+    test('a scroll selection change redraws them without leaving an empty row behind', () => {
+        const { panel, nameEl } = preparePanel();
+        expect(rowCount(panel)).toBe(1);
+        // The live redraw resolves this context off the game's panel, which this fixture does not model
+        const inject = quickInputButtons.injectButtons.bind(quickInputButtons);
+        const redraw = vi
+            .spyOn(quickInputButtons, 'injectButtons')
+            .mockImplementation((target) =>
+                inject(target, context(target, nameEl, CRAFT_PLANK, game.actionDetails[CRAFT_PLANK]))
+            );
+
+        for (let press = 0; press < 3; press++) quickInputButtons._onScrollSelectionChanged();
+        redraw.mockRestore();
+
+        expect(rowCount(panel)).toBe(1);
+    });
+
+    test('the game reusing the panel for another action leaves one set of rows', () => {
+        const { panel, nameEl } = preparePanel();
+        game.actionDetails[CHOP_LOG].experienceGain = { skillHrid: '/skills/woodcutting', value: 10 };
+        nameEl.textContent = 'Log';
+        quickInputButtons.injectButtons(panel, context(panel, nameEl, CHOP_LOG, game.actionDetails[CHOP_LOG]));
+        expect(rowCount(panel)).toBe(1);
+    });
+
+    test('turning the feature off removes the rows with the buttons', () => {
+        const { panel } = preparePanel();
+        quickInputButtons.disable();
+        expect(rowCount(panel)).toBe(0);
     });
 });

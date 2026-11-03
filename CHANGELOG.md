@@ -10,6 +10,31 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
 - Switching guilds keeps the new guild's trial start time.
 - Guild trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
+- The alchemy catalyst picker now names and stars the catalyst that earns the most for the selected item and action, with its profit per hour and per action, and says when a figure is a floor or a ceiling. It only reads; nothing is clicked for you.
+- Refined cape item cards show their profit again (Transmute, plus Coinify and Decompose where the game allows them), with a note saying how the capes were valued.
+- The Philosopher's Stone calculator marks a row as a floor when a drop on the side it shows has no price instead of counting it as 0, and prices a drop a shop converts.
+- Refined capes are now valued by their refinement stones plus the base cape by your Untradable capes setting in alchemy, enhancement costs and net worth, with no floor flag on Nothing and a flagged floor when Mirror has no price. The upgrade advisor prices one you do not hold at its stones alone on Nothing, and says so; chests still leave them unpriced.
+- The treasure popup keeps a readable height when the loot dialog fills a phone screen.
+- Times under an hour show as "53m 40s" instead of "0h 53m 40s".
+- The labyrinth Size stepper reappears in the toolbar as soon as you turn the grid scale control back on.
+- Task Claim Reward button now appears on translated game clients, once a task is complete.
+- Selected buttons in the net worth chart and the treasure tracker's open gear now keep their color when the mouse is over them instead of darkening.
+- The alchemy Profitability panel now prices essence and crate drops even when the expected-value tooltip setting is off, instead of showing every figure as a minimum.
+- Toggling a scroll chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
+- Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
+- The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time.
+- A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
+- Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
+- A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
+- Turning "Ability books as inventory" on or off with Ability Books excluded no longer counts as Non-Excl earnings, and the marker's hover shows that step.
+- A setting change marked in different batches on two devices no longer shows as an invented loss in net worth growth, the forecast or gold sources.
+- Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed, and adding a ninth aura option after another tab filled the list says it was not added.
+- Sync no longer loses a setting's change time if a tab closes or a sync reads mid-write during imports, migrations and copies between characters.
+- Hand-removing a catalyst from an alchemy session and resuming no longer undercosts the catalysts used afterward.
+- Goal Planner: it prices again by itself after the market history cool-down ends, its pricing count no longer restarts halfway, and a route is called the same as the quick estimate only when its time and coins match.
+- Several open tabs now share one market history request pace, so fewer requests get refused for going too fast.
+- Purple's Gift, the one chest that drops Task Tokens and Task Crystals, is now valued in full, so Treasure and tooltips no longer show it unpriced; task reward values rise a little because the Gift's tokens now count.
+- Combat Sim: a restored Upgrade table says when the pricing mode has changed since it was run.
 - The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.
 - Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
 - The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.

@@ -608,6 +608,29 @@ describe('lifecycle', () => {
         expect(document.querySelector('[data-mwi-ironbell-strip]')).toBeNull();
     });
 
+    test('the open panel and the action-bar strip listen once between them, not once each', async () => {
+        const { default: strip } = await import('./ironcow-action-strip.js');
+        await ironCowFarmPanel.initialize();
+        const withStripAlone = events.listeners.get('items_updated')?.size ?? 0;
+        const marketWithStripAlone = marketListeners.size;
+
+        ironCowFarmPanel.show();
+        expect(strip.active).toBe(true);
+
+        // The panel adds nothing of its own on top of the strip's subscription
+        expect(events.listeners.get('items_updated')?.size ?? 0).toBe(withStripAlone);
+        expect(withStripAlone).toBe(1);
+        expect(marketListeners.size).toBe(marketWithStripAlone);
+        expect(settingListeners.get('actionPanel_enhanceMatLimitProtections')?.size ?? 0).toBe(1);
+
+        // Closing the panel leaves the strip listening; stopping the feature takes the last listener
+        ironCowFarmPanel.hide({ remember: false });
+        expect(events.listeners.get('items_updated')?.size ?? 0).toBe(1);
+        ironCowFarmPanel.disable();
+        expect(events.listeners.get('items_updated')?.size ?? 0).toBe(0);
+        expect(settingListeners.get('actionPanel_enhanceMatLimitProtections')?.size ?? 0).toBe(0);
+    });
+
     test("a character switch to one with no snapshot of their own does not inherit the last character's costed loop", async () => {
         // Character A costs the loop; the store now holds A's snapshot.
         await ironCowFarmPanel.load();

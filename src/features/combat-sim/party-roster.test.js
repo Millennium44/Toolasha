@@ -291,6 +291,85 @@ describe('sync: merged per teammate, deletions remembered', () => {
         expect(merged.entries.some((x) => x.id === 'new')).toBe(true);
     });
 
+    describe('two full devices', () => {
+        const full = (prefix, at) =>
+            Array.from({ length: MAX_ROSTER_SIZE }, (_, i) => e(`${prefix}${i}`, `${prefix}${i}`, at + i));
+        const ids = (list) => list.map((x) => x.id);
+
+        test('keep the same teammates whichever copy folds into which, each in its own order', () => {
+            const a = { savedAt: NOW, entries: full('a', NOW - 100), removed: {} };
+            const b = { savedAt: NOW, entries: full('b', NOW - 90), removed: {} };
+            const ab = merge(a, b);
+            const ba = merge(b, a);
+            expect(ids(ab.entries)).toHaveLength(MAX_ROSTER_SIZE);
+            expect(ids(ab.entries).sort()).toEqual(ids(ba.entries).sort());
+            // The most recently changed stay: all of b's, and of a's those changed later than b's oldest
+            expect(ids(ab.entries)).toContain('b39');
+            expect(ids(ab.entries)).not.toContain('a0');
+            expect(ids(ab.entries)[0].startsWith('a')).toBe(true);
+            expect(ids(ba.entries)[0].startsWith('b')).toBe(true);
+        });
+
+        test('settle after one exchange: a replay of the pull, or the push going back, changes nothing', () => {
+            const a = { savedAt: NOW, entries: full('a', NOW - 100), removed: {} };
+            const b = { savedAt: NOW, entries: full('b', NOW - 90), removed: {} };
+            const onA = merge(a, b);
+            const onB = merge(b, onA);
+            expect(ids(onB.entries).sort()).toEqual(ids(onA.entries).sort());
+            expect(merge(onA, onB).entries).toEqual(onA.entries);
+            expect(merge(onA, onA).entries).toEqual(onA.entries);
+        });
+
+        test('the same change time is broken by id, the same way on both sides', () => {
+            const a = { savedAt: NOW, entries: full('a', NOW).map((x) => ({ ...x, updatedAt: NOW })) };
+            const b = { savedAt: NOW, entries: full('b', NOW).map((x) => ({ ...x, updatedAt: NOW })) };
+            expect(ids(merge(a, b).entries).sort()).toEqual(ids(merge(b, a).entries).sort());
+            expect(ids(merge(a, b).entries)).toContain('a0');
+            expect(ids(merge(a, b).entries)).not.toContain('b9');
+        });
+
+        test('an edit followed by new data: a teammate edited later outranks the ones that were not', () => {
+            const a = { savedAt: NOW, entries: full('a', NOW - 100), removed: {} };
+            const b = { savedAt: NOW, entries: full('b', NOW - 90), removed: {} };
+            const settled = merge(a, b);
+            // a0 fell out of the fold; a stale third device still has it and renames it now
+            const third = { savedAt: NOW, entries: [e('a0', 'Renamed', NOW)], removed: {} };
+            const merged = merge(settled, third);
+            expect(merged.entries.find((x) => x.id === 'a0').name).toBe('Renamed');
+            expect(merged.entries).toHaveLength(MAX_ROSTER_SIZE);
+        });
+
+        test('a deleted teammate never takes a place from a live one', () => {
+            const a = { savedAt: NOW, entries: full('a', NOW - 100), removed: {} };
+            const b = {
+                savedAt: NOW,
+                entries: [e('late', 'Late', NOW - 50)],
+                removed: { a39: NOW },
+            };
+            const merged = merge(a, b);
+            expect(ids(merged.entries)).not.toContain('a39');
+            expect(ids(merged.entries)).toContain('late');
+            expect(merged.entries).toHaveLength(MAX_ROSTER_SIZE);
+        });
+
+        test('saved builds converge the same way', () => {
+            const build = (id, at) => ({ id, name: id, dto: dto(), addedAt: 1, updatedAt: at });
+            const many = (prefix, at) =>
+                Array.from({ length: MAX_SAVED_BUILDS }, (_, i) => build(`${prefix}${i}`, at + i));
+            const a = { savedAt: NOW, entries: [], builds: many('a', NOW - 100) };
+            const b = { savedAt: NOW, entries: [], builds: many('b', NOW - 90) };
+            const ab = merge(a, b);
+            expect(ab.builds).toHaveLength(MAX_SAVED_BUILDS);
+            expect(ids(ab.builds).sort()).toEqual(ids(merge(b, a).builds).sort());
+        });
+
+        test('below the cap nothing is dropped and the order is this device’s', () => {
+            const a = { savedAt: NOW, entries: [e('a', 'A', NOW - 5), e('c', 'C', NOW)] };
+            const b = { savedAt: NOW, entries: [e('b', 'B', NOW - 9)] };
+            expect(ids(merge(a, b).entries)).toEqual(['a', 'c', 'b']);
+        });
+    });
+
     test('deleting here leaves a tombstone in storage', async () => {
         const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
         await removeTeammate(added[0]);
@@ -331,6 +410,60 @@ describe('aura options on a teammate', () => {
         expect((await loadRoster()).entries[0].auras).toHaveLength(MAX_AURA_OPTIONS);
         expect(normalizeAuraOptions('junk')).toEqual([]);
         expect((await setTeammateAuras('nope', [], true)).found).toBe(false);
+    });
+
+    describe('one over the cap', () => {
+        const options = (n) => Array.from({ length: n }, (_, i) => ({ hrid: `/abilities/a${i}`, level: i + 1 }));
+        const stale = (next) => (stored) => ({ ...stored, auras: [...stored.auras, next] });
+
+        test('a change that finds the list already full says so and writes nothing', async () => {
+            const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+            await setTeammateAuras(added[0], options(MAX_AURA_OPTIONS), true);
+            const before = db.value.savedAt;
+            const stamped = db.value.entries[0].updatedAt;
+
+            const result = await setTeammateAuras(added[0], stale({ hrid: '/abilities/ninth', level: 3 }));
+
+            expect(result).toMatchObject({ ok: true, found: true, capped: true });
+            expect(result.roster.entries[0].auras).toEqual(options(MAX_AURA_OPTIONS));
+            expect(db.value.savedAt).toBe(before);
+            expect(db.value.entries[0].updatedAt).toBe(stamped);
+        });
+
+        test('re-leveling one already on a full list is not a ninth', async () => {
+            const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+            await setTeammateAuras(added[0], options(MAX_AURA_OPTIONS), true);
+            const result = await setTeammateAuras(added[0], stale({ hrid: '/abilities/a0', level: 99 }));
+            expect(result.capped).toBe(false);
+            expect(result.roster.entries[0].auras.at(-1)).toEqual({ hrid: '/abilities/a0', level: 99 });
+        });
+
+        test('a list with more also unticking as built keeps that change and still says what was dropped', async () => {
+            const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+            await setTeammateAuras(added[0], options(MAX_AURA_OPTIONS), true);
+            const result = await setTeammateAuras(added[0], options(MAX_AURA_OPTIONS + 1), false);
+            expect(result.capped).toBe(true);
+            expect(result.roster.entries[0].includeAsBuilt).toBe(false);
+        });
+
+        test('exactly the cap, and duplicates or junk over it, are not over it', async () => {
+            const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+            const exact = await setTeammateAuras(added[0], options(MAX_AURA_OPTIONS), true);
+            expect(exact.capped).toBe(false);
+            const padded = await setTeammateAuras(
+                added[0],
+                [...options(MAX_AURA_OPTIONS), options(1)[0], { hrid: 'not-an-ability', level: 5 }],
+                true
+            );
+            expect(padded.capped).toBe(false);
+        });
+
+        test('a failed write and a missing teammate report no cap', async () => {
+            const { added } = await addTeammates([{ name: 'Ann', dto: dto() }]);
+            db.failNext = true;
+            expect((await setTeammateAuras(added[0], options(1), true)).ok).toBe(false);
+            expect((await setTeammateAuras('nope', options(MAX_AURA_OPTIONS + 1), true)).capped).toBe(false);
+        });
     });
 });
 

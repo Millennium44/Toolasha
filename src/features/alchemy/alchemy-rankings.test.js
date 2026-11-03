@@ -358,8 +358,21 @@ describe('rankAlchemyType with shop prices', () => {
     test('the override does not outlive the sweep', async () => {
         rankAlchemyType('coinify', { shopPrices: true });
         const { default: calculator } = await import('../market/alchemy-profit-calculator.js');
-        expect(calculator.inputBuyOverride).toBeNull();
         expect(calculator.calculateCoinifyProfit('/items/cheese', 0).materialCost).toBe(200);
+    });
+
+    test('the override is a parameter of the call, so two differently priced calls never see each other', async () => {
+        const { default: calculator } = await import('../market/alchemy-profit-calculator.js');
+        const cheap = (hrid) => (hrid === '/items/cheese' ? 80 : null);
+        const dearer = (hrid) => (hrid === '/items/cheese' ? 150 : null);
+        // Coinify (enhancement level is the second argument; the override is the seventh)
+        const args = (override) => ['/items/cheese', 0, false, null, null, null, override];
+        expect(calculator.calculateCoinifyProfit(...args(cheap)).materialCost).toBe(80);
+        expect(calculator.calculateCoinifyProfit(...args(dearer)).materialCost).toBe(150);
+        expect(calculator.calculateCoinifyProfit(...args(null)).materialCost).toBe(200);
+        // An override dearer than the market does not raise the price, and an unknown item falls back to it
+        expect(calculator.calculateCoinifyProfit(...args(() => 900)).materialCost).toBe(200);
+        expect(calculator.calculateCoinifyProfit(...args(() => null)).materialCost).toBe(200);
     });
 });
 

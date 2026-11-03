@@ -92,7 +92,14 @@ describe('timeReadable', () => {
         });
 
         test('formats minutes and seconds without hours', () => {
-            expect(timeReadable(125)).toBe('0h 02m 05s');
+            expect(timeReadable(125)).toBe('2m 05s');
+        });
+
+        test('an hour that has not begun prints no hours unit, and the leading minutes are not padded', () => {
+            expect(timeReadable(3220)).toBe('53m 40s');
+            expect(timeReadable(60)).toBe('1m 00s');
+            expect(timeReadable(600)).toBe('10m 00s');
+            expect(timeReadable(3599)).toBe('59m 59s');
         });
     });
 
@@ -155,7 +162,7 @@ describe('timeReadable', () => {
         });
 
         test('a duration under a day is untouched, seconds and all', () => {
-            expect(timeReadable(208)).toBe('0h 03m 28s');
+            expect(timeReadable(208)).toBe('3m 28s');
             expect(timeReadable(86399)).toBe('23h 59m 59s');
         });
 

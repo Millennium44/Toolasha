@@ -586,6 +586,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
+            alchemyCatalystMark: {
+                id: 'alchemyCatalystMark',
+                label: 'Alchemy panel: Mark the best catalyst in the catalyst picker',
+                type: 'checkbox',
+                default: true,
+                help: 'When you open the catalyst picker, adds a line at the top saying which catalyst earns the most per hour for the item and action you have selected (none, the type catalyst or Prime Catalyst), what it earns, and whether you own it, and puts a star on its tile. It only shows information: it never picks or fills the slot for you. Uses your pricing mode and the same profit figures as the Profitability section.',
+            },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
                 label: 'Alchemy panel: Sort item picker by profit or XP',
@@ -2133,7 +2140,7 @@ export const settingsGroups = {
                     { value: 'zero', label: 'Nothing (0)' },
                     { value: 'mirror', label: 'Same as a Mirror of Protection' },
                 ],
-                help: 'Capes (including the Chimerical Quiver and Enchanted Cloak) cannot be traded, so they have no market price. Sets what an unrefined cape is assumed to be worth in alchemy profit, enhancement costs, net worth and chest values. Refined and enhanced capes add their refinement cost and average enhancement cost (using your own stats) on top. Capes are never taxed, since they cannot be sold. Anywhere the base counts as nothing, the figure is marked as a floor.',
+                help: 'Capes (including the Chimerical Quiver and Enchanted Cloak) cannot be traded, so they have no market price. Sets what an unrefined cape is assumed to be worth in alchemy profit, enhancement costs, net worth and chest values, and what the base cape under a refined (★) cape adds to its refinement cost: nothing, or one Mirror of Protection. Refined and enhanced capes add their refinement cost and average enhancement cost (using your own stats) on top. Capes are never taxed, since they cannot be sold. On Nothing, an unrefined cape stays unpriced and is marked as a floor in alchemy profit, enhancement costs, net worth and chest values, while a refined cape is its refinement stones alone, a complete figure. On Mirror with no Mirror of Protection price, both are marked as a floor. Chest values leave refined capes unpriced on either setting. The upgrade advisor prices a refined cape you do not hold at its refinement stones alone on Nothing (and says so), and leaves it unpriced on Mirror.',
             },
             profitCalc_patientTickBuy: {
                 id: 'profitCalc_patientTickBuy',

@@ -85,11 +85,10 @@ vi.mock('../../core/data-manager.js', () => {
 vi.mock('../../api/marketplace.js', () => ({ default: { lastFetchTimestamp: 1, on: () => {}, off: () => {} } }));
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
-        inputBuyOverride: null,
         // Like the real calculator, a source with no ask yields nothing unless the override prices it
-        calculateCandidateResults(type, hrid) {
+        calculateCandidateResults(type, hrid, inputBuyOverride) {
             world.runs += 1;
-            world.overrideSeen = this.inputBuyOverride?.(hrid) ?? null;
+            world.overrideSeen = inputBuyOverride?.(hrid) ?? null;
             if (world.prices[hrid]?.ask == null && world.overrideSeen === null) return [];
             return world.candidates[`${type}|${hrid}`] ?? [];
         },
@@ -176,8 +175,8 @@ describe('decompose', () => {
         const route = only(liveSellRoutes(BOOMSTICK, new Set()), 'decompose');
         expect(world.overrideSeen).toBe(1000);
         expect(route.margin).toBeCloseTo(450.45);
-        // The override is the run's alone: the buying path's calculator is left as it was
-        expect(alchemyProfitCalculator.inputBuyOverride).toBeNull();
+        // The override is the run's alone: it is handed to that call, and the calculator keeps none
+        expect(alchemyProfitCalculator.inputBuyOverride).toBeUndefined();
     });
 
     test('a loss shows nothing', () => {

@@ -197,7 +197,7 @@ describe('what it says', () => {
         const warning = text().find((line) => line.startsWith('⚠'));
         // 200K pays 222 of 500 decomposes: 1,000 s + 2,220 s in
         expect(warning).toContain('Gold runs out on Decompose: Star Fruit at');
-        expect(warning).toContain('(in 0h 53m 40s)');
+        expect(warning).toContain('(in 53m 40s)');
         expect(warning).toContain('250.0K short');
     });
 

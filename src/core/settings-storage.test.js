@@ -90,15 +90,20 @@ const ALL_MIGRATIONS = [
  * @param {string} key - The character's settings key
  */
 function refuseNextMapWrite(key) {
-    const pass = storage.setJSON.getMockImplementation();
+    const passOne = storage.setJSON.getMockImplementation();
+    const passMany = storage.setMany.getMockImplementation();
     let refused = false;
-    storage.setJSON.mockImplementation((writeKey, ...rest) => {
-        if (!refused && writeKey === key) {
-            refused = true;
-            return Promise.resolve(false);
-        }
-        return pass(writeKey, ...rest);
-    });
+    const refuse = () => {
+        refused = true;
+        return Promise.resolve(false);
+    };
+    storage.setJSON.mockImplementation((writeKey, ...rest) =>
+        !refused && writeKey === key ? refuse() : passOne(writeKey, ...rest)
+    );
+    // The map and its stamps go in one transaction, so refusing the map refuses both
+    storage.setMany.mockImplementation((entries, ...rest) =>
+        !refused && Object.hasOwn(entries, key) ? refuse() : passMany(entries, ...rest)
+    );
 }
 
 /** The listing-age forcing (batch v3) already done, so a test can isolate the migration */
@@ -536,8 +541,8 @@ describe('one-time migration of the patient tick to one switch per side', () => 
 
     test('a migrated map that fails to save leaves the flag unset, so the next load carries it again', async () => {
         stored.set(`json:${KEY}`, oldTick({ isTrue: true }));
-        // storage.setJSON answers a refused or failed write with false rather than throwing
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        // Storage answers a refused or failed write with false rather than throwing
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -699,8 +704,8 @@ describe('one-time merge of the labyrinth sim budget', () => {
 
     test('a merge that fails to save leaves the flag unset, so the next load retries', async () => {
         stored.set(`json:${KEY}`, oldBudget({ labyrinthSimUncapped: true, labyrinthUpgradeMaxHours: 96 }));
-        // storage.setJSON answers a refused or failed write with false rather than throwing
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        // Storage answers a refused or failed write with false rather than throwing
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -868,7 +873,7 @@ describe('one-time migration of the inventory badge switches to one choice', () 
 
     test('a refused write leaves the flag unset, so the next load migrates again', async () => {
         stored.set(`json:${KEY}`, oldBadges(true, 'None', false));
-        storage.setJSON.mockImplementationOnce(() => Promise.resolve(false));
+        refuseNextMapWrite(KEY);
 
         const settings = await settingsStorage.loadSettings();
 
@@ -1558,7 +1563,7 @@ describe('a settings store that cannot be read', () => {
         const map = await settingsStorage.loadSettings();
 
         expect(map.ironCow_enabled.isTrue).toBe(true);
-        expect(storage.tryGet).toHaveBeenCalledTimes(1);
+        expect(storage.tryGet.mock.calls.filter(([key]) => key === KEY)).toHaveLength(1);
         expect(storage.getJSON).not.toHaveBeenCalledWith(KEY, expect.anything(), expect.anything());
     });
 
@@ -1764,6 +1769,7 @@ describe('a save keeps setting ids this build does not know about', () => {
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } });
         outage.on = false;
 
+        // The stamps could not be read either, so the map is tried alone rather than over a blank record
         expect(storage.setJSON).toHaveBeenCalledWith(
             'script_settingsMap_alice',
             { chatCommands: { isTrue: false } },
@@ -1907,8 +1913,12 @@ describe('a save carries only what this client changed', () => {
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
         outage.on = false;
 
-        const [entries] = storage.setMany.mock.calls.at(-1);
-        expect(entries['script_settingsMap_alice']).toEqual({ chatCommands: { isTrue: false } });
+        expect(storage.setJSON).toHaveBeenCalledWith(
+            'script_settingsMap_alice',
+            { chatCommands: { isTrue: false } },
+            expect.anything(),
+            true
+        );
     });
 
     test('the map and its change stamp are written in one transaction, never separately', async () => {
@@ -2285,6 +2295,393 @@ describe('settings change stamps, for the sync merge', () => {
         await settingsStorage.loadSettings();
 
         expect(stored.get(STAMPS).actionBar_showTimeRemaining).toEqual({ at: 0, seq: null, system: true });
+    });
+});
+
+describe('the defaults map can be stored', () => {
+    const MAP = 'script_settingsMap_alice';
+    const SHARED = 'script_settingsMap_shared';
+
+    /** As IndexedDB does: a value it cannot clone fails the whole transaction */
+    const storeLikeIndexedDb = () => {
+        const passMany = storage.setMany.getMockImplementation();
+        const passOne = storage.setJSON.getMockImplementation();
+        storage.setMany.mockImplementation((entries, ...rest) => {
+            try {
+                structuredClone(entries);
+            } catch {
+                return Promise.resolve(false);
+            }
+            return passMany(entries, ...rest);
+        });
+        storage.setJSON.mockImplementation((key, value, ...rest) => {
+            try {
+                structuredClone(value);
+            } catch {
+                return Promise.resolve(false);
+            }
+            return passOne(key, value, ...rest);
+        });
+        return () => {
+            storage.setMany.mockImplementation(passMany);
+            storage.setJSON.mockImplementation(passOne);
+        };
+    };
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('nothing in it is something storage cannot clone', () => {
+        expect(() => structuredClone(settingsStorage.buildDefaults())).not.toThrow();
+    });
+
+    test('a list worked out when the panel draws is left out, and a fixed list stays', () => {
+        const defaults = settingsStorage.buildDefaults();
+        expect(defaults.combatSim_defaultLoadout.options).toBeUndefined();
+        expect(defaults.combatSim_defaultLoadout.value).toBe('');
+        const withOptions = Object.values(defaults).filter((entry) => Array.isArray(entry.options));
+        expect(withOptions.length).toBeGreaterThan(0);
+    });
+
+    test('Reset to defaults lands: the map, the account-wide settings and their stamps', async () => {
+        const restore = storeLikeIndexedDb();
+        try {
+            stored.set(`json:${SHARED}`, {
+                sync_gistId: { id: 'sync_gistId', type: 'text', value: 'kept-by-mistake' },
+            });
+            await settingsStorage.resetToDefaults();
+            const ok = await settingsStorage.saveSettings(
+                settingsStorage.buildDefaults(),
+                settingsStorage.SAVE_ALL_KEYS
+            );
+            expect(ok).toBe(true);
+            expect(stored.get(`json:${MAP}`).combatSim_defaultLoadout.value).toBe('');
+            expect(stored.get(`json:${SHARED}`).sync_token.value).toBe('');
+            expect(stored.get(`json:settings_changedAt_${MAP}`).combatSim_defaultLoadout.at).toBeGreaterThan(0);
+        } finally {
+            restore();
+        }
+    });
+
+    test('a save before settings load lands too', async () => {
+        const restore = storeLikeIndexedDb();
+        try {
+            expect(await settingsStorage.saveSettingsKeepingStored(settingsStorage.buildDefaults())).toBe(true);
+            expect(stored.has(`json:${MAP}`)).toBe(true);
+        } finally {
+            restore();
+        }
+    });
+
+    test('a setting whose list is a function still reads its stored choice', async () => {
+        stored.set(`json:${MAP}`, { combatSim_defaultLoadout: { id: 'combatSim_defaultLoadout', value: 'Tank' } });
+        const settings = await settingsStorage.loadSettings();
+        expect(settings.combatSim_defaultLoadout.value).toBe('Tank');
+    });
+});
+
+describe('every settings-map write lands with its stamps in one transaction', () => {
+    const MAP = 'script_settingsMap_alice';
+    const STAMPS = `settings_changedAt_${MAP}`;
+    /** What a sync read would see after each write: every map id written, and the stamps beside it */
+    let views;
+
+    /**
+     * Note the store after each write, and fail a lone write of a map or its stamps.
+     * @param {Array<string>} maps - The map keys to watch
+     */
+    const watch = (maps) => {
+        const passOne = storage.setJSON.getMockImplementation();
+        const passMany = storage.setMany.getMockImplementation();
+        const note = () => {
+            for (const key of maps) {
+                views.push({
+                    key,
+                    map: JSON.parse(JSON.stringify(stored.get(`json:${key}`) ?? null)),
+                    stamps: JSON.parse(JSON.stringify(stored.get(`json:settings_changedAt_${key}`) ?? null)),
+                });
+            }
+        };
+        storage.setJSON.mockImplementation(async (key, ...rest) => {
+            const answer = await passOne(key, ...rest);
+            note();
+            return answer;
+        });
+        storage.setMany.mockImplementation(async (...args) => {
+            const answer = await passMany(...args);
+            note();
+            return answer;
+        });
+    };
+
+    /** At no point did a read find a changed setting without its stamp */
+    const neverTorn = (key, id) => {
+        const seen = views.filter((view) => view.key === key && view.map?.[id]);
+        expect(seen.length).toBeGreaterThan(0);
+        for (const view of seen) expect(view.stamps?.[id]).toBeTruthy();
+    };
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        views = [];
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    afterEach(() => {
+        storage.setJSON.mockImplementation((key, value) => {
+            if (outage.on) return Promise.resolve(false);
+            stored.set(`json:${key}`, value);
+            return Promise.resolve();
+        });
+        storage.setMany.mockImplementation((entries) => {
+            if (outage.on) return Promise.resolve(false);
+            for (const [key, value] of Object.entries(entries)) stored.set(`json:${key}`, value);
+            return Promise.resolve(true);
+        });
+    });
+
+    test('an import', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        watch([MAP]);
+        await settingsStorage.importSettings(JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } }));
+        neverTorn(MAP, 'chatCommands');
+        expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBeGreaterThan(0);
+    });
+
+    test('an import of a map stored as JSON text writes the text and stamps what it stands for', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        const text = JSON.stringify({ chatCommands: { isTrue: false } });
+        await settingsStorage.importSettings(JSON.stringify({ [MAP]: text }));
+        expect(stored.get(`json:${MAP}`)).toBe(text);
+        expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBeGreaterThan(0);
+    });
+
+    test('a refused import stamps nothing and stops', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        storage.setMany.mockImplementationOnce(() => Promise.resolve(false));
+        const result = await settingsStorage.importSettings(
+            JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } })
+        );
+        expect(result).toBe(null);
+        expect(stored.get(`json:${MAP}`)).toEqual({ chatCommands: { isTrue: true } });
+        expect(stored.has(`json:${STAMPS}`)).toBe(false);
+    });
+
+    test('a replay of the same import moves no stamp', async () => {
+        const file = JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } });
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(1000);
+            await settingsStorage.importSettings(file);
+            vi.setSystemTime(2000);
+            await settingsStorage.importSettings(file);
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBe(1000);
+    });
+
+    test('an import followed by a real change: the later change takes the stamp', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(1000);
+            await settingsStorage.importSettings(JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } }));
+            vi.setSystemTime(2000);
+            await settingsStorage.saveSettings({ chatCommands: { isTrue: true } }, ['chatCommands']);
+        } finally {
+            vi.useRealTimers();
+        }
+        expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBe(2000);
+    });
+
+    test('a key migration and a default rewrite', async () => {
+        stored.set(`json:${MAP}`, {
+            actionBar_showTimeRemaining: { isTrue: true },
+            labyrinthPathUnknownMode: { value: 'clearable' },
+        });
+        watch([MAP]);
+        await settingsStorage.loadSettings();
+        neverTorn(MAP, 'actionBar_showTimeRemaining');
+        const stamps = stored.get(`json:${STAMPS}`);
+        expect(stamps.actionBar_showTimeRemaining).toEqual({ at: 0, seq: null, system: true });
+        expect(stamps.labyrinthPathUnknownMode).toEqual({ at: 0, seq: null, system: true });
+    });
+
+    test('a pin, marked so a sync fold can tell it from a choice', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        watch([MAP]);
+        await settingsStorage.loadSettings();
+        neverTorn(MAP, 'combatProfileButton');
+        expect(stored.get(`json:${STAMPS}`).combatProfileButton).toEqual({ at: 0, seq: null, system: true, pin: true });
+    });
+
+    test('the seed from the global template, carrying its fill and pin stamps with it', async () => {
+        stored.set('json:script_settingsMap', {
+            chatCommands: { isTrue: true },
+            combatProfileButton: { isTrue: false },
+        });
+        stored.set('json:settings_changedAt_script_settingsMap', {
+            chatCommands: { at: 0, seq: null, system: true, fill: true },
+            combatProfileButton: { at: 0, seq: null, system: true, pin: true },
+        });
+        watch([MAP]);
+        await settingsStorage.loadSettings();
+        neverTorn(MAP, 'chatCommands');
+        const stamps = stored.get(`json:${STAMPS}`);
+        expect(stamps.chatCommands.fill).toBe(true);
+        expect(stamps.combatProfileButton.pin).toBe(true);
+    });
+
+    test('the carry-over to the account-wide map', async () => {
+        const SHARED = 'script_settingsMap_shared';
+        stored.set(`json:${MAP}`, { sync_token: { id: 'sync_token', type: 'text', value: 'abc' } });
+        watch([SHARED]);
+        await settingsStorage.migrateSharedSettings(MAP);
+        const held = Object.keys(stored.get(`json:${SHARED}`) || {});
+        expect(held.length).toBeGreaterThan(0);
+        neverTorn(SHARED, held[0]);
+    });
+
+    test('a save before settings load, its filled-in defaults included', async () => {
+        const map = settingsStorage.buildDefaults();
+        const [moved, untouched] = Object.keys(map).filter((id) => map[id].type === 'checkbox');
+        map[moved].isTrue = !map[moved].isTrue;
+        watch([MAP]);
+        expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(true);
+        neverTorn(MAP, moved);
+        neverTorn(MAP, untouched);
+        expect(stored.get(`json:${STAMPS}`)[untouched].fill).toBe(true);
+    });
+
+    test('an ordinary save, its filled-in defaults included', async () => {
+        watch([MAP]);
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: false }, whatsNew_showPopup: { isTrue: true } }, [
+            'chatCommands',
+        ]);
+        neverTorn(MAP, 'chatCommands');
+        neverTorn(MAP, 'whatsNew_showPopup');
+    });
+
+    test('the copies between characters', async () => {
+        const BOB = 'script_settingsMap_bob';
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        stored.set(`json:${BOB}`, { chatCommands: { isTrue: false } });
+        watch([MAP, BOB]);
+
+        expect(await settingsStorage.copySettingsFromCharacter('bob')).toBe(true);
+        neverTorn(MAP, 'chatCommands');
+
+        await settingsStorage.syncSettingsToAllCharacters({ chatCommands: { isTrue: true }, other: { value: 1 } });
+        neverTorn(BOB, 'other');
+
+        const { copied } = await settingsStorage.copySettingEntriesToOtherCharacters({ extra: { value: 2 } });
+        expect(copied.map((character) => character.id)).toEqual(['bob']);
+        neverTorn(BOB, 'extra');
+    });
+
+    test('a write with nothing to stamp stays a single write of the map', async () => {
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        storage.setMany.mockClear();
+        storage.setJSON.mockClear();
+        await settingsStorage.saveSettings({ chatCommands: { isTrue: true } }, ['chatCommands']);
+        expect(storage.setMany).not.toHaveBeenCalled();
+        expect(storage.setJSON.mock.calls.map(([key]) => key)).toContain(MAP);
+    });
+
+    test('a stamp that cannot be planned costs only the tie-break: the map still lands', async () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
+        const pass = storage.tryGet.getMockImplementation();
+        storage.tryGet.mockImplementation((key, ...rest) =>
+            key === STAMPS ? Promise.reject(new Error('read failed')) : pass(key, ...rest)
+        );
+        try {
+            await settingsStorage.importSettings(JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } }));
+        } finally {
+            storage.tryGet.mockImplementation(pass);
+            error.mockRestore();
+        }
+        expect(stored.get(`json:${MAP}`)).toEqual({ chatCommands: { isTrue: false } });
+    });
+
+    describe('a stamp record that cannot be read', () => {
+        const held = { other: { at: 1000, seq: 3 }, chatCommands: { at: 900, seq: 2 } };
+        /** The stamp record answers "could not be read"; everything else, the map included, works */
+        const stampReadFails = async (write) => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const pass = storage.tryGet.getMockImplementation();
+            storage.tryGet.mockImplementation((key, ...rest) =>
+                key === STAMPS ? Promise.resolve(null) : pass(key, ...rest)
+            );
+            // As the real one does on a failed read: the default comes back and nobody is told
+            const passJson = storage.getJSON.getMockImplementation();
+            storage.getJSON.mockImplementation((key, area, fallback) =>
+                key === STAMPS ? Promise.resolve(fallback) : passJson(key, area, fallback)
+            );
+            try {
+                return await write();
+            } finally {
+                storage.tryGet.mockImplementation(pass);
+                storage.getJSON.mockImplementation(passJson);
+                error.mockRestore();
+            }
+        };
+
+        beforeEach(() => {
+            stored.set(`json:${MAP}`, { chatCommands: { isTrue: true }, other: { value: 1 } });
+            stored.set(`json:${STAMPS}`, structuredClone(held));
+        });
+
+        test('a save lands the map alone and leaves every stamp as it was', async () => {
+            const ok = await stampReadFails(() =>
+                settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands'])
+            );
+            expect(ok).toBe(true);
+            expect(stored.get(`json:${MAP}`).chatCommands).toEqual({ isTrue: false });
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+        });
+
+        test('an import and a migration do the same', async () => {
+            await stampReadFails(() =>
+                settingsStorage.importSettings(
+                    JSON.stringify({ [MAP]: { chatCommands: { isTrue: false }, other: { value: 1 } } })
+                )
+            );
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+
+            stored.set(`json:${MAP}`, { actionBar_showTimeRemaining: { isTrue: true }, other: { value: 1 } });
+            await stampReadFails(() => settingsStorage.loadSettings());
+            expect(stored.get(`json:${MAP}`).actionBar_showTimeRemaining.value).toBe('both');
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+        });
+
+        test('the next save, the read working again, stamps the change on top of what was kept', async () => {
+            await stampReadFails(() =>
+                settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands'])
+            );
+            await settingsStorage.saveSettings({ chatCommands: { isTrue: true } }, ['chatCommands']);
+            const stamps = stored.get(`json:${STAMPS}`);
+            expect(stamps.other).toEqual(held.other);
+            expect(stamps.chatCommands.at).toBeGreaterThan(900);
+        });
+
+        test('a stamp record with nothing stored is a fresh one, not a failure', async () => {
+            stored.delete(`json:${STAMPS}`);
+            await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
+            expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBeGreaterThan(0);
+        });
     });
 });
 

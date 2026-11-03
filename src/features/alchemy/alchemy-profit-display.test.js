@@ -513,14 +513,14 @@ describe('createActionSpeedTimeSection', () => {
         // 100 requested at ×1.25 efficiency → ceil(100/1.25) = 80 base actions × 20s = 1600s
         const section = display.createActionSpeedTimeSection(profitData({ efficiency: 0.25 }), repeatField('100'));
 
-        expect(text(section)).toContain('Total time: 0h 26m 40s');
+        expect(text(section)).toContain('Total time: 26m 40s');
     });
 
     test('the base-action count rounds up — you cannot run a fraction of an action', () => {
         // 10 requested at ×1.5 → ceil(10/1.5) = 7 base actions × 20s = 140s, not 133s
         const section = display.createActionSpeedTimeSection(profitData({ efficiency: 0.5 }), repeatField('10'));
 
-        expect(text(section)).toContain('Total time: 0h 02m 20s');
+        expect(text(section)).toContain('Total time: 2m 20s');
     });
 
     test('an infinite repeat count reports an infinite time rather than a number', () => {
@@ -540,11 +540,11 @@ describe('createActionSpeedTimeSection', () => {
     test('editing the repeat box updates the total without a rebuild', () => {
         const field = repeatField('100');
         const section = display.createActionSpeedTimeSection(profitData(), field);
-        expect(text(section)).toContain('Total time: 0h 33m 20s');
+        expect(text(section)).toContain('Total time: 33m 20s');
 
         field.value = '10';
         field.dispatchEvent(new Event('input'));
-        expect(text(section)).toContain('Total time: 0h 03m 20s');
+        expect(text(section)).toContain('Total time: 3m 20s');
     });
 
     test('a rebuild drops the previous section’s listeners so one edit updates one section', () => {
@@ -557,8 +557,8 @@ describe('createActionSpeedTimeSection', () => {
         field.value = '10';
         field.dispatchEvent(new Event('input'));
 
-        expect(text(fresh)).toContain('Total time: 0h 03m 20s');
-        expect(text(stale)).toContain('Total time: 0h 33m 20s');
+        expect(text(fresh)).toContain('Total time: 3m 20s');
+        expect(text(stale)).toContain('Total time: 33m 20s');
     });
 
     test('removeSpeedTimeInputListeners detaches them and is safe to call twice', () => {
@@ -570,13 +570,13 @@ describe('createActionSpeedTimeSection', () => {
 
         field.value = '10';
         field.dispatchEvent(new Event('input'));
-        expect(text(section)).toContain('Total time: 0h 33m 20s');
+        expect(text(section)).toContain('Total time: 33m 20s');
     });
 
     test('the collapsed summary carries the rate and the total', () => {
         const section = display.createActionSpeedTimeSection(profitData({ efficiency: 0.5 }), repeatField('10'));
 
-        expect(section.textContent).toContain('270/hr | Total time: 0h 02m 20s');
+        expect(section.textContent).toContain('270/hr | Total time: 2m 20s');
     });
 
     test('a malformed profitData is logged and returns null instead of throwing', () => {

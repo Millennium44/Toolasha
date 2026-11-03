@@ -845,3 +845,33 @@ describe('onChanged — subscribers to the captures', () => {
         expect(seen).toEqual([123, 124]);
     });
 });
+
+describe('a profile from a socket the game has replaced', () => {
+    const oldSocket = { name: 'old' };
+    const newSocket = { name: 'new' };
+
+    afterEach(async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        delete dataManager.isFromActiveSocket;
+    });
+
+    test('is not filed under the arriving character, while the active socket still is', async () => {
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        dataManager.isFromActiveSocket = (context) => context?.socket === newSocket;
+        const seen = [];
+        guildMemberSkills.onChanged(() => seen.push('changed'));
+
+        game.wsHandlers.profile_shared(profile('Ada', { '/skills/alchemy': 50 }), { socket: oldSocket });
+        expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBeNull();
+        expect(seen).toEqual([]);
+
+        game.wsHandlers.profile_shared(profile('Ada', { '/skills/alchemy': 60 }), { socket: newSocket });
+        expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBe(60);
+        expect(seen).toEqual(['changed']);
+    });
+
+    test('a frame is still taken while the check is not there to say otherwise', () => {
+        game.wsHandlers.profile_shared(profile('Bo', { '/skills/alchemy': 70 }));
+        expect(guildMemberSkills.levelFor('Bo', '/skills/alchemy')).toBe(70);
+    });
+});

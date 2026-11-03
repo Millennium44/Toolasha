@@ -23,7 +23,13 @@ const state = vi.hoisted(() => ({
     craftingSetting: false,
     // The profit mode's book side per transaction side; null is the conservative default (buy ask, sell bid)
     sides: null,
+    // The untradable-cape setting: 'zero' | 'mirror'
+    capeMode: 'zero',
 }));
+
+const CAPE_BASE = '/items/test_cape';
+const CAPE_STAR = '/items/test_cape_refined';
+const SHARD = '/items/test_refinement_shard';
 
 const ITEM_DETAIL_MAP = {
     [SWORD]: {
@@ -43,12 +49,28 @@ const ITEM_DETAIL_MAP = {
         equipmentDetail: { type: '/equipment_types/main_hand' },
     },
     '/items/mirror_of_protection': { name: 'Mirror of Protection' },
+    // Capes carry no isTradable: the game leaves it off untradable gear
+    [CAPE_BASE]: { hrid: CAPE_BASE, name: 'Test Cape', equipmentDetail: { type: '/equipment_types/back' } },
+    [CAPE_STAR]: { hrid: CAPE_STAR, name: 'Test Cape (Refined)', equipmentDetail: { type: '/equipment_types/back' } },
+    [SHARD]: { hrid: SHARD, name: 'Test Refinement Shard', isTradable: true },
+};
+
+// The real shape of a refinement: a production skill's recipe, the base cape as upgradeItemHrid
+const ACTION_DETAIL_MAP = {
+    '/actions/tailoring/test_cape_refined': {
+        hrid: '/actions/tailoring/test_cape_refined',
+        type: '/action_types/tailoring',
+        retainAllEnhancement: true,
+        upgradeItemHrid: CAPE_BASE,
+        inputItems: [{ itemHrid: SHARD, count: 10 }],
+        outputItems: [{ itemHrid: CAPE_STAR, count: 1 }],
+    },
 };
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => [],
-        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP, actionDetailMap: {} }),
+        getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP, actionDetailMap: ACTION_DETAIL_MAP }),
         getCurrentCharacterId: () => CHAR,
         getGuildBuildingLevel: () => 0,
         getEquipment: () => new Map(),
@@ -62,7 +84,7 @@ vi.mock('../../core/config.js', () => ({
     default: {
         isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && state.craftingSetting,
         getSetting: () => false,
-        getSettingValue: (_key, fallback) => fallback,
+        getSettingValue: (key, fallback) => (key === 'untradableCapeBaseValue' ? state.capeMode : fallback),
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {}, getPrice: () => null } }));
@@ -146,7 +168,7 @@ const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf } = await import
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
 
 const gameData = { itemDetailMap: ITEM_DETAIL_MAP };
-const tier = (level) => ({ type: 'equipment', upgradeHrid: SWORD, upgradeLevel: level, removedItems: [] });
+const tier = (level, hrid = SWORD) => ({ type: 'equipment', upgradeHrid: hrid, upgradeLevel: level, removedItems: [] });
 const enhancingConfig = {
     enhancingLevel: 100,
     houseLevel: 0,
@@ -169,6 +191,7 @@ beforeEach(() => {
     state.custom = {};
     state.craftingSetting = false;
     state.sides = null;
+    state.capeMode = 'zero';
 });
 
 const tooltipPath = () => calculateEnhancementPath(SWORD, 1, enhancingConfig, { priceContext: 'ask' });
@@ -445,5 +468,46 @@ describe('resale and material buys follow the pricing mode', () => {
             expect(conservative.detail.gross).toBe(hybrid.detail.gross);
             expect(conservative.cost - hybrid.cost).toBe(192_000 - 144_000);
         });
+    });
+});
+
+describe('a refined untradable cape in the advisor follows the cape setting', () => {
+    beforeEach(() => {
+        // Ten shards at 100 each: the bill is 1000 stones alone, 91,000 with a mirror
+        state.books[`${SHARD}:0`] = { ask: 100, bid: 90 };
+    });
+
+    /** The row's buy price, its net and the ladder's note */
+    const starRow = () => {
+        const detail = explainUpgradeCost(tier(0, CAPE_STAR), gameData);
+        return { price: detail.buys[0].price, net: detail.net, unpriced: detail.unpriced, ladder: detail.ladder };
+    };
+
+    test('"nothing": priced at the stones alone, and the ladder says no base cape is in it', () => {
+        state.capeMode = 'zero';
+        const row = starRow();
+        expect(row.price).toBe(1000);
+        expect(row.net).toBe(1000);
+        expect(row.unpriced).toEqual([]);
+        expect(row.ladder).toMatchObject({ fresh: true, baseCost: 1000, baseStonesOnly: true });
+        expect(calculateUpgradeCost(tier(0, CAPE_STAR), gameData)).toBe(1000);
+    });
+
+    test('mirror: unpriced, with or without a mirror price, because the mirror is an assumption', () => {
+        state.capeMode = 'mirror';
+        expect(starRow()).toMatchObject({ price: null, net: null, unpriced: ['Test Cape (Refined)'] });
+        delete state.books['/items/mirror_of_protection:0'];
+        expect(starRow().price).toBeNull();
+        expect(calculateUpgradeCost(tier(0, CAPE_STAR), gameData)).toBeNull();
+    });
+
+    test('a custom buy price the player set for the star cape is the buy on either setting, with no stones note', () => {
+        state.custom[`${CAPE_STAR}:0:buy`] = 4_000_000;
+        for (const mode of ['zero', 'mirror']) {
+            state.capeMode = mode;
+            const row = starRow();
+            expect(row.price).toBe(4_000_000);
+            expect(row.ladder.baseStonesOnly).toBeUndefined();
+        }
     });
 });

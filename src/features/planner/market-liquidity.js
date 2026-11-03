@@ -82,6 +82,20 @@ function marketHistoryAPI() {
     return liveMarketHistoryAPI() || NO_HISTORY;
 }
 
+/**
+ * How long the history pool is still being waited out, for a caller that found volumes it could not measure and
+ * wants to ask again once the pool answers.
+ * @returns {number} Milliseconds left of the pool's cool-down; 0 when it is not cooling down (or not known)
+ */
+export function volumeCooldownMs() {
+    try {
+        return Number(marketHistoryAPI().cooldownRemainingMs?.()) || 0;
+    } catch (error) {
+        console.error('[MarketLiquidity] Reading the history cool-down failed:', error);
+        return 0;
+    }
+}
+
 /** How much history to average over. Long enough that a quiet week is not a verdict. */
 export const LIQUIDITY_WINDOW_DAYS = 30;
 
@@ -605,4 +619,5 @@ export default {
     applyInputNote,
     applyLiquidityLimits,
     resetLiquidityCache,
+    volumeCooldownMs,
 };

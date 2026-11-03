@@ -29,6 +29,8 @@ const history = vi.hoisted(() => ({
     // An item whose fetch throws, to check that one failure does not take the
     // rest of a concurrent sweep down with it.
     failFor: null,
+    // How long the pool has left of a cool-down; a function lets a test make the read itself fail
+    cooldownMs: 0,
 }));
 
 // The code under test reads the live singleton through the bridge (split build); hand it the mocked module.
@@ -55,6 +57,8 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
             return history.rows[itemHrid] ?? null;
         },
         currentSource: () => ({ key: history.hasVolume ? 'mooket2' : 'mooket1', hasVolume: history.hasVolume }),
+        cooldownRemainingMs: () =>
+            typeof history.cooldownMs === 'function' ? history.cooldownMs() : history.cooldownMs,
         get enabled() {
             return history.enabled;
         },
@@ -72,6 +76,7 @@ const {
     resetLiquidityCache,
     LIQUIDITY_SHARE,
     LIQUIDITY_HORIZON_DAYS,
+    volumeCooldownMs,
 } = await import('./market-liquidity.js');
 
 /**
@@ -738,5 +743,34 @@ describe('in the split production build', () => {
             if (hadWindow) globalThis.window = previousWindow;
             else delete globalThis.window;
         }
+    });
+});
+
+describe('volumeCooldownMs', () => {
+    beforeEach(() => {
+        history.cooldownMs = 0;
+    });
+
+    test('is how long the history pool has left of its cool-down', () => {
+        history.cooldownMs = 12_345;
+        expect(volumeCooldownMs()).toBe(12_345);
+    });
+
+    test('is zero when the pool is not cooling down', () => {
+        expect(volumeCooldownMs()).toBe(0);
+    });
+
+    test('is zero, not a throw, when the cool-down cannot be read', () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        history.cooldownMs = () => {
+            throw new Error('no history API');
+        };
+        expect(volumeCooldownMs()).toBe(0);
+        vi.restoreAllMocks();
+    });
+
+    test('is zero for a value that is not a number', () => {
+        history.cooldownMs = () => undefined;
+        expect(volumeCooldownMs()).toBe(0);
     });
 });

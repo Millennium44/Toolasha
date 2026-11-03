@@ -4150,7 +4150,12 @@ function resolveSelfEnhancePrice(itemHrid, targetLevel, gameData, { isSelf = tru
         const data = dataManager.getInitClientData?.() || {};
         const shops = [data.shopItemDetailMap, data.taskShopItemDetailMap, data.labyrinthShopItemDetailMap];
         base = shopPurchasePriceByMode(itemHrid, shops) || 0;
-        if (!(base > 0)) base = completeBuyPrice(priceBase(itemHrid));
+        if (!(base > 0)) {
+            const priced = priceBase(itemHrid);
+            base = completeBuyPrice(priced);
+            // A refined cape's bill on "nothing" is its stones alone: say the base cape is not in it
+            if (base > 0 && priced.baseCapeCounted === false) ladder.baseStonesOnly = true;
+        }
         if (!(base > 0)) return { price: null, source: null, ladder };
         ladder.baseCost = base;
     }

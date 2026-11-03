@@ -150,6 +150,13 @@ const ALLOWLIST = new Map([
         'stateless XP series pull fold; no module state to share',
     ],
     [
+        'src/utils/leaderboard-revision.js',
+        // A key builder and a factory: every gate keeps its own revisions in the closure of the
+        // createRevisionGate() call, and the module holds no state of its own. The leaderboard recorder
+        // (combat bundle) and the guild XP tracker (ui bundle) each make their own gate.
+        'stateless factory; each gate keeps its state per call, none at module level',
+    ],
+    [
         'src/utils/wrap-long-value.js',
         // One constant and one pure style helper, no imports and no module state.
         // Panels in several bundles (ironcow, ui, combat) draw label and value rows with it.
