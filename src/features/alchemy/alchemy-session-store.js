@@ -19,6 +19,7 @@
  */
 
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
+import { pickCosts } from './alchemy-cost-record.js';
 
 const STORAGE_STORE = 'alchemyHistory';
 
@@ -89,6 +90,30 @@ export function createAlchemySessionStore(baseKey, label) {
  * @returns {Object} The copy to keep
  */
 export function mergeSessionCopies(a, b) {
+    const kept = keepOneCopy(a, b);
+    if (!a || !b) return kept;
+    // The copy kept whole may be the one recorded on a build that saves no costs, or the one that has seen
+    // fewer of them; the copy covering more of the run supplies the field, and a reader prices whatever it
+    // still leaves uncovered at today's market
+    //
+    // Not across edit revisions, though: copies with different `editedAt` stamps are not an older and a newer
+    // version of one run but a session and its hand-corrected replacement, and the correction rescaled the
+    // costs it kept. The kept copy's costs stand (the other's only when it has none); an unstamped copy counts
+    // as stamp 0, so it is the one that loses to any edit and keeps its own costs if it outlived one.
+    const costs =
+        finite(a.editedAt) !== finite(b.editedAt)
+            ? (kept.costs ?? (kept === a ? b : a).costs)
+            : pickCosts(a.costs, b.costs);
+    if (costs && costs !== kept.costs) return { ...kept, costs };
+    return kept;
+}
+
+/**
+ * @param {Object} a - One copy
+ * @param {Object} b - The other
+ * @returns {Object} The copy to keep whole
+ */
+function keepOneCopy(a, b) {
     if (!a) return b;
     if (!b) return a;
     const editedA = finite(a.editedAt);

@@ -40,6 +40,7 @@ const storageMock = vi.hoisted(() => {
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
 const { createAlchemySessionStore, mergeSessionCopies, NO_CHARACTER } = await import('./alchemy-session-store.js');
+const { mergeCosts, resolveInputCost } = await import('./alchemy-cost-record.js');
 
 /** A session as the trackers build them */
 const session = (startTime, id) => ({ id: id ?? `transmute_${startTime}`, startTime, totalAttempts: 1, results: {} });
@@ -256,5 +257,55 @@ describe('a correction against a live recorder, and against a clear', () => {
         expect(store._union([], [copy(90)])).toEqual([]);
         // An edit that predates the clear is not news either
         expect(store._union([], [copy(90, { editedAt: stone.at - 1000 })])).toEqual([]);
+    });
+});
+
+describe('saved costs through a merge', () => {
+    const costed = (attempts, cost, extra = {}) => ({
+        ...session(AUG_4, 'transmute_live'),
+        totalAttempts: attempts,
+        costs: { input: { cost, units: attempts, bases: { ask: attempts } } },
+        ...extra,
+    });
+
+    test('the copy kept for its edit keeps its own costs, so a later extension prices right', () => {
+        const original = costed(10, 1000, { lastActivityTime: 1000 });
+        const corrected = costed(5, 500, { editedAt: 2000, lastActivityTime: 1000 });
+        const merged = mergeSessionCopies(original, corrected);
+        expect(merged.totalAttempts).toBe(5);
+        expect(merged.costs.input).toMatchObject({ cost: 500, units: 5 });
+        expect(mergeSessionCopies(corrected, original).costs).toEqual(merged.costs);
+
+        // Five more units costing 1,000 are recorded on top
+        const extended = { ...merged, totalAttempts: 10, costs: mergeCosts(merged.costs, costed(5, 1000).costs) };
+        expect(resolveInputCost(extended, 10, () => ({ price: 0, basis: null })).cost).toBe(1500);
+    });
+
+    test('replaying the merge changes nothing', () => {
+        const original = costed(10, 1000);
+        const corrected = costed(5, 500, { editedAt: 2000 });
+        const once = mergeSessionCopies(original, corrected);
+        expect(mergeSessionCopies(once, original)).toEqual(once);
+        expect(mergeSessionCopies(once, corrected)).toEqual(once);
+    });
+
+    test('a copy that outlived the edit keeps its own costs', () => {
+        const edited = costed(5, 500, { editedAt: 2000, lastActivityTime: 1000 });
+        const recorded = costed(12, 1300, { lastActivityTime: 2500 });
+        expect(mergeSessionCopies(edited, recorded).costs.input.cost).toBe(1300);
+    });
+
+    test('a kept copy with no costs borrows the other copy’s rather than none', () => {
+        const edited = { ...costed(5, 500, { editedAt: 2000 }), costs: undefined };
+        const original = costed(10, 1000);
+        expect(mergeSessionCopies(edited, original).costs.input.cost).toBe(1000);
+    });
+
+    test('copies of the same edit revision, or none, still go by coverage', () => {
+        const stamped = mergeSessionCopies(costed(9, 900, { editedAt: 5 }), costed(3, 300, { editedAt: 5 }));
+        expect(stamped.costs.input.units).toBe(9);
+        const bare = { ...costed(9, 900), costs: undefined };
+        expect(mergeSessionCopies(bare, costed(3, 300)).costs.input.units).toBe(3);
+        expect(mergeSessionCopies(costed(3, 300), costed(9, 900)).costs.input.units).toBe(9);
     });
 });

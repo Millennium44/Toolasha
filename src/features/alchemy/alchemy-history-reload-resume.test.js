@@ -39,6 +39,10 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: () => 10,
     getItemPrices: () => null,
+    getItemPriceInfo: () => {
+        const price = 10;
+        return { price, source: price === null ? null : 'book', estimated: false };
+    },
 }));
 // What is on disk survives the reload; the page's objects do not
 vi.mock('./alchemy-session-store.js', () => ({
