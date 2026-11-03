@@ -1601,7 +1601,15 @@ class SyncManager {
             // Settled: nothing in this version is news to this device. Deletes an earlier pull could not
             // land are still owed, and this path never reaches the retry in the apply
             await retryPendingDisplacedDeletes();
-            if (seen) await rememberLocal({ [KEY_GIST_VERSION]: { ...seen, current: true } });
+            // A held-back marker for a download older than this device's stamp has been overtaken: a later pull
+            // took the gist since (a pull stopped mid-import can write one that late). Nothing will retry it, as
+            // that download is gone from the gist, and left here it would refuse every push until another device
+            // happened to write
+            const settled = {
+                ...(seen ? { [KEY_GIST_VERSION]: { ...seen, current: true } } : {}),
+                ...(held && isNewer(lastSyncedAt, held.exportedAt) ? { [KEY_MERGE_HELD]: null } : {}),
+            };
+            if (Object.keys(settled).length) await rememberLocal(settled);
             if (!silent) showToast(await this._upToDateMessage(payload));
             return { ok: true, skipped: true, reason: 'not-newer' };
         }
@@ -1778,6 +1786,13 @@ class SyncManager {
             return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
 
+        // If rebuilding the post-import fingerprint fails, the pull has still
+        // applied other records. Leave a durable guard before that read, so a
+        // later push cannot replace the records this pull held back. Before the
+        // check below too: a store failing does not undo the hold, and the
+        // stopped path above keeps it the same way.
+        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
+
         // A pull that wrote nothing must not move the stamp. Remembering the
         // remote's `exportedAt` after a failed apply makes every later pull
         // answer 'not-newer' — the data never arrives and sync reports success
@@ -1792,11 +1807,6 @@ class SyncManager {
             );
             return { ok: false, reason: 'incomplete-apply' };
         }
-
-        // If rebuilding the post-import fingerprint fails, the pull has still
-        // applied other records. Leave a durable guard before that read, so a
-        // later push cannot replace the records this pull held back.
-        if (pendingHeld) await rememberLocal({ [KEY_MERGE_HELD]: pendingHeld });
 
         // The loop guard. An automatic merge goes back up only when this
         // device's copy, folded into the gist's the way the other device will

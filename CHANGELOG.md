@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Sync pushes no longer stay refused after a held-back marker has been overtaken by a later pull.
 - The Party Finder says who was dropped when a sync reduces a full roster to the cap, if it is open at the time.
 - A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
 - Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
