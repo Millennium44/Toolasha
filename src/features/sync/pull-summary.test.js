@@ -9,6 +9,10 @@
 
 import { describe, test, expect, beforeEach } from 'vitest';
 import {
+    countRows,
+    beginPullTiming,
+    finishPullTiming,
+    longestStallDuring,
     buildPullSummary,
     formatPullSummaryLine,
     formatPullStoreLine,
@@ -191,5 +195,201 @@ describe('the session memory', () => {
 
         clearPullSummary();
         expect(lastPullSummary()).toBeNull();
+    });
+});
+
+describe('row counts', () => {
+    test('a value that throws when inspected counts as not applicable', () => {
+        const hostile = new Proxy(
+            {},
+            {
+                getPrototypeOf() {
+                    throw new Error('no');
+                },
+            }
+        );
+        expect(countRows(hostile)).toBeNull();
+    });
+
+    test('an array is its length, a plain object its own keys, a missing value 0, anything else not countable', () => {
+        expect(countRows(['a', 'b', 'b', 'c'])).toBe(4);
+        expect(countRows({ x: 1, y: 2, z: 3 })).toBe(3);
+        expect(countRows(Object.create(null))).toBe(0);
+        expect(countRows(undefined)).toBe(0);
+        expect(countRows(null)).toBe(0);
+        expect(countRows([])).toBe(0);
+        expect(countRows('text')).toBeNull();
+        expect(countRows(7)).toBeNull();
+        expect(countRows(true)).toBeNull();
+        expect(countRows(new Map([[1, 2]]))).toBeNull();
+        expect(countRows(new Date())).toBeNull();
+    });
+
+    test('counting does not copy or touch the value', () => {
+        const value = Array.from({ length: 50_000 }, (_, i) => ({ i }));
+        const before = value[0];
+        expect(countRows(value)).toBe(50_000);
+        expect(value[0]).toBe(before);
+    });
+
+    test('the summary keeps counts as numbers and drops anything else', () => {
+        const summary = buildPullSummary({
+            merged: [
+                {
+                    store: 's',
+                    key: 'a_1',
+                    label: 'a',
+                    counts: { local: 12, pulled: 15, merged: 15, extra: ['secret'] },
+                },
+                { store: 's', key: 'b_1', label: 'b', counts: { local: 'many', pulled: -3, merged: Infinity } },
+                { store: 's', key: 'c_1', label: 'c', counts: 'nope' },
+                { store: 's', key: 'd_1', label: 'd' },
+            ],
+            expected: { s: 4 },
+        });
+        const [a, b, c, d] = summary.stores[0].combinedRecords;
+        expect(a.counts).toEqual({ local: 12, pulled: 15, merged: 15 });
+        expect(b.counts).toEqual({ local: null, pulled: null, merged: null });
+        expect(c).not.toHaveProperty('counts');
+        expect(d).not.toHaveProperty('counts');
+    });
+});
+
+describe('timing around a pull', () => {
+    const clock = (values) => {
+        const queue = [...values];
+        return { perfNow: () => queue.shift() };
+    };
+
+    test('notes the start, and closes with a duration', () => {
+        const begun = beginPullTiming({ perfNow: () => 5000, sinceLoadNow: () => 7000, visibilityNow: () => 'hidden' });
+        expect(begun).toEqual({ startPerf: 5000, sinceLoadMs: 7000, visibility: 'hidden' });
+        const done = finishPullTiming(begun, null, clock([8200]));
+        expect(done).toMatchObject({ startPerf: 5000, endPerf: 8200, durationMs: 3200, visibility: 'hidden' });
+        expect(done.stall.status).toBe('unmeasured');
+    });
+
+    test('a clock that is missing or goes backwards gives no duration, not a negative one', () => {
+        expect(
+            finishPullTiming({ startPerf: null, sinceLoadMs: null, visibility: null }, null, clock([10])).durationMs
+        ).toBeNull();
+        expect(
+            finishPullTiming({ startPerf: 500, sinceLoadMs: 1, visibility: null }, null, clock([100])).durationMs
+        ).toBe(0);
+        expect(finishPullTiming(null, null)).toBeNull();
+    });
+
+    test('the page clock helpers survive a browser without a time origin or a document', () => {
+        const begun = beginPullTiming();
+        expect(begun.startPerf === null || Number.isFinite(begun.startPerf)).toBe(true);
+        expect(begun.visibility === null || typeof begun.visibility === 'string').toBe(true);
+    });
+
+    describe('the longest stall that overlaps the pull', () => {
+        // The pull ran from 10_000 to 13_000 on the performance clock
+        const run = (windows, extra = {}) =>
+            longestStallDuring(
+                { running: true, totalMs: windows.reduce((t, w) => t + (w?.lostMs || 0), 0), windows, ...extra },
+                10_000,
+                13_000
+            );
+
+        test('uses the stretch the page lost, which ends when the late beat ran', () => {
+            // The beat ran at 14_000 after losing 2_500 ms: the lost time began at 11_500, inside the pull
+            expect(run([{ perfAt: 14_000, lostMs: 2500, visibilityState: 'hidden' }])).toEqual({
+                status: 'found',
+                lostMs: 2500,
+                visibility: 'hidden',
+            });
+        });
+
+        test('a stall that ended before the pull began, or began after it ended, is not an overlap', () => {
+            expect(run([{ perfAt: 9_900, lostMs: 4000, visibilityState: 'hidden' }]).status).toBe('none');
+            expect(run([{ perfAt: 20_000, lostMs: 5000, visibilityState: 'hidden' }]).status).toBe('none');
+        });
+
+        test('the largest of several wins, and a stall that spans the whole pull counts', () => {
+            const result = run([
+                { perfAt: 11_000, lostMs: 400, visibilityState: 'visible' },
+                { perfAt: 12_000, lostMs: 900, visibilityState: 'visible' },
+                { perfAt: 25_000, lostMs: 20_000, visibilityState: 'hidden' },
+            ]);
+            expect(result).toEqual({ status: 'found', lostMs: 20_000, visibility: 'hidden' });
+        });
+
+        test('a ring that has dropped older windows and starts after the pull cannot say none', () => {
+            const result = longestStallDuring(
+                {
+                    running: true,
+                    totalMs: 90_000,
+                    windows: [{ perfAt: 500_000, lostMs: 1000, visibilityState: 'visible' }],
+                },
+                10_000,
+                13_000
+            );
+            expect(result.status).toBe('rolled-off');
+        });
+
+        test('a ring that has dropped windows but still reaches back past the pull answers none', () => {
+            const result = longestStallDuring(
+                {
+                    running: true,
+                    totalMs: 90_000,
+                    windows: [
+                        { perfAt: 5_000, lostMs: 1000, visibilityState: 'visible' },
+                        { perfAt: 500_000, lostMs: 1000, visibilityState: 'visible' },
+                    ],
+                },
+                10_000,
+                13_000
+            );
+            expect(result.status).toBe('none');
+        });
+
+        test('an empty ring with nothing lost is none; no heartbeat or no diagnostics is unmeasured', () => {
+            expect(run([]).status).toBe('none');
+            expect(longestStallDuring({ running: false, totalMs: 0, windows: [] }, 10_000, 13_000).status).toBe(
+                'unmeasured'
+            );
+            for (const lostTime of [undefined, null, {}, { windows: 'x' }, 'x']) {
+                expect(longestStallDuring(lostTime, 10_000, 13_000).status).toBe('unmeasured');
+            }
+            expect(longestStallDuring({ running: true, windows: [] }, null, 13_000).status).toBe('unmeasured');
+        });
+
+        test('malformed windows are skipped, not trusted', () => {
+            const result = run([
+                null,
+                { perfAt: 'x', lostMs: 5 },
+                { perfAt: 12_000 },
+                { perfAt: 12_000, lostMs: 600, visibilityState: 'hidden' },
+            ]);
+            expect(result).toEqual({ status: 'found', lostMs: 600, visibility: 'hidden' });
+        });
+    });
+
+    test('the summary stores timing as numbers and short strings only', () => {
+        const summary = buildPullSummary({
+            timing: {
+                startPerf: 1,
+                endPerf: 2,
+                sinceLoadMs: 3,
+                durationMs: 1,
+                visibility: 'visible',
+                stall: { status: 'found', lostMs: 900, visibility: 'hidden', secret: 'x' },
+                extra: { value: 'secret' },
+            },
+        });
+        expect(summary.timing).toEqual({
+            startPerf: 1,
+            endPerf: 2,
+            sinceLoadMs: 3,
+            durationMs: 1,
+            visibility: 'visible',
+            stall: { status: 'found', lostMs: 900, visibility: 'hidden' },
+        });
+        expect(buildPullSummary({}).timing).toBeNull();
+        expect(buildPullSummary({ timing: 'nope' }).timing).toBeNull();
+        expect(buildPullSummary({ timing: { stall: { status: 'weird' } } }).timing.stall.status).toBe('unmeasured');
     });
 });

@@ -402,6 +402,41 @@ class TradeLedgerStore {
          * @type {Map<string, Set<string>>}
          */
         this._writtenDays = new Map();
+        /**
+         * What the over-recorded repair has done this session, per character (`charId → {runs, cut}`), for the
+         * sync pull report. Read-only bookkeeping: nothing here changes what the repair does. Kept by character
+         * id so a switch can never show one character's count against another, and kept across `disable()` as
+         * the session's history, not the feature's state.
+         * @type {Map<string, {runs: number, cut: number}>}
+         */
+        this._repairStats = new Map();
+    }
+
+    /**
+     * Note one finished run of the over-recorded repair.
+     * @param {string} charId - The character the run began under
+     * @param {number} cut - How many listings it cut back (0 when it found nothing over-recorded)
+     * @private
+     */
+    _noteRepair(charId, cut) {
+        const entry = this._repairStats.get(charId) || { runs: 0, cut: 0 };
+        entry.runs += 1;
+        entry.cut += cut;
+        this._repairStats.set(charId, entry);
+    }
+
+    /**
+     * What the over-recorded repair did this session for the character now on screen.
+     *
+     * `runs: 0` is "has not run yet" (the ledger was not loaded, the open listings were not known, or the
+     * archive could not be read), which is not the same as a run that cut nothing (`runs > 0, cut: 0`).
+     * `recording` says whether the ledger is on, so a report can tell "off" from "has not got there yet".
+     * @returns {{charId: string, runs: number, cut: number, recording: boolean}} A copy; never the live entry
+     */
+    repairStats() {
+        const charId = ledgerCharId();
+        const entry = this._repairStats.get(charId);
+        return { charId, runs: entry ? entry.runs : 0, cut: entry ? entry.cut : 0, recording: this.isInitialized };
     }
 
     /**
@@ -693,10 +728,19 @@ class TradeLedgerStore {
                     if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) openIds.add(Number(entry.id));
                 }
                 const caps = await this._endedFills(charId, openIds);
-                if (!current() || caps === null || caps.size === 0) return 0;
+                // Stood down (a switch landed) or deferred (the archive could not be read): the repair did not run
+                if (!current() || caps === null) return 0;
+                if (caps.size === 0) {
+                    this._noteRepair(charId, 0);
+                    return 0;
+                }
 
                 const { records, repairedIds } = repairOverRecorded(this.records, caps);
-                if (repairedIds.size === 0) return 0;
+                if (repairedIds.size === 0) {
+                    this._noteRepair(charId, 0);
+                    return 0;
+                }
+                this._noteRepair(charId, repairedIds.size);
                 const days = new Set();
                 for (const record of this.records) if (repairedIds.has(record.listingId)) days.add(bucketOf(record));
                 this.records = records;

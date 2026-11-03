@@ -1725,6 +1725,69 @@ describe('what a pull says it reconciled', () => {
         expect(lastPullSummary().stores.map((store) => store.store)).toEqual(['settings']);
     });
 
+    test('the summary keeps the apply row counts and times the pull, with numbers only', async () => {
+        oneOfEach();
+        payload.merged = [
+            {
+                store: 'guildHistory',
+                key: 'trials',
+                label: 'trial records',
+                counts: { local: 12, pulled: 15, merged: 15 },
+            },
+        ];
+
+        await syncManager.pull();
+
+        const summary = lastPullSummary();
+        expect(summary.stores[0].combinedRecords).toEqual([
+            { key: 'trials', label: 'trial records', counts: { local: 12, pulled: 15, merged: 15 } },
+        ]);
+        // This storage fake has no diagnostics: the stall is unmeasured, the rest of the timing is there
+        // (and this test runs without a document, so there is no visibility to note)
+        expect(summary.timing).toMatchObject({ visibility: null, stall: { status: 'unmeasured' } });
+        expect(summary.timing.durationMs).toBeGreaterThanOrEqual(0);
+        expect(summary.timing.endPerf).toBeGreaterThanOrEqual(summary.timing.startPerf);
+        for (const value of Object.values(summary.timing)) expect(typeof value).not.toBe('function');
+    });
+
+    test('a stall the heartbeat recorded during the pull is kept on the summary', async () => {
+        const { default: storageFake } = await import('../../core/storage.js');
+        oneOfEach();
+        storageFake.diagnostics = () => ({
+            lostTime: {
+                running: true,
+                totalMs: 4000,
+                // Ended in the future of this test's clock: the pull's window is whatever performance.now() gave
+                windows: [
+                    { at: Date.now(), perfAt: performance.now() + 1, lostMs: 100_000, visibilityState: 'hidden' },
+                ],
+            },
+        });
+        try {
+            await syncManager.pull();
+        } finally {
+            delete storageFake.diagnostics;
+        }
+
+        expect(lastPullSummary().timing.stall).toEqual({ status: 'found', lostMs: 100_000, visibility: 'hidden' });
+    });
+
+    test('diagnostics that throw cost the stall line and nothing else', async () => {
+        const { default: storageFake } = await import('../../core/storage.js');
+        oneOfEach();
+        storageFake.diagnostics = () => {
+            throw new Error('page was blocked');
+        };
+        try {
+            await syncManager.pull();
+        } finally {
+            delete storageFake.diagnostics;
+        }
+
+        expect(lastPullSummary().stores[0].combined).toBe(1);
+        expect(lastPullSummary().timing.stall.status).toBe('unmeasured');
+    });
+
     test('a character switch clears it — the summary belongs to the device, not the character', async () => {
         oneOfEach();
         await syncManager.pull();

@@ -31,6 +31,7 @@ import {
     ownershipSnapshot,
 } from './sync-ownership.js';
 import { ensureExternalKeysLoaded, ensureExternalKeysSaved } from './sync-external-keys.js';
+import { countRows } from './pull-summary.js';
 import { importEverything, stripExcludedKeys, tombstoneCompanionKey } from '../../utils/full-backup.js';
 import {
     announceSyncPullApplied,
@@ -806,8 +807,17 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                 const incoming = entries[key];
                 const fold = (local) =>
                     localWins ? registration.merge(incoming, local) : registration.mergeForPull(local, incoming);
+                // Row counts for the pull report, taken before the fold so a merge that edits its inputs cannot
+                // change them. Numbers only: the report never holds a value.
+                const localRows = countRows(probed.value);
+                const pulledRows = countRows(incoming);
                 entries[key] = fold(probed.value);
-                merged.push({ store: storeName, key, label: registration.label });
+                merged.push({
+                    store: storeName,
+                    key,
+                    label: registration.label,
+                    counts: { local: localRows, pulled: pulledRows, merged: countRows(entries[key]) },
+                });
                 if (entries[key] === probed.value) {
                     // The fold handed back the copy it was built on (a union that added nothing): the same
                     // without serializing either. Nothing mutates the copy before the write, so its text
@@ -1040,7 +1050,13 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         // key left out below already holds its value
         const { unchanged, unchangedKeys } = dropUnchangedKeys(payload, sameByStore);
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
-        const merged = histories.merged.filter(changed);
+        // The merged count is re-read from the payload as it now stands: `weighAgainstLocal` and the retention
+        // rules may have changed the value after the fold, and the report should count what is about to be written
+        const merged = histories.merged.filter(changed).map((entry) => {
+            const stored = payload?.stores?.[entry.store];
+            if (!entry.counts || !stored || !Object.hasOwn(stored, entry.key)) return entry;
+            return { ...entry, counts: { ...entry.counts, merged: countRows(stored[entry.key]) } };
+        });
         const mergeFailed = histories.failed.filter(changed);
         // What the import wrote that no fold produced, named for the pull summary: every key it wrote, less
         // the folds (a fold whose merge threw was written whole, so it stays in). The importer's own list

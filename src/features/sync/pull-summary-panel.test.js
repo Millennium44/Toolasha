@@ -20,7 +20,7 @@ vi.mock('../../utils/simple-panel.js', async (importOriginal) => {
 });
 
 const { buildPullSummary, rememberPullSummary, clearPullSummary } = await import('./pull-summary.js');
-const { openPullSummaryPanel, copyPullReport } = await import('./pull-summary-panel.js');
+const { openPullSummaryPanel, copyPullReport, currentPullReport } = await import('./pull-summary-panel.js');
 
 /** The panel's text after one draw */
 const drawn = () => {
@@ -136,5 +136,88 @@ describe('the Copy report button', () => {
         rememberPullSummary(buildPullSummary({ expected: { settings: 0 } }));
 
         expect(draw().querySelector('button.toolasha-pull-report-copy').textContent).toBe('Copy report');
+    });
+});
+
+describe('the report the panel writes', () => {
+    const repairLine = () =>
+        currentPullReport()
+            .split('\n')
+            .find((line) => line.startsWith('Ledger repair'));
+
+    beforeEach(() => {
+        rememberPullSummary(buildPullSummary({ expected: { settings: 0 } }));
+    });
+
+    afterEach(() => {
+        delete globalThis.window.Toolasha;
+    });
+
+    test('says the ledger repair is unknown when the market bundle is not there to ask', () => {
+        expect(repairLine()).toBe('Ledger repair this session: unknown');
+    });
+
+    test('asks the ledger store through the bridge and tells not-run-yet from zero from a count', () => {
+        const stats = { charId: '30404', runs: 0, cut: 0 };
+        globalThis.window.Toolasha = { Market: { tradeLedgerStore: { repairStats: () => ({ ...stats }) } } };
+        expect(repairLine()).toBe('Ledger repair this session (character 30404): not run yet');
+
+        Object.assign(stats, { runs: 2, cut: 0 });
+        expect(repairLine()).toBe('Ledger repair this session (character 30404): 0 listings cut (2 runs)');
+
+        Object.assign(stats, { runs: 2, cut: 3 });
+        expect(repairLine()).toBe('Ledger repair this session (character 30404): 3 listings cut (2 runs)');
+    });
+
+    test('a store that throws, or has no repairStats, costs the line and nothing else', () => {
+        globalThis.window.Toolasha = {
+            Market: {
+                tradeLedgerStore: {
+                    repairStats: () => {
+                        throw new Error('boom');
+                    },
+                },
+            },
+        };
+        expect(repairLine()).toBe('Ledger repair this session: unknown');
+        globalThis.window.Toolasha = { Market: { tradeLedgerStore: {} } };
+        expect(repairLine()).toBe('Ledger repair this session: unknown');
+        expect(currentPullReport()).toContain('Stores:');
+    });
+
+    test('a stall the heartbeat recorded after the pull ended reaches the report through storage diagnostics', async () => {
+        const { default: storage } = await import('../../core/storage.js');
+        const startPerf = performance.now() - 5000;
+        rememberPullSummary(
+            buildPullSummary({
+                expected: { settings: 0 },
+                timing: {
+                    startPerf,
+                    endPerf: startPerf + 3000,
+                    sinceLoadMs: 1000,
+                    durationMs: 3000,
+                    visibility: 'visible',
+                    stall: { status: 'none', lostMs: null, visibility: null },
+                },
+            })
+        );
+        const real = storage.diagnostics;
+        storage.diagnostics = () => ({
+            lostTime: {
+                running: true,
+                totalMs: 2500,
+                windows: [{ perfAt: startPerf + 3500, lostMs: 2500, visibilityState: 'hidden' }],
+            },
+        });
+        try {
+            expect(currentPullReport()).toContain('Longest stall overlapping the pull: 2500 ms (tab hidden)');
+            // A diagnostics call that throws leaves the stored answer
+            storage.diagnostics = () => {
+                throw new Error('blocked');
+            };
+            expect(currentPullReport()).toContain('Longest stall overlapping the pull: none');
+        } finally {
+            storage.diagnostics = real;
+        }
     });
 });

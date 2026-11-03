@@ -84,6 +84,8 @@ import { flushPersistedRecords } from '../../utils/persisted-record.js';
 import { stableStringify } from '../../utils/stable-stringify.js';
 import {
     buildPullSummary,
+    beginPullTiming,
+    finishPullTiming,
     formatPullSummaryLine,
     rememberPullSummary,
     clearPullSummary,
@@ -1526,6 +1528,8 @@ class SyncManager {
      * @private
      */
     async _doPull(silent, opToken, startup = false) {
+        // Noted before anything is awaited, for the pull report (numbers and a visibility word only)
+        const timingStart = beginPullTiming();
         const token = this._token();
         const gistId = await this._resolveGistId(token);
         if (!gistId) {
@@ -1899,6 +1903,7 @@ class SyncManager {
             expected,
             unchanged,
             at: new Date().toISOString(),
+            timing: this._pullTiming(timingStart),
         });
 
         // Nothing written means nothing latched, so there is nothing to reload
@@ -1986,6 +1991,28 @@ class SyncManager {
         if (pushBack && mergeHeld?.length) return { ok: true, merged: merged?.length || 0, pushedBack: false };
 
         return { ok: true, merged: merged?.length || 0 };
+    }
+
+    /**
+     * Close a pull's timing for its summary. Never throws: a page that was blocked, or a storage without
+     * diagnostics, costs the report a line, not the pull its summary.
+     * @param {Object} start - From `beginPullTiming`
+     * @returns {Object|null} Timing for `buildPullSummary`, or null
+     * @private
+     */
+    _pullTiming(start) {
+        try {
+            let lostTime = null;
+            try {
+                lostTime = storage.diagnostics?.()?.lostTime ?? null;
+            } catch {
+                lostTime = null;
+            }
+            return finishPullTiming(start, lostTime);
+        } catch (error) {
+            console.warn('[Sync] Could not time the pull:', error);
+            return null;
+        }
     }
 
     /**
