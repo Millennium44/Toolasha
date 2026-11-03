@@ -332,21 +332,30 @@ export function mergeMarkers(a, b) {
     if (!a) return b || null;
     if (!b) return a;
     const byKey = new Map();
-    for (const change of [...(a.changes || []), ...(b.changes || [])]) {
-        const key = changeKey(change);
-        const held = byKey.get(key);
-        if (!held) {
-            byKey.set(key, { ...change });
-        } else if (Number.isFinite(held.step) && Number.isFinite(change.step)) {
-            held.step += change.step;
-            held.stepCounted = (held.stepCounted ?? 0) + (change.stepCounted ?? change.step);
-        } else {
-            // One side's share is unknown, so the sum of the two is too
-            delete held.step;
-            delete held.stepCounted;
+    for (const marker of [a, b]) {
+        for (const change of marker.changes || []) {
+            const key = changeKey(change);
+            const share = changeShare(marker, change);
+            const held = byKey.get(key);
+            if (!held) {
+                byKey.set(key, { change, share, stated: Number.isFinite(change.step) });
+                continue;
+            }
+            // Unseparated on one side is a known nothing, not an unknown: the other side's share is the whole
+            // of what the sum holds for this change. Only a side that cannot say makes the total unknowable.
+            held.share =
+                held.share && share
+                    ? { step: held.share.step + share.step, stepCounted: held.share.stepCounted + share.stepCounted }
+                    : null;
+            held.stated = held.stated || Number.isFinite(change.step);
         }
     }
-    const changes = [...byKey.values()];
+    const changes = [...byKey.values()].map(({ change, share, stated }) => {
+        const { step: _step, stepCounted: _stepCounted, ...plain } = change;
+        if (!share) return plain;
+        // A share of nothing nobody stated stays unstated: an unseparated change carries no figure
+        return stated || share.step !== 0 || share.stepCounted !== 0 ? { ...plain, ...share } : plain;
+    });
     const add = (x, y) =>
         Number.isFinite(x) || Number.isFinite(y) ? (Number.isFinite(x) ? x : 0) + (Number.isFinite(y) ? y : 0) : null;
     const merged = {
@@ -426,8 +435,13 @@ export function countedShares(history) {
         }
         const repeated = new Set(repeats.map(({ change }) => change.id).filter((id) => !left.has(id)));
         const unseparated = (marker.unseparated || []).filter((id) => !repeated.has(id));
-        // Only unseparated changes left: nothing of this marker's step is still this marker's to claim
-        const anySeparated = changes.length === 0 || [...left].some((id) => !unseparated.includes(id));
+        // Only unseparated changes left: nothing of this marker's step is still this marker's to claim. A change
+        // can be on that list and hold a share too, once two markers have been merged
+        const anySeparated =
+            changes.length === 0 ||
+            changes.some(
+                (change) => left.has(change.id) && (Number.isFinite(change.step) || !unseparated.includes(change.id))
+            );
         shares.set(point.t, {
             step: Number.isFinite(marker.step) && anySeparated ? step : null,
             stepCounted: Number.isFinite(marker.step) && anySeparated ? stepCounted : 0,

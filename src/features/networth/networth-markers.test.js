@@ -617,6 +617,52 @@ describe('one change marked in different batches', () => {
             expect(merged.step).toBe(900);
         });
 
+        describe('a change separated on one side and unseparated on the other', () => {
+            const plainLab = { id: LAB, from: false, to: true };
+            const unseparatedLab = () => mark(9 * HOUR, [plainLab], null, { unseparated: [LAB] }).marker;
+
+            test('the share in the sum stays on the change, in either order', () => {
+                for (const merged of [
+                    mergeMarkers(lab().marker, unseparatedLab()),
+                    mergeMarkers(unseparatedLab(), lab().marker),
+                ]) {
+                    expect(merged.step).toBe(400);
+                    expect(merged.changes).toEqual([on(LAB, 400)]);
+                    expect(merged.unseparated).toEqual([LAB]);
+                }
+            });
+
+            test('so a later repeat of it comes out at that share, and the merged step still counts', () => {
+                const merged = {
+                    t: 10 * HOUR,
+                    total: 1500,
+                    nonExcluded: 1500,
+                    marker: mergeMarkers(lab().marker, unseparatedLab()),
+                };
+                expect(stepsAfter([merged], 0).step).toBe(400);
+                const later = mark(11 * HOUR, [on(LAB, 400), on(COW, 100)]);
+                expect(stepsAfter([merged, later], 0).step).toBe(500);
+                // The merged marker repeating an earlier batch comes out by what it holds, not by nothing
+                const earlier = mark(9 * HOUR, [on(LAB, 400), on(COW, 100)]);
+                const mergedWithTask = {
+                    ...merged,
+                    marker: mergeMarkers(merged.marker, mark(1, [on(TASK, 50)]).marker),
+                };
+                expect(stepsAfter([earlier, mergedWithTask], 0).step).toBe(550);
+            });
+
+            test('both sides unseparated carry no figure at all', () => {
+                const merged = mergeMarkers(unseparatedLab(), unseparatedLab());
+                expect(merged.changes).toEqual([plainLab]);
+                expect(merged.step).toBe(null);
+            });
+        });
+
+        test('a marker with only the sums and one change hands its share on through a merge', () => {
+            const merged = mergeMarkers(bare(lab()).marker, mark(1, [on(COW, 100)]).marker);
+            expect(merged.changes).toEqual([on(LAB, 400), on(COW, 100)]);
+        });
+
         test('a merge with one share unknown forgets the share rather than guess', () => {
             const merged = mergeMarkers(lab().marker, bare(both()).marker);
             expect(merged.changes[0]).toEqual({ id: LAB, from: false, to: true });
