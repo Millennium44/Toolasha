@@ -27,6 +27,8 @@ export const TARGETS = [
     { label: '1 day', seconds: 86400 },
     { label: '3 days', seconds: 3 * 86400 },
     { label: '1 week', seconds: 7 * 86400 },
+    { label: '2 weeks', seconds: 14 * 86400 },
+    { label: '30 days', seconds: 30 * 86400 },
 ];
 
 const DEFAULT_INDEX = 1;

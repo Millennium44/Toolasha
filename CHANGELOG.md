@@ -7,6 +7,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ## Unreleased — branch `main`
 
 - The sync report now lists every record a pull combined with its row counts, when the pull ran and how long it took, and whether the trade ledger repair has run, so sync problems can be traced from one paste.
+- The Consumables panel can now plan stock for 2 weeks or 30 days, on top of 8 hours, 1 day, 3 days and 1 week.
 - The Treasure popup now appears together with the game's Opened Loot dialog, instead of waiting on a timer that can run late, for example just after you switch back to the tab.
 - Saved loadouts are corrected from the game at login, so the Combat Sim, Lab Sim and labyrinth figures stop using gear you have since sold or swapped when a loadout update was missed.
 - The labyrinth path no longer counts shrouded rooms toward torches, so it stops warning about too few torches when you have enough.
