@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
+import { buildCharacterPanel, buildNewInventory } from './custom-tabs-inventory.fixture.js';
 
 const badgeMock = vi.hoisted(() => ({ renderAllBadges: vi.fn(async () => {}) }));
 
@@ -23,6 +24,7 @@ const dm = vi.hoisted(() => ({
     getCurrentCharacterGameMode: () => 'standard',
     getInitClientData: () => ({}),
     characterItems: [],
+    getInventory: () => [],
     on: () => {},
     off: () => {},
 }));
@@ -85,27 +87,38 @@ function makeTile(hrid) {
     return el;
 }
 
-/** An active UI with a Resources section holding two tiles, headers drawn from the tiles' datasets */
+/**
+ * An active UI over a game-shaped inventory (see custom-tabs-inventory.fixture.js), laid out by the real
+ * `_applyLayout`: a Resources section holding the cheese and milk tiles, the coin tile left Unorganized.
+ * `layout` only watches the real pass.
+ */
 async function setup() {
+    document.body.replaceChildren();
+    const { inventoryPanel } = buildCharacterPanel();
+    const { inv } = buildNewInventory(inventoryPanel, 'inventory_all');
+    const tileFor = (name) =>
+        [...inv.querySelectorAll('[class*="Item_itemContainer"]')].find(
+            (tile) => tile.querySelector('use').getAttribute('href').split('#')[1] === name
+        );
+    const tiles = [tileFor('cheese'), tileFor('milk')];
+
     ui = new CustomTabsUI();
-    await ui.initialize();
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const tiles = [makeTile('/items/cheese'), makeTile('/items/milk')];
-    for (const t of tiles) container.appendChild(t);
     ui._config = {
-        tabs: [{ id: 'res', name: 'Resources', open: true, items: tiles.map((t) => t.dataset.hrid), children: [] }],
+        tabs: [
+            {
+                id: 'res',
+                name: 'Resources',
+                open: true,
+                items: ['/items/cheese', '/items/milk'],
+                children: [],
+            },
+        ],
     };
+    ui._configCharId = dm.getCurrentCharacterId();
     ui._isActive = true;
-    ui._invContainer = container;
-    const tileMap = () => new Map(tiles.map((t) => [t.dataset.hrid, [t]]));
-    // Stand-in for the full-rebuild path of _applyLayoutSync: real header injection, real signature
-    const layout = vi.spyOn(ui, '_applyLayout').mockImplementation(async () => {
-        ui._injectAccordionHeaders(container, ui._config.tabs, 0, tileMap(), 0);
-        ui._headerTotalsSignature = ui._tileValueSignature?.(container);
-    });
-    const total = () => container.querySelector('.toolasha-ct-section-value')?.textContent ?? null;
-    return { container, tiles, layout, total };
+    const layout = vi.spyOn(ui, '_applyLayout');
+    const total = () => inv.querySelector('.toolasha-ct-section-value')?.textContent ?? null;
+    return { container: inv, tiles, layout, total };
 }
 
 describe('section header totals after the prices arrive', () => {
@@ -158,14 +171,18 @@ describe('section header totals after the prices arrive', () => {
     });
 
     test('a container swapped in while a render runs gets its headers checked', async () => {
-        const { container, tiles, layout } = await setup();
+        const { container, layout } = await setup();
         await ui._applyLayout();
         layout.mockClear();
 
-        // The game replaces the inventory grid mid-render; its own refresh request is folded in
-        const fresh = document.createElement('div');
-        for (const t of tiles) fresh.appendChild(t);
-        document.body.appendChild(fresh);
+        // The game replaces the whole inventory grid mid-render, tiles and all; its own refresh request is
+        // folded in
+        const host = container.parentElement;
+        container.remove();
+        const fresh = buildNewInventory(host, 'inventory_all').inv;
+        const freshCheese = [...fresh.querySelectorAll('[class*="Item_itemContainer"]')].find(
+            (tile) => tile.querySelector('use').getAttribute('href').split('#')[1] === 'cheese'
+        );
         let firstRender = true;
         badgeMock.renderAllBadges.mockImplementation(async () => {
             if (firstRender) {
@@ -173,12 +190,13 @@ describe('section header totals after the prices arrive', () => {
                 ui._invContainer = fresh;
                 ui._refreshBadgesWhenSettled(fresh);
             }
-            tiles[0].dataset.askValue = '2000000';
+            freshCheese.dataset.askValue = '2000000';
         });
         await ui._refreshBadgesWhenSettled(container);
         badgeMock.renderAllBadges.mockReset();
 
         expect(layout).toHaveBeenCalled();
+        expect(fresh.querySelector('.toolasha-ct-section-value')?.textContent).toBe('2.00M');
     });
 
     test('redraws when a tile is replaced by a different item of the same value', async () => {
