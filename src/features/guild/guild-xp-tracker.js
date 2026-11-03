@@ -19,6 +19,7 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { foldXPSeriesForPull } from '../../utils/xp-series-sync.js';
 import { runInBackground } from '../../utils/background-work.js';
+import { createRevisionGate } from '../../utils/leaderboard-revision.js';
 import { setScheduleHourOffset } from './guild-trial-schedule.js';
 import { loadoutIdChanges, signupFieldsFromGuildChar, signupFieldsFromUpdate } from './guild-trial-signups.js';
 
@@ -601,6 +602,8 @@ class GuildXPTracker {
         this.metaListeners = new Set();
         /** One save chain per storage key, so read-merge-writes never interleave */
         this._saveChains = new Map();
+        /** The newest leaderboard revision seen per board; the game drops an older one, so the tracker does too */
+        this.revisionGate = createRevisionGate();
         /** History loads still in flight; see `_trackLoad` */
         this._loadsPending = 0;
         /** Bumped by `disable()`; a login load that started before it is for a character that is gone */
@@ -751,9 +754,10 @@ class GuildXPTracker {
 
         // Bind handlers
         this._boundOnCharacterInit = (data) => this._onCharacterInit(data);
-        this._boundOnGuildUpdated = (data) => this._onGuildUpdated(data);
-        this._boundOnMembersUpdated = (data) => this._onMembersUpdated(data);
-        this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
+        // The socket the frame came in on rides along as `context`; see `_isStaleSocket`
+        this._boundOnGuildUpdated = (data, context) => this._onGuildUpdated(data, context);
+        this._boundOnMembersUpdated = (data, context) => this._onMembersUpdated(data, context);
+        this._boundOnLeaderboardUpdated = (data, context) => this._onLeaderboardUpdated(data, context);
 
         // Register dataManager listener for init data
         dataManager.on('character_initialized', this._boundOnCharacterInit);
@@ -763,7 +767,7 @@ class GuildXPTracker {
         webSocketHook.on('guild_updated', this._boundOnGuildUpdated);
         webSocketHook.on('guild_characters_updated', this._boundOnMembersUpdated);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
-        this._boundOnTrialSignupUpdated = (data) => this._onTrialSignupUpdated(data);
+        this._boundOnTrialSignupUpdated = (data, context) => this._onTrialSignupUpdated(data, context);
         webSocketHook.on('guild_trial_signup_updated', this._boundOnTrialSignupUpdated);
         this.unregisterHandlers.push(() => {
             webSocketHook.off('guild_updated', this._boundOnGuildUpdated);
@@ -1057,10 +1061,26 @@ class GuildXPTracker {
     }
 
     /**
+     * Whether a frame came from a socket the game has since replaced.
+     *
+     * After a character switch a late frame from the old character's socket can still arrive, and every store here
+     * is the new character's. Permissive only while the data manager has bound no socket (or its check is not
+     * loaded yet, in the split build); once one is bound, a frame without a `{socket}` context is dropped. The
+     * websocket hook always passes the context.
+     * @param {Object} [context] - What the websocket hook passed with the frame (`{socket}`)
+     * @returns {boolean} True when the frame must be ignored
+     */
+    _isStaleSocket(context) {
+        return dataManager.isFromActiveSocket?.(context) === false;
+    }
+
+    /**
      * Handle guild_updated — record guild-level XP.
      * @param {Object} data - guild_updated message
+     * @param {Object} [context] - The frame's socket
      */
-    async _onGuildUpdated(data) {
+    async _onGuildUpdated(data, context) {
+        if (this._isStaleSocket(context)) return;
         const guild = data.guild;
         if (!guild) return;
         // A character switch (or the feature turning off) tears the tracker down while a history load this message is
@@ -1124,8 +1144,10 @@ class GuildXPTracker {
     /**
      * Handle guild_characters_updated — record per-member XP.
      * @param {Object} data - guild_characters_updated message
+     * @param {Object} [context] - The frame's socket
      */
-    async _onMembersUpdated(data) {
+    async _onMembersUpdated(data, context) {
+        if (this._isStaleSocket(context)) return;
         // See `_onGuildUpdated`: a teardown during the awaits below must not be undone by this message
         const epoch = this._epoch;
         const guildCharacterMap = data.guildCharacterMap || {};
@@ -1235,8 +1257,10 @@ class GuildXPTracker {
     /**
      * Handle guild_trial_signup_updated — update a single member's trial signup state.
      * @param {Object} data - guild_trial_signup_updated message
+     * @param {Object} [context] - The frame's socket
      */
-    _onTrialSignupUpdated(data) {
+    _onTrialSignupUpdated(data, context) {
+        if (this._isStaleSocket(context)) return;
         const charId = String(data.characterId);
         const meta = this.memberMeta[charId];
         if (!meta) return;
@@ -1289,12 +1313,18 @@ class GuildXPTracker {
     /**
      * Handle leaderboard_updated (category: guild) — record XP for all guilds on the guild leaderboard.
      * @param {Object} data - leaderboard_updated message
+     * @param {Object} [context] - The frame's socket
      */
-    async _onLeaderboardUpdated(data) {
+    async _onLeaderboardUpdated(data, context) {
+        if (this._isStaleSocket(context)) return;
+        if (data.leaderboardCategory !== 'guild') return;
+        // The game drops a board older than the revision it already holds for the same view; an older frame
+        // arriving late would otherwise be sampled as the newest reading. Judged on receipt, before the history
+        // load is waited on, so arrival order is the order the revisions are compared in.
+        if (this.revisionGate.isStale(data)) return;
         const epoch = this._epoch;
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch || !this._recordsHistory()) return;
-        if (data.leaderboardCategory !== 'guild') return;
 
         const rows = data.leaderboard?.rows;
         if (!rows || rows.length === 0) return;
@@ -1633,6 +1663,8 @@ class GuildXPTracker {
         this.leaderboardXPHistory = {};
         this.memberXPHistory = {};
         this.memberMeta = {};
+        // The next character's boards start their revisions afresh
+        this.revisionGate.reset();
         setScheduleHourOffset(null);
         this.initialized = false;
     }

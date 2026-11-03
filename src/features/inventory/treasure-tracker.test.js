@@ -1900,4 +1900,91 @@ describe('placeBesideDialog never covers the game loot dialog', () => {
         expect(place).toEqual({ left: 20, top: 8, height: 180 });
         expect(place.top + place.height).toBeLessThanOrEqual(dialog.top);
     });
+
+    describe('a dialog that fills the phone screen', () => {
+        const viewport = { width: 412, height: 850 };
+
+        test('a very short screen: the written height never exceeds what the screen can show', () => {
+            const short = { width: 412, height: 100 };
+            const place = placeBesideDialog({ left: 4, right: 408, top: 10, bottom: 95 }, popup, short);
+            expect(place).toEqual({ left: 8, top: 8, height: 84 });
+            expect(place.top + place.height).toBeLessThanOrEqual(short.height - 8);
+        });
+
+        test('no gap at all: pinned to the top at the minimum height, never a height of 0', () => {
+            // above: 20 - 12 - 8 = 0; below: 850 - 830 - 12 - 8 = 0
+            const place = placeBesideDialog({ left: 4, right: 408, top: 20, bottom: 830 }, popup, viewport);
+            expect(place).toEqual({ left: 8, top: 8, height: 120 });
+        });
+
+        test('a dialog taller than the window (negative gaps) is treated the same way', () => {
+            const place = placeBesideDialog({ left: 0, right: 412, top: -40, bottom: 900 }, popup, viewport);
+            expect(place).toEqual({ left: 8, top: 8, height: 120 });
+        });
+
+        test('a gap of a few pixels is under the floor, so it overlaps rather than becoming a sliver', () => {
+            // above: 40 - 12 - 8 = 20; below: 850 - 800 - 12 - 8 = 30
+            const place = placeBesideDialog({ left: 20, right: 392, top: 40, bottom: 800 }, popup, viewport);
+            expect(place.height).toBe(120);
+            expect(place.top).toBe(8);
+        });
+
+        test('a gap exactly at the floor is still a gap: the popup sits in it and scrolls', () => {
+            // above: 140 - 12 - 8 = 120
+            const place = placeBesideDialog({ left: 20, right: 392, top: 140, bottom: 840 }, popup, viewport);
+            expect(place).toEqual({ left: 20, top: 8, height: 120 });
+        });
+
+        test('a gap that reaches the floor on the lower side is used even when the upper one is tiny', () => {
+            // above: 20; below: 850 - 560 - 20 = 270 but the popup (400 tall) does not fit whole
+            const place = placeBesideDialog(
+                { left: 20, right: 392, top: 40, bottom: 560 },
+                { width: 300, height: 400 },
+                viewport
+            );
+            expect(place).toEqual({ left: 20, top: 572, height: 270 });
+        });
+
+        test('a popup already shorter than the floor keeps its own height when it has to overlap', () => {
+            const place = placeBesideDialog(
+                { left: 4, right: 408, top: 20, bottom: 830 },
+                { width: 300, height: 90 },
+                viewport
+            );
+            expect(place.height).toBe(90);
+        });
+
+        test('the popup is given a real height on the page, not left at its natural size over the dialog', () => {
+            const dialog = document.createElement('div');
+            dialog.className = 'Modal_modal__1';
+            dialog.getBoundingClientRect = () => ({
+                left: 4,
+                right: 408,
+                top: 20,
+                bottom: 830,
+                width: 404,
+                height: 810,
+            });
+            document.body.appendChild(dialog);
+            const popup = {
+                style: { visibility: 'hidden' },
+                getBoundingClientRect: () => ({ width: 260, height: 300 }),
+            };
+            treasureTracker.popup = popup;
+            const { innerWidth, innerHeight } = window;
+            window.innerWidth = 412;
+            window.innerHeight = 850;
+            try {
+                treasureTracker._placeBesideDialog(0);
+            } finally {
+                window.innerWidth = innerWidth;
+                window.innerHeight = innerHeight;
+                treasureTracker.popup = null;
+                document.body.innerHTML = '';
+            }
+            expect(popup.style.height).toBe('120px');
+            expect(popup.style.top).toBe('8px');
+            expect(popup.style.visibility).toBe('');
+        });
+    });
 });

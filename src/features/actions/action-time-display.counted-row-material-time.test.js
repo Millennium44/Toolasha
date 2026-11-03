@@ -238,7 +238,7 @@ describe('a counted queue row shows the time it can actually run', () => {
         observerState.handler(el);
 
         // 40 × 10s, not 500 × 10s
-        expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
+        expect(rowLimits(el)).toEqual(['[6m 40s]']);
     });
 
     test('a counted row that can perform none of its request reads as no time', () => {
@@ -265,7 +265,7 @@ describe('a counted queue row shows the time it can actually run', () => {
         const el = queueTooltipPopper(['Plank', 'Bow']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 06m 40s]', '[0h 02m 10s · mat: 13]']);
+        expect(rowLimits(el)).toEqual(['[6m 40s]', '[2m 10s · mat: 13]']);
 
         const start = 10 * 3600;
         const clocks = rowClocks(el).map(clockSeconds);
@@ -298,7 +298,7 @@ describe('a counted queue row shows the time it can actually run', () => {
         const el = queueTooltipPopper(['Plank']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 01m 40s]']);
+        expect(rowLimits(el)).toEqual(['[1m 40s]']);
     });
 });
 
@@ -334,7 +334,7 @@ describe('a counted row capped by projected yield is marked as an estimate', () 
         const el = queueTooltipPopper(['Decompose: Star Fruit', 'Coinify: Foraging Essence']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 16m 40s · mat: 100]', '[0h 01m 00s]']);
+        expect(rowLimits(el)).toEqual(['[16m 40s · mat: 100]', '[1m 00s]']);
 
         // Row 2's figure rests on essence that has not been produced yet, so its clock — and
         // every clock built on the running total after it — is marked as a projection.
@@ -371,7 +371,7 @@ describe('the queue edit menu, which duplicates the timing logic inline, agrees'
         const el = queueEditMenu(['Plank']);
         actionTimeDisplay.injectQueueTimes(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
+        expect(rowLimits(el)).toEqual(['[6m 40s]']);
     });
 
     test('a counted row with nothing to work with shows no time', () => {
@@ -409,7 +409,7 @@ describe('a counted enhancing row shows the time its materials can cover', () =>
         observerState.handler(el);
 
         // 40 x 10s, not 500 x 10s
-        expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
+        expect(rowLimits(el)).toEqual(['[6m 40s]']);
     });
 
     test('an enhancing row that can perform none of its request reads as no time', () => {
@@ -468,7 +468,7 @@ describe('a counted enhancing row shows the time its materials can cover', () =>
         document.body.appendChild(el);
         actionTimeDisplay.injectQueueTimes(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 06m 40s]']);
+        expect(rowLimits(el)).toEqual(['[6m 40s]']);
     });
 });
 
@@ -577,7 +577,7 @@ describe('rows no queued action matches make the total incomplete, not a confide
         const el = queueTooltipPopper(['Plank', '苹果'], 2);
         observerState.handler(el);
 
-        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: 0h 01m 40s + [?]');
+        expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: 1m 40s + [?]');
         expect(el.querySelector('.mwi-queue-tooltip-total').title).toContain('1 queue row could not be identified');
     });
 
@@ -605,7 +605,7 @@ describe('rows no queued action matches make the total incomplete, not a confide
         observerState.handler(el);
 
         const total = el.querySelector('.mwi-queue-tooltip-total');
-        expect(total.textContent).toBe('Total: 0h 01m 40s');
+        expect(total.textContent).toBe('Total: 1m 40s');
         expect(total.title).toBe('');
     });
 });

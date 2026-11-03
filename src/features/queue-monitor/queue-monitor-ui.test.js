@@ -259,7 +259,7 @@ describe('snapshot freshness', () => {
         await queueMonitorUI.initialize();
 
         // 30 min elapsed of 1 h of known work behind the fight
-        expect(document.body.textContent).toContain('≥ 0h 30m 00s');
+        expect(document.body.textContent).toContain('≥ 30m 00s');
         expect(document.body.textContent).not.toContain('Done');
         expect(document.body.textContent).not.toContain('Idle');
     });
@@ -295,7 +295,7 @@ describe('snapshot freshness', () => {
         await queueMonitorUI.initialize();
 
         // 4800 s of known work minus 30 min elapsed
-        expect(document.body.textContent).toContain('≥ 0h 50m 00s');
+        expect(document.body.textContent).toContain('≥ 50m 00s');
         expect(document.body.textContent).not.toContain('Done');
     });
 

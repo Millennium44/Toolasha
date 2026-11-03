@@ -222,7 +222,7 @@ describe('a queued row is credited with what the rows before it produce', () => 
         // Row 1 never terminates, so it credits none of its star fruit to row 2.
         // Row 2 performs 100 decomposes at a 0.6 success rate → 60 essence expected, on top
         // of the 15 held: 75 essence, and coinify consumes 10 at a time → 7 actions.
-        expect(rowLimits(el)).toEqual(['[∞]', '[0h 16m 40s · mat: 100]', '[0h 01m 10s · mat: ~7]']);
+        expect(rowLimits(el)).toEqual(['[∞]', '[16m 40s · mat: 100]', '[1m 10s · mat: ~7]']);
         expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: [∞]');
     });
 
@@ -234,7 +234,7 @@ describe('a queued row is credited with what the rows before it produce', () => 
         const el = queueTooltipPopper(['Plank', 'Bow']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 05m 00s · mat: 30]', '[0h 01m 40s · mat: 10]']);
+        expect(rowLimits(el)).toEqual(['[5m 00s · mat: 30]', '[1m 40s · mat: 10]']);
     });
 
     test('a row limited purely by held stock is unmarked', () => {
@@ -268,7 +268,7 @@ describe('a queued row is credited with what the rows before it produce', () => 
         const el = queueTooltipPopper(['Decompose: Star Fruit']);
         observerState.handler(el);
 
-        expect(rowLimits(el)).toEqual(['[0h 16m 40s · mat: 100]']);
+        expect(rowLimits(el)).toEqual(['[16m 40s · mat: 100]']);
         expect(el.querySelector('.mwi-queue-tooltip-total').textContent).toBe('Total: [∞]');
     });
 });

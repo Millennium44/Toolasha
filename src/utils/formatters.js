@@ -79,15 +79,15 @@ const TIME_READABLE_MAX_UNITS = 2;
 /**
  * Convert seconds to human-readable time format.
  *
- * Under a day the clock is unchanged — `0h 03m 28s` is three units and every one of them is a
- * figure someone acts on. At a day and over, the output is capped at its two largest units (see
+ * Under a day the clock keeps its seconds — `1h 03m 28s` is three units and every one of them is a
+ * figure someone acts on; under an hour it simply has no hours unit (`3m 28s`). At a day and over, the output is capped at its two largest units (see
  * {@link TIME_READABLE_MAX_UNITS}); a surface that genuinely needs the third passes `maxUnits`.
  *
  * @param {number} sec - Seconds to convert
  * @param {Object} [options]
  * @param {number} [options.maxUnits=2] - How many units a duration of a day or more may print.
  *   Only the day/hour/minute and year/month/day forms are capped; the sub-day clock is not.
- * @returns {string} Formatted time (e.g., "1h 23m 45s" or "3 years 5 months")
+ * @returns {string} Formatted time (e.g., "53m 40s", "1h 23m 45s" or "3 years 5 months")
  *
  * @example
  * timeReadable(3661) // "1h 01m 01s"
@@ -147,6 +147,12 @@ export function timeReadable(sec, { maxUnits = TIME_READABLE_MAX_UNITS } = {}) {
     // For times < 1 minute, just show seconds
     if (hours === 0 && minutes === 0) {
         return seconds + 's';
+    }
+
+    // Under an hour there is no hours unit to print ("53m 40s", not "0h 53m 40s"), and the leading unit is not
+    // zero-padded
+    if (hours === 0) {
+        return minutes + 'm ' + pad(seconds) + 's';
     }
 
     const str = hours + 'h ' + pad(minutes) + 'm ' + pad(seconds) + 's';

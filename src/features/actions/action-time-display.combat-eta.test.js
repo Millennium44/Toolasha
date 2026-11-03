@@ -763,8 +763,8 @@ describe('the Queued Actions panel', () => {
         game.currentActions = [coinifyAction(1), coinifyAction(2, 6)];
         const menu = queueMenu(['Coinify', 'Coinify']);
         actionTimeDisplay.injectQueueTimes(menu);
-        expect(rowTexts(menu)).toEqual(['[30s] 12:00:30', '[0h 01m 00s] 12:01:30']);
-        expect(total()).toBe('Total time: 0h 01m 30s');
+        expect(rowTexts(menu)).toEqual(['[30s] 12:00:30', '[1m 00s] 12:01:30']);
+        expect(total()).toBe('Total time: 1m 30s');
     });
 });
 
