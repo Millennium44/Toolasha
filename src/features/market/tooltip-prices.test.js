@@ -14,6 +14,7 @@ const settings = vi.hoisted(() => ({
     loadoutMarksEnabled: true,
     selfUseAlchemy: false,
     multiAction: true,
+    capeMode: undefined,
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
@@ -62,6 +63,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'selfUse_markMeaning') return settings.markMeaning;
             if (id === 'itemTooltip_alchemyInsteadHeadline') return settings.insteadHeadline ?? fallback;
             if (id === 'profitCalc_pricingMode') return settings.pricingMode ?? fallback;
+            if (id === 'untradableCapeBaseValue') return settings.capeMode ?? fallback;
             return fallback;
         },
         onSettingChange: (id, cb) => {
@@ -355,6 +357,7 @@ beforeEach(async () => {
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
     settings.multiAction = true;
+    settings.capeMode = undefined;
     settings.keepChip = true;
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
@@ -2413,12 +2416,20 @@ describe('refined cape transmute line', () => {
         const text = (await blockFor()).textContent;
         expect(text).toContain('Transmute: 1.5M/hr');
         expect(text).toContain('(1.7K/action)');
-        expect(text).toContain('refinement stones');
+        expect(text).toContain('refinement stones alone');
         expect(text).toContain('never taxed');
         expect(text).toContain('1 other untradable cape this can return is valued the same way');
         // Only the actions the calculator found: no Coinify or Decompose row for this item
         expect(text).not.toContain('Coinify');
         expect(text).not.toContain('Decompose');
+    });
+
+    test('on the mirror setting the note says the base cape is a mirror, not stones alone', async () => {
+        settings.capeMode = 'mirror';
+        alchemyState.profits = { transmute: capeTransmute() };
+        const text = (await blockFor()).textContent;
+        expect(text).toContain('refinement stones plus a Mirror of Protection');
+        expect(text).not.toContain('stones alone');
     });
 
     test('a row with an unpriced output is a floor and says so, never a plain figure', async () => {

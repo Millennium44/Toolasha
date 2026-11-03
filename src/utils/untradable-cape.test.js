@@ -121,15 +121,15 @@ describe('describeAssumedCape', () => {
         expect(text).not.toContain('floor');
     });
 
-    test('a refined cape says it is valued by its refinement stones, not the setting', () => {
-        const text = describeAssumedCape(
-            { itemHrid: '/items/gatherer_cape_refined', enhancementLevel: 0, value: 10000, partial: false },
-            'Gatherer Cape (Refined)',
-            format
-        );
-        expect(text).toContain('refinement stones');
-        expect(text).not.toContain('setting');
-        expect(text).toContain('never taxed');
+    test('a refined cape is worded by the setting: stones alone on nothing, stones plus a mirror on mirror', () => {
+        const entry = { itemHrid: '/items/gatherer_cape_refined', enhancementLevel: 0, value: 10000, partial: false };
+        const zero = describeAssumedCape(entry, 'Gatherer Cape (Refined)', format);
+        expect(zero).toContain('refinement stones alone');
+        expect(zero).toContain('never taxed');
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        const mirror = describeAssumedCape(entry, 'Gatherer Cape (Refined)', format);
+        expect(mirror).toContain('refinement stones plus a Mirror of Protection');
+        expect(mirror).not.toContain('alone');
     });
 
     test('a figure built on a base of nothing says it is a floor', () => {

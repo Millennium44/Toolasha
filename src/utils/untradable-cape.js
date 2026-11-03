@@ -115,9 +115,11 @@ export function getCapeBaseValue({ context = 'profit', mode } = {}) {
 export function describeAssumedCape(entry, name, formatValue) {
     const level = entry.enhancementLevel > 0 ? ` +${entry.enhancementLevel}` : '';
     const floor = entry.partial ? ' The base cape counts as nothing, so this is a floor.' : '';
-    // A refined cape never reads the setting: its refinement stones (plus the enhancing cost of a +N one) are its value
+    // A refined cape is its refinement stones plus its base cape as the setting values it (a Mirror of Protection, or nothing)
     const source = isRefinedCape(entry.itemHrid)
-        ? 'from its refinement stones (plus your own enhancing cost at +N)'
+        ? getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR
+            ? 'from its refinement stones plus a Mirror of Protection for the base cape (plus your own enhancing cost at +N)'
+            : 'from its refinement stones alone, the base cape counting as nothing (plus your own enhancing cost at +N)'
         : 'from the untradable-cape setting (plus refinement and your own enhancing cost where it has them)';
     return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} ${source}, never taxed.${floor}`;
 }
