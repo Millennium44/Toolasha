@@ -1399,6 +1399,7 @@ class DecomposeHistoryViewer {
             const clearFiltersBtn = document.createElement('button');
             clearFiltersBtn.textContent = 'Clear All Filters';
             styleGameButton(clearFiltersBtn, 'quiet', true);
+            Object.assign(clearFiltersBtn.style, { height: 'auto', minHeight: '1.5rem' });
             clearFiltersBtn.addEventListener('click', () => this.clearAllFilters());
             rightGroup.appendChild(clearFiltersBtn);
         }

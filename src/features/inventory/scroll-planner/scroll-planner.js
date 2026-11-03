@@ -23,7 +23,7 @@ import { itemHridFromIcon } from '../../../utils/item-icon.js';
 import { skillIcon, spriteIcon } from '../../../utils/overlay-format.js';
 import { setReactInputValue } from '../../../utils/react-input.js';
 import { setScrollRunActive } from './scroll-planner-state.js';
-import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../../utils/game-look.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../../utils/game-look.js';
 import {
     buildRun,
     describeScrollSkills,
@@ -911,7 +911,7 @@ class ScrollPlanner {
             const scrolls = this.scrollsForSkill(actionTypeHrid);
             const on = scrolls.length > 0 && scrolls.every((itemHrid) => this.quickSelected.has(itemHrid));
             button.setAttribute('aria-pressed', String(on));
-            setButtonRest(button, on ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(button, on ? 'primary' : 'quiet');
         }
     }
 

@@ -3486,7 +3486,7 @@ function drawHints(body, comparison, observed) {
     const hints = deviationHints(comparison, observed);
     if (!hints.length) return;
 
-    const card = panelCard(body, 'Worth checking first', ROW_COLORS.bad);
+    const card = panelCard(body, 'Worth checking first');
     card.appendChild(
         panelNote(
             'Hints, not verdicts. These are ordered by how often each turns out to be behind a gap of this ' +
@@ -3647,7 +3647,7 @@ function recordButton() {
     styleGameButton(button, 'quiet');
     // Red while recording is a status, so it keeps its tint
     if (state.recording) {
-        setButtonRest(button, 'rgba(248, 113, 113, 0.18)');
+        setButtonRest(button, 'rgba(248, 113, 113, 0.18)', 'rgba(248, 113, 113, 0.3)');
         button.style.color = ROW_COLORS.bad;
     }
     button.addEventListener('click', () => {

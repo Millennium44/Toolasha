@@ -49,7 +49,7 @@ import { decomposeChain, clearDecomposeChainCaches } from '../../utils/decompose
 import { effectiveInventory, onReservationsChanged } from '../../utils/inventory-reservations.js';
 import tooltipPrices from '../market/tooltip-prices.js';
 import selfUseWanted from '../market/self-use-wanted.js';
-import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
+import { GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 
 /** The setting that remembers which sort the table was last left on */
 const SORT_MODE_SETTING = 'alchemy_bestItems_sortMode';
@@ -1295,13 +1295,13 @@ class AlchemyBestItems {
         // Update tab styling
         this.modal.querySelectorAll('[data-mwi-type-tab]').forEach((tab) => {
             const isActive = tab.getAttribute('data-mwi-type-tab') === this.currentType;
-            setButtonRest(tab, isActive ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(tab, isActive ? 'primary' : 'quiet');
         });
 
         // Update sort button styling
         this.modal.querySelectorAll('[data-mwi-sort-btn]').forEach((btn) => {
             const isActive = btn.getAttribute('data-mwi-sort-btn') === sortMode;
-            setButtonRest(btn, isActive ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(btn, isActive ? 'primary' : 'quiet');
             const onlyDecompose = SORT_MODES.find(
                 (m) => m.value === btn.getAttribute('data-mwi-sort-btn')
             )?.decomposeOnly;
@@ -1314,7 +1314,7 @@ class AlchemyBestItems {
         // Update profitable toggle styling
         const profitToggle = this.modal.querySelector('[data-mwi-profit-toggle]');
         if (profitToggle) {
-            setButtonRest(profitToggle, this.profitableOnly ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(profitToggle, this.profitableOnly ? 'primary' : 'quiet');
         }
 
         // Build table

@@ -54,6 +54,8 @@ function button(parent, label, handler, disabled = false) {
     element.textContent = label;
     element.disabled = disabled;
     styleGameButton(element, 'quiet', true);
+    // A long label wraps and the button grows, rather than spilling out of a fixed height
+    Object.assign(element.style, { height: 'auto', minHeight: '1.5rem' });
     if (disabled) Object.assign(element.style, { cursor: 'default', opacity: '0.5' });
     element.addEventListener('click', handler);
     parent.appendChild(element);

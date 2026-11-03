@@ -82,6 +82,9 @@ const DEFAULT_PANEL = { width: 520, height: 620 };
 /** How long a burst of coin or queue updates settles before the bells-you-can-buy lines redraw */
 const LIVE_REDRAW_MS = 300;
 
+/** The height a compact game button has, kept as its minimum so a long label can grow it */
+const COMPACT_BUTTON_HEIGHT = 'calc(var(--button-height-normal, 1.875rem) - 0.375rem)';
+
 const COLORS = {
     border: GAME_COLORS.border,
     hairline: 'rgba(255, 255, 255, 0.10)',
@@ -118,7 +121,8 @@ function button(label, onClick, style = {}) {
     element.textContent = label;
     // A caller asking for no fill is asking for a bare glyph, which only shows a fill on hover
     styleGameButton(element, style.background === 'none' ? 'icon' : 'quiet', true);
-    Object.assign(element.style, style);
+    // A long label (the plan's summary) wraps and the button grows, rather than spilling out of a fixed height
+    Object.assign(element.style, { height: 'auto', minHeight: COMPACT_BUTTON_HEIGHT }, style);
     element.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick(event);

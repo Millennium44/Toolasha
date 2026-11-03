@@ -1772,7 +1772,7 @@ class CombatScore {
         format = SIM_EXPORT_FORMATS.METZ
     ) {
         const originalText = button.textContent;
-        const originalBg = button.style.background;
+        const originalBg = button.style.background || BUTTON_LOOK.primary.rest;
 
         try {
             const snapshot = findCombatSnapshot(snapshotName);
@@ -1812,7 +1812,7 @@ class CombatScore {
      */
     async handleCombatSimExport(button, format) {
         const originalText = button.textContent;
-        const originalBg = button.style.background;
+        const originalBg = button.style.background || BUTTON_LOOK.primary.rest;
 
         try {
             // Get current profile ID (if viewing someone else's profile)
@@ -1840,7 +1840,7 @@ class CombatScore {
      */
     async handleCombatSimExportFromSnapshot(snapshotName, button, format) {
         const originalText = button.textContent;
-        const originalBg = button.style.background;
+        const originalBg = button.style.background || BUTTON_LOOK.primary.rest;
 
         try {
             const snapshot = findCombatSnapshot(snapshotName);
@@ -1869,7 +1869,7 @@ class CombatScore {
      */
     async handleMilkonomyExport(button) {
         const originalText = button.textContent;
-        const originalBg = button.style.background;
+        const originalBg = button.style.background || BUTTON_LOOK.primary.rest;
 
         try {
             // Get current profile ID (if viewing someone else's profile)

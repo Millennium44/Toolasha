@@ -25,7 +25,7 @@ import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
-import { BUTTON_LOOK, GAME_COLORS, setButtonRest, styleGameButton } from '../../utils/game-look.js';
+import { GAME_COLORS, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 import { classTagIcon } from '../../utils/class-weapon.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
@@ -1755,7 +1755,7 @@ function drawTrialPicker(body, trials) {
                 guildTrialAbilitiesPanel.render();
             }
         );
-        if ((pretrialUi.hrid ?? null) === option.hrid) setButtonRest(button, BUTTON_LOOK.primary.rest);
+        if ((pretrialUi.hrid ?? null) === option.hrid) setButtonVariant(button, 'primary');
         card.appendChild(button);
     }
 }

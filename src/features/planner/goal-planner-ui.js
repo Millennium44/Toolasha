@@ -70,7 +70,7 @@ import { prepareRouteInput, routeCacheKey, runRouteSearch, ROUTE_OBJECTIVES } fr
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
-import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
+import { GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
@@ -85,6 +85,9 @@ const ROUTE_CACHE_SIZE = 8;
 function yieldToBrowser() {
     return new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+/** The height a compact game button has, kept as its minimum so a long label can grow it */
+const COMPACT_BUTTON_HEIGHT = 'calc(var(--button-height-normal, 1.875rem) - 0.375rem)';
 
 const COLORS = {
     border: GAME_COLORS.border,
@@ -155,7 +158,8 @@ function button(label, onClick, style = {}) {
     element.textContent = label;
     // A caller asking for no fill is asking for a bare glyph, which only shows a fill on hover
     styleGameButton(element, style.background === 'none' ? 'icon' : 'quiet', true);
-    Object.assign(element.style, style);
+    // A long label wraps and the button grows, rather than spilling out of a fixed height
+    Object.assign(element.style, { height: 'auto', minHeight: COMPACT_BUTTON_HEIGHT }, style);
     element.addEventListener('click', (event) => {
         event.stopPropagation();
         onClick(event);
@@ -948,7 +952,7 @@ class GoalPlannerPanel {
                 this._render();
             });
             if (this.formType === type) {
-                setButtonRest(chip, BUTTON_LOOK.primary.rest);
+                setButtonVariant(chip, 'primary');
             }
             strip.appendChild(chip);
         }
@@ -1700,7 +1704,7 @@ class GoalPlannerPanel {
                 state.objective = objective;
                 this._render();
             });
-            if (state.objective === objective) setButtonRest(chip, BUTTON_LOOK.primary.rest);
+            if (state.objective === objective) setButtonVariant(chip, 'primary');
             if (!result.routes[objective]) chip.style.opacity = '0.6';
             chips.appendChild(chip);
         }

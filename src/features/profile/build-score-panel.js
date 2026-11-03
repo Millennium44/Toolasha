@@ -510,7 +510,7 @@ function drawContributors(body, score) {
     const top = topContributors(score);
     if (!top.length) return;
 
-    const card = panelCard(body, `Biggest ${top.length} contributors`, ROW_COLORS.gold);
+    const card = panelCard(body, `Biggest ${top.length} contributors`);
     for (const entry of top) card.appendChild(breakdownLine(entry, entry.from));
 }
 

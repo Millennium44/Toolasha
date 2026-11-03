@@ -95,7 +95,7 @@ import { cardTaskKey } from './task-card-state.js';
 import { questForTaskCard } from './task-card-quest.js';
 import taskRerollProtection from './task-reroll-protection.js';
 import { getCowbellValue } from './task-profit-calculator.js';
-import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
+import { GAME_COLORS, stopButtonHover, styleGameButton } from '../../utils/game-look.js';
 import { findRerollOptions } from './task-reroll-options.js';
 
 const CHIP_ID = 'mwi-task-reroll-walk-chip';
@@ -2013,8 +2013,10 @@ class TaskRerollWalk {
             if (!button) continue;
             button.className = `${button.className} ${TOOLBAR_BUTTON_CLASS}`.trim();
             button.style.cssText = '';
-            // The game-look hover handlers stay on the button; with no rest fill they hand the toolbar's own class back
-            button._restBg = '';
+            // The game-look hover handlers stay on the button; these buttons wear the toolbar's own class, so
+            // they paint nothing inline. A widget built for the floating mode makes new buttons, so this
+            // never has to be undone.
+            stopButtonHover(button);
         }
         // No ✕ in the toolbar: the gear drawer's "Hide the walk" and the header 🎲 manage it there
         widget.close.remove();
