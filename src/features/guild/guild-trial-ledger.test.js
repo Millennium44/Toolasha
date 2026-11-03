@@ -1174,6 +1174,42 @@ describe('the ledger on disk', () => {
             warn.mockRestore();
         });
 
+        test('a fold queued behind the wait gives up too, when the ledger was turned off meanwhile', async () => {
+            const key = await cycleKey();
+            disk.failKeys.add(key);
+            let wanted = true;
+            const stillWanted = () => wanted;
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const waiting = recordFinishedTrial({ session: bob(), guildName: 'g', retry: true, stillWanted });
+            const queued = recordFinishedTrial({
+                session: session([[player('Carol', { damage: 3 })]], { startedAt: WEEK + 6000 }),
+                guildName: 'g',
+                stillWanted,
+            });
+            await vi.advanceTimersByTimeAsync(0);
+            wanted = false;
+            disk.failKeys.clear();
+            await vi.advanceTimersByTimeAsync(LEDGER_READ_RETRY_MS[0]);
+            await expect(waiting).resolves.toBeNull();
+            await expect(queued).resolves.toBeNull();
+            expect(disk.store[key].members.carol).toBeUndefined();
+            warn.mockRestore();
+            error.mockRestore();
+        });
+
+        test('turned off while the read is out, nothing is written', async () => {
+            const key = await cycleKey();
+            disk.writes.length = 0;
+            let asks = 0;
+            // True for the turn's own check, false from the check before the write
+            const stillWanted = () => asks++ < 1;
+            await expect(recordFinishedTrial({ session: bob(), guildName: 'g', stillWanted })).resolves.toBeNull();
+            expect(asks).toBe(2);
+            expect(disk.writes).toEqual([]);
+            expect(disk.store[key].members.bob).toBeUndefined();
+        });
+
         test('without retry it still answers at once', async () => {
             const key = await cycleKey();
             disk.failKeys.add(key);

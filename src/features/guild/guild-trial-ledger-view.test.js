@@ -299,6 +299,19 @@ describe('buildLedgerTable', () => {
         expect(table.rows.find((row) => row.name === 'Alice').damage).toBe(222);
     });
 
+    test('a read outstanding across a guild change does not draw the departed guild’s ledger', async () => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        world.cyclesQueue = [{ gate, value: [cycle(WEEK, 1, { alice: { name: 'Alice', damage: 111 } })] }];
+        const read = refreshLedgerView();
+        world.guildName = 'Another Guild';
+        release();
+        await read;
+        expect(buildLedgerTable().rows.find((row) => row.name === 'Alice')).toBeUndefined();
+    });
+
     // The staleness guard is a counter, and `resetLedgerView()` used to zero
     // it. The character-switch handler calls reset and then starts a refresh of
     // its own, so the arriving character's first run was handed generation 1 —

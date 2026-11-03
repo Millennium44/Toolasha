@@ -1504,7 +1504,8 @@ export const LEDGER_READ_RETRY_MS = [5_000, 30_000, 120_000];
  *   and without it a cycle can only say who it saw.
  * @param {boolean} [options.retry=false] - Read the cycle again after {@link LEDGER_READ_RETRY_MS} when it
  *   cannot be read, rather than dropping the trial. In this page only: a reload ends the wait
- * @param {function(): boolean} [options.stillWanted] - Asked before each retry; false gives the trial up
+ * @param {function(): boolean} [options.stillWanted] - Asked when the fold's turn comes, before each retry and
+ *   before the write; false gives the trial up
  * @returns {Promise<Object|null>} The contribution folded, or null when there was nothing to fold
  */
 export async function recordFinishedTrial({
@@ -1528,6 +1529,8 @@ export async function recordFinishedTrial({
 
     const run = async () => {
         try {
+            // This fold may have queued behind another's retries, for minutes
+            if (!stillWanted()) return null;
             // An unreadable record is not an empty one: a fresh cycle written over it would erase the week.
             // A read that fails is usually a moment's trouble, and a trial happens once a cycle
             let read = await storage.tryGet(key, LEDGER_STORE);
@@ -1551,6 +1554,8 @@ export async function recordFinishedTrial({
             // which is the normal case when a manual stop races the watcher
             if (next === cycle) return null;
 
+            // Turned off while the read was out
+            if (!stillWanted()) return null;
             await storage.set(key, next, LEDGER_STORE, true);
 
             const keys = await storage.getAllKeys(LEDGER_STORE);

@@ -210,6 +210,8 @@ export async function refreshLedgerView() {
         // does not, would leave this writing one character's ledger into
         // another's panel.
         if (characterId !== (dataManager.getCurrentCharacterId?.() ?? null)) return;
+        // …and the guild: the same character can change guild with the panel open
+        if (guild !== guildName()) return;
 
         // A listing that failed keeps the table already read rather than blanking it
         state.listingFailed = Boolean(listingFailed);
