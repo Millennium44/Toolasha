@@ -258,6 +258,8 @@ class MarketHistoryAPI {
         this.paceNextAt = new Map();
         /** Requests waiting for their turn, so a cool-down can end the wait at once */
         this.paceWaiters = new Set();
+        /** Requests queued on the cross-tab Web Lock, so a cool-down can end their wait too */
+        this.turnWaiters = new Set();
     }
 
     /** @returns {boolean} Whether history may be fetched at all */
@@ -364,17 +366,17 @@ class MarketHistoryAPI {
         if (turn) {
             endTurn = await turn;
             if (!this.enabled || this.currentSource().key !== source.key) {
-                endTurn();
+                endTurn(false);
                 return this.fetchHistory(itemHrid, enhancementLevel, days, { force, slotFor: source.key });
             }
             if (Date.now() < this.cooldownUntil) {
-                endTurn();
+                endTurn(false);
                 return null;
             }
             if (!force) {
                 const cached = this.cache.get(key);
                 if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-                    endTurn();
+                    endTurn(false);
                     return cached.rows;
                 }
             }
@@ -392,7 +394,7 @@ class MarketHistoryAPI {
         try {
             const request = fetch(url, { signal: controller.signal });
             // Sent: the turn is held for the pace interval from here, not until the answer
-            endTurn();
+            endTurn(true);
             const response = await request;
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const payload = await response.json();
@@ -415,15 +417,17 @@ class MarketHistoryAPI {
             return null;
         } finally {
             clearTimeout(timeout);
-            endTurn();
+            // Nothing went out if the send itself threw: the turn is given back, not held
+            endTurn(false);
         }
     }
 
     /**
      * Take the shared turn to send to one pool, across every open tab.
      *
-     * Resolves, once it is this request's turn, with `endTurn`: call it when the request has been sent and the
-     * turn is held for one pace interval from then (calling it again does nothing). When the turn does not come
+     * Resolves, once it is this request's turn, with `endTurn(sent)`: call it with `true` when the request has been
+     * sent and the turn is held for one pace interval from then, or with `false` when nothing went out and the
+     * turn is given back at once (the first call decides; later ones do nothing). When the turn does not come
      * within {@link PACE_LOCK_MAX_WAIT_MS} it resolves with a no-op and the request goes out on this tab's own
      * pace alone, as it did before the tabs shared one. With no Web Locks there is nothing to wait for and it
      * returns null, so the caller does not even yield.
@@ -443,20 +447,25 @@ class MarketHistoryAPI {
                 hold = release;
             });
             let ended = false;
-            const endTurn = () => {
+            const endTurn = (sent = true) => {
                 if (ended) return;
                 ended = true;
-                if (this.paceIntervalMs > 0) setTimeout(hold, this.paceIntervalMs);
+                if (sent && this.paceIntervalMs > 0) setTimeout(hold, this.paceIntervalMs);
                 else hold();
             };
+            // A cool-down ends the wait for the turn, as it ends the wait for a slot
+            const waiter = { sourceKey, abort: () => controller.abort() };
+            this.turnWaiters.add(waiter);
             const taken = locks.request(`${PACE_LOCK_PREFIX}${sourceKey}`, { signal: controller.signal }, () => {
                 clearTimeout(waitTimer);
+                this.turnWaiters.delete(waiter);
                 resolve(endTurn);
                 return held;
             });
             // An aborted wait (or a lock that cannot be had) is not a failure of the lookup
             Promise.resolve(taken).catch(() => {
                 clearTimeout(waitTimer);
+                this.turnWaiters.delete(waiter);
                 resolve(() => {});
             });
         });
@@ -507,6 +516,10 @@ class MarketHistoryAPI {
     releasePaceWaiters(sourceKey) {
         for (const waiter of [...this.paceWaiters]) {
             if (waiter.sourceKey === sourceKey) waiter.wake();
+        }
+        // Requests queued behind other tabs' turns end their wait too; each finds the cool-down and answers null
+        for (const waiter of [...this.turnWaiters]) {
+            if (waiter.sourceKey === sourceKey) waiter.abort();
         }
         this.paceNextAt.delete(sourceKey);
     }

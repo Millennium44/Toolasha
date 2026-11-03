@@ -949,6 +949,47 @@ describe('request pacing across tabs', () => {
         expect(locks.queueOf(LOCK).held).toBe(false);
     });
 
+    test('a turn that sent nothing is given back at once, not held for the pace interval', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.remember('mooket2:/items/a:0:7', rows);
+        other.release();
+        // A third tab asks for the turn as soon as this one has answered from the cache
+        let thirdGrantedAt = null;
+        const releasedAt = Date.now();
+        locks.manager.request(LOCK, {}, () => {
+            thirdGrantedAt = Date.now();
+        });
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await done).toEqual(rows);
+        expect(mock).not.toHaveBeenCalled();
+        expect(thirdGrantedAt).toBe(releasedAt);
+    });
+
+    test('a cool-down that begins ends the wait for the turn at once, without the holder letting go', async () => {
+        const { mock } = recordingFetch();
+        globalThis.fetch = mock;
+        const other = otherTabHolds(locks.manager);
+        await other.granted;
+
+        const done = marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+        await vi.advanceTimersByTimeAsync(10);
+        marketHistoryAPI.cooldownUntil = Date.now() + 30_000;
+        marketHistoryAPI.releasePaceWaiters('mooket2');
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(await done).toBeNull();
+        expect(mock).not.toHaveBeenCalled();
+        expect(marketHistoryAPI.turnWaiters.size).toBe(0);
+        other.release();
+    });
+
     test('a forced refresh still asks the pool even when an answer is cached', async () => {
         const { mock } = recordingFetch();
         globalThis.fetch = mock;
