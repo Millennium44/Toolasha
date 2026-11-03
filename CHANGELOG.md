@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- The treasure popup keeps a readable height when the loot dialog fills a phone screen.
 - Times under an hour show as "53m 40s" instead of "0h 53m 40s".
 - The labyrinth Size stepper reappears in the toolbar as soon as you turn the grid scale control back on.
 - Task Claim Reward button now appears on translated game clients, once a task is complete.

@@ -136,6 +136,8 @@ const LOOT_DIALOG_SELECTOR = '[class*="Modal_modal"]:not([class*="Modal_modalCon
 /** Gap between the two, and how far off a screen edge the popup may not go */
 const DIALOG_GAP = 12;
 const EDGE_MARGIN = 8;
+/** The least height a popup squeezed beside the dialog is given; narrower gaps make it overlap instead */
+const MIN_POPUP_HEIGHT = 120;
 /**
  * The dialog is rendered by React in response to the same message that brings us
  * the loot, so it is reliably absent at the moment we are told about it. These
@@ -526,7 +528,9 @@ export function capHeightToWindow(popup, viewportHeight = window.innerHeight) {
  * Beside the dialog when the window is wide enough: right of it, else left of it, top-aligned. On a phone
  * neither side has room, and the old fallback (the left edge) put the popup over the dialog and its Close
  * button. There it goes above or below the dialog instead, whichever has the room; when neither fits it
- * whole, it takes the larger gap and is given that gap as its height, so it scrolls rather than overlaps.
+ * whole, it takes the larger gap and is given that gap as its height, so it scrolls rather than overlaps -
+ * unless that gap is under {@link MIN_POPUP_HEIGHT} (a dialog filling the screen), where it overlaps the top of
+ * the dialog at that minimum height instead of collapsing to a sliver.
  *
  * @param {{left:number,right:number,top:number,bottom:number}} anchor - The dialog's rect
  * @param {{width:number,height:number}} self - The popup's size
@@ -549,8 +553,17 @@ export function placeBesideDialog(anchor, self, viewport) {
     const below = viewport.height - anchor.bottom - DIALOG_GAP - EDGE_MARGIN;
     if (self.height <= above) return { left, top: anchor.top - DIALOG_GAP - self.height };
     if (self.height <= below) return { left, top: anchor.bottom + DIALOG_GAP };
-    if (above >= below) return { left, top: EDGE_MARGIN, height: Math.max(0, above) };
-    return { left, top: anchor.bottom + DIALOG_GAP, height: Math.max(0, below) };
+
+    // Neither gap holds it whole, so it shrinks to the larger gap and scrolls - but only down to a height worth
+    // reading. A dialog that fills the screen leaves a gap of a few pixels (or none, which the caller read as
+    // "no height given" and left the popup at its natural size, over the dialog), so below the floor it
+    // overlaps instead: pinned to the top edge at the floor height, which covers the dialog's top and leaves
+    // the Close button at its bottom reachable.
+    const minHeight = Math.min(MIN_POPUP_HEIGHT, self.height);
+    const larger = Math.max(above, below);
+    if (larger < minHeight) return { left, top: EDGE_MARGIN, height: minHeight };
+    if (above >= below) return { left, top: EDGE_MARGIN, height: above };
+    return { left, top: anchor.bottom + DIALOG_GAP, height: below };
 }
 
 class TreasureTracker {
