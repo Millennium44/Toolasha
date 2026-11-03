@@ -45,6 +45,9 @@ import {
     formatUnlimitedTimeText,
 } from './unlimited-action-estimate.js';
 
+/** The "Do ... times" rows' container; a redraw removes it with the buttons inside, or it stays behind empty */
+const QUEUE_ROWS_CLASS = 'mwi-quick-input-rows';
+
 /**
  * Guild shrine action-speed bonus for an action type, as a fraction (0.1 = +10%).
  * The same buff calculateActionStats applies, so the displayed total matches the stats.
@@ -493,6 +496,7 @@ class QuickInputButtons {
                 // Action changed (React reused the panel) — remove old injections
                 panel.querySelectorAll('.mwi-collapsible-section').forEach((el) => el.remove());
                 panel.querySelectorAll('.mwi-quick-input-btn').forEach((el) => el.remove());
+                panel.querySelectorAll(`.${QUEUE_ROWS_CLASS}`).forEach((el) => el.remove());
             }
 
             // From here this is a fresh injection for this panel: let go of whatever the
@@ -983,6 +987,7 @@ class QuickInputButtons {
             let lastInserted = inputContainer;
 
             if (queueContent) {
+                queueContent.classList.add(QUEUE_ROWS_CLASS);
                 inputContainer.insertAdjacentElement('afterend', queueContent);
                 lastInserted = queueContent;
             }
@@ -1033,6 +1038,7 @@ class QuickInputButtons {
             this._addToggles.clear();
             document.querySelectorAll('.mwi-collapsible-section').forEach((section) => section.remove());
             document.querySelectorAll('.mwi-quick-input-btn').forEach((button) => button.remove());
+            document.querySelectorAll(`.${QUEUE_ROWS_CLASS}`).forEach((rows) => rows.remove());
             document.querySelectorAll('[class*="SkillActionDetail_regularComponent"]').forEach((el) => {
                 el.style.maxHeight = '';
                 el.style.overflowY = '';
