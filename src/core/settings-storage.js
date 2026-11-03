@@ -1591,7 +1591,12 @@ class SettingsStorage {
         const filled = fill ? Object.keys(next).filter((id) => !Object.hasOwn(old, id) && !ids?.has(id)) : [];
         if (changed.length === 0 && removed.length === 0 && filled.length === 0 && !carryFrom) return null;
 
-        const existing = await storage.getJSON(`${SETTING_STAMPS_PREFIX}${mapKey}`, this.storageArea, null);
+        // A read that could not be made must not look like no stamps: starting from nothing, the write would put
+        // that over the whole record, and every other setting would lose to an older value from another device
+        const existingKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+        const probed = await storage.tryGet(existingKey, this.storageArea);
+        if (probed === null) throw new Error(`${existingKey} could not be read`);
+        const existing = probed.found ? storage.parseJSON(probed.value, existingKey, null) : null;
         const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
         let moved = changed.length > 0 || removed.length > 0;
         if (changed.length > 0) {

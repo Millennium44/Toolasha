@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- A failed read of the settings' change times no longer wipes them, which could let another device's older value overwrite a real edit.
 - Reset to defaults now really resets, including account-wide settings; before, it could report success, leave those settings in place, and be undone by the next sync pull.
 - A second tab can no longer drop task reroll counts saved by another tab, and a retired task coming back from a stale copy can no longer lower its recorded spend.
 - Turning "Ability books as inventory" on or off with Ability Books excluded no longer counts as Non-Excl earnings, and the marker's hover shows that step.

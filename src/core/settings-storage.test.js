@@ -1563,7 +1563,7 @@ describe('a settings store that cannot be read', () => {
         const map = await settingsStorage.loadSettings();
 
         expect(map.ironCow_enabled.isTrue).toBe(true);
-        expect(storage.tryGet).toHaveBeenCalledTimes(1);
+        expect(storage.tryGet.mock.calls.filter(([key]) => key === KEY)).toHaveLength(1);
         expect(storage.getJSON).not.toHaveBeenCalledWith(KEY, expect.anything(), expect.anything());
     });
 
@@ -1769,8 +1769,13 @@ describe('a save keeps setting ids this build does not know about', () => {
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } });
         outage.on = false;
 
-        const [entries] = storage.setMany.mock.calls.at(-1);
-        expect(entries['script_settingsMap_alice']).toEqual({ chatCommands: { isTrue: false } });
+        // The stamps could not be read either, so the map is tried alone rather than over a blank record
+        expect(storage.setJSON).toHaveBeenCalledWith(
+            'script_settingsMap_alice',
+            { chatCommands: { isTrue: false } },
+            expect.anything(),
+            true
+        );
     });
 });
 
@@ -1908,8 +1913,12 @@ describe('a save carries only what this client changed', () => {
         await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
         outage.on = false;
 
-        const [entries] = storage.setMany.mock.calls.at(-1);
-        expect(entries['script_settingsMap_alice']).toEqual({ chatCommands: { isTrue: false } });
+        expect(storage.setJSON).toHaveBeenCalledWith(
+            'script_settingsMap_alice',
+            { chatCommands: { isTrue: false } },
+            expect.anything(),
+            true
+        );
     });
 
     test('the map and its change stamp are written in one transaction, never separately', async () => {
@@ -2594,17 +2603,85 @@ describe('every settings-map write lands with its stamps in one transaction', ()
     test('a stamp that cannot be planned costs only the tie-break: the map still lands', async () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         stored.set(`json:${MAP}`, { chatCommands: { isTrue: true } });
-        const pass = storage.getJSON.getMockImplementation();
-        storage.getJSON.mockImplementation((key, ...rest) =>
+        const pass = storage.tryGet.getMockImplementation();
+        storage.tryGet.mockImplementation((key, ...rest) =>
             key === STAMPS ? Promise.reject(new Error('read failed')) : pass(key, ...rest)
         );
         try {
             await settingsStorage.importSettings(JSON.stringify({ [MAP]: { chatCommands: { isTrue: false } } }));
         } finally {
-            storage.getJSON.mockImplementation(pass);
+            storage.tryGet.mockImplementation(pass);
             error.mockRestore();
         }
         expect(stored.get(`json:${MAP}`)).toEqual({ chatCommands: { isTrue: false } });
+    });
+
+    describe('a stamp record that cannot be read', () => {
+        const held = { other: { at: 1000, seq: 3 }, chatCommands: { at: 900, seq: 2 } };
+        /** The stamp record answers "could not be read"; everything else, the map included, works */
+        const stampReadFails = async (write) => {
+            const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const pass = storage.tryGet.getMockImplementation();
+            storage.tryGet.mockImplementation((key, ...rest) =>
+                key === STAMPS ? Promise.resolve(null) : pass(key, ...rest)
+            );
+            // As the real one does on a failed read: the default comes back and nobody is told
+            const passJson = storage.getJSON.getMockImplementation();
+            storage.getJSON.mockImplementation((key, area, fallback) =>
+                key === STAMPS ? Promise.resolve(fallback) : passJson(key, area, fallback)
+            );
+            try {
+                return await write();
+            } finally {
+                storage.tryGet.mockImplementation(pass);
+                storage.getJSON.mockImplementation(passJson);
+                error.mockRestore();
+            }
+        };
+
+        beforeEach(() => {
+            stored.set(`json:${MAP}`, { chatCommands: { isTrue: true }, other: { value: 1 } });
+            stored.set(`json:${STAMPS}`, structuredClone(held));
+        });
+
+        test('a save lands the map alone and leaves every stamp as it was', async () => {
+            const ok = await stampReadFails(() =>
+                settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands'])
+            );
+            expect(ok).toBe(true);
+            expect(stored.get(`json:${MAP}`).chatCommands).toEqual({ isTrue: false });
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+        });
+
+        test('an import and a migration do the same', async () => {
+            await stampReadFails(() =>
+                settingsStorage.importSettings(
+                    JSON.stringify({ [MAP]: { chatCommands: { isTrue: false }, other: { value: 1 } } })
+                )
+            );
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+
+            stored.set(`json:${MAP}`, { actionBar_showTimeRemaining: { isTrue: true }, other: { value: 1 } });
+            await stampReadFails(() => settingsStorage.loadSettings());
+            expect(stored.get(`json:${MAP}`).actionBar_showTimeRemaining.value).toBe('both');
+            expect(stored.get(`json:${STAMPS}`)).toEqual(held);
+        });
+
+        test('the next save, the read working again, stamps the change on top of what was kept', async () => {
+            await stampReadFails(() =>
+                settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands'])
+            );
+            await settingsStorage.saveSettings({ chatCommands: { isTrue: true } }, ['chatCommands']);
+            const stamps = stored.get(`json:${STAMPS}`);
+            expect(stamps.other).toEqual(held.other);
+            expect(stamps.chatCommands.at).toBeGreaterThan(900);
+        });
+
+        test('a stamp record with nothing stored is a fresh one, not a failure', async () => {
+            stored.delete(`json:${STAMPS}`);
+            await settingsStorage.saveSettings({ chatCommands: { isTrue: false } }, ['chatCommands']);
+            expect(stored.get(`json:${STAMPS}`).chatCommands.at).toBeGreaterThan(0);
+        });
     });
 });
 
