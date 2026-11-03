@@ -10,6 +10,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - The Trial payout section can now be collapsed like Past weeks and Trial history, leaving a one-line summary in its heading.
 - Guild trial estimates show a range until the rate starts falling, payout figures follow, Past weeks and Trial history can collapse, and trials now keep tier clear times so the estimate can be re-tested.
 - Guild trial points now use the exact figures the game sends, so Past weeks matches the game's announced total, and a zeroed card no longer drops a trial.
+- Performance panel exports now include timer counts, leak and heap readings, GM traffic and the tab census.
 - Alchemy history now saves what inputs and catalysts cost as a session runs, so Net no longer drifts with the market; older sessions stay at today's price and are marked.
 - Guild trial totals now match a fight by guild and trial whenever Stats is opened, ignore another guild's, and the panel says when figures are still estimates.
 - The guild trial assignment shows each member's signed-up trial and role and flags a saved loadout view as out of date, and trial start times follow the guild's schedule.

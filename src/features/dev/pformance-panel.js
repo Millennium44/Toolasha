@@ -317,10 +317,11 @@ class PFormancePanel {
         });
 
         const copyBtn = this._headerButton('⧉', () => this._exportReport('clipboard'));
-        copyBtn.title = 'Copy the startup trace — paste it to somebody who can read it';
+        copyBtn.title =
+            'Copy the performance report (startup trace, stalls, timers, and the leak, traffic and tab extras) — paste it to somebody who can read it';
 
         const saveBtn = this._headerButton('⭳', () => this._exportReport('file'));
-        saveBtn.title = 'Save the startup trace as a file (text and JSON)';
+        saveBtn.title = 'Save the performance report as files (text and JSON)';
 
         const closeBtn = this._headerButton('✕', () => this.hide());
         closeBtn.title = 'Close';
@@ -1017,7 +1018,84 @@ class PFormancePanel {
     }
 
     /**
-     * Hand the whole trace over, as text a person can read.
+     * What the leak, traffic and all-tabs sections hold right now, for the export.
+     *
+     * Read from state the panel already holds: the canary and heap trend are
+     * sampled by the panel's own 1s refresh, and the census keeps the replies to
+     * its last two polls. Nothing here samples or polls, so an export never
+     * waits and never adds a reading. Each section says why when it is empty.
+     * @param {Object} pm - The performance monitor
+     * @returns {{leak: Object, traffic: Object, tabs: Object}} Sections for the report
+     * @private
+     */
+    _collectExtras(pm) {
+        const off =
+            'attribution extras are off (the ◎ button), so this is only sampled while the panel is open with them on';
+
+        const canary = { rows: null, reason: null };
+        const heap = { trend: null, reason: null };
+        if (!this.attributionEnabled) {
+            canary.reason = off;
+            heap.reason = off;
+        } else {
+            if (!this.leakCanary) {
+                canary.reason =
+                    'no canary yet (this monitor cannot make one, or the panel has not drawn since it opened)';
+            } else {
+                const rows = this.leakCanary.getReport?.() || [];
+                if (rows.length) canary.rows = rows;
+                else canary.reason = 'no readings yet';
+            }
+            if (!pm.heapMemorySupported?.()) {
+                heap.reason = 'this browser does not expose heap size (Chrome only)';
+            } else {
+                heap.trend = this.heapTrend?.getTrend?.() || null;
+                if (!heap.trend) heap.reason = 'fewer than two heap readings so far';
+            }
+        }
+
+        let snapshot = null;
+        let trafficReason = null;
+        try {
+            snapshot = getGmTrafficSnapshot();
+        } catch (error) {
+            console.error('[PFormance] Could not read the traffic counters:', error);
+            trafficReason = 'the traffic counters could not be read';
+        }
+
+        let tabs = [];
+        let tabsReason = null;
+        const census = this.tabCensus;
+        if (!census) {
+            tabsReason = 'this tab has not joined the census channel';
+        } else if (!census.supported) {
+            tabsReason = 'this browser has no BroadcastChannel, so other tabs cannot be heard';
+        } else {
+            try {
+                tabs = census.getTabs();
+            } catch (error) {
+                console.error('[PFormance] Could not read the tab census:', error);
+                tabsReason = 'the tab list could not be read';
+            }
+            if (!tabsReason) {
+                if (!this.attributionEnabled || !census.isPolling()) {
+                    tabsReason = `${off}; only this tab is listed`;
+                } else if (tabs.length <= 1) {
+                    tabsReason =
+                        'no other tab answered the last two polls (the export reuses them and does not poll again)';
+                }
+            }
+        }
+
+        return {
+            leak: { canary, heap },
+            traffic: { snapshot, reason: trafficReason },
+            tabs: { tabs, reason: tabsReason },
+        };
+    }
+
+    /**
+     * Hand the whole report over, as text a person can read.
      *
      * The panel is a live view; a trace is evidence. Copying beats a screenshot
      * because the two things that locate a slow start — when each feature began,
@@ -1039,6 +1117,7 @@ class PFormancePanel {
             panelDelays: pm.getPanelDelays?.() || [],
             // Creation rate, which no duration in `stats` can show
             timerCounters: pm.timerCounters ? { ...pm.timerCounters } : null,
+            ...this._collectExtras(pm),
             environment: {
                 script: scriptBuildLabel() || 'unknown',
                 cores: typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 'unknown',
@@ -1050,9 +1129,9 @@ class PFormancePanel {
 
         if (destination === 'file') {
             const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
-            downloadFile(`toolasha-startup-${stamp}.txt`, text);
+            downloadFile(`toolasha-performance-${stamp}.txt`, text);
             downloadFile(
-                `toolasha-startup-${stamp}.json`,
+                `toolasha-performance-${stamp}.json`,
                 JSON.stringify(reportData(payload), null, 2),
                 'application/json'
             );
