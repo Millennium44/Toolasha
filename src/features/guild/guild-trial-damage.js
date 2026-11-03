@@ -350,6 +350,47 @@ function statsScopeKey(scope) {
 }
 
 /**
+ * Whether one trial's stats rows name the people a measurement measured.
+ *
+ * At least half of the smaller side's names must appear on the other. A member
+ * the rows omit (left early, never credited) does not fail it, nor does a
+ * measured name the rows lack. With nothing measured, or no name resolved,
+ * there is nothing to compare and the trial hrid alone decides.
+ *
+ * @param {Object|undefined} rows - `{name: {...}}` for one trial
+ * @param {Object|undefined} measuredRows - `{name: {...}}` as measured
+ * @returns {boolean}
+ */
+function rowsDescribeMeasured(rows, measuredRows) {
+    const reported = Object.keys(rows || {});
+    const measured = Object.keys(measuredRows || {});
+    if (!reported.length || !measured.length) return true;
+    const held = new Set(measured);
+    const shared = reported.filter((name) => held.has(name)).length;
+    return shared >= Math.ceil(Math.min(reported.length, measured.length) / 2);
+}
+
+/**
+ * The saved fights a stats blob still holds open.
+ *
+ * A fight whose encounter already has the game's totals paired with a measurement
+ * since it ended is settled, whichever tab or device paired it.
+ *
+ * @param {Object} blob - From `loadTrialStats`
+ * @returns {Object} Encounter → fight
+ */
+function openSavedFights(blob) {
+    const open = {};
+    for (const [encounter, fight] of Object.entries(blob?.unreconciled || {})) {
+        if (!fight || typeof fight !== 'object') continue;
+        const pair = blob.trials?.[encounter];
+        if (pair?.measured && Object.keys(pair.reported || {}).length && pair.at >= fight.endedAt) continue;
+        open[encounter] = fight;
+    }
+    return open;
+}
+
+/**
  * Which of the five encounters a name is, if any.
  *
  * Hrids as well as display names: `/monsters/trial_chameleon` and "Trial
@@ -942,6 +983,12 @@ class GuildTrialDamage {
         /** A test-server stats restore waiting for a fight to name its cycle */
         this.statsRestoreOwed = false;
         /**
+         * Ended fights the game's totals have not reached yet, as the week's blob
+         * holds them: `{[encounter]: {measured, endedAt, cycleAt, weekStartAt, guildId}}`. Survives
+         * {@link reset} like `storedStats`, and has its scope. See {@link _saveEndedFight}.
+         */
+        this.savedFights = {};
+        /**
          * Whose week `storedStats` is: the guild, and the character for the
          * fallback key before the guild is known. Set by {@link setGuildName}.
          */
@@ -1205,6 +1252,7 @@ class GuildTrialDamage {
             characterId: dataManager.getCurrentCharacterId?.() ?? null,
         };
         this.storedStats = {};
+        this.savedFights = {};
         this._restoreStats();
         // …and the live tally a refresh interrupted, held until the stream shows the same fight
         this.pendingLive = null;
@@ -1286,6 +1334,7 @@ class GuildTrialDamage {
         this.onGuildUpdated = null;
         this.serverClockOffsetMs = null;
         this.ownGuildId = null;
+        this.savedFights = {};
         this.initialized = false;
         this.reset();
     }
@@ -1316,8 +1365,17 @@ class GuildTrialDamage {
             Object.keys(this.storedStats || {}).length
                 ? { ...this.storedStats }
                 : null;
+        // A fight saved under the fallback key before the guild was known moves with them
+        const carryFights =
+            !previous.guildName &&
+            next.guildName &&
+            String(previous.characterId ?? '') === String(next.characterId ?? '') &&
+            Object.keys(this.savedFights).length
+                ? { ...this.savedFights }
+                : null;
         this.statsScope = next;
         this.storedStats = {};
+        this.savedFights = carryFights || {};
         // A saved live tally belongs to the character it was read for
         if (String(previous.characterId ?? '') !== String(next.characterId ?? '')) {
             this.pendingLive = null;
@@ -1329,7 +1387,7 @@ class GuildTrialDamage {
         if (this.pendingLive && Number.isFinite(this.pendingLive.endedAt) && !this.spectator.ticks && !this.source) {
             this._tryAdoptLive(null);
         }
-        if (carry) this._persistStats(carry).catch(() => {});
+        if (carry || carryFights) this._persistStats(carry, { fights: carryFights }).catch(() => {});
         else this._restoreStats().catch(() => {});
     }
 
@@ -1802,7 +1860,7 @@ class GuildTrialDamage {
                 };
             }
             this.storedStats = { ...this.storedStats, ...entries };
-            this._persistStats(entries).catch(() => {});
+            this._persistStats(entries, { guildId: data?.guildId ?? null }).catch(() => {});
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the trial stats failed:', error);
         }
@@ -1846,12 +1904,7 @@ class GuildTrialDamage {
      * @returns {boolean}
      */
     _rowsDescribeHeldFight(rows) {
-        const reported = Object.keys(rows || {});
-        const measured = Object.keys(this._measuredByName());
-        if (!reported.length || !measured.length) return true;
-        const held = new Set(measured);
-        const shared = reported.filter((name) => held.has(name)).length;
-        return shared >= Math.ceil(Math.min(reported.length, measured.length) / 2);
+        return rowsDescribeMeasured(rows, this._measuredByName());
     }
 
     /**
@@ -1912,39 +1965,193 @@ class GuildTrialDamage {
      * Merge the message's per-encounter comparisons into the week's saved blob
      * and write it back. Load-merge-save rather than saving the in-memory copy,
      * so a reset between trials cannot drop an earlier trial's entry from disk.
+     *
+     * This is also where a saved fight ({@link _saveEndedFight}) meets its game
+     * totals, on disk rather than in memory, because the two can be a reload or a
+     * later fight apart. The blob's own scope, week and cycle guards are the ones
+     * that decide which fights a message can describe; on top of them a message
+     * naming a different guild id, or rows naming other people, leaves the fight
+     * waiting. The pair is filed without touching `reported`, which is the held
+     * fight's own.
+     *
      * @param {Object} entries - Encounter → `{reported, measured, at}`
+     * @param {Object} [options]
+     * @param {*} [options.guildId] - The stats frame's `guildId`, where it stated one
+     * @param {Object|null} [options.fights] - Encounter → a saved fight to hold, or null to withdraw it
      */
-    async _persistStats(entries) {
-        if (!entries || !Object.keys(entries).length) return;
+    async _persistStats(entries, { guildId = null, fights = null } = {}) {
+        if (!Object.keys(entries || {}).length && !Object.keys(fights || {}).length) return;
         // Whose week these entries belong to is decided now, before the await: a
         // character switch or guild change landing during the read must neither
         // file them under the arriving scope nor put the departing scope's blob
         // back into memory
         const scope = { ...this.statsScope, cycleAt: this._statsCycleAt(entries) };
         const scopeKey = statsScopeKey(scope);
+        // A saved fight whose own write is still queued, or was refused, is only in memory
+        const inMemory = { ...this.savedFights };
+        // With no fight held, on the test server, arrival time would name the cycle (see `_statsCycleAt`), and a
+        // click hours after the fight would file as a cycle of its own, leaving the fight behind in the last one
+        const namesNoFight = isTestServer() && this._statsCycleAt() === undefined;
         try {
-            const blob = await loadTrialStats(Date.now(), scope);
+            if (namesNoFight) scope.cycleAt = (await this._waitingFightCycle(scope)) ?? scope.cycleAt;
+            const now = Date.now();
+            const blob = await loadTrialStats(now, scope);
             blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
-            for (const [encounter, entry] of Object.entries(entries)) {
+            const held = Object.fromEntries(
+                Object.entries(inMemory).filter(([, fight]) => this._savedFightInCycle(fight, now, scope.cycleAt))
+            );
+            const open = openSavedFights({
+                trials: blob.trials,
+                unreconciled: { ...held, ...(blob.unreconciled || {}), ...(fights || {}) },
+            });
+            const paired = [];
+            for (const [encounter, entry] of Object.entries(entries || {})) {
+                const fight = open[encounter];
+                const fromFight =
+                    entry.measured === null &&
+                    fight &&
+                    !(guildId !== null && fight.guildId != null && String(guildId) !== String(fight.guildId)) &&
+                    rowsDescribeMeasured(entry.reported, fight.measured);
+                if (fight && entry.measured === null && !fromFight) {
+                    console.info(`[GuildTrialDamage] The ${encounter} rows do not describe the saved fight; it waits.`);
+                }
+                if (fromFight || entry.measured !== null) paired.push(encounter);
+                if (fromFight) {
+                    blob.trials[encounter] = { ...entry, measured: fight.measured };
+                    console.info(`[GuildTrialDamage] Paired the game's totals with the saved ${encounter} fight.`);
+                    continue;
+                }
                 // A trial re-stated with nothing watched beside it — a
                 // re-delivery after a reset, or a later message carrying an
                 // earlier fight's rows again — must not erase the measurement
                 // this week already stored for the same encounter. The loaded
                 // blob is week-guarded, so a held pair is this week's by
                 // construction; its fresher roster still lands.
-                const held = blob.trials[encounter];
+                const stored = blob.trials[encounter];
                 blob.trials[encounter] =
-                    entry.measured === null && held?.measured !== null && held?.measured !== undefined
-                        ? { ...entry, measured: held.measured }
+                    entry.measured === null && stored?.measured !== null && stored?.measured !== undefined
+                        ? { ...entry, measured: stored.measured }
                         : entry;
             }
+            const unreconciled = { ...open };
+            for (const encounter of paired) unreconciled[encounter] = null;
+            // One withdrawn, or a copy on disk that is settled by now, goes too
+            for (const encounter of [...Object.keys(blob.unreconciled || {}), ...Object.keys(fights || {})]) {
+                if (!(encounter in open)) unreconciled[encounter] = null;
+            }
+            if (Object.keys(unreconciled).length) blob.unreconciled = unreconciled;
             // The write still lands under the scope the entries arrived in, where
             // they belong; memory takes the merged blob only if nobody switched
-            if (statsScopeKey(this.statsScope) === scopeKey) this.storedStats = blob.trials;
-            await saveTrialStats(blob, scope);
+            if (statsScopeKey(this.statsScope) === scopeKey) {
+                this.storedStats = blob.trials;
+                this.savedFights = { ...open };
+            }
+            const saved = await saveTrialStats(blob, scope);
+            // A pair that could not be written leaves its fight waiting, here as on disk
+            if (saved === false || statsScopeKey(this.statsScope) !== scopeKey) return;
+            for (const encounter of paired) {
+                if (this.savedFights[encounter] === open[encounter]) delete this.savedFights[encounter];
+            }
         } catch (error) {
             console.error('[GuildTrialDamage] Saving trial stats failed:', error);
         }
+    }
+
+    /**
+     * Keep an ended fight's measurement until the game's totals for it arrive.
+     *
+     * The game sends `guild_trial_stats_updated` only when somebody opens Stats, and
+     * one fight is held at a time: a later fight, a character switch or a reload
+     * with restoring off would otherwise take the measurement with it, and the rows
+     * would file as a roster with nothing to compare. So the measurement goes into
+     * the week's stats blob as soon as the game declares the fight over, beside
+     * `trials`, where every older reader leaves it alone.
+     *
+     * The rules of {@link _lateStatsExpected} apply: spectated and declared over by
+     * the game. A quiet stream's ending may be a fight still running with the view
+     * shut, and keeps its short window. An unnamed encounter has no place to file
+     * and no rows to meet; the next call (the end message naming it, or the fight
+     * being replaced) tries again.
+     */
+    _saveEndedFight() {
+        if (this.source !== 'spectated' || this.endedByGame !== true || !Number.isFinite(this.endedAt)) return;
+        if (this.reported || !this.encounter || !this.spectator.ticks) return;
+        // As for the live save: a saved tally not yet decided on is better than this one, which may be a fraction
+        if (this._liveLoading || this.pendingLive) return;
+        const measured = this._measuredByName();
+        if (!Object.keys(measured).length) return;
+        const fight = {
+            measured,
+            endedAt: this.endedAt,
+            cycleAt: this._statsCycleAt() ?? null,
+            weekStartAt: guildXPTracker.getCurrentWeekStartAt?.() ?? null,
+            guildId: this._ownGuildId() ?? null,
+        };
+        this.savedFights = { ...this.savedFights, [this.encounter]: fight };
+        this._persistStats({}, { fights: { [this.encounter]: fight } }).catch(() => {});
+    }
+
+    /**
+     * The cycle of a fight still waiting, where the game says its cycle is still the current one.
+     *
+     * The game's `currentWeekStartAt` is the cycle's on the test server, and is the only
+     * statement of it that does not need a fight held.
+     *
+     * @param {Object} scope - Whose stats
+     * @returns {Promise<number|undefined>} Client ms, or undefined when no such fight is waiting
+     */
+    async _waitingFightCycle(scope) {
+        const week = guildXPTracker.getCurrentWeekStartAt?.() ?? null;
+        if (week === null) return undefined;
+        const blob = await loadTrialStats(Date.now(), { ...scope, cycleAt: null });
+        const cycles = Object.values(openSavedFights(blob))
+            .filter((fight) => fight.weekStartAt === week && Number.isFinite(fight.cycleAt))
+            .map((fight) => fight.cycleAt);
+        return cycles.length ? Math.max(...cycles) : undefined;
+    }
+
+    /**
+     * Take back the held fight's saved measurement: the fight turned out not to be over.
+     */
+    _withdrawEndedFight() {
+        const encounter = this.encounter;
+        if (!encounter || this.savedFights[encounter]?.endedAt !== this.endedAt) return;
+        delete this.savedFights[encounter];
+        this._persistStats({}, { fights: { [encounter]: null } }).catch(() => {});
+    }
+
+    /**
+     * Whether a stats message arriving now can still describe a saved fight: the same
+     * trial week and, on the test server, the same cycle. The blob guards what is on
+     * disk the same way; this is for the copy in memory.
+     *
+     * @param {Object|null} fight - A saved fight
+     * @param {number} now - Clock
+     * @param {number|null|undefined} cycleAt - The cycle in hand, where one is
+     * @returns {boolean}
+     */
+    _savedFightInCycle(fight, now, cycleAt) {
+        if (!fight || trialWeekStart(fight.endedAt) !== trialWeekStart(now)) return false;
+        if (!isTestServer() || !Number.isFinite(cycleAt) || !Number.isFinite(fight.cycleAt)) return true;
+        return Math.abs(cycleAt - fight.cycleAt) <= FIGHT_SPAN_MS;
+    }
+
+    /**
+     * Earlier fights still waiting for the game's totals, for the panel to say so.
+     * Not the held fight, which has its own line.
+     *
+     * @param {number} [now] - Clock
+     * @returns {Array<{encounter: string, endedAt: number}>} Oldest first
+     */
+    _waitingSavedFights(now = Date.now()) {
+        const cycleAt = this._statsCycleAt();
+        return Object.entries(this.savedFights)
+            .filter(([encounter, fight]) => {
+                if (encounter === this.encounter && fight?.endedAt === this.endedAt) return false;
+                return this._savedFightInCycle(fight, now, cycleAt);
+            })
+            .map(([encounter, fight]) => ({ encounter, endedAt: fight.endedAt }))
+            .sort((a, b) => a.endedAt - b.endedAt);
     }
 
     /**
@@ -1997,6 +2204,7 @@ class GuildTrialDamage {
             if (statsScopeKey(this.statsScope) !== scopeKey) return;
             const trials = blob?.trials && typeof blob.trials === 'object' ? blob.trials : {};
             this.storedStats = { ...trials, ...this.storedStats };
+            this.savedFights = { ...openSavedFights(blob), ...this.savedFights };
         } catch {
             // Unreadable: memory keeps whatever arrived under this scope since
         }
@@ -2309,6 +2517,10 @@ class GuildTrialDamage {
         at,
         { newFight = this._isNewFight({ battleId, tier }, at), arriving = null } = {}
     ) {
+        // The fight being replaced, as it finally stands: a name settled since its end, an encounter
+        // only known now, or a fight restored from a save made before fights were kept at all
+        if (newFight) this._saveEndedFight();
+
         // The ending wave's last chance at names before it banks by them. A
         // page opened mid-tier never had this tier's roster; the next tier's
         // opening states every member's maximums, and a member's maximums are
@@ -3049,6 +3261,7 @@ class GuildTrialDamage {
         this.staleStream = false;
         this._freezeElapsed();
         this._livePersist.note();
+        this._saveEndedFight();
     }
 
     /**
@@ -3059,6 +3272,8 @@ class GuildTrialDamage {
      * starts the elapsed count afresh rather than bridging it.
      */
     _resumeStream() {
+        // `encounter` is still set only when this is the same fight going on; another fight cleared it
+        if (this.endedByGame) this._withdrawEndedFight();
         this._unfreezeElapsed();
         this.endedAt = null;
         this.endedByGame = false;
@@ -3965,6 +4180,8 @@ class GuildTrialDamage {
             reported: this.reported ? { ...this.reported } : null,
             reportedMeasured: this.reportedMeasured ? { ...this.reportedMeasured } : null,
             storedStats: { ...this.storedStats },
+            // Earlier fights this week whose game totals have not arrived, for the board to say so
+            waitingFights: this._waitingSavedFights(),
             // All health the monsters lost this fight, and the part of it no
             // player could be credited with — the per-player rows sum to
             // `attributed`, not to `damage`

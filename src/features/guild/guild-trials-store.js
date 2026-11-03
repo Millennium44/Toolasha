@@ -2213,7 +2213,8 @@ function otherStatsCycle(blob, cycle) {
  * @param {string|null} [scope.guildName] - Guild name, or null before it is known
  * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
  * @param {number|null} [scope.cycleAt] - The cycle wanted: its fight's start, client ms. Ignored on live
- * @returns {Promise<{weekStart: number, trials: Object, cycleAt?: number}>} The blob, or a fresh one
+ * @returns {Promise<{weekStart: number, trials: Object, cycleAt?: number, unreconciled?: Object}>} The blob, or a
+ *   fresh one. `unreconciled` is there only when the blob holds an ended fight still waiting for the game's totals
  */
 export async function loadTrialStats(now = Date.now(), { guildName = null, characterId = null, cycleAt = null } = {}) {
     const weekStart = trialWeekStart(now);
@@ -2224,7 +2225,13 @@ export async function loadTrialStats(now = Date.now(), { guildName = null, chara
         if (!held || typeof held !== 'object' || held.weekStart !== weekStart) return fresh;
         if (otherStatsCycle(held, cycle)) return fresh;
         const trials = held.trials && typeof held.trials === 'object' ? held.trials : {};
-        return cycle === null ? { weekStart, trials } : { weekStart, trials, cycleAt: storedStatsCycle(held) ?? cycle };
+        const waiting = held.unreconciled && Object.keys(held.unreconciled).length ? held.unreconciled : null;
+        return {
+            weekStart,
+            trials,
+            ...(cycle === null ? {} : { cycleAt: storedStatsCycle(held) ?? cycle }),
+            ...(waiting ? { unreconciled: waiting } : {}),
+        };
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial stats:', error);
         return fresh;
@@ -2239,7 +2246,13 @@ export async function loadTrialStats(now = Date.now(), { guildName = null, chara
  * not unioned in: its comparisons move to `earlierCycles`, newest last, and
  * this cycle's become `trials`.
  *
- * @param {{weekStart: number, trials: Object, cycleAt?: number}} blob - The comparison, keyed by encounter
+ * `unreconciled` holds ended fights still waiting for the game's totals, by encounter: `{measured, endedAt, ...}`,
+ * as `guild-trial-damage.js` writes them. Beside `trials` rather than in it, because every reader of `trials`
+ * (an older build's included) takes an entry there as the game's figures. It has the same scope, week and cycle
+ * as the blob, and goes with it. Unioned like `trials`; a null in the copy being written withdraws an encounter.
+ *
+ * @param {{weekStart: number, trials: Object, cycleAt?: number, unreconciled?: Object}} blob - The comparison, keyed
+ *   by encounter
  * @param {Object} [scope] - Whose stats; see {@link trialStatsStorageKey}
  * @param {string|null} [scope.guildName] - Guild name, or null before it is known
  * @param {string|number|null} [scope.characterId] - The viewing character, for the fallback key
@@ -2248,17 +2261,21 @@ export async function loadTrialStats(now = Date.now(), { guildName = null, chara
  */
 export async function saveTrialStats(blob, { guildName = null, characterId = null, cycleAt = null } = {}) {
     const cycle = statsCycle(cycleAt ?? blob?.cycleAt);
-    const memory = cycle === null ? blob : { ...blob, cycleAt: cycle };
+    const memory = settledUnreconciled(cycle === null ? blob : { ...blob, cycleAt: cycle });
+    // Named here: the fold runs again as the write lands, on a copy that no longer carries the nulls
+    const withdrawn = Object.entries(blob?.unreconciled || {})
+        .filter(([, fight]) => !fight)
+        .map(([encounter]) => encounter);
     // Same week: the encounters are unioned, this copy's winning; another
     // week's stored blob is last week's trial and the new one replaces it
     const fold = (stored, held) => {
-        if (stored?.weekStart !== held?.weekStart) return held;
+        if (stored?.weekStart !== held?.weekStart) return settledUnreconciled(held);
         if (otherStatsCycle(stored, cycle)) {
             const earlier = { cycleAt: storedStatsCycle(stored), trials: stored.trials || {} };
-            return {
+            return settledUnreconciled({
                 ...held,
                 earlierCycles: [...(stored.earlierCycles || []), earlier].slice(-MAX_EARLIER_STATS_CYCLES),
-            };
+            });
         }
         const merged = { ...stored, ...held, trials: { ...(stored.trials || {}), ...(held.trials || {}) } };
         // One cycle is anchored at its first fight, so the anchor cannot creep
@@ -2266,9 +2283,23 @@ export async function saveTrialStats(blob, { guildName = null, characterId = nul
         if (Number.isFinite(stored.cycleAt) && Number.isFinite(held.cycleAt)) {
             merged.cycleAt = Math.min(stored.cycleAt, held.cycleAt);
         }
-        return merged;
+        merged.unreconciled = { ...(stored.unreconciled || {}), ...(held.unreconciled || {}) };
+        for (const encounter of withdrawn) delete merged.unreconciled[encounter];
+        return settledUnreconciled(merged);
     };
     return probeMergeWrite(trialStatsStorageKey(guildName, characterId), memory, fold);
+}
+
+/**
+ * A stats blob with its withdrawn fights gone, and no `unreconciled` field at all when none are left.
+ * @param {Object} blob - A stats blob
+ * @returns {Object} The blob to store
+ */
+function settledUnreconciled(blob) {
+    if (!blob || !('unreconciled' in blob)) return blob;
+    const { unreconciled, ...rest } = blob;
+    const open = Object.entries(unreconciled || {}).filter(([, fight]) => fight);
+    return open.length ? { ...rest, unreconciled: Object.fromEntries(open) } : rest;
 }
 
 // ─── Building bonuses ───────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- A guild trial's measurement is now kept until someone opens Stats, even past a later fight, a reload or a character switch, and the trial board names fights still waiting.
 - The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
 - Switching guilds keeps the new guild's trial start time.
 - Guild trial tiers no longer lose the tier the game stated when the bar shows only one monster of a wave, and an out-of-date stated tier is still dropped.
