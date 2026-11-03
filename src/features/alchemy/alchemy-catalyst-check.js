@@ -253,7 +253,7 @@ class AlchemyCatalystCheck {
             return false;
         }
 
-        const context = this.readContext();
+        const context = this.readContext(panel);
         const pending = this.pending;
         if (pending) {
             if (this.stillArmed(pending, context, panel)) {
@@ -284,15 +284,16 @@ class AlchemyCatalystCheck {
 
     /**
      * What the panel is set to do now.
+     * @param {Element} panel - The alchemy panel to read
      * @returns {{action: string, selection: Object, catalystHrid: string|null, signature: string}|null} Null on a tab
      *   with no catalyst, with no input, or with a slot that cannot be read
      */
-    readContext() {
+    readContext(panel) {
         const action = activeAlchemyAction();
         if (!TYPE_CATALYSTS[action]) return null;
-        const selection = readAlchemyPanelSelection();
+        const selection = readAlchemyPanelSelection(panel);
         if (!selection?.itemHrid) return null;
-        const catalystHrid = readSlottedCatalyst();
+        const catalystHrid = readSlottedCatalyst(panel);
         if (catalystHrid === undefined) return null;
         const signature = [
             dataManager.getCurrentCharacterId?.() || '',
@@ -398,7 +399,7 @@ class AlchemyCatalystCheck {
         pending.timer = setTimeout(() => this.clearPending(), CONFIRM_WINDOW_MS);
 
         const recheck = () => {
-            if (this.pending === pending && !this.stillArmed(pending, this.readContext())) this.clearPending();
+            if (this.pending === pending && !this.stillArmed(pending, this.readContext(panel))) this.clearPending();
         };
         // The panel holds the input and the slot, whose sprites change by attribute as well as by node
         const content = panel.closest('[class*="SkillActionDetail_skillActionDetail"]') || panel;

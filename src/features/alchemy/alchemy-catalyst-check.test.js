@@ -603,6 +603,50 @@ describe('which buttons count', () => {
     });
 });
 
+describe('reads the panel that was pressed', () => {
+    /** Another panel earlier in the document, set to something else entirely */
+    const decoyBefore = () => {
+        const decoy = document.createElement('div');
+        decoy.className = 'SkillActionDetail_alchemyComponent__decoy';
+        decoy.innerHTML = `
+            <div class="SkillActionDetail_catalystItemInputContainer__5zmou">${slotHtml(PRIME)}</div>
+            <div class="SkillActionDetail_itemRequirements__3SPnA">${requirementHtml(SWISS, 7)}</div>`;
+        document.getElementById('game-root').prepend(decoy);
+        return decoy;
+    };
+
+    test('its input and its catalyst, not the first in the document', () => {
+        decoyBefore();
+        press();
+        expect(game).not.toHaveBeenCalled();
+        expect(calculator.calculateCoinifyProfit.mock.calls.at(-1)[0]).toBe(CHEESE);
+        expect(calculator.calculateCoinifyProfit.mock.calls.at(-1)[1]).toBe(0);
+        expect(message().textContent).toContain('Your choice, no catalyst');
+    });
+
+    test('a change in another panel does not disarm the held press', async () => {
+        const decoy = decoyBefore();
+        press();
+        decoy.querySelector('[class*="itemRequirements"]').innerHTML = requirementHtml(CHEESE, 1);
+        await settle();
+        expect(message()).not.toBeNull();
+        await pause();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+    });
+
+    test('a change in its own panel still does, with another panel on the page', async () => {
+        decoyBefore();
+        press();
+        setSlot(CAT);
+        // setSlot edits the first slot in the document, here the decoy's, so the panel's own is set by hand
+        document.querySelector('[class*="SkillActionDetail_skillActionDetail"] [class*="catalystItemInputContainer"]').innerHTML =
+            slotHtml(PRIME);
+        await settle();
+        expect(message()).toBeNull();
+    });
+});
+
 describe('a message nobody can see never costs a press', () => {
     const isMessage = (el) => el.classList?.contains('mwi-alchemy-catalyst-check');
     const passesUnseen = () => {
