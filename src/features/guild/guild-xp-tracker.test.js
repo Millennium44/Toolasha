@@ -1178,3 +1178,122 @@ describe('a message waiting on the history load when the tracker is torn down', 
         expect(guildXPTracker.guildXPHistory.Milky).toHaveLength(1);
     });
 });
+
+describe('frames from a replaced socket and out-of-order leaderboard frames', () => {
+    const oldSocket = { name: 'old' };
+    const newSocket = { name: 'new' };
+    const board = (rows, leaderboardRevision) => ({
+        leaderboardType: 'standard',
+        leaderboardCategory: 'guild',
+        leaderboardRevision,
+        leaderboard: { rows },
+    });
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        storageMock.store.clear();
+        storageMock.unavailable = false;
+        storageMock.set.mockClear();
+        guildXPTracker.disable();
+        dataManagerMock.characterData = null;
+        // The data manager's own rule: permissive until a socket is bound, then only that socket
+        dataManagerMock.activeSocket = newSocket;
+        dataManagerMock.isFromActiveSocket = (context) =>
+            !dataManagerMock.activeSocket || context?.socket === dataManagerMock.activeSocket;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        delete dataManagerMock.isFromActiveSocket;
+        delete dataManagerMock.activeSocket;
+    });
+
+    test('a late guild_updated from the old socket records nothing; the active socket does', async () => {
+        await guildXPTracker._onGuildUpdated({ guild: { name: 'Old', experience: 5 } }, { socket: oldSocket });
+        expect(guildXPTracker.getOwnGuildName()).toBeNull();
+        expect(guildXPTracker.guildXPHistory).toEqual({});
+
+        await guildXPTracker._onGuildUpdated({ guild: { name: 'New', experience: 9 } }, { socket: newSocket });
+        expect(guildXPTracker.getOwnGuildName()).toBe('New');
+        expect(guildXPTracker.guildXPHistory.New.map((s) => s.xp)).toEqual([9]);
+    });
+
+    test('a late guild_characters_updated from the old socket changes no roster and no member series', async () => {
+        const message = { guildCharacterMap: { 7: { guildID: 'g1', guildExperience: 4 } } };
+        await guildXPTracker._onMembersUpdated(message, { socket: oldSocket });
+        expect(guildXPTracker.getOwnGuildID()).toBeNull();
+        expect(guildXPTracker.memberXPHistory).toEqual({});
+
+        await guildXPTracker._onMembersUpdated(message, { socket: newSocket });
+        expect(guildXPTracker.getOwnGuildID()).toBe('g1');
+        expect(guildXPTracker.memberXPHistory[7].map((s) => s.xp)).toEqual([4]);
+    });
+
+    test('a late sign-up update from the old socket leaves the member as the new one has them', () => {
+        guildXPTracker.memberMeta = { 7: { name: 'Ada', signedUpCombatTrialHrid: '' } };
+        const update = { characterId: 7, signedUpCombatTrialHrid: '/guild_trials/x' };
+
+        guildXPTracker._onTrialSignupUpdated(update, { socket: oldSocket });
+        expect(guildXPTracker.memberMeta[7].signedUpCombatTrialHrid).toBe('');
+
+        guildXPTracker._onTrialSignupUpdated(update, { socket: newSocket });
+        expect(guildXPTracker.memberMeta[7].signedUpCombatTrialHrid).toBe('/guild_trials/x');
+    });
+
+    test('a late leaderboard frame from the old socket records no reading', async () => {
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 500 }], 4), { socket: oldSocket });
+        expect(guildXPTracker.leaderboardXPHistory).toEqual({});
+    });
+
+    test('with no socket bound yet, frames are still taken', async () => {
+        dataManagerMock.activeSocket = null;
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 500 }], 1), { socket: oldSocket });
+        expect(guildXPTracker.leaderboardXPHistory.Rival).toHaveLength(1);
+    });
+
+    test('an older leaderboard revision arriving late does not replace the newer figures', async () => {
+        const live = { socket: newSocket };
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }], 5), live);
+        vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 3000 }], 7), live);
+        // Revision 6 was computed before 7 and is slower to arrive
+        vi.setSystemTime(new Date('2026-01-01T02:01:00Z'));
+        // (a guild only the older board lists would be sampled as news, whatever its XP)
+        await guildXPTracker._onLeaderboardUpdated(
+            board(
+                [
+                    { name: 'Rival', value2: 2000 },
+                    { name: 'Ghost', value2: 50 },
+                ],
+                6
+            ),
+            live
+        );
+
+        expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([1000, 3000]);
+        expect(guildXPTracker.leaderboardXPHistory.Ghost).toBeUndefined();
+    });
+
+    test('the same revision again, and a different board at a lower revision, are both taken', async () => {
+        const live = { socket: newSocket };
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }], 5), live);
+        vi.setSystemTime(new Date('2026-01-01T00:30:00Z'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1100 }], 5), live);
+        expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([1000, 1100]);
+
+        // An ironcow board has its own revision counter
+        const ironcow = { ...board([{ name: 'Cow', value2: 10 }], 1), guildTypeFilter: 'ironcow' };
+        await guildXPTracker._onLeaderboardUpdated(ironcow, live);
+        expect(guildXPTracker.leaderboardXPHistory.Cow).toHaveLength(1);
+    });
+
+    test('a character switch starts the revisions afresh', async () => {
+        const live = { socket: newSocket };
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 1000 }], 9), live);
+        guildXPTracker.disable();
+        vi.setSystemTime(new Date('2026-01-01T03:00:00Z'));
+        await guildXPTracker._onLeaderboardUpdated(board([{ name: 'Rival', value2: 2000 }], 1), live);
+        expect(guildXPTracker.leaderboardXPHistory.Rival.map((s) => s.xp)).toEqual([2000]);
+    });
+});

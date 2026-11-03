@@ -519,7 +519,7 @@ class GuildMemberSkills {
         this.guildName = guildName;
         if (!this.initialized) {
             this.initialized = true;
-            this.onProfile = (message) => this._onProfile(message);
+            this.onProfile = (message, context) => this._onProfile(message, context);
             webSocketHook.on('profile_shared', this.onProfile);
             // The moment a clicked unit's sheet lands, that member's in-flight
             // suppression is over — without this the 20s request window kept
@@ -643,9 +643,14 @@ class GuildMemberSkills {
      * record's merge instead (`dropRenamedDuplicates` keeps only the newest capture per `characterId`), and the
      * capture just taken is the newest there is, so the old name goes from storage on this same save.
      *
+     * A profile from a socket the game has since replaced is not this character's to record: after a switch it would
+     * be filed under the arriving guild's key.
+     *
      * @param {Object} message - `profile_shared`
+     * @param {Object} [context] - The frame's socket
      */
-    _onProfile(message) {
+    _onProfile(message, context) {
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
         try {
             const capture = extractProfileSkills(message);
             if (!capture) return;
