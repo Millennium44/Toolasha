@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Saved loadouts are corrected from the game at login, so the Combat Sim, Lab Sim and labyrinth figures stop using gear you have since sold or swapped when a loadout update was missed.
 - The labyrinth path no longer counts shrouded rooms toward torches, so it stops warning about too few torches when you have enough.
 - A scroll chip shows your press at once and takes another straight away, instead of lagging behind the figures until its save finished.
 - A guild trial's measurement is now kept until someone opens Stats, even past a later fight, a reload or a character switch, and the trial board names fights still waiting.

@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ items: [], characterId: 'char1' }));
+const game = vi.hoisted(() => ({ items: [], characterId: 'char1', loadoutMap: undefined, writes: [] }));
 
 /** The store, with `getJSON` swappable so a test can land a switch inside a read */
 const store = vi.hoisted(() => ({ getJSON: async () => null }));
@@ -27,7 +27,10 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/storage.js', () => ({
-    default: { setJSON: () => {}, getJSON: (...args) => store.getJSON(...args) },
+    default: {
+        setJSON: (key, value) => game.writes.push({ key, value }),
+        getJSON: (...args) => store.getJSON(...args),
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -35,6 +38,9 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.items;
         },
         getCurrentCharacterId: () => game.characterId,
+        get characterData() {
+            return game.loadoutMap ? { characterLoadoutMap: game.loadoutMap } : {};
+        },
         // initialize() re-reads under the character-scoped key when this fires
         on: () => {},
         off: () => {},
@@ -56,6 +62,8 @@ const owned = (hrid, enhancementLevel, count = 1) => ({ itemHrid: hrid, enhancem
 beforeEach(() => {
     game.items = [];
     game.characterId = 'char1';
+    game.loadoutMap = undefined;
+    game.writes = [];
     store.getJSON = async () => null;
 });
 
@@ -373,5 +381,131 @@ describe('switching characters', () => {
         // the previous character's one snapshot in place because the
         // "already loaded" guard skipped the read entirely.
         expect(store.getAllSnapshots()).toHaveLength(0);
+    });
+});
+
+describe('the login data corrects a saved copy', () => {
+    const NECK = '/item_locations/neck';
+    const SOLD = '/items/necklace_of_speed';
+    const WORN = '/items/philosophers_necklace';
+    // The game's shape: keyed by loadout id, the wearable as a hash that usually says +0
+    const serverLoadout = (itemHrid, extra = {}) => ({
+        id: 39837,
+        characterID: 'char1',
+        actionTypeHrid: '/action_types/combat',
+        name: 'Melee - Stab',
+        isDefault: true,
+        useExactEnhancement: false,
+        ordinal: 1,
+        wearableMap: { [NECK]: `char1::/item_locations/inventory::${itemHrid}::0` },
+        foodItemHrids: ['/items/gummy'],
+        drinkItemHrids: [],
+        abilityMap: {},
+        ...extra,
+    });
+    const fresh = async () => {
+        const instance = new loadoutSnapshot.constructor();
+        await instance.initialize();
+        return instance;
+    };
+    const neckOf = (instance) =>
+        Object.values(instance.snapshots)[0].equipment.find((e) => e.itemLocationHrid === NECK);
+    const saved = (instance, itemHrid, level = 5) => {
+        instance._onLoadoutsUpdated({ characterLoadoutMap: { 39837: serverLoadout(itemHrid) } });
+        const stored = JSON.parse(JSON.stringify(instance.snapshots));
+        stored[39837].equipment[0].enhancementLevel = level;
+        stored[39837].savedAt = 1;
+        game.writes = [];
+        return stored;
+    };
+
+    test('gear sold while this script missed the update leaves every loadout at login', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        const instance = await fresh();
+
+        expect(neckOf(instance).itemHrid).toBe(WORN);
+        expect(game.writes.at(-1).key).toBe('loadout_snapshots_char1');
+        expect(game.writes.at(-1).value[39837].equipment[0].itemHrid).toBe(WORN);
+    });
+
+    test('so does a stale copy when the character-scoped read comes back later', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        const instance = await fresh();
+        const updates = [];
+        instance.onUpdate(() => updates.push(neckOf(instance).itemHrid));
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        await instance.characterInitializedHandler();
+
+        expect(updates).toEqual([WORN]);
+    });
+
+    test('an ordinary login writes nothing and keeps the level already worked out', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), WORN);
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        const instance = await fresh();
+
+        expect(game.writes).toEqual([]);
+        expect(neckOf(instance).enhancementLevel).toBe(5);
+    });
+
+    test('a level the loadout is pinned to does count as a change', async () => {
+        const instance = new loadoutSnapshot.constructor();
+        instance._onLoadoutsUpdated({
+            characterLoadoutMap: { 39837: serverLoadout(WORN, { useExactEnhancement: true }) },
+        });
+        const stored = JSON.parse(JSON.stringify(instance.snapshots));
+        stored[39837].equipment[0].enhancementLevel = 5;
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN, { useExactEnhancement: true }) };
+
+        expect(neckOf(await fresh()).enhancementLevel).toBe(0);
+    });
+
+    test('a loadout deleted elsewhere goes, and one added elsewhere comes', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), WORN);
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 40000: serverLoadout(WORN, { id: 40000, name: 'Ranged' }) };
+
+        const instance = await fresh();
+
+        expect(Object.keys(instance.snapshots)).toEqual(['40000']);
+    });
+
+    test('a character with every loadout deleted ends with none, an empty map being the server’s word', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), WORN);
+        store.getJSON = async () => stored;
+        game.loadoutMap = {};
+
+        expect((await fresh()).snapshots).toEqual({});
+    });
+
+    test('with no map to read the saved copy stands', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+
+        expect(neckOf(await fresh()).itemHrid).toBe(SOLD);
+        expect(game.writes).toEqual([]);
+    });
+
+    test('another character’s map never lands under this character’s key', async () => {
+        const stored = saved(new loadoutSnapshot.constructor(), SOLD);
+        store.getJSON = async () => stored;
+        game.loadoutMap = { 39837: serverLoadout(WORN, { characterID: 'someone-else' }) };
+
+        expect(neckOf(await fresh()).itemHrid).toBe(SOLD);
+        expect(game.writes).toEqual([]);
+    });
+
+    test('a store with nothing saved is filled from the login data', async () => {
+        game.loadoutMap = { 39837: serverLoadout(WORN) };
+
+        expect(neckOf(await fresh()).itemHrid).toBe(WORN);
     });
 });

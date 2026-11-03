@@ -113,6 +113,28 @@ function buildSnapshot(loadout, id) {
     };
 }
 
+/**
+ * What a snapshot says, for telling a real change from a re-save: not when it was saved, and not the level of a
+ * "highest owned" item, which is resolved when read and which `updateEnhancementLevel` moves in the stored copy.
+ * @param {Object} snapshots - { [characterLoadoutID]: snapshot }
+ * @returns {string}
+ */
+function snapshotsFingerprint(snapshots) {
+    const entries = Object.keys(snapshots)
+        .sort()
+        .map((id) => {
+            const { savedAt: _savedAt, equipment = [], ...rest } = snapshots[id];
+            const worn = equipment
+                .map((equip) => ({
+                    ...equip,
+                    enhancementLevel: rest.useExactEnhancement ? equip.enhancementLevel : null,
+                }))
+                .sort((a, b) => String(a.itemLocationHrid).localeCompare(String(b.itemLocationHrid)));
+            return [id, rest, worn];
+        });
+    return JSON.stringify(entries);
+}
+
 class LoadoutSnapshot {
     constructor() {
         this.snapshots = {}; // In-memory cache: { [characterLoadoutID]: snapshot }, name inside
@@ -212,8 +234,9 @@ class LoadoutSnapshot {
         // Covers both the first subscription and re-registering after disable()
         this._ensureSubscribed();
 
-        // Load from storage — loadouts_updated only fires when the user visits the loadouts
-        // UI, so storage is always the source of snapshots at startup.
+        // Storage first, so a read of it can never land after the server's word below. loadouts_updated
+        // does not fire at login, and one missed (the game played without this script, on another device, or
+        // an older copy arriving by sync) would otherwise leave sold gear in every loadout for good.
         const ticket = captureOwner(this);
         if (Object.keys(this.snapshots).length === 0) {
             const storageKey = getStorageKey();
@@ -244,14 +267,7 @@ class LoadoutSnapshot {
             if (!stillOurs(ticket)) return;
             this.snapshots = loaded;
 
-            // Fallback for Steam users: if storage is also empty, bootstrap from
-            // the characterLoadoutMap embedded in init_character_data (already in dataManager).
-            if (Object.keys(this.snapshots).length === 0) {
-                const characterLoadoutMap = dataManager.characterData?.characterLoadoutMap;
-                if (characterLoadoutMap && Object.keys(characterLoadoutMap).length > 0) {
-                    this._onLoadoutsUpdated({ characterLoadoutMap });
-                }
-            }
+            this._reconcileWithServer();
         }
 
         // Whatever the load produced — snapshots, or a genuinely empty store —
@@ -266,12 +282,38 @@ class LoadoutSnapshot {
             // is the module's own, so nothing serialises it against a further
             // switch — same reason as the read above
             if (getStorageKey() !== storageKey) return;
-            if (Object.keys(fresh).length > 0) {
-                this.snapshots = fresh;
-                this._emitUpdate();
-            }
+            const hadStored = Object.keys(fresh).length > 0;
+            if (hadStored) this.snapshots = fresh;
+            if (!this._reconcileWithServer() && hadStored) this._emitUpdate();
         };
         dataManager.on('character_initialized', this.characterInitializedHandler);
+    }
+
+    /**
+     * Put the store right from the loadouts the server sent with the character data, the current word on them.
+     * Writes and tells listeners only if something really differs, so an ordinary login stores nothing and gives
+     * sync nothing to push. No map (not sent, or another character's) leaves the store as it is.
+     * @returns {boolean} Whether the store changed
+     * @private
+     */
+    _reconcileWithServer() {
+        const loadoutMap = dataManager.characterData?.characterLoadoutMap;
+        if (!loadoutMap) return false;
+
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const next = {};
+        for (const [id, loadout] of Object.entries(loadoutMap)) {
+            if (!loadout.name) continue;
+            if (characterId && loadout.characterID && String(loadout.characterID) !== String(characterId)) return false;
+            next[id] = buildSnapshot(loadout, id);
+        }
+        if (snapshotsFingerprint(next) === snapshotsFingerprint(this.snapshots)) return false;
+
+        this.snapshots = next;
+        storage.setJSON(getStorageKey(), this.snapshots, 'settings');
+        this._markReady();
+        this._emitUpdate();
+        return true;
     }
 
     /**

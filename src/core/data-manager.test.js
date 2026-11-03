@@ -356,6 +356,19 @@ describe('equipped abilities through a labyrinth run', () => {
         { abilityHrid: '/abilities/toughness', slotNumber: 3, level: 10 },
     ];
 
+    test('a loadouts_updated message keeps the login copy of the loadouts current', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        await login(dataManager, NORMAL);
+        const characterLoadoutMap = { 39837: { id: 39837, name: 'Melee - Stab', wearableMap: {} } };
+
+        webSocketHandlers.get('loadouts_updated')({ characterLoadoutMap });
+        expect(dataManager.characterData.characterLoadoutMap).toBe(characterLoadoutMap);
+
+        // A message with no map says nothing about the loadouts
+        webSocketHandlers.get('loadouts_updated')({});
+        expect(dataManager.characterData.characterLoadoutMap).toBe(characterLoadoutMap);
+    });
+
     test('a lab loadout replaces the kit and leaving restores it', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         await login(dataManager, NORMAL);

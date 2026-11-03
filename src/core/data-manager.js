@@ -1516,6 +1516,14 @@ class DataManager {
         // labyrinth, which equips a loadout per room and restores on exit:
         // equipment tracked those swaps because items_updated was handled, and
         // abilities did not because this message was not.
+        // The login copy of the loadouts is what later readers trust, so it follows the game's updates
+        this.webSocketHook.on('loadouts_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+            if (this.characterData && data?.characterLoadoutMap) {
+                this.characterData.characterLoadoutMap = data.characterLoadoutMap;
+            }
+        });
+
         this.webSocketHook.on('abilities_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
 
