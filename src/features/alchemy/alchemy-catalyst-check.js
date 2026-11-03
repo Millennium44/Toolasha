@@ -63,6 +63,8 @@ const SAME_GESTURE_MS = 350;
  * 500 ms in, past the double-click window, and keeps firing for as long as Enter is held
  */
 const KEY_REPEAT_MS = 1000;
+/** How long a setup the player went ahead with stays agreed to: queueing several runs is one decision */
+const ACKNOWLEDGED_MS = 60_000;
 
 /**
  * What is in the panel's catalyst slot, from the sprite it draws.
@@ -161,6 +163,8 @@ class AlchemyCatalystCheck {
         this.pending = null;
         /** "Skip until reload": kept in memory only, so a reload or a character switch ends it */
         this.skipped = false;
+        /** The setup the player last went ahead with, and when. Compared on each press, so it needs no timer */
+        this.acknowledged = null;
     }
 
     initialize() {
@@ -171,7 +175,9 @@ class AlchemyCatalystCheck {
         this.clickHandler = (event) => this.onClick(event);
         document.addEventListener('click', this.clickHandler, true);
         this.settingUnsubscribe = config.onSettingChange(SETTING, (value) => {
-            if (!value) this.clearPending();
+            if (value) return;
+            this.clearPending();
+            this.acknowledged = null;
         });
         // Up before the first press, which would otherwise find the figures not ready and say nothing
         if (!expectedValueCalculator.isInitialized) requestExpectedValue();
@@ -186,6 +192,7 @@ class AlchemyCatalystCheck {
             this.clearPending();
             document.querySelectorAll(`.${MESSAGE_CLASS}`).forEach((el) => el.remove());
             this.skipped = false;
+            this.acknowledged = null;
         } catch (error) {
             console.error('[AlchemyCatalystCheck] Disable failed part-way:', error);
         } finally {
@@ -240,6 +247,7 @@ class AlchemyCatalystCheck {
         if (pending) {
             if (this.stillArmed(pending, context, panel)) {
                 if (this.isSameGesture(pending, event)) return true;
+                this.acknowledged = { signature: pending.signature, at: Date.now() };
                 this.clearPending();
                 return false;
             }
@@ -247,6 +255,7 @@ class AlchemyCatalystCheck {
         }
         if (!context) return false;
 
+        if (this.isAcknowledged(context)) return false;
         if (this.isAlreadyRunning(context)) return false;
         if (!expectedValueCalculator.isInitialized) {
             requestExpectedValue();
@@ -313,6 +322,17 @@ class AlchemyCatalystCheck {
             pending.node.isConnected &&
             context?.signature === pending.signature
         );
+    }
+
+    /**
+     * Whether the player has just gone ahead with this setup. The signature is what they agreed to, and carries neither
+     * the button nor the count, so Start and Queue and any number of runs are the same answer.
+     * @param {{signature: string}} context - The panel now
+     * @returns {boolean} True when it should not be asked again yet
+     */
+    isAcknowledged({ signature }) {
+        const acknowledged = this.acknowledged;
+        return acknowledged?.signature === signature && Date.now() - acknowledged.at < ACKNOWLEDGED_MS;
     }
 
     /**

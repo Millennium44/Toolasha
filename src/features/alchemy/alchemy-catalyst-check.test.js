@@ -341,11 +341,110 @@ describe('holding a press', () => {
         expect(vi.getTimerCount()).toBe(0);
     });
 
-    test('the press after that is a new first press', async () => {
+    test('having gone ahead, the same setup is not asked about again for a minute: queueing several runs', async () => {
+        press(queue());
+        await pause();
+        press(queue());
+        expect(game).toHaveBeenCalledTimes(1);
+        for (let run = 2; run <= 5; run += 1) {
+            await pause();
+            press(queue());
+            expect(game).toHaveBeenCalledTimes(run);
+            expect(message()).toBeNull();
+        }
+    });
+
+    test('what was agreed to does not depend on which button: Start then Queue, or a different count', async () => {
+        const count = document.createElement('input');
+        document.querySelector('[class*="SkillActionDetail_alchemyComponent"]').appendChild(count);
+        count.value = '10';
+        press(start());
+        await pause();
+        press(start());
+        count.value = '500';
+        press(queue());
+        expect(game).toHaveBeenCalledTimes(2);
+        expect(message()).toBeNull();
+    });
+
+    test('a minute later it asks again', async () => {
         press();
         await pause();
         press();
+        await vi.advanceTimersByTimeAsync(60_000);
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).not.toBeNull();
+    });
+
+    test('remembering costs no timer', async () => {
+        press();
         await pause();
+        press();
+        expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test.each([
+        ['another catalyst', () => setSlot(PRIME), 'Your choice, prime catalyst'],
+        [
+            'another item',
+            () => {
+                setAnswers('coinify', SWISS, { none: profit(1e6), typeSpecific: profit(9e6), prime: profit(2e6) });
+                document.querySelector('[class*="itemRequirements"]').innerHTML = requirementHtml(SWISS, 0);
+            },
+            '+9.0M/hr',
+        ],
+        [
+            'another level',
+            () => {
+                document.querySelector('[class*="itemRequirements"]').innerHTML = requirementHtml(CHEESE, 5);
+            },
+            'Your choice, no catalyst',
+        ],
+        [
+            'another action',
+            () => {
+                setAnswers('decompose', CHEESE, { none: profit(1e6), typeSpecific: profit(7e6), prime: profit(2e6) });
+                selectTab('Decompose');
+            },
+            '+7.0M/hr',
+        ],
+        [
+            'another character',
+            () => {
+                state.charId = 'char-2';
+            },
+            'Your choice, no catalyst',
+        ],
+    ])('%s is a new setup, judged afresh inside the minute', async (_name, change, expected) => {
+        press();
+        await pause();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        change();
+        await pause();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message().textContent).toContain(expected);
+    });
+
+    test('disable forgets what was agreed to', async () => {
+        press();
+        await pause();
+        press();
+        check.disable();
+        check.initialize();
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).not.toBeNull();
+    });
+
+    test('turning the setting off forgets it too, if the feature was never torn down', async () => {
+        press();
+        await pause();
+        press();
+        check.acknowledged = { signature: check.acknowledged?.signature, at: Date.now() };
+        for (const handler of state.settingHandlers.get('alchemyCatalystCheck')) handler(false);
         press();
         expect(game).toHaveBeenCalledTimes(1);
         expect(message()).not.toBeNull();
@@ -456,11 +555,9 @@ describe('holding a press', () => {
 
     test('each press asks the calculator afresh, so changed gear or drinks are in the figure', async () => {
         press();
-        await pause();
-        press();
+        await vi.advanceTimersByTimeAsync(15_000);
         const before = calculator.calculateCoinifyProfit.mock.calls.length;
         setAnswers('coinify', CHEESE, { none: profit(100_000), typeSpecific: profit(900_000), prime: profit(800_000) });
-        await pause();
         press();
         expect(calculator.calculateCoinifyProfit.mock.calls.length).toBeGreaterThan(before);
         expect(message().textContent).toContain('+900.0K/hr');
