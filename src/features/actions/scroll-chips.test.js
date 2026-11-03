@@ -66,6 +66,7 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     marketDepthCap: () => null,
     guildMemberSkills: () => null,
     scrollSimulator: () => null,
+    scrollPlannerInstance: () => null,
 }));
 
 const scrollSimulator = (await import('../combat/scroll-simulator.js')).default;

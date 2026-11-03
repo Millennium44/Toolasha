@@ -93,7 +93,7 @@ import staleCapitalView from '../features/market/stale-capital-view.js';
 import overbidPanel from '../features/market/overbid-panel.js';
 import watchlist, { watchlistPanel, watchItem } from '../features/inventory/watchlist.js';
 import autoAllButton from '../features/inventory/auto-all-button.js';
-import scrollPlanner from '../features/inventory/scroll-planner/scroll-planner.js';
+import scrollPlanner, { scrollPlannerInstance } from '../features/inventory/scroll-planner/scroll-planner.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
 import equipmentSavings, { equipmentSavingsPanel, watchTarget } from '../features/inventory/equipment-savings-row.js';
@@ -181,6 +181,8 @@ toolashaRoot.Market = {
     watchTarget,
     autoAllButton,
     scrollPlanner,
+    // The singleton behind the record above, for the action panel's scroll chips in the actions bundle
+    scrollPlannerInstance,
     inventoryCategoryTotals,
     customTabsFeature,
     equipmentSavings,

@@ -893,6 +893,146 @@ describe('ScrollPlanner', () => {
         });
     });
 
+    describe('openWithSelection (the way in from the action panel chips)', () => {
+        const modal = () => document.querySelector('.toolasha-scroll-planner-modal');
+        const row = (hrid) => modal().querySelector(`.toolasha-scroll-planner-row[data-item-hrid="${hrid}"]`);
+        const nameOf = (hrid) => row(hrid).querySelector('.toolasha-scroll-planner-name');
+        const qtyOf = (hrid) => row(hrid).querySelector('input').value;
+        const setN = (value) => {
+            const field = modal().querySelector('.toolasha-scroll-planner-quickfill input');
+            field.value = value;
+            field.dispatchEvent(new Event('input'));
+        };
+
+        test('is not active before initialize, with the setting off, or after cleanup, and opens nothing', async () => {
+            expect(planner.isRunning()).toBe(false);
+            expect(planner.openWithSelection([DAMAGE])).toBe(false);
+
+            mocks.settings.scrollPlanner = false;
+            await planner.initialize();
+            expect(planner.isRunning()).toBe(false);
+            expect(planner.openWithSelection([DAMAGE])).toBe(false);
+            expect(modal()).toBeNull();
+
+            mocks.settings.scrollPlanner = true;
+            await planner.initialize();
+            expect(planner.isRunning()).toBe(true);
+            planner.cleanup();
+            expect(planner.isRunning()).toBe(false);
+            expect(planner.openWithSelection([DAMAGE])).toBe(false);
+            expect(modal()).toBeNull();
+        });
+
+        test('opens the window with that scroll selected and no quantity: nothing is planned or pressed', async () => {
+            await planner.initialize();
+
+            expect(planner.openWithSelection([GATHERING])).toBe(true);
+
+            expect(nameOf(GATHERING).getAttribute('aria-pressed')).toBe('true');
+            expect(nameOf(DAMAGE).getAttribute('aria-pressed')).toBe('false');
+            expect(qtyOf(GATHERING)).toBe('');
+            expect(planner.draft).toEqual({});
+            expect(modal().textContent).toContain('highlighted scrolls are filled in');
+            // No run, no click on any inventory tile, no write
+            expect(planner.run).toBeNull();
+            expect(bar()).toBeNull();
+            expect(mocks.writes).toEqual([]);
+            expect(isScrollRunActive()).toBe(false);
+        });
+
+        test('typing N then fills the selected scroll, as if its name had been pressed', async () => {
+            await planner.initialize();
+            planner.openWithSelection([GATHERING]);
+
+            setN('3');
+
+            expect(qtyOf(GATHERING)).toBe('3');
+            expect(qtyOf(DAMAGE)).toBe('');
+            expect(planner.draft).toEqual({ [GATHERING]: 3 });
+        });
+
+        test('with the window already open, the draft, typed N and quantities stay and the scroll joins', async () => {
+            await planner.initialize();
+            planner.openModal();
+            setN('2');
+            nameOf(DAMAGE).click();
+            expect(qtyOf(DAMAGE)).toBe('2');
+
+            expect(planner.openWithSelection([WISDOM])).toBe(true);
+
+            expect(document.querySelectorAll('.toolasha-scroll-planner-modal')).toHaveLength(1);
+            expect(qtyOf(DAMAGE)).toBe('2');
+            expect(qtyOf(WISDOM)).toBe('2');
+            expect(nameOf(WISDOM).getAttribute('aria-pressed')).toBe('true');
+            expect(modal().querySelector('.toolasha-scroll-planner-quickfill input').value).toBe('2');
+            expect(planner.draft).toEqual({ [DAMAGE]: 2, [WISDOM]: 2 });
+        });
+
+        test('a quantity typed by hand in an open window survives', async () => {
+            await planner.initialize();
+            planner.openModal();
+            const input = row(GATHERING).querySelector('input');
+            input.value = '7';
+            input.dispatchEvent(new Event('input'));
+
+            planner.openWithSelection([DAMAGE]);
+
+            expect(qtyOf(GATHERING)).toBe('7');
+        });
+
+        test('ignores scrolls the planner has no row for, and opens nothing when none is left', async () => {
+            await planner.initialize();
+
+            expect(planner.openWithSelection(['/items/cheese', '/items/nope'])).toBe(false);
+            expect(modal()).toBeNull();
+            expect(planner.openWithSelection([])).toBe(false);
+            expect(planner.openWithSelection(undefined)).toBe(false);
+
+            expect(planner.openWithSelection(['/items/cheese', DAMAGE])).toBe(true);
+            expect(nameOf(DAMAGE).getAttribute('aria-pressed')).toBe('true');
+        });
+
+        test('no scroll data yet: no window', async () => {
+            await planner.initialize();
+            mocks.clientData = { itemDetailMap: {} };
+
+            expect(planner.openWithSelection([DAMAGE])).toBe(false);
+            expect(modal()).toBeNull();
+        });
+
+        test('inventory not loaded: the window says so, as it does from the menu', async () => {
+            await planner.initialize();
+            mocks.characterItems = null;
+
+            expect(planner.openWithSelection([DAMAGE])).toBe(true);
+
+            expect(modal().textContent).toContain('not loaded');
+        });
+
+        test('during a guided run the window still opens and the run is untouched', async () => {
+            buildInventory([DAMAGE]);
+            await planner.initialize();
+            await planner.startRun({ [DAMAGE]: 2 });
+            const run = planner.run;
+
+            expect(planner.openWithSelection([GATHERING])).toBe(true);
+
+            expect(planner.run).toBe(run);
+            expect(isScrollRunActive()).toBe(true);
+        });
+
+        test('the menu button still opens the window with nothing selected', async () => {
+            await planner.initialize();
+            const menu = buildMenu('Scroll Of Damage', DAMAGE);
+            planner.handleActionMenu(menu);
+
+            menu.querySelector('.toolasha-scroll-planner-btn').click();
+
+            expect(nameOf(DAMAGE).getAttribute('aria-pressed')).toBe('false');
+            expect(modal().textContent).not.toContain('highlighted scrolls');
+        });
+    });
+
     test('says when there is no last plan', async () => {
         await planner.initialize();
         planner.openModal();

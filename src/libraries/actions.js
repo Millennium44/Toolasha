@@ -19,6 +19,7 @@ import requiredMaterials from '../features/actions/required-materials.js';
 import missingMaterialsButton from '../features/actions/missing-materials-button.js';
 import budgetCalculator from '../features/actions/budget-calculator.js';
 import costSummary from '../features/actions/cost-summary.js';
+import scrollChipsPanel from '../features/actions/scroll-chips-panel.js';
 import actionPanelLayout from '../features/actions/action-panel-layout.js';
 import craftingPlan from '../features/crafting-plan/index.js';
 // The step walker is a stateful singleton the ui bundle's Iron Cow queue walk also drives; exporting it here
@@ -93,6 +94,7 @@ toolashaRoot.Actions = {
     missingMaterialsButton,
     budgetCalculator,
     costSummary,
+    scrollChipsPanel,
     actionPanelLayout,
     craftingPlan,
     craftingPlanWalk,

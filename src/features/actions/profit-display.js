@@ -26,7 +26,7 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
-import { buildScrollChips, watchForScrollChanges } from './scroll-chips.js';
+import { watchForScrollChanges } from './scroll-chips.js';
 import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import {
@@ -656,14 +656,6 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${gatheringLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
-    // Scroll toggles: a click saves the selection, then this same display runs again
-    const scrollChips = buildScrollChips({
-        actionTypeHrid: gatheringActionType,
-        spriteUrl: itemsSpriteUrl(),
-        onChange: () => displayGatheringProfit(panel, actionHrid, dropTableSelector),
-    });
-    if (scrollChips) topLevelContent.appendChild(scrollChips.element);
-
     const detailedBreakdownSection = createCollapsibleSection(
         '📊',
         'Per hour breakdown',
@@ -682,13 +674,11 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     // Add X actions breakdown section (updates dynamically with input)
     // Remove listeners from previous renders first so they don't accumulate on the panel
     clearPanelInputListeners(panel);
-    if (scrollChips) trackPanelInputListener(panel, scrollChips.dispose);
-    else {
-        trackPanelInputListener(
-            panel,
-            watchForScrollChanges(topLevelContent, () => displayGatheringProfit(panel, actionHrid, dropTableSelector))
-        );
-    }
+    // The scroll chips live in their own row on the panel; a change to the selection redraws this section
+    trackPanelInputListener(
+        panel,
+        watchForScrollChanges(topLevelContent, () => displayGatheringProfit(panel, actionHrid, dropTableSelector))
+    );
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;
@@ -1365,14 +1355,6 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     modeDiv.textContent = `Pricing Mode: ${modeLabel}  •  Loadout: ${productionLoadoutLabel}${priceAge ? `  •  ${priceAge}` : ''}`;
     topLevelContent.appendChild(modeDiv);
 
-    // Scroll toggles: a click saves the selection, then this same display runs again
-    const scrollChips = buildScrollChips({
-        actionTypeHrid: productionActionType,
-        spriteUrl: itemsSpriteUrl(),
-        onChange: () => displayProductionProfit(panel, actionHrid, dropTableSelector),
-    });
-    if (scrollChips) topLevelContent.appendChild(scrollChips.element);
-
     const detailedBreakdownSection = createCollapsibleSection(
         '📊',
         'Per hour breakdown',
@@ -1391,13 +1373,11 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     // Add X actions breakdown section (updates dynamically with input)
     // Remove listeners from previous renders first so they don't accumulate on the panel
     clearPanelInputListeners(panel);
-    if (scrollChips) trackPanelInputListener(panel, scrollChips.dispose);
-    else {
-        trackPanelInputListener(
-            panel,
-            watchForScrollChanges(topLevelContent, () => displayProductionProfit(panel, actionHrid, dropTableSelector))
-        );
-    }
+    // The scroll chips live in their own row on the panel; a change to the selection redraws this section
+    trackPanelInputListener(
+        panel,
+        watchForScrollChanges(topLevelContent, () => displayProductionProfit(panel, actionHrid, dropTableSelector))
+    );
     const inputField = findActionInput(panel);
     if (inputField) {
         const inputValue = parseInt(inputField.value) || 0;

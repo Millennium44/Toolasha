@@ -1325,6 +1325,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'scrollChipsPanel',
+            name: 'Scroll Chips',
+            category: 'Actions',
+            module: Actions.scrollChipsPanel,
+            async: false,
+            // The chips are the way into the scroll simulation, so they follow its switch both ways
+            customCheck: () => config.getSetting('simulateScrollEffects'),
+            liveStop: true,
+        },
+        {
             key: 'craftingPlan',
             name: 'Crafting Plan',
             category: 'Actions',

@@ -1,8 +1,9 @@
 /** @vitest-environment happy-dom */
 
 /**
- * Scroll chips inside the gathering profit section: a click saves the selection and
- * runs the same display again, with the new selection armed for the calculation.
+ * The gathering profit section and the scroll selection. The chips are their own row on the panel
+ * (scroll-chips-panel.js), not part of this section: the section draws none, and redraws with the
+ * new selection armed whenever the selection changes, whether or not the section drew any chips.
  */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
@@ -129,7 +130,7 @@ const { displayGatheringProfit } = await import('./profit-display.js');
 
 const EFF = '/buff_types/efficiency';
 
-describe('scroll chips in the gathering profit section', () => {
+describe('the gathering profit section follows the scroll selection', () => {
     beforeEach(async () => {
         game.saved = {};
         game.armed = [];
@@ -153,10 +154,11 @@ describe('scroll chips in the gathering profit section', () => {
         return panel;
     }
 
-    test('draws the chips in the profit section, and none when the master toggle is off', async () => {
+    test('draws no chips of its own, with simulation on or off', async () => {
         const panel = makePanel();
         await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
-        expect(panel.querySelectorAll('#mwi-foraging-profit .mwi-scroll-chips button[data-buff]')).toHaveLength(1);
+        expect(panel.querySelector('#mwi-foraging-profit')).toBeTruthy();
+        expect(panel.querySelector('.mwi-scroll-chips')).toBeNull();
 
         game.values.simulateScrollEffects = false;
         await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
@@ -164,66 +166,49 @@ describe('scroll chips in the gathering profit section', () => {
         expect(panel.querySelector('#mwi-foraging-profit')).toBeTruthy();
     });
 
-    test('switching simulation on brings the chips into a panel that is already open', async () => {
-        game.values.simulateScrollEffects = false;
-        const panel = makePanel();
-        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
-        expect(panel.querySelector('.mwi-scroll-chips')).toBeNull();
-
-        // What the setting's change handler sends
-        game.values.simulateScrollEffects = true;
-        document.dispatchEvent(
-            new CustomEvent('toolasha:scroll-selection-changed', { detail: { key: null, setting: true } })
-        );
-
-        await vi.waitFor(() => expect(panel.querySelector('.mwi-scroll-chips')).toBeTruthy());
-        expect(panel.querySelectorAll('#mwi-foraging-profit')).toHaveLength(1);
-    });
-
-    test('switching simulation off takes the chips out of an open panel', async () => {
-        const panel = makePanel();
-        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
-        expect(panel.querySelector('.mwi-scroll-chips')).toBeTruthy();
-
-        game.values.simulateScrollEffects = false;
-        document.dispatchEvent(
-            new CustomEvent('toolasha:scroll-selection-changed', { detail: { key: null, setting: true } })
-        );
-
-        await vi.waitFor(() => expect(panel.querySelector('.mwi-scroll-chips')).toBeNull());
-    });
-
-    test('no chips when the profit section is hidden', async () => {
-        game.values.actionPanel_showProfitDetail = false;
+    test('with simulation on and nothing selected, nothing is armed: the figures are the real ones', async () => {
         const panel = makePanel();
         await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
 
-        expect(panel.querySelector('.mwi-scroll-chips')).toBeNull();
+        expect(game.armed.at(-1)).toEqual([]);
     });
 
-    test('a click saves, then recalculates with the scroll armed, in one fresh section', async () => {
+    test('a selection saved elsewhere (a chip, the Loadouts popup) recalculates with it armed, in one fresh section', async () => {
         const panel = makePanel();
         await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
         const callsBefore = calculateGatheringProfitMock.mock.calls.length;
-        expect(game.armed.at(-1)).toEqual([]);
 
-        panel.querySelector(`button[data-buff="${EFF}"]`).click();
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
         await vi.waitFor(() => expect(calculateGatheringProfitMock.mock.calls.length).toBe(callsBefore + 1));
-        await vi.waitFor(() => expect(panel.querySelector(`button[data-buff="${EFF}"]`)?.dataset.on).toBe('true'));
 
         expect(game.armed.at(-1)).toEqual([EFF]);
         expect(panel.querySelectorAll('#mwi-foraging-profit')).toHaveLength(1);
-        expect(panel.querySelectorAll('.mwi-scroll-chips')).toHaveLength(1);
     });
 
-    test('re-rendering does not stack listeners: one click recalculates once', async () => {
+    test('switching simulation off redraws the section with nothing armed', async () => {
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(game.armed.at(-1)).toEqual([EFF]);
+        const callsBefore = calculateGatheringProfitMock.mock.calls.length;
+
+        game.values.simulateScrollEffects = false;
+        document.dispatchEvent(
+            new CustomEvent('toolasha:scroll-selection-changed', { detail: { key: null, setting: true } })
+        );
+
+        await vi.waitFor(() => expect(calculateGatheringProfitMock.mock.calls.length).toBe(callsBefore + 1));
+        expect(game.armed.at(-1)).toEqual([]);
+    });
+
+    test('re-rendering does not stack listeners: one selection change recalculates once', async () => {
         const panel = makePanel();
         for (let i = 0; i < 4; i++) {
             await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
         }
         const callsBefore = calculateGatheringProfitMock.mock.calls.length;
 
-        panel.querySelector(`button[data-buff="${EFF}"]`).click();
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
         await vi.waitFor(() => expect(calculateGatheringProfitMock.mock.calls.length).toBeGreaterThan(callsBefore));
         await new Promise((resolve) => setTimeout(resolve, 0));
 
