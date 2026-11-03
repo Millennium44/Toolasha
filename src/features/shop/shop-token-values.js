@@ -241,8 +241,8 @@ class ShopTokenValues {
         element.title = line.assumed
             ? line.assumedValue > 0
                 ? `Not on the market. Assumed worth ${formatKMB(line.assumedValue)} from the untradable-cape setting` +
-                  `${line.partial ? ' (a floor: the base cape counts as nothing)' : ''}, never taxed and never marked best.`
-                : 'Not on the market, and the untradable-cape setting values the base cape at nothing. Never marked best.'
+                  `${line.partial ? ' (a floor: the base cape counts as nothing, or a refinement stone is unpriced)' : ''}, never taxed and never marked best.`
+                : 'Not on the market, and nothing could value it (the untradable-cape setting counts an unrefined cape at nothing; a refined cape needs its refinement stones priced). Never marked best.'
             : isBest
               ? `Best value for this token: market value of what it buys, after market tax, per token (${badgeSide()} price).`
               : `Market value of what it buys, after market tax, per token (${badgeSide()} price).`;

@@ -978,6 +978,8 @@ describe('untradable items with no price', () => {
 
     beforeEach(() => {
         mocks.itemDetails[CAPE_HRID] = { equipmentDetail: { type: '/equipment_types/back' } };
+        // The mirror setting with no mirror price: a missing term, so the row still asks for a price
+        mocks.capeMode = 'mirror';
     });
 
     test('needs a price: cost-derived figures are unknown, not computed from 0', () => {
@@ -1027,33 +1029,20 @@ describe('untradable items with no price', () => {
         expect(row.costSource).toBe('capeSetting');
         expect(row.cost).toBeGreaterThan(0);
 
+        // "Nothing" is the player's own setting, so an unrefined cape costs a plain 0, not a missing price
         mocks.capeMode = 'zero';
+        const free = calc.calculateRow(CAPE_HRID, cape());
+        expect(free.needsPrice).toBe(false);
+        expect(free.costSource).toBe('capeZero');
+        expect(free.cost).toBe(0);
+        expect(free.profitPerHour).not.toBeNull();
+        // A mirror setting whose mirror has no price is a missing term, not a free one
+        mocks.capeMode = 'mirror';
+        delete mocks.prices[`${MIRROR_HRID}+0`];
         expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
     });
 
-    test('a refined cape craft counts the base at the setting, or needs a price', () => {
-        const REFINED = '/items/test_cape_refined';
-        mocks.refineActions['/actions/refine_cape'] = {
-            outputItems: [{ itemHrid: REFINED }],
-            inputItems: [{ itemHrid: OTHER_HRID, count: 10 }],
-            upgradeItemHrid: CAPE_HRID,
-        };
-        calc.pricingMode = 'conservative';
-        const details = cape(REFINED);
-
-        const blank = calc.calculateRow(REFINED, details);
-        expect(blank.needsPrice).toBe(true);
-        expect(blank.profitPerHour).toBeNull();
-
-        mocks.capeMode = 'mirror';
-        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
-        const valued = calc.calculateRow(REFINED, details);
-        expect(valued.needsPrice).toBe(false);
-        expect(valued.cost).toBeGreaterThan(10 * 200);
-        expect(calc._craftBaseNotes[REFINED]).toBe('capeSetting');
-    });
-
-    test('an unresolved refined cape stays needs-price instead of taking the unrefined base value', () => {
+    function refinedCape(extraPrices = {}) {
         const REFINED = '/items/test_cape_refined';
         mocks.refineActions['/actions/refine_cape'] = {
             outputItems: [{ itemHrid: REFINED }],
@@ -1061,12 +1050,62 @@ describe('untradable items with no price', () => {
             upgradeItemHrid: CAPE_HRID,
         };
         mocks.itemDetails[REFINED] = { equipmentDetail: { type: '/equipment_types/back' } };
-        mocks.capeMode = 'mirror';
-        mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
-        delete mocks.prices[`${OTHER_HRID}+0`]; // a refinement material nobody lists
-        const row = calc.calculateRow(REFINED, cape(REFINED));
-        expect(row.needsPrice).toBe(true);
-        expect(row.profitPerHour).toBeNull();
+        Object.assign(mocks.prices, extraPrices);
+        return { REFINED, details: cape(REFINED) };
+    }
+
+    test('a refined cape costs its refinement stones alone under either cape setting', () => {
+        const { REFINED, details } = refinedCape({ [`${MIRROR_HRID}+0`]: { ask: 7000, bid: 6000 } });
+        calc.pricingMode = 'conservative';
+        for (const mode of ['zero', 'mirror']) {
+            mocks.capeMode = mode;
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.needsPrice).toBe(false);
+            expect(row.costSource).toBe('craft');
+            // 10 shards at the ask (200): the mirror is never added to a refined cape
+            expect(row.cost).toBe(2000);
+            expect(row.profitPerHour).not.toBeNull();
+            expect(calc._craftBaseNotes[REFINED]).toBe('untradable');
+        }
+    });
+
+    test('the stones follow the table pricing mode', () => {
+        const { REFINED, details } = refinedCape();
+        calc.pricingMode = 'conservative';
+        const ask = calc.calculateRow(REFINED, details).cost;
+        calc.pricingMode = 'optimistic';
+        const bid = calc.calculateRow(REFINED, details).cost;
+        expect(ask).toBe(2000);
+        expect(bid).toBe(1000);
+    });
+
+    test('an unpriced stone leaves a refined cape unpriced under either setting, never 0', () => {
+        const { REFINED, details } = refinedCape();
+        delete mocks.prices[`${OTHER_HRID}+0`]; // a refinement stone nobody lists
+        for (const mode of ['zero', 'mirror']) {
+            mocks.capeMode = mode;
+            mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.needsPrice).toBe(true);
+            expect(row.cost).toBeNull();
+            expect(row.profitPerHour).toBeNull();
+        }
+    });
+
+    test('a market listing below the stone bill still wins, and a manual override beats both', () => {
+        const { REFINED, details } = refinedCape({ [`${REFINED_HRID}+0`]: { ask: 500, bid: 400 } });
+        calc.pricingMode = 'conservative';
+        const listed = calc.calculateRow(REFINED, details);
+        expect(listed.costSource).toBe('market');
+        expect(listed.cost).toBe(500);
+
+        mocks.prices[`${REFINED_HRID}+0`] = { ask: 9000, bid: 8000 };
+        expect(calc.calculateRow(REFINED, details).cost).toBe(2000);
+
+        calc.itemCostOverrides[REFINED] = 1234;
+        const pinned = calc.calculateRow(REFINED, details);
+        expect(pinned.costSource).toBe('override');
+        expect(pinned.cost).toBe(1234);
     });
 
     test('the cape stand-in is priced on the table own buy side, not the global one', () => {

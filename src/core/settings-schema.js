@@ -2133,7 +2133,7 @@ export const settingsGroups = {
                     { value: 'zero', label: 'Nothing (0)' },
                     { value: 'mirror', label: 'Same as a Mirror of Protection' },
                 ],
-                help: 'Capes (including the Chimerical Quiver and Enchanted Cloak) cannot be traded, so they have no market price. Sets what an unrefined cape is assumed to be worth in alchemy profit, enhancement costs, net worth and chest values. Refined and enhanced capes add their refinement cost and average enhancement cost (using your own stats) on top. Capes are never taxed, since they cannot be sold. Anywhere the base counts as nothing, the figure is marked as a floor.',
+                help: 'Capes (including the Chimerical Quiver and Enchanted Cloak) cannot be traded, so they have no market price. Sets what an unrefined cape is assumed to be worth in alchemy profit, enhancement costs, net worth and chest values. It applies to unrefined capes only: a refined cape is always valued by its refinement stones alone (the base cape is never added), and an enhanced one adds its average enhancement cost (using your own stats) on top. Capes are never taxed, since they cannot be sold. Where an unrefined cape counts as nothing, the figure is marked as a floor.',
             },
             profitCalc_patientTickBuy: {
                 id: 'profitCalc_patientTickBuy',

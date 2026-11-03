@@ -1405,16 +1405,19 @@ class AlchemyBestItems {
             }
             // An untradable cape has no market price: its value in this row is an assumption
             if (isUntradableCape(item.itemHrid)) {
-                const baseValue = isRefinedCape(item.itemHrid) ? 0 : getCapeBaseValue();
+                const refined = isRefinedCape(item.itemHrid);
+                const baseValue = refined ? 0 : getCapeBaseValue();
                 const marker = document.createElement('span');
                 marker.textContent = '*';
                 marker.setAttribute('data-mwi-assumed-value', 'true');
                 marker.style.cssText = 'color: #fbbf24; margin-left: 2px; cursor: help;';
                 marker.title =
                     'Not on the market, so its value here is an assumption: ' +
-                    (baseValue > 0
-                        ? `the base cape counts as ${formatWithSeparator(Math.round(baseValue))} coins (the untradable-cape setting)`
-                        : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
+                    (refined
+                        ? 'a refined cape is valued by its refinement stones alone (the base cape is not added)'
+                        : baseValue > 0
+                          ? `the base cape counts as ${formatWithSeparator(Math.round(baseValue))} coins (the untradable-cape setting)`
+                          : 'the base cape counts as nothing (the untradable-cape setting), so this is a floor') +
                     ', plus refinement and your own enhancing cost. Never taxed.';
                 nameTd.appendChild(marker);
             }

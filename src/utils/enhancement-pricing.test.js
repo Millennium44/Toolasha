@@ -414,3 +414,52 @@ describe('getProductionCostDetailed before game data loads', () => {
         expect(getProductionCostDetailed('/items/late_mat').cost).toBe(200);
     });
 });
+
+describe('a refined untradable cape is its refinement stones alone', () => {
+    const CAPE = '/items/test_cape';
+    const REFINED = '/items/test_cape_refined';
+    const STONE = '/items/test_stone';
+
+    beforeEach(() => {
+        game.items[CAPE] = { name: 'Cape', equipmentDetail: { type: '/equipment_types/back' } };
+        game.items[REFINED] = { name: 'Cape R', equipmentDetail: { type: '/equipment_types/back' } };
+        game.items[STONE] = { name: 'Stone' };
+        game.actions['/actions/refine_test_cape'] = {
+            type: '/action_types/alchemy',
+            inputItems: [
+                { itemHrid: STONE, count: 10 },
+                { itemHrid: '/items/coin', count: 500 },
+            ],
+            outputItems: [{ itemHrid: REFINED, count: 1 }],
+            upgradeItemHrid: CAPE,
+        };
+        game.prices[`${STONE}:0`] = { ask: 100, bid: 90 };
+        game.prices['/items/mirror_of_protection:0'] = { ask: 7000, bid: 6000 };
+    });
+
+    test('the cape setting changes nothing: stones plus the coin fee, not partial, base never added', async () => {
+        const { default: config } = await import('../core/config.js');
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            expect(getProductionCostDetailed(REFINED, 'ask')).toEqual({ cost: 1500, partial: false });
+            expect(getProductionCostDetailed(REFINED, 'bid').cost).toBe(1400);
+            spy.mockRestore();
+        }
+    });
+
+    test('an unpriced stone leaves the bill partial under either setting', async () => {
+        const { default: config } = await import('../core/config.js');
+        delete game.prices[`${STONE}:0`];
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            expect(getProductionCostDetailed(REFINED, 'ask').partial).toBe(true);
+            spy.mockRestore();
+        }
+    });
+});

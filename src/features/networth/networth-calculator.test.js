@@ -1943,7 +1943,7 @@ describe('untradable capes', () => {
         expect(await calculateItemValueDetailed({ itemHrid: '/items/key' })).toEqual({ value: 0, partial: false });
     });
 
-    test('a refined cape counts its base through the recipe: mirror setting adds it, "nothing" leaves a flagged floor', async () => {
+    test('a refined cape is its refinement stones alone, whatever the cape setting says', async () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
@@ -1960,12 +1960,18 @@ describe('untradable capes', () => {
 
         expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
             value: 1000,
-            partial: true,
+            partial: false,
         });
         mocks.settings.untradableCapeBaseValue = 'mirror';
         expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
-            value: 2000,
+            value: 1000,
             partial: false,
+        });
+        // An unpriced stone is still a flagged floor, never a silent 0
+        delete mocks.itemPrices['/items/shard'];
+        expect(await calculateItemValueDetailed({ itemHrid: REFINED, enhancementLevel: 0 })).toEqual({
+            value: 0,
+            partial: true,
         });
     });
 
@@ -1988,7 +1994,7 @@ describe('untradable capes', () => {
         });
     });
 
-    test('the worker is handed the main thread own fallback bill for a refined cape, base and refinement together', async () => {
+    test('the worker is handed the main thread own fallback bill for a refined cape, the stones alone under either setting', async () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
@@ -2014,8 +2020,8 @@ describe('untradable capes', () => {
         };
 
         for (const [mode, expected] of [
-            ['zero', { price: 1000, partial: true }],
-            ['mirror', { price: 2000, partial: false }],
+            ['zero', { price: 1000, partial: false }],
+            ['mirror', { price: 1000, partial: false }],
         ]) {
             mocks.settings.untradableCapeBaseValue = mode;
             workerBatch.mockReset();

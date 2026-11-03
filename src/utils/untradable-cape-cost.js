@@ -12,7 +12,7 @@ import { isUntradableCape } from './untradable-cape.js';
 
 /**
  * Value of one unenhanced untradable cape: the cape setting for an unrefined one; the refinement
- * bill plus that base for a refined one.
+ * stones alone for a refined one (its base cape is never added, whatever the setting says).
  *
  * @param {string} itemHrid - Cape item HRID (base or refined)
  * @param {Object} [options] - Pricing options
@@ -20,7 +20,7 @@ import { isUntradableCape } from './untradable-cape.js';
  * @param {'ask'|'bid'|'average'} [options.mode] - Force one book side
  * @returns {{value: number|null, partial: boolean}|null} null when the item is not an untradable
  *   cape. `value` is null when nothing prices it (never 0 standing in for a value); `partial` is
- *   true when the figure is a floor (an input nothing prices, or a base the setting values at nothing)
+ *   true when the figure is a floor (a refinement stone nothing prices, or an unrefined base the setting values at nothing)
  */
 export function getUntradableCapeBaseCost(itemHrid, { context = 'profit', mode } = {}) {
     if (!isUntradableCape(itemHrid)) return null;

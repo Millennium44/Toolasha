@@ -42,7 +42,7 @@ import { isExcluded, getExclusions } from './networth-exclusions.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { getArtisanBonus } from '../../utils/artisan-bonus.js';
-import { getCapeBaseValue, isRefinedCape, isUntradableCape } from '../../utils/untradable-cape.js';
+import { getCapeBaseValue, isRefinedCape, isUntradableCape, leavesOutCapeBase } from '../../utils/untradable-cape.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { GUILD_CREDIT_HRIDS } from '../../utils/guild-credit-hrids.js';
 import { guildCreditPricingMode } from '../../utils/guild-credit-networth-side.js';
@@ -601,7 +601,8 @@ function craftingBill(itemHrid) {
 
     // Add upgrade item cost (not affected by Artisan Tea)
     let upgradeCost = 0;
-    if (action.upgradeItemHrid) {
+    // (A refined cape's base cape is left out: the stones are the whole bill, see leavesOutCapeBase)
+    if (action.upgradeItemHrid && !leavesOutCapeBase(itemHrid, action.upgradeItemHrid)) {
         const upgrade = priceWithPartial(action.upgradeItemHrid, 0, null);
         if (upgrade.partial || !(upgrade.price > 0)) partial = true;
         upgradeCost = upgrade.price;

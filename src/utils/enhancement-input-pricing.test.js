@@ -704,19 +704,19 @@ describe('untradable capes', () => {
         expect(priceBase('/items/cloak').assumed).toBeUndefined();
     });
 
-    test('a refined cape is its refinement bill plus the base per the setting, and the setting is in the cost cache key', () => {
+    test('a refined cape is its refinement stones alone under either setting, never partial for a zero base', () => {
         addRefineRecipe();
-        // Nothing for the base: the bill is the materials only, and says it is a floor
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
-        expect(priceBase(REFINED).assumed).toBeUndefined();
-        game.capeMode = 'mirror';
-        // The mirror inside the bill is an assumption, not something a player could pay for
-        expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
-        game.craftingSetting = true;
-        expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
+        for (const mode of ['zero', 'mirror']) {
+            game.capeMode = mode;
+            for (const crafting of [false, true]) {
+                game.craftingSetting = crafting;
+                const priced = priceBase(REFINED);
+                expect(priced).toMatchObject({ price: 1000, partial: false });
+                expect(priced.assumed).toBeUndefined();
+            }
+        }
         game.craftingSetting = false;
         game.capeMode = 'zero';
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
     });
 
     test('the cape setting is part of the pricing stamp, so cached enhancement costs are dropped when it moves', () => {

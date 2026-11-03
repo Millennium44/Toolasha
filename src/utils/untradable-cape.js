@@ -54,6 +54,20 @@ export function isRefinedCape(itemHrid) {
 }
 
 /**
+ * Whether a recipe's upgrade item is left out of its bill: a refined (★) cape is valued by its refinement
+ * stones alone. The base cape it upgrades is a cape the player owns, never bought, so it is not added at
+ * the cape setting's value or at anything else, and a base of nothing does not make the figure partial.
+ * The one rule every refined-cape price shares (the production bill, net worth's bill, and through them
+ * the history viewers, Philo and the profit tables).
+ * @param {string} outputHrid - The item the recipe makes
+ * @param {string} upgradeItemHrid - The recipe's upgrade item
+ * @returns {boolean} True for a refined cape upgraded from an untradable cape
+ */
+export function leavesOutCapeBase(outputHrid, upgradeItemHrid) {
+    return isRefinedCape(outputHrid) && isUntradableCape(upgradeItemHrid);
+}
+
+/**
  * The unrefined cape behind a refined one.
  * @param {string} itemHrid - Item HRID
  * @returns {string} The hrid without its refined suffix (unchanged when not refined)
