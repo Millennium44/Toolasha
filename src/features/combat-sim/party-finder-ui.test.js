@@ -786,6 +786,36 @@ describe('aura options in the tab', () => {
         ]);
     });
 
+    test('a ninth aura against a list another tab filled is refused out loud, and the editor redraws full', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await openAuras('a');
+        // Drawn with room for more; another tab fills the list before Add is pressed
+        const eight = Array.from({ length: 8 }, (_, i) => ({ hrid: `/abilities/other_${i}`, level: 5 + i }));
+        state.db.entries[0].auras = eight;
+        state.db.entries[0].updatedAt = 2;
+        tab.root.querySelector('[data-pf-aura-pick="a"]').value = '/abilities/mystic_aura';
+        tab.root.querySelector('[data-pf-aura-level="a"]').value = '15';
+        tab.root.querySelector('[data-pf-aura-add="a"]').click();
+        await flush();
+        expect(state.db.entries[0].auras).toEqual(eight);
+        // An unchanged teammate is not stamped as a newer edit
+        expect(state.db.entries[0].updatedAt).toBe(2);
+        expect(el('roster-note').textContent).toBe('At most 8 aura options, so that one was not added.');
+        expect(tab.root.querySelector('[data-pf-aura-add="a"]')).toBeNull();
+    });
+
+    test('with room left the same add says nothing', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        await mountTab();
+        await openAuras('a');
+        tab.root.querySelector('[data-pf-aura-pick="a"]').value = '/abilities/mystic_aura';
+        tab.root.querySelector('[data-pf-aura-level="a"]').value = '15';
+        tab.root.querySelector('[data-pf-aura-add="a"]').click();
+        await flush();
+        expect(el('roster-note').textContent).toBe('');
+    });
+
     test('a stored aura the game no longer has is shown as skipped, and the plan says so', async () => {
         seedRoster([['a', 'Ann', build(80)]]);
         state.db.entries[0].auras = [{ hrid: '/abilities/retired_aura', level: 10 }];

@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Two full Party Finder rosters on different devices now settle on the same 40 teammates and saved builds, the most recently changed, and adding a ninth aura option after another tab filled the list says it was not added.
 - Sync no longer loses a setting's change time if a tab closes or a sync reads mid-write during imports, migrations and copies between characters.
 - Hand-removing a catalyst from an alchemy session and resuming no longer undercosts the catalysts used afterward.
 - The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.

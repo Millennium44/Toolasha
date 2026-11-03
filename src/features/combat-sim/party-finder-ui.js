@@ -1125,6 +1125,9 @@ export class PartyFinderTab {
             this._adoptRoster(result);
             if (!result.ok) this._rosterNote('Could not save the aura options.', true);
             else if (!result.found) this._rosterNote('That teammate is gone (deleted elsewhere?).', true);
+            else if (result.capped) {
+                this._rosterNote(`At most ${MAX_AURA_OPTIONS} aura options, so that one was not added.`, true);
+            }
         };
 
         const current = entry.dto?.abilities?.[0]?.hrid;
