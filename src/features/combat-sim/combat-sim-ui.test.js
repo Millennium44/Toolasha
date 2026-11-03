@@ -5230,6 +5230,17 @@ describe('upgrade row handoff', () => {
         expect(enhanced.title).toContain('gives up its resale, 1.0M');
     });
 
+    test('a fresh refined-cape base on "nothing" says it is the stones alone, with no base cape counted', () => {
+        const fresh = { fromLevel: 0, toLevel: 0, fresh: true, alreadyHeld: false, isSelf: true, baseCost: 1000 };
+        const plain = upgradeCostCell({ cost: 1000, costDetail: { ladder: fresh } });
+        expect(plain.title).toBe(
+            'Enhance from +0 to +0: you hold no spare copy, so this includes a fresh base at 1.0K.'
+        );
+        const stones = upgradeCostCell({ cost: 1000, costDetail: { ladder: { ...fresh, baseStonesOnly: true } } });
+        expect(stones.title).toContain('fresh base at 1.0K (the refinement stones alone');
+        expect(stones.title).toContain('counts the base cape as nothing');
+    });
+
     test('the buttons add the item to savings and to the watchlist', () => {
         const container = document.createElement('div');
         container.innerHTML = upgradeRowActionsHtml(

@@ -708,11 +708,14 @@ describe('untradable capes', () => {
 
     test('a refined cape is its stones plus the base by the setting: zero is complete, mirror adds one mirror', () => {
         addRefineRecipe();
-        // Nothing: the player's own choice, so the stones alone are a complete bill, yet still not a price a
-        // buyer could pay (a cape cannot be bought), so it is flagged assumed on both settings
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
+        // Nothing: the player's own choice, so the stones alone are a complete bill a buyer may use, flagged as
+        // counting no base cape; only the mirror setting makes it an assumption
+        const zero = priceBase(REFINED);
+        expect(zero).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
+        expect(zero.assumed).toBeUndefined();
         game.craftingSetting = true;
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
+        expect(priceBase(REFINED).assumed).toBeUndefined();
         game.craftingSetting = false;
         game.capeMode = 'mirror';
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
@@ -720,7 +723,7 @@ describe('untradable capes', () => {
         expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
         game.craftingSetting = false;
         game.capeMode = 'zero';
-        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, assumed: true });
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false, baseCapeCounted: false });
     });
 
     test('a mirror setting with no mirror price leaves a refined cape a flagged floor, not stones alone', () => {

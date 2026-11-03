@@ -471,36 +471,43 @@ describe('resale and material buys follow the pricing mode', () => {
     });
 });
 
-describe('a refined untradable cape is never priced as a purchase', () => {
+describe('a refined untradable cape in the advisor follows the cape setting', () => {
     beforeEach(() => {
-        // Ten shards at 100 each: the bill is 1000 with the base counted as nothing, more with a mirror
+        // Ten shards at 100 each: the bill is 1000 stones alone, 91,000 with a mirror
         state.books[`${SHARD}:0`] = { ask: 100, bid: 90 };
     });
 
-    /** The row's price and whether the advisor called it unpriced */
+    /** The row's buy price, its net and the ladder's note */
     const starRow = () => {
         const detail = explainUpgradeCost(tier(0, CAPE_STAR), gameData);
-        return { price: detail.buys[0].price, net: detail.net, unpriced: detail.unpriced };
+        return { price: detail.buys[0].price, net: detail.net, unpriced: detail.unpriced, ladder: detail.ladder };
     };
 
-    test('unpriced on "nothing", as when the base made the bill partial (stones alone are not a buy)', () => {
+    test('"nothing": priced at the stones alone, and the ladder says no base cape is in it', () => {
         state.capeMode = 'zero';
-        expect(starRow()).toEqual({ price: null, net: null, unpriced: ['Test Cape (Refined)'] });
+        const row = starRow();
+        expect(row.price).toBe(1000);
+        expect(row.net).toBe(1000);
+        expect(row.unpriced).toEqual([]);
+        expect(row.ladder).toMatchObject({ fresh: true, baseCost: 1000, baseStonesOnly: true });
+        expect(calculateUpgradeCost(tier(0, CAPE_STAR), gameData)).toBe(1000);
+    });
+
+    test('mirror: unpriced, with or without a mirror price, because the mirror is an assumption', () => {
+        state.capeMode = 'mirror';
+        expect(starRow()).toMatchObject({ price: null, net: null, unpriced: ['Test Cape (Refined)'] });
+        delete state.books['/items/mirror_of_protection:0'];
+        expect(starRow().price).toBeNull();
         expect(calculateUpgradeCost(tier(0, CAPE_STAR), gameData)).toBeNull();
     });
 
-    test('unpriced on the mirror setting, with or without a mirror price', () => {
-        state.capeMode = 'mirror';
-        expect(starRow().price).toBeNull();
-        delete state.books['/items/mirror_of_protection:0'];
-        expect(starRow().price).toBeNull();
-    });
-
-    test('a custom buy price the player set for the star cape is still the buy, on either setting', () => {
+    test('a custom buy price the player set for the star cape is the buy on either setting, with no stones note', () => {
         state.custom[`${CAPE_STAR}:0:buy`] = 4_000_000;
         for (const mode of ['zero', 'mirror']) {
             state.capeMode = mode;
-            expect(starRow().price).toBe(4_000_000);
+            const row = starRow();
+            expect(row.price).toBe(4_000_000);
+            expect(row.ladder.baseStonesOnly).toBeUndefined();
         }
     });
 });

@@ -1095,7 +1095,10 @@ function ladderSentence(ladder, total = null) {
         `Enhance from +${ladder.fromLevel} to +${ladder.toLevel}` +
         (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '');
     if (ladder.fresh) {
-        return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}.`;
+        const stonesOnly = ladder.baseStonesOnly
+            ? ' (the refinement stones alone: your Untradable capes setting counts the base cape as nothing)'
+            : '';
+        return `${span}: you hold no spare copy, so this includes a fresh base at ${formatKMB(ladder.baseCost)}${stonesOnly}.`;
     }
     if (ladder.fromEquipped) return `${span}, on the copy you are wearing.`;
     if (ladder.claimed) return `${span}, on a spare copy another loadout wears${forfeitNote}.`;

@@ -235,16 +235,18 @@ function assumedCapeBase(options) {
 }
 
 /**
- * Whether a crafted price is a refined (★) untradable cape's bill, which is never a price anyone could pay:
- * the cape cannot be bought, and the bill covers its refinement stones plus the base cape only as the
- * setting values it (one mirror, or nothing). Flagged `assumed` on both settings, so a reader that would BUY
- * the piece (the upgrade advisor) leaves it unpriced, as it did when the "nothing" setting made the bill
- * partial. To let the advisor quote stones-only on "nothing", return false for that mode here.
+ * What a refined (★) untradable cape's crafted bill says about its base cape. The cape cannot be bought, and
+ * the bill covers its refinement stones plus the base cape only as the setting values it. On the mirror
+ * setting that is one mirror, an assumption, so the price is flagged `assumed` and a reader that would BUY the
+ * piece (the upgrade advisor) leaves it unpriced. On "nothing" the stones alone are a complete bill that a
+ * reader may use, flagged `baseCapeCounted: false` so a surface can say that no base cape is in it.
+ * To leave the advisor's refined capes unpriced on "nothing" too, return `{ assumed: true }` for both modes.
  * @param {string} itemHrid - The priced item
- * @returns {boolean}
+ * @returns {{assumed?: true, baseCapeCounted?: false}}
  */
-function craftedCapeBillIsAssumed(itemHrid) {
-    return isRefinedCape(itemHrid) && isUntradableCape(itemHrid);
+function craftedCapeBillFlags(itemHrid) {
+    if (!isRefinedCape(itemHrid) || !isUntradableCape(itemHrid)) return {};
+    return getCapeBaseValueMode() === 'mirror' ? { assumed: true } : { baseCapeCounted: false };
 }
 
 /**
@@ -280,7 +282,7 @@ export function priceGuarded(itemHrid, options = {}) {
     const guarded = result(price, resolved.estimated || price !== resolved.price, Boolean(resolved.custom), partial);
     // A refined cape's craft cost includes its base cape at the setting's value (one mirror, or nothing): an
     // assumption, not a price anyone could pay (a cape cannot be bought)
-    if (guarded.price > 0 && resolved.production && craftedCapeBillIsAssumed(itemHrid)) guarded.assumed = true;
+    if (guarded.price > 0 && resolved.production) Object.assign(guarded, craftedCapeBillFlags(itemHrid));
     return guarded.unpriced ? { ...guarded, custom: Boolean(resolved.custom) } : guarded;
 }
 
@@ -347,7 +349,7 @@ export function priceBase(itemHrid, options = {}) {
             partial: craftPartial(itemHrid, side),
             crafted: true,
             // A refined cape's craft cost carries its base at the cape setting's value: an assumption
-            ...(craftedCapeBillIsAssumed(itemHrid) ? { assumed: true } : {}),
+            ...craftedCapeBillFlags(itemHrid),
         };
     }
     return { ...bought, crafted: false };
