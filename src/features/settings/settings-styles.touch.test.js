@@ -96,6 +96,12 @@ describe('settings panel on a touch screen', () => {
         }
     });
 
+    it("keeps the phone block's 36px on a touch phone, since the touch floor comes after it", () => {
+        const last = css.lastIndexOf('@media (pointer: coarse) and (max-width: 480px)');
+        expect(last).toBeGreaterThan(css.lastIndexOf('@media (pointer: coarse) {'));
+        expect(css.slice(last)).toMatch(/\.toolasha-setting-input select[\s\S]*min-height:\s*36px/);
+    });
+
     it('changes nothing for a fine pointer: none of the 32px rules sit outside a media query', () => {
         // The phone-width block is its own query (and was there before); take it out too
         const { rest } = (() => {
