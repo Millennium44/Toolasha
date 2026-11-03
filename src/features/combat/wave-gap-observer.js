@@ -47,6 +47,7 @@ import { runningCombatAction } from '../../utils/combat-actions.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
 import { registerRow, TILE_CLASS } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 
 /** Where the tally lives */
@@ -302,7 +303,7 @@ function bar(count, most) {
  * @returns {void}
  */
 function drawCategory(body, title, category) {
-    const card = panelCard(body, title, ACCENT);
+    const card = panelCard(body, title);
     card.appendChild(panelLine('Observations', String(category.n)));
     if (!category.n) {
         card.appendChild(panelNote('None yet.'));
@@ -344,7 +345,6 @@ export const waveGapPanel = createPanel({
     id: 'waveGap',
     title: 'Wave Gap',
     size: { width: 470, height: 540 },
-    accent: ACCENT,
     refreshMs: 3000,
     draw: (body) => {
         if (!config.getSetting('waveGapWatch')) {
@@ -362,7 +362,7 @@ export const waveGapPanel = createPanel({
 
         const summary = waveGap.summary();
 
-        const verdict = panelCard(body, 'Verdict', ACCENT);
+        const verdict = panelCard(body, 'Verdict');
         verdict.appendChild(panelNote(summary.verdict.text));
         if (summary.updatedAt) {
             verdict.appendChild(
@@ -370,7 +370,7 @@ export const waveGapPanel = createPanel({
             );
         }
 
-        const ruler = panelCard(body, 'How good the ruler is', ACCENT);
+        const ruler = panelCard(body, 'How good the ruler is');
         ruler.appendChild(
             panelNote(
                 'Both ends of the measurement are client arrival times, so every reading carries network ' +
@@ -402,7 +402,7 @@ export const waveGapPanel = createPanel({
 
         for (const [key, label] of CATEGORY_LABELS) drawCategory(body, label, summary.categories[key]);
 
-        const compare = panelCard(body, 'Do the categories agree?', ACCENT);
+        const compare = panelCard(body, 'Do the categories agree?');
         if (summary.openVsDungeon) {
             compare.appendChild(
                 panelLine(
@@ -428,7 +428,7 @@ export const waveGapPanel = createPanel({
             );
         }
 
-        const cycle = panelCard(body, 'Is it tied to a repeating clock?', ACCENT);
+        const cycle = panelCard(body, 'Is it tied to a repeating clock?');
         cycle.appendChild(
             panelNote(
                 `Each interval is binned by where its kill fell inside a candidate cycle, ${CYCLE_BINS} bins per ` +
@@ -461,7 +461,7 @@ export const waveGapPanel = createPanel({
             }
         }
 
-        const discards = panelCard(body, `Discarded transitions (${summary.discarded})`, ACCENT);
+        const discards = panelCard(body, `Discarded transitions (${summary.discarded})`);
         discards.appendChild(
             panelNote(
                 'Why a transition was thrown away matters as much as the headline: a wipe restarts the wave ' +
@@ -474,15 +474,8 @@ export const waveGapPanel = createPanel({
 
         const reset = document.createElement('button');
         reset.textContent = 'Forget the sample';
-        Object.assign(reset.style, {
-            background: 'none',
-            border: '1px solid #9aa4bb',
-            borderRadius: '4px',
-            color: '#9aa4bb',
-            padding: '5px 10px',
-            marginTop: '8px',
-            cursor: 'pointer',
-        });
+        styleGameButton(reset, 'quiet');
+        reset.style.marginTop = '8px';
         reset.addEventListener('click', async () => {
             await waveGap.forget();
             waveGapPanel.render();

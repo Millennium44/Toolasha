@@ -10,6 +10,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 - Several open tabs now share one market history request pace, so fewer requests get refused for going too fast.
 - Purple's Gift, the one chest that drops Task Tokens and Task Crystals, is now valued in full, so Treasure and tooltips no longer show it unpriced; task reward values rise a little because the Gift's tokens now count.
 - Combat Sim: a restored Upgrade table says when the pricing mode has changed since it was run.
+- The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.
+- Combat observers, guild trials, account, loot, market, savings, alchemy history, best items, reroll and crafting walks, scroll planner, budget, houses, Iron Bell, goal planner, risk of ruin, queue monitor and death recap panels now use the game's plain dark frame, white titles and blue buttons.
 - The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.
 - The Combat Simulator, Lab Simulator, loadout editor pickers, Labyrinth log, Enhancement Tracker, XPH calculator and costs table now use the game's own plain frame, white titles and blue buttons.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.

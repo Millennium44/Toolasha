@@ -38,6 +38,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import {
     CHARM_TIER_EXPERIENCE,
@@ -197,19 +198,18 @@ export function familyRows() {
  * @param {string} definition.id - Stable key the fold is remembered under. Not
  *   the title: the titles carry the equipped bonus, so they change under you
  * @param {string} definition.title - Heading
- * @param {string} definition.accent - Heading color
  * @param {boolean} [definition.defaultOpen] - How it starts, the first time only
  * @returns {HTMLElement} The contents, to append rows to
  */
-function section(body, { id, title, accent, defaultOpen = true }) {
+function section(body, { id, title, defaultOpen = true }) {
     const open = sectionOpen[id] ?? defaultOpen;
 
-    const card = panelCard(body, undefined, accent);
+    const card = panelCard(body);
     card.style.padding = '0';
 
     const header = document.createElement('div');
     Object.assign(header.style, {
-        color: accent,
+        color: GAME_COLORS.text,
         fontWeight: 'bold',
         cursor: 'pointer',
         padding: '6px 9px',
@@ -313,7 +313,7 @@ function charmLine(charm, worn) {
     const line = tableRow();
     const isWorn = worn && charm.itemHrid === worn.itemHrid && charm.enhancementLevel === worn.enhancementLevel;
     if (isWorn) {
-        line.style.background = 'rgba(201, 160, 255, 0.14)';
+        line.style.background = 'rgba(255, 255, 255, 0.10)';
         line.style.borderRadius = '3px';
     }
 
@@ -361,7 +361,6 @@ function drawGuide(body) {
     const content = section(body, {
         id: 'guide',
         title: 'Charm EXP Guide',
-        accent: '#c9a0ff',
         defaultOpen: false,
     });
 
@@ -404,7 +403,6 @@ export const charmPanel = createPanel({
     id: 'charmPanel',
     title: 'Charms',
     size: { width: 430, height: 480 },
-    accent: '#c9a0ff',
     draw: (body) => {
         const worn = equippedCharm();
         if (!worn) {
@@ -427,7 +425,7 @@ export const charmPanel = createPanel({
         ]) {
             if (!group.length) continue;
 
-            const content = section(body, { id, title, accent: '#c9a0ff', defaultOpen });
+            const content = section(body, { id, title, defaultOpen });
             content.appendChild(tableHeading(() => charmPanel.render()));
             for (const charm of sortCharmRows(group, sortColumn, sortDirection)) {
                 content.appendChild(charmLine(charm, worn));

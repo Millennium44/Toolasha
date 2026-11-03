@@ -40,6 +40,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
 import { registerRow, TILE_CLASS } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 
 /** Where the tally lives */
@@ -294,7 +295,7 @@ function seconds(ms) {
  * @returns {void}
  */
 function drawEffect(body, effect) {
-    const card = panelCard(body, effect.label, ACCENT);
+    const card = panelCard(body, effect.label);
     card.appendChild(panelNote(effect.signature));
     card.appendChild(panelLine('Engine assumes', seconds(effect.assumedMs), '#e8ecf5'));
     card.appendChild(panelLine('Verdict', effect.text, STATE_COLORS[effect.state] || '#e8ecf5'));
@@ -351,7 +352,6 @@ export const tickPeriodPanel = createPanel({
     id: 'tickPeriod',
     title: 'Tick Period',
     size: { width: 480, height: 560 },
-    accent: ACCENT,
     refreshMs: 3000,
     draw: (body) => {
         if (!config.getSetting('tickPeriodWatch')) {
@@ -369,13 +369,13 @@ export const tickPeriodPanel = createPanel({
 
         const summary = tickPeriod.summary();
 
-        const verdict = panelCard(body, 'Verdict', ACCENT);
+        const verdict = panelCard(body, 'Verdict');
         verdict.appendChild(panelNote(summary.verdict));
         if (summary.updatedAt) {
             verdict.appendChild(panelLine('Last interval', formatRelativeTime(Date.now() - summary.updatedAt)));
         }
 
-        const ruler = panelCard(body, 'How good the ruler is', ACCENT);
+        const ruler = panelCard(body, 'How good the ruler is');
         ruler.appendChild(
             panelNote(
                 'Both ends of an interval are client arrival times, so every reading carries network jitter. ' +
@@ -399,7 +399,7 @@ export const tickPeriodPanel = createPanel({
             );
         }
 
-        const falls = panelCard(body, 'Where the health falls went', ACCENT);
+        const falls = panelCard(body, 'Where the health falls went');
         falls.appendChild(
             panelNote(
                 'Damage over time has no signature of its own — it is a health fall with no swing behind it. ' +
@@ -422,15 +422,8 @@ export const tickPeriodPanel = createPanel({
 
         const reset = document.createElement('button');
         reset.textContent = 'Forget the sample';
-        Object.assign(reset.style, {
-            background: 'none',
-            border: '1px solid #9aa4bb',
-            borderRadius: '4px',
-            color: '#9aa4bb',
-            padding: '5px 10px',
-            marginTop: '8px',
-            cursor: 'pointer',
-        });
+        styleGameButton(reset, 'quiet');
+        reset.style.marginTop = '8px';
         reset.addEventListener('click', async () => {
             await tickPeriod.forget();
             tickPeriodPanel.render();

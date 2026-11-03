@@ -38,9 +38,8 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, signedPercent, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { isLevelGapped } from '../../utils/dungeon-level-gap.js';
-
-const ACCENT = '#7fd6a3';
 
 /** How many item rows a player's table shows before it is more list than answer */
 const MAX_ITEMS = 25;
@@ -94,7 +93,7 @@ function cell(text, color) {
  */
 function drawSessionStats(body, party) {
     const context = combatDropLuck.context;
-    const card = panelCard(body, 'Session Statistics', ACCENT);
+    const card = panelCard(body, 'Session Statistics');
 
     card.append(
         panelLine('Battles', formatWithSeparator(party.battles)),
@@ -125,7 +124,7 @@ function drawVerdict(body) {
     // `describeLuck` returns `{text, tone}`; the object itself reaching a line
     // is how this last went wrong
     const verdict = describeLuck(result.percentile);
-    const card = panelCard(body, 'Verdict', ACCENT);
+    const card = panelCard(body, 'Verdict');
     const difference = (result.income || 0) - (result.expected || 0);
 
     card.append(
@@ -159,7 +158,7 @@ function drawVerdict(body) {
  * @param {Object} party - From `partyLuck`
  */
 function drawRevenue(body, party) {
-    const card = panelCard(body, 'Revenue', ACCENT);
+    const card = panelCard(body, 'Revenue');
 
     for (const player of party.players) {
         const verdict = signedPercent(player.percent ?? 0);
@@ -200,7 +199,7 @@ function drawRevenue(body, party) {
  * @param {Object} player - From `partyLuck`
  */
 function drawPlayerTable(body, player) {
-    const card = panelCard(body, player.name, player.isCurrentPlayer ? ROW_COLORS.gold : ACCENT);
+    const card = panelCard(body, player.name);
 
     const heading = itemRow();
     Object.assign(heading.style, {
@@ -265,7 +264,7 @@ function drawPlayerTable(body, player) {
  * @param {Object} chest - From `combatDropLuck.dungeonChestLuck()`
  */
 function drawDungeonChests(body, chest) {
-    const card = panelCard(body, 'Dungeon chests', ACCENT);
+    const card = panelCard(body, 'Dungeon chests');
 
     for (const player of chest.players) {
         const luck = player.luck;
@@ -437,15 +436,7 @@ function copyBar(text) {
     const copyBtn = document.createElement('button');
     copyBtn.textContent = '⧉';
     copyBtn.title = 'Copy this reading as plain text — the figure people compare with each other.';
-    Object.assign(copyBtn.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        color: ROW_COLORS.dim,
-        border: '1px solid rgba(255, 255, 255, 0.15)',
-        borderRadius: '4px',
-        padding: '2px 6px',
-        fontSize: '11px',
-        cursor: 'pointer',
-    });
+    styleGameButton(copyBtn, 'quiet', true);
     copyBtn.addEventListener('click', () => {
         if (!navigator.clipboard) return;
         navigator.clipboard
@@ -467,7 +458,6 @@ export const partyLuckPanel = createPanel({
     id: 'partyLuck',
     title: 'Party Luck',
     size: { width: 480, height: 560 },
-    accent: ACCENT,
     refreshMs: 5000,
     draw: (body) => {
         const party = partyLuck(combatDropLuck.context);

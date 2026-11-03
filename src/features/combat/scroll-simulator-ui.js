@@ -18,6 +18,7 @@ import {
     SELECTION_CHANGED_EVENT,
 } from '../../utils/scroll-buff-values.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const BUTTON_ID = 'toolasha-scroll-sim-btn';
 const POPUP_ID = 'toolasha-scroll-sim-popup';
@@ -123,10 +124,10 @@ class ScrollSimPopup {
             width: 320px;
             display: flex;
             flex-direction: column;
-            background: rgba(10, 10, 20, 0.96);
-            border: 2px solid ${config.COLOR_ACCENT};
-            border-radius: 8px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.8);
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
             user-select: none;
@@ -140,14 +141,13 @@ class ScrollSimPopup {
             align-items: center;
             justify-content: space-between;
             padding: 10px 14px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid ${GAME_COLORS.border};
             cursor: grab;
-            background: rgba(255,255,255,0.04);
             flex-shrink: 0;
         `;
 
         const title = document.createElement('span');
-        title.style.cssText = `font-size: 0.9rem; font-weight: 600; color: ${config.COLOR_ACCENT};`;
+        title.style.cssText = `font-size: 0.9rem; font-weight: 600; color: ${GAME_COLORS.text};`;
         const contextLabel = this.loadoutName ? this.loadoutName : 'Defaults';
         title.textContent = `Scroll Simulation — ${contextLabel}`;
 

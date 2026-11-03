@@ -24,6 +24,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createPanel } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { navigateToAction, navigateToItem } from '../../utils/item-navigation.js';
 import { liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import {
@@ -40,7 +41,6 @@ export const ARBITRAGE_BOARD_SETTING = 'actions_arbitrageBoard';
 export const OPEN_BUTTON_CLASS = 'mwi-arbitrage-open';
 
 const PANEL_ID = 'production-arbitrage';
-const ACCENT = '#f0b860';
 const MAX_ROWS = 150;
 
 const SORT_LABELS = {
@@ -81,16 +81,7 @@ function controlButton(label, onClick, active = false) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
-    Object.assign(button.style, {
-        padding: '3px 8px',
-        borderRadius: '4px',
-        border: `1px solid ${active ? ACCENT : 'rgba(255,255,255,0.25)'}`,
-        background: active ? `${ACCENT}33` : 'transparent',
-        color: active ? ACCENT : INK,
-        cursor: 'pointer',
-        fontSize: '11px',
-        fontFamily: 'inherit',
-    });
+    styleGameButton(button, active ? 'primary' : 'quiet', true);
     button.addEventListener('click', onClick);
     return button;
 }
@@ -152,7 +143,6 @@ class ProductionArbitrageBoard {
             id: PANEL_ID,
             title: 'Production Arbitrage',
             size: { width: 980, height: 560 },
-            accent: ACCENT,
             // Redraws happen when slices land and when a control is used; the
             // timed redraw is only a backstop against a stale price snapshot
             refreshMs: 10 * 60_000,
@@ -358,7 +348,7 @@ class ProductionArbitrageBoard {
             padding: '2px 6px',
             borderRadius: '4px',
             border: '1px solid rgba(255,255,255,0.25)',
-            background: 'rgba(14, 16, 22, 0.97)',
+            background: GAME_COLORS.background,
             color: INK,
             fontSize: '11px',
         });
@@ -388,7 +378,7 @@ class ProductionArbitrageBoard {
             padding: '2px 6px',
             borderRadius: '4px',
             border: '1px solid rgba(255,255,255,0.25)',
-            background: 'rgba(14, 16, 22, 0.97)',
+            background: GAME_COLORS.background,
             color: INK,
             fontSize: '11px',
             width: '140px',

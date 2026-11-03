@@ -21,6 +21,8 @@
 
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
+import { styleGameButton } from '../../utils/game-look.js';
+
 import { registerRow } from '../../utils/overlay-rows.js';
 import { categoryLabel } from './notice-policy.js';
 import {
@@ -177,16 +179,8 @@ function drawCategoryChips(body, entries) {
         chip.type = 'button';
         chip.textContent = categoryLabel(category);
         chip.dataset.noticeCategoryChip = category;
-        Object.assign(chip.style, {
-            background: active ? 'rgba(158, 196, 255, 0.18)' : 'rgba(255, 255, 255, 0.04)',
-            border: `1px solid ${active ? 'rgba(158, 196, 255, 0.55)' : 'rgba(255, 255, 255, 0.14)'}`,
-            borderRadius: '10px',
-            color: active ? ROW_COLORS.accent : ROW_COLORS.dim,
-            cursor: 'pointer',
-            font: 'inherit',
-            fontSize: '11px',
-            padding: '2px 8px',
-        });
+        // The game's blue when the category is showing, the quiet blue when it is hidden
+        styleGameButton(chip, active ? 'primary' : 'quiet', true);
         chip.title = active
             ? `Showing ${categoryLabel(category)} — click to hide it`
             : `${categoryLabel(category)} is hidden — click to show it`;
@@ -207,15 +201,7 @@ function panelButton(label, onClick) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
-    Object.assign(button.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        border: '1px solid rgba(255, 255, 255, 0.14)',
-        borderRadius: '5px',
-        color: ROW_COLORS.neutral,
-        cursor: 'pointer',
-        font: 'inherit',
-        padding: '3px 9px',
-    });
+    styleGameButton(button, 'quiet', true);
     button.addEventListener('click', onClick);
     return button;
 }
@@ -252,7 +238,7 @@ function draw(body) {
         const heading = noticeDay(entry.at);
         if (heading !== day) {
             day = heading;
-            card = panelCard(body, heading, ROW_COLORS.accent);
+            card = panelCard(body, heading);
         }
         drawNotice(card, entry);
     }
@@ -279,7 +265,6 @@ export const noticePanel = createPanel({
     id: PANEL_ID,
     title: 'Notices',
     size: { width: 420, height: 320 },
-    accent: '#9ec4ff',
     refreshMs: REFRESH_MS,
     draw,
 });

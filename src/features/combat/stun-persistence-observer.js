@@ -35,6 +35,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { captureOwner, noteTeardown, stillOurs } from '../../utils/init-ownership.js';
 import { registerRow, TILE_CLASS } from '../../utils/overlay-rows.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { styleGameButton } from '../../utils/game-look.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 
 /** Where the tally lives */
@@ -232,7 +233,7 @@ const stunPersistence = {
  * @returns {void}
  */
 function drawDirection(body, title, direction) {
-    const card = panelCard(body, title, ACCENT);
+    const card = panelCard(body, title);
     card.appendChild(panelLine('Qualifying episodes', String(direction.episodes)));
 
     if (!direction.episodes) {
@@ -283,7 +284,6 @@ export const stunPersistencePanel = createPanel({
     id: 'stunPersistence',
     title: 'Stun Persistence',
     size: { width: 430, height: 470 },
-    accent: ACCENT,
     refreshMs: 3000,
     draw: (body) => {
         if (!config.getSetting('stunPersistenceWatch')) {
@@ -301,7 +301,7 @@ export const stunPersistencePanel = createPanel({
 
         const summary = stunPersistence.summary();
 
-        const verdict = panelCard(body, 'Verdict', ACCENT);
+        const verdict = panelCard(body, 'Verdict');
         verdict.appendChild(panelNote(summary.verdict.text));
         if (summary.updatedAt) {
             verdict.appendChild(
@@ -313,7 +313,7 @@ export const stunPersistencePanel = createPanel({
         drawDirection(body, 'Monster cast the stun, monster died', summary.directions[DIRECTIONS.monsterCaster]);
         drawDirection(body, 'Player cast the stun, player died (control)', summary.directions[DIRECTIONS.playerCaster]);
 
-        const discards = panelCard(body, `Discarded episodes (${summary.discarded})`, ACCENT);
+        const discards = panelCard(body, `Discarded episodes (${summary.discarded})`);
         discards.appendChild(
             panelNote(
                 'Why an episode was thrown away matters as much as the headline: it is how you know the ' +
@@ -324,7 +324,7 @@ export const stunPersistencePanel = createPanel({
             discards.appendChild(panelLine(row.label, String(row.count), '#9aa4bb'));
         }
 
-        const audit = panelCard(body, 'Recent qualifying episodes', ACCENT);
+        const audit = panelCard(body, 'Recent qualifying episodes');
         const rows = (stunPersistence.tally().audit || []).slice(0, 8);
         if (!rows.length) audit.appendChild(panelNote('None yet.'));
         for (const row of rows) {
@@ -344,15 +344,8 @@ export const stunPersistencePanel = createPanel({
 
         const reset = document.createElement('button');
         reset.textContent = 'Forget the sample';
-        Object.assign(reset.style, {
-            background: 'none',
-            border: '1px solid #9aa4bb',
-            borderRadius: '4px',
-            color: '#9aa4bb',
-            padding: '5px 10px',
-            marginTop: '8px',
-            cursor: 'pointer',
-        });
+        styleGameButton(reset, 'quiet');
+        reset.style.marginTop = '8px';
         reset.addEventListener('click', async () => {
             await stunPersistence.forget();
             stunPersistencePanel.render();

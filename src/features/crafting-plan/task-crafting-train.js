@@ -33,6 +33,7 @@ import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { GAME } from '../../utils/selectors.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 /** Action types whose tasks have a crafting chain worth walking */
 const PRODUCTION_TYPES = [
@@ -518,9 +519,9 @@ class TaskCraftingTrain {
         panel.style.cssText = `
             position: fixed; left: 50%; top: 15%; transform: translateX(-50%);
             z-index: 150; max-width: min(520px, calc(100vw - 24px));
-            padding: 10px 12px; border: 1px solid var(--border-color, #60a5fa); border-radius: 6px;
-            background: var(--bg-color-tertiary, #1a1a2e); color: var(--text-color-primary, #fff);
-            font-size: 0.85em; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+            padding: 10px 12px; border: ${GAME_FRAME.border}; border-radius: ${GAME_FRAME.borderRadius};
+            background: ${GAME_FRAME.background}; color: ${GAME_COLORS.text};
+            font-size: 0.85em; box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         if (groups.length === 0) {
@@ -534,11 +535,8 @@ class TaskCraftingTrain {
         const close = document.createElement('button');
         close.type = 'button';
         close.textContent = 'Close';
-        close.style.cssText = `
-            margin-top: 8px; padding: 2px 10px; cursor: pointer; background: transparent;
-            color: var(--text-color-secondary, #ccc); border: 1px solid var(--border-color, #444);
-            border-radius: 3px;
-        `;
+        styleGameButton(close, 'quiet', true);
+        close.style.marginTop = '8px';
         close.addEventListener('click', () => panel.remove());
         panel.appendChild(close);
 
@@ -557,7 +555,7 @@ class TaskCraftingTrain {
         row.appendChild(names);
 
         const savings = document.createElement('div');
-        savings.style.cssText = 'color: var(--text-color-secondary, #ccc); margin: 2px 0 4px;';
+        savings.style.cssText = `color: ${GAME_COLORS.textDim}; margin: 2px 0 4px;`;
         savings.textContent =
             `${formatWithSeparator(group.steps.length)} steps together, ` +
             `${formatWithSeparator(separate)} apart — ${formatWithSeparator(group.saved)} saved`;
@@ -566,11 +564,7 @@ class TaskCraftingTrain {
         const start = document.createElement('button');
         start.type = 'button';
         start.textContent = 'Start merged walk';
-        start.style.cssText = `
-            padding: 3px 10px; cursor: pointer; background: var(--bg-color-tertiary, #1a1a2e);
-            color: var(--text-color-primary, #fff); border: 1px solid var(--border-color, #60a5fa);
-            border-radius: 4px;
-        `;
+        styleGameButton(start, 'primary', true);
         start.addEventListener('click', async () => {
             document.getElementById(PANEL_ID)?.remove();
             await this.startMergedWalk(group);
