@@ -1396,6 +1396,15 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'alchemyCatalystCheck',
+            name: 'Alchemy Catalyst Check',
+            category: 'Alchemy',
+            module: Actions.alchemyCatalystCheck,
+            async: false,
+            // It holds button presses, so clearing the setting must take its listener off at once
+            liveStop: true,
+        },
+        {
             key: 'teaRecommendation',
             name: 'Tea Recommendation',
             category: 'Actions',

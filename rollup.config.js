@@ -886,6 +886,12 @@ export const singletonOwnership = new Map([
         { global: 'Toolasha.UI.taskCompletionTracker' },
     ],
     [normalize(join(__dirname, 'src/features/actions/loot-log-history.js')), { global: 'Toolasha.UI.lootLogHistory' }],
+    // Holds the player's protected-category list; the catalyst check (actions) asks it whether a press is its own.
+    // The global is the registration record, which carries `protectedCategoryFor` for this reason.
+    [
+        normalize(join(__dirname, 'src/features/alchemy/alchemy-action-protection.js')),
+        { global: 'Toolasha.UI.alchemyActionProtection' },
+    ],
     [
         normalize(join(__dirname, 'src/features/notifications/market-undercut-alerts.js')),
         { global: 'Toolasha.UI.marketUndercutAlerts' },

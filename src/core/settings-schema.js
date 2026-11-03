@@ -593,6 +593,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'When you open the catalyst picker, adds a line at the top saying which catalyst earns the most per hour for the item and action you have selected (none, the type catalyst or Prime Catalyst), what it earns, and whether you own it, and puts a star on its tile. It only shows information: it never picks or fills the slot for you. Uses your pricing mode and the same profit figures as the Profitability section.',
             },
+            alchemyCatalystCheck: {
+                id: 'alchemyCatalystCheck',
+                label: 'Alchemy panel: Check the catalyst when you press Start or Queue',
+                type: 'checkbox',
+                default: false,
+                help: "Off by default because it holds a button press. When you press an alchemy Start or Queue button without the most profitable catalyst selected, that press does nothing and a message says which option is best and what your choice costs per hour; one more press within 15 seconds goes ahead, and that setup is not asked about again for a minute. It only speaks up when your choice earns at least 10K coins an hour less than the best option and that gap is at least 5% of the best option's hourly figure, gain or loss. It stays quiet when the figures are not loaded or have an unpriced item, when a catalyst involved has an empty order book and so only an estimated price, when options tie, when this same setup is already running, when an Iron Cow does not own the best catalyst, and when the message could not be shown. Items in a protected category keep their own confirmation instead. Under the message, Skip until reload stops it until you reload or switch character, and Turn this check off clears this setting. It never picks a catalyst or starts anything for you. Uses your pricing mode and the same profit figures as the Profitability section.",
+            },
             alchemyItemSort: {
                 id: 'alchemyItemSort',
                 label: 'Alchemy panel: Sort item picker by profit or XP',

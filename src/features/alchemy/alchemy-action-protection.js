@@ -98,25 +98,9 @@ class AlchemyActionProtection {
             const btn = e.target.closest('button');
             if (!btn) return;
 
-            if (!btn.closest('[class*="SkillActionDetail_buttonsContainer"]')) return;
-
-            const alchemyPanel = btn.closest('[class*="SkillActionDetail_alchemyComponent"]');
-            if (!alchemyPanel) return;
-
-            const alchemyType = this._getAlchemyType();
-            if (!alchemyType) return;
-
-            const protectedCategories = this.protectedMap.get(alchemyType);
-            if (!protectedCategories || protectedCategories.size === 0) return;
-
-            const itemHrid = this._getSelectedItemHrid();
-            if (!itemHrid) return;
-
-            const itemDetails = dataManager.getItemDetails(itemHrid);
-            if (!itemDetails) return;
-
-            const categoryHrid = itemDetails.categoryHrid;
-            if (!protectedCategories.has(categoryHrid)) return;
+            const press = this._protectedPress(btn);
+            if (!press) return;
+            const { alchemyPanel, categoryHrid } = press;
 
             // Item is in a protected category — apply state machine
             if (alchemyPanel.dataset.mwiAlchemyConfirmed === '1') {
@@ -153,6 +137,48 @@ class AlchemyActionProtection {
 
         document.addEventListener('click', handler, true);
         this.unregisterHandlers.push(() => document.removeEventListener('click', handler, true));
+    }
+
+    /**
+     * Whether a press of this button falls under a protected category.
+     * @param {Element} btn - The button pressed
+     * @returns {{alchemyPanel: Element, categoryHrid: string}|null} The panel and category, or null when this
+     *   guard has nothing to say about the press
+     */
+    _protectedPress(btn) {
+        if (!btn.closest('[class*="SkillActionDetail_buttonsContainer"]')) return null;
+
+        const alchemyPanel = btn.closest('[class*="SkillActionDetail_alchemyComponent"]');
+        if (!alchemyPanel) return null;
+
+        const alchemyType = this._getAlchemyType();
+        if (!alchemyType) return null;
+
+        const protectedCategories = this.protectedMap.get(alchemyType);
+        if (!protectedCategories || protectedCategories.size === 0) return null;
+
+        const itemHrid = this._getSelectedItemHrid();
+        if (!itemHrid) return null;
+
+        const itemDetails = dataManager.getItemDetails(itemHrid);
+        if (!itemDetails) return null;
+
+        const categoryHrid = itemDetails.categoryHrid;
+        if (!protectedCategories.has(categoryHrid)) return null;
+
+        return { alchemyPanel, categoryHrid };
+    }
+
+    /**
+     * The protected category a press of this button runs into, for another guard on the same button to stand
+     * aside for. Answers whichever state the double-confirm is in, armed or not, and null when this feature is
+     * off or has not loaded the player's list.
+     * @param {Element} btn - The button pressed
+     * @returns {string|null} The category hrid, or null
+     */
+    protectedCategoryFor(btn) {
+        if (!config.getSetting('alchemy_actionProtection')) return null;
+        return this._protectedPress(btn)?.categoryHrid ?? null;
     }
 
     _setupShieldButton() {
@@ -761,6 +787,9 @@ export default {
     initialize: async () => {
         await alchemyActionProtection.initialize();
     },
+    // On this record, not only the instance: this is what `Toolasha.UI.alchemyActionProtection` publishes, and so
+    // what the catalyst check in the actions bundle reaches
+    protectedCategoryFor: (btn) => alchemyActionProtection.protectedCategoryFor(btn),
     cleanup: () => {
         alchemyActionProtection.disable();
     },
