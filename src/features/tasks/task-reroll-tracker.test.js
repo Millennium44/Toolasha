@@ -538,6 +538,96 @@ describe('a cross-device sync pull combines the retired-task history', () => {
         }
     });
 
+    describe('one task on two rows', () => {
+        const row = (over) => ({
+            taskId: 1,
+            retiredAt: 100,
+            coinRerollCount: 5,
+            cowbellRerollCount: 0,
+            goldSpent: 310000,
+            cowbellsSpent: 0,
+            monsterHrid: '/monsters/jerry',
+            actionHrid: '/actions/combat/jerry',
+            goalCount: 100,
+            ...over,
+        });
+        const seenAgain = row({
+            retiredAt: 900,
+            coinRerollCount: 2,
+            cowbellRerollCount: 1,
+            goldSpent: 30000,
+            cowbellsSpent: 1,
+        });
+        const kept = row({ cowbellRerollCount: 1, cowbellsSpent: 1 });
+
+        const merge = async () => {
+            const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+            return mergeForKey('rerollSpending', 'taskRerollHistory_market123').merge;
+        };
+
+        test('the highest counts and the earliest time stand, whichever copy is which', async () => {
+            const fold = await merge();
+            expect(fold([row()], [seenAgain])).toEqual([kept]);
+            expect(fold([seenAgain], [row()])).toEqual([kept]);
+        });
+
+        test('a replay, and a third device, change nothing more', async () => {
+            const fold = await merge();
+            const once = fold([row()], [seenAgain]);
+            expect(fold(once, [seenAgain])).toEqual(once);
+            expect(fold(once, once)).toEqual(once);
+            expect(fold(once, [row({ retiredAt: 50, coinRerollCount: 1, goldSpent: 10000 })])[0]).toMatchObject({
+                retiredAt: 50,
+                coinRerollCount: 5,
+                goldSpent: 310000,
+            });
+        });
+
+        test('new data after: a row with more spend than the fold raises it and keeps the first time', async () => {
+            const fold = await merge();
+            const once = fold([row()], [seenAgain]);
+            expect(fold(once, [row({ retiredAt: 950, coinRerollCount: 6, goldSpent: 630000 })])[0]).toMatchObject({
+                retiredAt: 100,
+                coinRerollCount: 6,
+                goldSpent: 630000,
+            });
+        });
+
+        test('a row with no time, or a blank name, does not wipe what the other holds', async () => {
+            const fold = await merge();
+            const [merged] = fold([row()], [{ taskId: 1, monsterHrid: '', actionHrid: '', goalCount: 0 }]);
+            expect(merged).toEqual(row());
+        });
+
+        test('a retired task a stale copy brought back does not lower its row when it retires again', async () => {
+            spend().set('taskRerollHistory_market123', [row()]);
+            spend().set('taskRerollData_market123', {});
+            await tracker.loadFromStorage();
+            await tracker.loadHistory();
+
+            // A stale pull puts the task back on the map with its old, lower count
+            spend().set('taskRerollData_market123', { 1: { coinRerollCount: 2, cowbellRerollCount: 0 } });
+            tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0, seenAt: Date.now() });
+            await tracker.saveToStorage();
+            expect(tracker.taskRerollData.get(1).coinRerollCount).toBe(2);
+
+            dataManager.characterQuests = [{ id: 7 }];
+            tracker.cleanupOldTasks();
+            await tracker.historyRecord.flushed();
+
+            const [saved] = spend().get('taskRerollHistory_market123');
+            expect(saved).toMatchObject({ taskId: 1, retiredAt: 100, coinRerollCount: 5, goldSpent: 310000 });
+            expect(spend().get('taskRerollHistory_market123')).toHaveLength(1);
+        });
+
+        test('a different task is untouched, and order stays oldest first', async () => {
+            const fold = await merge();
+            const merged = fold([row({ taskId: 2, retiredAt: 500 })], [seenAgain, row()]);
+            expect(merged.map((entry) => entry.taskId)).toEqual([1, 2]);
+            expect(merged[0].retiredAt).toBe(100);
+        });
+    });
+
     test('the live reroll map is deliberately not merged', async () => {
         const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
         // Curated: a task is dropped from it on purpose when it retires, so a

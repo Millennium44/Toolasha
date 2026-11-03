@@ -15,7 +15,7 @@ import {
     noteCardTaskDrawn,
 } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
-import { createCuratedRecord, createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { createCuratedRecord, createPersistedRecord } from '../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
@@ -97,17 +97,44 @@ export function calculateCowbellSpent(rerollCount) {
 }
 
 /**
- * Fold a stored history under the in-memory one: the union by task, oldest
- * first, capped at {@link HISTORY_CAP}.
+ * Two records of one task's retirement as one. A task retires once, so the earliest time is when it did and a later
+ * row is the same task seen again: a stale copy of the live map can bring it back with lower counts, and retire it a
+ * second time. Spend only ever rises, so the highest counts stand.
+ * @param {Object} held - One row
+ * @param {Object} row - The other, whose other fields win where it has them
+ * @returns {Object} The row to keep
+ */
+function foldHistoryRow(held, row) {
+    const times = [held.retiredAt, row.retiredAt].filter((at) => at > 0);
+    const merged = { ...held, ...row };
+    for (const field of ['coinRerollCount', 'cowbellRerollCount', 'goldSpent', 'cowbellsSpent']) {
+        merged[field] = Math.max(held[field] || 0, row[field] || 0);
+    }
+    for (const field of ['monsterHrid', 'actionHrid', 'goalCount']) {
+        merged[field] = row[field] || held[field] || merged[field];
+    }
+    if (times.length > 0) merged.retiredAt = Math.min(...times);
+    return merged;
+}
+
+/**
+ * Fold a stored history under the in-memory one: one row per task, oldest
+ * first, capped at {@link HISTORY_CAP}. The same answer whichever copy is which, and on a replay.
  * @param {Array} stored - Entries as read back
  * @param {Array} memory - Entries as held
  * @returns {Array} The merged, capped history
  */
 function mergeHistory(stored, memory) {
-    const merged = mergeById(
-        (entry) => entry?.taskId,
-        (a, b) => (a.retiredAt || 0) - (b.retiredAt || 0)
-    )(stored, memory);
+    const byTask = new Map();
+    for (const list of [stored, memory]) {
+        for (const entry of Array.isArray(list) ? list : []) {
+            const taskId = entry?.taskId;
+            if (taskId === null || taskId === undefined) continue;
+            const held = byTask.get(taskId);
+            byTask.set(taskId, held ? foldHistoryRow(held, entry) : entry);
+        }
+    }
+    const merged = [...byTask.values()].sort((a, b) => (a.retiredAt || 0) - (b.retiredAt || 0));
     return merged.length > HISTORY_CAP ? merged.slice(merged.length - HISTORY_CAP) : merged;
 }
 
