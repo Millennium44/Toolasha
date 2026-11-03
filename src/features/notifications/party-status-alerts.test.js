@@ -7,7 +7,7 @@
  * behind when the setting goes off.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, vi, afterEach } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 import { kindForEventKey } from './notice-policy.js';
 
@@ -71,7 +71,17 @@ function emit(event, data) {
 }
 
 describe('party status alerts', () => {
+    const realNow = Date.now;
+
+    afterEach(() => {
+        Date.now = realNow;
+    });
+
     beforeEach(async () => {
+        // Each reading is past the minimum gap, except in the test that drives the clock itself
+        let clock = 1_000_000;
+        Date.now = () => (clock += 61_000);
+        partyStatusAlerts.lastFiredAt = 0;
         game.settings = { [MASTER_SETTING]: true };
         game.characterId = 'me';
         game.switching = false;
@@ -89,8 +99,8 @@ describe('party status alerts', () => {
         expect(def.label).toMatch(/party starts or stops fighting/i);
     });
 
-    test('its event keys land in the combat category', () => {
-        expect(kindForEventKey('party-status:me:1').category).toBe('combat');
+    test('its event keys are not critical, so quiet hours can hold them', () => {
+        expect(kindForEventKey('party-status:me:1').category).toBe('other');
     });
 
     test('a party that starts, then stops, is announced both times, with the zone on the start', () => {
@@ -164,6 +174,18 @@ describe('party status alerts', () => {
         expect(game.notified).toHaveLength(2);
         // Not told the first time, so the second change reuses the number rather than skipping one
         expect(game.notified[0].key).toBe(game.notified[1].key);
+    });
+
+    test('a change within a minute of the last alert stays quiet, so fights in quick succession cannot spam', () => {
+        let now = 1_000_000;
+        Date.now = () => now;
+        const start = { status: 'battling', previousStatus: 'recruiting', started: true, stopped: false };
+        const stop = { status: 'recruiting', previousStatus: 'battling', started: false, stopped: true };
+        expect(partyStatusAlerts.onChange(start)?.fired).toBe(true);
+        now += 59_000;
+        expect(partyStatusAlerts.onChange(stop)).toBeNull();
+        now += 2_000;
+        expect(partyStatusAlerts.onChange(stop)?.fired).toBe(true);
     });
 
     test('the master switch off wires nothing at all', async () => {

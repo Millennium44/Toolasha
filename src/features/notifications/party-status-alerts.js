@@ -44,6 +44,13 @@ import notificationService from './notification-service.js';
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_partyStatus';
 
+/**
+ * The least time between two alerts. `party_updated` has not been captured across a repeating
+ * dungeon or zone loop, so whether its status flips between runs is unknown; this caps the cost
+ * if it does. A real stop just after a start stays quiet, which is the cheaper mistake.
+ */
+const MIN_ALERT_GAP_MS = 60_000;
+
 /** Prefix for the notification service's event keys */
 const EVENT_KEY_PREFIX = 'party-status';
 
@@ -79,6 +86,8 @@ class PartyStatusAlerts {
     constructor() {
         /** Changes told so far; part of the event key and never reset (see the module comment) */
         this.changeSeq = 0;
+        /** When the last alert fired, for {@link MIN_ALERT_GAP_MS} */
+        this.lastFiredAt = 0;
         /** The character this instance was started for */
         this.characterId = null;
         this.changeHandler = null;
@@ -133,13 +142,17 @@ class PartyStatusAlerts {
 
         // The party's earlier state was never known: a status arriving, not a status changing
         if (change.previousStatus == null) return null;
+        if (Date.now() - this.lastFiredAt < MIN_ALERT_GAP_MS) return null;
 
         const who = current || 'unknown';
         const key = `${EVENT_KEY_PREFIX}:${who}:${this.changeSeq + 1}`;
         const result = notificationService.notify(key, changeMessage(change, change.started ? zoneName() : ''), {
             title: change.started ? 'Party started' : 'Party stopped',
         });
-        if (result?.fired) this.changeSeq += 1;
+        if (result?.fired) {
+            this.changeSeq += 1;
+            this.lastFiredAt = Date.now();
+        }
         return result;
     }
 
