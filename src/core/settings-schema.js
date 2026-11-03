@@ -1016,6 +1016,7 @@ export const settingsGroups = {
                 label: 'Show expected value for openable containers',
                 type: 'checkbox',
                 default: true,
+                help: 'Shows the expected value of a crate, chest or other openable container on its tooltip, and the all-N duration line on a stack of scrolls. Only the tooltip changes: with this off, those containers are still priced in net worth, inventory badges, the loot log, combat stats and task values, so those figures do not depend on it.',
             },
             expectedValue_showDrops: {
                 id: 'expectedValue_showDrops',
