@@ -9,12 +9,18 @@ const bus = vi.hoisted(() => ({
     market: new Set(),
     settings: new Map(),
     registrations: { events: 0, market: 0, settings: 0 },
+    /** Which data manager registration (1-based) throws, once; 0 for none */
+    failAt: 0,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         on: (event, fn) => {
             bus.registrations.events++;
+            if (bus.registrations.events === bus.failAt) {
+                bus.failAt = 0;
+                throw new Error('registration failed');
+            }
             if (!bus.events.has(event)) bus.events.set(event, new Set());
             bus.events.get(event).add(fn);
         },
@@ -119,6 +125,20 @@ describe('onIronBellLive', () => {
         offs.forEach((off) => off());
         expect(listening()).toEqual({ events: 0, market: 0, settings: 0 });
 
+        const again = vi.fn();
+        subscribe(again);
+        expect(listening()).toEqual({ events: LIVE_EVENTS.length, market: 1, settings: 1 });
+        for (const fn of bus.market) fn();
+        expect(again).toHaveBeenCalledTimes(1);
+    });
+
+    test('an attach that throws part-way leaves nothing registered, and the next subscriber registers once', () => {
+        bus.failAt = 3;
+
+        expect(() => onIronBellLive(() => {})).toThrow('registration failed');
+        expect(listening()).toEqual({ events: 0, market: 0, settings: 0 });
+
+        bus.registrations = { events: 0, market: 0, settings: 0 };
         const again = vi.fn();
         subscribe(again);
         expect(listening()).toEqual({ events: LIVE_EVENTS.length, market: 1, settings: 1 });

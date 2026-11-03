@@ -32,15 +32,34 @@ function fire() {
     }
 }
 
-/** Attach the shared listeners to the data manager, the market feed and the protection setting */
+/**
+ * Attach the shared listeners to the data manager, the market feed and the protection setting.
+ * All or nothing: if one registration throws, the ones already made are taken back off and the error
+ * goes on, so a later subscriber starts from a clean slate instead of registering twice.
+ */
 function attach() {
-    for (const event of LIVE_EVENTS) dataManager.on(event, fire);
-    marketAPI.on?.(fire);
-    const offSetting = config.onSettingChange?.(PROTECTION_SETTING, fire);
+    const offs = [];
+    try {
+        for (const event of LIVE_EVENTS) {
+            dataManager.on(event, fire);
+            offs.push(() => dataManager.off?.(event, fire));
+        }
+        marketAPI.on?.(fire);
+        offs.push(() => marketAPI.off?.(fire));
+        const offSetting = config.onSettingChange?.(PROTECTION_SETTING, fire);
+        if (typeof offSetting === 'function') offs.push(offSetting);
+    } catch (error) {
+        for (const off of offs.reverse()) {
+            try {
+                off();
+            } catch (offError) {
+                console.error('[IronCow] Undoing a partial live subscription failed:', offError);
+            }
+        }
+        throw error;
+    }
     detach = () => {
-        for (const event of LIVE_EVENTS) dataManager.off?.(event, fire);
-        marketAPI.off?.(fire);
-        if (typeof offSetting === 'function') offSetting();
+        for (const off of offs) off();
     };
 }
 
@@ -50,8 +69,8 @@ function attach() {
  * @returns {function(): void} Unsubscribe (idempotent); the last one out detaches the shared listeners
  */
 export function onIronBellLive(callback) {
-    subscribers.add(callback);
     if (!detach) attach();
+    subscribers.add(callback);
 
     let live = true;
     return () => {
