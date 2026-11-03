@@ -35,6 +35,8 @@ import {
     skillingSlotCap,
 } from './guild-trial-assign.js';
 import { TRIAL_SKILLS, parseCurrentTrialsData, trialWeekStart } from '../guild/guild-trials-math.js';
+import { currentSignup, loadoutViewStatus, roleLabel } from '../guild/guild-trial-signups.js';
+import { VIEW_LOADOUT_CONTEXT, getLoadout } from '../../utils/view-loadout.js';
 
 const ACCENT = '#b9a6ff';
 
@@ -139,11 +141,23 @@ export function parseTrialMinLevels(raw) {
  * start (Friday 00:00 UTC, computed from the clock as the game does), an unreadable join time
  * being ineligible. The test server waives the rule, as the game does there.
  *
+ * Each member also carries the cycle's sign-up as {@link currentSignup} reads it: the combat trial and role,
+ * and whether a captured trial loadout view of each kind is still current (`combatView`, `skillingView`:
+ * `stale`, `current`, `unknown`, or `none` with no view). A role shows only beside a combat trial.
+ *
  * @param {Object} tracker - The guild XP tracker
- * @param {{now?: number, testServer?: boolean}} [options]
+ * @param {{now?: number, testServer?: boolean, viewFor?: function(string, string): ?Object}} [options]
+ *   `viewFor(characterId, kind)` answers the captured trial loadout view, for tests
  * @returns {{weekStartAt: string|null, members: Array<Object>}}
  */
-export function cycleRoster(tracker, { now = Date.now(), testServer = isTestServer() } = {}) {
+export function cycleRoster(
+    tracker,
+    {
+        now = Date.now(),
+        testServer = isTestServer(),
+        viewFor = (id, kind) => getLoadout(id, VIEW_LOADOUT_CONTEXT.GuildTrial, kind),
+    } = {}
+) {
     const weekStartAt = tracker?.getCurrentWeekStartAt?.() ?? null;
     const weekMs = trialWeekStart(now);
     const members = [];
@@ -154,11 +168,24 @@ export function cycleRoster(tracker, { now = Date.now(), testServer = isTestServ
         const joinedMs = meta.joinTime == null || meta.joinTime === '' ? NaN : new Date(meta.joinTime).getTime();
         if (!testServer && !(joinedMs < weekMs)) continue;
         const thisCycle = weekStartAt != null && meta.signupWeekStartAt === weekStartAt;
+        const signup = currentSignup(meta, weekStartAt);
+        const id = String(entry.characterID);
+        const viewState = (kind, signedUp) => {
+            if (!signedUp) return 'none';
+            const view = viewFor(id, kind);
+            if (!view) return 'none';
+            return loadoutViewStatus(view, tracker.getLoadoutChangedAt?.(id, kind), true);
+        };
         members.push({
-            id: String(entry.characterID),
+            id,
             name: meta.name,
             current: thisCycle ? skillingTrialHrid(meta.signedUpSkillingTrialHrid) : null,
             inCombat: thisCycle && Boolean(meta.signedUpCombatTrialHrid),
+            combatTrial: signup?.combatTrial || '',
+            role: signup?.role || '',
+            rolePref: signup?.rolePref || '',
+            combatView: viewState('combat', Boolean(signup?.combatTrial)),
+            skillingView: viewState('skilling', Boolean(signup?.skillingTrial)),
         });
     }
     members.sort((a, b) => a.name.localeCompare(b.name));
@@ -303,6 +330,37 @@ export function memberRates(
 export function signupSkillingLevel(map, id) {
     const level = Number(map?.[id]?.skillingTrialLevel);
     return Number.isFinite(level) && level >= 1 && level <= 1000 ? level : null;
+}
+
+/**
+ * The combat cell: the signed-up trial and role, or a dash. A sign-up with no role says so rather than
+ * guessing one.
+ * @param {{combatTrial?: string, role?: string}} member - A {@link cycleRoster} member
+ * @param {function(string): string} label - Trial hrid → name
+ * @returns {string}
+ */
+export function combatSignupText(member, label) {
+    if (!member?.combatTrial) return '—';
+    return `${label(member.combatTrial)} · ${member.role ? roleLabel(member.role) : 'no role'}`;
+}
+
+/**
+ * A marker for a captured loadout view that no longer matches what the member signed up with, or whose
+ * currency cannot be told. Nothing for a current view or none.
+ * @param {string} status - `stale`, `current`, `unknown` or `none`
+ * @returns {HTMLElement|null}
+ */
+function viewNote(status) {
+    if (status !== 'stale' && status !== 'unknown') return null;
+    const note = document.createElement('span');
+    note.dataset.loadoutView = status;
+    note.textContent = status === 'stale' ? '(view out of date)' : '(view age unknown)';
+    note.title =
+        status === 'stale'
+            ? 'They picked a different loadout after this view was taken. Click View Loadout again.'
+            : 'The game does not say which loadout a view was of, and this one could not be compared with their sign-up.';
+    note.style.cssText = `font-size:10px;color:${status === 'stale' ? '#ffb86b' : '#8a93a8'};`;
+    return note;
 }
 
 const MARKERS = { reading: 'R', manual: 'M', level: 'L', signup: 'S', 'below-min': '<min', missing: '—' };
@@ -468,6 +526,12 @@ export class TrialAssignPlanner {
                 // The rates the optimizer consumes: a new reading can change them without changing the level
                 trials.map((t) => m.rates[t]),
             ]),
+        ]);
+        // What the roster table shows: the above plus cells the optimizer never reads, so a change
+        // to these redraws the view without invalidating a recommendation
+        context.displaySignature = JSON.stringify([
+            context.signature,
+            members.map((m) => [m.id, m.combatTrial, m.role, m.rolePref, m.combatView, m.skillingView]),
         ]);
         return context;
     }
@@ -654,14 +718,15 @@ export class TrialAssignPlanner {
      */
     inputsChanged() {
         if (this.controller || (this.sim.kind !== 'assign' && !this.result)) return;
-        const signature = this.context().signature;
+        const context = this.context();
+        const signature = context.signature;
         if (this.result && this.result.signature !== signature) {
             this.result = null;
             this.check = null;
             this.status = 'The roster, sign-ups, levels or readings changed since the last recommendation.';
             removeResultCards();
         }
-        if (this.sim.kind !== 'assign' || signature === this.drawnSignature) return;
+        if (this.sim.kind !== 'assign' || context.displaySignature === this.drawnSignature) return;
         const active = typeof document === 'undefined' ? null : document.activeElement;
         const typing =
             active?.closest?.('[data-trial-assign-root]') && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
@@ -694,7 +759,7 @@ export class TrialAssignPlanner {
         const busy = Boolean(this.controller);
         body.dataset.trialAssignRoot = 'true';
         const context = this.context();
-        this.drawnSignature = context.signature;
+        this.drawnSignature = context.displaySignature;
         const label = (trial) => trialLabel(trial, context.clientData);
         const rerender = () => this.sim.panel?.render();
         if (this.result && !busy && this.result.signature !== context.signature) {
@@ -946,7 +1011,7 @@ export class TrialAssignPlanner {
         const table = document.createElement('table');
         table.style.cssText = 'width:100%;border-collapse:collapse;font-size:12px;';
         const head = document.createElement('tr');
-        for (const title of ['Member', 'Now', ...context.trials.map(label), 'Pin']) {
+        for (const title of ['Member', 'Now', 'Combat', ...context.trials.map(label), 'Pin']) {
             const cell = document.createElement('th');
             cell.textContent = title;
             cell.style.textAlign = 'left';
@@ -962,7 +1027,17 @@ export class TrialAssignPlanner {
             tr.appendChild(name);
             const now = document.createElement('td');
             now.textContent = member.current ? label(member.current) : '—';
+            const skillingNote = viewNote(member.skillingView);
+            if (skillingNote) now.append(' ', skillingNote);
             tr.appendChild(now);
+            const combat = document.createElement('td');
+            combat.dataset.combatSignup = member.combatTrial ? 'yes' : 'no';
+            combat.textContent = combatSignupText(member, label);
+            if (member.combatTrial && !member.role && member.rolePref)
+                combat.title = `No role chosen; usually takes ${roleLabel(member.rolePref)} for this trial`;
+            const combatNote = viewNote(member.combatView);
+            if (combatNote) combat.append(' ', combatNote);
+            tr.appendChild(combat);
             for (const trial of context.trials) {
                 const cell = document.createElement('td');
                 const coverage = member.coverage[trial];

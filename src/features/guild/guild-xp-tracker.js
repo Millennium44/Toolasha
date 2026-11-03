@@ -19,6 +19,8 @@ import performanceMonitor from '../../utils/performance-monitor.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { foldXPSeriesForPull } from '../../utils/xp-series-sync.js';
 import { runInBackground } from '../../utils/background-work.js';
+import { setScheduleHourOffset } from './guild-trial-schedule.js';
+import { loadoutIdChanges, signupFieldsFromGuildChar, signupFieldsFromUpdate } from './guild-trial-signups.js';
 
 const STORE_NAME = 'guildHistory';
 /**
@@ -890,6 +892,8 @@ class GuildXPTracker {
         if (epoch !== this._epoch) return;
 
         const guild = data.guild;
+        // The schedule belongs to the guild this login names; no guild, or no stated offset, holds none
+        setScheduleHourOffset(guild ? (guild.trialScheduleHourOffset ?? data.guildTrialScheduleHourOffset) : null);
         if (!guild) return; // Player not in a guild
 
         const guildName = guild.name;
@@ -929,6 +933,7 @@ class GuildXPTracker {
                 signedUpSkillingTrialHrid: guildChar?.signedUpSkillingTrialHrid || '',
                 signedUpCombatTrialHrid: guildChar?.signedUpCombatTrialHrid || '',
                 signupWeekStartAt: guildChar?.signupWeekStartAt || null,
+                ...signupFieldsFromGuildChar(guildChar),
             };
         }
         this._notifyMetaChanged();
@@ -1069,9 +1074,15 @@ class GuildXPTracker {
         // history, but stop exposing the departed guild's roster under the arriving guild's name.
         if (guild.id != null && this.ownGuildID != null && String(guild.id) !== String(this.ownGuildID)) {
             this.memberMeta = {};
+            // The departed guild's schedule is not the arriving guild's
+            setScheduleHourOffset(null);
         }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
+
+        // Kept when the message does not state it (0 is a stated value)
+        const scheduleOffset = guild.trialScheduleHourOffset ?? data.guildTrialScheduleHourOffset;
+        if (scheduleOffset !== undefined && scheduleOffset !== null) setScheduleHourOffset(scheduleOffset);
 
         const name = guild.name;
         const previous = this.ownGuildName;
@@ -1125,7 +1136,10 @@ class GuildXPTracker {
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
         // An initial history load may still be pending. Invalidate outgoing signups immediately on receipt.
-        if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) this.memberMeta = {};
+        if (newGuildID && this.ownGuildID && String(newGuildID) !== String(this.ownGuildID)) {
+            this.memberMeta = {};
+            setScheduleHourOffset(null);
+        }
         if (this._loadsPending > 0) await this.whenReady();
         if (epoch !== this._epoch) return;
         this.rawSharableMap = sharableMap;
@@ -1133,6 +1147,7 @@ class GuildXPTracker {
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
             // Readers must not pair the arriving guild ID with the departed guild's signups while history loads.
             this.memberMeta = {};
+            setScheduleHourOffset(null);
             // Guild switched — drop the old guild's member data and load the new
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
@@ -1182,6 +1197,7 @@ class GuildXPTracker {
         for (const [charId, sharableData] of Object.entries(sharableMap)) {
             const guildChar = guildCharacterMap[charId];
             const inviterId = guildChar?.inviterCharacterID;
+            const before = this.memberMeta[charId];
             this.memberMeta[charId] = {
                 name: sharableData.name,
                 gameMode: sharableData.gameMode,
@@ -1194,7 +1210,9 @@ class GuildXPTracker {
                 signedUpSkillingTrialHrid: guildChar?.signedUpSkillingTrialHrid || '',
                 signedUpCombatTrialHrid: guildChar?.signedUpCombatTrialHrid || '',
                 signupWeekStartAt: guildChar?.signupWeekStartAt || null,
+                ...signupFieldsFromGuildChar(guildChar),
             };
+            this._stampLoadoutChanges(charId, before, this.memberMeta[charId], Boolean(guildChar));
         }
         this._notifyMetaChanged();
 
@@ -1222,10 +1240,50 @@ class GuildXPTracker {
         const charId = String(data.characterId);
         const meta = this.memberMeta[charId];
         if (!meta) return;
+        // Role and loadout ids only when the message states them (see signupFieldsFromUpdate); a trial that
+        // changed takes its role and loadout with it, so they are worked out against the trials held before
+        const before = { ...meta };
+        const fields = signupFieldsFromUpdate(meta, data);
         meta.signedUpSkillingTrialHrid = data.signedUpSkillingTrialHrid || '';
         meta.signedUpCombatTrialHrid = data.signedUpCombatTrialHrid || '';
         meta.signupWeekStartAt = data.signupWeekStartAt || null;
+        Object.assign(meta, fields);
+        this._stampLoadoutChanges(charId, before, meta, true);
         this._notifyMetaChanged();
+    }
+
+    /**
+     * Remember when a member's signed-up loadout id changed, so a loadout view taken earlier can be called out
+     * of date (the game's loadout reply names no id). First sight of a member is not a change. Skipped when the
+     * message did not carry the member at all, since their fields then read as empty.
+     * @param {string} charId
+     * @param {Object|undefined} before - Held meta, if any
+     * @param {Object} after - The meta just written (its stamps are filled in here)
+     * @param {boolean} carried - Whether the message actually carried this member
+     * @param {number} [now]
+     */
+    _stampLoadoutChanges(charId, before, after, carried, now = Date.now()) {
+        const stamps = { ...(before?.loadoutChangedAt || {}) };
+        if (carried) {
+            const changed = loadoutIdChanges(before, after);
+            if (changed.combat) stamps.combat = now;
+            if (changed.skilling) stamps.skilling = now;
+        } else if (before) {
+            // Not carried: keep what was held rather than reading missing fields as ids of 0
+            for (const key of ['signedUpCombatLoadoutID', 'signedUpSkillingLoadoutID']) after[key] = before[key] ?? 0;
+        }
+        after.loadoutChangedAt = stamps;
+    }
+
+    /**
+     * When a member's signed-up loadout id for a kind was last seen to change.
+     * @param {string|number} characterID
+     * @param {'combat'|'skilling'} kind
+     * @returns {number|null} Epoch ms, or null if never seen to change
+     */
+    getLoadoutChangedAt(characterID, kind) {
+        const at = this.memberMeta[characterID]?.loadoutChangedAt?.[kind];
+        return Number.isFinite(at) ? at : null;
     }
 
     /**
@@ -1575,6 +1633,7 @@ class GuildXPTracker {
         this.leaderboardXPHistory = {};
         this.memberXPHistory = {};
         this.memberMeta = {};
+        setScheduleHourOffset(null);
         this.initialized = false;
     }
 }

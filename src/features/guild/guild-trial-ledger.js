@@ -78,6 +78,7 @@
 import storage from '../../core/storage.js';
 import { TRIAL_ACTIVE_MS, trialFromHrid, trialWeekStart } from './guild-trials-math.js';
 import { isUnnamedRowName } from './guild-trial-units.js';
+import { getScheduleHourOffset } from './guild-trial-schedule.js';
 import { isTestServer } from '../../utils/game-server.js';
 import { registerSyncRetention } from '../../utils/sync-merge-registry.js';
 
@@ -172,14 +173,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;
 
 /**
- * The UTC hour the test server's daily combat trial starts.
+ * The UTC hour the test server's skilling trial starts when the game has not stated a schedule offset.
  *
- * Nothing on the wire states the test server's schedule, so it is assumed here
- * and nowhere else: a skilling hour at 21:00 UTC and a combat hour at 22:00,
- * every day. Every anchored fight in the stored ledger starts at 22:00:17. A
- * cycle opens an hour before this and has run once its combat hour is over.
+ * The game states it as `trialScheduleHourOffset` (see guild-trial-schedule.js): whole hours after the cycle's
+ * midnight UTC at which the skilling hour begins, the combat hour following it. This is the value that was
+ * assumed before anything read the field — 21 — and every anchored fight in the stored ledger starts at
+ * 22:00:17, which agrees. It applies only when no offset is held.
  */
-export const TEST_SERVER_COMBAT_HOUR_UTC = 22;
+export const ASSUMED_TEST_SKILLING_HOUR_UTC = 21;
+
+/** The UTC hour a daily combat trial starts under the assumed offset */
+export const TEST_SERVER_COMBAT_HOUR_UTC = ASSUMED_TEST_SKILLING_HOUR_UTC + 1;
 
 /** Most cycles a window enumerates, so a corrupt stamp far in the past cannot spin it */
 const MAX_WINDOW_SLOTS = 1000;
@@ -187,24 +191,36 @@ const MAX_WINDOW_SLOTS = 1000;
 /**
  * The scheduled cycle a moment belongs to.
  *
- * Live runs one cycle a trial week and `from` is that week's start, the stamp a
- * live record is stored under. The test server runs one a day: a moment belongs
- * to the cycle whose combat start lies within half a day of it, so a fight
- * anchor, or an `at` from late in the combat hour, lands on its own day.
+ * Live runs one cycle a trial week and `from` is that week's start, the stamp a live record is stored under, so
+ * it never moves with the schedule offset; the cycle opens `hourOffset` hours after it. The test server runs
+ * one a day: a moment belongs to the cycle whose combat start lies within half a day of it, so a fight anchor,
+ * or an `at` from late in the combat hour, lands on its own day. The combat hour is the skilling hour
+ * (`hourOffset`) plus one, and the cycle opens at the skilling hour. `from` there is a derived boundary, not a
+ * stored key: records are filed by week and told apart by their own fight anchors.
  *
  * @param {number} at - Epoch ms
  * @param {boolean} daily - Whether cycles are daily (the test server)
- * @returns {{from: number, opens: number, end: number}} The cycle's assignment
- *   boundary, when it begins, and when it has run
+ * @param {number|null} [hourOffset] - The guild's schedule hour offset (0 is a real value); defaults to the
+ *   one the game stated, and to the previous assumption when it has not stated one
+ * @returns {{from: number, opens: number, end: number, assumed: boolean}} The cycle's assignment boundary,
+ *   when it begins, when it has run, and whether the start came from the assumption rather than the game
  */
-export function scheduledCycle(at, daily) {
+export function scheduledCycle(at, daily, hourOffset = getScheduleHourOffset()) {
+    const stated = Number.isFinite(hourOffset);
     if (!daily) {
         const from = trialWeekStart(at);
-        return { from, opens: from, end: from + WEEK_MS };
+        // Unstated, a live cycle opens at its start, as it was always taken to
+        return { from, opens: from + (stated ? hourOffset * 3_600_000 : 0), end: from + WEEK_MS, assumed: !stated };
     }
-    const offset = TEST_SERVER_COMBAT_HOUR_UTC * 3_600_000;
+    const skilling = stated ? hourOffset : ASSUMED_TEST_SKILLING_HOUR_UTC;
+    const offset = (skilling + 1) * 3_600_000;
     const combat = Math.floor((at - offset + DAY_MS / 2) / DAY_MS) * DAY_MS + offset;
-    return { from: combat - DAY_MS / 2, opens: combat - TRIAL_ACTIVE_MS, end: combat + TRIAL_ACTIVE_MS };
+    return {
+        from: combat - DAY_MS / 2,
+        opens: combat - TRIAL_ACTIVE_MS,
+        end: combat + TRIAL_ACTIVE_MS,
+        assumed: !stated,
+    };
 }
 
 /**

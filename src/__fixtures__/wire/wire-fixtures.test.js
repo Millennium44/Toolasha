@@ -10,7 +10,7 @@ import { buildBattleConsumableAbilityUpdated } from './battle-consumable-ability
 import { buildItemsUpdated } from './items-updated.js';
 import { buildListingPlaced, buildListingCancelled, buildOrderBooksUpdated } from './market.js';
 import { buildCharacterAction } from './character-actions.js';
-import { buildGuildMember } from './guild-members.js';
+import { buildGuildMember, buildSignedUpGuildMember } from './guild-members.js';
 import {
     buildEndGuildBattle,
     buildGuildBattleUpdated,
@@ -182,6 +182,13 @@ describe('wire fixtures keep the captured field names', () => {
         expect(m).toHaveProperty('signedUpCombatTrialHrid');
         expect(m).toHaveProperty('signedUpSkillingTrialHrid');
         expect(m).toHaveProperty('signupWeekStartAt');
+        // Role is a bare word, loadout ids are numbers with 0 for none, prefs are JSON strings
+        expect(m.signedUpCombatRoleHrid).toBe('');
+        expect(m.signedUpCombatLoadoutID).toBe(0);
+        const full = buildSignedUpGuildMember();
+        expect(['damage_dealer', 'support', 'tank']).toContain(full.signedUpCombatRoleHrid);
+        expect(typeof full.trialRolePrefs).toBe('string');
+        expect(JSON.parse(full.trialLoadoutPrefs)['/guild_combat/swarm']).toBe(full.signedUpCombatLoadoutID);
     });
 
     test('client and character pieces', () => {

@@ -52,6 +52,7 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('../../utils/command-registry.js', () => ({ registerCommand: vi.fn(), unregisterCommand: vi.fn() }));
 vi.mock('../../utils/view-loadout.js', () => ({
     getLoadouts: () => harness.entries,
+    getLoadout: () => null,
     VIEW_LOADOUT_CONTEXT: { GuildTrial: 'guild_trial' },
 }));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => [], setJSON: async () => true } }));
@@ -1058,5 +1059,33 @@ describe('trial readings belong to one guild', () => {
         } finally {
             delete dataManager.characterData.guild;
         }
+    });
+});
+
+describe('a roster build made from a loadout view against the signed-up loadout', () => {
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    const trackerWith = (seen, changedAt) => ({
+        Combat: {
+            guildXPTrackerInstance: {
+                getMemberMeta: (id) => (seen.includes(String(id)) ? { name: 'x' } : null),
+                getLoadoutChangedAt: (id) => changedAt[String(id)] ?? null,
+            },
+        },
+    });
+
+    test('stale after the id changed, current before, unknown for an untracked member, none for a plain build', () => {
+        const view = { id: '7', viewKind: 'combat', capturedAt: 1000 };
+        window.Toolasha = trackerWith(['7'], { 7: 2000 });
+        expect(feature.loadoutViewStatusOf(view)).toBe('stale');
+        window.Toolasha = trackerWith(['7'], { 7: 900 });
+        expect(feature.loadoutViewStatusOf(view)).toBe('current');
+        window.Toolasha = trackerWith([], {});
+        expect(feature.loadoutViewStatusOf(view)).toBe('unknown');
+        expect(feature.loadoutViewStatusOf({ id: '7', capturedAt: 1000 })).toBe('none');
+        delete window.Toolasha;
+        expect(feature.loadoutViewStatusOf(view)).toBe('unknown');
     });
 });

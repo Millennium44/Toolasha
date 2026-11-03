@@ -6,6 +6,7 @@ import webSocketHook from '../../core/websocket.js';
 import { createPanel, panelCard, panelNote, panelLine } from '../../utils/simple-panel.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
+import { loadoutViewStatus } from '../guild/guild-trial-signups.js';
 import { guildMemberSkills, guildXpTracker } from '../../utils/bundle-bridge.js';
 import {
     buildPlayerDTO,
@@ -494,6 +495,22 @@ export class GuildTrialSim {
         this.changed();
     }
 
+    /**
+     * Whether a roster build made from a captured loadout view still matches the member's signed-up loadout.
+     * @param {Object} member - A combat roster member
+     * @returns {'stale'|'current'|'unknown'|'none'} `none` for a build that is not a loadout view
+     */
+    loadoutViewStatusOf(member) {
+        if (member?.viewKind !== 'combat') return 'none';
+        const tracker = guildXpTracker();
+        const seen = Boolean(tracker?.getMemberMeta?.(member.id));
+        return loadoutViewStatus(
+            { kind: 'combat', capturedAt: member.capturedAt },
+            tracker?.getLoadoutChangedAt?.(member.id, 'combat'),
+            seen
+        );
+    }
+
     async addCapturedBuilds() {
         if (this.loading || this.controller) return;
         const generation = this.generation;
@@ -521,6 +538,7 @@ export class GuildTrialSim {
                     dto: built.dto,
                     source: 'Captured trial loadout + cached profile levels',
                     capturedAt: entry.capturedAt,
+                    viewKind: 'combat',
                     profileCapturedAt: built.profileCapturedAt,
                 };
                 this.combatMembers = [...this.combatMembers.filter((m) => m.id !== id), member];
@@ -603,6 +621,7 @@ export class GuildTrialSim {
                     dto: built.dto,
                     source: `Trial capture · ${bundle.guildName}`,
                     capturedAt: entry.capturedAt,
+                    viewKind: 'combat',
                     profileCapturedAt: built.profileCapturedAt,
                 });
             }
@@ -1066,6 +1085,13 @@ export class GuildTrialSim {
                 },
                 busy
             );
+            const viewStatus = this.loadoutViewStatusOf(member);
+            if (viewStatus === 'stale')
+                roster.appendChild(
+                    panelNote(
+                        `${member.name} signed up with a different combat loadout after this view was taken. View their loadout again.`
+                    )
+                );
             roster.appendChild(
                 panelNote(
                     `${member.source || 'Imported build'}${member.capturedAt ? ` · ${new Date(member.capturedAt).toLocaleString()}` : ''}${member.profileCapturedAt ? ` · profile ${new Date(member.profileCapturedAt).toLocaleString()}` : ''}`
