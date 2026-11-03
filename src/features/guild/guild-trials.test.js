@@ -6600,6 +6600,32 @@ describe('the combat tier from the card alone', () => {
         expect(analysis.tiersClearedSoFar).toBe(1);
     });
 
+    test('a reading of one monster of a four-monster wave does not drop the stated tier', () => {
+        // Swarm's four monsters: the statement was for the whole wave, the bar read one of them
+        const partial = { current: 200_000, max: 250_000, source: 'pool', slots: 1, waveCount: 4 };
+        const record = {
+            ...fight({ liveTier: 2, liveTierTarget: 1_000_000 }),
+            samples: [
+                { t: Date.now() - 10_000, readings: [{ ...partial, current: 210_000 }] },
+                { t: Date.now(), readings: [partial] },
+            ],
+        };
+        const analysis = analyseTrial(record, { participants: 4, phase: 'live' });
+        expect(analysis.tier).toBe(2);
+        expect(analysis.tierSource).toBe('socket');
+
+        // …and a whole-wave reading that disagrees still drops it: the tier has moved on
+        const whole = { current: 1_900_000, max: 2_000_000, source: 'pool', slots: 4, waveCount: 4 };
+        const moved = {
+            ...record,
+            samples: [
+                { t: Date.now() - 10_000, readings: [{ ...whole, current: 1_950_000 }] },
+                { t: Date.now(), readings: [whole] },
+            ],
+        };
+        expect(analyseTrial(moved, { participants: 4, phase: 'live' }).tierSource).not.toBe('socket');
+    });
+
     test('the combat caption names the boss’s health rather than a work total', () => {
         const analysis = analyseTrial(fight(), { participants: 4, phase: 'live', workBase: 550_000 });
         const html = renderTrialBlock(analysis, 4, { measured: false, reason: 'none' }, { phase: 'live' });

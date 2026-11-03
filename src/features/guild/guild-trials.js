@@ -612,7 +612,9 @@ export function analyseTrial(
     const fromBadge = badge !== null ? (completed || !earned ? badge : badge + 1) : null;
 
     const socketTarget = Number.isFinite(record?.liveTierTarget) ? record.liveTierTarget : null;
-    const socketStale = socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
+    // A reading of part of a wave (one monster's max) cannot disagree with the whole wave's target
+    const socketStale =
+        latestMonsters !== null && socketTarget !== null && Number.isFinite(total) && total !== socketTarget;
     const fromSocket = !completed && !socketStale && Number.isFinite(record?.liveTier) ? record.liveTier : null;
 
     // The guild payload's `highestTier` for this trial's party ('server'): tiers
