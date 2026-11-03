@@ -440,9 +440,10 @@ const SHARED_SETTINGS_KEY = 'script_settingsMap_shared';
  * (`features/sync/sync-payload.js`, which repeats this literal — a feature
  * cannot be imported from core).
  *
- * Every path that writes a settings map stamps what it changed, by comparing
- * the entries before and after (`_stampDiff`), so no path can forget a
- * setting it touched. A write the player did not make — the first-load seed,
+ * Every path that writes a settings map stamps what it changed in the same
+ * transaction, by comparing the entries before and after
+ * (`_writeMapWithStamps`), so no path can forget a setting it touched and no
+ * reader can see a new value under its old stamp. A write the player did not make — the first-load seed,
  * a key migration, a default rewrite, the account-wide carry-over — stamps
  * `{at: 0, system: true}`: older than any change a person made, so it never
  * beats one, while still saying "this build has an opinion here" against a
@@ -716,11 +717,12 @@ class SettingsStorage {
                 if (globalTemplate) {
                     // Copy global template to this character
                     saved = globalTemplate;
-                    const written = await storage.setJSON(characterKey, saved, this.storageArea, true);
-                    if (written !== false) {
-                        await this._stampDiff(characterKey, null, saved, { system: true });
-                        await this._carryFillAndPinStamps(this.storageKey, characterKey);
-                    }
+                    // A copied template's untouched defaults and pins stay what they were: stamped as plain
+                    // system values they would outrank another device's pin in a sync fold
+                    await this._writeMapWithStamps(characterKey, saved, null, {
+                        system: true,
+                        carryFrom: this.storageKey,
+                    });
                 }
 
                 // Add character to known characters list
@@ -942,9 +944,7 @@ class SettingsStorage {
                 // Storage answers a refused or failed write with false, not a
                 // throw. Recording over an unwritten map would strand every
                 // character on its own token forever.
-                const written = await storage.setJSON(SHARED_SETTINGS_KEY, next, this.storageArea, true);
-                if (written === false) return;
-                await this._stampDiff(SHARED_SETTINGS_KEY, existing, next, { system: true });
+                if (!(await this._writeMapWithStamps(SHARED_SETTINGS_KEY, next, existing, { system: true }))) return;
             }
             if (conflicts.length > 0) {
                 // A previous run's record may still be waiting to be shown —
@@ -997,7 +997,7 @@ class SettingsStorage {
      * @param {Object} settings - The caller's settings map
      * @param {Iterable<string>} settingIds - Shared ids this save is carrying
      * @param {Iterable<string>|null} [userIds] - The ids the player asked to change, for the stamps; every
-     *   carried id when omitted. Null: only ids already stored whose value moved (see `_stampDiff`).
+     *   carried id when omitted. Null: only ids already stored whose value moved (see `_planStamps`).
      * @returns {Promise<boolean>} Whether every requested shared entry was written
      * @private
      */
@@ -1067,9 +1067,7 @@ class SettingsStorage {
                 // throw. The flag waits for a load whose write lands: set over an
                 // unsaved map, it would stop the rewrite for good and a reload
                 // would find the old default back.
-                const written = await storage.setJSON(characterKey, next, this.storageArea, true);
-                if (written === false) return next;
-                await this._stampDiff(characterKey, saved, next, { system: true });
+                if (!(await this._writeMapWithStamps(characterKey, next, saved, { system: true }))) return next;
             }
             await storage.set(flagKey, true, this.storageArea, true);
             return next;
@@ -1117,10 +1115,9 @@ class SettingsStorage {
             for (const id of Object.keys(next)) {
                 if (!saved[id] && !persisted[id]) persisted[id] = next[id];
             }
-            const written = await storage.setJSON(characterKey, persisted, this.storageArea, true);
             // A pin is a guess about an untouched switch, not an opinion: marked so a sync merge lets any
             // real value, stamped or not, beat it (see localStampWins)
-            if (written !== false) await this._stampDiff(characterKey, onDisk, persisted, { system: true, pin: true });
+            await this._writeMapWithStamps(characterKey, persisted, onDisk, { system: true, pin: true });
         } catch (error) {
             console.error('[SettingsStorage] Pinning previous defaults failed:', error);
         }
@@ -1198,9 +1195,7 @@ class SettingsStorage {
                 // throw. The record waits for a load whose write lands: written
                 // over an unsaved map, it would stop the carry for good and a
                 // reload would find the new settings off.
-                const written = await storage.setJSON(characterKey, next, this.storageArea, true);
-                if (written === false) return next;
-                await this._stampDiff(characterKey, saved, next, { system: true });
+                if (!(await this._writeMapWithStamps(characterKey, next, saved, { system: true }))) return next;
             }
             // The union, not just this pass: an id recorded by a build that has
             // an entry this one does not must not be forgotten, or that entry
@@ -1479,16 +1474,14 @@ class SettingsStorage {
         }
 
         // Written in one transaction with its change stamps, so no reader sees a new value under an old
-        // stamp. Stamped as the player's: see below.
+        // stamp. Stamped as the player's: what this save was asked to change (a reset is asked to change
+        // everything) and whose value moved. An id written only because the stored map lacked it — a setting
+        // newer than the save file, filled in from its default — is not a choice and is stamped as a fill.
+        // Without dirty tracking the save says nothing about intent, so only ids already stored whose value
+        // moved count.
         const userIds = this._userIds(settings, dirtyKeys);
-        if (!(await this._writeMapWithStamps(characterKey, toWrite, stored, { ids: userIds }))) return false;
-        // Stamped as the player's: what this save was asked to change (a reset
-        // is asked to change everything) and whose value moved. An id written
-        // only because the stored map lacked it — a setting newer than the
-        // save file, filled in from its default — is not a choice and is not
-        // stamped. Without dirty tracking the save says nothing about intent,
-        // so only ids already stored whose value moved count.
-        await this._stampFilled(characterKey, stored, toWrite, userIds);
+        if (!(await this._writeMapWithStamps(characterKey, toWrite, stored, { ids: userIds, fill: true })))
+            return false;
 
         // The account-wide settings go to their own key as well as staying in
         // this character's map. Staying keeps a downgrade working and adds no
@@ -1519,7 +1512,32 @@ class SettingsStorage {
     }
 
     /**
-     * Stamp the settings whose VALUE a write just changed.
+     * Write a settings map together with the stamps for what it changed, in one storage transaction, so a
+     * tab close or a sync read between the two cannot see a new value under its old stamp. Every path that
+     * writes a settings map comes through here. A stamp that cannot be planned costs only the tie-break on a
+     * setting two devices both changed, so the map is then written alone, and never fails for it.
+     * @param {string} mapKey - The settings map's storage key
+     * @param {*} value - What to store (an import may carry a map as JSON text)
+     * @param {Object|null} before - The map as stored before the write
+     * @param {Object} stampOptions - As for `_planStamps`
+     * @param {Object|null} [after] - The map `value` stands for, when it is not the map itself
+     * @returns {Promise<boolean>} Whether the write landed
+     * @private
+     */
+    async _writeMapWithStamps(mapKey, value, before, stampOptions, after = value) {
+        let stamps = null;
+        try {
+            stamps = await this._planStamps(mapKey, before, after, stampOptions);
+        } catch (error) {
+            console.error('[SettingsStorage] Could not stamp changed settings:', error);
+        }
+        if (!stamps) return (await storage.setJSON(mapKey, value, this.storageArea, true)) !== false;
+        const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
+        return (await storage.setMany({ [mapKey]: value, [stampKey]: stamps }, this.storageArea)) !== false;
+    }
+
+    /**
+     * The stamps a settings-map write should land with, for the settings whose VALUE it changes.
      *
      * Values, not entries: an entry also carries its label and option list,
      * which change between builds without anyone choosing anything.
@@ -1535,57 +1553,30 @@ class SettingsStorage {
      * System writes stamp `{at: 0, system: true}`: older than any change a
      * person made, so they never beat one in a merge.
      *
-     * Best effort: a stamp that fails to land costs only the tie-break on a
-     * setting two devices both changed, and must never fail the write itself.
+     * `fill` stamps the ids written only because the stored map lacked them
+     * (defaults this install filled in, not choices) as `{at: 0, system: true,
+     * fill: true}`. A sync merge ranks a fill below every other value (see
+     * `localStampWins`), so a fresh browser's defaults cannot override what an
+     * existing profile holds, pinned previous defaults included. A fill never
+     * overwrites a stamp that exists, and a later real change replaces it.
+     *
+     * `carryFrom` names a template map whose fill and pin stamps go onto this
+     * map's, for a character seeded from it.
      *
      * @param {string} mapKey - The settings map's storage key
      * @param {Object|null} before - The map as stored before the write
      * @param {Object|null} after - The map as written
-     * @param {{system?: boolean, ids?: Set<string>|null, absentIsChange?: boolean}} [options] - What may count
-     * @returns {Promise<void>}
+     * @param {{system?: boolean, pin?: boolean, ids?: Set<string>|null, absentIsChange?: boolean, fill?: boolean,
+     *   carryFrom?: string|null}} [options] - What may count
+     * @returns {Promise<Object|null>} The new stamp map, or null when nothing about the stamps changes
      * @private
      */
-    async _stampDiff(mapKey, before, after, options = {}) {
-        try {
-            const plan = await this._planStamps(mapKey, before, after, options);
-            if (plan) await storage.setJSON(plan.stampKey, plan.stamps, this.storageArea, true);
-        } catch (error) {
-            console.error('[SettingsStorage] Could not stamp changed settings:', error);
-        }
-    }
-
-    /**
-     * Write a settings map together with the stamps for what it changed, in one storage transaction, so a
-     * tab close or a sync read between the two cannot see a new value under its old stamp. A stamp that
-     * cannot be planned costs only the tie-break, so the map is then written alone, as before.
-     * @param {string} mapKey - The settings map's storage key
-     * @param {Object} value - The map to write
-     * @param {Object|null} before - The map as stored before the write
-     * @param {Object} stampOptions - As for `_stampDiff`
-     * @returns {Promise<boolean>} Whether the write landed
-     * @private
-     */
-    async _writeMapWithStamps(mapKey, value, before, stampOptions) {
-        let plan = null;
-        try {
-            plan = await this._planStamps(mapKey, before, value, stampOptions);
-        } catch (error) {
-            console.error('[SettingsStorage] Could not stamp changed settings:', error);
-        }
-        if (!plan) return (await storage.setJSON(mapKey, value, this.storageArea, true)) !== false;
-        return (await storage.setMany({ [mapKey]: value, [plan.stampKey]: plan.stamps }, this.storageArea)) !== false;
-    }
-
-    /**
-     * What `_stampDiff` would write: the stamp key and its new map, or null when nothing changed.
-     * @param {string} mapKey - The settings map's storage key
-     * @param {Object|null} before - The map as stored before the write
-     * @param {Object|null} after - The map as written
-     * @param {Object} options - As for `_stampDiff`
-     * @returns {Promise<{stampKey: string, stamps: Object}|null>}
-     * @private
-     */
-    async _planStamps(mapKey, before, after, { system = false, pin = false, ids = null, absentIsChange = false } = {}) {
+    async _planStamps(
+        mapKey,
+        before,
+        after,
+        { system = false, pin = false, ids = null, absentIsChange = false, fill = false, carryFrom = null } = {}
+    ) {
         const old = before && typeof before === 'object' ? before : {};
         const next = after && typeof after === 'object' ? after : {};
         const absentCounts = system || absentIsChange || Boolean(ids);
@@ -1594,86 +1585,40 @@ class SettingsStorage {
             Object.hasOwn(old, id) ? canonical(valueOf(old[id])) !== canonical(valueOf(next[id])) : absentCounts
         );
         const removed = Object.keys(old).filter((id) => !Object.hasOwn(next, id));
-        if (changed.length === 0 && removed.length === 0) return null;
+        const filled = fill ? Object.keys(next).filter((id) => !Object.hasOwn(old, id) && !ids?.has(id)) : [];
+        if (changed.length === 0 && removed.length === 0 && filled.length === 0 && !carryFrom) return null;
 
-        const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
-        const existing = await storage.getJSON(stampKey, this.storageArea, null);
+        const existing = await storage.getJSON(`${SETTING_STAMPS_PREFIX}${mapKey}`, this.storageArea, null);
         const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
-        let stamp;
-        if (system) {
-            stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
-        } else {
-            const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
-            const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
-            stamp = { at: Date.now(), seq };
+        let moved = changed.length > 0 || removed.length > 0;
+        if (changed.length > 0) {
+            let stamp;
+            if (system) {
+                stamp = pin ? { at: 0, seq: null, system: true, pin: true } : { at: 0, seq: null, system: true };
+            } else {
+                const rawSeq = await storage.get(SYNC_SEQ_KEY, this.storageArea, null);
+                const seq = Number.isSafeInteger(rawSeq) && rawSeq >= 0 ? rawSeq : null;
+                stamp = { at: Date.now(), seq };
+            }
+            for (const id of changed) stamps[id] = { ...stamp };
         }
-        for (const id of changed) stamps[id] = { ...stamp };
         for (const id of removed) delete stamps[id];
-        return { stampKey, stamps };
-    }
-
-    /**
-     * Copy a template map's fill and pin stamps onto a character map seeded from it.
-     * @param {string} fromKey - The template map's storage key
-     * @param {string} toKey - The character map's storage key
-     * @returns {Promise<void>}
-     * @private
-     */
-    async _carryFillAndPinStamps(fromKey, toKey) {
-        // A copied template's untouched defaults and pins stay what they were: stamped as plain system
-        // values they would outrank another device's pin in a sync fold
-        try {
-            const source = await storage.getJSON(`${SETTING_STAMPS_PREFIX}${fromKey}`, this.storageArea, null);
-            if (!source || typeof source !== 'object' || Array.isArray(source)) return;
-            const stampKey = `${SETTING_STAMPS_PREFIX}${toKey}`;
-            const existing = await storage.getJSON(stampKey, this.storageArea, null);
-            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
-            let carried = false;
-            for (const [id, stamp] of Object.entries(source)) {
-                if (!stamp?.fill && !stamp?.pin) continue;
-                stamps[id] = { ...stamp };
-                carried = true;
-            }
-            if (carried) await storage.setJSON(stampKey, stamps, this.storageArea, true);
-        } catch (error) {
-            console.error('[SettingsStorage] Could not carry template stamps:', error);
+        for (const id of filled) {
+            if (Object.hasOwn(stamps, id)) continue;
+            stamps[id] = { at: 0, seq: null, system: true, fill: true };
+            moved = true;
         }
-    }
-
-    /**
-     * Stamp the ids a save wrote only because the stored map lacked them (defaults this install filled
-     * in, not choices) as `{at: 0, system: true, fill: true}`. A sync merge ranks a fill below every
-     * other value (see `localStampWins`), so a fresh browser's defaults cannot override what an existing
-     * profile holds, pinned previous defaults included. Never overwrites a stamp that already exists,
-     * and a later real change replaces it (`_stampDiff` writes the id's whole stamp).
-     *
-     * @param {string} mapKey - The settings map's storage key
-     * @param {Object|null} before - The map as stored before the write
-     * @param {Object|null} after - The map as written
-     * @param {Set<string>|null} userIds - Ids the save was asked to change (stamped as real choices)
-     * @returns {Promise<void>}
-     * @private
-     */
-    async _stampFilled(mapKey, before, after, userIds) {
-        try {
-            const old = before && typeof before === 'object' ? before : {};
-            const filled = Object.keys(after && typeof after === 'object' ? after : {}).filter(
-                (id) => !Object.hasOwn(old, id) && !userIds?.has(id)
-            );
-            if (filled.length === 0) return;
-            const stampKey = `${SETTING_STAMPS_PREFIX}${mapKey}`;
-            const existing = await storage.getJSON(stampKey, this.storageArea, null);
-            const stamps = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
-            let added = false;
-            for (const id of filled) {
-                if (Object.hasOwn(stamps, id)) continue;
-                stamps[id] = { at: 0, seq: null, system: true, fill: true };
-                added = true;
+        if (carryFrom) {
+            const source = await storage.getJSON(`${SETTING_STAMPS_PREFIX}${carryFrom}`, this.storageArea, null);
+            if (source && typeof source === 'object' && !Array.isArray(source)) {
+                for (const [id, stamp] of Object.entries(source)) {
+                    if (!stamp?.fill && !stamp?.pin) continue;
+                    stamps[id] = { ...stamp };
+                    moved = true;
+                }
             }
-            if (added) await storage.setJSON(stampKey, stamps, this.storageArea, true);
-        } catch (error) {
-            console.error('[SettingsStorage] Could not stamp filled settings:', error);
         }
+        return moved ? stamps : null;
     }
 
     /**
@@ -1733,10 +1678,8 @@ class SettingsStorage {
             )
         );
         if (!stored || typeof stored !== 'object') {
-            const written = await storage.setJSON(characterKey, settings, this.storageArea, true);
-            if (written === false) return false;
-            await this._stampDiff(characterKey, null, settings, { ids: chosen });
-            await this._stampFilled(characterKey, null, settings, chosen);
+            const written = await this._writeMapWithStamps(characterKey, settings, null, { ids: chosen, fill: true });
+            if (!written) return false;
             return this._writeSharedEntries(settings, touchedShared);
         }
 
@@ -1745,10 +1688,8 @@ class SettingsStorage {
             const untouched = settingId in defaults && valueOf(entry) === valueOf(defaults[settingId]);
             if (!(settingId in merged) || !untouched) merged[settingId] = entry;
         }
-        const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
-        if (written === false) return false;
-        await this._stampDiff(characterKey, stored, merged, { ids: chosen });
-        await this._stampFilled(characterKey, stored, merged, chosen);
+        const written = await this._writeMapWithStamps(characterKey, merged, stored, { ids: chosen, fill: true });
+        if (!written) return false;
         return this._writeSharedEntries(settings, touchedShared);
     }
 
@@ -1859,8 +1800,9 @@ class SettingsStorage {
             if (character.id === sourceId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
             const before = await storage.getJSON(characterKey, this.storageArea, null);
-            let targetWritten = (await storage.setJSON(characterKey, settings, this.storageArea, true)) !== false;
-            if (targetWritten) await this._stampDiff(characterKey, before, settings, { absentIsChange: true });
+            let targetWritten = await this._writeMapWithStamps(characterKey, settings, before, {
+                absentIsChange: true,
+            });
 
             for (let i = 0; i < TASK_CHARACTER_SCOPED_PREFIXES.length; i++) {
                 if (taskScopedValues[i] === null) continue;
@@ -1919,13 +1861,9 @@ class SettingsStorage {
             }
             const merged = { ...stored };
             for (const id of ids) merged[id] = { ...entries[id] };
-            const written = await storage.setJSON(characterKey, merged, this.storageArea, true);
-            if (written === false) {
-                skipped.push(character);
-            } else {
-                await this._stampDiff(characterKey, stored, merged, { ids: new Set(ids) });
-                copied.push(character);
-            }
+            const written = await this._writeMapWithStamps(characterKey, merged, stored, { ids: new Set(ids) });
+            if (written) copied.push(character);
+            else skipped.push(character);
         }
 
         return { copied, skipped };
@@ -1960,9 +1898,8 @@ class SettingsStorage {
             return false;
         }
         const before = await storage.getJSON(destinationKey, this.storageArea, null);
-        const written = await storage.setJSON(destinationKey, sourceMap, this.storageArea, true);
-        if (written === false) return false;
-        await this._stampDiff(destinationKey, before, sourceMap, { absentIsChange: true });
+        if (!(await this._writeMapWithStamps(destinationKey, sourceMap, before, { absentIsChange: true })))
+            return false;
         // The map is the source character's; the migration record left behind is
         // this character's, and it describes a map that is no longer here. A
         // source last written by a build that predates a merge would otherwise
@@ -2164,11 +2101,10 @@ class SettingsStorage {
 
                 const isMap = key.startsWith(this.storageKey);
                 const before = isMap ? await storage.getJSON(key, this.storageArea, null) : null;
-                const written = await storage.setJSON(key, value, this.storageArea, true);
-                if (written !== false && isMap) {
-                    await this._stampDiff(key, before, parseMap(value), { absentIsChange: true });
-                }
-                if (written === false) {
+                const written = isMap
+                    ? await this._writeMapWithStamps(key, value, before, { absentIsChange: true }, parseMap(value))
+                    : (await storage.setJSON(key, value, this.storageArea, true)) !== false;
+                if (!written) {
                     await this.reconcileKeyMigrationState(importedKeys);
                     console.error(`[Settings Storage] Import stopped: ${key} could not be written`);
                     return null;
