@@ -124,6 +124,62 @@ describe('deleting a marked point', () => {
         expect(networthHistory.history[1].marker.step).toBe(400);
     });
 
+    test('a change the next point carries in a bigger batch is not added twice either', async () => {
+        const now = Date.now();
+        const batch = {
+            changes: [
+                { id: LAB, from: false, to: true, step: 400, stepCounted: 400 },
+                { id: 'networth_includeCowbells', from: false, to: true, step: 100, stepCounted: 100 },
+            ],
+            step: 500,
+            stepCounted: 500,
+            unseparated: [],
+            raw: 500,
+        };
+        networthHistory.history = [
+            { t: now - 3 * HOUR, total: 1000, nonExcluded: 1000 },
+            { t: now - 2 * HOUR, total: 1400, nonExcluded: 1400, marker: marker(400) },
+            { t: now - HOUR, total: 1500, nonExcluded: 1500, marker: batch },
+        ];
+        await networthHistory.deleteSnapshot(now - 2 * HOUR);
+        expect(networthHistory.history[1].marker).toEqual(batch);
+
+        // The other way round: the bigger batch is the one deleted, and only the cowbells are left to carry
+        networthHistory.history = [
+            { t: now - 3 * HOUR, total: 1000, nonExcluded: 1000 },
+            { t: now - 2 * HOUR, total: 1500, nonExcluded: 1500, marker: batch },
+            { t: now - HOUR, total: 1500, nonExcluded: 1500, marker: marker(400) },
+        ];
+        await networthHistory.deleteSnapshot(now - 2 * HOUR);
+        const kept = networthHistory.history[1].marker;
+        expect(kept.step).toBe(500);
+        expect(kept.changes.map((c) => c.id).sort()).toEqual([LAB, 'networth_includeCowbells'].sort());
+        expect(networthHistory.getGrowthHistory().map((p) => p.total)).toEqual([1000, 1000]);
+    });
+
+    test('a pull that brings two batches, read straight through: growth takes the shared change out once', async () => {
+        const now = Date.now();
+        const mine = { t: now - 2 * HOUR, total: 1400, nonExcluded: 1400, marker: marker(400) };
+        const theirs = {
+            t: now - HOUR,
+            total: 1500,
+            nonExcluded: 1500,
+            marker: {
+                changes: [
+                    { id: LAB, from: false, to: true, step: 400, stepCounted: 400 },
+                    { id: 'networth_includeCowbells', from: false, to: true, step: 100, stepCounted: 100 },
+                ],
+                step: 500,
+                stepCounted: 500,
+                unseparated: [],
+                raw: 500,
+            },
+        };
+        networthHistory.history = [{ t: now - 3 * HOUR, total: 1000, nonExcluded: 1000 }, mine, theirs];
+        expect(networthHistory.getGrowthHistory().map((p) => p.total)).toEqual([1000, 1000, 1000]);
+        expect(networthHistory.getForecastHistory().at(-1).total).toBe(1500);
+    });
+
     test('with no later point the remembered settings go back, so the change is pending and is marked again', async () => {
         networthHistory.markerState = { t: Date.now(), settings: { [LAB]: true } };
         networthHistory.history = [
@@ -178,6 +234,29 @@ describe('pruning keeps the steps', () => {
         expect(out[0].marker.step).toBe(340);
         // pruning what is already pruned adds nothing
         expect(pruneHistory(out, now)[0].marker.step).toBe(340);
+    });
+
+    test('over the cap a dropped batch that overlaps the survivor adds only what the survivor lacks', () => {
+        const now = Date.parse('2026-11-02T12:00:00Z');
+        const points = Array.from({ length: 12_001 }, (_, i) => ({ t: now - (12_001 - i) * 600_000, total: 1000 + i }));
+        points[0] = {
+            ...points[0],
+            marker: {
+                changes: [
+                    { id: LAB, from: false, to: true, step: 400, stepCounted: 400 },
+                    { id: 'networth_includeCowbells', from: false, to: true, step: 100, stepCounted: 100 },
+                ],
+                step: 500,
+                stepCounted: 500,
+                unseparated: [],
+                raw: 500,
+            },
+        };
+        points[1] = { ...points[1], marker: marker(400) };
+        const out = pruneHistory(points, now);
+        expect(out).toHaveLength(12_000);
+        expect(out[0].marker.step).toBe(500);
+        expect(pruneHistory(out, now)[0].marker.step).toBe(500);
     });
 });
 

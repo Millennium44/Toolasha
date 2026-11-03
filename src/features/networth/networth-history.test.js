@@ -779,7 +779,7 @@ describe('setting-change markers on history points', () => {
         expect(networthHistory.markerState.settings[LAB]).toBe(false);
 
         const second = await take(reading(true));
-        expect(second.marker.changes).toEqual([{ id: LAB, from: false, to: true }]);
+        expect(second.marker.changes).toEqual([{ id: LAB, from: false, to: true, step: 400, stepCounted: 400 }]);
         expect(second.marker.step).toBe(400);
         // The recorded line is the raw one
         expect(second.total).toBe(1450);

@@ -19,6 +19,8 @@ const {
     describeChanges,
     countedMarkerTimes,
     mergeMarkers,
+    withoutChangesHeldBy,
+    stepBetween,
     relevanceContext,
 } = await import('./networth-markers.js');
 
@@ -338,6 +340,191 @@ describe('one change marked twice', () => {
             mark(10 * HOUR + 1000, flip('networth_includeTaskTokens', false, true), 50),
         ];
         expect(stepsAfter(history, 0)).toMatchObject({ step: 413, count: 2 });
+    });
+});
+
+describe('one change marked in different batches', () => {
+    const HOUR = 3_600_000;
+    const LAB = 'networth_includeLabyrinthTokens';
+    const COW = 'networth_includeCowbells';
+    const TASK = 'networth_includeTaskTokens';
+    const on = (id, step, stepCounted = step) => ({ id, from: false, to: true, step, stepCounted });
+    const off = (id, step) => ({ id, from: true, to: false, step, stepCounted: step });
+    /** A marked point; `step` is what the changes sum to unless a change has no share of its own */
+    const mark = (t, changes, step = changes.reduce((sum, c) => sum + (c.step ?? 0), 0), extra = {}) => ({
+        t,
+        total: 1000 + step,
+        nonExcluded: 1000 + step,
+        marker: {
+            changes,
+            step,
+            stepCounted: changes.reduce((sum, c) => sum + (c.stepCounted ?? 0), 0) || step,
+            unseparated: [],
+            raw: step,
+            ...extra,
+        },
+    });
+    /** The same marker as an older build wrote it: the sums and no shares */
+    const bare = (point) => ({
+        ...point,
+        marker: {
+            ...point.marker,
+            changes: point.marker.changes.map(({ id, from, to }) => ({ id, from, to })),
+        },
+    });
+
+    const lab = () => mark(10 * HOUR, [on(LAB, 400)]);
+    const both = () => mark(11 * HOUR, [on(LAB, 400), on(COW, 100)]);
+
+    test('tokens on one device, tokens and cowbells on another: the tokens count once', () => {
+        const history = [lab(), both()];
+        for (const order of [history, [...history].reverse()]) {
+            expect(stepsAfter(order, 0)).toMatchObject({ step: 500, stepCounted: 500, count: 2 });
+            expect(stepBetween(order, 0, Infinity)).toBe(500);
+        }
+        expect(withoutSteps(history).map((p) => p.total)).toEqual([1000, 1000]);
+    });
+
+    test('the bigger batch first: the smaller one is all repeats and counts for nothing', () => {
+        const history = [mark(10 * HOUR, [on(LAB, 400), on(COW, 100)]), mark(11 * HOUR, [on(LAB, 400)])];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 500, count: 1 });
+        expect(countedMarkerTimes(history)).toEqual(new Set([10 * HOUR]));
+        expect(withoutSteps(history).map((p) => p.total)).toEqual([1000, 1000 + 400 - 500]);
+    });
+
+    test('three batches over three settings: each setting counts once', () => {
+        const history = [
+            mark(10 * HOUR, [on(LAB, 400), on(COW, 100)]),
+            mark(11 * HOUR, [on(COW, 110), on(TASK, 50)]),
+            mark(12 * HOUR, [on(TASK, 55), on(LAB, 390)]),
+        ];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 550, count: 2 });
+    });
+
+    test('a replay changes nothing: the same point held once more, or the whole fold run again', () => {
+        const history = [lab(), both()];
+        expect(stepsAfter(history, 0)).toEqual(stepsAfter(history, 0));
+        expect(stepsAfter([...history, { ...both(), t: 12 * HOUR }], 0).step).toBe(500);
+    });
+
+    test('new data after the window: the same change later is a real second change', () => {
+        const history = [lab(), both(), mark(40 * HOUR, [on(LAB, 300)])];
+        expect(stepsAfter(history, 0).step).toBe(800);
+    });
+
+    test('a flip back between the batches keeps the later change real, setting by setting', () => {
+        const history = [lab(), mark(10.5 * HOUR, [off(LAB, -400)]), both()];
+        expect(stepsAfter(history, 0).step).toBe(500);
+    });
+
+    test('a flip of another setting between them does not', () => {
+        const history = [lab(), mark(10.5 * HOUR, [off(COW, -100)]), both()];
+        // Lab counts once (400); cowbells off then on are both real (-100, +100)
+        expect(stepsAfter(history, 0).step).toBe(400);
+    });
+
+    test('a repeat that was only ever a floor stops making the step a floor', () => {
+        const history = [lab(), mark(11 * HOUR, [on(LAB, 400), on(COW, 100)], 500, { floor: [LAB] })];
+        expect(stepsAfter(history, 0).floor).toBe(0);
+    });
+
+    test('a repeat of an unseparated change is not reported as left in twice', () => {
+        const unsure = { id: 'networth_pricingMode', from: 'ask', to: 'bid' };
+        const history = [
+            mark(10 * HOUR, [unsure], null, { unseparated: [unsure.id] }),
+            mark(11 * HOUR, [unsure, on(COW, 100)], 100, { unseparated: [unsure.id] }),
+        ];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 100, inexact: 1, count: 1 });
+    });
+
+    test('a marker left with only unseparated changes claims no step', () => {
+        const unsure = { id: 'networth_pricingMode', from: 'ask', to: 'bid' };
+        const history = [lab(), mark(11 * HOUR, [on(LAB, 400), unsure], 400, { unseparated: [unsure.id] })];
+        expect(stepsAfter(history, 0)).toMatchObject({ step: 400, count: 1, inexact: 1 });
+    });
+
+    describe('an older build’s markers, which have only the sums', () => {
+        test('old against new: the shared change comes out at the share the other marker carries', () => {
+            expect(stepsAfter([lab(), bare(both())], 0).step).toBe(500);
+            expect(stepsAfter([bare(lab()), both()], 0).step).toBe(500);
+        });
+
+        test('old against old, one change on the first: that marker’s sum is the share', () => {
+            expect(stepsAfter([bare(lab()), bare(both())], 0).step).toBe(500);
+        });
+
+        test('old against old with nothing to divide by counts both whole, as it always did', () => {
+            const a = bare(mark(10 * HOUR, [on(LAB, 400), on(COW, 100)]));
+            const b = bare(mark(11 * HOUR, [on(LAB, 400), on(TASK, 50)]));
+            expect(stepsAfter([a, b], 0).step).toBe(950);
+        });
+
+        test('the same batch twice still needs no shares', () => {
+            const a = bare(mark(10 * HOUR, [on(LAB, 400), on(COW, 100)]));
+            const b = bare(mark(11 * HOUR, [on(COW, 100), on(LAB, 400)]));
+            expect(stepsAfter([a, b], 0)).toMatchObject({ step: 500, count: 1 });
+        });
+    });
+
+    test('buildMarker gives each separated change its share, and none to one it cannot separate', () => {
+        const marker = buildMarker({
+            changes: [
+                { id: LAB, from: false, to: true },
+                { id: COW, from: false, to: true },
+                { id: 'networth_pricingMode', from: 'ask', to: 'bid' },
+            ],
+            prevRecord: { rows: [] },
+            current: {
+                rows: [
+                    ['h', '/items/labyrinth_token', 0, 4, 400],
+                    ['h', '/items/cowbell', 0, 1, 100],
+                ],
+                ex: { '/items/cowbell': 30 },
+            },
+            prevTotal: 1000,
+            total: 1530,
+        });
+        expect(marker.changes).toEqual([
+            { id: LAB, from: false, to: true, step: 400, stepCounted: 400 },
+            { id: COW, from: false, to: true, step: 130, stepCounted: 100 },
+            { id: 'networth_pricingMode', from: 'ask', to: 'bid' },
+        ]);
+        expect(marker.step).toBe(530);
+        expect(marker.stepCounted).toBe(500);
+    });
+
+    describe('carrying one marker onto another', () => {
+        test('takes the shared change out, by its share', () => {
+            const rest = withoutChangesHeldBy(both().marker, lab().marker);
+            expect(rest.changes.map((c) => c.id)).toEqual([COW]);
+            expect(rest.step).toBe(100);
+            expect(rest.stepCounted).toBe(100);
+        });
+
+        test('nothing shared: the same marker; everything shared: nothing to carry', () => {
+            const task = mark(9, [on(TASK, 5)]).marker;
+            expect(withoutChangesHeldBy(task, lab().marker)).toBe(task);
+            expect(withoutChangesHeldBy(lab().marker, both().marker)).toBe(null);
+            expect(withoutChangesHeldBy(null, lab().marker)).toBe(null);
+            expect(withoutChangesHeldBy(task, null)).toBe(task);
+        });
+
+        test('with shares nobody can tell it carries whole, as before', () => {
+            const a = bare(mark(1, [on(LAB, 400), on(COW, 100)])).marker;
+            const b = bare(mark(2, [on(LAB, 400), on(TASK, 50)])).marker;
+            expect(withoutChangesHeldBy(a, b)).toBe(a);
+        });
+
+        test('a merge adds the shares of a change both hold, so they keep summing to the step', () => {
+            const merged = mergeMarkers(lab().marker, both().marker);
+            expect(merged.changes).toEqual([on(LAB, 800), on(COW, 100)]);
+            expect(merged.step).toBe(900);
+        });
+
+        test('a merge with one share unknown forgets the share rather than guess', () => {
+            const merged = mergeMarkers(lab().marker, bare(both()).marker);
+            expect(merged.changes[0]).toEqual({ id: LAB, from: false, to: true });
+        });
     });
 });
 

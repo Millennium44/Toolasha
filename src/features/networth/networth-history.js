@@ -17,7 +17,7 @@ import {
     rebasedWithoutSteps,
     withoutSteps,
     mergeMarkers,
-    markerIdentity,
+    withoutChangesHeldBy,
     relevanceContext,
 } from './networth-markers.js';
 import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
@@ -227,19 +227,14 @@ export function pruneHistory(history, now = Date.now()) {
     if (pruned.length <= MAX_HISTORY_POINTS) return pruned;
 
     // Over the cap the oldest go, and the steps their markers carry move to the oldest point that stays, so no
-    // surviving total regains one. A step already on that point (an identity it holds) is not added twice
+    // surviving total regains one. A change already on that point is not added twice
     const kept = pruned.slice(pruned.length - MAX_HISTORY_POINTS);
     let carried = null;
     for (const point of pruned.slice(0, pruned.length - MAX_HISTORY_POINTS)) {
         if (point.marker) carried = mergeMarkers(carried, point.marker);
     }
-    if (carried) {
-        const held = new Set((kept[0].marker ? markerIdentity(kept[0].marker) : '').split('&'));
-        const fresh = markerIdentity(carried)
-            .split('&')
-            .some((key) => !held.has(key));
-        if (fresh) kept[0] = { ...kept[0], marker: mergeMarkers(carried, kept[0].marker) };
-    }
+    const toCarry = withoutChangesHeldBy(carried, kept[0].marker);
+    if (toCarry) kept[0] = { ...kept[0], marker: mergeMarkers(toCarry, kept[0].marker) };
     return kept;
 }
 
@@ -850,9 +845,9 @@ class NetworthHistory {
     _carryMarker(removed, idx) {
         const next = this.history[idx];
         if (next) {
-            // The same change already on the next point (marked by another device): count it once
-            const same = next.marker && markerIdentity(next.marker) === markerIdentity(removed.marker);
-            if (!same) this.history[idx] = { ...next, marker: mergeMarkers(removed.marker, next.marker) };
+            // A change already on the next point (marked by another device) counts once
+            const toCarry = withoutChangesHeldBy(removed.marker, next.marker);
+            if (toCarry) this.history[idx] = { ...next, marker: mergeMarkers(toCarry, next.marker) };
             return;
         }
         if (networthMovers.last?.t === removed.t) networthMovers.last = null;

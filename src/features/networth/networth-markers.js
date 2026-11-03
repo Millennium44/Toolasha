@@ -7,7 +7,9 @@
  * separable steps out of the figures that describe growth.
  *
  * A marker rides on the history point (`point.marker`), so it syncs with it and an older build, which
- * reads only the fields it knows, ignores it. What a device last saw is a device-local state record
+ * reads only the fields it knows, ignores it. Each change also carries its own share of the step
+ * (`changes[i].step`, `.stepCounted`), so one setting marked by two devices in different batches can be counted
+ * once; a marker written before that has only the sums, and is read as far as they allow. What a device last saw is a device-local state record
  * (`networthMarkerState_<id>`, see sync-ownership.js), compared at every reading, so a change made
  * while the page was closed is found at the next reading and a change is found once.
  *
@@ -203,7 +205,8 @@ const sumExcluded = (record, predicate) =>
  * @param {{rows: Array<Array>, ex?: Object, exOther?: boolean}} params.current - This reading's rows and exclusions
  * @param {number|null} params.prevTotal - Total of the reading before, when known
  * @param {number} params.total - Total of this reading
- * @returns {Object} `{changes, step, stepCounted, unseparated, floor, small, raw}`; `step` is null when nothing could be separated
+ * @returns {Object} `{changes, step, stepCounted, unseparated, floor, small, raw}`; `step` is null when nothing could
+ *   be separated. A separated change carries its own share as `step` and `stepCounted`
  */
 export function buildMarker({ changes, prevRecord, current, prevTotal, total }) {
     let step = 0;
@@ -211,28 +214,33 @@ export function buildMarker({ changes, prevRecord, current, prevTotal, total }) 
     let separated = 0;
     const unseparated = [];
     const floor = [];
+    const shared = [];
     for (const change of changes) {
         const predicate = SEPARABLE[change.id];
         if (TOTAL_NEUTRAL.has(change.id)) {
             separated += 1;
+            shared.push({ ...change, step: 0, stepCounted: 0 });
         } else if (predicate && prevRecord) {
             const now = matching(current, predicate);
             const was = matching(prevRecord, predicate);
             const counted = sumValue(now) - sumValue(was);
-            step += counted + sumExcluded(current, predicate) - sumExcluded(prevRecord, predicate);
+            const whole = counted + sumExcluded(current, predicate) - sumExcluded(prevRecord, predicate);
+            step += whole;
             stepCounted += counted;
             separated += 1;
+            shared.push({ ...change, step: Math.round(whole), stepCounted: Math.round(counted) });
             // The side that was valued is the one switched on: this reading when turned on, the last when off
             const valued = change.to === true ? now : was;
             const unsure = valued.some((row) => ((row[5] || 0) & (FLAG_UNPRICED | FLAG_PARTIAL)) !== 0);
             if (unsure || current?.exOther === true || prevRecord.exOther === true) floor.push(change.id);
         } else {
             unseparated.push(change.id);
+            shared.push(change);
         }
     }
     const raw = Number.isFinite(prevTotal) ? Math.round(total - prevTotal) : null;
     const marker = {
-        changes,
+        changes: shared,
         step: separated > 0 ? Math.round(step) : null,
         stepCounted: separated > 0 ? Math.round(stepCounted) : null,
         unseparated,
@@ -281,18 +289,32 @@ const changeKey = (c) => `${c.id}|${String(c.from)}|${String(c.to)}`;
 const reverseKey = (c) => `${c.id}|${String(c.to)}|${String(c.from)}`;
 
 /**
- * A marker's identity: the set of (setting, from, to) it carries.
+ * What one change contributed to its marker's step, as far as can be told.
+ *
+ * A marker written before changes carried their own shares has only the sums. Those still answer when the change
+ * is the only one on it, or was never in the sum at all; with several in the sum, nothing says how it divides.
  * @param {Object} marker - A marker
- * @returns {string} Order-independent key
+ * @param {Object} change - One of its changes
+ * @returns {{step: number, stepCounted: number}|null} The share, or null when it cannot be told
  */
-export function markerIdentity(marker) {
-    return (marker?.changes || []).map(changeKey).sort().join('&');
+function changeShare(marker, change) {
+    if (Number.isFinite(change.step)) {
+        return {
+            step: change.step,
+            stepCounted: Number.isFinite(change.stepCounted) ? change.stepCounted : change.step,
+        };
+    }
+    if (!Number.isFinite(marker.step) || (marker.unseparated || []).includes(change.id)) {
+        return { step: 0, stepCounted: 0 };
+    }
+    if ((marker.changes || []).length !== 1) return null;
+    return { step: marker.step, stepCounted: Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step };
 }
 
 /**
  * Merge two markers on one point (a deleted point's marker carried onto the next, or a prune carrying a
- * dropped point's). Changes are joined without repeating an identity; steps add; a null step stays null
- * only when both are.
+ * dropped point's). Changes are joined without repeating an identity; steps add, on the marker and on a change
+ * both hold; a null step stays null only when both are.
  * @param {Object|null} a - A marker
  * @param {Object|null} b - A marker
  * @returns {Object|null} The merged marker
@@ -300,15 +322,22 @@ export function markerIdentity(marker) {
 export function mergeMarkers(a, b) {
     if (!a) return b || null;
     if (!b) return a;
-    const seen = new Set();
-    const changes = [];
+    const byKey = new Map();
     for (const change of [...(a.changes || []), ...(b.changes || [])]) {
         const key = changeKey(change);
-        if (!seen.has(key)) {
-            seen.add(key);
-            changes.push(change);
+        const held = byKey.get(key);
+        if (!held) {
+            byKey.set(key, { ...change });
+        } else if (Number.isFinite(held.step) && Number.isFinite(change.step)) {
+            held.step += change.step;
+            held.stepCounted = (held.stepCounted ?? 0) + (change.stepCounted ?? change.step);
+        } else {
+            // One side's share is unknown, so the sum of the two is too
+            delete held.step;
+            delete held.stepCounted;
         }
     }
+    const changes = [...byKey.values()];
     const add = (x, y) =>
         Number.isFinite(x) || Number.isFinite(y) ? (Number.isFinite(x) ? x : 0) + (Number.isFinite(y) ? y : 0) : null;
     const merged = {
@@ -325,41 +354,125 @@ export function mergeMarkers(a, b) {
 }
 
 /**
- * The marked points that count, one per change identity inside the window.
+ * What each marked point counts for, one setting change at a time.
  *
- * Two markers with the same identity less than {@link SAME_CHANGE_WINDOW_MS} apart are one change that
- * two devices (or tabs) each marked before their points met; the earliest counts and the later ones do
- * not, whatever order the points were merged in. A flip and flip back is not collapsed: a marker of the
- * opposite change (same setting, from and to swapped) between two equal ones makes the later one real.
+ * The same change on two markers less than {@link SAME_CHANGE_WINDOW_MS} apart is one change that two devices (or
+ * tabs) each marked before their points met; the earliest counts and the later ones do not, whatever order the
+ * points were merged in. They need not have marked the same batch: one device can record labyrinth tokens at one
+ * reading and another labyrinth tokens and cowbells at the next, and only the tokens are the same change. A flip
+ * and flip back is not collapsed: the opposite change (same setting, from and to swapped) between two equal ones
+ * makes the later one real.
+ *
+ * A repeat comes out of its marker's step by its own share, or failing that (a marker with only the sums) by the
+ * share the marker it repeats carries. When neither can say, the marker counts whole, as it did before changes
+ * carried shares. A marker made up entirely of repeats needs no shares and counts for nothing.
  * @param {Array<Object>} history - Points, any order
- * @returns {Set<number>} The `t` of each point whose marker counts
+ * @returns {Map<number, {step: number|null, stepCounted: number, unseparated: Array<string>, floor: Array<string>}>}
+ *   By point `t`, what each counting marker contributes; a point whose marker is all repeats is absent
  */
-export function countedMarkerTimes(history) {
+export function countedShares(history) {
     const marked = (history || [])
         .filter((point) => point?.marker && Number.isFinite(point.t))
         .sort((x, y) => x.t - y.t);
-    const counted = new Set();
+    const shares = new Map();
+    /** Change key to the point that last counted it, and that change's share there */
     const lastCounted = new Map();
-    for (let i = 0; i < marked.length; i += 1) {
-        const point = marked[i];
-        const identity = markerIdentity(point.marker);
-        const prior = lastCounted.get(identity);
-        let duplicate = false;
-        if (prior !== undefined && point.t - prior <= SAME_CHANGE_WINDOW_MS) {
-            const reversed = point.marker.changes.map(reverseKey);
-            duplicate = !marked.some(
-                (other) =>
-                    other.t > prior &&
-                    other.t < point.t &&
-                    other.marker.changes.some((c) => reversed.includes(changeKey(c)))
-            );
+    for (const point of marked) {
+        const marker = point.marker;
+        const changes = marker.changes || [];
+        const fresh = [];
+        const repeats = [];
+        for (const change of changes) {
+            const prior = lastCounted.get(changeKey(change));
+            const reversed = reverseKey(change);
+            const repeat =
+                prior !== undefined &&
+                point.t - prior.t <= SAME_CHANGE_WINDOW_MS &&
+                !marked.some(
+                    (other) =>
+                        other.t > prior.t &&
+                        other.t < point.t &&
+                        (other.marker.changes || []).some((c) => changeKey(c) === reversed)
+                );
+            if (repeat) {
+                repeats.push({ change, prior });
+            } else {
+                fresh.push(change);
+                lastCounted.set(changeKey(change), { t: point.t, share: changeShare(marker, change) });
+            }
         }
-        if (!duplicate) {
-            counted.add(point.t);
-            lastCounted.set(identity, point.t);
+        if (changes.length > 0 && fresh.length === 0) continue;
+
+        let step = marker.step;
+        let stepCounted = Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step;
+        const left = new Set(fresh.map((change) => change.id));
+        for (const { change, prior } of repeats) {
+            const share = changeShare(marker, change) ?? prior.share;
+            if (!share) {
+                left.add(change.id);
+                continue;
+            }
+            step -= share.step;
+            stepCounted -= share.stepCounted;
         }
+        const repeated = new Set(repeats.map(({ change }) => change.id).filter((id) => !left.has(id)));
+        const unseparated = (marker.unseparated || []).filter((id) => !repeated.has(id));
+        // Only unseparated changes left: nothing of this marker's step is still this marker's to claim
+        const anySeparated = changes.length === 0 || [...left].some((id) => !unseparated.includes(id));
+        shares.set(point.t, {
+            step: Number.isFinite(marker.step) && anySeparated ? step : null,
+            stepCounted: Number.isFinite(marker.step) && anySeparated ? stepCounted : 0,
+            unseparated,
+            floor: (marker.floor || []).filter((id) => !repeated.has(id)),
+        });
     }
-    return counted;
+    return shares;
+}
+
+/**
+ * The marked points that count at all.
+ * @param {Array<Object>} history - Points, any order
+ * @returns {Set<number>} The `t` of each point whose marker counts for something
+ */
+export function countedMarkerTimes(history) {
+    return new Set(countedShares(history).keys());
+}
+
+/**
+ * A marker with the changes another marker on the same point already holds taken out, so carrying one onto the
+ * other does not add a shared change's step twice.
+ * @param {Object} marker - The marker being carried
+ * @param {Object|null} other - The marker already there
+ * @returns {Object|null} What is left to carry (the same marker when nothing is shared or a share cannot be told),
+ *   or null when the other holds every change
+ */
+export function withoutChangesHeldBy(marker, other) {
+    if (!marker || !other) return marker || null;
+    const held = new Map((other.changes || []).map((change) => [changeKey(change), change]));
+    const changes = marker.changes || [];
+    const shared = changes.filter((change) => held.has(changeKey(change)));
+    if (shared.length === 0) return marker;
+    if (shared.length === changes.length) return null;
+    let step = marker.step;
+    let stepCounted = Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step;
+    for (const change of shared) {
+        const share = changeShare(marker, change) ?? changeShare(other, held.get(changeKey(change)));
+        if (!share) return marker;
+        step -= share.step;
+        stepCounted -= share.stepCounted;
+    }
+    const gone = new Set(shared.map((change) => change.id));
+    const rest = {
+        ...marker,
+        changes: changes.filter((change) => !held.has(changeKey(change))),
+        step: Number.isFinite(marker.step) ? step : null,
+        stepCounted: Number.isFinite(marker.step) ? stepCounted : null,
+        unseparated: (marker.unseparated || []).filter((id) => !gone.has(id)),
+    };
+    const floor = (marker.floor || []).filter((id) => !gone.has(id));
+    if (floor.length > 0) rest.floor = floor;
+    else delete rest.floor;
+    return rest;
 }
 
 /**
@@ -371,7 +484,7 @@ export function countedMarkerTimes(history) {
  *   only an unseparated change that mattered (left in), and how many steps are only a floor
  */
 export function stepsAfter(history, afterT, untilT = Infinity) {
-    const counted = countedMarkerTimes(history);
+    const shares = countedShares(history);
     let step = 0;
     let stepCounted = 0;
     let count = 0;
@@ -379,14 +492,15 @@ export function stepsAfter(history, afterT, untilT = Infinity) {
     let floor = 0;
     for (const point of history || []) {
         const marker = point?.marker;
-        if (!marker || !(point.t > afterT) || point.t > untilT || !counted.has(point.t)) continue;
-        if (Number.isFinite(marker.step)) {
-            step += marker.step;
-            stepCounted += Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step;
+        const share = marker ? shares.get(point.t) : null;
+        if (!share || !(point.t > afterT) || point.t > untilT) continue;
+        if (Number.isFinite(share.step)) {
+            step += share.step;
+            stepCounted += share.stepCounted;
             count += 1;
-            if ((marker.floor || []).length > 0) floor += 1;
+            if (share.floor.length > 0) floor += 1;
         }
-        if ((marker.unseparated || []).length > 0 && marker.small !== true) inexact += 1;
+        if (share.unseparated.length > 0 && marker.small !== true) inexact += 1;
     }
     return { step, stepCounted, count, inexact, floor };
 }
@@ -402,14 +516,14 @@ export function withoutSteps(history) {
     if (!Array.isArray(history) || !history.some((p) => Number.isFinite(p?.marker?.step) && p.marker.step !== 0)) {
         return history;
     }
-    const counted = countedMarkerTimes(history);
+    const shares = countedShares(history);
     let offset = 0;
     let offsetCounted = 0;
     return history.map((point) => {
-        const marker = point?.marker;
-        if (marker && Number.isFinite(marker.step) && counted.has(point.t)) {
-            offset += marker.step;
-            offsetCounted += Number.isFinite(marker.stepCounted) ? marker.stepCounted : marker.step;
+        const share = point?.marker ? shares.get(point.t) : null;
+        if (Number.isFinite(share?.step)) {
+            offset += share.step;
+            offsetCounted += share.stepCounted;
         }
         if (offset === 0 && offsetCounted === 0) return point;
         const shifted = { ...point, total: point.total - offset };
@@ -443,18 +557,11 @@ export function rebasedWithoutSteps(history) {
  * @returns {number} Sum of the separated steps
  */
 export function stepBetween(history, fromT, toT) {
-    const counted = countedMarkerTimes(history);
+    const shares = countedShares(history);
     let step = 0;
     for (const point of history || []) {
-        if (
-            point?.marker &&
-            Number.isFinite(point.marker.step) &&
-            counted.has(point.t) &&
-            point.t > fromT &&
-            point.t <= toT
-        ) {
-            step += point.marker.step;
-        }
+        const share = point?.marker ? shares.get(point.t) : null;
+        if (Number.isFinite(share?.step) && point.t > fromT && point.t <= toT) step += share.step;
     }
     return step;
 }
