@@ -41,6 +41,10 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (hrid) => (hrid in game.prices ? game.prices[hrid] : null),
     getItemPrices: () => null,
+    getItemPriceInfo: (hrid) => {
+        const price = hrid in game.prices ? game.prices[hrid] : null;
+        return { price, source: price === null ? null : 'book', estimated: false };
+    },
 }));
 vi.mock('./alchemy-session-store.js', () => ({
     createAlchemySessionStore: () => ({

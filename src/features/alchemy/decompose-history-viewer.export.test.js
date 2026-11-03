@@ -51,7 +51,9 @@ vi.mock('../../utils/market-data.js', () => ({
 
 const { decomposeHistoryViewer } = await import('./decompose-history-viewer.js');
 
-const session = () => ({
+const SAVED_CATALYSTS = { [CATALYST_HRID]: { cost: 2000, count: 2, unpricedCount: 0 } };
+
+const session = (overrides = {}) => ({
     id: 's1',
     trackerVersion: 2,
     inputItemHrid: INPUT_HRID,
@@ -61,6 +63,12 @@ const session = () => ({
     results: {},
     catalystOfDecompositionUsed: 2,
     primeCatalystUsed: 0,
+    // Priced when it ran, as a session recorded now is
+    costs: {
+        input: { cost: 5000, units: 10, unpricedUnits: 0, bases: { 'current buy': 10 } },
+        catalysts: SAVED_CATALYSTS,
+    },
+    ...overrides,
 });
 
 beforeEach(() => {
@@ -77,7 +85,8 @@ describe('buildDataNote', () => {
 
     test('an unpriced input says the total is incomplete', () => {
         state.inputPriced = false;
-        const detail = decomposeHistoryViewer.computeSessionProfit(session());
+        // No input price was saved either: the read finds none, and says so
+        const detail = decomposeHistoryViewer.computeSessionProfit(session({ costs: { catalysts: SAVED_CATALYSTS } }));
         expect(detail.inputUnpriced).toBe(true);
         expect(decomposeHistoryViewer.buildDataNote(detail)).toBe('input unpriced — total is incomplete');
     });
@@ -114,7 +123,11 @@ describe('exportHistory', () => {
 
     test('a qualified row carries the readable note in the CSV', () => {
         state.inputPriced = false;
-        decomposeHistoryViewer.sessions = [session()];
+        decomposeHistoryViewer.sessions = [
+            session({
+                costs: { catalysts: SAVED_CATALYSTS },
+            }),
+        ];
         const csv = captureCsv();
         expect(csv.split('\n')[1]).toContain('input unpriced — total is incomplete');
     });

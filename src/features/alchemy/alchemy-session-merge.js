@@ -56,6 +56,7 @@
  */
 
 import { mergedTrackerVersion } from './alchemy-tracker-version.js';
+import { mergeCosts } from './alchemy-cost-record.js';
 
 /**
  * @param {*} value - Anything
@@ -259,6 +260,11 @@ function foldSession(accumulated, next) {
 
     const catalystsUsed = mergeCatalystsUsed(accumulated.catalystsUsed, next.catalystsUsed);
     if (catalystsUsed) merged.catalystsUsed = catalystsUsed;
+
+    // Saved costs add up exactly as the counts they describe do. A part recorded without them simply
+    // covers less, and the reader prices what is uncovered at today's market
+    const costs = mergeCosts(accumulated.costs, next.costs);
+    if (costs) merged.costs = costs;
 
     const repair = mergeRepairStamp(accumulated.repair, next.repair);
     if (repair) merged.repair = repair;

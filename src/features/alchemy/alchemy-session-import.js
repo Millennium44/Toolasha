@@ -38,10 +38,15 @@
  *     `predictedRate` / `predictedAt` / `predictedCatalystHrid` (the model's
  *     forecast for this run, taken at session start — edit only if you are
  *     correcting what was actually predicted, not the outcome).
- *   - DERIVED, never stored on the session (recomputed on every read from
- *     current market prices, so there is nothing to edit): `profit`,
- *     `revenue`, `inputCost`, `coinCost`, `netConsumed`, and every other
- *     field `computeSessionProfit` returns. `mergedFrom` is likewise never
+ *   - AUTHORITATIVE: `costs` (what the consumed input and catalysts cost when
+ *     they were spent, saved per message — see `alchemy-session-cost.js`).
+ *     Optional: a session without it, or with it covering fewer units than the
+ *     session consumed, is costed at today's market for the uncovered part and
+ *     marked so. Edit `totalAttempts` and the cost is scaled to match.
+ *   - DERIVED, never stored on the session (recomputed on every read, so
+ *     there is nothing to edit): `profit`, `revenue`, `inputCost`,
+ *     `coinCost`, `netConsumed`, and every other field `computeSessionProfit`
+ *     returns. `mergedFrom` is likewise never
  *     stored — it only exists on the reload-merged view a viewer builds at
  *     read time (`alchemy-session-merge.js`), so it never appears in an
  *     exported (stored, unmerged) session either.
@@ -84,6 +89,7 @@
  */
 
 import { stableStringify } from '../../utils/stable-stringify.js';
+import { validateCosts, rescaleCosts } from './alchemy-cost-record.js';
 
 /** Marks a file as one of these backups, distinct from the CSV export. */
 export const ALCHEMY_BACKUP_FORMAT = 'toolasha-alchemy-history';
@@ -296,6 +302,11 @@ export function validateAlchemySession(kind, session) {
         }
     }
 
+    if (session.costs !== undefined) {
+        const problem = validateCosts(session.costs);
+        if (problem) return { ok: false, error: `Session ${label} ${problem}.` };
+    }
+
     if (kind === 'transmute' || kind === 'decompose') {
         if (session.results !== undefined) {
             if (!isPlainObject(session.results)) {
@@ -356,6 +367,16 @@ export function validateAlchemySessions(kind, sessions) {
 }
 
 /**
+ * The costs of an imported session, scaled to its own counts so a hand-lowered attempt count lowers them once,
+ * here, and the ticks recorded afterwards are not diluted by a read-time scale over the whole record.
+ * @param {Object} session - An imported session
+ * @returns {Object|undefined} Its costs, or undefined when it has none
+ */
+function rescaled(session) {
+    return session.costs === undefined ? undefined : rescaleCosts(session);
+}
+
+/**
  * Merge an imported sessions array onto the stored (unmerged) ones by id.
  *
  * An imported id already in storage REPLACES that record whole — this is how
@@ -364,6 +385,10 @@ export function validateAlchemySessions(kind, sessions) {
  * correction even when it lowers the attempt count (see `mergeSessionCopies`). An imported id storage has never
  * seen is added. A stored session absent from the file is left exactly as it
  * is; import is additive/corrective, never a wholesale replace.
+ *
+ * `costs` (what the input and catalysts cost when they were spent) is the one field a replacement does not
+ * wipe by omission: a file made before costs were saved says nothing about them, so the stored session's
+ * `costs` are kept. A file that does carry `costs` wins like any other field, scaled to its own counts.
  *
  * @param {Array<Object>} stored - The character's stored sessions, unmerged
  * @param {Array<Object>} imported - The backup's sessions array
@@ -390,13 +415,21 @@ export function planAlchemyImportMerge(stored, imported, now = Date.now()) {
         // plain restore does not outrank progress another device recorded since
         const { editedAt: _incomingStamp, ...incomingBody } = incoming;
         const { editedAt: _storedStamp, ...storedBody } = existing;
-        if (stableStringify(incomingBody) === stableStringify(storedBody)) return existing;
-        return { ...incomingBody, editedAt: now };
+        // A file from before costs were saved says nothing about them. Importing it must not wipe what this
+        // device saved; a file that does carry `costs` wins, like every other field
+        const body =
+            incomingBody.costs === undefined && storedBody.costs !== undefined
+                ? { ...incomingBody, costs: storedBody.costs }
+                : incomingBody;
+        if (stableStringify(body) === stableStringify(storedBody)) return existing;
+        return body.costs === undefined
+            ? { ...body, editedAt: now }
+            : { ...body, costs: rescaled(body), editedAt: now };
     });
 
     const addedIds = [];
     for (const [id, incoming] of importedById) {
-        merged.push(incoming);
+        merged.push(incoming.costs === undefined ? incoming : { ...incoming, costs: rescaled(incoming) });
         addedIds.push(id);
     }
 
