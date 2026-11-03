@@ -77,14 +77,29 @@ vi.mock('../alchemy/alchemy-rankings.js', () => ({
     },
 }));
 vi.mock('./combat-rates.js', () => ({ loadCombatRates: async () => rates.combat }));
-const liquidity = vi.hoisted(() => ({ measured: true, throttle: {}, unmeasured: {}, progress: null, gate: null }));
+const liquidity = vi.hoisted(() => ({
+    measured: true,
+    throttle: {},
+    unmeasured: {},
+    progress: null,
+    gate: null,
+    /** What each successive sweep reports, as the real one does: counts from zero, then null */
+    sweeps: null,
+    calls: 0,
+    /** How long the history pool has left of a cool-down */
+    cooldownMs: 0,
+}));
 // Bounding rates by market volume reaches a third-party history server, and what
 // this file is about is which rates get ranked, not how fast they sell. The
 // liquidity bound has its own tests; here it passes everything through and says
 // it measured, so the "not being checked" note stays out of the note assertions.
 vi.mock('./market-liquidity.js', () => ({
+    volumeCooldownMs: () => liquidity.cooldownMs,
     // A test can thin an item's book with `liquidity.throttle[itemHrid] = share`; absent = unmeasured
     applyLiquidityLimits: async (rates, options) => {
+        const sweep = liquidity.sweeps?.[liquidity.calls];
+        liquidity.calls += 1;
+        for (const progress of sweep || []) options?.onProgress?.(progress);
         // A test can have the sweep report progress, then wait, to look at what is heard meanwhile
         if (liquidity.progress) {
             options?.onProgress?.(liquidity.progress);
@@ -1199,9 +1214,101 @@ describe('route rates — every action of a skill, locked ones included', () => 
                 },
             };
         };
+        beforeEach(() => {
+            liquidity.calls = 0;
+        });
         afterEach(() => {
             liquidity.progress = null;
             liquidity.gate = null;
+            liquidity.sweeps = null;
+            liquidity.calls = 0;
+            liquidity.cooldownMs = 0;
+            liquidity.unmeasured = {};
+            liquidity.measured = true;
+        });
+
+        test('volumes left unmeasured while the pool cools down name the moment to ask again', async () => {
+            withSale();
+            liquidity.unmeasured['/items/stew'] = true;
+            liquidity.cooldownMs = 30_000;
+            const before = Date.now();
+            const context = await buildPlannerContext();
+            expect(context.volumeRetryAt).toBeGreaterThanOrEqual(before + 30_000);
+            expect(context.volumeRetryAt).toBeLessThanOrEqual(Date.now() + 30_000);
+        });
+
+        test('nothing measured at all while the pool cools down names it too', async () => {
+            withSale();
+            liquidity.measured = false;
+            liquidity.cooldownMs = 10_000;
+            const context = await buildPlannerContext();
+            expect(context.volumeRetryAt).toBeGreaterThan(Date.now());
+        });
+
+        test('unmeasured volumes with the pool not cooling down (history off, a lone failure) wait for nothing', async () => {
+            withSale();
+            liquidity.unmeasured['/items/stew'] = true;
+            liquidity.cooldownMs = 0;
+            expect((await buildPlannerContext()).volumeRetryAt).toBeNull();
+        });
+
+        test('a cool-down with every volume measured waits for nothing', async () => {
+            withSale();
+            liquidity.cooldownMs = 30_000;
+            expect((await buildPlannerContext()).volumeRetryAt).toBeNull();
+        });
+
+        test('a build that ranks nothing waits for nothing', async () => {
+            liquidity.cooldownMs = 30_000;
+            expect((await buildPlannerContext({ measureRates: false })).volumeRetryAt).toBeNull();
+        });
+
+        test('the second sweep carries on from the first’s count instead of starting over, and ends once', async () => {
+            withSale();
+            // The rates sweep looks up 2 volumes; the training margins then look up 3 more
+            liquidity.sweeps = [
+                [{ done: 1, total: 2 }, { done: 2, total: 2 }, null],
+                [{ done: 1, total: 3 }, { done: 2, total: 3 }, { done: 3, total: 3 }, null],
+            ];
+            const heard = [];
+            await buildPlannerContext({ onProgress: (progress) => heard.push(progress) });
+            expect(heard).toEqual([
+                { done: 1, total: 2 },
+                { done: 2, total: 2 },
+                { done: 3, total: 5 },
+                { done: 4, total: 5 },
+                { done: 5, total: 5 },
+                null,
+            ]);
+        });
+
+        test('a sweep with nothing uncached reports nothing, and the one that follows counts from zero', async () => {
+            withSale();
+            liquidity.sweeps = [[], [{ done: 1, total: 1 }, null]];
+            const heard = [];
+            await buildPlannerContext({ onProgress: (progress) => heard.push(progress) });
+            expect(heard).toEqual([{ done: 1, total: 1 }, null]);
+        });
+
+        test('no lookups at all means no count and no closing null', async () => {
+            withSale();
+            liquidity.sweeps = [[], []];
+            const heard = [];
+            await buildPlannerContext({ onProgress: (progress) => heard.push(progress) });
+            expect(heard).toEqual([]);
+        });
+
+        test('a progress callback that throws does not stop the pricing', async () => {
+            withSale();
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            liquidity.sweeps = [[{ done: 1, total: 1 }, null], []];
+            const context = await buildPlannerContext({
+                onProgress: () => {
+                    throw new Error('gone');
+                },
+            });
+            expect(context.rateNotes).toBeDefined();
+            vi.restoreAllMocks();
         });
 
         test('a pricing build hands the sweep its own callback', async () => {

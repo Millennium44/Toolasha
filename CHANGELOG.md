@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Goal Planner: it prices again by itself after the market history cool-down ends, its pricing count no longer restarts halfway, and a route is called the same as the quick estimate only when its time and coins match.
 - Several open tabs now share one market history request pace, so fewer requests get refused for going too fast.
 - Purple's Gift, the one chest that drops Task Tokens and Task Crystals, is now valued in full, so Treasure and tooltips no longer show it unpriced; task reward values rise a little because the Gift's tokens now count.
 - Combat Sim: a restored Upgrade table says when the pricing mode has changed since it was run.
