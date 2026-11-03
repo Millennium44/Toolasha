@@ -22,6 +22,8 @@ vi.mock('./untradable-cape.js', () => ({
     isUntradableCape: (hrid) => CAPES.has(hrid),
     getCapeBaseValueMode: () => mode.value,
     CAPE_BASE_VALUE_ZERO: 'zero',
+    baseCapeIsPlainZero: (output, upgrade) =>
+        mode.value === 'zero' && String(output).endsWith('_refined') && CAPES.has(upgrade),
 }));
 
 const { priceInputWithRefinementFallback } = await import('./refined-item-cost.js');

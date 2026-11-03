@@ -153,14 +153,17 @@ beforeEach(() => {
     };
     game.actions = {
         '/actions/alchemy/transmute': { type: '/action_types/alchemy', baseTimeCost: 20e9 },
-        '/actions/refine/gatherer': {
-            type: '/action_types/alchemy',
+        // The real recipe shape: a production skill, the base cape as upgradeItemHrid
+        '/actions/tailoring/gatherer_cape_refined': {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
             inputItems: [{ itemHrid: SHARD, count: 10 }],
             outputItems: [{ itemHrid: GATHERER_STAR, count: 1 }],
             upgradeItemHrid: GATHERER,
         },
-        '/actions/refine/chance': {
-            type: '/action_types/alchemy',
+        '/actions/tailoring/chance_cape_refined': {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
             inputItems: [{ itemHrid: SHARD, count: 20 }],
             outputItems: [{ itemHrid: CHANCE_STAR, count: 1 }],
             upgradeItemHrid: CHANCE,
@@ -216,7 +219,9 @@ describe('a refined cape transmute', () => {
     });
 
     test('a sibling whose stone is unpriced is named as an unpriced output, not valued at 0 silently', () => {
-        game.actions['/actions/refine/chance'].inputItems = [{ itemHrid: '/items/other_shard', count: 5 }];
+        game.actions['/actions/tailoring/chance_cape_refined'].inputItems = [
+            { itemHrid: '/items/other_shard', count: 5 },
+        ];
         game.items['/items/other_shard'] = { name: 'Other Shard', isTradable: true };
         game.buffVersion++;
         const result = calculator.calculateTransmuteProfit(GATHERER_STAR);

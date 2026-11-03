@@ -1947,8 +1947,9 @@ describe('untradable capes', () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
-                '/actions/upgrade/refine': {
-                    type: '/action_types/alchemy',
+                '/actions/tailoring/test_cape_refined': {
+                    type: '/action_types/tailoring',
+                    retainAllEnhancement: true,
                     outputItems: [{ itemHrid: REFINED, count: 1 }],
                     inputItems: [{ itemHrid: '/items/shard', count: 10 }],
                     upgradeItemHrid: CAPE,
@@ -2006,8 +2007,9 @@ describe('untradable capes', () => {
         mocks.initData = {
             houseRoomDetailMap: {},
             actionDetailMap: {
-                '/actions/upgrade/refine': {
-                    type: '/action_types/alchemy',
+                '/actions/tailoring/test_cape_refined': {
+                    type: '/action_types/tailoring',
+                    retainAllEnhancement: true,
                     outputItems: [{ itemHrid: REFINED, count: 1 }],
                     inputItems: [{ itemHrid: '/items/shard', count: 10 }],
                     upgradeItemHrid: CAPE,

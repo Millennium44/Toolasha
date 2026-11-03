@@ -32,6 +32,8 @@ vi.mock('./untradable-cape.js', () => ({
     isUntradableCape: (hrid) => ctx.capes.has(hrid),
     isRefinedCape: (hrid) => hrid.endsWith('_refined'),
     getCapeBaseValue: () => ctx.capeBase,
+    // The rule the main thread's bill uses; this suite prices capes through the base value alone
+    baseCapeIsPlainZero: () => false,
 }));
 
 // The shared enhancement input rule, emulated over the test's own price map: the main thread resolves

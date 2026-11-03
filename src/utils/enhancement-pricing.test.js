@@ -424,8 +424,10 @@ describe('a refined untradable cape is its refinement stones alone', () => {
         game.items[CAPE] = { name: 'Cape', equipmentDetail: { type: '/equipment_types/back' } };
         game.items[REFINED] = { name: 'Cape R', equipmentDetail: { type: '/equipment_types/back' } };
         game.items[STONE] = { name: 'Stone' };
-        game.actions['/actions/refine_test_cape'] = {
-            type: '/action_types/alchemy',
+        // The real shape: a refinement is a production skill's recipe, the base cape its upgradeItemHrid
+        game.actions['/actions/tailoring/test_cape_refined'] = {
+            type: '/action_types/tailoring',
+            retainAllEnhancement: true,
             inputItems: [
                 { itemHrid: STONE, count: 10 },
                 { itemHrid: '/items/coin', count: 500 },
