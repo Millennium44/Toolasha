@@ -1456,11 +1456,22 @@ class GuildTrialScoreboard {
             : '';
 
         const forecast = saved ? null : this.forecast;
+        // A flat-rate walk is a range of tiers until its rate has shown it is falling, and too early to
+        // say before two tiers are banked: never a point stated surer than the row beside it
+        const forecastRange = forecast?.range;
+        const reach = !forecastRange
+            ? `T${forecast?.tier}`
+            : forecastRange.high > forecastRange.low
+              ? `T${forecastRange.low}–${forecastRange.high}`
+              : `T${forecast.tier}`;
+        const basis = `${forecast?.source === 'measured' ? 'from the party’s measured rate' : 'estimated from captured loadouts'}`;
         const expected =
             forecast && forecast.tier !== null
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:6px;">` +
-                  `Expected to reach <span style="color:${GOOD}; font-weight:600;">T${forecast.tier}</span> ` +
-                  `in the hour — ${forecast.source === 'measured' ? 'from the party\u2019s measured rate' : 'estimated from captured loadouts'}` +
+                  (forecastRange?.early
+                      ? `<span style="color:${GOOD}; font-weight:600;">Too early to say</span> what tier it will reach in the hour`
+                      : `Expected to reach <span style="color:${GOOD}; font-weight:600;">${reach}</span> in the hour`) +
+                  ` — ${basis}` +
                   `${Number.isFinite(forecast.enragedFrom) ? ', with the boss fully enraged by then' : ''}.</div>`
                 : '';
 

@@ -50,11 +50,19 @@ import {
     MAX_TRIAL_NAME_CHARS,
     TRIAL_ACTIVE_MS,
     TRIAL_BUDGET_MS,
+    TRIAL_MAX_TIER,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
 import { FOREIGN_CYCLE_REASON, statesAsMuch } from './guild-trial-history.js';
-import { mergeResults, resultsFromHistory, trialResultsOf, withTrialResults } from './guild-trial-results.js';
+import {
+    boundSignupLevels,
+    mergeResults,
+    mergeTrialFacts,
+    resultsFromHistory,
+    trialResultsOf,
+    withTrialResults,
+} from './guild-trial-results.js';
 
 /** Object store the records live in — shared with the guild XP history */
 const STORE_NAME = 'guildHistory';
@@ -508,6 +516,9 @@ function tileStamps(tile) {
         ...Object.values(tile?.tierSeenAt || {}),
         tile?.tierReadAt,
         tile?.serverTierAt,
+        tile?.endedAt,
+        tile?.runSeenAt,
+        tile?.signupLevelsAt,
     ]
         .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
         .map(Number);
@@ -565,7 +576,22 @@ function currentCyclePart(tile, from) {
     const tierSeenAt = Object.fromEntries(Object.entries(tile.tierSeenAt || {}).filter(([, when]) => since(when)));
     const read = since(tile.tierReadAt);
     const stated = since(tile.serverTierAt);
-    if (!samples.length && !pointSamples.length && !Object.keys(tierSeenAt).length && !read && !stated) return null;
+    // The end and the sign-up levels are stamped, so they go with the cycle they were taken in
+    const ended = since(tile.endedAt);
+    const signedUp = since(tile.signupLevelsAt);
+    const watched = since(tile.runSeenAt);
+    if (
+        !samples.length &&
+        !pointSamples.length &&
+        !Object.keys(tierSeenAt).length &&
+        !read &&
+        !stated &&
+        !ended &&
+        !watched &&
+        !signedUp
+    ) {
+        return null;
+    }
 
     const kept = lastReadSince(tile, from);
     const badgePoints = kept && read && Number.isFinite(tile.tier) ? tile.pointsByTier?.[tile.tier] : undefined;
@@ -593,6 +619,9 @@ function currentCyclePart(tile, from) {
         ...(stated
             ? { serverTier: tile.serverTier, serverTierAt: tile.serverTierAt, serverDone: Boolean(tile.serverDone) }
             : {}),
+        ...(ended ? { endedAt: tile.endedAt, ...(tile.endReason ? { endReason: tile.endReason } : {}) } : {}),
+        ...(watched ? { runSeenAt: tile.runSeenAt } : {}),
+        ...(signedUp ? { signupLevels: tile.signupLevels, signupLevelsAt: tile.signupLevelsAt } : {}),
     };
 }
 
@@ -624,6 +653,13 @@ function earlierCyclePart(tile, from) {
     }
     if (stampedSince(tile.serverTierAt, from)) {
         for (const field of ['serverTier', 'serverTierAt', 'serverDone']) delete part[field];
+    }
+    if (stampedSince(tile.endedAt, from)) {
+        for (const field of ['endedAt', 'endReason']) delete part[field];
+    }
+    if (stampedSince(tile.runSeenAt, from)) delete part.runSeenAt;
+    if (stampedSince(tile.signupLevelsAt, from)) {
+        for (const field of ['signupLevels', 'signupLevelsAt']) delete part[field];
     }
     if (lastReadSince(tile, from)) {
         // The current part took the badge tier's points; see currentCyclePart.
@@ -968,6 +1004,8 @@ export function recordTileSample(record, tile, at, characterId = null) {
             : existing.tierReadAt,
         // Written by `recordServerTiers` only; a card sample says nothing about them
         ...latestServerTier(existing, null),
+        // …nor about how the trial ended or who signed up: carried through, not rebuilt
+        ...mergeTrialFacts(existing, null),
         samples: samples.slice(-MAX_SAMPLES),
         pointSamples: pointSamples.slice(-MAX_SAMPLES),
         tiers,
@@ -1016,7 +1054,16 @@ export function recordTileSample(record, tile, at, characterId = null) {
 export function recordServerTiers(
     record,
     key,
-    { bankedTier = null, done = false, clears = {}, at, create = null } = {}
+    {
+        bankedTier = null,
+        done = false,
+        clears = {},
+        at,
+        create = null,
+        seenAt = null,
+        deadlineAt = null,
+        signupLevels = null,
+    } = {}
 ) {
     if (!record || !Number.isFinite(at)) return record;
     const tierStated = Number.isFinite(bankedTier) && bankedTier >= 0;
@@ -1036,9 +1083,23 @@ export function recordServerTiers(
         tierSeenAt[tier] = when;
         changed = true;
     }
+    const ended = endFacts(existing, { tierStated, bankedTier, done, at, seenAt, deadlineAt });
+    // A party read running now: the moment, so a later "done" can tell a watched ending from a late open.
+    // Seen running after a stated end, the end belongs to an earlier cycle and is dropped
+    const runningNow = tierStated && !done && Number.isFinite(seenAt);
+    const lastSeen = Number.isFinite(existing.runSeenAt) ? existing.runSeenAt : -Infinity;
+    // Refreshed only every few minutes so a stream of identical readings does not rewrite the record; the held
+    // stamp can only lag the true last reading, so a window measured from it is never too generous
+    const runSeenAt = runningNow && seenAt - lastSeen >= RUN_SEEN_REFRESH_MS ? seenAt : null;
+    const staleEnd = runningNow && Number.isFinite(existing.endedAt) && seenAt > existing.endedAt;
+    const signedUp = signupFacts(existing, signupLevels, Number.isFinite(seenAt) ? seenAt : at);
     if (
         record.tiles?.[key] &&
         !changed &&
+        !ended &&
+        runSeenAt === null &&
+        !staleEnd &&
+        !signedUp &&
         (!tierStated ||
             (existing.serverTier === bankedTier &&
                 existing.serverTierAt === at &&
@@ -1047,17 +1108,111 @@ export function recordServerTiers(
         return record;
     }
 
+    const base = staleEnd ? omitKeys(existing, ['endedAt', 'endReason']) : existing;
     return {
         ...record,
         tiles: {
             ...(record.tiles || {}),
             [key]: {
-                ...existing,
+                ...base,
                 tierSeenAt,
+                ...(runSeenAt !== null ? { runSeenAt } : {}),
                 ...(tierStated ? { serverTier: bankedTier, serverTierAt: at, serverDone: Boolean(done) } : {}),
+                ...(ended || {}),
+                ...(signedUp || {}),
             },
         },
     };
+}
+
+/**
+ * Copy of an object without some keys.
+ * @param {Object} object - Source
+ * @param {string[]} keys - Keys to leave out
+ * @returns {Object} The copy
+ */
+function omitKeys(object, keys) {
+    return Object.fromEntries(Object.entries(object).filter(([key]) => !keys.includes(key)));
+}
+
+/**
+ * How recent the reading that showed a party running must be for its ending to count as watched.
+ *
+ * One payload interval: `guild_updated` arrives on guild events, at the top tiers
+ * one every ten minutes or more, so fifteen minutes is that cadence with a
+ * margin. A party last seen running longer ago than this (a tab closed through
+ * the end, a game reopened hours later) has an end that happened somewhere in
+ * the gap, and stamping the reload as the end, or judging clock-versus-early
+ * from it, would be a guess. The end then stays unknown.
+ */
+export const END_SEEN_RUNNING_MS = 15 * 60_000;
+
+/** How much newer a running reading must be than the held `runSeenAt` before it is written again */
+export const RUN_SEEN_REFRESH_MS = 5 * 60_000;
+
+/**
+ * Within this of a party's own deadline, a trial that ended did so on the clock.
+ *
+ * The payload that first shows a party finished arrives within a second or two
+ * of the end; a party seen finished with more than this still on its clock
+ * stopped early.
+ */
+export const END_CLOCK_SLACK_MS = 30_000;
+
+/**
+ * What the payload lets a party's ending be stated as, once.
+ *
+ * Never guessed. A finished ladder is stated outright (the top tier banked and
+ * the party done), with the final clear as the end. Otherwise the end is the
+ * moment this client saw the party go from running to done — a party first seen
+ * already done states no end at all — and its reason is `clock` or `early` only
+ * where the party's own deadline is known: seen done at or after it less
+ * {@link END_CLOCK_SLACK_MS} is the clock, before it the trial stopped with time
+ * left (a wipe, a party giving up: the payload does not say which). A trial
+ * with no known deadline gets the end time and no reason.
+ *
+ * @param {Object} existing - The tile before this statement
+ * @param {Object} stated - What the payload says now
+ * @returns {{endedAt: number, endReason?: string}|null} Fields to write, or null when nothing new is stated
+ */
+function endFacts(existing, { tierStated, bankedTier, done, at, seenAt, deadlineAt }) {
+    if (!tierStated || !done || Number.isFinite(existing?.endedAt)) return null;
+    if (bankedTier >= TRIAL_MAX_TIER) return Number.isFinite(at) ? { endedAt: at, endReason: 'ladder' } : null;
+
+    // Seen running recently, by a stamp of the reading itself: `serverTierAt` is when a tier banked, not
+    // when the party was last looked at, and says nothing about how stale the running reading is
+    const lastRunning = existing?.runSeenAt;
+    const wasRunning =
+        Number.isFinite(lastRunning) &&
+        !existing.serverDone &&
+        Number.isFinite(seenAt) &&
+        seenAt >= lastRunning &&
+        seenAt - lastRunning <= END_SEEN_RUNNING_MS;
+    if (!wasRunning) return null;
+    if (!Number.isFinite(deadlineAt)) return { endedAt: seenAt };
+    return { endedAt: seenAt, endReason: seenAt >= deadlineAt - END_CLOCK_SLACK_MS ? 'clock' : 'early' };
+}
+
+/**
+ * The sign-up level map to write onto a tile, set once.
+ *
+ * `null` in is a map that was never loaded and writes nothing, so the tile
+ * reads as unknown. A map stated empty (nobody signed up for this trial) is
+ * written as `{}` and replaced by the first non-empty one, since sign-ups can
+ * land after the first message that names the trial.
+ *
+ * @param {Object} existing - The tile before this statement
+ * @param {Object|null} levels - `{characterId: level}` for the members signed up to this trial, or null
+ * @param {number} at - When it was read, client ms
+ * @returns {{signupLevels: Object, signupLevelsAt: number}|null} Fields to write, or null
+ */
+function signupFacts(existing, levels, at) {
+    if (!levels || typeof levels !== 'object' || !Number.isFinite(at)) return null;
+    const held = existing?.signupLevels;
+    if (held && typeof held === 'object' && Object.keys(held).length > 0) return null;
+    const incoming = boundSignupLevels(levels);
+    if (!Object.keys(incoming).length && held && typeof held === 'object') return null;
+    return { signupLevels: incoming, signupLevelsAt: at };
 }
 
 /**
@@ -1139,6 +1294,17 @@ function latestTierReadAt(a, b) {
 }
 
 /**
+ * The later of two tiles' last "seen running" readings, omitted when neither has one.
+ * @param {Object} a - One side's tile
+ * @param {Object} b - The other side's tile
+ * @returns {{runSeenAt?: number}} Spreadable
+ */
+function latestRunSeenAt(a, b) {
+    const reads = [a?.runSeenAt, b?.runSeenAt].filter(Number.isFinite);
+    return reads.length ? { runSeenAt: Math.max(...reads) } : {};
+}
+
+/**
  * The later of two tiles' guild-payload statements, omitted when neither has one.
  * @param {Object} a - One side's tile
  * @param {Object} b - The other side's tile
@@ -1191,13 +1357,15 @@ function foldArchivedCycle(kept, other) {
         }
         const server = latestServerTier(held, tile);
         const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
+        const facts = mergeTrialFacts(held, tile);
         const same =
+            JSON.stringify(mergeTrialFacts(held, null)) === JSON.stringify(facts) &&
             held.serverTier === server.serverTier &&
             held.serverTierAt === server.serverTierAt &&
             Boolean(held.serverDone) === Boolean(server.serverDone) &&
             JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
         if (same) continue;
-        tiles[key] = { ...held, ...server, tierSeenAt };
+        tiles[key] = { ...held, ...server, tierSeenAt, ...facts };
         changed = true;
     }
     return changed ? { ...kept, tiles } : kept;
@@ -1373,6 +1541,11 @@ export function mergeTrialRecords(base, incoming) {
             // badge is the same clear seen again, and the first one is closest
             // to when it actually happened.
             tierSeenAt: mergeTierSeenAt(existing.tierSeenAt, tile.tierSeenAt),
+            // How the trial ended and who signed up: the earlier observation of
+            // each, from whichever side has it — one copy kept whole must not
+            // drop what only the other saw
+            ...mergeTrialFacts(existing, tile),
+            ...latestRunSeenAt(existing, tile),
             // Latest wins: either side reading the badge is the card being watched
             ...latestTierReadAt(existing, tile),
             // The newer statement of the guild payload, all three fields together

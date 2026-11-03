@@ -44,6 +44,7 @@ import {
     guildPoints,
     trialBasePoints,
     trialFromHrid,
+    TRIAL_ACTIVE_MS,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { matchTrialHrid } from './guild-trials-scrape.js';
@@ -78,6 +79,133 @@ const TRIAL_HRIDS = [
 export function trialOfTile(tile) {
     const hrid = matchTrialHrid(tile?.name, TRIAL_HRIDS);
     return hrid ? trialFromHrid(hrid) : null;
+}
+
+// ─── What a trial leaves besides its tier ───────────────────────────────────
+
+/** Members whose sign-up level is kept per trial; more than a guild roster holds */
+export const MAX_SIGNUP_LEVELS = 120;
+
+/** Tiers whose clear stamp is kept per trial; the ladder has 21 */
+const MAX_CLEAR_TIERS = 40;
+
+/** Why a trial ended, where that could be told: the ladder finished, the hour ran out, or it stopped with time left */
+export const END_REASONS = ['ladder', 'clock', 'early'];
+
+/**
+ * A trial's tier-clear stamps, packed for keeping long after the week's tiles are gone.
+ *
+ * `{from, t}`: `from` is the earliest stamp in client ms and `t` maps each tier
+ * to its milliseconds after it — about twelve bytes a tier against twenty-five
+ * for the absolute stamp.
+ *
+ * @param {Object|null} seen - A tile's `tierSeenAt`, `{tier: clientMs}`
+ * @returns {{from: number, t: Object<string, number>}|null} Null with no usable stamp
+ */
+export function encodeClears(seen) {
+    const stamps = Object.entries(seen && typeof seen === 'object' ? seen : {})
+        .map(([tier, at]) => [Number(tier), Number(at)])
+        .filter(([tier, at]) => Number.isInteger(tier) && tier >= 1 && Number.isFinite(at))
+        .sort((a, b) => a[0] - b[0])
+        .slice(0, MAX_CLEAR_TIERS);
+    if (!stamps.length) return null;
+    const from = Math.min(...stamps.map(([, at]) => at));
+    return { from, t: Object.fromEntries(stamps.map(([tier, at]) => [tier, at - from])) };
+}
+
+/**
+ * {@link encodeClears} read back.
+ * @param {{from: number, t: Object}|null} clears - A stored `clears`
+ * @returns {Object<string, number>} `{tier: clientMs}`; empty for anything malformed
+ */
+export function decodeClears(clears) {
+    if (!clears || typeof clears !== 'object' || !Number.isFinite(clears.from)) return {};
+    const seen = {};
+    for (const [tier, offset] of Object.entries(clears.t && typeof clears.t === 'object' ? clears.t : {})) {
+        if (Number(tier) >= 1 && Number.isFinite(offset)) seen[tier] = clears.from + offset;
+    }
+    return seen;
+}
+
+/**
+ * Two copies of one trial's packed clears as one: every tier either holds, the earlier sighting of a shared one.
+ * @param {Object|null} a - One side's `clears`
+ * @param {Object|null} b - The other side's
+ * @returns {{from: number, t: Object}|null} Null when neither holds a stamp
+ */
+export function mergeClears(a, b) {
+    const merged = {};
+    for (const side of [decodeClears(a), decodeClears(b)]) {
+        for (const [tier, at] of Object.entries(side)) {
+            merged[tier] = Number.isFinite(merged[tier]) ? Math.min(merged[tier], at) : at;
+        }
+    }
+    return encodeClears(merged);
+}
+
+/**
+ * A sign-up level map as kept: whole-number levels by character id, at most {@link MAX_SIGNUP_LEVELS}.
+ * @param {Object|null} levels - `{characterId: level}`
+ * @returns {Object<string, number>} Never null; `{}` for no usable entry
+ */
+export function boundSignupLevels(levels) {
+    const entries = Object.entries(levels && typeof levels === 'object' ? levels : {})
+        .map(([id, level]) => [id, Number(level)])
+        .filter(([, level]) => Number.isFinite(level) && level >= 1 && level <= 1000)
+        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        .slice(0, MAX_SIGNUP_LEVELS);
+    return Object.fromEntries(entries);
+}
+
+/**
+ * The end and sign-up facts two copies of one trial hold, as one — shared by a live tile and a result.
+ *
+ * Neither is overwritten once stated, so the earlier observation of each wins:
+ * the first moment the end was seen (its reason with it), and the first
+ * non-empty sign-up map (on the test server, of two ends a trial's hour apart, the later cycle's). A map stated empty stands only when the other copy has
+ * none; "never loaded" (no `signupLevels` field at all) is told apart from
+ * "nobody signed up" (`{}`).
+ *
+ * @param {Object|null} a - One copy
+ * @param {Object|null} b - The other
+ * @returns {Object} Spreadable: `endedAt`, `endReason`, `signupLevels`, `signupLevelsAt`, each only where a copy has it
+ */
+export function mergeTrialFacts(a, b) {
+    const out = {};
+    const ended = [a, b].filter((side) => Number.isFinite(side?.endedAt));
+    if (ended.length) {
+        // Earliest wins, except on the test server (several cycles a week): two ends more than a trial's hour
+        // apart are two cycles', and the later is the current one. A stale tab's pre-cut end must not outlive it
+        const apart =
+            ended.length > 1 && isTestServer() && Math.abs(ended[0].endedAt - ended[1].endedAt) > TRIAL_ACTIVE_MS;
+        const first = ended.reduce((best, side) =>
+            (apart ? side.endedAt > best.endedAt : side.endedAt < best.endedAt) ? side : best
+        );
+        const reason = [first, ...ended.filter((side) => side.endedAt === first.endedAt)]
+            .map((side) => side.endReason)
+            .find((value) => END_REASONS.includes(value));
+        out.endedAt = first.endedAt;
+        if (reason) out.endReason = reason;
+    }
+    const mapped = [a, b].filter((side) => side?.signupLevels && typeof side.signupLevels === 'object');
+    if (mapped.length) {
+        const filled = (side) => Object.keys(side.signupLevels).length > 0;
+        const at = (side) => (Number.isFinite(side.signupLevelsAt) ? side.signupLevelsAt : Infinity);
+        const pool = mapped.some(filled) ? mapped.filter(filled) : mapped;
+        const first = pool.reduce((best, side) => (at(side) < at(best) ? side : best));
+        out.signupLevels = boundSignupLevels(first.signupLevels);
+        if (Number.isFinite(first.signupLevelsAt)) out.signupLevelsAt = first.signupLevelsAt;
+    }
+    return out;
+}
+
+/**
+ * A `clears` value as a spreadable field, absent when there is none.
+ * @param {Object|null} clears - From {@link encodeClears}
+ * @returns {{clears?: Object}} Spreadable
+ */
+function clearsField(clears) {
+    return clears ? { clears } : {};
 }
 
 /**
@@ -137,6 +265,9 @@ export function resultsFromCycle(cycle) {
             completed: Boolean(tile.completed),
             serverTier,
             serverTierAt: serverTier !== null && Number.isFinite(tile.serverTierAt) ? tile.serverTierAt : null,
+            // Additive: an entry from a build before these existed has none of them, which reads as unknown
+            ...clearsField(encodeClears(tile.tierSeenAt)),
+            ...mergeTrialFacts(tile, null),
         });
     }
     return results;
@@ -192,8 +323,13 @@ function mergeResult(held, other) {
         ? stated.reduce((best, result) => (ahead(rank(result), rank(best)) ? result : best))
         : null;
     const stamps = [held.archivedAt, other.archivedAt].filter(Number.isFinite);
+    // The card's copy is kept whole, but the other copy can carry what it lacks: stamps, the end, the sign-ups
+    const rest = { ...card };
+    for (const field of ['endedAt', 'endReason', 'signupLevels', 'signupLevelsAt', 'clears']) delete rest[field];
     return {
-        ...card,
+        ...rest,
+        ...clearsField(mergeClears(held.clears, other.clears)),
+        ...mergeTrialFacts(held, other),
         archivedAt: stamps.length ? Math.min(...stamps) : null,
         serverTier: server ? server.serverTier : null,
         serverTierAt: server ? (server.serverTierAt ?? null) : null,

@@ -751,7 +751,11 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
         // …and the expected tier is back, which is what an unjoined card lost
         expect(html).toContain('Expected');
         expect(html).not.toContain('not projectable');
-        expect(html).toContain(`~T${timing.expectedTier}`);
+        // Two timed badges at T18+: 13 tiers done settles it to a narrow range
+        expect(timing.range).toMatchObject({ state: 'settled' });
+        expect(html).toContain(`~T${timing.range.low}–${timing.range.high}`);
+        expect(timing.range.low).toBeLessThanOrEqual(timing.expectedTier);
+        expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
         expect(timing.expectedTier).toBeGreaterThan(18);
     });
 
@@ -872,8 +876,9 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
 
         expect(text).toContain('Last tier T18 took 8m 45s');
         expect(text).toMatch(/Next tier in ~1[12]m/);
-        expect(text).toContain('Before it ends ~1 more tier');
-        expect(text).toContain('~T19');
+        // Four timed intervals, the rate falling: the range is ±1 around the T19 the walk reaches
+        expect(text).toContain('Before it ends ~0–2 more tiers');
+        expect(text).toContain('Expected ~T18–20');
         const falling = Number(text.match(/falling ~(\d+)%\/tier/)?.[1]);
         expect(falling).toBeGreaterThan(0);
         expect(falling).toBeLessThanOrEqual(50);
@@ -3620,6 +3625,82 @@ describe('the panel, end to end', () => {
             expect(text()).not.toContain('Past tiers');
         });
 
+        describe('folding the sections', () => {
+            // Timers are faked in this file: let the storage promises land by microtask
+            const settle = async () => {
+                for (let i = 0; i < 10; i += 1) await Promise.resolve();
+            };
+            const drawn = () => {
+                const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+                guildTrials.record = {
+                    ...guildTrials.record,
+                    history: [
+                        archivedWeek({ weekStart: weekAgo(1), tiles: { 'skilling::alchemy': alchemy(7, 1200) } }),
+                    ],
+                };
+                fire(root);
+                return root;
+            };
+            const heading = (key) => document.querySelector(`[data-fold="${key}"]`);
+
+            beforeEach(() => {
+                guildTrials.sectionFolds = {};
+                guildTrials.foldsHydration = null;
+                delete game.store.guildTrialSectionFolds;
+            });
+
+            test('a section nobody has touched is expanded, and its heading is a button', () => {
+                drawn();
+                expect(heading('history').tagName).toBe('BUTTON');
+                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+                expect(historyCells('Alchemy')).not.toBeNull();
+            });
+
+            test('clicking a heading folds only its section, and a redraw does not reopen it', async () => {
+                const root = drawn();
+                await settle();
+                heading('trial-history').click();
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
+                expect(document.querySelector('[data-mwi-block="trial-history"]').children).toHaveLength(1);
+                // Past weeks is untouched
+                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
+                expect(document.querySelector('[data-mwi-block="history"]').children.length).toBeGreaterThan(1);
+
+                // The live trial redraws the tab every pass
+                fire(root);
+                fire(root);
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
+                expect(document.querySelector('[data-mwi-block="trial-history"]').children).toHaveLength(1);
+
+                heading('trial-history').click();
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+                expect(historyCells('Alchemy')).not.toBeNull();
+            });
+
+            test('a fold is written down and read back on the next load', async () => {
+                drawn();
+                await settle();
+                heading('history').click();
+                await settle();
+                expect(game.store.guildTrialSectionFolds).toEqual({ history: true });
+
+                document.body.innerHTML = '';
+                guildTrials.sectionFolds = {};
+                guildTrials.foldsHydration = null;
+                drawn();
+                await settle();
+                expect(heading('history').getAttribute('aria-expanded')).toBe('false');
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+            });
+
+            test('a section with nothing to show has no heading to fold', () => {
+                fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
+                expect(heading('history')).toBeNull();
+                expect(heading('trial-history')).toBeNull();
+            });
+        });
+
         test('weeks the four-cycle archive has dropped still show, from the kept results', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = {
@@ -3719,9 +3800,7 @@ describe('the panel, end to end', () => {
                 const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
                 guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
                 fire(root);
-                const header = [...document.querySelectorAll('[title]')].find(
-                    (node) => node.textContent === 'Trial history'
-                );
+                const header = document.querySelector('[data-fold="trial-history"]');
                 expect(header.getAttribute('title')).toContain('the last 120 cycles');
             } finally {
                 game.testServer = false;
@@ -3732,9 +3811,7 @@ describe('the panel, end to end', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
             fire(root);
-            const header = [...document.querySelectorAll('[title]')].find(
-                (node) => node.textContent === 'Trial history'
-            );
+            const header = document.querySelector('[data-fold="trial-history"]');
             expect(header.getAttribute('title')).toContain('52 weeks');
             expect(header.getAttribute('title')).not.toContain('test server');
         });
@@ -8076,7 +8153,37 @@ describe('a combat trial only mates joined', () => {
         });
         expect(html).not.toContain('On pace for');
         expect(html).toContain(`Expected`);
-        expect(html).toContain(`~T${timing.expectedTier}`);
+        // Two timed clears at a flat rate: stated as the range it can end in, with the point inside it
+        expect(timing.range.high).toBeGreaterThan(timing.range.low);
+        expect(html).toContain(`~T${timing.range.low}–${timing.range.high}`);
+        expect(timing.range.low).toBeLessThanOrEqual(timing.expectedTier);
+        expect(timing.range.high).toBeGreaterThanOrEqual(timing.expectedTier);
+    });
+
+    test('a scheduled trial whose forecast is too early to say does not print a bare tier', () => {
+        const forecast = {
+            tier: 9,
+            tiersCleared: 9,
+            source: 'estimated',
+            limitedBy: 'time',
+            range: { low: 0, high: 9, point: 9, early: true },
+        };
+        const html = renderTrialBlock(
+            analyseTrial(badger(), { phase: 'scheduled', participants: 0, now }),
+            0,
+            undefined,
+            { phase: 'scheduled', forecast }
+        );
+        expect(html).toContain('If it started now');
+        expect(html).toContain('too early to say');
+        expect(html).not.toContain('~T9');
+        const settled = renderTrialBlock(
+            analyseTrial(badger(), { phase: 'scheduled', participants: 0, now }),
+            0,
+            undefined,
+            { phase: 'scheduled', forecast: { ...forecast, range: null } }
+        );
+        expect(settled).toContain('~T9');
     });
 
     test('a scheduled trial is forecast only from the loadouts of members signed up for it', async () => {
@@ -8314,6 +8421,594 @@ describe('after a reload, before any guild message', () => {
         guildTrials._noteInitialTrials(INIT_CHARACTER_DATA);
         expect(guildTrials.currentTrials).toBeNull();
         expect(guildTrials.serverClockOffsetMs).toBeNull();
+    });
+});
+
+describe('a fight you are in: the pace is a range until the damage rate has shown what it does', () => {
+    const HOUR = 3_600_000;
+    /** The shape of a combat tier's health, as the rate evidence is built from it */
+    const shape = (tier) => 1 + 0.1 * (tier - 1);
+
+    /**
+     * Stamps for tiers `from`..: each interval's rate is `factor` times a base rate.
+     * @param {number} from - First stamped tier
+     * @param {number[]} factors - One per later tier
+     * @returns {Object} `{tier: ms}`
+     */
+    const stamps = (from, factors) => {
+        const seen = { [from]: now - HOUR };
+        let at = now - HOUR;
+        factors.forEach((factor, i) => {
+            at += Math.round((shape(from + 1 + i) * 1e9) / (3e5 * factor));
+            seen[from + 1 + i] = at;
+        });
+        return seen;
+    };
+
+    /** A Trial Chameleon fight with `banked` tiers behind it, killing at a steady rate */
+    const fight = (banked, extra = {}) =>
+        analyseTrial(
+            record({
+                name: 'Trial Chameleon',
+                kind: 'combat',
+                tier: banked,
+                pointsByTier: { [banked]: 1200 },
+                samples: [
+                    { t: now - 10_000, readings: [{ current: 640_000, max: 643_500 }] },
+                    { t: now, readings: [{ current: 440_000, max: 643_500 }] },
+                ],
+                ...extra,
+            }),
+            { participants: 17, phase: 'live', timeLeftMs: 56 * 60_000, workBase: 550_000, now }
+        );
+
+    test('the reported fight: T4 with 56 minutes left no longer reads as a sure T21', () => {
+        const analysis = fight(3);
+        expect(analysis.pace.tiersCleared).toBe(21);
+        // One reading of the rate and no clear stamps: six tiers either side
+        expect(analysis.paceRange).toMatchObject({ state: 'one-interval', halfWidth: 6, low: 15, high: 21 });
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('~T15–21');
+        expect(html).not.toContain('21 tiers → T21');
+        expect(html).toContain('could end anywhere from T15 to T21');
+        // The banked count is real and does not widen
+        expect(analysis.tiersClearedSoFar).toBe(3);
+        expect(html).toMatch(/>Banked<\/span><span[^>]*>3</);
+    });
+
+    test('too few tiers done is plain early wording, with the flat walk in the hover as the most it could be', () => {
+        const analysis = fight(1);
+        expect(analysis.paceRange.early).toBe(true);
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).toContain('too early to say');
+        expect(html).toContain('would reach T21');
+        expect(html).not.toContain('→ T21');
+    });
+
+    test('a damage rate that has stayed flat across timed tiers is three tiers either side', () => {
+        const analysis = fight(5, { tierSeenAt: stamps(1, [1, 1, 1, 1]) });
+        expect(analysis.rangeEvidence).toEqual({ intervals: 4, falling: 0 });
+        expect(analysis.paceRange).toMatchObject({ state: 'flat', halfWidth: 3, low: 18, high: 21 });
+    });
+
+    test('a rate that has fallen for three intervals narrows to one tier either side', () => {
+        const slow = fight(5, { tierSeenAt: stamps(1, [1, 0.8, 0.6, 0.45]) });
+        expect(slow.rangeEvidence.falling).toBe(3);
+        expect(slow.paceRange).toMatchObject({ state: 'settled', halfWidth: 1 });
+        expect(slow.paceRange.high - slow.paceRange.low).toBeLessThanOrEqual(2);
+    });
+
+    test('thirteen tiers done settles it whatever the stamps say', () => {
+        expect(fight(13).paceRange).toMatchObject({ state: 'settled', halfWidth: 1 });
+    });
+
+    test('the last tier: fighting T21 spans the banked 20 to 21, and a finished ladder states no range', () => {
+        expect(fight(20).paceRange).toMatchObject({ low: 20, high: 21 });
+        expect(fight(21).paceRange).toBeNull();
+    });
+
+    test('kill time unknown: no movement in the bar, no pace and no range', () => {
+        const analysis = fight(3, {
+            samples: [
+                { t: now - 10_000, readings: [{ current: 600_000, max: 643_500 }] },
+                { t: now, readings: [{ current: 600_000, max: 643_500 }] },
+            ],
+        });
+        expect(analysis.pace).toBeNull();
+        expect(analysis.paceRange).toBeNull();
+        const html = renderTrialBlock(analysis, 17, { measured: false, reason: 'none' }, { phase: 'live' });
+        expect(html).not.toContain('→ T');
+        expect(html).not.toContain('~T');
+    });
+
+    test('a skilling fight of your own is untouched: no range on a joined skilling pace', () => {
+        const analysis = analyseTrial(
+            record({
+                name: 'Foraging',
+                kind: 'skilling',
+                tier: 4,
+                pointsByTier: { 4: 590 },
+                tiers: [{ tier: 5, total: 57_120 }],
+                samples: [
+                    { t: now, readings: [{ current: 20_000, max: 57_120 }] },
+                    { t: now + 10_000, readings: [{ current: 20_500, max: 57_120 }] },
+                ],
+            }),
+            { participants: 2, timeLeftMs: 20 * 60_000, phase: 'live' }
+        );
+        expect(analysis.paceRange).toBeNull();
+    });
+
+    describe('the forecast row for a fight with a measured party damage', () => {
+        const forecastWith = (range) => ({
+            tier: 21,
+            tiersCleared: 21,
+            source: 'measured',
+            limitedBy: 'time',
+            clears: [],
+            enragedFrom: null,
+            range,
+        });
+        const draw = (range) =>
+            renderTrialBlock(
+                fight(3),
+                17,
+                { measured: false, reason: 'none' },
+                { phase: 'live', forecast: forecastWith(range) }
+            );
+
+        test('a wide range replaces the confident count, with the hover saying why', () => {
+            const html = draw({ low: 15, high: 21, point: 21, halfWidth: 6, state: 'one-interval', early: false });
+            expect(html).toContain('~T15–21');
+            expect(html).not.toContain('21 tiers → T21');
+            expect(html).toContain('could end anywhere from T15 to T21');
+        });
+
+        test('too early reads as plain wording', () => {
+            const html = draw({ low: 3, high: 21, point: 21, halfWidth: 6, state: 'one-interval', early: true });
+            expect(html).toContain('too early to say');
+            expect(html).not.toContain('21 tiers → T21');
+        });
+
+        test('no range keeps the point, as a forecast with none always did', () => {
+            expect(draw(null)).toContain('21 tiers → T21');
+        });
+    });
+
+    describe('folding the Trial payout panel', () => {
+        const bonuses = {
+            buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+            treasury: { bonus: 0.3, level: 5 },
+        };
+        const settle = async () => {
+            for (let i = 0; i < 10; i += 1) await Promise.resolve();
+        };
+        let root;
+        const trial = (extra = {}) => ({
+            name: 'Trial Chameleon',
+            type: 'combat',
+            banked: 3,
+            projected: 15,
+            tierKnown: true,
+            ...extra,
+        });
+        const draw = (trials) => {
+            guildTrials._renderPayout(root, trials, null, bonuses);
+        };
+        const heading = () => root.querySelector('[data-fold="payout"]');
+        const block = () => root.querySelector('[data-mwi-block="payout"]');
+        const actions = () => [...block().querySelectorAll('[data-action]')].map((el) => el.dataset.action);
+
+        beforeEach(() => {
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+            delete game.store.guildTrialSectionFolds;
+            root = document.createElement('div');
+            document.body.append(root);
+        });
+        afterEach(() => {
+            delete game.store.guildTrialSectionFolds;
+            root.remove();
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+        });
+
+        test('open by default: a button heading, the figures, the note rows and the buttons', () => {
+            draw([trial()]);
+            expect(heading().tagName).toBe('BUTTON');
+            expect(heading().getAttribute('aria-expanded')).toBe('true');
+            expect(heading().textContent).not.toContain('on pace');
+            expect(block().textContent).toContain('Guild Points on pace');
+            expect(actions()).toContain('record');
+            expect(block().textContent).not.toContain('could not be drawn');
+        });
+
+        test('folded: the figures go, the buttons stay, and the heading carries the pace', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            expect(heading().getAttribute('aria-expanded')).toBe('false');
+            expect(block().textContent).not.toContain('Guild Points on pace');
+            expect(block().textContent).not.toContain('Tokens, if you took part');
+            expect(heading().textContent).toMatch(/Trial payout · [\d,]+ pts on pace · [\d,]+ tokens/);
+            expect(actions()).toEqual(expect.arrayContaining(['record', 'export', 'scoreboard', 'roster', 'ledger']));
+            expect(block().textContent).not.toContain('could not be drawn');
+        });
+
+        test('the summary quotes the figures the open panel draws', async () => {
+            draw([trial()]);
+            await settle();
+            const open = block().textContent;
+            const points = open.match(/Guild Points on pace([\d,]+)/)[1];
+            const tokens = open.match(/Tokens, if you took part([\d,]+)/)[1];
+            heading().click();
+            expect(heading().textContent).toContain(`${points} pts on pace`);
+            expect(heading().textContent).toContain(`${tokens} tokens`);
+        });
+
+        test('a redraw does not reopen it, and opening again restores the figures', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            draw([trial()]);
+            draw([trial()]);
+            expect(heading().getAttribute('aria-expanded')).toBe('false');
+            expect(block().textContent).not.toContain('Guild Points on pace');
+            heading().click();
+            expect(heading().getAttribute('aria-expanded')).toBe('true');
+            expect(block().textContent).toContain('Guild Points on pace');
+        });
+
+        test('a wide pace folds to the range form', async () => {
+            draw([trial({ projectedRange: { low: 15, high: 21 } })]);
+            await settle();
+            heading().click();
+            expect(heading().textContent).toMatch(/~[\d,]+–[\d,]+ pts on pace · ~[\d,]+–[\d,]+ tokens/);
+        });
+
+        test('no pace yet folds to dashes, not to the banked figure', async () => {
+            draw([trial({ projected: undefined })]);
+            await settle();
+            heading().click();
+            expect(heading().textContent).toContain('— pts on pace · — tokens');
+            expect(actions()).toContain('record');
+        });
+
+        test('the fold is written down and read back', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            await settle();
+            expect(game.store.guildTrialSectionFolds).toEqual({ payout: true });
+            root.remove();
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+            root = document.createElement('div');
+            document.body.append(root);
+            draw([trial()]);
+            await settle();
+            expect(guildTrials.sectionFolds.payout).toBe(true);
+        });
+    });
+
+    describe('the payout that follows the pace', () => {
+        const bonuses = {
+            buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+            treasury: { bonus: 0.3, level: 5 },
+        };
+        const payoutText = (analysis) => {
+            guildTrials.record = {
+                weekStart: 0,
+                tiles: {
+                    'combat::trial chameleon': { name: 'Trial Chameleon', kind: 'combat', samples: [], tiers: [] },
+                },
+            };
+            vi.setSystemTime(now);
+            guildTrials._noteCurrentTrials({
+                guild: {
+                    currentTrialsData: JSON.stringify({
+                        skilling: { status: '', parties: null },
+                        combat: {
+                            status: 'in_progress',
+                            budgetRemainingMs: 1_800_000,
+                            parties: { '/guild_combat/chameleon': { done: false } },
+                        },
+                    }),
+                },
+            });
+            const trials = guildTrials._payoutTrials({ phase: null }, {}, () => analysis);
+            const root = document.createElement('div');
+            document.body.append(root);
+            guildTrials._renderPayout(root, trials, null, bonuses);
+            const text = root.textContent;
+            root.remove();
+            vi.useRealTimers();
+            return { trials, text };
+        };
+
+        test('a wide pace pays a range, with no confident point or gold beside it; banked stays exact', () => {
+            const analysis = { ...fight(3), tiersClearedSoFar: 3 };
+            const { trials, text } = payoutText(analysis);
+            expect(trials[0].projectedRange).toEqual({ low: 15, high: 21 });
+            expect(text).toMatch(/Guild Points on pace~[\d,]+–[\d,]+/);
+            expect(text).toMatch(/Tokens, every eligible member~[\d,]+–[\d,]+/);
+            expect(text).not.toMatch(/Tokens, every eligible member[\d,]+\s*\(/);
+            expect(text).toMatch(/Guild Points banked[\d,]+/);
+            expect(text).not.toMatch(/Guild Points banked~/);
+        });
+
+        test('the range holds the point: a high end capped at the point keeps its part-tier credit', () => {
+            const wide = fight(3);
+            const pace = { ...wide.pace, tiersCleared: 15, partialFraction: 0.8 };
+            const figure = (text) => text.match(/Guild Points on pace~?([\d,]+)(?:–([\d,]+))?/);
+            const num = (value) => Number(value.replace(/,/g, ''));
+            const point = figure(payoutText({ ...wide, tiersClearedSoFar: 3, pace, paceRange: null }).text);
+            const ranged = figure(
+                payoutText({
+                    ...wide,
+                    tiersClearedSoFar: 3,
+                    pace,
+                    paceRange: { low: 12, high: 15, point: 15, early: false },
+                }).text
+            );
+            expect(point[2]).toBeUndefined();
+            expect(num(ranged[2])).toBeGreaterThanOrEqual(num(point[1]));
+            expect(num(ranged[1])).toBeLessThanOrEqual(num(point[1]));
+        });
+
+        test('an early pace pays from what is banked up to the flat walk', () => {
+            const { trials } = payoutText(fight(1));
+            expect(trials[0].projectedRange).toEqual({ low: 1, high: 21 });
+        });
+
+        test('a settled pace with no spread keeps a point payout', () => {
+            const analysis = { ...fight(13), paceRange: { low: 21, high: 21, point: 21, early: false } };
+            const { trials, text } = payoutText(analysis);
+            expect(trials[0].projectedRange).toBeNull();
+            expect(text).not.toMatch(/Guild Points on pace~/);
+        });
+    });
+});
+
+describe('how a trial ended and who signed up, kept with the panel shut', () => {
+    const base = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+    const milking = base.skilling.parties['/guild_skilling/milking'];
+    const newestStamp = base.skilling.parties['/guild_skilling/alchemy'].highestTierReachedAtMs;
+    const deadline = milking.tierStartedAtMs + milking.budgetRemainingMs;
+    const SKEW = 5_000;
+    const TRIP = 300;
+    const key = 'skilling::milking';
+    const HRID = '/guild_skilling/milking';
+
+    const message = (party) => {
+        const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+        payload.skilling.parties[HRID] = { ...milking, ...party };
+        return { guild: { id: 'g-own', currentTrialsData: JSON.stringify(payload) } };
+    };
+    const hear = (data, serverAt) => {
+        vi.setSystemTime(serverAt + SKEW + TRIP);
+        guildTrials._noteCurrentTrials(data);
+    };
+    const tile = () => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level: 170,
+        tier: 7,
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+    });
+    const record = () => ({ weekStart: 0, tiles: { [key]: tile() } });
+    let savedWeek = null;
+    const file = (held) => guildTrials._recordServerTiers(held, Date.now());
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
+        guildTrials.socketPhase = null;
+        guildTrials.signupLevelMap = null;
+        game.characterData = { guild: { id: 'g-own' } };
+        savedWeek = game.currentWeek;
+        game.currentWeek = 'W1';
+        game.members = [];
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        game.characterData = null;
+        game.currentWeek = savedWeek;
+        game.members = [];
+        guildTrials.signupLevelMap = null;
+    });
+
+    /** A party running at tier 7, then the same party finished at `tier` when the message is heard at `serverAt` */
+    const runThenFinish = ({ tier = 8, serverAt, lastRunningAt = serverAt - 5 * 60_000 }) => {
+        hear(message({}), newestStamp);
+        let running = file(record());
+        // The reading that last showed the party running: a payload a few minutes before the end
+        hear(message({ tierStartedAtMs: newestStamp, highestTierReachedAtMs: newestStamp }), lastRunningAt);
+        running = file(running);
+        hear(
+            message({
+                highestTier: tier,
+                done: true,
+                tierStartedAtMs: serverAt,
+                highestTierReachedAtMs: serverAt,
+                budgetRemainingMs: Math.max(0, deadline - serverAt),
+            }),
+            serverAt
+        );
+        return file(running);
+    };
+
+    test('a party seen going from running to done at its deadline ended on the clock', () => {
+        const done = runThenFinish({ serverAt: deadline });
+        expect(done.tiles[key]).toMatchObject({ serverDone: true, endReason: 'clock' });
+        expect(done.tiles[key].endedAt).toBe(deadline + SKEW + TRIP);
+    });
+
+    test('a party seen finishing with the clock still running stopped early, the cause not stated', () => {
+        const done = runThenFinish({ serverAt: deadline - 20 * 60_000 });
+        expect(done.tiles[key].endReason).toBe('early');
+        expect(done.tiles[key].endedAt).toBe(deadline - 20 * 60_000 + SKEW + TRIP);
+    });
+
+    test('a party first seen already done states no end at all: never guessed', () => {
+        hear(message({ highestTier: 9, done: true }), deadline);
+        const done = file(record());
+        expect(done.tiles[key]).toMatchObject({ serverTier: 9, serverDone: true });
+        expect(done.tiles[key].endedAt).toBeUndefined();
+        expect(done.tiles[key].endReason).toBeUndefined();
+    });
+
+    test('a party last seen running hours before it is seen done states no end and no reason: unknown, never guessed', () => {
+        // Wiped at minute 20, tab closed, game reopened two hours later: the reload is not the end
+        const done = runThenFinish({ serverAt: deadline + 2 * 3_600_000, lastRunningAt: deadline - 40 * 60_000 });
+        expect(done.tiles[key]).toMatchObject({ serverDone: true });
+        expect(done.tiles[key].endedAt).toBeUndefined();
+        expect(done.tiles[key].endReason).toBeUndefined();
+    });
+
+    test('a running reading just past the window is stale, and just inside it counts', () => {
+        const stale = runThenFinish({ serverAt: deadline, lastRunningAt: deadline - 16 * 60_000 });
+        expect(stale.tiles[key].endedAt).toBeUndefined();
+        const fresh = runThenFinish({ serverAt: deadline, lastRunningAt: deadline - 14 * 60_000 });
+        expect(fresh.tiles[key].endReason).toBe('clock');
+    });
+
+    test('the top tier banked and the party done is the ladder, ended at the final clear', () => {
+        hear(message({}), newestStamp);
+        const running = file(record());
+        const at = deadline - 15 * 60_000;
+        hear(message({ highestTier: 21, done: true, tierStartedAtMs: at, highestTierReachedAtMs: at }), at);
+        const done = file(running);
+        expect(done.tiles[key]).toMatchObject({ endReason: 'ladder', endedAt: at + SKEW + TRIP });
+    });
+
+    test('the end is stated once: a later message does not move it', () => {
+        const done = runThenFinish({ serverAt: deadline });
+        const first = done.tiles[key].endedAt;
+        hear(
+            message({ highestTier: 8, done: true, tierStartedAtMs: deadline, highestTierReachedAtMs: deadline }),
+            deadline + 90_000
+        );
+        expect(file(done).tiles[key].endedAt).toBe(first);
+    });
+
+    describe('sign-up levels', () => {
+        const SIGNUPS = {
+            1001: { combatLevel: 140, skillingTrialLevel: 150 },
+            1002: { combatLevel: 120, skillingTrialLevel: 95 },
+            1003: { combatLevel: 130, skillingTrialLevel: 110 },
+        };
+        const roster = () => {
+            game.members = [
+                { characterID: 1001, signedUpSkillingTrialHrid: HRID, signupWeekStartAt: 'W1' },
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+                { characterID: 1003, signedUpSkillingTrialHrid: HRID, signupWeekStartAt: 'W0' },
+            ];
+        };
+        const learn = (map = SIGNUPS) =>
+            guildTrials._noteSignupLevels('guild_characters_updated', {
+                guildCharacterMap: { 1001: { guildID: 'g-own' } },
+                guildTrialSignupLevelMap: map,
+            });
+
+        test('the levels of the members signed up to this trial this week, and no one else', () => {
+            roster();
+            learn();
+            hear(message({}), newestStamp);
+            const tileOut = file(record()).tiles[key];
+            expect(tileOut.signupLevels).toEqual({ 1001: 150 });
+            expect(tileOut.signupLevelsAt).toBe(Date.now());
+        });
+
+        test('a combat trial reads the combat level', () => {
+            game.members = [
+                { characterID: 1001, signedUpCombatTrialHrid: '/guild_combat/badger', signupWeekStartAt: 'W1' },
+            ];
+            learn();
+            expect(guildTrials._signupLevelsFor('/guild_combat/badger', 'combat', 'g-own')).toEqual({ 1001: 140 });
+        });
+
+        test('unknown is not empty: no map or no roster stores nothing, a loaded empty sheet stores {}', () => {
+            hear(message({}), newestStamp);
+            // No map ever seen
+            expect(file(record()).tiles[key].signupLevels).toBeUndefined();
+            // A map but no roster
+            learn();
+            expect(guildTrials._signupLevelsFor(HRID, 'skilling', 'g-own')).toBeNull();
+            expect(file(record()).tiles[key].signupLevels).toBeUndefined();
+            // Both loaded, nobody on this trial
+            game.members = [
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+            ];
+            expect(file(record()).tiles[key].signupLevels).toEqual({});
+        });
+
+        test('an empty first reading is replaced by the first non-empty one, which is then kept', () => {
+            hear(message({}), newestStamp);
+            game.members = [
+                { characterID: 1002, signedUpSkillingTrialHrid: '/guild_skilling/alchemy', signupWeekStartAt: 'W1' },
+            ];
+            learn();
+            const empty = file(record());
+            expect(empty.tiles[key].signupLevels).toEqual({});
+            roster();
+            const filled = file(empty);
+            expect(filled.tiles[key].signupLevels).toEqual({ 1001: 150 });
+            learn({ 1001: { skillingTrialLevel: 151 } });
+            expect(file(filled)).toBe(filled);
+        });
+
+        test('another guild’s levels are not held, and a held map is dropped for a guild that is not its own', () => {
+            roster();
+            guildTrials._noteSignupLevels('guild_characters_updated', {
+                guildCharacterMap: { 1001: { guildID: 'g-other' } },
+                guildTrialSignupLevelMap: SIGNUPS,
+            });
+            expect(guildTrials.signupLevelMap).toBeNull();
+            learn();
+            expect(guildTrials._signupLevelsFor(HRID, 'skilling', 'g-other')).toBeNull();
+        });
+
+        test('one member’s sign-up is merged only into a map already held', () => {
+            const signup = { characterId: 1001, trialSignupLevels: { combatLevel: 141, skillingTrialLevel: 152 } };
+            guildTrials._noteSignupLevels('guild_trial_signup_updated', signup);
+            expect(guildTrials.signupLevelMap).toBeNull();
+            learn();
+            guildTrials._noteSignupLevels('guild_trial_signup_updated', signup);
+            expect(guildTrials.signupLevelMap.map[1001]).toMatchObject({ skillingTrialLevel: 152 });
+            expect(guildTrials.signupLevelMap.map[1002]).toMatchObject({ skillingTrialLevel: 95 });
+        });
+
+        test('the map is dropped on a character switch', () => {
+            learn();
+            // A switch resets much more than the map; put it all back for the tests after this one
+            const fields = [
+                'record',
+                'guildName',
+                'socketGuildName',
+                'characterId',
+                'adopting',
+                'lastRecordSaveAt',
+                'recordUnread',
+                'awaitingCharacter',
+                'currentTrials',
+                'serverTierClears',
+                'socketPhase',
+            ];
+            const saved = Object.fromEntries(fields.map((field) => [field, guildTrials[field]]));
+            try {
+                guildTrials._forgetCharacter(777);
+                expect(guildTrials.signupLevelMap).toBeNull();
+            } finally {
+                Object.assign(guildTrials, saved);
+            }
+        });
     });
 });
 

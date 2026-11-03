@@ -2620,7 +2620,8 @@ describe('trial results — each trial’s tier kept after its week leaves the a
     test('one week of results is small enough to keep a year of', () => {
         const rolled = rollRecordToWeek(finishedWeek(weekOf(1), 6), thisWeek);
         const bytes = JSON.stringify(rolled.trialResults).length;
-        // Measured: 5 trials, 1,082 bytes — about 56 KB for a year of weeks
-        expect(bytes / rolled.trialResults.length).toBeLessThan(300);
+        // Measured: 5 trials, 1,082 bytes before each kept its packed tier clears (334 a trial with them, still
+        // about 87 KB for a year of weeks)
+        expect(bytes / rolled.trialResults.length).toBeLessThan(400);
     });
 });

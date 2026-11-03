@@ -160,8 +160,13 @@ import { openTrialInputCapture, closeTrialInputCapture } from './guild-trial-inp
 import { openTrialLedgerPanel } from './guild-trial-ledger-view.js';
 import { forecastTrial, trialWave } from './guild-trial-forecast.js';
 import {
+    earlyPaceHover,
+    expectedRange,
     foldServerTierClears,
     INIT_PAYLOAD_FRESH_MS,
+    initPayloadAgeMs,
+    rangeHover,
+    rateEvidence,
     serverClockOffset,
     tierClearTimes,
     tierTimingAsForecast,
@@ -297,6 +302,39 @@ const WORK_BASE_VERSION = 2;
 
 /** What a card's level line looks like, for finding the node the tier badge belongs on */
 const LEVEL_LINE_RE = /Lv\.\s*\d+/;
+
+/** Where the folded history sections are remembered (the `settings` store; device-local, listed in `LOCAL_ONLY_KEY_PREFIXES`) */
+const SECTION_FOLDS_KEY = 'guildTrialSectionFolds';
+
+/**
+ * How a fight's walked tier is worded: a range, "too early to say", or null to state it as a point.
+ *
+ * @param {{low: number, high: number, point?: number, early?: boolean}|null|undefined} range - From `expectedRange`
+ * @returns {{text: string, hover: string}|null} Null when the range has no spread and is not early
+ */
+function rangedPace(range) {
+    if (!range) return null;
+    if (range.early) return { text: 'too early to say', hover: `\n${earlyPaceHover(range.point)}` };
+    if (range.high > range.low) return { text: `~T${range.low}–${range.high}`, hover: rangeHover(range) };
+    return null;
+}
+
+/**
+ * A history section's heading as a button that folds it.
+ * @param {string} key - The block key, carried in `data-fold`
+ * @param {string} label - The heading
+ * @param {string} title - The hover, already escaped
+ * @param {boolean} collapsed - Whether the section is folded
+ * @returns {string} Markup
+ */
+function foldHeading(key, label, title, collapsed) {
+    return (
+        `<button type="button" data-fold="${key}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${title}" ` +
+        `style="display:flex; align-items:center; gap:6px; width:100%; min-height:32px; padding:0; margin:0 0 2px; ` +
+        `background:none; border:0; cursor:pointer; text-align:left; color:${ACCENT}; font:inherit; font-weight:700;">` +
+        `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span style="min-width:0; overflow-wrap:anywhere;">${label}</span></button>`
+    );
+}
 
 /** Cycles the Trial history table has a column for; earlier ones are in each row's hover */
 const TRIAL_HISTORY_COLUMNS = 5;
@@ -910,12 +948,37 @@ export function analyseTrial(
               })
             : null;
 
+    // A combat fight walked at its measured damage is a flat rate held for the
+    // hour. The bosses grow and the party's damage does not always keep up, so
+    // the tier it reaches is stated as the range the shared rule gives, from
+    // what the clear stamps show of the rate (a fight with none is one reading).
+    // The tiers banked, which are real, are never widened.
+    const rangeEvidence =
+        kind === 'combat'
+            ? rateEvidence(record, { kind, now, windowed: isTestServer() })
+            : { intervals: 0, falling: 0 };
+    const paceRange =
+        kind === 'combat' &&
+        pace &&
+        pace.limitedBy !== 'unknown-next-tier' &&
+        base.tiersClearedSoFar < TRIAL_MAX_TIER &&
+        Number.isFinite(pace.tiersCleared)
+            ? expectedRange({
+                  point: pace.tiersCleared,
+                  banked: base.tiersClearedSoFar,
+                  intervals: Math.max(1, rangeEvidence.intervals),
+                  falling: rangeEvidence.falling,
+              })
+            : null;
+
     return {
         ...base,
         rate,
         rateNote,
         remaining,
         total,
+        paceRange,
+        rangeEvidence,
         // A time-to-clear is only as current as the reading it divides
         etaMs: readingStale ? null : etaMs(remaining, rate),
         next,
@@ -1409,15 +1472,20 @@ export function renderTrialBlock(
             ),
         ];
         if (forecast && forecast.tier !== null) {
+            // The scoreboard's verdict on this same forecast: nothing is banked on a trial that has not
+            // started, so a range that is early says "too early to say" here as there, never a bare tier
+            const early = rangedPace(forecast.range);
             scheduledRows.push(
                 line(
                     'If it started now',
-                    `~T${forecast.tiersCleared}${Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : ''}`,
+                    (early ? early.text : `~T${forecast.tiersCleared}`) +
+                        (Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : ''),
                     WARN,
                     'Walked from tier 1 over a full hour, at the party damage estimated from the loadouts ' +
                         'captured so far' +
                         (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
-                        ' — a rough shape before anything is measured, priced from the game’s own tier data.'
+                        ' — a rough shape before anything is measured, priced from the game’s own tier data.' +
+                        (early ? early.hover : '')
                 )
             );
         }
@@ -1530,13 +1598,19 @@ export function renderTrialBlock(
                 );
             }
             if (!atFinalTier && Number.isFinite(loose.tiersBeforeEnd)) {
+                // A wide estimate is a range of tiers, never a count stated as if it were sure
+                const spread = loose.tiersBeforeEndRange;
+                const ranged = spread && spread.high > spread.low;
                 rows.push(
                     line(
                         'Before it ends',
-                        `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
+                        ranged
+                            ? `~${spread.low}–${spread.high} more tiers`
+                            : `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
                         DIM,
                         'Walked one tier at a time for the rest of the hour, each priced at its own projected ' +
-                            'rate — not a time divided by a flat one. A tier only counts when it fits whole.'
+                            'rate — not a time divided by a flat one. A tier only counts when it fits whole.' +
+                            (ranged ? rangeHover(loose.range) : '')
                     )
                 );
             }
@@ -1709,13 +1783,16 @@ export function renderTrialBlock(
     // no measured slowdown to replace it; when there is, the Expected row stands
     // alone and the flat walk lives on in its tooltip.
     if (analysis.pace && !slowdown && (!forecast || forecast.tier === null)) {
+        // A fight's flat damage rate is a range, or too early to say; see `rangedPace`
+        const ranged = rangedPace(analysis.paceRange);
         rows.push(
             line(
                 'On pace for',
-                paceCaption(),
-                analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
+                ranged ? ranged.text : paceCaption(),
+                analysis.pace.limitedBy === 'ladder' && !ranged ? GOOD : WARN,
                 'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
                     'whole.' +
+                    (ranged ? ranged.hover : '') +
                     (analysis.pace.limitedBy === 'unknown-next-tier'
                         ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
                           'least”, because the real pace may be higher.'
@@ -1742,13 +1819,20 @@ export function renderTrialBlock(
         // needs a live bar. An unjoined card has none, and reaching for it
         // unguarded is what turned a restored Expected row into a thrown render.
         const flat = analysis.pace ? analysis.pace.tiersCleared : null;
+        // Until the rate has shown it is falling the end is a range, not a tier
+        const range = timing && forecast.range && forecast.range.high > forecast.range.low ? forecast.range : null;
+        // A fight's flat damage rate: a range, or too early to say
+        const combatRanged = !slowdown && !timing ? rangedPace(forecast.range) : null;
+        const combatNote = combatRanged ? combatRanged.hover : '';
         rows.push(
             line(
                 slowdown || timing ? 'Expected' : 'On pace for',
                 slowdown || timing
-                    ? `~T${cleared}${margin}`
-                    : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
-                forecast.source === 'estimated' ? WARN : GOOD,
+                    ? `~T${range ? `${range.low}–${range.high}` : cleared}${margin}`
+                    : combatRanged
+                      ? `${combatRanged.text}${forecast.range.early ? '' : margin}`
+                      : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
+                forecast.source === 'estimated' || combatRanged ? WARN : GOOD,
                 timing
                     ? 'Walked from what each tier actually needs — derived from the game’s own ladder ' +
                           '— at the rate this guild is measured to be clearing them, taken from the ' +
@@ -1761,7 +1845,8 @@ export function renderTrialBlock(
                                 'any further.'
                               : '\nOne tier has been timed, so the rate is held flat — a second timed tier ' +
                                 'is what turns a reading into a trend.') +
-                          '\nThe whole guild’s pace, not your own contribution.'
+                          '\nThe whole guild’s pace, not your own contribution.' +
+                          rangeHover(range)
                     : forecast.source === 'measured'
                       ? 'Walked from the work or health each tier actually needs — derived from the game’s own ' +
                         'data and rules, not fitted — at the rate this party is measured to be producing.' +
@@ -1781,10 +1866,12 @@ export function renderTrialBlock(
                               'boss gains a stack a minute to ten, ending at +100% damage and +100% ' +
                               'accuracy. Still killable — but expect deaths to slow this beyond the ' +
                               'projection.'
-                            : '')
+                            : '') +
+                        combatNote
                       : 'Estimated from the loadouts captured so far' +
                         (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
-                        ' — a rough shape rather than a measurement, until the party’s own damage has been seen.'
+                        ' — a rough shape rather than a measurement, until the party’s own damage has been seen.' +
+                        combatNote
             )
         );
     } else if (forecast?.reason) {
@@ -2916,6 +3003,16 @@ class GuildTrials {
          */
         this.serverTierClears = null;
         /**
+         * The sign-up level map the game last stated, with the guild it was sent
+         * for — `{guildId, map}` — or null while none has been seen (unknown,
+         * which is not the same as nobody having signed up); see
+         * {@link _noteSignupLevels}.
+         */
+        this.signupLevelMap = null;
+        /** Folded history sections by block key; see {@link _foldsFor} */
+        this.sectionFolds = {};
+        this.foldsHydration = null;
+        /**
          * Milliseconds to add to a server stamp to put it on this client's
          * clock, the tightest bound seen so far; see `serverClockOffset`. A
          * property of the two clocks, so it survives a character switch.
@@ -3087,6 +3184,16 @@ class GuildTrials {
         this._onCharacterInit = (data) => this._noteInitialTrials(data);
         dataManager.on?.('character_initialized', this._onCharacterInit);
         this.unregister.push(() => dataManager.off?.('character_initialized', this._onCharacterInit));
+
+        // Before `_refresh` below, which files the trials a `guild_updated` states and reads this map
+        for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
+            const onLevels = (data, context) => {
+                if (dataManager.isFromActiveSocket?.(context) === false) return;
+                this._noteSignupLevels(type, data);
+            };
+            webSocketHook.on(type, onLevels);
+            this.unregister.push(() => webSocketHook.off(type, onLevels));
+        }
 
         this._refresh = (data) => {
             this._noteGuildName(data);
@@ -3385,6 +3492,8 @@ class GuildTrials {
             this.currentTrials = null;
             // …and the tier clears it stated, which are the departing guild's parties
             this.serverTierClears = null;
+            // …and the departing guild's sign-up levels
+            this.signupLevelMap = null;
             this.socketPhase = null;
             // The forecast the per-player panel echoes, and the render state
             // that decides which card is allowed to replace it. Rebuilt every
@@ -3696,6 +3805,8 @@ class GuildTrials {
             const id = data?.character?.id ?? null;
             const current = dataManager.getCurrentCharacterId?.() ?? this.characterId ?? null;
             if (id !== null && current !== null && String(id) !== String(current)) return;
+            // The login payload's sign-up levels, until a message restates them
+            this._noteSignupLevels('init', data);
             // This character's guild states no trial: whatever is held is
             // another guild's or another cycle's, and must not be filed here
             if (data && !parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData)) {
@@ -3827,12 +3938,24 @@ class GuildTrials {
                     const partyAt = Number.isFinite(party.highestTierReachedAtMs)
                         ? party.highestTierReachedAtMs
                         : party.tierStartedAtMs;
+                    // The party's own deadline: the same absolute instant for every party, and
+                    // `budgetRemainingMs` is as of its last clear
+                    const deadlineAt =
+                        offset !== null &&
+                        Number.isFinite(party.tierStartedAtMs) &&
+                        Number.isFinite(party.budgetRemainingMs)
+                            ? party.tierStartedAtMs + party.budgetRemainingMs + offset
+                            : null;
                     next = recordServerTiers(next, key, {
                         bankedTier: party.highestTier,
                         done: party.done,
                         clears,
                         at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : held.at,
                         create,
+                        seenAt: held.at,
+                        deadlineAt,
+                        // Null while the sign-up sheet or level map has not been loaded: unknown, not empty
+                        signupLevels: this._signupLevelsFor(partyKey, kind, record.guildId ?? this._guildId()),
                     });
                 }
             }
@@ -3840,6 +3963,104 @@ class GuildTrials {
         } catch (error) {
             console.error('[GuildTrials] Recording the guild payload’s tier clears failed:', error);
             return record;
+        }
+    }
+
+    /**
+     * Hold the sign-up level map the game states, whichever tab is open.
+     *
+     * `guildTrialSignupLevelMap` is `{characterId: {combatLevel, skillingTrialLevel}}`
+     * for the members signed up. It arrives whole on the login payload, on
+     * `guild_characters_updated` (which replaces the whole copy: an absent map
+     * means none) and on `guild_updated`; `guild_trial_signup_updated` carries one
+     * member's entry. A single member's entry is merged only into a map already
+     * held, because a map started from one member would read as the whole sheet.
+     * Kept with the guild it was sent for, and never filed under another.
+     *
+     * @param {'guild_updated'|'guild_characters_updated'|'guild_trial_signup_updated'|'init'} type - Where it came from
+     * @param {Object|null} data - The payload
+     */
+    _noteSignupLevels(type, data) {
+        try {
+            if (this.awaitingCharacter) return;
+            const own = dataManager.characterData?.guild?.id ?? null;
+            const sentFor =
+                type === 'guild_characters_updated'
+                    ? (Object.values(data?.guildCharacterMap || {})[0]?.guildID ?? null)
+                    : (data?.guild?.id ?? null);
+            if (sentFor !== null && own !== null && String(sentFor) !== String(own)) return;
+            const guildId = sentFor ?? own;
+
+            if (type === 'guild_trial_signup_updated') {
+                const held = this.signupLevelMap;
+                const id = data?.characterId != null ? String(data.characterId) : null;
+                const entry =
+                    data?.trialSignupLevels && typeof data.trialSignupLevels === 'object'
+                        ? data.trialSignupLevels
+                        : null;
+                const level = Number(entry?.skillingTrialLevel ?? data?.skillingTrialLevel);
+                if (!id || !held?.map || !(Number.isFinite(level) && level > 0)) return;
+                if (held.guildId !== null && guildId !== null && String(held.guildId) !== String(guildId)) return;
+                this.signupLevelMap = {
+                    guildId: held.guildId ?? guildId,
+                    map: { ...held.map, [id]: { ...held.map[id], ...entry, skillingTrialLevel: level } },
+                };
+                return;
+            }
+
+            const map = data?.guildTrialSignupLevelMap;
+            if (type === 'init' && this.signupLevelMap) {
+                // A login payload read back late is older than what the socket has said since
+                const age = initPayloadAgeMs(data, Date.now(), this.serverClockOffsetMs);
+                if (!Number.isFinite(age) || age > INIT_PAYLOAD_FRESH_MS) return;
+            }
+            if (map && typeof map === 'object') {
+                this.signupLevelMap = { guildId, map };
+            } else if (type === 'guild_characters_updated') {
+                this.signupLevelMap = { guildId, map: {} };
+            }
+        } catch (error) {
+            console.error('[GuildTrials] Reading the sign-up levels failed:', error);
+        }
+    }
+
+    /**
+     * The levels of the members signed up to one trial, for its record tile.
+     *
+     * Skilling reads each member's `skillingTrialLevel` and combat their
+     * `combatLevel`, out of the held map; who is signed up where comes from the
+     * XP tracker's sign-ups, as {@link participantCounts} counts them.
+     *
+     * @param {string} partyKey - The trial's hrid
+     * @param {'skilling'|'combat'} kind - Which ladder
+     * @param {string|number|null} guildId - The guild the record belongs to
+     * @param {Object} [tracker] - The XP tracker, injectable for tests
+     * @returns {Object<string, number>|null} `{characterId: level}`; `{}` when nobody is signed up, null when the
+     *   map or the roster has not been loaded (unknown, not empty), or is another guild's
+     */
+    _signupLevelsFor(partyKey, kind, guildId, tracker = guildXPTracker) {
+        try {
+            const held = this.signupLevelMap;
+            if (!held?.map || typeof held.map !== 'object') return null;
+            if (held.guildId !== null && guildId !== null && String(held.guildId) !== String(guildId)) return null;
+            const members = tracker?.getMemberList?.();
+            if (!Array.isArray(members) || !members.length) return null;
+
+            const week = tracker.getCurrentWeekStartAt?.() || null;
+            const levels = {};
+            for (const member of members) {
+                const meta = tracker.getMemberMeta?.(member.characterID) || member;
+                if (week && meta?.signupWeekStartAt !== week) continue;
+                const signedUp = kind === 'combat' ? meta?.signedUpCombatTrialHrid : meta?.signedUpSkillingTrialHrid;
+                if (signedUp !== partyKey) continue;
+                const entry = held.map[member.characterID];
+                const level = Number(kind === 'combat' ? entry?.combatLevel : entry?.skillingTrialLevel);
+                if (Number.isFinite(level) && level >= 1) levels[String(member.characterID)] = level;
+            }
+            return levels;
+        } catch (error) {
+            console.error('[GuildTrials] Reading who signed up to a trial failed:', error);
+            return null;
         }
     }
 
@@ -4091,6 +4312,10 @@ class GuildTrials {
                     this.currentTrials = null;
                     this.serverTierClears = null;
                     this.socketPhase = null;
+                }
+                // The sign-up levels carry their own guild; another's are not the arriving guild's
+                if (this.signupLevelMap && !snapshotNamesGuild({ guildId: this.signupLevelMap.guildId }, joined)) {
+                    this.signupLevelMap = null;
                 }
             } else {
                 // The name is adopted either way; a record under it that could
@@ -4578,10 +4803,22 @@ class GuildTrials {
                     : null;
             const timing = walked?.limitedBy === 'no-clock' ? null : tierTimingAsForecast(walked);
 
+            // The pace is a range of tiers when its rule says so, and the money
+            // derived from it must not read as surer than the tiers are. A pace
+            // that is too early to state spans from what is banked to the flat
+            // walk, the most it could be. The banked figures are real and never widen.
+            const paceSpan = pace ? analysis.paceRange : (timing?.range ?? null);
+            const projectedRange = !paceSpan
+                ? null
+                : paceSpan.early
+                  ? { low: analysis.tiersClearedSoFar, high: paceSpan.point }
+                  : { low: paceSpan.low, high: paceSpan.high };
+
             trials.push({
                 name: record.name,
                 type: record.kind,
                 banked: analysis.tiersClearedSoFar,
+                projectedRange: projectedRange && projectedRange.high > projectedRange.low ? projectedRange : null,
                 projected: pace?.tiersCleared ?? timing?.tiersCleared ?? analysis.tiersClearedSoFar,
                 // How far into the tier beyond `projected` the forecast reaches by
                 // the hour's end, 0..1; that leftover progress pays out.
@@ -5174,32 +5411,54 @@ class GuildTrials {
         // it from the ladder made "on pace" come out *below* "banked" whenever
         // the cards had stated more than the ladder derives, which reads as the
         // trial going backwards.
-        const projected = payoutProjection({
-            trials: trials.map((trial) => {
-                const extraTiers = Math.max(0, (trial.projected ?? trial.banked) - trial.banked);
-                const step = EXTRA_TIER_POINTS[trial.type] ?? 0;
-                const fromCards = trial.points?.source !== 'ladder';
-                const base = trial.points?.basePoints;
-                const stated = trial.points?.guildPoints;
-                // The pace ends part-way into the tier after `projected`, and that
-                // leftover progress pays out (0.5% per 1%, capped at 50%). Size it
-                // off that tier's marginal points. Live rule since the guild patch.
-                const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
-                const partialBasePoints = partialTierCredit(trial.partialFraction) * marginal;
-                return {
-                    ...trial,
-                    tiersCleared: trial.projected,
-                    partialBasePoints,
-                    basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
-                    guildPointsOverride:
-                        fromCards && Number.isFinite(stated)
-                            ? stated + extraTiers * step * (1 + (buildersHallBonus || 0))
-                            : undefined,
-                };
-            }),
-            buildersHallBonus,
-            treasuryBonus,
-        });
+        const projectTrials = (list) =>
+            payoutProjection({
+                trials: list.map((trial) => {
+                    const extraTiers = Math.max(0, (trial.projected ?? trial.banked) - trial.banked);
+                    const step = EXTRA_TIER_POINTS[trial.type] ?? 0;
+                    const fromCards = trial.points?.source !== 'ladder';
+                    const base = trial.points?.basePoints;
+                    const stated = trial.points?.guildPoints;
+                    // The pace ends part-way into the tier after `projected`, and that
+                    // leftover progress pays out (0.5% per 1%, capped at 50%). Size it
+                    // off that tier's marginal points. Live rule since the guild patch.
+                    const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
+                    const partialBasePoints = partialTierCredit(trial.partialFraction) * marginal;
+                    return {
+                        ...trial,
+                        tiersCleared: trial.projected,
+                        partialBasePoints,
+                        basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
+                        guildPointsOverride:
+                            fromCards && Number.isFinite(stated)
+                                ? stated + extraTiers * step * (1 + (buildersHallBonus || 0))
+                                : undefined,
+                    };
+                }),
+                buildersHallBonus,
+                treasuryBonus,
+            });
+        const projected = projectTrials(trials);
+        // Where a trial's pace is a range of tiers, the figures it pays are a range too: the low and
+        // high ends of every such trial together. An end keeps the point's part-tier credit only where it
+        // sits at or below the point's own tier (the high end capped at the point): above it, one more whole
+        // tier pays at least what the part-tier credit (at most half a tier) did, so the range holds the point
+        const spread = trials.some((trial) => trial.projectedRange);
+        const atEnd = (end) =>
+            projectTrials(
+                trials.map((trial) => {
+                    if (!trial.projectedRange) return trial;
+                    const tier = trial.projectedRange[end];
+                    const atPoint = !(tier > (trial.projected ?? 0));
+                    return {
+                        ...trial,
+                        projected: tier,
+                        partialFraction: end === 'high' && atPoint ? trial.partialFraction : 0,
+                    };
+                })
+            );
+        const lowEnd = spread ? atEnd('low') : null;
+        const highEnd = spread ? atEnd('high') : null;
 
         // Which of the three states the banked figure is in. They are three
         // different things and they all used to render as `0`, which is the one
@@ -5212,16 +5471,24 @@ class GuildTrials {
             (trial) => trial.banked > 0 || Number.isFinite(trial.points?.quoted?.statedPoints)
         );
 
-        const eligible = tokenPayoutLine(
-            projected.eligibleTokens,
-            'Half the total base points, paid to every member who joined before the week started.',
-            { showGold: !inProgress }
-        );
-        const participant = tokenPayoutLine(
-            projected.participantTokens,
-            'The eligible payout plus a further 50% of it for participating.',
-            { showGold: !inProgress }
-        );
+        const eligibleTitle = 'Half the total base points, paid to every member who joined before the week started.';
+        const participantTitle = 'The eligible payout plus a further 50% of it for participating.';
+        // A wide pace pays a range: the same arithmetic at the low and the high end of the tiers,
+        // without the gold valuation, which would put a confident figure beside an open one
+        const rangeNote =
+            '\nThe pace is a range of tiers, not a tier, so this is the payout at each end of it — ' +
+            'see the pace row for why. What is banked is not a range.';
+        const ranged = (pick, title) => {
+            const low = tokenPayoutLine(pick(lowEnd), title, { showGold: false });
+            const high = tokenPayoutLine(pick(highEnd), title, { showGold: false });
+            return { value: `~${low.value}–${high.value}`, title: `${title}${rangeNote}` };
+        };
+        const eligible = spread
+            ? ranged((end) => end.eligibleTokens, eligibleTitle)
+            : tokenPayoutLine(projected.eligibleTokens, eligibleTitle, { showGold: !inProgress });
+        const participant = spread
+            ? ranged((end) => end.participantTokens, participantTitle)
+            : tokenPayoutLine(projected.participantTokens, participantTitle, { showGold: !inProgress });
 
         const bankedRow = !anyTierKnown
             ? line(
@@ -5241,10 +5508,35 @@ class GuildTrials {
                 )
               : line('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
+        // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
+        // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
+        const collapsed = this._foldsFor().payout === true;
+        const paceKnown = trials.some((trial) => Number.isFinite(trial.projected));
+        const paceFigure = (pick) =>
+            !paceKnown ? '—' : spread ? `~${exact(pick(lowEnd))}–${exact(pick(highEnd))}` : exact(pick(projected));
+        const payoutHeading = foldHeading(
+            'payout',
+            collapsed
+                ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
+                      `${paceFigure((end) => end.participantTokens)} tokens`
+                : 'Trial payout',
+            'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
+                (collapsed
+                    ? 'The summary is the pace and the tokens if you took part.'
+                    : 'Fold it to a one-line summary; the buttons stay.'),
+            collapsed
+        );
+
         const rows = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
             bankedRow,
-            line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
+            spread
+                ? line(
+                      'Guild Points on pace',
+                      `~${exact(lowEnd.guildPoints)}–${exact(highEnd.guildPoints)}`,
+                      ACCENT,
+                      `What the pace would add to what is banked, at each end of its range of tiers.${rangeNote}`
+                  )
+                : line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
             line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
@@ -5354,7 +5646,7 @@ class GuildTrials {
                 }
                 return root.firstElementChild === block;
             },
-            html: rows.join('') + this._controlsHTML(),
+            html: payoutHeading + (collapsed ? '' : rows.join('')) + this._controlsHTML(),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row
@@ -5387,7 +5679,10 @@ class GuildTrials {
                     root.insertAdjacentElement('afterbegin', block);
                 }
             },
-            onBuild: (block) => this._bindControls(block),
+            onBuild: (block) => {
+                this._bindControls(block);
+                this._wireFolds(block, root, () => this._renderPayout(root, trials, firstTile, bonuses));
+            },
         });
 
         // Kept while it is on screen: by the time the cycle reads "Completed"
@@ -5578,27 +5873,88 @@ class GuildTrials {
         const summaries = this._pastWeekSummaries(now, bonuses);
         if (!summaries.length) return false;
 
+        const collapsed = this._foldsFor().history === true;
         const rows = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
-                'title="The last few finished cycles, kept when the week rolled over. Newest first. ' +
-                '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
-                'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
-                'derived from today’s building bonuses, which is what the ~ marks.">' +
-                'Past weeks</div>',
+            foldHeading(
+                'history',
+                'Past weeks',
+                'The last few finished cycles, kept when the week rolled over. Newest first. ' +
+                    '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
+                    'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
+                    'derived from today’s building bonuses, which is what the ~ marks.',
+                collapsed
+            ),
         ];
-        for (const summary of summaries) {
+        for (const summary of collapsed ? [] : summaries) {
             const title = summary.reason ? ` title="Archived: ${String(summary.reason).replace(/"/g, '&quot;')}"` : '';
             rows.push(`<div style="color:${DIM};"${title}>${pastWeekLine(summary)}</div>`);
         }
 
         this._placeBlock(root, 'history', {
             html: rows.join(''),
+            onBuild: (block) => this._wireFolds(block, root),
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',
             place: (block) => root.insertAdjacentElement('beforeend', block),
         });
         return true;
+    }
+
+    /**
+     * Which of the Trials tab's history sections are folded, `{[blockKey]: true}`.
+     *
+     * Read from the `settings` store once per session, as the Guild panel's
+     * sign-ups fold is; a section never touched is expanded. A fold set before
+     * the read lands is kept over what the read brings. The read redraws the
+     * sections when it lands so a remembered fold applies on the first view.
+     *
+     * @returns {Object<string, boolean>} Live object; a missing key is expanded
+     */
+    _foldsFor() {
+        if (!this.foldsHydration) {
+            // The folds belong to the device, but the redraw below belongs to whoever was in the tab
+            const characterId = this.characterId;
+            this.foldsHydration = (async () => {
+                try {
+                    const stored = await storage.get(SECTION_FOLDS_KEY, 'settings', {});
+                    if (stored && typeof stored === 'object') {
+                        for (const [key, folded] of Object.entries(stored)) {
+                            if (!(key in this.sectionFolds)) this.sectionFolds[key] = folded === true;
+                        }
+                    }
+                } catch {
+                    /* an unreadable preference is just the default */
+                }
+                if (this.characterId !== characterId) return;
+                const root = findTrialsRoot();
+                if (root?.isConnected) this._render(root);
+            })();
+        }
+        return this.sectionFolds;
+    }
+
+    /**
+     * Make a history block's heading fold its section.
+     * @param {Element} block - The block just built
+     * @param {Element} root - The trials content element
+     * @param {Function|null} [refresh] - Redraws just this block, for a block that is not a history section
+     */
+    _wireFolds(block, root, refresh = null) {
+        for (const button of block.querySelectorAll('[data-fold]')) {
+            button.addEventListener('click', () => {
+                const key = button.dataset.fold;
+                this.sectionFolds[key] = !this.sectionFolds[key];
+                // Not remembered across a reload if this write fails; the fold stands for the session
+                Promise.resolve(storage.set(SECTION_FOLDS_KEY, { ...this.sectionFolds }, 'settings')).catch(() => {});
+                if (refresh) {
+                    refresh();
+                    return;
+                }
+                this._renderHistory(root);
+                this._renderTrialHistory(root);
+            });
+        }
     }
 
     /**
@@ -5652,15 +6008,20 @@ class GuildTrials {
             cell('Best', GAME_COLORS.textDim) +
             '</div>';
 
-        const html = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
-                'title="The tier each trial reached in every finished cycle this client saw, newest first, and ' +
+        const collapsed = this._foldsFor()['trial-history'] === true;
+        const heading = foldHeading(
+            'trial-history',
+            'Trial history',
+            'The tier each trial reached in every finished cycle this client saw, newest first, and ' +
                 `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
                 'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle ' +
-                'and the date of its best.">' +
-                'Trial history</div>',
-            header,
-            ...rows.map((row) => {
+                'and the date of its best.',
+            collapsed
+        );
+        const html = [
+            heading,
+            ...(collapsed ? [] : [header]),
+            ...(collapsed ? [] : rows).map((row) => {
                 const detail = trialHistoryDetail(row);
                 return (
                     `<div style="${grid}" title="${escapeAttr(detail)}">` +
@@ -5675,7 +6036,7 @@ class GuildTrials {
                     '</div>'
                 );
             }),
-            ...(hidden > 0
+            ...(hidden > 0 && !collapsed
                 ? [
                       `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
                           `+${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover</div>`,
@@ -5685,6 +6046,7 @@ class GuildTrials {
 
         this._placeBlock(root, 'trial-history', {
             html,
+            onBuild: (block) => this._wireFolds(block, root),
             style:
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',
@@ -6597,6 +6959,8 @@ class GuildTrials {
         this.timers.clearAll();
         this.samplerId = null;
         this.lastTickAt = 0;
+        // Re-enabled, the folds are read again rather than trusted from before
+        this.foldsHydration = null;
         // Before the breakdown goes: the trial in hand is saved off it — trial-history.js
         trialHistory.stop();
         guildTrialDamage.cleanup();
