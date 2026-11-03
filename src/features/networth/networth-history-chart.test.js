@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { BUTTON_LOOK } from '../../utils/game-look.js';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -327,5 +328,50 @@ describe('growth figures and setting-change markers', () => {
         await networthHistoryChart.openModal();
         const text = document.getElementById('mwi-nw-chart-stats').textContent;
         expect(text).not.toContain('setting change');
+    });
+});
+
+describe('a button promoted to the selected look hovers to the selected look', () => {
+    const PRIMARY = BUTTON_LOOK.primary;
+    const QUIET = BUTTON_LOOK.quiet;
+
+    /**
+     * @param {HTMLElement} el - A styled button
+     * @returns {{hover: string, rest: string}} Its fill under the pointer, then back at rest
+     */
+    const fills = (el) => {
+        el.dispatchEvent(new Event('mouseover'));
+        const hover = el.style.background;
+        el.dispatchEvent(new Event('mouseout'));
+        return { hover, rest: el.style.background };
+    };
+
+    const rangeButton = (range) => document.querySelector(`.mwi-nw-range-btn[data-range="${range}"]`);
+
+    test('picking a range makes it hover to the primary fill, and the one it replaced to the quiet fill', async () => {
+        await networthHistoryChart.openModal();
+        const was = rangeButton('all');
+        const now = rangeButton('7d');
+
+        now.click();
+
+        expect(fills(now)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+        expect(fills(was)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
+    });
+
+    test('the Connect Gaps and Show Bars toggles follow their state both ways', async () => {
+        await networthHistoryChart.openModal();
+        const gaps = document.querySelector('.mwi-nw-gap-toggle');
+        const bars = document.querySelector('.mwi-nw-bar-toggle');
+
+        gaps.click();
+        bars.click();
+        expect(fills(gaps)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+        expect(fills(bars)).toEqual({ hover: PRIMARY.hover, rest: PRIMARY.rest });
+
+        gaps.click();
+        bars.click();
+        expect(fills(gaps)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
+        expect(fills(bars)).toEqual({ hover: QUIET.hover, rest: QUIET.rest });
     });
 });

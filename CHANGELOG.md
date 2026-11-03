@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Selected buttons in the net worth chart and the treasure tracker's open gear now keep their color when the mouse is over them instead of darkening.
 - The alchemy Profitability panel now prices essence and crate drops even when the expected-value tooltip setting is off, instead of showing every figure as a minimum.
 - Toggling a scroll chip or switching action on an open panel no longer leaves empty "Do ... times" rows behind.
 - The Script Accent Color no longer tints the borders, titles or buttons of Mentions, Monster Stat Check, Scroll Simulation, Combat Score and the Skilling optimizer; it still colors data such as sender names.

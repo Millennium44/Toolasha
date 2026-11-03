@@ -12,7 +12,7 @@ import { networthFormatter, formatDateTime } from '../../utils/formatters.js';
 import { createForecastSection } from './networth-forecast-section.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
-import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonRest, styleGameButton } from '../../utils/game-look.js';
+import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 import { openMoversPanel } from './networth-movers-panel.js';
 import { stepsAfter, growthNote, describeChanges } from './networth-markers.js';
 
@@ -239,7 +239,7 @@ class NetworthHistoryChart {
         gapToggle.textContent = 'Connect Gaps';
         gapToggle.className = 'mwi-nw-gap-toggle';
         const updateGapToggleStyle = () => {
-            setButtonRest(gapToggle, this.connectGaps ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(gapToggle, this.connectGaps ? 'primary' : 'quiet');
         };
         styleGameButton(gapToggle, 'quiet', true);
         gapToggle.style.marginLeft = '4px';
@@ -257,7 +257,7 @@ class NetworthHistoryChart {
         barToggle.textContent = 'Show Bars';
         barToggle.className = 'mwi-nw-bar-toggle';
         const updateBarToggleStyle = () => {
-            setButtonRest(barToggle, this.showBars ? BUTTON_LOOK.primary.rest : BUTTON_LOOK.quiet.rest);
+            setButtonVariant(barToggle, this.showBars ? 'primary' : 'quiet');
         };
         styleGameButton(barToggle, 'quiet', true);
         barToggle.style.marginLeft = '4px';
@@ -611,9 +611,9 @@ class NetworthHistoryChart {
     _selectPresetRange(btn, rangeRow, range) {
         // Highlight selected button, deselect others
         for (const sibling of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
-            setButtonRest(sibling, BUTTON_LOOK.quiet.rest);
+            setButtonVariant(sibling, 'quiet');
         }
-        setButtonRest(btn, BUTTON_LOOK.primary.rest);
+        setButtonVariant(btn, 'primary');
 
         // Clear date inputs
         const fromInput = document.getElementById('mwi-nw-date-from');
@@ -640,7 +640,7 @@ class NetworthHistoryChart {
 
         // Deselect all preset buttons
         for (const btn of rangeRow.querySelectorAll('.mwi-nw-range-btn')) {
-            setButtonRest(btn, BUTTON_LOOK.quiet.rest);
+            setButtonVariant(btn, 'quiet');
         }
 
         // Parse dates (from = start of day, to = end of day)
