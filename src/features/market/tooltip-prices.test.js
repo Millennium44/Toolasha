@@ -13,6 +13,7 @@ const settings = vi.hoisted(() => ({
     hideInEnhanceSelector: false,
     loadoutMarksEnabled: true,
     selfUseAlchemy: false,
+    multiAction: true,
     keepChip: true,
     markMeaning: 'keep',
     insteadOfBuying: false,
@@ -44,6 +45,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_hideInEnhanceSelector') return settings.hideInEnhanceSelector;
             if (id === 'itemTooltip_loadoutMarks') return settings.loadoutMarksEnabled;
             if (id === 'itemTooltip_selfUseAlchemy') return settings.selfUseAlchemy;
+            if (id === 'itemTooltip_multiActionProfit') return settings.multiAction;
             if (id === 'itemTooltip_selfUseKeepChip') return settings.keepChip;
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
             if (id === 'itemTooltip_alchemyInsteadOfSelling') return settings.insteadOfSelling;
@@ -112,6 +114,20 @@ vi.mock('../../core/data-manager.js', () => {
             },
         },
         '/items/frenzy': { name: 'Frenzy' },
+        // A refined cape: untradable, back slot, returns itself, a sibling ★ cape or a Philosopher's Stone
+        '/items/gatherer_cape_refined': {
+            name: 'Gatherer Cape (Refined)',
+            equipmentDetail: { type: '/equipment_types/back' },
+            alchemyDetail: {
+                bulkMultiplier: 1,
+                transmuteSuccessRate: 0.6,
+                transmuteDropTable: [
+                    { itemHrid: '/items/gatherer_cape_refined', dropRate: 0.9, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/chance_cape_refined', dropRate: 0.04, minCount: 1, maxCount: 1 },
+                    { itemHrid: '/items/philosophers_stone', dropRate: 0.06, minCount: 1, maxCount: 1 },
+                ],
+            },
+        },
         '/items/seal_of_wisdom': {
             name: 'Scroll of Wisdom',
             categoryHrid: '/item_categories/scroll',
@@ -338,6 +354,7 @@ beforeEach(async () => {
     settings.hideInEnhanceSelector = false;
     settings.loadoutMarksEnabled = true;
     settings.selfUseAlchemy = false;
+    settings.multiAction = true;
     settings.keepChip = true;
     settings.markMeaning = 'keep';
     settings.insteadOfBuying = false;
@@ -2360,5 +2377,85 @@ describe('buildDetailedProfitDisplay materials table quotes', () => {
 
         expect(totalRow(html)).not.toContain('≥');
         expect(totalRow(html)).toContain('200');
+    });
+});
+
+describe('refined cape transmute line', () => {
+    const CAPE = '/items/gatherer_cape_refined';
+    // The calculator's transmute result for a refined cape valued by its stones: 10 shards at 1,000
+    const capeTransmute = (overrides = {}) => ({
+        actionType: 'transmute',
+        itemHrid: CAPE,
+        enhancementLevel: 0,
+        profitPerHour: 1_500_000,
+        profitPerAction: 1_700,
+        actionsPerHour: 900,
+        successRate: 0.6,
+        requirementCosts: [{ itemHrid: CAPE, count: 1, price: 10_000 }],
+        catalystCostPerHour: 0,
+        totalTeaCostPerHour: 0,
+        dropRevenues: [],
+        unpricedOutputs: [],
+        assumedCapes: [
+            { itemHrid: CAPE, enhancementLevel: 0, value: 10_000, partial: false },
+            { itemHrid: '/items/chance_cape_refined', enhancementLevel: 0, value: 20_000, partial: false },
+        ],
+        ...overrides,
+    });
+    const blockFor = async (hrid = CAPE, level = 0) => {
+        const el = itemTooltip('Gatherer Cape (Refined)');
+        await tooltipPrices.injectMultiActionProfitDisplay(el, hrid, level);
+        return el.querySelector('.market-multi-action-injected');
+    };
+
+    test('shows the Transmute line, and says the cape is valued by its stones and untaxed', async () => {
+        alchemyState.profits = { transmute: capeTransmute() };
+        const text = (await blockFor()).textContent;
+        expect(text).toContain('Transmute: 1.5M/hr');
+        expect(text).toContain('(1.7K/action)');
+        expect(text).toContain('refinement stones');
+        expect(text).toContain('never taxed');
+        expect(text).toContain('1 other untradable cape this can return is valued the same way');
+        // Only the actions the calculator found: no Coinify or Decompose row for this item
+        expect(text).not.toContain('Coinify');
+        expect(text).not.toContain('Decompose');
+    });
+
+    test('a row with an unpriced output is a floor and says so, never a plain figure', async () => {
+        alchemyState.profits = { transmute: capeTransmute({ unpricedOutputs: ['/items/chance_cape_refined'] }) };
+        const text = (await blockFor()).textContent;
+        expect(text).toContain('≥ 1.5M/hr (unpriced output)');
+    });
+
+    test('no transmute result (a stone nothing prices, or the market not loaded) draws nothing', async () => {
+        alchemyState.profits = {};
+        expect(await blockFor()).toBeNull();
+    });
+
+    test('with the profit lines off and self-use off, nothing is drawn for the cape', async () => {
+        settings.multiAction = false;
+        alchemyState.profits = { transmute: capeTransmute() };
+        expect(await blockFor()).toBeNull();
+    });
+
+    test('the self-use transmute line follows its own rule: a cape nobody can sell has no held-item line', async () => {
+        settings.selfUseAlchemy = true;
+        priceState.unpriced.add(CAPE);
+        alchemyState.profits = { transmute: capeTransmute() };
+        const text = (await blockFor()).textContent;
+        expect(text).toContain('Transmute: 1.5M/hr');
+        expect(text).not.toContain('Transmute held item');
+    });
+
+    test('a cape without assumed values (an Iron Cow quote, a listing) carries no assumption note', async () => {
+        alchemyState.profits = { transmute: capeTransmute({ assumedCapes: [] }) };
+        const text = (await blockFor()).textContent;
+        expect(text).toContain('Transmute: 1.5M/hr');
+        expect(text).not.toContain('refinement stones');
+    });
+
+    test('an enhanced +N cape is given no transmute row (the calculator returns none)', async () => {
+        alchemyState.profits = {};
+        expect(await blockFor(CAPE, 5)).toBeNull();
     });
 });

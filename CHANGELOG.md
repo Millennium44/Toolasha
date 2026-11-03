@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Refined cape item cards show their Transmute profit again, with a note saying how the capes were valued.
 - The Philosopher's Stone calculator now values sibling cape drops by the same rule, and marks a row as a floor when a drop has no price instead of counting it as 0.
 - Refined capes are now valued the same everywhere: their refinement stones plus the base cape by your Untradable capes setting, with no partial flag on Nothing and a flagged floor when Mirror has no price.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.

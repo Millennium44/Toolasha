@@ -115,5 +115,9 @@ export function getCapeBaseValue({ context = 'profit', mode } = {}) {
 export function describeAssumedCape(entry, name, formatValue) {
     const level = entry.enhancementLevel > 0 ? ` +${entry.enhancementLevel}` : '';
     const floor = entry.partial ? ' The base cape counts as nothing, so this is a floor.' : '';
-    return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} from the untradable-cape setting (plus refinement and your own enhancing cost where it has them), never taxed.${floor}`;
+    // A refined cape never reads the setting: its refinement stones (plus the enhancing cost of a +N one) are its value
+    const source = isRefinedCape(entry.itemHrid)
+        ? 'from its refinement stones (plus your own enhancing cost at +N)'
+        : 'from the untradable-cape setting (plus refinement and your own enhancing cost where it has them)';
+    return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} ${source}, never taxed.${floor}`;
 }
