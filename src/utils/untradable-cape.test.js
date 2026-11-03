@@ -132,6 +132,35 @@ describe('describeAssumedCape', () => {
         expect(mirror).not.toContain('alone');
     });
 
+    test('a refined cape names an enhancing cost only at a real level, with its number, never a literal +N', () => {
+        const base = { itemHrid: '/items/gatherer_cape_refined', value: 10000, partial: false };
+        for (const mode of ['zero', 'mirror']) {
+            mocks.settings.untradableCapeBaseValue = mode;
+            const plain = describeAssumedCape({ ...base, enhancementLevel: 0 }, 'Cape', format);
+            expect(plain).not.toContain('+N');
+            expect(plain).not.toContain('enhancing');
+            const enhanced = describeAssumedCape({ ...base, enhancementLevel: 7 }, 'Cape', format);
+            expect(enhanced).not.toContain('+N');
+            expect(enhanced).toContain('your own enhancing cost at +7');
+        }
+    });
+
+    test('the floor sentence is worded by the setting: mirror with no mirror price is not "counts as nothing"', () => {
+        mocks.settings.untradableCapeBaseValue = 'mirror';
+        const mirror = describeAssumedCape({ enhancementLevel: 0, value: 5, partial: true }, 'Cape', format);
+        expect(mirror).toContain('floor');
+        expect(mirror).toContain('Mirror of Protection');
+        expect(mirror).not.toContain('counts as nothing');
+        mocks.settings.untradableCapeBaseValue = 'zero';
+        const refined = describeAssumedCape(
+            { itemHrid: '/items/gatherer_cape_refined', enhancementLevel: 0, value: 5, partial: true },
+            'Cape',
+            format
+        );
+        expect(refined).toContain('An input has no price');
+        expect(refined).not.toContain('counts as nothing, so');
+    });
+
     test('a figure built on a base of nothing says it is a floor', () => {
         expect(describeAssumedCape({ enhancementLevel: 0, value: 5, partial: true }, 'Cape', format)).toContain(
             'floor'

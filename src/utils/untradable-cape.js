@@ -114,12 +114,23 @@ export function getCapeBaseValue({ context = 'profit', mode } = {}) {
  */
 export function describeAssumedCape(entry, name, formatValue) {
     const level = entry.enhancementLevel > 0 ? ` +${entry.enhancementLevel}` : '';
-    const floor = entry.partial ? ' The base cape counts as nothing, so this is a floor.' : '';
+    const mirror = getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR;
+    const refined = isRefinedCape(entry.itemHrid);
+    // Whose floor it is depends on the setting: nothing is the player's choice (so a refined cape is only a floor
+    // for an input nothing prices), and a mirror setting is a floor when the mirror itself has no price
+    let floor = '';
+    if (entry.partial) {
+        if (mirror) floor = ' The Mirror of Protection or another input has no price, so this is a floor.';
+        else if (refined) floor = ' An input has no price, so this is a floor.';
+        else floor = ' The base cape counts as nothing, so this is a floor.';
+    }
+    // Your own enhancing cost is part of the figure only when the cape is enhanced
+    const enhancing = entry.enhancementLevel > 0 ? ` (plus your own enhancing cost at +${entry.enhancementLevel})` : '';
     // A refined cape is its refinement stones plus its base cape as the setting values it (a Mirror of Protection, or nothing)
-    const source = isRefinedCape(entry.itemHrid)
-        ? getCapeBaseValueMode() === CAPE_BASE_VALUE_MIRROR
-            ? 'from its refinement stones plus a Mirror of Protection for the base cape (plus your own enhancing cost at +N)'
-            : 'from its refinement stones alone, the base cape counting as nothing (plus your own enhancing cost at +N)'
+    const source = refined
+        ? mirror
+            ? `from its refinement stones plus a Mirror of Protection for the base cape${enhancing}`
+            : `from its refinement stones alone, the base cape counting as nothing${enhancing}`
         : 'from the untradable-cape setting (plus refinement and your own enhancing cost where it has them)';
     return `${name}${level}: not on the market; valued at ${formatValue(entry.value)} ${source}, never taxed.${floor}`;
 }

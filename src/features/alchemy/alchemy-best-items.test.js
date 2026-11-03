@@ -2169,6 +2169,24 @@ describe('untradable capes in the table', () => {
         expect(marks[0].title).toContain('floor');
     });
 
+    test('the marker is worded by the setting: refined on nothing is complete, mirror with no mirror price is a floor', () => {
+        draw([entry(CAPE, 'Gatherer Cape'), entry(`${CAPE}_refined`, 'Gatherer Cape (Refined)')]);
+        let [plain, refined] = [...bestItems.modal.querySelectorAll('[data-mwi-assumed-value]')];
+        expect(plain.title).toContain('floor');
+        expect(refined.title).toContain('counts as nothing');
+        expect(refined.title).not.toContain('floor');
+
+        settings.values.untradableCapeBaseValue = 'mirror';
+        delete market.prices['/items/mirror_of_protection'];
+        draw([entry(CAPE, 'Gatherer Cape'), entry(`${CAPE}_refined`, 'Gatherer Cape (Refined)')]);
+        [plain, refined] = [...bestItems.modal.querySelectorAll('[data-mwi-assumed-value]')];
+        for (const mark of [plain, refined]) {
+            expect(mark.title).toContain('Mirror of Protection, which has no price, so this is a floor');
+            expect(mark.title).not.toContain('counts as nothing');
+        }
+        delete settings.values.untradableCapeBaseValue;
+    });
+
     test('on the mirror setting the marker names the base value it assumed, and a refined cape still gets one', () => {
         settings.values.untradableCapeBaseValue = 'mirror';
         market.prices['/items/mirror_of_protection'] = 5_000_000;
