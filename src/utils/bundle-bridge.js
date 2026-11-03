@@ -124,6 +124,18 @@ export function marketHistoryPanel() {
 }
 
 /**
+ * The trade ledger store, for the sync pull report's repair line.
+ *
+ * Reached through the global because the store is a market bundle singleton and the sync panel that asks
+ * lives in the ui bundle, which loads after it. `Toolasha.Market.tradeLedgerStore` is the singleton itself
+ * (`libraries/market.js` binds the default export), not a registry record.
+ * @returns {Object|null} The store, or null when the market bundle is absent
+ */
+export function tradeLedgerStore() {
+    return toolashaRoot()?.Market?.tradeLedgerStore || null;
+}
+
+/**
  * The market undercut alerts — the initialized copy, whose Mooket sightings
  * are what let a price count as fresh.
  *

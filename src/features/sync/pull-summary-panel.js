@@ -8,10 +8,11 @@
  * session, because that is exactly as long as the summary exists.
  */
 
+import storage from '../../core/storage.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
-import { scriptBuildLabel } from '../../utils/bundle-bridge.js';
+import { scriptBuildLabel, tradeLedgerStore } from '../../utils/bundle-bridge.js';
 import { buildPullReport } from './pull-report.js';
 import { UNCHANGED_UNKNOWN, lastPullSummary, formatPullSummaryLine } from './pull-summary.js';
 
@@ -49,7 +50,36 @@ export function currentPullReport() {
     return buildPullReport(lastPullSummary(), {
         version: scriptBuildLabel(),
         host: globalThis.location?.hostname || null,
+        lostTime: readLostTime(),
+        ledgerRepair: readLedgerRepair(),
     });
+}
+
+/**
+ * The heartbeat's lost-time record, for the report's stall line.
+ * @returns {Object|null} `storage.diagnostics().lostTime`, or null when it cannot be read
+ */
+function readLostTime() {
+    try {
+        return storage.diagnostics?.()?.lostTime ?? null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * What the trade ledger's repair has done this session for the character on screen. Read through the bundle
+ * bridge: the ledger is a market bundle singleton, and this panel is in the ui bundle, which loads after it.
+ * @returns {{charId: string, runs: number, cut: number}|undefined} The store's answer, or undefined when the
+ *   store is not there to ask (the report then says unknown, not "not run yet")
+ */
+function readLedgerRepair() {
+    try {
+        const store = tradeLedgerStore();
+        return typeof store?.repairStats === 'function' ? store.repairStats() : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /**

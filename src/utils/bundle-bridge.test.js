@@ -67,6 +67,29 @@ describe('guildXpTracker() reads the live tracker, not its registration record',
     });
 });
 
+describe('tradeLedgerStore() reads the live store', () => {
+    test('the Market key it reads is bound to the store singleton, which can report its repair count', async () => {
+        const { readFileSync } = await import('node:fs');
+        const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
+        const key = read('./bundle-bridge.js').match(/tradeLedgerStore\(\)\s*\{[\s\S]*?Market\?\.(\w+)/)[1];
+        const market = read('../libraries/market.js');
+        const importLine = market.split('\n').find((line) => line.includes('trade-ledger-store.js'));
+        // The default export of the file, published under the key the bridge reads
+        expect(importLine).toContain(`import ${key} from`);
+        expect(market).toMatch(new RegExp(`^\\s+${key},$`, 'm'));
+
+        const { default: store } = await import('../features/market/trade-ledger-store.js');
+        expect(typeof store.repairStats).toBe('function');
+        expect(store.repairStats().runs).toBe(0);
+    });
+
+    test('hands back whatever the namespace holds', () => {
+        const store = { repairStats: () => ({ charId: '1', runs: 0, cut: 0 }) };
+        globalThis.window = { Toolasha: { Market: { tradeLedgerStore: store } } };
+        expect(bridge.tradeLedgerStore()).toBe(store);
+    });
+});
+
 describe('scrollPlannerInstance() reads the live planner, not its registration record', () => {
     test('the Market key it reads is bound to the planner singleton, which can say whether it is running', async () => {
         const { readFileSync } = await import('node:fs');

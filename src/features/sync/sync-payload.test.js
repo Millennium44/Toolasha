@@ -911,8 +911,62 @@ describe('applyPayload merges additive records', () => {
         const result = await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
 
         expect(importedPayloads[0].stores.dungeonRuns.run_char).toEqual(['local', 'remote']);
-        expect(result.merged).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
+        // Counts only: how many rows this device held, the download held, and the union has
+        expect(result.merged).toEqual([
+            { store: 'dungeonRuns', key: 'run_char', label: 'fake', counts: { local: 1, pulled: 1, merged: 2 } },
+        ]);
         off();
+    });
+
+    test('the row counts cover a stack of three or more with duplicates, an object value and a value with no rows', async () => {
+        const offs = [
+            registerSyncMerge({
+                store: 'dungeonRuns',
+                base: 'tradeLedgerRec',
+                merge: (local, incoming) => [...new Set([...local, ...incoming])],
+                label: 'ledger fills',
+            }),
+            registerSyncMerge({
+                store: 'dungeonRuns',
+                base: 'tallyMap',
+                merge: (local, incoming) => ({ ...local, ...incoming }),
+                label: 'tally map',
+            }),
+            registerSyncMerge({
+                store: 'dungeonRuns',
+                base: 'lastRun',
+                merge: (local, incoming) => `${local}|${incoming}`,
+                label: 'plain text',
+            }),
+        ];
+        storeState.stores.dungeonRuns = {
+            tradeLedgerRec_12345_2026_08_19: ['a', 'b', 'b', 'c'],
+            tallyMap_12345: { x: 1, y: 2, z: 3 },
+            lastRun_12345: 'old',
+        };
+        const payload = JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: {
+                dungeonRuns: {
+                    tradeLedgerRec_12345_2026_08_19: ['c', 'd', 'd', 'e', 'f'],
+                    tallyMap_12345: { z: 9, w: 4 },
+                    lastRun_12345: 'new',
+                },
+            },
+        });
+
+        const result = await applyPayload(payload);
+
+        const counts = Object.fromEntries(result.merged.map((entry) => [entry.key, entry.counts]));
+        // Local copy 4 rows (one duplicated), pulled 5 rows (one duplicated), the union of a, b, c, d, e, f is 6
+        expect(counts.tradeLedgerRec_12345_2026_08_19).toEqual({ local: 4, pulled: 5, merged: 6 });
+        expect(counts.tallyMap_12345).toEqual({ local: 3, pulled: 2, merged: 4 });
+        // A string has no rows to count
+        expect(counts.lastRun_12345).toEqual({ local: null, pulled: null, merged: null });
+        // ...and no value rides along in the result's counts
+        expect(JSON.stringify(result.merged.map((entry) => entry.counts))).not.toContain('old');
+        offs.forEach((off) => off());
     });
 
     test('a write still sitting in the debounce queue is part of the merge base', async () => {

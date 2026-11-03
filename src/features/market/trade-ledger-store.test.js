@@ -257,6 +257,7 @@ beforeEach(() => {
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._statesChain = null;
     tradeLedgerStore._writtenDays = new Map();
+    tradeLedgerStore._repairStats = new Map();
     archiveMock.rows = [];
     archiveMock.reads = 0;
     for (const fn of [
@@ -1306,5 +1307,126 @@ describe('fills recorded past what a finished listing filled are cut back', () =
         archiveMock.rows = [];
         await tradeLedgerStore._repairOverRecorded();
         expect(quantities(5)).toEqual([5]);
+    });
+});
+
+describe('the repair count the sync pull report prints', () => {
+    const LOG_KEY = 'marketListingTimestamps_market123';
+    const T1 = DAY1 + 3600e3;
+    const T2 = DAY2 + 3600e3;
+    const T3 = DAY3 + 3600e3;
+    const logRow = (id, filledQuantity) => ({
+        id,
+        timestamp: T1,
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        price: 100,
+        orderQuantity: filledQuantity,
+        filledQuantity,
+        isSell: true,
+        status: 'filled',
+    });
+    const loadAndRepair = async () => {
+        dataManagerMock.characterData ||= {};
+        await tradeLedgerStore.load();
+        await tradeLedgerStore._recordsChain;
+    };
+
+    test('says it has not run before the repair has', () => {
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 0, cut: 0 });
+    });
+
+    test('counts the listings a run cut, and a second run that finds nothing adds a run and no cuts', async () => {
+        // Two listings over their final count, with stacks of three
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T1), fill(6, T2), fill(6, T3), fill(7, T1)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(6, 5), logRow(7, 5)]);
+
+        await loadAndRepair();
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 2 });
+
+        await tradeLedgerStore._repairOverRecorded();
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 2, cut: 2 });
+    });
+
+    test('a run that finds nothing over-recorded is a run that cut zero, not "not run"', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+
+        await loadAndRepair();
+
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 0 });
+    });
+
+    test('a log naming nothing it may cut still counts as a run', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        await loadAndRepair();
+        expect(tradeLedgerStore.repairStats().runs).toBe(1);
+        expect(tradeLedgerStore.repairStats().cut).toBe(0);
+    });
+
+    test('a repair that was skipped is not counted: no open listings known, archive unreadable, legacy store', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+
+        // The character's data has not arrived and the caller has no listings: "not loaded", not an empty book
+        await tradeLedgerStore.load();
+        await tradeLedgerStore._recordsChain;
+        expect(tradeLedgerStore.repairStats().runs).toBe(0);
+
+        // The archive cannot be read, so the whole repair waits
+        dataManagerMock.characterData = {};
+        archiveMock.rows = null;
+        await tradeLedgerStore._repairOverRecorded();
+        expect(tradeLedgerStore.repairStats().runs).toBe(0);
+
+        // The single key is still the record
+        archiveMock.rows = [];
+        tradeLedgerStore._legacy = true;
+        await tradeLedgerStore._repairOverRecorded();
+        expect(tradeLedgerStore.repairStats().runs).toBe(0);
+    });
+
+    test("a character switch never shows one character's count against another", async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
+
+        dataManagerMock.characterId = 'other77';
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'other77', runs: 0, cut: 0 });
+
+        // ...and the first character's count is still theirs on the way back
+        dataManagerMock.characterId = 'market123';
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
+    });
+
+    test('a run stood down by a switch landing inside it is not counted', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        tradeLedgerStore.isLoaded = true;
+        dataManagerMock.characterData = {};
+        tradeLedgerStore.records = [fill(5, T1), fill(5, T2)];
+        // The switch lands while the log is being read
+        const real = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementation(async (key, store) => {
+            if (key === LOG_KEY) tradeLedgerStore._generation += 1;
+            return real(key, store);
+        });
+        try {
+            await tradeLedgerStore._repairOverRecorded();
+        } finally {
+            storageMock.tryGet.mockImplementation(real);
+        }
+        expect(tradeLedgerStore.repairStats().runs).toBe(0);
+    });
+
+    test('the answer is a copy: reading it cannot change the count', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const stats = tradeLedgerStore.repairStats();
+        stats.cut = 99;
+        stats.runs = 99;
+        expect(tradeLedgerStore.repairStats()).toEqual({ charId: 'market123', runs: 1, cut: 1 });
     });
 });
