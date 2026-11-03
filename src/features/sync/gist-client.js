@@ -257,7 +257,19 @@ export async function httpRequest({ method, url, headers = {}, body, anonymous =
     // failed where the manager got through: trying the page first could only fail again, and that
     // failure could not be replayed (see below)
     const replayable = REPLAYABLE_METHODS.has(String(method).toUpperCase());
-    if (!replayable && fetchFailuresAnsweredByManager > 0) return managerRequest(send, request);
+    if (!replayable && fetchFailuresAnsweredByManager > 0) {
+        // The page fetch was not tried, so a good answer says nothing about it and leaves the run alone. A
+        // manager that could not get through, or a 5xx, breaks the run exactly as in the replay below: the
+        // next request goes back to the page fetch rather than staying on the manager on stale evidence.
+        try {
+            const response = await managerRequest(send, request);
+            if (response.status >= 500) fetchFailuresAnsweredByManager = 0;
+            return response;
+        } catch (managerError) {
+            fetchFailuresAnsweredByManager = 0;
+            throw managerError;
+        }
+    }
 
     try {
         const response = await pageFetch(request, true);

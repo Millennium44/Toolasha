@@ -169,6 +169,71 @@ describe('transport', () => {
         expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm']);
     });
 
+    describe('a request sent straight to the manager', () => {
+        /** One page fetch failure the manager answered: the next POST or PATCH skips the page fetch */
+        const failOnce = async () => {
+            responses.push({ fetchThrows: true }, { status: 200, body: [] });
+            await findSyncGist('tok');
+        };
+        const send = (method) =>
+            httpRequest({
+                method,
+                url: `https://api.github.com/gists${method === 'PATCH' ? '/g1' : ''}`,
+                body: '{}',
+            });
+
+        test.each(['POST', 'PATCH'])('a %s the manager could not send breaks the run', async (method) => {
+            await failOnce();
+            responses.push({ networkError: true });
+            await expect(send(method)).rejects.toMatchObject({ kind: 'offline' });
+
+            // The next write tries the page fetch again rather than staying on the manager
+            responses.push({ status: 200, body: {} });
+            await send(method);
+            expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm', 'fetch']);
+        });
+
+        test.each(['POST', 'PATCH'])('a %s answered with a 5xx breaks the run', async (method) => {
+            await failOnce();
+            responses.push({ status: 502, body: { message: 'Bad gateway' } });
+            expect((await send(method)).status).toBe(502);
+
+            responses.push({ status: 200, body: {} });
+            await send(method);
+            expect(calls.map((call) => call.transport)).toEqual(['fetch', 'gm', 'gm', 'fetch']);
+        });
+
+        test('it never latches the manager by itself: a broken run needs three fresh failures', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            await failOnce();
+            await failOnce();
+            responses.push({ status: 503, body: {} });
+            await send('POST');
+            // Two failures before the 503 would have been enough for this one to latch, had the run survived
+            await failOnce();
+            responses.push({ status: 200, body: [] });
+            await findSyncGist('tok');
+            expect(calls.at(-1).transport).toBe('fetch');
+            expect(warn).not.toHaveBeenCalled();
+            warn.mockRestore();
+        });
+
+        test('a good answer says nothing about the page fetch: the run stands and is not added to', async () => {
+            const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            await failOnce();
+            for (let i = 0; i < 3; i += 1) {
+                responses.push({ status: 201, body: { id: 'g1', files: {} } });
+                await send('POST');
+            }
+            // Still one failure: the next write still skips the page fetch, and nothing has latched
+            responses.push({ status: 201, body: { id: 'g2', files: {} } });
+            await send('POST');
+            expect(calls.at(-1).transport).toBe('gm');
+            expect(warn).not.toHaveBeenCalled();
+            warn.mockRestore();
+        });
+    });
+
     test('a page fetch that fails on a whole-gist PATCH is not replayed over a possibly newer gist', async () => {
         responses.push({ fetchThrows: true });
         await expect(
