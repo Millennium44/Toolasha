@@ -121,6 +121,7 @@ const goalsRecord = createCuratedRecord({
     store: 'settings',
     empty: () => [],
     merge: mergeById((goal) => goal?.id),
+    threeWay: { idOf: (goal) => goal?.id },
     migrate: 'discard',
     label: 'GoalPlanner',
 });

@@ -220,6 +220,17 @@ describe('the stored pins', () => {
         expect(stored()).toEqual({ coinify: ['/items/b'] });
     });
 
+    test("a stale tab's save keeps the pins the other tab added and does not bring back one it removed", async () => {
+        seed({ coinify: ['/items/a', '/items/b'] });
+        await pins.loadPins();
+        // The other tab unpinned b and pinned c while this one sat open
+        seed({ coinify: ['/items/a', '/items/c'] });
+
+        pins.pins = togglePin(pins.pins, 'coinify', '/items/d');
+        await pins.savePins();
+        expect(stored()).toEqual({ coinify: ['/items/a', '/items/d', '/items/c'] });
+    });
+
     test('once storage is back, the next save lands', async () => {
         storageMock.unavailable = true;
         await pins.loadPins();

@@ -84,6 +84,7 @@ const {
     mergeById,
     mergeMaps,
     mergeSeriesMaps,
+    mergeThreeWay,
 } = await import('./persisted-record.js');
 
 const { announceSyncPullApplied } = await import('./sync-merge-registry.js');
@@ -581,6 +582,203 @@ describe('curated record', () => {
         await record.save();
         expect(storageMock.storeFor('settings').get('fav_char2')).toEqual({ log: true, cheese: true });
         expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true });
+    });
+});
+
+describe('mergeThreeWay', () => {
+    test('what this tab left alone follows the stored value, a removal included', () => {
+        expect(mergeThreeWay({ a: 1, b: 2 }, { a: 1 }, { a: 1, b: 2 })).toEqual({ a: 1 });
+        expect(mergeThreeWay({ a: 1 }, { a: 1, c: 3 }, { a: 1 })).toEqual({ a: 1, c: 3 });
+    });
+
+    test('what this tab changed is written, and its own removal stays removed', () => {
+        expect(mergeThreeWay({ a: 1, b: 2 }, { a: 1, b: 2 }, { a: 5 })).toEqual({ a: 5 });
+        expect(mergeThreeWay({ a: 1, b: 2 }, { a: 9, b: 2, c: 3 }, { a: 1 })).toEqual({ a: 9, c: 3 });
+    });
+
+    test('where both changed the same value, this tab wins; elsewhere both edits stand', () => {
+        expect(mergeThreeWay({ a: 1, b: 1 }, { a: 2, b: 2 }, { a: 3, b: 1 })).toEqual({ a: 3, b: 2 });
+    });
+
+    test('nested objects merge key by key', () => {
+        const base = { zones: { x: true }, sortBy: 'value' };
+        const stored = { zones: { x: true, y: true }, sortBy: 'value' };
+        const held = { zones: { x: true, z: true }, sortBy: 'name' };
+        expect(mergeThreeWay(base, stored, held)).toEqual({ zones: { x: true, y: true, z: true }, sortBy: 'name' });
+    });
+
+    test('an array without an identity is taken whole from this tab when both changed it', () => {
+        expect(mergeThreeWay({ r: [1, 2] }, { r: [1, 3] }, { r: [1, 4] })).toEqual({ r: [1, 4] });
+    });
+
+    test('keyed arrays: additions from both, removals from either, held order first', () => {
+        const idOf = (v) => v;
+        expect(mergeThreeWay(['a', 'b', 'c'], ['a', 'b', 'c', 'd'], ['a', 'b', 'x'], { idOf })).toEqual([
+            'a',
+            'b',
+            'x',
+            'd',
+        ]);
+        // The other tab removed b; this tab removed a
+        expect(mergeThreeWay(['a', 'b', 'c'], ['a', 'c'], ['b', 'c'], { idOf })).toEqual(['c']);
+    });
+
+    test('keyed arrays of objects: one element edited in each tab keeps one row, not two', () => {
+        const idOf = (g) => g.id;
+        const base = [{ id: 1, qty: 5 }];
+        expect(mergeThreeWay(base, [{ id: 1, qty: 6 }], [{ id: 1, qty: 7 }], { idOf })).toEqual([{ id: 1, qty: 7 }]);
+        // Edited here while the other tab removed it: the edit is kept
+        expect(mergeThreeWay(base, [], [{ id: 1, qty: 7 }], { idOf })).toEqual([{ id: 1, qty: 7 }]);
+        // Left alone here while the other tab removed it: the removal stands
+        expect(mergeThreeWay(base, [], [{ id: 1, qty: 5 }], { idOf })).toEqual([]);
+    });
+});
+
+describe('curated record with threeWay, as two tabs', () => {
+    const FAV = 'fav_char1';
+    const tab = (extra = {}) =>
+        createCuratedRecord({ base: 'fav', empty: () => ({}), threeWay: true, label: 'Test', ...extra });
+    const pinsTab = () =>
+        createCuratedRecord({ base: 'fav', empty: () => ({}), threeWay: { idOf: (v) => v }, label: 'Test' });
+    const settingsStore = () => storageMock.storeFor('settings');
+
+    test('a stale tab keeps what the other tab added and brings back nothing the other tab removed', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        delete b.get().cheese;
+        b.get().butter = true;
+        await b.save();
+
+        // a still holds cheese and has not seen butter; it adds an unrelated item
+        a.get().eggs = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+    });
+
+    test('a removal made in this tab stays removed even though the other tab still stores the item', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        delete a.get().milk;
+        await a.save();
+        // b is stale and has milk; it edits something else
+        b.get().cheese = 'aged';
+        await b.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: 'aged' });
+    });
+
+    test('the baseline moves with a landed write: a tab that saved does not undo the other tab afterwards', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        a.get().cheese = true;
+        await a.save();
+        // b reads, removes the item a added, and saves
+        await b.load({ authoritative: true });
+        delete b.get().cheese;
+        await b.save();
+        // a's next, unrelated edit must not put cheese back
+        a.get().eggs = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true });
+    });
+
+    test('a write that fails leaves the edit unwritten, and the retry still honors the other tab', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        const b = tab();
+        await a.load();
+        await b.load();
+
+        delete a.get().milk;
+        storageMock.unavailable = true;
+        expect(await a.save()).toBe(false);
+        storageMock.unavailable = false;
+
+        // While a could not write, b added an item and removed another
+        b.get().butter = true;
+        delete b.get().cheese;
+        await b.save();
+
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({ butter: true });
+    });
+
+    test('a write that is refused after the probe does not advance the baseline', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        await a.load();
+        delete a.get().milk;
+        storageMock.set.mockImplementationOnce(async () => false);
+        expect(await a.save()).toBe(false);
+
+        // Another tab removes cheese; a, whose milk removal never landed, saves again
+        settingsStore().set(FAV, { milk: true });
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({});
+    });
+
+    test('keyed lists: two stale tabs pin different items and unpin one another', async () => {
+        settingsStore().set(FAV, { coinify: ['a', 'b'] });
+        const a = pinsTab();
+        const b = pinsTab();
+        await a.load();
+        await b.load();
+
+        b.get().coinify = ['a', 'b', 'c'];
+        await b.save();
+        a.get().coinify = ['b', 'a', 'd'].filter((h) => h !== 'b');
+        await a.save();
+        // a unpinned b and added d; b added c
+        expect(settingsStore().get(FAV)).toEqual({ coinify: ['a', 'd', 'c'] });
+
+        // b, still holding b's pin as it last saw it, unpins a
+        b.get().coinify = ['b', 'c'];
+        await b.save();
+        expect(settingsStore().get(FAV).coinify.sort()).toEqual(['c', 'd']);
+    });
+
+    test('a reset and a reload start from the stored value, not from the last baseline', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        await a.load();
+        a.reset();
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        await a.load();
+        delete a.get().cheese;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true });
+    });
+
+    test('a single tab behaves as before: edits and removals both land', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        await a.load();
+        delete a.get().milk;
+        a.get().eggs = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true, eggs: true });
+        delete a.get().eggs;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true });
+    });
+
+    test('before a load, a save still merges so nothing stored is lost', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        a.get().cheese = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, cheese: true });
     });
 });
 

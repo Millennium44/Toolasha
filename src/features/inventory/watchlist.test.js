@@ -986,6 +986,27 @@ describe('the stored list survives a read that cannot be made', () => {
         expect(storedHrids()).toEqual(['/items/rare_hat', '/items/trainee_charm']);
         expect(isWatched('/items/cheese')).toBe(false);
     });
+
+    test('a stale tab keeps what the other tab added and does not bring back what it removed', async () => {
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/rare_hat', name: 'Rare Hat' },
+            ],
+        });
+        await switchCharacter();
+        // The other tab removed the hat and added a charm while this one sat open
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/trainee_charm', name: 'Trainee Charm' },
+            ],
+        });
+
+        watchItem('/items/milk', 'Milk');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual(['/items/cheese', '/items/milk', '/items/trainee_charm']);
+    });
 });
 
 /**

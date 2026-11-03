@@ -213,6 +213,131 @@ export function mergeSeriesMaps(keyOf, sort = null) {
     };
 }
 
+/** A plain object: not an array, a date, or null */
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+}
+
+/**
+ * Deep equality for stored values: plain objects, arrays, dates and scalars. A key whose value is
+ * undefined counts as absent, as it does once the value has been stored.
+ * @param {*} a
+ * @param {*} b
+ * @returns {boolean}
+ */
+function valuesEqual(a, b) {
+    if (Object.is(a, b)) return true;
+    if (a instanceof Date || b instanceof Date) {
+        return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    }
+    if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+    if (Array.isArray(a) || Array.isArray(b)) {
+        return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => valuesEqual(v, b[i]));
+    }
+    const keysA = Object.keys(a).filter((key) => a[key] !== undefined);
+    const keysB = Object.keys(b).filter((key) => b[key] !== undefined);
+    return keysA.length === keysB.length && keysA.every((key) => valuesEqual(a[key], b[key]));
+}
+
+/**
+ * A copy of a value that later edits cannot reach, boxed so a value that cannot be copied is told apart
+ * from an absent one.
+ * @param {*} value
+ * @returns {{value: *}|null} null when the value cannot be copied
+ */
+function snapshotOf(value) {
+    try {
+        return { value: structuredClone(value) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Three-way merge of a stored value and this tab's held one, against the value both started from.
+ *
+ * What this tab changed since `base` is written; what it left alone is whatever is stored now — so
+ * another tab's addition survives, and so does its removal. A removal this tab made stays removed even
+ * if the stored copy still has the item. Where both changed the same thing, the held value wins. Objects
+ * merge key by key. Arrays merge by element identity when `idOf` is given (an element only one side
+ * changed follows that side; the held order is kept and the other tab's additions follow it); without
+ * `idOf` an array both tabs changed is taken whole from the held side, which can drop the other tab's
+ * edit to it.
+ *
+ * @param {*} base - What this tab last read from or wrote to storage
+ * @param {*} stored - What is stored now
+ * @param {*} held - What this tab holds
+ * @param {Object} [options]
+ * @param {(element: *) => *} [options.idOf] - Identity of an array element; null/undefined means none
+ * @returns {*} The merged value; undefined means the value should not exist
+ */
+export function mergeThreeWay(base, stored, held, options = {}) {
+    if (valuesEqual(held, base)) return stored;
+    if (valuesEqual(stored, base) || valuesEqual(stored, held)) return held;
+    if (isPlainObject(held) && isPlainObject(stored)) {
+        const from = isPlainObject(base) ? base : {};
+        const out = {};
+        for (const key of new Set([...Object.keys(from), ...Object.keys(stored), ...Object.keys(held)])) {
+            const merged = mergeThreeWay(from[key], stored[key], held[key], options);
+            if (merged !== undefined) out[key] = merged;
+        }
+        return out;
+    }
+    if (Array.isArray(held) && Array.isArray(stored) && typeof options.idOf === 'function') {
+        return mergeKeyedArrays(Array.isArray(base) ? base : [], stored, held, options);
+    }
+    return held;
+}
+
+/**
+ * The array half of {@link mergeThreeWay}: elements matched by `idOf`, held order first.
+ * @param {Array} base
+ * @param {Array} stored
+ * @param {Array} held
+ * @param {{idOf: (element: *) => *}} options
+ * @returns {Array}
+ */
+function mergeKeyedArrays(base, stored, held, options) {
+    const index = (list) => {
+        const byId = new Map();
+        for (const element of list) {
+            const id = element == null ? null : options.idOf(element);
+            if (id !== null && id !== undefined && !byId.has(id)) byId.set(id, element);
+        }
+        return byId;
+    };
+    const baseById = index(base);
+    const storedById = index(stored);
+    const heldById = index(held);
+    const out = [];
+    for (const element of held) {
+        const id = element == null ? null : options.idOf(element);
+        if (id === null || id === undefined) {
+            out.push(element);
+            continue;
+        }
+        if (!baseById.has(id)) {
+            // Added here, or added in both tabs
+            out.push(storedById.has(id) ? mergeThreeWay(undefined, storedById.get(id), element, options) : element);
+        } else if (!storedById.has(id)) {
+            // The other tab removed it: that stands unless this tab changed it since
+            if (!valuesEqual(element, baseById.get(id))) out.push(element);
+        } else {
+            out.push(mergeThreeWay(baseById.get(id), storedById.get(id), element, options));
+        }
+    }
+    for (const element of stored) {
+        const id = element == null ? null : options.idOf(element);
+        if (id === null || id === undefined) {
+            if (!held.some((own) => valuesEqual(own, element))) out.push(element);
+        } else if (!heldById.has(id) && !baseById.has(id)) {
+            // Added by the other tab; one this tab removed is in base and stays removed
+            out.push(element);
+        }
+    }
+    return out;
+}
+
 /**
  * Create a persisted record.
  *
@@ -825,29 +950,74 @@ export function createPersistedRecord({
  * keep tombstones). That is for a list two tabs edit at once, where memory
  * written whole puts back what the other tab removed and drops what it added.
  *
+ * `threeWay` is the way to serve two tabs without tombstones or a change to
+ * the stored shape. The record remembers the value it last read from, or
+ * wrote to, storage; a save then folds against that baseline ({@link
+ * mergeThreeWay}) instead of writing memory whole: what this tab changed
+ * since is written, what it left alone follows whatever is stored now. So a
+ * stale tab neither drops what the other tab added nor brings back what the
+ * other tab removed, and its own removal stays removed. Where both tabs
+ * changed the same thing this tab's value wins. Before the first readable
+ * load, and when the baseline could not be kept, a save behaves as it did
+ * without `threeWay`.
+ *
  * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
  *   to {@link mergeMaps} and is only consulted before the first readable load
  *   unless `keepMerging` is set
  * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
+ * @param {boolean|{idOf?: (element: *) => *}} [options.threeWay=false] - Fold saves against the last
+ *   known stored value; `idOf` names an array element's identity (see {@link mergeThreeWay})
  * @returns {Object} The record handle
  */
-export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, ...options }) {
+export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, threeWay = false, ...options }) {
     let trustMemory = false;
+    const useThreeWay = Boolean(threeWay) && !keepMerging;
+    const threeWayOptions = typeof threeWay === 'object' && threeWay ? threeWay : {};
+    /** What this record last read from or wrote to storage, when it could be copied */
+    let baseline = null;
+    /** Bumped by every load and reset, so a save that began before one does not adopt its snapshot */
+    let epoch = 0;
     const record = createPersistedRecord({
         ...options,
-        merge: (stored, memory) => (trustMemory && !keepMerging ? memory : merge(stored, memory)),
+        merge: (stored, memory) => {
+            if (!trustMemory) {
+                // A load (or a save before any): the stored value is what this record now knows of storage
+                if (useThreeWay) baseline = snapshotOf(stored);
+                return merge(stored, memory);
+            }
+            if (keepMerging) return merge(stored, memory);
+            return useThreeWay && baseline ? mergeThreeWay(baseline.value, stored, memory, threeWayOptions) : memory;
+        },
     });
-    const { load, reset } = record;
+    const { load, reset, save } = record;
     record.load = async (options) => {
         trustMemory = false;
+        epoch += 1;
         const readable = await load(options);
         trustMemory = readable;
         return readable;
     };
     record.reset = () => {
         trustMemory = false;
+        baseline = null;
+        epoch += 1;
         reset();
     };
+    if (useThreeWay) {
+        // The baseline moves only when a write is known to have landed, and to what this tab held when
+        // it asked for it: a write that failed leaves the edits unwritten and still "changed", and what
+        // another tab added meanwhile is not claimed as seen
+        record.save = (options) => {
+            const asked = trustMemory ? snapshotOf(record.get()) : null;
+            const askedIn = epoch;
+            const pending = save(options);
+            if (!asked) return pending;
+            return pending.then((written) => {
+                if (written && askedIn === epoch) baseline = asked;
+                return written;
+            });
+        };
+    }
     return record;
 }
 
@@ -859,4 +1029,5 @@ export default {
     mergeById,
     mergeMaps,
     mergeSeriesMaps,
+    mergeThreeWay,
 };

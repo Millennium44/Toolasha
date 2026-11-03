@@ -48,6 +48,7 @@ const record = createCuratedRecord({
     store: 'settings',
     empty: () => ({}),
     merge: mergePins,
+    threeWay: { idOf: (hrid) => hrid },
     migrate: 'adopt',
     label: 'AlchemyItemPins',
 });
