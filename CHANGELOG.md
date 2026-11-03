@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- Combat Sim: a restored Upgrade table says when the pricing mode has changed since it was run.
 - The settings panel is easier to use on a phone: the search row wraps, the end of long groups can be reached, switches and buttons are larger, and labels sit above wide controls.
 - The Combat Simulator, Lab Simulator, loadout editor pickers, Labyrinth log, Enhancement Tracker, XPH calculator and costs table now use the game's own plain frame, white titles and blue buttons.
 - The docked task reroll walk no longer repeats Sort Tasks or shows its own X, and sits before the Merged crafting walk button.

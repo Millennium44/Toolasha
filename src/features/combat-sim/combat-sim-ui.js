@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
+import { outputTaxRate } from '../../utils/profit-helpers.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import {
     expectedValueCalculator,
@@ -317,11 +318,21 @@ const ABILITY_ORDER_TOP = 5;
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 /**
  * What the trigger search's profit figures were priced under: the market snapshot and the pricing
- * settings. A remembered result taken under other prices is not offered as unchanged.
+ * settings, and the sale tax each simulated player's drops were taxed at (the live character's own, and the
+ * rate every other member pays). A remembered result taken under other prices or another tax is not offered as
+ * unchanged.
+ * @param {Array<Object>} [simDTOs] - Every simulated member
+ * @param {string|null} [selfHrid] - The live character among them, or null when none of them is
  * @returns {Object}
  */
-function triggerPricingStamp() {
+export function triggerPricingStamp(simDTOs = [], selfHrid = null) {
     return {
+        saleTax: {
+            live: outputTaxRate(),
+            members: Object.fromEntries(
+                (simDTOs || []).map((dto) => [dto?.hrid, analyzedSaleTaxRate(simDTOs, dto?.hrid, selfHrid)])
+            ),
+        },
         scriptVersion: scriptVersion(),
         gameVersion: dataManager.getInitClientData?.()?.gameVersion ?? null,
         fetchedAt: marketAPI?.lastFetchTimestamp ?? null,
@@ -10948,6 +10959,10 @@ class CombatSimUI {
                     characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
                     zoneName: getCombatZones().find((z) => z.hrid === zoneHrid)?.name || null,
                     difficultyTier,
+                    // What the costs and profit figures were read under, so a restored table can say when
+                    // today's pricing or sale tax is not the one it was measured at
+                    pricingLabel: config.getPricingModeDisplayLabel?.() || null,
+                    saleTax: outputTaxRate(),
                 });
             }
         } catch (error) {
@@ -11098,7 +11113,7 @@ class CombatSimUI {
                 playerIndex: party.playerIndex,
                 dtoSignatures: runContext.signatures,
                 communityBuffs: getCommunityBuffs(),
-                pricing: triggerPricingStamp(),
+                pricing: triggerPricingStamp(party.simDTOs, party.selfHrid ?? null),
             });
             const cached = await loadTriggerResult(signature);
             // A later refresh, a run that started meanwhile, or a character switch owns the box now
@@ -11181,7 +11196,7 @@ class CombatSimUI {
             playerIndex,
             dtoSignatures: runContext.signatures,
             communityBuffs,
-            pricing: triggerPricingStamp(),
+            pricing: triggerPricingStamp(party.simDTOs, party.selfHrid ?? null),
         });
         const playerDTOs = structuredClone(party.simDTOs);
 
@@ -13570,6 +13585,8 @@ class CombatSimUI {
                 characterName: payload.characterName || null,
                 zoneName: payload.zoneName || null,
                 difficultyTier: payload.difficultyTier,
+                pricingLabel: payload.pricingLabel || null,
+                saleTax: Number.isFinite(payload.saleTax) ? payload.saleTax : null,
             };
             this._renderUpgradeResults(payload.data);
         } catch (error) {
@@ -13593,11 +13610,25 @@ class CombatSimUI {
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
         const stopped = meta?.stopped ? ` (${stoppedRunText(meta.stopped)})` : '';
+        // Costs and profit were read at the pricing and sale tax the run was saved under; said when either is no
+        // longer the one in force. A payload from before they were stamped says nothing
+        const pricingNow = config.getPricingModeDisplayLabel?.() || null;
+        const pricingChanged = meta?.pricingLabel && pricingNow && meta.pricingLabel !== pricingNow;
+        const taxNow = outputTaxRate();
+        const taxChanged = Number.isFinite(meta?.saleTax) && Number.isFinite(taxNow) && meta.saleTax !== taxNow;
+        const percent = (rate) => `${Math.round(rate * 1000) / 10}%`;
+        const repriced =
+            (pricingChanged
+                ? ` Costs were priced at ${escapeAttribute(meta.pricingLabel)}; prices are now set to ${escapeAttribute(pricingNow)}.`
+                : '') +
+            (taxChanged
+                ? ` Profit was measured at a ${percent(meta.saleTax)} sale tax; it is now ${percent(taxNow)}.`
+                : '');
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
             `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.</span>` +
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}${stopped}. Run a new analysis to refresh them.${repriced}</span>` +
             `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
             `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
             `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
