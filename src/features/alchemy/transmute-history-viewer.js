@@ -8,10 +8,17 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
-import { getUntradableCapeValue } from '../enhancement/untradable-cape-value.js';
-import { getItemPrice, getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
-import { formatInputCostLine, priceInputWithRefinementFallback } from '../../utils/refined-item-cost.js';
+import { formatInputCostLine } from '../../utils/refined-item-cost.js';
+import { priceInputNow, priceCatalystNow, currentPricingMode } from './alchemy-session-cost.js';
+import {
+    resolveInputCost,
+    resolveCatalystCost,
+    resolveBulk,
+    TODAYS_PRICE_MARK,
+    todaysPriceNote,
+    joinTitles,
+} from './alchemy-cost-record.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -93,6 +100,7 @@ const TRANSMUTE_TOTALS_COLUMNS = [
 /** Footnote markers under the totals table. @type {Array<string>} */
 const TRANSMUTE_TOTALS_LEGEND = [
     '* input unpriced — total is incomplete',
+    "≈ priced at today's market on some sessions — no price was saved when they ran, so it moves with the market",
     '† catalyst on some sessions could not be priced — excluded, not zero',
     '‡ catalyst not recorded on some sessions (predates tracking) — excluded, not zero',
     '◇ catalyst estimated on some sessions, not measured',
@@ -593,6 +601,7 @@ class TransmuteHistoryViewer {
                 profitCell.textContent =
                     formatKMB(profitDetail.profit, 1) +
                     (profitDetail.inputUnpriced ? '*' : '') +
+                    (profitDetail.inputAtTodaysPrice || profitDetail.catalystAtTodaysPrice ? TODAYS_PRICE_MARK : '') +
                     (profitDetail.catalystUnpriced ? '†' : '') +
                     (profitDetail.catalystUnrecorded ? '‡' : '') +
                     (profitDetail.catalystEstimated ? '◇' : '') +
@@ -686,6 +695,8 @@ class TransmuteHistoryViewer {
                 revenueShopValued: false,
                 inputCost: 0,
                 inputUnpriced: false,
+                todaysPriceSessions: 0,
+                catalystTodaysPriceSessions: 0,
                 coinCost: 0,
                 catalystCost: 0,
                 catalystRecordedSessions: 0,
@@ -708,6 +719,8 @@ class TransmuteHistoryViewer {
                 if (detail.revenueShopValued) group.revenueShopValued = true;
                 group.inputCost += detail.inputCost;
                 if (detail.inputUnpriced) group.inputUnpriced = true;
+                if (detail.inputAtTodaysPrice) group.todaysPriceSessions++;
+                if (detail.catalystAtTodaysPrice) group.catalystTodaysPriceSessions++;
                 group.coinCost += detail.coinCost;
 
                 if (detail.catalystEntries.length > 0) {
@@ -834,6 +847,8 @@ class TransmuteHistoryViewer {
             revenueShopValued: false,
             inputCost: 0,
             inputUnpriced: false,
+            todaysPriceSessions: 0,
+            catalystTodaysPriceSessions: 0,
             coinCost: 0,
             catalystCost: 0,
             catalystRecordedSessions: 0,
@@ -863,6 +878,8 @@ class TransmuteHistoryViewer {
             pooled.repairedSessions += group.repairedSessions;
             pooled.unreliableSessions += group.unreliableSessions;
             pooled.inputUnpriced = pooled.inputUnpriced || group.inputUnpriced;
+            pooled.todaysPriceSessions += group.todaysPriceSessions;
+            pooled.catalystTodaysPriceSessions += group.catalystTodaysPriceSessions;
             pooled.revenueUnpriced = pooled.revenueUnpriced || group.revenueUnpriced;
             pooled.revenueShopValued = pooled.revenueShopValued || group.revenueShopValued;
             pooled.impossible = pooled.impossible || group.impossible;
@@ -1027,13 +1044,20 @@ class TransmuteHistoryViewer {
         );
         row.appendChild(
             this.createTotalsCell(
-                group.impossible ? '—' : formatKMB(group.inputCost, 1) + (group.inputUnpriced ? '*' : ''),
+                group.impossible
+                    ? '—'
+                    : formatKMB(group.inputCost, 1) +
+                          (group.inputUnpriced ? '*' : '') +
+                          (group.todaysPriceSessions > 0 ? TODAYS_PRICE_MARK : ''),
                 {
                     title: group.impossible
                         ? impossibleTitle
-                        : group.inputUnpriced
-                          ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
-                          : undefined,
+                        : joinTitles(
+                              group.inputUnpriced
+                                  ? 'At least one session in this group has an unpriced input — this total is incomplete, not fully costed.'
+                                  : undefined,
+                              todaysPriceNote(group.todaysPriceSessions)
+                          ),
                 }
             )
         );
@@ -1139,6 +1163,8 @@ class TransmuteHistoryViewer {
                 acc.coinCost += group.coinCost;
                 acc.catalystCost += group.catalystCost;
                 acc.inputUnpriced = acc.inputUnpriced || group.inputUnpriced;
+                acc.todaysPriceSessions += group.todaysPriceSessions;
+                acc.catalystTodaysPriceSessions += group.catalystTodaysPriceSessions;
                 acc.catalystUnrecordedSessions += group.catalystUnrecordedSessions;
                 acc.catalystUnpricedSessions += group.catalystUnpricedSessions;
                 acc.catalystEstimatedSessions += group.catalystEstimatedSessions;
@@ -1162,6 +1188,8 @@ class TransmuteHistoryViewer {
                 catalystCost: 0,
                 netConsumed: 0,
                 inputUnpriced: false,
+                todaysPriceSessions: 0,
+                catalystTodaysPriceSessions: 0,
                 catalystUnrecordedSessions: 0,
                 catalystUnpricedSessions: 0,
                 catalystEstimatedSessions: 0,
@@ -1229,8 +1257,17 @@ class TransmuteHistoryViewer {
         );
         row.appendChild(
             this.createTotalsCell(
-                overall.hasImpossibleGroup ? '—' : formatKMB(overall.inputCost, 1) + (overall.inputUnpriced ? '*' : ''),
-                { bold: true, title: overall.hasImpossibleGroup ? overallImpossibleTitle : undefined }
+                overall.hasImpossibleGroup
+                    ? '—'
+                    : formatKMB(overall.inputCost, 1) +
+                          (overall.inputUnpriced ? '*' : '') +
+                          (overall.todaysPriceSessions > 0 ? TODAYS_PRICE_MARK : ''),
+                {
+                    bold: true,
+                    title: overall.hasImpossibleGroup
+                        ? overallImpossibleTitle
+                        : todaysPriceNote(overall.todaysPriceSessions),
+                }
             )
         );
 
@@ -1288,9 +1325,10 @@ class TransmuteHistoryViewer {
                 `${this.getItemName(entry.hrid)} x${entry.count}` +
                 (entry.unpriced ? ' (unpriced, not counted)' : ` −${formatKMB(entry.cost, 1)}`)
         );
-        const basis = detail.catalystEstimated
+        let basis = detail.catalystEstimated
             ? ' (estimated — the catalyst in the slot at session start × successes)'
             : ' (recorded)';
+        if (detail.catalystAtTodaysPrice) basis += " — priced at today's market, no price was saved";
         return `Catalyst: ${parts.join(', ')}${basis}`;
     }
 
@@ -1338,8 +1376,11 @@ class TransmuteHistoryViewer {
         if (group.catalystUnpricedSessions > 0) text += '†';
         if (group.catalystUnrecordedSessions > 0) text += '‡';
         if (group.catalystEstimatedSessions > 0) text += '◇';
+        if (group.catalystTodaysPriceSessions > 0) text += TODAYS_PRICE_MARK;
 
         const notes = [];
+        const todaysNote = todaysPriceNote(group.catalystTodaysPriceSessions);
+        if (todaysNote) notes.push(todaysNote.replace('their input', 'their catalysts'));
         if (group.catalystEstimatedSessions > 0) {
             notes.push(
                 `${group.catalystEstimatedSessions} session(s) predate recorded catalyst consumption — ` +
@@ -1418,7 +1459,7 @@ class TransmuteHistoryViewer {
         // The session's own bulk size, when it has one. Sessions recorded before
         // it was persisted have none, and the item's current value is the only
         // answer available for those.
-        const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        const bulkMultiplier = resolveBulk(session, itemDetails);
 
         let revenue = 0;
         let revenueUnpriced = false;
@@ -1460,15 +1501,12 @@ class TransmuteHistoryViewer {
         // The price's source goes along with it: an Iron Cow character's vendor or
         // coinify valuation of a refined cape is what it could be dumped for, not
         // what one costs, and must not beat the refinement craft cost
-        const inputPriceInfo = getItemPriceInfo(session.inputItemHrid, { context: 'profit', side: 'buy' });
-        const marketPrice = inputPriceInfo.price > 0 ? inputPriceInfo.price : 0;
-        const { price: inputPrice, basis: inputBasis } = priceInputWithRefinementFallback(
-            session.inputItemHrid,
-            marketPrice,
-            { marketSource: inputPriceInfo.source, capeValue: getUntradableCapeValue }
-        );
-        const inputCost = netConsumed * inputPrice;
-        const inputUnpriced = inputBasis === null && netConsumed > 0;
+        // What this session's input cost: the price saved with each message where there is one, today's
+        // market for whatever was not saved (a session from before costs were kept, or its unsaved part)
+        const inputResolved = resolveInputCost(session, netConsumed, () => priceInputNow(session.inputItemHrid));
+        const inputCost = inputResolved.cost;
+        const inputBasis = inputResolved.basis;
+        const inputUnpriced = inputResolved.unpriced;
 
         // Transmute coin fee — see utils/alchemy-fees.js. The session's recorded bulkMultiplier
         // is the one that was actually billed, so it overrides the item's current one.
@@ -1487,6 +1525,11 @@ class TransmuteHistoryViewer {
             nonSelfReturnOutputs,
             inputBasis,
             inputUnpriced,
+            inputSavedUnits: inputResolved.savedUnits,
+            inputTodayUnits: inputResolved.todayUnits,
+            inputAtTodaysPrice: inputResolved.pricedToday,
+            inputSavedMode: inputResolved.mode,
+            inputTodayMode: inputResolved.mode ? currentPricingMode() : null,
             ...catalyst,
         };
     }
@@ -1520,14 +1563,21 @@ class TransmuteHistoryViewer {
         const catalystEntries = [];
         let catalystCost = 0;
         let catalystUnpriced = false;
+        let catalystAtTodaysPrice = false;
         for (const { hrid, count } of used) {
             if (count <= 0) continue;
-            const price = getItemPrice(hrid, { context: 'profit', side: 'buy' });
-            const unpriced = !(price > 0);
-            const cost = unpriced ? 0 : count * price;
-            if (unpriced) catalystUnpriced = true;
-            else catalystCost += cost;
-            catalystEntries.push({ hrid, count, cost, unpriced });
+            // Saved with each message where there is a record; today's market for whatever is not covered
+            const resolved = resolveCatalystCost(session, hrid, count, priceCatalystNow);
+            if (resolved.unpriced) catalystUnpriced = true;
+            if (resolved.pricedToday) catalystAtTodaysPrice = true;
+            catalystCost += resolved.cost;
+            catalystEntries.push({
+                hrid,
+                count,
+                cost: resolved.cost,
+                unpriced: resolved.unpriced,
+                atTodaysPrice: resolved.pricedToday,
+            });
         }
 
         // "Nothing recorded" is a gap in the data, not a free run — but only
@@ -1540,6 +1590,7 @@ class TransmuteHistoryViewer {
             catalystCost,
             catalystUnrecorded,
             catalystUnpriced,
+            catalystAtTodaysPrice,
             catalystEstimated: !hasRecorded && catalystEntries.length > 0,
             catalystEntries,
         };
@@ -2375,6 +2426,8 @@ class TransmuteHistoryViewer {
     buildDataNote(session, detail) {
         const notes = [];
         if (detail.inputUnpriced) notes.push('input unpriced — total is incomplete');
+        if (detail.inputAtTodaysPrice) notes.push("input priced at today's market (no price was saved for it)");
+        if (detail.catalystAtTodaysPrice) notes.push("catalyst priced at today's market (no price was saved for it)");
         if (detail.catalystUnpriced) notes.push('catalyst could not be priced — excluded, not zero');
         if (detail.catalystUnrecorded) notes.push('catalyst not recorded (predates tracking) — excluded, not zero');
         if (detail.catalystEstimated) notes.push('catalyst estimated, not measured');

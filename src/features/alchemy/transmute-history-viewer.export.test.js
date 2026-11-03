@@ -72,6 +72,11 @@ const session = (overrides = {}) => ({
     bulkMultiplier: 1,
     results: { [SHARD]: { count: 80, totalValue: 56000, priceEach: 700 } },
     catalystsUsed: { [PRIME]: 80 },
+    // Priced when it ran, as a session recorded now is
+    costs: {
+        input: { cost: 50000, units: 100, unpricedUnits: 0, bases: { 'current buy': 100 } },
+        catalysts: { [PRIME]: { cost: 80000, count: 80, unpricedCount: 0 } },
+    },
     ...overrides,
 });
 
@@ -92,8 +97,14 @@ describe('buildDataNote', () => {
     });
 
     test('an unpriced input says the total is incomplete', () => {
+        // Nothing was saved for the input, and the market has no price for it now either
         game.prices[GEM] = 0;
-        const s = session();
+        const s = session({
+            costs: {
+                input: undefined,
+                catalysts: session().costs.catalysts,
+            },
+        });
         const detail = transmuteHistoryViewer.computeSessionProfit(s);
         expect(detail.inputUnpriced).toBe(true);
         expect(transmuteHistoryViewer.buildDataNote(s, detail)).toContain('input unpriced — total is incomplete');
@@ -101,7 +112,9 @@ describe('buildDataNote', () => {
 
     test('an unpriced catalyst says it was excluded, not free', () => {
         game.prices[PRIME] = 0;
-        const s = session();
+        const s = session({
+            costs: { input: session().costs.input, catalysts: undefined },
+        });
         const detail = transmuteHistoryViewer.computeSessionProfit(s);
         expect(detail.catalystUnpriced).toBe(true);
         expect(transmuteHistoryViewer.buildDataNote(s, detail)).toContain(
@@ -147,7 +160,12 @@ describe('buildDataNote', () => {
     test('several qualifications on one session all land in the note', () => {
         game.prices[GEM] = 0;
         game.prices[PRIME] = 0;
-        const s = session();
+        const s = session({
+            costs: {
+                input: undefined,
+                catalysts: undefined,
+            },
+        });
         const detail = transmuteHistoryViewer.computeSessionProfit(s);
         const note = transmuteHistoryViewer.buildDataNote(s, detail);
         expect(note).toContain('input unpriced');
@@ -186,7 +204,14 @@ describe('exportHistory', () => {
 
     test('a qualified row carries the readable note in the CSV', () => {
         game.prices[GEM] = 0;
-        transmuteHistoryViewer.sessions = [session()];
+        transmuteHistoryViewer.sessions = [
+            session({
+                costs: {
+                    input: undefined,
+                    catalysts: session().costs.catalysts,
+                },
+            }),
+        ];
         const csv = captureCsv();
         const dataRow = csv.split('\n')[1];
         expect(dataRow).toContain('input unpriced — total is incomplete');

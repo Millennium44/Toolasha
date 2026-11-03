@@ -52,6 +52,10 @@ vi.mock('../../utils/market-data.js', () => ({
     // now read to mark an output unpriced instead of silently costing it 0.
     getItemPrice: (hrid) => (hrid in game.prices ? game.prices[hrid] : null),
     getItemPrices: () => null,
+    getItemPriceInfo: (hrid) => {
+        const price = hrid in game.prices ? game.prices[hrid] : null;
+        return { price, source: price === null ? null : 'book', estimated: false };
+    },
 }));
 vi.mock('./alchemy-session-store.js', () => ({
     createAlchemySessionStore: () => ({

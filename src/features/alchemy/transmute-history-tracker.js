@@ -27,6 +27,8 @@ import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
 import { createItemCountLedger, deltasByItem, seedLedgerFromInventory } from './alchemy-item-deltas.js';
 import { recordCatalystUse } from './alchemy-catalyst-use.js';
+import { recordInputCost, recordCatalystCost } from './alchemy-session-cost.js';
+import { resolveBulk } from './alchemy-cost-record.js';
 import { runningAlchemyAction } from './alchemy-running-action.js';
 import { mergeReloadSplitSessions, expandKeptSessions } from './alchemy-session-merge.js';
 import { captureResumePoint, findResumableSession, gapRows } from './alchemy-session-resume.js';
@@ -503,6 +505,20 @@ class TransmuteHistoryTracker {
         }
         // Failure — totalAttempts already incremented, nothing more to record
 
+        // What this message's input cost NOW, saved on the session — the read side used to price the lot at
+        // whatever the market said on the day somebody looked. Net of the self-returns, the same arithmetic
+        // `computeSessionProfit` applies to the whole session, so the parts sum to the whole. No await between
+        // here and the save, so the character cannot change underneath it.
+        const selfReturnedActions = producedActions.get(inputItemHrid) || 0;
+        recordInputCost(session, {
+            inputItemHrid,
+            // The viewer counts attempts at the session's bulk size and takes off what the results recorded
+            units: Math.max(
+                0,
+                attemptCount * resolveBulk(session, itemDetailsForBulk) - selfReturnedActions * bulkMultiplier
+            ),
+        });
+
         this.recordCatalystUse(session, action, noted, successCount, attemptCount);
 
         // Where the next message — or the gap a reload leaves — is measured from
@@ -537,13 +553,14 @@ class TransmuteHistoryTracker {
      */
     recordCatalystUse(session, action, noted, successCount, attemptCount) {
         const catalystHrid = this.extractItemHrid(action.secondaryItemHash);
-        recordCatalystUse(session, {
+        const consumed = recordCatalystUse(session, {
             catalystHrid,
             noted,
             successCount,
             attemptCount,
             stackKnown: this.seededHrids.has(catalystHrid),
         });
+        recordCatalystCost(session, catalystHrid, consumed);
     }
 
     /**
