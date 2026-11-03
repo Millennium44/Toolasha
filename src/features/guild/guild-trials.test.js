@@ -3619,6 +3619,38 @@ describe('the panel, end to end', () => {
             expect(text()).not.toContain('could not be drawn');
         });
 
+        test('a trial the game’s list left off a cycle reads n/r; one with no list to go on keeps its dash', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            const at = weekAgo(1) + 2 * 24 * 60 * 60 * 1000;
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [
+                    archivedWeek({ weekStart: weekAgo(3), tiles: { 'skilling::alchemy': alchemy(9, 1500) } }),
+                    archivedWeek({ weekStart: weekAgo(2), tiles: archivedWeek().tiles }),
+                    // Last week's cycle: the game ran Alchemy and the Badger only
+                    archivedWeek({
+                        weekStart: weekAgo(1),
+                        tiles: { 'skilling::alchemy': alchemy(7, 1200) },
+                        scheduled: {
+                            skilling: { trials: ['alchemy'], at },
+                            combat: { trials: ['badger'], at: at + 60 * 60 * 1000 },
+                        },
+                    }),
+                ],
+            };
+            fire(root);
+
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T7', '—', 'T9', 'T9']);
+            expect(historyCells('Milking')).toEqual(['Milking', 'n/r', 'T6', '—', 'T6']);
+            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', 'n/r', 'T5', '—', 'T5']);
+            const block = document.querySelector('[data-mwi-block="trial-history"]');
+            const milkingRow = [...block.children].find((node) => node.children[0]?.textContent === 'Milking');
+            expect(milkingRow.children[1].getAttribute('title')).toBe('The game did not run this trial that cycle');
+            expect(milkingRow.children[3].getAttribute('title')).toBeNull();
+            expect(milkingRow.getAttribute('title')).toContain('Last week: did not run');
+            expect(text()).not.toContain('could not be drawn');
+        });
+
         test('no finished cycle yet: no block and no card line', () => {
             fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
             expect(text()).not.toContain('Trial history');
@@ -9347,6 +9379,69 @@ describe('a mates’ trial timed from the guild payload', () => {
         hear({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } }, newestStamp);
         const record = { weekStart: 0, tiles: { 'skilling::milking': milkingTile() } };
         expect(guildTrials._recordServerTiers(record, newestStamp + SKEW + 61 * 60_000)).toBe(record);
+    });
+});
+
+describe('the game’s list of the cycle’s trials is saved with the record', () => {
+    // The live mid-hour payload, as the guild object carries it (it names its guild)
+    const stamp =
+        JSON.parse(CURRENT_TRIALS_DATA_SKILLING).skilling.parties['/guild_skilling/alchemy'].highestTierReachedAtMs;
+    const SKEW = 5_000;
+    const TRIP = 300;
+    const message = (guild = { id: 'g1', name: 'SuperMoo' }) => ({
+        guild: { ...guild, currentTrialsData: CURRENT_TRIALS_DATA_SKILLING },
+    });
+    const weekRecord = (extra = {}) => ({
+        weekStart: trialWeekStart(stamp + SKEW + TRIP),
+        tiles: {},
+        guildId: 'g1',
+        guildName: 'SuperMoo',
+        ...extra,
+    });
+
+    beforeEach(() => {
+        guildTrials.currentTrials = null;
+        guildTrials.serverTierClears = null;
+        guildTrials.serverClockOffsetMs = null;
+        guildTrials.socketPhase = null;
+        vi.setSystemTime(stamp + SKEW + TRIP);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a running hour’s four trials are filed for skilling, and combat, which has none yet, is left unknown', () => {
+        guildTrials._noteCurrentTrials(message());
+        const record = guildTrials._recordServerTiers(weekRecord(), Date.now());
+
+        expect(record.scheduled.skilling.trials).toEqual(['alchemy', 'brewing', 'cooking', 'milking']);
+        expect(record.scheduled).not.toHaveProperty('combat');
+    });
+
+    test('hearing the same payload again leaves the list as it was, so it is not rewritten', () => {
+        guildTrials._noteCurrentTrials(message());
+        const once = guildTrials._recordServerTiers(weekRecord(), Date.now());
+        vi.setSystemTime(Date.now() + 20_000);
+        guildTrials._noteCurrentTrials(message());
+        const twice = guildTrials._recordServerTiers(once, Date.now());
+        expect(twice.scheduled).toBe(once.scheduled);
+    });
+
+    test('a payload sent for another guild is never filed under this one', () => {
+        guildTrials._noteCurrentTrials(message({ id: 'g2', name: 'Elsewhere' }));
+        expect(guildTrials._recordServerTiers(weekRecord(), Date.now())).not.toHaveProperty('scheduled');
+    });
+
+    test('a payload that states no guild is not attributed to one', () => {
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: CURRENT_TRIALS_DATA_SKILLING } });
+        expect(guildTrials._recordServerTiers(weekRecord(), Date.now())).not.toHaveProperty('scheduled');
+    });
+
+    test('a record of another week takes nothing from this week’s payload', () => {
+        guildTrials._noteCurrentTrials(message());
+        const record = weekRecord({ weekStart: trialWeekStart(stamp) - 7 * 24 * 60 * 60 * 1000 });
+        expect(guildTrials._recordServerTiers(record, Date.now())).not.toHaveProperty('scheduled');
     });
 });
 

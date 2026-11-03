@@ -45,6 +45,7 @@ import {
     trialBasePoints,
     trialFromHrid,
     TRIAL_ACTIVE_MS,
+    TRIAL_BUDGET_MS,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { matchTrialHrid } from './guild-trials-scrape.js';
@@ -446,7 +447,211 @@ export function trialResultsOf(record) {
  */
 export function withTrialResults(record) {
     if (!record || typeof record !== 'object') return record;
-    return { ...record, trialResults: trialResultsOf(record) };
+    const cycleTrials = cycleTrialsOf(record);
+    const rest = { ...record };
+    delete rest.cycleTrials;
+    return { ...rest, trialResults: trialResultsOf(record), ...(cycleTrials.length ? { cycleTrials } : {}) };
+}
+
+// ─── Which trials the game said ran each cycle ──────────────────────────────
+
+/*
+ * The game's `currentTrials` lists exactly the trials a cycle runs — a test
+ * cycle ran 6 of the 15 — and a trial it did not list leaves no result and no
+ * tile. Without the list, "did not run" cannot be told from "ran, and this
+ * client saw nothing", which is why the list is saved with each cycle.
+ *
+ * Three shapes, all additive and all absent when unknown:
+ *
+ * - `record.scheduled` — the running cycle's lists, one per kind, each
+ *   `{trials: ['alchemy', …], at}` (trial keys, `at` the client ms the list is
+ *   placed at). A kind is written on its own: combat starts an hour after
+ *   skilling, so one kind's list says nothing about the other's.
+ * - `cycle.scheduled` — the same, on the archived cycle the record put away.
+ * - `record.cycleTrials` — `[{weekStart, cycleFrom, skilling?: [...], combat?: [...]}]`,
+ *   the slim list beside `trialResults`, derived from the archive the same way
+ *   and kept as long. A kind with no list in it is unknown, never "nothing ran".
+ */
+
+/** The two kinds a cycle runs, in the order the hours come */
+const SCHEDULE_KINDS = ['skilling', 'combat'];
+
+/**
+ * A list of trial keys as kept: strings only, once each, sorted.
+ * @param {*} trials - A stored list
+ * @returns {string[]} Never null; empty for anything malformed
+ */
+function cleanTrialKeys(trials) {
+    if (!Array.isArray(trials)) return [];
+    return [...new Set(trials.filter((key) => typeof key === 'string' && key))].sort();
+}
+
+/**
+ * One kind's stored list, or nothing.
+ * @param {*} side - `{trials, at}` as stored
+ * @returns {{trials: string[], at: number}|null} Null unless it holds a trial and a finite stamp
+ */
+export function cleanScheduledSide(side) {
+    const trials = cleanTrialKeys(side?.trials);
+    if (!trials.length || !Number.isFinite(side?.at)) return null;
+    return { trials, at: side.at };
+}
+
+/**
+ * A stored `scheduled` as kept: the kinds that hold a usable list.
+ * @param {*} scheduled - `{skilling?, combat?}`
+ * @returns {Object|null} Null when no kind holds one
+ */
+export function cleanScheduled(scheduled) {
+    const out = {};
+    for (const kind of SCHEDULE_KINDS) {
+        const side = cleanScheduledSide(scheduled?.[kind]);
+        if (side) out[kind] = side;
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Which hour-sized slot a list is placed in. Two lists of one cycle fall in the
+ * same slot or neighboring ones; two cycles are further apart than a slot.
+ * @param {{at: number}} side - A cleaned side
+ * @returns {number} The slot
+ */
+function scheduleSlot(side) {
+    return Math.floor(side.at / TRIAL_BUDGET_MS);
+}
+
+/**
+ * Two copies of one kind's list as one.
+ *
+ * The later slot wins whole: it is the later cycle's, and an earlier cycle's list
+ * must not be added to it. In one slot the lists are one cycle's, stated twice,
+ * and the fuller (the union) stands. Slots rather than a distance between stamps
+ * so the rule gives one answer whichever way round, and in whatever grouping,
+ * copies are folded: a merge between devices must converge.
+ *
+ * @param {Object|null} a - One side
+ * @param {Object|null} b - The other
+ * @returns {{trials: string[], at: number}|null} Null when neither holds a list
+ */
+export function mergeScheduledSide(a, b) {
+    const left = cleanScheduledSide(a);
+    const right = cleanScheduledSide(b);
+    if (!left || !right) return left || right;
+    const [slotLeft, slotRight] = [scheduleSlot(left), scheduleSlot(right)];
+    if (slotLeft !== slotRight) return slotLeft > slotRight ? left : right;
+    return { trials: cleanTrialKeys([...left.trials, ...right.trials]), at: Math.max(left.at, right.at) };
+}
+
+/**
+ * Two `scheduled` objects as one, kind by kind.
+ * @param {Object|null} a - One side
+ * @param {Object|null} b - The other
+ * @returns {Object|null} Null when neither holds a list
+ */
+export function mergeScheduled(a, b) {
+    const out = {};
+    for (const kind of SCHEDULE_KINDS) {
+        const side = mergeScheduledSide(a?.[kind], b?.[kind]);
+        if (side) out[kind] = side;
+    }
+    return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Divide a record's lists at a cycle's start: what was placed before it, and what was not.
+ *
+ * `from` is per kind, as the tile cut is; a kind with no boundary is left where it is.
+ *
+ * @param {Object|null} scheduled - A record's `scheduled`
+ * @param {{skilling: number|null, combat: number|null}} from - Client ms the cycle began, per kind
+ * @returns {{earlier: Object|null, current: Object|null}} Either null when it has none
+ */
+export function splitScheduled(scheduled, from) {
+    const earlier = {};
+    const current = {};
+    for (const kind of SCHEDULE_KINDS) {
+        const side = cleanScheduledSide(scheduled?.[kind]);
+        if (!side) continue;
+        if (Number.isFinite(from?.[kind]) && side.at < from[kind]) earlier[kind] = side;
+        else current[kind] = side;
+    }
+    return {
+        earlier: Object.keys(earlier).length ? earlier : null,
+        current: Object.keys(current).length ? current : null,
+    };
+}
+
+/**
+ * The lists an archived cycle states, as a `cycleTrials` entry.
+ * @param {Object} cycle - An archived cycle from `record.history`
+ * @returns {Object|null} Null for a foreign cycle, one with no week, or one that kept no list
+ */
+export function cycleTrialsFromCycle(cycle) {
+    if (!cycle || typeof cycle !== 'object' || cycle.reason === FOREIGN_CYCLE_REASON) return null;
+    const weekStart = cycleWeek(cycle);
+    const scheduled = cleanScheduled(cycle.scheduled);
+    if (weekStart === null || !scheduled) return null;
+    return {
+        weekStart,
+        cycleFrom: Number.isFinite(cycle.cycleFrom) ? cycle.cycleFrom : null,
+        ...Object.fromEntries(Object.entries(scheduled).map(([kind, side]) => [kind, side.trials])),
+    };
+}
+
+/**
+ * Every list the archived cycles state.
+ * @param {Array<Object>} history - `record.history`
+ * @returns {Array<Object>} Unfolded; {@link mergeCycleTrials} makes them one per cycle
+ */
+export function cycleTrialsFromHistory(history) {
+    return (Array.isArray(history) ? history : []).map(cycleTrialsFromCycle).filter(Boolean);
+}
+
+/**
+ * Several lists of cycle lists as one: one entry per cycle, a kind's list the union of the copies,
+ * oldest first, capped to the newest {@link resultCycleCap} cycles.
+ *
+ * Two copies of one cycle are one statement made twice, so they are unioned; a kind only one copy
+ * has stays that copy's. A cycle is a week on live and a week and `cycleFrom` on the test server,
+ * the identity the results use.
+ *
+ * @param {...Array<Object>} lists - Lists of entries
+ * @returns {Array<Object>} A new array
+ */
+export function mergeCycleTrials(...lists) {
+    const byCycle = new Map();
+    for (const list of lists) {
+        for (const entry of Array.isArray(list) ? list : []) {
+            if (!entry || typeof entry !== 'object' || !Number.isFinite(entry.weekStart)) continue;
+            const cycleFrom = Number.isFinite(entry.cycleFrom) ? entry.cycleFrom : null;
+            const key = `${entry.weekStart}|${cycleFrom ?? ''}`;
+            const held = byCycle.get(key) || { weekStart: entry.weekStart, cycleFrom };
+            for (const kind of SCHEDULE_KINDS) {
+                const trials = cleanTrialKeys(entry[kind]);
+                if (trials.length) held[kind] = cleanTrialKeys([...(held[kind] || []), ...trials]);
+            }
+            byCycle.set(key, held);
+        }
+    }
+    const order = (entry) => [entry.weekStart, entry.cycleFrom ?? -Infinity];
+    const sorted = [...byCycle.values()]
+        .filter((entry) => SCHEDULE_KINDS.some((kind) => entry[kind]))
+        .sort((a, b) => {
+            const [aw, ai] = order(a);
+            const [bw, bi] = order(b);
+            return aw !== bw ? aw - bw : ai !== bi ? ai - bi : 0;
+        });
+    return sorted.slice(-resultCycleCap());
+}
+
+/**
+ * A record's cycle lists: what it kept, with everything its archive states folded in.
+ * @param {Object|null} record - A trial record
+ * @returns {Array<Object>} Oldest first; empty when no cycle kept a list
+ */
+export function cycleTrialsOf(record) {
+    return mergeCycleTrials(record?.cycleTrials, cycleTrialsFromHistory(record?.history));
 }
 
 /**
@@ -511,9 +716,12 @@ function cycleLabel(cycle, now) {
  * @param {Object} [options] - Context
  * @param {number} [options.now] - Clock
  * @param {number|null} [options.buildersHallBonus] - For pricing a tier only the payload stated
+ * @param {Array<Object>} [options.cycleTrials] - From {@link cycleTrialsOf}. A cell with no result is marked `notRun`
+ *   only when the cycle's list for the trial's kind is there and omits the trial; with no list it is unknown, as before.
+ *   Never read for a tier, a point or a best
  * @returns {{cycles: Array<{key: string, label: string}>, rows: Array<Object>}} The history
  */
-export function trialResultsHistory(results, { now = Date.now(), buildersHallBonus = null } = {}) {
+export function trialResultsHistory(results, { now = Date.now(), buildersHallBonus = null, cycleTrials = [] } = {}) {
     const thisWeek = trialWeekStart(now);
     const past = (Array.isArray(results) ? results : []).filter(
         (result) => isResult(result) && !(result.weekStart >= thisWeek && !Number.isFinite(result.cycleFrom))
@@ -532,6 +740,17 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
         .sort((a, b) => (a.order[0] !== b.order[0] ? b.order[0] - a.order[0] : b.order[1] - a.order[1]))
         .map((cycle) => ({ key: cycle.key, label: cycleLabel(cycle, now) }));
 
+    const listed = new Map();
+    for (const entry of Array.isArray(cycleTrials) ? cycleTrials : []) {
+        if (!entry || typeof entry !== 'object' || !Number.isFinite(entry.weekStart)) continue;
+        listed.set(`${entry.weekStart}|${Number.isFinite(entry.cycleFrom) ? entry.cycleFrom : ''}`, entry);
+    }
+    // The game's list for this cycle and kind says the trial was not on it. No list is no answer
+    const didNotRun = (cycleKey, kind, trial) => {
+        const list = listed.get(cycleKey)?.[kind];
+        return Array.isArray(list) && list.length > 0 && !list.includes(trial);
+    };
+
     const byTrial = new Map();
     for (const result of past) {
         const id = `${result.kind}:${result.trial}`;
@@ -545,7 +764,11 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
         .map((entry) => {
             const weeks = cycles.map((cycle) => {
                 const result = entry.byCycle.get(cycle.key);
-                if (!result) return { key: cycle.key, label: cycle.label, tier: null, points: null };
+                if (!result) {
+                    const empty = { key: cycle.key, label: cycle.label, tier: null, points: null };
+                    if (didNotRun(cycle.key, entry.kind, entry.trial)) empty.notRun = true;
+                    return empty;
+                }
                 return {
                     key: cycle.key,
                     label: cycle.label,
@@ -575,13 +798,19 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
     return { cycles, rows };
 }
 
+/** The cell for a cycle the game's own list says a trial did not run in */
+export const NOT_RUN_CELL = 'n/r';
+
 /**
- * One week's tier as a cell: `T7`, or "—" when the trial has no result for it.
+ * One week's tier as a cell: `T7`, "n/r" when the game's list for that cycle did
+ * not include the trial, or "—" when there is no result for it (it ran, or this
+ * client has no list for the cycle).
  * @param {Object} week - A row's week
  * @returns {string} The cell
  */
-function tierCell(week) {
-    return Number.isFinite(week?.tier) ? `T${week.tier}` : '—';
+export function trialHistoryCell(week) {
+    if (Number.isFinite(week?.tier)) return `T${week.tier}`;
+    return week?.notRun ? NOT_RUN_CELL : '—';
 }
 
 /** How many of a trial's cycles the inline line shows */
@@ -591,10 +820,10 @@ export const INLINE_CYCLES = 6;
  * A trial's last cycles as plain tiers, newest first.
  * @param {Object} row - A row from {@link trialResultsHistory}
  * @param {number} [inline] - How many cycles to show
- * @returns {string} e.g. `T20 · T20 · —`, with `+3 earlier` after them when some are left out
+ * @returns {string} e.g. `T20 · n/r · —`, with `+3 earlier` after them when some are left out
  */
 export function trialHistoryTiers(row, inline = INLINE_CYCLES) {
-    const shown = (row?.weeks || []).slice(0, inline).map(tierCell);
+    const shown = (row?.weeks || []).slice(0, inline).map(trialHistoryCell);
     const hidden = Math.max(0, (row?.weeks || []).length - inline);
     return [...shown, ...(hidden ? [`+${hidden} earlier`] : [])].join(' · ');
 }
@@ -637,7 +866,7 @@ export function trialHistoryCells(row, inline = INLINE_CYCLES) {
  */
 export function trialHistoryDetail(row) {
     const lines = (row?.weeks || []).map((week) => {
-        if (!Number.isFinite(week.tier)) return `${week.label}: —`;
+        if (!Number.isFinite(week.tier)) return `${week.label}: ${week.notRun ? 'did not run' : '—'}`;
         // An unknown figure is "—", never 0: a tier above T0 always paid something
         const points = week.points
             ? `${week.points.derived ? '~' : ''}${formatWithSeparator(Math.round(week.points.points))} pts`
@@ -646,7 +875,8 @@ export function trialHistoryDetail(row) {
     });
     return [
         `${row?.name ?? 'Trial'} — tier reached each finished cycle, newest first.`,
-        '"—" is a cycle this client never saw a result for, or a points figure it never saw; T0 is a real result.',
+        '"—" is a cycle this client has no result for (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
+        '"n/r" is a cycle the game’s own list says the trial did not run in.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',
         ...(row?.best ? [`Best: T${row.best.tier}, ${inSentence(row.best.label)}.`] : []),
         '',
