@@ -40,6 +40,8 @@ import {
 import { runningAction } from '../../utils/combat-actions.js';
 import { parseItemHash } from '../../utils/item-hash.js';
 import { MENU_SELECTOR, TILE_SELECTOR } from '../../utils/item-selector-dom.js';
+import { isIronCowCharacter } from '../../utils/ironcow-valuation.js';
+import { getItemPriceInfo } from '../../utils/market-data.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
@@ -277,7 +279,7 @@ class AlchemyCatalystCheck {
             computeCatalystAnswer(context.action, context.selection),
             context.catalystHrid
         );
-        if (!verdict.hold) return false;
+        if (!verdict.hold || this.cannotActOn(verdict)) return false;
 
         return this.hold(panel, buttons, context, verdict);
     }
@@ -364,6 +366,22 @@ class AlchemyCatalystCheck {
             input.itemHrid === selection.itemHrid &&
             input.level === selection.enhancementLevel &&
             parseItemHash(running.secondaryItemHash).itemHrid === catalystHrid
+        );
+    }
+
+    /**
+     * What the figures alone do not say: whether this player could take the advice, and whether it rests on a quote.
+     * An Iron Cow cannot buy a catalyst, so one it is not known to hold is out of reach. A catalyst with an empty order
+     * book is priced from the official value map, which is an estimate, and the gap would be measured from it.
+     * @param {{best: Object, current: Object}} verdict - From {@link judgeCatalystPress}
+     * @returns {boolean} True when the press should not be stopped for this
+     */
+    cannotActOn({ best, current }) {
+        if (best.hrid && isIronCowCharacter()) {
+            if (!dataManager.getInventory?.() || ownedCatalystCount(best.hrid) === 0) return true;
+        }
+        return [best, current].some(
+            ({ hrid }) => hrid && getItemPriceInfo(hrid, { context: 'profit', side: 'buy' }).estimated
         );
     }
 

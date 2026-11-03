@@ -15,6 +15,9 @@ const state = vi.hoisted(() => ({
     evReady: true,
     evInit: vi.fn(),
     observerReady: [],
+    gameMode: 'standard',
+    estimated: new Set(),
+    priceInfoCalls: [],
 }));
 
 const calculator = vi.hoisted(() => {
@@ -64,6 +67,7 @@ vi.mock('../../core/data-manager.js', () => ({
         on: () => {},
         off: () => {},
         getCurrentCharacterId: () => state.charId,
+        getCurrentCharacterGameMode: () => state.gameMode,
         getInventory: () => state.inventory,
         getCurrentActions: () => state.actions,
         getInitClientData: () => null,
@@ -83,6 +87,14 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     },
 }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: calculator }));
+vi.mock('../../utils/market-data.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    getItemPriceInfo: (hrid, options) => {
+        state.priceInfoCalls.push([hrid, options]);
+        const estimated = state.estimated.has(hrid);
+        return { price: 1000, source: estimated ? 'value' : 'book', estimated };
+    },
+}));
 vi.mock('../actions/action-panel-sort.js', () => ({
     default: { isPinned: () => false, togglePin: async () => {} },
 }));
@@ -216,6 +228,9 @@ beforeEach(async () => {
     state.protectedList = null;
     state.evReady = true;
     state.evInit.mockReset();
+    state.gameMode = 'standard';
+    state.estimated = new Set();
+    state.priceInfoCalls = [];
     vi.spyOn(console, 'error').mockImplementation(() => {});
     layOut();
     clearWinner();
@@ -644,6 +659,89 @@ describe('reads the panel that was pressed', () => {
             slotHtml(PRIME);
         await settle();
         expect(message()).toBeNull();
+    });
+});
+
+describe('a figure this player cannot act on, or that is only an estimate', () => {
+    const primeBest = () =>
+        setAnswers('coinify', CHEESE, { none: profit(1e6), typeSpecific: profit(1.2e6), prime: profit(2e6) });
+    const passes = () => {
+        press();
+        expect(game).toHaveBeenCalledTimes(1);
+        expect(message()).toBeNull();
+        expect(vi.getTimerCount()).toBe(0);
+    };
+    const held = () => {
+        press();
+        expect(game).not.toHaveBeenCalled();
+        expect(message()).not.toBeNull();
+    };
+
+    test.each(['ironcow', 'legacy_ironcow'])('%s: a best catalyst it does not own passes, since it cannot buy one', (mode) => {
+        state.gameMode = mode;
+        primeBest();
+        passes();
+    });
+
+    test('an Iron Cow whose inventory has not loaded passes: not known to own it', () => {
+        state.gameMode = 'ironcow';
+        state.inventory = null;
+        primeBest();
+        passes();
+    });
+
+    test('an Iron Cow holding only the enhanced or the wrong catalyst does not own the best one', () => {
+        state.gameMode = 'ironcow';
+        state.inventory = [
+            { itemHrid: PRIME, count: 3, enhancementLevel: 2, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: CAT, count: 3, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        primeBest();
+        passes();
+    });
+
+    test('an Iron Cow that owns the best catalyst is held, with no talk of buying', () => {
+        state.gameMode = 'ironcow';
+        held();
+        expect(message().textContent).toContain('catalyst of coinification');
+        expect(message().textContent).not.toContain('buying');
+    });
+
+    test('an Iron Cow with no catalyst as the best option is held for the catalyst it has slotted', () => {
+        state.gameMode = 'ironcow';
+        setAnswers('coinify', CHEESE, { none: profit(9e5), typeSpecific: profit(1e5), prime: profit(2e5) });
+        mountPanel({ catalyst: CAT });
+        held();
+    });
+
+    test('a market character owning none of the best is held, and told', () => {
+        primeBest();
+        held();
+        expect(message().textContent).toContain('You have none of the best one');
+    });
+
+    test('a best catalyst priced from the value map is an estimate, and owned or not it passes', () => {
+        state.estimated.add(CAT);
+        passes();
+        game.mockClear();
+        state.inventory = [];
+        passes();
+    });
+
+    test('so is the slotted catalyst the gap is measured from', () => {
+        mountPanel({ catalyst: PRIME });
+        state.estimated.add(PRIME);
+        passes();
+    });
+
+    test('an estimated price on a catalyst in neither role says nothing', () => {
+        state.estimated.add(PRIME);
+        held();
+    });
+
+    test('asks for the price the way the calculator does: profit context, buy side', () => {
+        press();
+        expect(state.priceInfoCalls).toContainEqual([CAT, { context: 'profit', side: 'buy' }]);
     });
 });
 
