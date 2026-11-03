@@ -278,19 +278,12 @@ export function rankAlchemyType(type, { shopPrices = false } = {}) {
     if (!method) return [];
 
     const results = [];
-    // The calculator prices the input through this for the length of the sweep only. Sell sides never
-    // see it: the shop does not buy at its sale price.
-    alchemyProfitCalculator.inputBuyOverride = shopPrices ? shopUnitPrice : null;
-    try {
-        collectRankings(type, method, gameData, level, shopPrices, results);
-    } finally {
-        alchemyProfitCalculator.inputBuyOverride = null;
-    }
+    collectRankings(type, method, gameData, level, shopPrices, results);
     return results;
 }
 
 /**
- * The body of {@link rankAlchemyType}'s sweep, split out so the shop override is always cleared.
+ * The body of {@link rankAlchemyType}'s sweep.
  * @param {string} type
  * @param {string} method - Calculator method name
  * @param {Object} gameData
@@ -308,6 +301,9 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
     } catch {
         // The calculator resolves its own, and fails per item as it always did
     }
+    // The calculator prices each input through this, for that call alone. Sell sides never see it: the shop
+    // does not buy at its sale price.
+    const inputBuyOverride = shopPrices ? shopUnitPrice : null;
     for (const [itemHrid, itemDetails] of Object.entries(gameData.itemDetailMap)) {
         if (!isEligible(type, itemDetails)) continue;
 
@@ -316,8 +312,8 @@ function collectRankings(type, method, gameData, level, shopPrices, results) {
             // Transmute takes no enhancement level — the item goes in as it is
             profitData =
                 type === 'transmute'
-                    ? alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext)
-                    : alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext);
+                    ? alchemyProfitCalculator[method](itemHrid, false, null, null, actionContext, 0, inputBuyOverride)
+                    : alchemyProfitCalculator[method](itemHrid, 0, false, null, actionContext, null, inputBuyOverride);
         } catch {
             continue;
         }

@@ -413,25 +413,21 @@ class AlchemyProfitCalculator {
         // _bestCatalystCombo to a single candidate. Null everywhere else, so every other
         // caller gets the full search.
         this._comboFilter = null;
-        // An alternative buy price for the item put into an action, or null for none. Set by the Best
-        // Items ranking for one synchronous sweep so a coin-priced NPC shop offer can stand in for a
-        // dearer or missing market price; null everywhere else, so every other caller prices the
-        // input at the market only.
-        this.inputBuyOverride = null;
     }
 
     /**
      * The price of the item an alchemy action consumes, at the buy side.
-     * The market price, unless {@link inputBuyOverride} offers a cheaper one (or the market has none).
+     * The market price, unless `inputBuyOverride` offers a cheaper one (or the market has none).
      * Base items only: the shop sells nothing enhanced.
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level of the input
+     * @param {Function|null} [inputBuyOverride] - See `calculateCoinifyProfit`
      * @returns {number|null} Price, or null when nobody prices it
      */
-    _marketInputBuyPrice(itemHrid, enhancementLevel = 0) {
+    _marketInputBuyPrice(itemHrid, enhancementLevel = 0, inputBuyOverride = null) {
         const market = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
-        if (!this.inputBuyOverride || enhancementLevel) return market;
-        const alternative = this.inputBuyOverride(itemHrid);
+        if (!inputBuyOverride || enhancementLevel) return market;
+        const alternative = inputBuyOverride(itemHrid);
         if (alternative === null || alternative === undefined || !(alternative >= 0)) return market;
         if (market === null || !(market > 0) || alternative < market) return alternative;
         return market;
@@ -443,10 +439,11 @@ class AlchemyProfitCalculator {
      * returned beside the price so the result can say the figure is an assumption.
      * @param {string} itemHrid - Item HRID
      * @param {number} [enhancementLevel=0] - Enhancement level of the input
+     * @param {Function|null} [inputBuyOverride] - See `calculateCoinifyProfit`
      * @returns {{price: number|null, assumedCape: Object|null}} Price (null when nobody prices it)
      */
-    _resolveInput(itemHrid, enhancementLevel = 0) {
-        const market = this._marketInputBuyPrice(itemHrid, enhancementLevel);
+    _resolveInput(itemHrid, enhancementLevel = 0, inputBuyOverride = null) {
+        const market = this._marketInputBuyPrice(itemHrid, enhancementLevel, inputBuyOverride);
         if (market !== null) return { price: market, assumedCape: null };
         const cape = assumedCape(itemHrid, enhancementLevel, 'buy');
         return cape ? { price: cape.value, assumedCape: cape } : { price: null, assumedCape: null };
@@ -470,10 +467,11 @@ class AlchemyProfitCalculator {
      * {@link _resolveInput}, price only.
      * @param {string} itemHrid - Item HRID
      * @param {number} [enhancementLevel=0] - Enhancement level of the input
+     * @param {Function|null} [inputBuyOverride] - See `calculateCoinifyProfit`
      * @returns {number|null}
      */
-    _inputBuyPrice(itemHrid, enhancementLevel = 0) {
-        return this._resolveInput(itemHrid, enhancementLevel).price;
+    _inputBuyPrice(itemHrid, enhancementLevel = 0, inputBuyOverride = null) {
+        return this._resolveInput(itemHrid, enhancementLevel, inputBuyOverride).price;
     }
 
     /**
@@ -1016,6 +1014,10 @@ class AlchemyProfitCalculator {
      * @param {number|null} [teaBonusOverride]
      * @param {Object|null} [actionContext]
      * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a catalyst, as for transmute
+     * @param {Function|null} [inputBuyOverride] - An alternative buy price for the item put into the action
+     *   (`(itemHrid) => price|null`), used when it is cheaper than the market or the market has none; a coin-priced
+     *   NPC shop offer is the one caller. Asked for this one call only, never kept: null prices the input at the
+     *   market alone. Base items only.
      * @returns {Object|null} Detailed profit data or null if not coinifiable
      */
     calculateCoinifyProfit(
@@ -1024,7 +1026,8 @@ class AlchemyProfitCalculator {
         useLiveSetup = false,
         teaBonusOverride = null,
         actionContext = null,
-        catalystChoice = null
+        catalystChoice = null,
+        inputBuyOverride = null
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1087,7 +1090,7 @@ class AlchemyProfitCalculator {
 
             // Calculate input cost (material cost)
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel, inputBuyOverride);
             const pricePerItem = inputQuote.price;
             if (pricePerItem === null) {
                 return null; // No market data
@@ -1333,6 +1336,10 @@ class AlchemyProfitCalculator {
      * @param {number|null} [teaBonusOverride]
      * @param {Object|null} [actionContext]
      * @param {'none'|'typeSpecific'|'prime'|null} [catalystChoice] - Force a catalyst, as for transmute
+     * @param {Function|null} [inputBuyOverride] - An alternative buy price for the item put into the action
+     *   (`(itemHrid) => price|null`), used when it is cheaper than the market or the market has none; a coin-priced
+     *   NPC shop offer is the one caller. Asked for this one call only, never kept: null prices the input at the
+     *   market alone. Base items only.
      * @returns {Object|null} Profit data or null if not decomposable
      */
     calculateDecomposeProfit(
@@ -1341,7 +1348,8 @@ class AlchemyProfitCalculator {
         useLiveSetup = false,
         teaBonusOverride = null,
         actionContext = null,
-        catalystChoice = null
+        catalystChoice = null,
+        inputBuyOverride = null
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1405,7 +1413,7 @@ class AlchemyProfitCalculator {
             // Some items (e.g. Holy Milk) consume multiple copies per action — bulkMultiplier
             // scales both the input consumed and the base decompose outputs received.
             const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
-            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel, inputBuyOverride);
             const pricePerItem = inputQuote.price;
             if (pricePerItem === null) {
                 return null; // No market data
@@ -1746,6 +1754,10 @@ class AlchemyProfitCalculator {
      *   instead of searching for the best one or reading the live panel.
      * @param {Object|null} [actionContext]
      * @param {number} [enhancementLevel=0] - Enhancement level of the input item
+     * @param {Function|null} [inputBuyOverride] - An alternative buy price for the item put into the action
+     *   (`(itemHrid) => price|null`), used when it is cheaper than the market or the market has none; a coin-priced
+     *   NPC shop offer is the one caller. Asked for this one call only, never kept: null prices the input at the
+     *   market alone. Base items only.
      * @returns {Object|null} Profit data or null if not transmutable
      */
     calculateTransmuteProfit(
@@ -1754,7 +1766,8 @@ class AlchemyProfitCalculator {
         teaBonusOverride = null,
         catalystChoice = null,
         actionContext = null,
-        enhancementLevel = 0
+        enhancementLevel = 0,
+        inputBuyOverride = null
     ) {
         try {
             const gameData = dataManager.getInitClientData();
@@ -1838,7 +1851,7 @@ class AlchemyProfitCalculator {
             });
 
             // Get input cost (market price of the item being transmuted)
-            const inputQuote = this._resolveInput(itemHrid, enhancementLevel);
+            const inputQuote = this._resolveInput(itemHrid, enhancementLevel, inputBuyOverride);
             const inputPrice = inputQuote.price;
             if (inputPrice === null) {
                 return null; // No market data
@@ -2428,13 +2441,17 @@ class AlchemyProfitCalculator {
      * search and every other caller are untouched.
      * @param {'decompose'|'transmute'|'coinify'} actionType
      * @param {string} itemHrid - A base item (enhancement level 0)
+     * @param {Function|null} [inputBuyOverride] - Priced as for the single-action calculators, for this call only
      * @returns {Array<Object>} One result per available candidate; empty when the action does not apply
      */
-    calculateCandidateResults(actionType, itemHrid) {
+    calculateCandidateResults(actionType, itemHrid, inputBuyOverride = null) {
         let run = null;
-        if (actionType === 'decompose') run = () => this.calculateDecomposeProfit(itemHrid);
-        else if (actionType === 'transmute') run = () => this.calculateTransmuteProfit(itemHrid);
-        else if (actionType === 'coinify') run = () => this.calculateCoinifyProfit(itemHrid);
+        if (actionType === 'decompose')
+            run = () => this.calculateDecomposeProfit(itemHrid, 0, false, null, null, null, inputBuyOverride);
+        else if (actionType === 'transmute')
+            run = () => this.calculateTransmuteProfit(itemHrid, false, null, null, null, 0, inputBuyOverride);
+        else if (actionType === 'coinify')
+            run = () => this.calculateCoinifyProfit(itemHrid, 0, false, null, null, null, inputBuyOverride);
         if (!run) return [];
 
         const results = [];
