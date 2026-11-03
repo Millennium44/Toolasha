@@ -8575,6 +8575,122 @@ describe('a fight you are in: the pace is a range until the damage rate has show
         });
     });
 
+    describe('folding the Trial payout panel', () => {
+        const bonuses = {
+            buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },
+            treasury: { bonus: 0.3, level: 5 },
+        };
+        const settle = async () => {
+            for (let i = 0; i < 10; i += 1) await Promise.resolve();
+        };
+        let root;
+        const trial = (extra = {}) => ({
+            name: 'Trial Chameleon',
+            type: 'combat',
+            banked: 3,
+            projected: 15,
+            tierKnown: true,
+            ...extra,
+        });
+        const draw = (trials) => {
+            guildTrials._renderPayout(root, trials, null, bonuses);
+        };
+        const heading = () => root.querySelector('[data-fold="payout"]');
+        const block = () => root.querySelector('[data-mwi-block="payout"]');
+        const actions = () => [...block().querySelectorAll('[data-action]')].map((el) => el.dataset.action);
+
+        beforeEach(() => {
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+            delete game.store.guildTrialSectionFolds;
+            root = document.createElement('div');
+            document.body.append(root);
+        });
+        afterEach(() => {
+            delete game.store.guildTrialSectionFolds;
+            root.remove();
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+        });
+
+        test('open by default: a button heading, the figures, the note rows and the buttons', () => {
+            draw([trial()]);
+            expect(heading().tagName).toBe('BUTTON');
+            expect(heading().getAttribute('aria-expanded')).toBe('true');
+            expect(heading().textContent).not.toContain('on pace');
+            expect(block().textContent).toContain('Guild Points on pace');
+            expect(actions()).toContain('record');
+            expect(block().textContent).not.toContain('could not be drawn');
+        });
+
+        test('folded: the figures go, the buttons stay, and the heading carries the pace', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            expect(heading().getAttribute('aria-expanded')).toBe('false');
+            expect(block().textContent).not.toContain('Guild Points on pace');
+            expect(block().textContent).not.toContain('Tokens, if you took part');
+            expect(heading().textContent).toMatch(/Trial payout · [\d,]+ pts on pace · [\d,]+ tokens/);
+            expect(actions()).toEqual(expect.arrayContaining(['record', 'export', 'scoreboard', 'roster', 'ledger']));
+            expect(block().textContent).not.toContain('could not be drawn');
+        });
+
+        test('the summary quotes the figures the open panel draws', async () => {
+            draw([trial()]);
+            await settle();
+            const open = block().textContent;
+            const points = open.match(/Guild Points on pace([\d,]+)/)[1];
+            const tokens = open.match(/Tokens, if you took part([\d,]+)/)[1];
+            heading().click();
+            expect(heading().textContent).toContain(`${points} pts on pace`);
+            expect(heading().textContent).toContain(`${tokens} tokens`);
+        });
+
+        test('a redraw does not reopen it, and opening again restores the figures', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            draw([trial()]);
+            draw([trial()]);
+            expect(heading().getAttribute('aria-expanded')).toBe('false');
+            expect(block().textContent).not.toContain('Guild Points on pace');
+            heading().click();
+            expect(heading().getAttribute('aria-expanded')).toBe('true');
+            expect(block().textContent).toContain('Guild Points on pace');
+        });
+
+        test('a wide pace folds to the range form', async () => {
+            draw([trial({ projectedRange: { low: 15, high: 21 } })]);
+            await settle();
+            heading().click();
+            expect(heading().textContent).toMatch(/~[\d,]+–[\d,]+ pts on pace · ~[\d,]+–[\d,]+ tokens/);
+        });
+
+        test('no pace yet folds to dashes, not to the banked figure', async () => {
+            draw([trial({ projected: undefined })]);
+            await settle();
+            heading().click();
+            expect(heading().textContent).toContain('— pts on pace · — tokens');
+            expect(actions()).toContain('record');
+        });
+
+        test('the fold is written down and read back', async () => {
+            draw([trial()]);
+            await settle();
+            heading().click();
+            await settle();
+            expect(game.store.guildTrialSectionFolds).toEqual({ payout: true });
+            root.remove();
+            guildTrials.sectionFolds = {};
+            guildTrials.foldsHydration = null;
+            root = document.createElement('div');
+            document.body.append(root);
+            draw([trial()]);
+            await settle();
+            expect(guildTrials.sectionFolds.payout).toBe(true);
+        });
+    });
+
     describe('the payout that follows the pace', () => {
         const bonuses = {
             buildersHall: { bonus: 0.2, level: 5, rules: null, source: 'test' },

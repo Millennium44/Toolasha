@@ -332,7 +332,7 @@ function foldHeading(key, label, title, collapsed) {
         `<button type="button" data-fold="${key}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${title}" ` +
         `style="display:flex; align-items:center; gap:6px; width:100%; min-height:32px; padding:0; margin:0 0 2px; ` +
         `background:none; border:0; cursor:pointer; text-align:left; color:${ACCENT}; font:inherit; font-weight:700;">` +
-        `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span>${label}</span></button>`
+        `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span style="min-width:0; overflow-wrap:anywhere;">${label}</span></button>`
     );
 }
 
@@ -5508,8 +5508,26 @@ class GuildTrials {
                 )
               : line('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
+        // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
+        // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
+        const collapsed = this._foldsFor().payout === true;
+        const paceKnown = trials.some((trial) => Number.isFinite(trial.projected));
+        const paceFigure = (pick) =>
+            !paceKnown ? '—' : spread ? `~${exact(pick(lowEnd))}–${exact(pick(highEnd))}` : exact(pick(projected));
+        const payoutHeading = foldHeading(
+            'payout',
+            collapsed
+                ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
+                      `${paceFigure((end) => end.participantTokens)} tokens`
+                : 'Trial payout',
+            'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
+                (collapsed
+                    ? 'The summary is the pace and the tokens if you took part.'
+                    : 'Fold it to a one-line summary; the buttons stay.'),
+            collapsed
+        );
+
         const rows = [
-            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;">Trial payout</div>`,
             bankedRow,
             spread
                 ? line(
@@ -5628,7 +5646,7 @@ class GuildTrials {
                 }
                 return root.firstElementChild === block;
             },
-            html: rows.join('') + this._controlsHTML(),
+            html: payoutHeading + (collapsed ? '' : rows.join('')) + this._controlsHTML(),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row
@@ -5661,7 +5679,10 @@ class GuildTrials {
                     root.insertAdjacentElement('afterbegin', block);
                 }
             },
-            onBuild: (block) => this._bindControls(block),
+            onBuild: (block) => {
+                this._bindControls(block);
+                this._wireFolds(block, root, () => this._renderPayout(root, trials, firstTile, bonuses));
+            },
         });
 
         // Kept while it is on screen: by the time the cycle reads "Completed"
@@ -5892,6 +5913,8 @@ class GuildTrials {
      */
     _foldsFor() {
         if (!this.foldsHydration) {
+            // The folds belong to the device, but the redraw below belongs to whoever was in the tab
+            const characterId = this.characterId;
             this.foldsHydration = (async () => {
                 try {
                     const stored = await storage.get(SECTION_FOLDS_KEY, 'settings', {});
@@ -5903,6 +5926,7 @@ class GuildTrials {
                 } catch {
                     /* an unreadable preference is just the default */
                 }
+                if (this.characterId !== characterId) return;
                 const root = findTrialsRoot();
                 if (root?.isConnected) this._render(root);
             })();
@@ -5914,14 +5938,19 @@ class GuildTrials {
      * Make a history block's heading fold its section.
      * @param {Element} block - The block just built
      * @param {Element} root - The trials content element
+     * @param {Function|null} [refresh] - Redraws just this block, for a block that is not a history section
      */
-    _wireFolds(block, root) {
+    _wireFolds(block, root, refresh = null) {
         for (const button of block.querySelectorAll('[data-fold]')) {
             button.addEventListener('click', () => {
                 const key = button.dataset.fold;
                 this.sectionFolds[key] = !this.sectionFolds[key];
                 // Not remembered across a reload if this write fails; the fold stands for the session
                 Promise.resolve(storage.set(SECTION_FOLDS_KEY, { ...this.sectionFolds }, 'settings')).catch(() => {});
+                if (refresh) {
+                    refresh();
+                    return;
+                }
                 this._renderHistory(root);
                 this._renderTrialHistory(root);
             });
