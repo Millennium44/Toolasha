@@ -69,8 +69,20 @@ describe('computeLabyrinthPath', () => {
         const { tiles, cols } = grid(['SXF', '###']);
         const path = computeLabyrinthPath(tiles, cols);
         expect(path.shrouds).toBe(1);
-        expect(path.torches).toBe(2);
+        // The shrouded room is cleared without entering it: only the exit takes a torch
+        expect(path.torches).toBe(1);
+        expect(path.rooms).toBe(2);
         expect(path.route.has(1)).toBe(true);
+    });
+
+    test('a route of fights, chests and shrouds asks torches only for the rooms it enters', () => {
+        const { tiles, cols } = grid(['SXTX.F', '######']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.rooms).toBe(5);
+        expect(path.shrouds).toBe(2);
+        expect(path.chests.size).toBe(1);
+        // The chest, the fight and the exit
+        expect(path.torches).toBe(3);
     });
 
     test('grafts on treasure rooms reachable without shrouds', () => {
@@ -175,7 +187,8 @@ describe('computeLabyrinthPath', () => {
         const { tiles, cols } = grid(['SUF']);
         const path = computeLabyrinthPath(tiles, cols);
         expect(path.shrouds).toBe(1);
-        expect(path.torches).toBe(2);
+        expect(path.torches).toBe(1);
+        expect(path.rooms).toBe(2);
         expect(path.route.has(1)).toBe(true);
     });
 

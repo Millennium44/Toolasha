@@ -134,7 +134,8 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * @param {number} cols - Grid width
  * @returns {Object|null} { route: Set<number>, chests: Set<number>,
  *   chestBranch: Set<number> (rooms entered only to reach a chest), shrouds,
- *   torches, target } or null when there is no start/exit/route
+ *   torches (rooms entered, so not the shrouded ones), rooms (every room on the route, shrouded or not),
+ *   target } or null when there is no start/exit/route
  */
 export function computeLabyrinthPath(tiles, cols) {
     const target = tiles.findIndex((t) => t?.isExit && !t.cleared);
@@ -406,13 +407,16 @@ export function computeLabyrinthPath(tiles, cols) {
         pool = pool.filter((idx) => !routeSet.has(idx));
     }
 
+    // A torch is spent entering a room. A shroud clears the room without entering it, and cleared rooms are free
     let shrouds = 0;
     let torches = 0;
+    let rooms = 0;
     for (const idx of routeSet) {
         const t = tiles[idx];
         if (!t || t.cleared || t.isEntrance) continue;
-        torches++;
+        rooms++;
         if (t.needsShroud) shrouds++;
+        else torches++;
     }
 
     // Rooms the plan enters only to reach a chest — on the route but not on the
@@ -423,7 +427,7 @@ export function computeLabyrinthPath(tiles, cols) {
         if (!exitRoute.has(idx) && !tiles[idx]?.isTreasure) chestBranch.add(idx);
     }
 
-    return { route: routeSet, chests, chestBranch, shrouds, torches, target: targetIdx };
+    return { route: routeSet, chests, chestBranch, shrouds, torches, rooms, target: targetIdx };
 }
 
 /**

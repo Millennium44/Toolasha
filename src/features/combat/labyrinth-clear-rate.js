@@ -4916,8 +4916,8 @@ class LabyrinthClearRate {
             const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
             const unknownText = unknownCount ? ` · ${plural(unknownCount, 'unrevealed room')}` : '';
 
-            // Every room entered costs a torch, so the route length is the
-            // torch bill; shrouds are only the rooms it plans to skip.
+            // A room entered costs a torch; a shrouded one is cleared without entering, so it costs a shroud
+            // instead. The route's length is `rooms`, its torch bill `torches`.
             const supplies = this.getSupplyCounts();
             const torches = describeSupplyNeed(path.torches, supplies.torch, 'room', supplies.known);
             const shrouds = describeSupplyNeed(
@@ -4961,7 +4961,7 @@ class LabyrinthClearRate {
                 : '';
 
             this.setTileStatus(
-                `Path: ${plural(path.torches, 'room')}${walkedNote} · ${shrouds.text}${shroudNote} · ` +
+                `Path: ${plural(path.rooms, 'room')}${walkedNote} · ${shrouds.text}${shroudNote} · ` +
                     `${plural(path.chests.size, 'chest')}${unknownText}${splitNote}${torchNote}${unsimmedNote}`,
                 shrouds.over || torches.over || unsimmed > 0
             );
