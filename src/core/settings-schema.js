@@ -2565,7 +2565,7 @@ export const settingsGroups = {
                 type: 'checkboxWithButton',
                 buttonLabel: 'Defaults...',
                 default: true,
-                help: 'Adds scroll chips to gathering and production action panels. With none pressed, every figure is the real one; a pressed chip makes the speed, XP and profit figures show hypothetical results as if that scroll were active (the scroll itself is never used). Configure default scrolls with the button; override per-loadout from the Loadouts panel.',
+                help: 'Adds scroll chips to gathering and production action panels. A chip you press makes the speed, XP and profit figures show hypothetical results as if that scroll were active (the scroll itself is never used). With no scrolls chosen every figure is the real one; scrolls already chosen with the Defaults button or in the Loadouts panel apply as soon as this is on.',
             },
             xpTracker: {
                 id: 'xpTracker',

@@ -14,6 +14,7 @@ const game = vi.hoisted(() => ({
     characterItems: null,
     planner: null,
     itemsListeners: [],
+    settingListeners: [],
     saved: {},
     personalBuffTypeDetailMap: {
         '/personal_buff_types/efficiency': {
@@ -31,6 +32,12 @@ vi.mock('../../core/config.js', () => ({
     default: {
         COLOR_ACCENT: '#0ff',
         getSetting: (key) => (key in game ? game[key] : false),
+        onSettingChange: (key, callback) => {
+            game.settingListeners.push([key, callback]);
+            return () => {
+                game.settingListeners = game.settingListeners.filter(([, c]) => c !== callback);
+            };
+        },
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -110,6 +117,7 @@ beforeEach(async () => {
     game.characterItems = [stack(GOURMET_ITEM, 6)];
     game.planner = fakePlanner();
     game.itemsListeners = [];
+    game.settingListeners = [];
     game.saved = {};
     scrollSimulator.scrollsByLoadout = {};
     scrollSimulator.initialized = false;
@@ -320,6 +328,39 @@ describe('scroll chips: Plan', () => {
 
         expect(planButton(element).disabled).toBe(false);
         element.remove();
+    });
+
+    test('Plan follows the planner setting: it appears when the planner is switched on and goes when it is off', () => {
+        vi.useFakeTimers();
+        game.scrollPlanner = false;
+        game.planner = fakePlanner({ isRunning: () => false });
+        const { element } = build();
+        document.body.appendChild(element);
+        expect(planButton(element).style.display).toBe('none');
+        expect(game.settingListeners.map(([key]) => key)).toEqual(['scrollPlanner']);
+
+        // The setting flips first; the planner module starts a moment later
+        game.scrollPlanner = true;
+        game.settingListeners.forEach(([, callback]) => callback(true));
+        expect(planButton(element).style.display).toBe('none');
+        game.planner = fakePlanner();
+        vi.advanceTimersByTime(400);
+        expect(planButton(element).style.display).toBe('inline-flex');
+
+        game.scrollPlanner = false;
+        game.settingListeners.forEach(([, callback]) => callback(false));
+        expect(planButton(element).style.display).toBe('none');
+        vi.useRealTimers();
+    });
+
+    test('the setting listener goes with the last row', () => {
+        const { element, dispose } = build();
+        document.body.appendChild(element);
+        expect(game.settingListeners).toHaveLength(1);
+
+        dispose();
+
+        expect(game.settingListeners).toHaveLength(0);
     });
 
     test('a planner that went away since the draw: pressing Plan hides it instead of failing', () => {

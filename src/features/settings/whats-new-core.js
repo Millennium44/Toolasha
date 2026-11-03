@@ -115,8 +115,9 @@ export function conservativeOverrides(newIds, lookup) {
  * one more look after a change that makes them more useful. Each is offered once, in the update
  * popup, with its live switch, and is never switched on for anyone.
  *
- * - `simulateScrollEffects`: the scroll chips now sit on every action panel, and the simulation
- *   starts with nothing selected, so turning it on changes no figure until a chip is pressed.
+ * - `simulateScrollEffects`: the scroll chips now sit on every action panel. A new player starts with
+ *   nothing selected, but a player who chose scrolls in Defaults... or the Loadouts panel while it was
+ *   off has them applied the moment it is switched on, so the popup says how many are chosen.
  *
  * Not `newSettingIds`: those were never shown. These were, and nothing about them is new. Not
  * `conservativeOverrides` either, which switches things off; nothing here changes a value.

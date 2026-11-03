@@ -48,7 +48,7 @@ import { pricingRowsLocked } from './iron-cow-mode.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { openSettings } from '../ui/command-palette.js';
 import { askChoice } from '../../utils/choice-dialog.js';
-import { toolashaRoot } from '../../utils/bundle-bridge.js';
+import { scrollSimulator, toolashaRoot } from '../../utils/bundle-bridge.js';
 import { filterChangelogSince } from './changelog-markers.js';
 import {
     createPricingSideSelect,
@@ -291,6 +291,22 @@ function changelogPage(parsed, page, pageSize) {
     return parts.join('\n\n');
 }
 
+/**
+ * What switching a re-offered setting on does for this particular player, when that depends on
+ * saved state. Without it the popup could say "nothing changes" to someone it changes things for.
+ * @param {string} id - A setting on `REOFFERED_SETTINGS`
+ * @returns {string|null}
+ */
+function reofferDetail(id) {
+    if (id !== 'simulateScrollEffects') return null;
+    const count = scrollSimulator()?.getSelectedScrollCount?.();
+    if (!count) return null;
+    return (
+        `${count} scroll${count === 1 ? '' : 's'} already selected: switching this on applies ` +
+        `${count === 1 ? 'it' : 'them'} to your figures right away.`
+    );
+}
+
 class WhatsNew {
     constructor() {
         this.panel = null;
@@ -490,7 +506,12 @@ class WhatsNew {
             // A re-offer alone (nothing new, same build) still speaks; a mark with nothing to show does not
             if (changed || fresh.length > 0 || reoffer.length > 0) {
                 this._pending = {
-                    headline: describeUpdate(stored, current),
+                    // Only a re-offer to speak of on a build that did not change: "New in <version>" would
+                    // claim an update that did not happen
+                    headline:
+                        !changed && fresh.length === 0
+                            ? 'Settings worth another look'
+                            : describeUpdate(stored, current),
                     forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
                     newIds: fresh,
                     reoffered: reoffer,
@@ -1015,14 +1036,29 @@ class WhatsNew {
 
         // Settings that are not new but may be worth switching on now. Their switches are live like the
         // rows above; showing them changes nothing.
-        const worthALook = reoffered.map((id) => this._settingRow(id, false)).filter(Boolean);
+        const worthALook = reoffered
+            .map((id) => {
+                const row = this._settingRow(id, false);
+                const detail = row ? reofferDetail(id) : null;
+                if (detail) {
+                    const line = document.createElement('div');
+                    line.className = 'toolasha-whats-new-reoffer-detail';
+                    line.textContent = detail;
+                    Object.assign(line.style, { fontSize: '11px', color: '#ffa500', marginTop: '2px' });
+                    row.firstElementChild?.appendChild(line);
+                }
+                return row;
+            })
+            .filter(Boolean);
         if (worthALook.length > 0) {
             const section = document.createElement('div');
             section.className = 'toolasha-whats-new-reoffered';
             section.style.marginTop = newIds.length > 0 ? '10px' : '0';
             section.innerHTML = `<div style="font-weight:700; color:${COLORS.accent}; margin-bottom:2px;">Worth another look</div>`;
             const note = document.createElement('div');
-            note.textContent = 'Not new, and still off. Nothing was changed for you; switch one on to try it.';
+            note.textContent =
+                'Not new, and still off. Nothing was changed for you; switch one on to try it. ' +
+                'Anything already chosen for it applies as soon as it is on.';
             Object.assign(note.style, { fontSize: '11px', color: COLORS.dim, marginBottom: '6px' });
             section.appendChild(note);
             for (const row of worthALook) section.appendChild(row);

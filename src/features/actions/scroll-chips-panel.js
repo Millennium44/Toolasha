@@ -32,8 +32,18 @@ import { buildScrollChips, SCROLL_CHIPS_CLASS, SIMULATED_ACTION_TYPES } from './
 /** How long a panel must be quiet before it is re-checked */
 const RECHECK_DELAY_MS = 100;
 
-/** Markers of the blocks `quick-input-buttons.js` inserts after the quantity field */
-const TOOLASHA_BLOCK_SELECTOR = '.mwi-collapsible-section, .mwi-quick-input-btn';
+/**
+ * Markers of the blocks `quick-input-buttons.js` inserts after the quantity field: its sections, its
+ * buttons, and the container that holds the "Do ... times" rows (which can be empty, so it is
+ * recognized by its own class as well as by what is in it).
+ */
+const TOOLASHA_BLOCK_SELECTOR = '.mwi-collapsible-section, .mwi-quick-input-btn, .mwi-quick-input-rows';
+
+/**
+ * The profit section is also a `.mwi-collapsible-section`, but it belongs below the chips: the row
+ * sits above it, directly under Level Progress, so it never lands under an expanded breakdown.
+ */
+const PROFIT_SELECTOR = '[data-mwi-profit-display]';
 
 const timers = createTimerRegistry();
 
@@ -50,37 +60,59 @@ const panels = new Map();
 let unsubscribePanels = null;
 
 /**
- * The element the game's quantity field sits in; Toolasha's sections go right after it.
- * Found the way `quick-input-buttons.js` finds it, so both agree where the block starts.
+ * The element the game's quantity field sits in; Toolasha's sections go right after it. Only the
+ * game's own Repeat box counts: the Current Action tab has none (see the "no Repeat box" branch in
+ * `profit-display.js`), and any other number field on the panel (the crafting plan's gold per hour)
+ * would anchor the row to the wrong place.
  * @param {HTMLElement} panel
  * @returns {HTMLElement|null}
  */
 function findInputContainer(panel) {
-    const input =
-        panel.querySelector('[class*="maxActionCountInput"] input') || panel.querySelector('input[type="number"]');
+    const input = panel.querySelector('[class*="maxActionCountInput"] input');
     return input?.parentNode?.parentNode?.parentNode || null;
 }
 
 function isToolashaBlock(element) {
+    if (element.matches?.(PROFIT_SELECTOR)) return false;
     return element.matches?.(TOOLASHA_BLOCK_SELECTOR) || Boolean(element.querySelector?.('.mwi-quick-input-btn'));
 }
 
 /**
- * Put the row right after the block of Toolasha sections that follows the quantity field. A row
- * already at the end of that block stays where it is, so a check that finds it in place writes
+ * Where the row goes, as the element it follows or precedes, or null when the panel has no place
+ * for it yet:
+ * 1. right after the block of Toolasha sections that follows the quantity field;
+ * 2. with no quantity field (the Current Action tab), right before the profit section;
+ * 3. failing both, right before the game's Start / Stop buttons.
+ * @param {HTMLElement} panel
+ * @param {HTMLElement} row
+ * @returns {{target: HTMLElement, position: 'afterend'|'beforebegin'}|null}
+ */
+function findSlot(panel, row) {
+    const inputContainer = findInputContainer(panel);
+    if (inputContainer) {
+        let anchor = inputContainer;
+        for (let next = inputContainer.nextElementSibling; next && next !== row; next = next.nextElementSibling) {
+            if (!isToolashaBlock(next)) break;
+            anchor = next;
+        }
+        return { target: anchor, position: 'afterend' };
+    }
+    const profit = panel.querySelector(PROFIT_SELECTOR);
+    if (profit) return { target: profit, position: 'beforebegin' };
+    const buttons = panel.querySelector('[class*="SkillActionDetail_buttonsContainer"]');
+    return buttons ? { target: buttons, position: 'beforebegin' } : null;
+}
+
+/**
+ * Put the row in its slot. A row already there stays, so a check that finds it in place writes
  * nothing.
- * @param {HTMLElement} inputContainer
+ * @param {{target: HTMLElement, position: 'afterend'|'beforebegin'}} slot
  * @param {HTMLElement} row
  */
-function placeRow(inputContainer, row) {
-    let anchor = inputContainer;
-    for (let next = inputContainer.nextElementSibling; next && next !== row; next = next.nextElementSibling) {
-        if (!isToolashaBlock(next)) break;
-        anchor = next;
-    }
-    if (row.previousElementSibling !== anchor || row.parentNode !== anchor.parentNode) {
-        anchor.insertAdjacentElement('afterend', row);
-    }
+function placeRow(slot, row) {
+    const { target, position } = slot;
+    const inPlace = position === 'afterend' ? row.previousElementSibling === target : row.nextElementSibling === target;
+    if (!inPlace) target.insertAdjacentElement(position, row);
 }
 
 /**
@@ -116,8 +148,8 @@ function sync(panel, { rebuild = false } = {}) {
         return;
     }
     const type = wantedType(panel);
-    const inputContainer = type ? findInputContainer(panel) : null;
-    if (!type || !inputContainer) {
+    const slot = type ? findSlot(panel, state.chips?.element ?? null) : null;
+    if (!type || !slot) {
         if (state.chips) removeRow(state);
         return;
     }
@@ -134,7 +166,7 @@ function sync(panel, { rebuild = false } = {}) {
         state.chips = chips;
         state.type = type;
     }
-    placeRow(inputContainer, state.chips.element);
+    placeRow(findSlot(panel, state.chips.element) ?? slot, state.chips.element);
 }
 
 function schedule(panel) {

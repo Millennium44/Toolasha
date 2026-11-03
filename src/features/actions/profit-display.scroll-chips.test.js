@@ -43,7 +43,8 @@ vi.mock('../../core/data-manager.js', () => ({
         on: () => {},
         setScrollSimulation: (type, set) => game.armed.push([...set]),
         clearScrollSimulation: () => {},
-        isBuffBeingSimulated: () => false,
+        // True for what the last call to setScrollSimulation armed, as the real data manager does
+        isBuffBeingSimulated: (type, buff) => (game.armed.at(-1) ?? []).includes(buff),
     },
 }));
 
@@ -199,6 +200,52 @@ describe('the gathering profit section follows the scroll selection', () => {
 
         await vi.waitFor(() => expect(calculateGatheringProfitMock.mock.calls.length).toBe(callsBefore + 1));
         expect(game.armed.at(-1)).toEqual([]);
+    });
+
+    test('a panel with no Repeat box and a saved selection says in the section that the profit is simulated', async () => {
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+
+        const note = panel.querySelector('#mwi-foraging-profit .mwi-scroll-simulated-note');
+        expect(note.textContent).toBe('Simulated, not active: Efficiency scroll');
+        // Shown with the section collapsed: it is a sibling of the header, not inside the hidden content
+        expect(note.closest('.mwi-section-content')).toBeNull();
+        expect(panel.querySelector('#mwi-foraging-profit .mwi-section-content').contains(note)).toBe(false);
+    });
+
+    test('no note with nothing selected, or with simulation off', async () => {
+        const panel = makePanel();
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(panel.querySelector('.mwi-scroll-simulated-note')).toBeNull();
+
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
+        game.values.simulateScrollEffects = false;
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(panel.querySelector('.mwi-scroll-simulated-note')).toBeNull();
+    });
+
+    test('the note goes when the selection is cleared, and is never stacked by redraws', async () => {
+        await scrollSimulator.saveScrollsForLoadout(null, [EFF]);
+        const panel = makePanel();
+        for (let i = 0; i < 3; i++) await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+        expect(panel.querySelectorAll('.mwi-scroll-simulated-note')).toHaveLength(1);
+
+        await scrollSimulator.saveScrollsForLoadout(null, []);
+        await vi.waitFor(() => expect(panel.querySelector('.mwi-scroll-simulated-note')).toBeNull());
+    });
+
+    test('the profit section goes after the chips row when the row sits in the run of sections', async () => {
+        const panel = makePanel();
+        const level = document.createElement('div');
+        level.className = 'mwi-collapsible-section';
+        const chips = document.createElement('div');
+        chips.className = 'mwi-scroll-chips';
+        panel.append(level, chips);
+
+        await displayGatheringProfit(panel, '/actions/foraging/map', '.drop-table');
+
+        expect(chips.nextElementSibling?.id).toBe('mwi-foraging-profit');
     });
 
     test('re-rendering does not stack listeners: one selection change recalculates once', async () => {

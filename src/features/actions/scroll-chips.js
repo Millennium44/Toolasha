@@ -29,6 +29,9 @@ import {
 
 export const SCROLL_CHIPS_CLASS = 'mwi-scroll-chips';
 
+/** How long after the planner's setting changes its module has certainly started or stopped */
+const PLANNER_SETTLE_MS = 300;
+
 /**
  * The action types whose panel figures take part in the simulation: the profit display and the
  * speed and XP figures arm it for the gathering and production skills. A chip anywhere else would
@@ -60,6 +63,27 @@ export function getApplicableScrollBuffs(actionTypeHrid) {
         if (typeHrid && detail.usableInActionTypeMap?.[actionTypeHrid]) applicable.add(typeHrid);
     }
     return SCROLL_BUFF_ORDER.filter((hrid) => applicable.has(hrid));
+}
+
+/**
+ * A scroll's short name ("Efficiency"), the way a chip shows it.
+ * @param {string} buffTypeHrid
+ * @returns {string}
+ */
+export function shortScrollName(buffTypeHrid) {
+    return (SCROLL_BUFF_LABELS[buffTypeHrid] ?? buffTypeHrid).replace(/^Scroll of /, '').replace(/ \(.*\)$/, '');
+}
+
+/**
+ * The scrolls a figure drawn for this action type is simulating right now: armed, and better than
+ * what is really active. Meant to be called while the simulation is armed (during a calculation).
+ * @param {string} actionTypeHrid
+ * @returns {string[]} Short names, in chip order
+ */
+export function getSimulatedScrollNames(actionTypeHrid) {
+    return SCROLL_BUFF_ORDER.filter((hrid) => dataManager.isBuffBeingSimulated?.(actionTypeHrid, hrid)).map(
+        shortScrollName
+    );
 }
 
 /**
@@ -192,17 +216,40 @@ function watchSelection(row, redraw) {
 }
 
 /**
- * Rows whose owned counts follow the inventory, held weakly like the selection watchers: one
- * `items_updated` listener on the data manager while any row is live, none otherwise.
+ * Rows whose owned counts (and Plan control) follow the inventory and the planner, held weakly
+ * like the selection watchers: one `items_updated` listener on the data manager and one
+ * `scrollPlanner` setting listener while any row is live, none otherwise.
  */
 const ownedRows = new Set();
 const ownedRefreshers = new WeakMap();
 let itemsListener = null;
+let plannerSettingUndo = null;
+let plannerSettleTimer = null;
 
 function stopItemsListener() {
-    if (!itemsListener) return;
-    dataManager.off?.('items_updated', itemsListener);
-    itemsListener = null;
+    if (itemsListener) {
+        dataManager.off?.('items_updated', itemsListener);
+        itemsListener = null;
+    }
+    plannerSettingUndo?.();
+    plannerSettingUndo = null;
+    if (plannerSettleTimer !== null) {
+        clearTimeout(plannerSettleTimer);
+        plannerSettleTimer = null;
+    }
+}
+
+/**
+ * The planner's setting changed. The planner itself starts or stops a moment later (the registry
+ * does it after the change), so the Plan controls are repainted now and once more after that.
+ */
+function onPlannerSettingChanged() {
+    onItemsChanged();
+    if (plannerSettleTimer !== null) clearTimeout(plannerSettleTimer);
+    plannerSettleTimer = setTimeout(() => {
+        plannerSettleTimer = null;
+        onItemsChanged();
+    }, PLANNER_SETTLE_MS);
 }
 
 function onItemsChanged() {
@@ -227,6 +274,7 @@ function watchOwned(row, refresh) {
     if (!itemsListener) {
         itemsListener = onItemsChanged;
         dataManager.on?.('items_updated', itemsListener);
+        plannerSettingUndo = config.onSettingChange?.('scrollPlanner', onPlannerSettingChanged) ?? null;
     }
     const ref = new WeakRef(row);
     ownedRows.add(ref);
@@ -310,10 +358,7 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = itemsSp
         if (spriteUrl && itemSuffix) {
             chip.innerHTML = `<svg width="14" height="14"><use href="${spriteUrl}#${itemSuffix}"></use></svg>`;
         }
-        const name = (SCROLL_BUFF_LABELS[buffTypeHrid] ?? buffTypeHrid)
-            .replace(/^Scroll of /, '')
-            .replace(/ \(.*\)$/, '');
-        chip.appendChild(document.createTextNode(name));
+        chip.appendChild(document.createTextNode(shortScrollName(buffTypeHrid)));
         const ownedEl = document.createElement('span');
         ownedEl.className = 'mwi-scroll-chip-owned';
         ownedEl.style.cssText = 'color:#aaa;';

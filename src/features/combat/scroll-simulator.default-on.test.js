@@ -98,6 +98,17 @@ describe('simulation on, nothing selected', () => {
         expect(scrollSimulator.getScrollSetForActionType(BREWING)).toEqual(new Set());
     });
 
+    test('how many scrolls are chosen is told even with the switch off, and not before they are loaded', async () => {
+        expect(scrollSimulator.getSelectedScrollCount()).toBe(0);
+        await scrollSimulator.saveScrollsForLoadout(null, ['/buff_types/efficiency', '/buff_types/gourmet']);
+        await scrollSimulator.saveScrollsForLoadout('Brew Set', ['/buff_types/gourmet', '/buff_types/wisdom']);
+        game.simulateScrollEffects = false;
+        expect(scrollSimulator.getSelectedScrollCount()).toBe(3);
+
+        scrollSimulator.initialized = false;
+        expect(scrollSimulator.getSelectedScrollCount()).toBeNull();
+    });
+
     test('pressing a chip arms exactly that scroll and no other', async () => {
         await scrollSimulator.saveScrollsForLoadout(null, ['/buff_types/gourmet']);
         dataManager.setScrollSimulation(BREWING, scrollSimulator.getScrollSetForActionType(BREWING));

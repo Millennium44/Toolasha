@@ -854,6 +854,42 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         expect(mocks.written).toEqual([]);
     });
 
+    test('a re-offer on an unchanged build does not claim a new version; a real update still says so', async () => {
+        mocks.stateRead = { found: true, value: state() };
+        await whatsNew.applyPolicy();
+        expect(whatsNew._pending.headline).toBe('Settings worth another look');
+        expect(whatsNew._pending.headline).not.toContain('New in');
+
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0' }) };
+        await whatsNew.applyPolicy();
+        expect(whatsNew._pending.headline).toBe('Updated 2.89.0 → 2.90.0');
+    });
+
+    test('the row says how many scrolls are already selected, since switching it on applies them at once', () => {
+        const base = { headline: 'x', forkChanged: false, newIds: [], reoffered: [ID], turnedOff: new Set() };
+        const detail = () => whatsNew.panel.querySelector('.toolasha-whats-new-reoffer-detail')?.textContent ?? null;
+
+        domWindow.Toolasha = { ...CURRENT, Combat: { scrollSimulator: { getSelectedScrollCount: () => 3 } } };
+        whatsNew._buildPanel(base);
+        expect(detail()).toBe('3 scrolls already selected: switching this on applies them to your figures right away.');
+
+        domWindow.Toolasha = { ...CURRENT, Combat: { scrollSimulator: { getSelectedScrollCount: () => 1 } } };
+        whatsNew._buildPanel(base);
+        expect(detail()).toBe('1 scroll already selected: switching this on applies it to your figures right away.');
+
+        // None chosen, not loaded yet, or the combat bundle absent: no claim either way
+        for (const count of [() => 0, () => null]) {
+            domWindow.Toolasha = { ...CURRENT, Combat: { scrollSimulator: { getSelectedScrollCount: count } } };
+            whatsNew._buildPanel(base);
+            expect(detail()).toBeNull();
+        }
+        domWindow.Toolasha = { ...CURRENT };
+        whatsNew._buildPanel(base);
+        expect(detail()).toBeNull();
+        expect(whatsNew.panel.textContent).toContain('Anything already chosen for it applies as soon as it is on');
+        whatsNew.close();
+    });
+
     test('the same build with nothing else new still speaks, once', async () => {
         mocks.stateRead = { found: true, value: state() };
         await whatsNew.applyPolicy();

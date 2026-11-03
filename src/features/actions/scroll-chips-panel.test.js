@@ -113,11 +113,30 @@ const section = (title) => {
     el.textContent = title;
     return el;
 };
+// As quick-input-buttons draws it now: a rows container, which a redraw removes with its buttons
 const quickInputs = () => {
     const el = document.createElement('div');
+    el.className = 'mwi-quick-input-rows';
     el.innerHTML = '<button class="mwi-quick-input-btn">1</button>';
     return el;
 };
+// The same container once its buttons are gone
+const emptyRows = () => {
+    const el = document.createElement('div');
+    el.className = 'mwi-quick-input-rows';
+    return el;
+};
+// The profit section is a collapsible section too, marked as the profit display's
+const profitSection = () => {
+    const el = section('profit');
+    el.setAttribute('data-mwi-profit-display', 'true');
+    return el;
+};
+function section_after(panel, text, el) {
+    [...panel.querySelectorAll('.mwi-collapsible-section')]
+        .find((s) => s.textContent === text)
+        .insertAdjacentElement('afterend', el);
+}
 const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 
 function boot() {
@@ -180,6 +199,39 @@ describe('scroll chips panel: where and when', () => {
         expect(full.querySelectorAll('.mwi-scroll-chips')).toHaveLength(1);
     });
 
+    test('the row goes above the profit section, directly under the last of the speed and level sections', () => {
+        const panel = makePanel(TAILORING);
+        for (const el of [profitSection(), section('level'), section('speed'), quickInputs()]) {
+            inputContainer(panel).insertAdjacentElement('afterend', el);
+        }
+        // input, rows, speed, level, profit
+        boot();
+
+        const row = rows(panel)[0];
+        expect(row.previousElementSibling.textContent).toBe('level');
+        expect(row.nextElementSibling.matches('[data-mwi-profit-display]')).toBe(true);
+    });
+
+    test('a rows container with no buttons in it still counts as part of the block', () => {
+        const panel = makePanel(TAILORING);
+        inputContainer(panel).insertAdjacentElement('afterend', emptyRows());
+        boot();
+
+        expect(rows(panel)[0].previousElementSibling.className).toBe('mwi-quick-input-rows');
+    });
+
+    test('a profit section redrawn after the row (placed after the sections, before the row) leaves the row above it', async () => {
+        const panel = makePanel(TAILORING);
+        inputContainer(panel).insertAdjacentElement('afterend', section('level'));
+        boot();
+        const profit = profitSection();
+        // quick-input-buttons puts a profit section back after the last section, which can be before the row
+        section_after(panel, 'level', profit);
+
+        await vi.waitFor(() => expect(rows(panel)[0].nextElementSibling).toBe(profit));
+        expect(rows(panel)[0].previousElementSibling.textContent).toBe('level');
+    });
+
     test('sections drawn after the row land above it: the row is moved to the end of the block', async () => {
         const panel = makePanel(TAILORING);
         boot();
@@ -238,10 +290,47 @@ describe('scroll chips panel: every ending', () => {
         expect(rows(panel)).toHaveLength(0);
     });
 
-    test('a panel with no quantity field yet gets its row when the field arrives', async () => {
+    test('a panel with no quantity field (the Current Action tab) anchors the row to the profit section', async () => {
         const panel = makePanel(TAILORING, { withInput: false });
         boot();
+        // Nothing but the game's buttons to hang it on: it goes right before them, not nowhere
+        expect(rows(panel)).toHaveLength(1);
+        expect(rows(panel)[0].nextElementSibling.className).toContain('SkillActionDetail_buttonsContainer');
+
+        const profit = profitSection();
+        panel.querySelector('.requirements').insertAdjacentElement('afterend', profit);
+
+        await vi.waitFor(() => expect(rows(panel)[0].nextElementSibling).toBe(profit));
+        expect(rows(panel)).toHaveLength(1);
+    });
+
+    test('no quantity field, no profit section and no buttons: no row, and one appears with the first anchor', async () => {
+        const panel = makePanel(TAILORING, { withInput: false });
+        panel.querySelector('[class*="buttonsContainer"]').remove();
+        boot();
         expect(rows(panel)).toHaveLength(0);
+
+        const profit = profitSection();
+        panel.appendChild(profit);
+
+        await vi.waitFor(() => expect(rows(panel)).toHaveLength(1));
+        expect(rows(panel)[0].nextElementSibling).toBe(profit);
+    });
+
+    test('an input that is not the Repeat box (a crafting plan number field) does not anchor the row', () => {
+        const panel = makePanel(TAILORING, { withInput: false });
+        panel.insertAdjacentHTML('afterbegin', '<div class="plan"><input type="number"></div>');
+        const profit = profitSection();
+        panel.querySelector('.requirements').insertAdjacentElement('afterend', profit);
+        boot();
+
+        expect(rows(panel)[0].nextElementSibling).toBe(profit);
+    });
+
+    test('a panel whose quantity field arrives later moves the row under the sections', async () => {
+        const panel = makePanel(TAILORING, { withInput: false });
+        boot();
+        expect(rows(panel)).toHaveLength(1);
 
         panel
             .querySelector('.requirements')
@@ -251,7 +340,8 @@ describe('scroll chips panel: every ending', () => {
                     '<input type="number"></div></div></div>'
             );
 
-        await vi.waitFor(() => expect(rows(panel)).toHaveLength(1));
+        await vi.waitFor(() => expect(inputContainer(panel).nextElementSibling).toBe(rows(panel)[0]));
+        expect(rows(panel)).toHaveLength(1);
     });
 
     test('an action that is not resolved yet gets its row once the game data is there', async () => {
