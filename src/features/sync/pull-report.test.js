@@ -11,6 +11,7 @@ import {
     describeSyncKey,
     redactSyncKey,
     REPORT_PRIVACY_LINE,
+    ROW_COUNTS_NOTE,
 } from './pull-report.js';
 import { memberSkillsStorageKey } from '../guild/guild-member-skills.js';
 import { sessionStorageKey } from '../guild/guild-trial-abilities.js';
@@ -227,6 +228,7 @@ describe('what the report says about each key the pull did something to', () => 
         const keys = keyLines(text);
         expect(keys).toHaveLength(10);
         expect(text).toContain('Keys (latched, merge failed, combined or written whole): 10');
+        expect(text).toContain(ROW_COUNTS_NOTE);
 
         const latched = keys.filter((line) => line.includes('LATCHED'));
         expect(latched).toHaveLength(7);
@@ -395,6 +397,7 @@ describe('what the report says about each key the pull did something to', () => 
         const text = buildPullReport(nothing, {});
         expect(text).toContain('Pull applied: no records changed.');
         expect(text).toContain('Keys (latched, merge failed, combined or written whole): 0');
+        expect(text).not.toContain(ROW_COUNTS_NOTE);
         expect(keyLines(text)).toHaveLength(0);
 
         const held = buildPullSummary({

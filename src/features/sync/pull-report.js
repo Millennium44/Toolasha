@@ -15,6 +15,10 @@ import { formatPullSummaryLine, formatPullStoreLine, longestStallDuring } from '
 /** The line the report opens with, so a reader knows what it holds */
 export const REPORT_PRIVACY_LINE = 'Contains key names and counts only, no saved values.';
 
+/** The merged count is read before the write's transaction, whose refold can add what another tab saved then */
+export const ROW_COUNTS_NOTE =
+    'Row counts are from the merge, before the write: a save in that moment can add to what is stored.';
+
 /** Keys named per list before the rest are counted */
 const MAX_KEYS = 400;
 
@@ -333,6 +337,7 @@ export function buildPullReport(summary, { version = null, host = null, lostTime
     // Latched keys first: they are what forced the reload; failed folds next, then the other folds
     keyed.sort((a, b) => a[3] - b[3]);
     lines.push('', `Keys (latched, merge failed, combined or written whole): ${keyed.length}`);
+    if (keyed.some((entry) => entry[4])) lines.push(ROW_COUNTS_NOTE);
     for (const [store, key, status, , rows] of keyed.slice(0, MAX_KEYS)) {
         lines.push(`  ${keyLine(store, key, status, rows)}`);
     }
