@@ -428,20 +428,23 @@ export function buildScrollChips({ actionTypeHrid, onChange, spriteUrl = itemsSp
             return;
         }
         const chip = event.target?.closest?.('button[data-buff]');
-        if (!chip || busy) return;
-        busy = true;
+        if (!chip) return;
         try {
             // Resolve again at click time: the loadout can have changed since the draw
             const current = sim.resolveSelection(actionTypeHrid);
             const next = new Set(current.set);
             if (next.has(chip.dataset.buff)) next.delete(chip.dataset.buff);
             else next.add(chip.dataset.buff);
-            const saved = await sim.saveScrollsForLoadout(current.loadoutName, [...next]);
-            if (saved) await onChange();
-        } catch (error) {
-            console.error('[ScrollChips] Toggle failed:', error);
-        } finally {
+            // Memory changes and the figures redraw before the save's first await, while the write itself can
+            // take seconds: `busy` covers only that part, so the chip follows at once and another press counts
+            busy = true;
+            const saving = sim.saveScrollsForLoadout(current.loadoutName, [...next]);
             busy = false;
+            refreshGroups();
+            if (await saving) await onChange();
+        } catch (error) {
+            busy = false;
+            console.error('[ScrollChips] Toggle failed:', error);
         }
     };
     row.addEventListener('click', onClick);

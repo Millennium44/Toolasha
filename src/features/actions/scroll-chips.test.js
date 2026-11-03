@@ -167,6 +167,34 @@ describe('scroll chips', () => {
         expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set());
     });
 
+    test('a chip follows the press at once and takes another one, however long the write takes', async () => {
+        const { default: storage } = await import('../../core/storage.js');
+        let finishWrite;
+        const write = vi.spyOn(storage, 'setJSON').mockImplementation(
+            () =>
+                new Promise((resolve) => {
+                    finishWrite = resolve;
+                })
+        );
+        const onChange = vi.fn();
+        const { element } = buildScrollChips({ actionTypeHrid: BREWING, onChange });
+        const gourmet = chip(element, '/buff_types/gourmet');
+
+        gourmet.click();
+        expect(gourmet.dataset.on).toBe('true');
+        expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set(['/buff_types/gourmet']));
+
+        // Still writing: a second press counts and the chip shows it
+        gourmet.click();
+        expect(gourmet.dataset.on).toBe('false');
+        expect(scrollSimulator.getScrollsForLoadout(null)).toEqual(new Set());
+        expect(onChange).not.toHaveBeenCalled();
+
+        write.mockRestore();
+        finishWrite();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
     test('a save the simulator refuses does not redraw', async () => {
         const onChange = vi.fn();
         const { element } = buildScrollChips({ actionTypeHrid: BREWING, onChange });

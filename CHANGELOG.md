@@ -6,6 +6,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+- A scroll chip shows your press at once and takes another straight away, instead of lagging behind the figures until its save finished.
 - A guild trial's measurement is now kept until someone opens Stats, even past a later fight, a reload or a character switch, and the trial board names fights still waiting.
 - The attendance ledger says when it could not be read instead of claiming nothing is recorded, and retries a finished trial it could not save.
 - Switching guilds keeps the new guild's trial start time.
