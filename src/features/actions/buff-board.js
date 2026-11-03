@@ -400,7 +400,6 @@ export const buffBoardPanel = createPanel({
     id: 'buffBoard',
     title: 'Buff Board',
     size: { width: 340, height: 460 },
-    accent: ACCENT,
     draw: (body) => {
         const shown = shownActionType();
         const running = runningActionType();
@@ -414,7 +413,7 @@ export const buffBoardPanel = createPanel({
 
         const sources = collectBuffs(shown);
         for (const source of sources) {
-            const card = panelCard(body, source.label, ACCENT);
+            const card = panelCard(body, source.label);
             card.dataset.buffSource = source.key;
             for (const buff of source.buffs) card.appendChild(buffRow(buff));
         }
@@ -438,7 +437,7 @@ export const buffBoardPanel = createPanel({
 function drawCombatDrinks(body) {
     const drinks = combatDrinkBuffs();
     if (drinks.length) {
-        const card = panelCard(body, 'Teas & coffees (from the live fight)', ACCENT);
+        const card = panelCard(body, 'Teas & coffees (from the live fight)');
         card.dataset.buffSource = 'consumable';
         for (const buff of drinks) card.appendChild(buffRow(buff));
         card.appendChild(
@@ -448,7 +447,7 @@ function drawCombatDrinks(body) {
     }
 
     const slotted = combatSlotNames();
-    const card = panelCard(body, 'Teas & coffees', ACCENT);
+    const card = panelCard(body, 'Teas & coffees');
     card.dataset.buffSource = 'consumable-missing';
     card.appendChild(
         note(
@@ -474,7 +473,7 @@ function drawSupply(body, actionTypeHrid) {
     }
     if (!drinks.length) return;
 
-    const card = panelCard(body, 'Drink supply (estimate)', ACCENT);
+    const card = panelCard(body, 'Drink supply (estimate)');
     card.dataset.buffSource = 'supply';
     for (const drink of drinks) {
         const line = document.createElement('div');

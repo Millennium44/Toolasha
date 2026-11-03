@@ -409,7 +409,6 @@ class OverbidPanel {
             id: PANEL_ID,
             title: 'Overbid table',
             size: { width: 400, height: 220 },
-            accent: ACCENT,
             draw: (body) => {
                 drawOverbidTable(body, this.rows, this.unknown, {
                     hiddenRows: this.hiddenRows,

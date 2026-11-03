@@ -44,6 +44,7 @@ import labyrinthClearRate from './labyrinth-clear-rate.js';
 import { captureFile, startCapture, lastFightRoomLevel } from './labyrinth-tick-capture.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
@@ -1129,10 +1130,10 @@ class MonsterStatCheckPanel {
                above is paid for, and resizable from the corner. */
             max-height: calc(${VIEWPORT_HEIGHT} * ${PANEL_MAX_HEIGHT_FRACTION});
             resize: both;
-            background: rgba(10, 10, 20, 0.96);
-            border: 2px solid ${config.COLOR_ACCENT};
-            border-radius: 8px;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.8);
+            background: ${GAME_FRAME.background};
+            border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius};
+            box-shadow: ${GAME_FRAME.boxShadow};
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #fff;
             user-select: none;
@@ -1146,14 +1147,13 @@ class MonsterStatCheckPanel {
             justify-content: space-between;
             gap: 8px;
             padding: 8px 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid ${GAME_COLORS.border};
             cursor: grab;
-            background: rgba(255,255,255,0.04);
             flex-shrink: 0;
         `;
 
         const title = document.createElement('span');
-        title.style.cssText = `font-size: 0.85rem; font-weight: 600; color: ${config.COLOR_ACCENT}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
+        title.style.cssText = `font-size: 0.85rem; font-weight: 600; color: ${GAME_COLORS.text}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
         title.textContent = 'Monster Stat Check';
 
         const controls = document.createElement('div');
@@ -1346,7 +1346,7 @@ class MonsterStatCheckPanel {
               : '';
         const flag = snapshot.hasMismatch ? '⚠ ' : '';
         this.titleEl.textContent = `${flag}${name || 'Monster'}${levelLabel}`;
-        this.titleEl.style.color = snapshot.hasMismatch ? '#e56b6b' : config.COLOR_ACCENT;
+        this.titleEl.style.color = snapshot.hasMismatch ? '#e56b6b' : GAME_COLORS.text;
 
         this._renderNav(body);
 

@@ -22,6 +22,7 @@ import {
     joinTitles,
 } from './alchemy-cost-record.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import {
     buildAlchemyBackupEnvelope,
@@ -1397,10 +1398,8 @@ class DecomposeHistoryViewer {
         if (this.hasAnyFilter()) {
             const clearFiltersBtn = document.createElement('button');
             clearFiltersBtn.textContent = 'Clear All Filters';
-            clearFiltersBtn.style.cssText = `
-                padding: 6px 12px; background: #e67e22; color: white;
-                border: none; border-radius: 4px; cursor: pointer;
-            `;
+            styleGameButton(clearFiltersBtn, 'quiet', true);
+            Object.assign(clearFiltersBtn.style, { height: 'auto', minHeight: '1.5rem' });
             clearFiltersBtn.addEventListener('click', () => this.clearAllFilters());
             rightGroup.appendChild(clearFiltersBtn);
         }
@@ -1408,10 +1407,7 @@ class DecomposeHistoryViewer {
         // Export button
         const exportBtn = document.createElement('button');
         exportBtn.textContent = 'Export';
-        exportBtn.style.cssText = `
-            padding: 6px 12px; background: #2563eb; color: white;
-            border: none; border-radius: 4px; cursor: pointer;
-        `;
+        styleGameButton(exportBtn, 'primary', true);
         exportBtn.addEventListener('click', () => this.exportHistory());
         rightGroup.appendChild(exportBtn);
 
@@ -1419,10 +1415,7 @@ class DecomposeHistoryViewer {
         const backupBtn = document.createElement('button');
         backupBtn.textContent = 'Backup';
         backupBtn.title = 'Download a lossless JSON backup of this history, for hand-editing and re-importing';
-        backupBtn.style.cssText = `
-            padding: 6px 12px; background: #2563eb; color: white;
-            border: none; border-radius: 4px; cursor: pointer;
-        `;
+        styleGameButton(backupBtn, 'primary', true);
         backupBtn.addEventListener('click', () => this.exportBackup());
         rightGroup.appendChild(backupBtn);
 
@@ -1431,16 +1424,14 @@ class DecomposeHistoryViewer {
         importBtn.textContent = 'Import';
         importBtn.title =
             'Restore sessions from a JSON backup — a session id already in your history is replaced, others are added';
-        importBtn.style.cssText = `
-            padding: 6px 12px; background: #16a34a; color: white;
-            border: none; border-radius: 4px; cursor: pointer;
-        `;
+        styleGameButton(importBtn, 'primary', true);
         importBtn.addEventListener('click', () => this.triggerImportBackup());
         rightGroup.appendChild(importBtn);
 
         // Clear History button
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear History';
+        // Red stays: this one throws the history away
         clearBtn.style.cssText = `
             padding: 6px 12px; background: #dc2626; color: white;
             border: none; border-radius: 4px; cursor: pointer;
@@ -1594,13 +1585,9 @@ class DecomposeHistoryViewer {
             const prevBtn = document.createElement('button');
             prevBtn.textContent = '\u25C0';
             prevBtn.disabled = this.currentPage === 1;
-            prevBtn.style.cssText = `
-                padding: 4px 12px;
-                background: ${this.currentPage === 1 ? '#333' : '#4a90e2'};
-                color: ${this.currentPage === 1 ? '#666' : 'white'};
-                border: none; border-radius: 4px;
-                cursor: ${this.currentPage === 1 ? 'default' : 'pointer'};
-            `;
+            styleGameButton(prevBtn, 'primary', true);
+            prevBtn.style.padding = '4px 12px';
+            if (this.currentPage === 1) Object.assign(prevBtn.style, { opacity: '0.5', cursor: 'default' });
             prevBtn.addEventListener('click', () => {
                 if (this.currentPage > 1) {
                     this.currentPage--;
@@ -1614,13 +1601,9 @@ class DecomposeHistoryViewer {
             const nextBtn = document.createElement('button');
             nextBtn.textContent = '\u25B6';
             nextBtn.disabled = this.currentPage >= totalPages;
-            nextBtn.style.cssText = `
-                padding: 4px 12px;
-                background: ${this.currentPage >= totalPages ? '#333' : '#4a90e2'};
-                color: ${this.currentPage >= totalPages ? '#666' : 'white'};
-                border: none; border-radius: 4px;
-                cursor: ${this.currentPage >= totalPages ? 'default' : 'pointer'};
-            `;
+            styleGameButton(nextBtn, 'primary', true);
+            nextBtn.style.padding = '4px 12px';
+            if (this.currentPage >= totalPages) Object.assign(nextBtn.style, { opacity: '0.5', cursor: 'default' });
             nextBtn.addEventListener('click', () => {
                 if (this.currentPage < totalPages) {
                     this.currentPage++;
@@ -1912,9 +1895,9 @@ class DecomposeHistoryViewer {
     createPopupBase(titleText) {
         const popup = document.createElement('div');
         popup.style.cssText = `
-            background: #2a2a2a; border: 1px solid #555;
-            border-radius: 4px; padding: 12px; min-width: 200px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            background: ${GAME_FRAME.background}; border: ${GAME_FRAME.border};
+            border-radius: ${GAME_FRAME.borderRadius}; padding: 12px; min-width: 200px;
+            box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
         const title = document.createElement('div');
@@ -1986,18 +1969,14 @@ class DecomposeHistoryViewer {
 
         const applyBtn = document.createElement('button');
         applyBtn.textContent = 'Apply';
-        applyBtn.style.cssText = `
-            flex: 1; padding: 6px; background: #4a90e2; color: white;
-            border: none; border-radius: 3px; cursor: pointer;
-        `;
+        styleGameButton(applyBtn, 'primary', true);
+        applyBtn.style.flex = '1';
         applyBtn.addEventListener('click', onApply);
 
         const clearBtn = document.createElement('button');
         clearBtn.textContent = 'Clear';
-        clearBtn.style.cssText = `
-            flex: 1; padding: 6px; background: #666; color: white;
-            border: none; border-radius: 3px; cursor: pointer;
-        `;
+        styleGameButton(clearBtn, 'quiet', true);
+        clearBtn.style.flex = '1';
         clearBtn.addEventListener('click', onClear);
 
         row.appendChild(applyBtn);

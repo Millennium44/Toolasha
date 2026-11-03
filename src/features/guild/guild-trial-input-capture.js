@@ -17,6 +17,8 @@ import {
     MAX_TRIAL_INPUT_BYTES,
 } from './guild-trial-simulation-inputs.js';
 import { createPanel, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
+
 import { openPlayerProfile } from '../../utils/profile-command.js';
 import { fetchLoadout, onLoadoutCaptured, VIEW_LOADOUT_CONTEXT } from '../../utils/view-loadout.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -269,8 +271,9 @@ function button(label, action, disabled = false) {
     element.type = 'button';
     element.textContent = label;
     element.disabled = disabled;
-    element.style.cssText =
-        'padding:5px 8px;margin:3px;border:1px solid #8fb4ff66;border-radius:5px;background:#222b3c;color:#e8ecf5;cursor:pointer;';
+    styleGameButton(element, 'quiet', true);
+    element.style.margin = '3px';
+    if (disabled) Object.assign(element.style, { cursor: 'default', opacity: '0.5' });
     element.addEventListener('click', action);
     return element;
 }
@@ -408,7 +411,7 @@ function draw(body) {
     if (selection && !trials.includes(selection)) selection = '';
     const rows = visibleRows(allRows);
     const controls = document.createElement('div');
-    controls.style.cssText = 'position:sticky;top:0;background:#10141e;padding-bottom:8px;z-index:1;';
+    controls.style.cssText = `position:sticky;top:0;background:${GAME_COLORS.background};padding-bottom:8px;z-index:1;`;
     const select = document.createElement('select');
     select.setAttribute('aria-label', 'Trial to capture');
     for (const hrid of ['', ...trials]) {

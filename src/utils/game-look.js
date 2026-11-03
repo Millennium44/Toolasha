@@ -48,6 +48,7 @@ export const BUTTON_LOOK = {
 export function styleGameButton(button, variant, compact = false) {
     const look = BUTTON_LOOK[variant];
     button._restBg = look.rest;
+    button._hoverBg = look.hover;
     Object.assign(button.style, {
         background: look.rest,
         border: 'none',
@@ -64,8 +65,14 @@ export function styleGameButton(button, variant, compact = false) {
         lineHeight: '1',
         boxSizing: 'border-box',
     });
-    button.addEventListener('mouseover', () => (button.style.background = look.hover));
-    button.addEventListener('mouseout', () => (button.style.background = button._restBg));
+    // Read at the time of the event, so a button promoted to another fill hovers to that fill's hover color,
+    // and a button a caller has handed back to a host stylesheet (`_noHover`) paints nothing inline
+    button.addEventListener('mouseover', () => {
+        if (!button._noHover) button.style.background = button._hoverBg;
+    });
+    button.addEventListener('mouseout', () => {
+        if (!button._noHover) button.style.background = button._restBg;
+    });
     return button;
 }
 
@@ -74,8 +81,30 @@ export function styleGameButton(button, variant, compact = false) {
  *
  * @param {HTMLButtonElement} button - A button from styleGameButton
  * @param {string} background - The new resting fill
+ * @param {string} [hover] - The fill under the pointer; left alone when omitted
  */
-export function setButtonRest(button, background) {
+export function setButtonRest(button, background, hover) {
     button._restBg = background;
+    if (hover !== undefined) button._hoverBg = hover;
     button.style.background = background;
+}
+
+/**
+ * Move a styled button to another variant's fills, rest and hover together.
+ *
+ * @param {HTMLButtonElement} button - A button from styleGameButton
+ * @param {'primary'|'quiet'|'icon'} variant - Which fill
+ */
+export function setButtonVariant(button, variant) {
+    const look = BUTTON_LOOK[variant];
+    setButtonRest(button, look.rest, look.hover);
+}
+
+/**
+ * Stop a styled button painting inline fills, for a button handed back to the host's own stylesheet.
+ *
+ * @param {HTMLButtonElement} button - A button from styleGameButton
+ */
+export function stopButtonHover(button) {
+    button._noHover = true;
 }

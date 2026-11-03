@@ -35,6 +35,7 @@ import dataManager from '../../core/data-manager.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
@@ -57,8 +58,6 @@ export const QUIET_RATIO = 0.25;
 
 /** Below this the week rate is too small for its collapse to mean anything */
 export const QUIET_MIN_WEEK_RATE = 1;
-
-const ACCENT = '#c0b0ff';
 
 /**
  * The contribution card's search box, as typed. Lives outside the panel's own
@@ -360,7 +359,7 @@ export function bindCaptureToGuild(capture, guildName) {
  */
 export function drawProfileCycler(body, capture = guildMemberSkills) {
     const state = capture.progress?.() || { logged: 0, total: 0, next: null, stale: 0 };
-    const card = panelCard(body, `Member skills (logged ${state.logged}/${state.total})`, ACCENT);
+    const card = panelCard(body, `Member skills (logged ${state.logged}/${state.total})`);
 
     if (!state.total) {
         card.appendChild(panelNote('No roster yet — open the guild page once.'));
@@ -380,9 +379,9 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         const battleButton = document.createElement('button');
         battleButton.className = 'mwi-battleinfo-cycler';
         battleButton.textContent = `Open ${unit.name}\u2019s battle info`;
-        battleButton.style.cssText =
-            'width:100%; margin:4px 0 0; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
-            `background:transparent; border:1px solid ${ACCENT}; color:${ACCENT};`;
+        styleGameButton(battleButton, 'quiet', true);
+        // A full-width button on a narrow panel: a long name wraps, so the height grows instead of clipping
+        Object.assign(battleButton.style, { width: '100%', margin: '4px 0 0', height: 'auto', minHeight: '1.5rem' });
         battleButton.title =
             'Opens one fighting member\u2019s Battle Info popup per click, so the game sends their combat ' +
             'stat sheet. Only on offer while a fight is on screen \u2014 a profile cannot carry a combat sheet.';
@@ -412,11 +411,9 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
     button.className = 'mwi-profile-cycler';
     button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
     button.disabled = !state.next;
-    button.style.cssText =
-        'width:100%; margin:4px 0; padding:4px 8px; border-radius:4px; font-size:11px;' +
-        `cursor:${state.next ? 'pointer' : 'default'}; background:transparent;` +
-        `border:1px solid ${state.next ? ACCENT : 'rgba(255,255,255,0.2)'};` +
-        `color:${state.next ? ACCENT : ROW_COLORS.dim};`;
+    styleGameButton(button, state.next ? 'primary' : 'quiet', true);
+    Object.assign(button.style, { width: '100%', margin: '4px 0', height: 'auto', minHeight: '1.5rem' });
+    if (!state.next) Object.assign(button.style, { cursor: 'default', opacity: '0.5' });
     button.title =
         'Opens one member\u2019s profile per click, so the game sends their skill levels and this can keep ' +
         'them. Nothing is opened automatically.\n' +
@@ -456,9 +453,8 @@ export function drawProfileCycler(body, capture = guildMemberSkills) {
         const redo = document.createElement('button');
         redo.className = 'mwi-profile-redo';
         redo.textContent = `⟲ Redo all ${state.logged}`;
-        redo.style.cssText =
-            'width:100%; margin:0 0 4px; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
-            `background:transparent; border:1px solid rgba(255,255,255,0.2); color:${ROW_COLORS.dim};`;
+        styleGameButton(redo, 'quiet', true);
+        Object.assign(redo.style, { width: '100%', margin: '0 0 4px', height: 'auto', minHeight: '1.5rem' });
         redo.title =
             'Marks every capture as due again, so the button above walks the roster once more. Nothing is ' +
             'thrown away — the levels already stored stand until a fresh profile replaces them.';
@@ -525,7 +521,7 @@ export function drawGuildSkillTotals(
         now,
     });
 
-    const card = panelCard(body, '', ACCENT);
+    const card = panelCard(body, '');
     const details = document.createElement('details');
     details.className = 'mwi-guild-skill-totals';
     details.open = skillTotalsState.open;
@@ -534,7 +530,7 @@ export function drawGuildSkillTotals(
     });
     const summary = document.createElement('summary');
     summary.textContent = 'Guild skill levels';
-    summary.style.cssText = `cursor:pointer; color:${ACCENT}; font-weight:bold;`;
+    summary.style.cssText = `cursor:pointer; color:${GAME_COLORS.text}; font-weight:bold;`;
     details.appendChild(summary);
     card.appendChild(details);
 
@@ -648,7 +644,7 @@ export function drawSeenLoadouts(
     memberNames = guildXPTracker.getMemberList().map((member) => member?.name || '')
 ) {
     const { kept: seen, hidden } = filterSeenToRoster(allSeen, memberNames);
-    const card = panelCard(body, `Seen loadouts (${seen.length})`, ACCENT);
+    const card = panelCard(body, `Seen loadouts (${seen.length})`);
 
     if (!seen.length) {
         card.appendChild(panelNote('No stat sheets seen yet.'));
@@ -733,10 +729,8 @@ function exportRosterCsvButton(rows) {
     const button = document.createElement('button');
     button.textContent = 'Export CSV';
     button.title = 'The contribution table as it stands, with raw numbers a spreadsheet can sort.';
-    button.style.cssText =
-        'align-self:flex-start; margin:2px 0 4px; background:rgba(255,255,255,0.08);' +
-        'border:1px solid rgba(255,255,255,0.18); color:#e8ecf5; border-radius:5px; padding:3px 8px;' +
-        'cursor:pointer; font-size:11px;';
+    styleGameButton(button, 'quiet', true);
+    Object.assign(button.style, { alignSelf: 'flex-start', margin: '2px 0 4px' });
     button.addEventListener('click', () => {
         const csv = toCsv(rosterCsvRows(rows), ROSTER_CSV_COLUMNS);
         downloadCsv(csvFilename('guild-roster-contribution'), csv);
@@ -748,7 +742,6 @@ export const guildRosterPanel = createPanel({
     id: 'guildRoster',
     title: 'Guild Roster',
     size: { width: 430, height: 470 },
-    accent: ACCENT,
     draw: (body) => {
         const snapshot = rosterSnapshot();
         if (!snapshot?.guildName) {
@@ -759,7 +752,7 @@ export const guildRosterPanel = createPanel({
 
         const { guildName, rows, level, guildRate, guildDayRate } = snapshot;
 
-        const guild = panelCard(body, guildName, ACCENT);
+        const guild = panelCard(body, guildName);
         if (level) {
             guild.appendChild(panelLine('Level', String(level.level), ROW_COLORS.gold));
             guild.appendChild(panelLine('Guild XP', xp(level.currentXP), ROW_COLORS.dim));
@@ -806,7 +799,7 @@ export const guildRosterPanel = createPanel({
 
         const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);
         const shown = filterRosterRows(contributing, rosterFilterText);
-        const card = panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`, ACCENT);
+        const card = panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`);
         if (!contributing.length) {
             card.appendChild(panelNote('No member has two samples in the last week yet.'));
         } else {

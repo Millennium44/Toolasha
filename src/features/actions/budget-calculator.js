@@ -16,6 +16,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { release, reserve } from '../../utils/inventory-reservations.js';
 import { upgradeLevelForPanel } from '../../utils/upgrade-slot.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
 
 const PRODUCTION_TYPES = [
     '/action_types/brewing',
@@ -184,15 +185,16 @@ function showBreakdownModal(budget, result) {
 
     const modal = document.createElement('div');
     modal.style.cssText = `
-        background: #1a1a1a;
-        border: 2px solid #3a3a3a;
-        border-radius: 8px;
+        background: ${GAME_FRAME.background};
+        border: ${GAME_FRAME.border};
+        border-radius: ${GAME_FRAME.borderRadius};
+        box-shadow: ${GAME_FRAME.boxShadow};
         padding: 20px;
         max-width: 680px;
         width: 95%;
         max-height: 85vh;
         overflow-y: auto;
-        color: #e0e0e0;
+        color: ${GAME_COLORS.text};
         font-size: 13px;
     `;
 
@@ -200,11 +202,11 @@ function showBreakdownModal(budget, result) {
     const header = document.createElement('div');
     header.style.cssText = `
         display: flex; justify-content: space-between; align-items: center;
-        margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #3a3a3a;
+        margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid ${GAME_COLORS.border};
     `;
     header.innerHTML = `
         <div>
-            <span style="font-size:15px; font-weight:600; color:#e0e0e0;">Budget Calculator</span>
+            <span style="font-size:15px; font-weight:600; color:${GAME_COLORS.text};">Budget Calculator</span>
             <span style="margin-left:10px; color:#aaa;">
                 Budget: <strong style="color:#fff;">${formatKMB(budget)}</strong>
                 &nbsp;→&nbsp;
@@ -212,7 +214,7 @@ function showBreakdownModal(budget, result) {
             </span>
         </div>
         <button id="mwi-budget-modal-close" style="
-            background:none; border:none; color:#aaa; font-size:24px; cursor:pointer; padding:0; line-height:1;
+            background:none; border:none; color:${GAME_COLORS.textDim}; font-size:24px; cursor:pointer; padding:0; line-height:1;
         ">×</button>
     `;
 
@@ -512,24 +514,8 @@ class BudgetCalculator {
 
         const calcBtn = document.createElement('button');
         calcBtn.textContent = 'Calculate';
-        calcBtn.style.cssText = `
-            background: linear-gradient(180deg, rgba(126,200,126,0.2) 0%, rgba(126,200,126,0.1) 100%);
-            color: #e0e0e0;
-            border: 1px solid rgba(126,200,126,0.4);
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            white-space: nowrap;
-        `;
-        calcBtn.addEventListener('mouseenter', () => {
-            calcBtn.style.background =
-                'linear-gradient(180deg, rgba(126,200,126,0.35) 0%, rgba(126,200,126,0.25) 100%)';
-        });
-        calcBtn.addEventListener('mouseleave', () => {
-            calcBtn.style.background = 'linear-gradient(180deg, rgba(126,200,126,0.2) 0%, rgba(126,200,126,0.1) 100%)';
-        });
+        styleGameButton(calcBtn, 'primary');
+        calcBtn.style.whiteSpace = 'nowrap';
 
         const detailsLink = document.createElement('span');
         detailsLink.title = 'View last breakdown';

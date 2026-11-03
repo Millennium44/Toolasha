@@ -25,6 +25,7 @@ import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 import { classTagIcon } from '../../utils/class-weapon.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
@@ -36,8 +37,6 @@ import {
     onLoadoutCaptured,
     VIEW_LOADOUT_CONTEXT,
 } from '../../utils/view-loadout.js';
-
-const ACCENT = '#a8d6a0';
 
 /**
  * Make an element open a player's profile on click.
@@ -74,11 +73,11 @@ const COLLAPSED_CARDS_KEY = 'guildTrialAbilities_collapsedCards';
  */
 function collapsibleCard(body, title, key) {
     const collapsed = collapsedCards.has(key);
-    const card = panelCard(body, '', ACCENT);
+    const card = panelCard(body, '');
     const heading = document.createElement('div');
     heading.textContent = `${collapsed ? '▸' : '▾'} ${title}`;
     Object.assign(heading.style, {
-        color: ACCENT,
+        color: GAME_COLORS.text,
         fontWeight: 'bold',
         marginBottom: '3px',
         cursor: 'pointer',
@@ -548,13 +547,18 @@ function playerChip(name, index, names, now) {
     chip.title = awaiting
         ? `${name}: Battle Info already asked for — waiting for the sheet. Askable again once the request times out.`
         : `Open ${name}'s Battle Info — one request per press, nothing automatic.`;
-    chip.style.cssText =
-        `background: rgba(255,255,255,${awaiting ? '0.03' : '0.08'}); ` +
-        `border: 1px solid ${awaiting ? 'rgba(255,255,255,0.12)' : `${ACCENT}66`}; ` +
-        `color: ${awaiting ? 'rgba(232,236,245,0.45)' : '#e8ecf5'}; ` +
-        'border-radius: 9px; padding: 1px 7px; font-size: 11px; line-height: 16px; ' +
-        `max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; ` +
-        `cursor: ${awaiting ? 'default' : 'pointer'};`;
+    styleGameButton(chip, 'quiet', true);
+    Object.assign(chip.style, {
+        height: 'auto',
+        borderRadius: '9px',
+        padding: '1px 7px',
+        lineHeight: '16px',
+        maxWidth: '120px',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    });
+    if (awaiting) Object.assign(chip.style, { opacity: '0.5', cursor: 'default' });
 
     chip.addEventListener('focus', () => {
         pendingChipFocus = { name, index };
@@ -638,7 +642,7 @@ function drawOutstandingChips(card, state, now = Date.now()) {
  * @param {Object} state - From `guildTrialAbilities.state()`
  */
 function drawHeader(body, state) {
-    const card = panelCard(body, headerLine(state), ACCENT);
+    const card = panelCard(body, headerLine(state));
 
     // Said first, because it reframes every claim below it: these are the
     // last trial's captures, kept viewable until the next trial replaces them
@@ -1298,10 +1302,16 @@ function fetchLoadoutButton(row) {
     button.title = hasId
         ? "Ask the game for this player's trial loadout — one request, sent by this click."
         : 'No character id known for this player yet — open their loadout once from the roster to capture it.';
-    button.style.cssText =
-        'margin-left: 6px; padding: 0 6px; font-size: 10px; line-height: 15px; border-radius: 8px; ' +
-        `background: rgba(255,255,255,${hasId ? '0.08' : '0.03'}); border: 1px solid rgba(255,255,255,0.18); ` +
-        `color: ${hasId ? '#e8ecf5' : 'rgba(232,236,245,0.4)'}; cursor: ${hasId ? 'pointer' : 'default'};`;
+    styleGameButton(button, 'quiet', true);
+    Object.assign(button.style, {
+        height: 'auto',
+        marginLeft: '6px',
+        padding: '0 6px',
+        fontSize: '10px',
+        lineHeight: '15px',
+        borderRadius: '8px',
+    });
+    if (!hasId) Object.assign(button.style, { opacity: '0.5', cursor: 'default' });
 
     button.addEventListener('click', async (event) => {
         event.stopPropagation();
@@ -1431,10 +1441,9 @@ function fetchNextRow(state) {
         ? `Ask the game for ${next.name}'s trial loadout — one request, sent by this click.`
         : 'Nobody outstanding has a known character id to fetch.';
     const active = Boolean(next) && !busy;
-    button.style.cssText =
-        'padding: 3px 8px; font-size: 11px; line-height: 15px; border-radius: 8px; ' +
-        `background: rgba(255,255,255,${active ? '0.08' : '0.03'}); border: 1px solid rgba(255,255,255,0.18); ` +
-        `color: ${active ? '#e8ecf5' : 'rgba(232,236,245,0.4)'}; cursor: ${active ? 'pointer' : 'default'};`;
+    styleGameButton(button, 'quiet', true);
+    Object.assign(button.style, { height: 'auto', padding: '3px 8px', lineHeight: '15px', borderRadius: '8px' });
+    if (!active) Object.assign(button.style, { opacity: '0.5', cursor: 'default' });
 
     button.addEventListener('click', async () => {
         if (busy || !next) return;
@@ -1625,9 +1634,7 @@ function controlButton(label, title, onClick) {
     const button = document.createElement('button');
     button.textContent = label;
     button.title = title;
-    button.style.cssText =
-        'background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); color: #e8ecf5; ' +
-        'border-radius: 5px; padding: 4px 8px; cursor: pointer; font-size: 12px;';
+    styleGameButton(button, 'quiet', true);
     button.addEventListener('click', onClick);
     return button;
 }
@@ -1748,7 +1755,7 @@ function drawTrialPicker(body, trials) {
                 guildTrialAbilitiesPanel.render();
             }
         );
-        if ((pretrialUi.hrid ?? null) === option.hrid) button.style.borderColor = ACCENT;
+        if ((pretrialUi.hrid ?? null) === option.hrid) setButtonVariant(button, 'primary');
         card.appendChild(button);
     }
 }
@@ -1806,7 +1813,6 @@ export const guildTrialAbilitiesPanel = createPanel({
     id: 'guildTrialAbilities',
     title: 'Trial Abilities',
     size: { width: 440, height: 520 },
-    accent: ACCENT,
     draw: (body) => {
         const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {};
         const trials = combatTrialsThisWeek(guildXPTracker);

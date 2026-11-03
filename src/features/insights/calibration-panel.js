@@ -42,8 +42,6 @@ import {
     DEFAULT_GAP_PERCENT,
 } from './calibration-math.js';
 
-const ACCENT = '#7fd4c1';
-
 /**
  * Which skill groups are showing their per-action breakdown.
  *
@@ -574,7 +572,7 @@ function drawBidSpread(card, groupRecords) {
  */
 function drawGroup(body, group, all) {
     const gap = group.medianDeviation === null ? null : signedPercent(group.medianDeviation, DEFAULT_GAP_PERCENT);
-    const card = panelCard(body, titleCase(group.actionType), group.flagged ? ROW_COLORS.bad : ACCENT);
+    const card = panelCard(body, titleCase(group.actionType));
 
     card.appendChild(panelLine('Predicted', perHour(group.predictedMean), ROW_COLORS.dim));
     card.appendChild(panelLine('Actual', perHour(group.actualMean), ROW_COLORS.gold));
@@ -619,7 +617,7 @@ function drawTrend(body, all) {
     const series = dailySeries(all, { days: 7 });
     if (series.length < 2) return;
 
-    const card = panelCard(body, 'Last 7 days', ACCENT);
+    const card = panelCard(body, 'Last 7 days');
     for (const day of series) {
         const gap = day.deviation === null ? null : signedPercent(day.deviation, DEFAULT_GAP_PERCENT);
         card.appendChild(
@@ -638,7 +636,7 @@ function drawTrend(body, all) {
  * @param {Array<Object>} all - Every record
  */
 function drawRecent(body, all) {
-    const card = panelCard(body, 'Recent runs', ACCENT);
+    const card = panelCard(body, 'Recent runs');
     const recent = [...all].sort((a, b) => b.t - a.t).slice(0, 12);
 
     for (const record of recent) {
@@ -677,7 +675,7 @@ function drawRecent(body, all) {
 function drawEnhancing(body, observations) {
     if (!observations.length) return;
 
-    const card = panelCard(body, `Enhancing (${observations.length} runs)`, ACCENT);
+    const card = panelCard(body, `Enhancing (${observations.length} runs)`);
 
     const percentiles = observations.map((entry) => (1 - entry.tailProbability) * 100);
     const midPercentile = median(percentiles);
@@ -749,11 +747,7 @@ function drawAlchemy(body, summary) {
     for (const group of summary.kinds) {
         const decided = group.verdict !== 'too few attempts' && group.verdict !== 'unstamped';
         const off = group.verdict === 'sim too high' || group.verdict === 'sim too low';
-        const card = panelCard(
-            body,
-            `${titleCase(group.kind)} success (${group.attempts} attempts)`,
-            off ? ROW_COLORS.bad : ACCENT
-        );
+        const card = panelCard(body, `${titleCase(group.kind)} success (${group.attempts} attempts)`);
 
         card.appendChild(
             panelLine(
@@ -861,7 +855,6 @@ export const calibrationPanel = createPanel({
     id: 'predictionCalibration',
     title: 'Prediction Calibration',
     size: { width: 400, height: 460 },
-    accent: ACCENT,
     draw: (body) => {
         const all = records();
         const enhancing = enhancementRecords();
@@ -886,7 +879,7 @@ export const calibrationPanel = createPanel({
         if (all.length) {
             const summary = summarizeCalibration(all);
 
-            const overall = panelCard(body, `Overall (${summary.overall.samples} runs)`, ACCENT);
+            const overall = panelCard(body, `Overall (${summary.overall.samples} runs)`);
             overall.appendChild(panelLine('Predicted', perHour(summary.overall.predictedMean), ROW_COLORS.dim));
             overall.appendChild(panelLine('Actual', perHour(summary.overall.actualMean), ROW_COLORS.gold));
             const overallGap =

@@ -9,6 +9,7 @@ import dataManager from '../../core/data-manager.js';
 import { buildCharacterSheetLink } from './character-sheet.js';
 import { calculateCombatScore } from './score-calculator.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import { BUTTON_LOOK } from '../../utils/game-look.js';
 
 const PROFILE_MODAL_SELECTOR = '.SharableProfile_modal__2OmCQ';
 
@@ -309,12 +310,13 @@ class CharacterCardButton {
     }
 
     /**
-     * Refresh colors on existing button
+     * Put the existing button back to the game's blue. The accent color no longer paints it, but a
+     * change of accent still lands here, and must not leave the button in a color it never had.
      */
     refresh() {
         const button = document.getElementById('mwi-character-card-btn');
         if (button) {
-            button.style.background = config.COLOR_ACCENT;
+            button.style.background = BUTTON_LOOK.primary.rest;
         }
     }
 

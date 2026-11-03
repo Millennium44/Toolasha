@@ -51,15 +51,13 @@ import { formatWithSeparator } from '../../utils/formatters.js';
 import { itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
+import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 
 /** The convention behind every figure in the panel, said once at the top */
 const HEADER_NOTE = 'Score = what this kit would cost to buy, in millions of coins.';
 
 /** How many lines the "biggest contributors" summary lists */
 const TOP_CONTRIBUTORS = 5;
-
-const COMBAT_ACCENT = '#8fb4ff';
-const SKILLER_ACCENT = '#c9a0ff';
 
 /** The header when the panel is showing your own build */
 const OWN_TITLE = 'Build Score';
@@ -327,15 +325,7 @@ function copyBar(text) {
     const copyBtn = document.createElement('button');
     copyBtn.textContent = '⧉';
     copyBtn.title = 'Copy this score as plain text — the figure people compare builds with.';
-    Object.assign(copyBtn.style, {
-        background: 'rgba(255, 255, 255, 0.06)',
-        color: ROW_COLORS.dim,
-        border: '1px solid rgba(255, 255, 255, 0.15)',
-        borderRadius: '4px',
-        padding: '2px 6px',
-        fontSize: '11px',
-        cursor: 'pointer',
-    });
+    styleGameButton(copyBtn, 'quiet', true);
     copyBtn.addEventListener('click', () => {
         if (!navigator.clipboard) return;
         navigator.clipboard
@@ -356,11 +346,10 @@ function copyBar(text) {
  * @param {HTMLElement} body - Where it goes
  * @param {string} title - What score this is
  * @param {number} total - The figure
- * @param {string} accent - Ink
  * @returns {HTMLElement} The card, to add sections to
  */
-function scoreCard(body, title, total, accent) {
-    const card = panelCard(body, undefined, accent);
+function scoreCard(body, title, total) {
+    const card = panelCard(body);
 
     const header = document.createElement('div');
     Object.assign(header.style, {
@@ -373,7 +362,7 @@ function scoreCard(body, title, total, accent) {
 
     const label = document.createElement('span');
     label.textContent = title;
-    Object.assign(label.style, { color: accent, flex: '1' });
+    Object.assign(label.style, { color: GAME_COLORS.text, flex: '1' });
 
     const value = document.createElement('span');
     value.textContent = total.toFixed(1);
@@ -521,7 +510,7 @@ function drawContributors(body, score) {
     const top = topContributors(score);
     if (!top.length) return;
 
-    const card = panelCard(body, `Biggest ${top.length} contributors`, ROW_COLORS.gold);
+    const card = panelCard(body, `Biggest ${top.length} contributors`);
     for (const entry of top) card.appendChild(breakdownLine(entry, entry.from));
 }
 
@@ -532,7 +521,6 @@ export const buildScorePanel = createPanel({
     id: 'buildScore',
     title: OWN_TITLE,
     size: { width: 380, height: 480 },
-    accent: COMBAT_ACCENT,
     draw: (body) => {
         const note = panelNote(HEADER_NOTE);
         note.title =
@@ -549,10 +537,10 @@ export const buildScorePanel = createPanel({
 
         body.appendChild(copyBar(buildScoreSummaryText(score, scoreOwner)));
 
-        const combat = scoreCard(body, 'Combat Score', score.total || 0, COMBAT_ACCENT);
+        const combat = scoreCard(body, 'Combat Score', score.total || 0);
         for (const definition of combatSections(score)) contributionSection(combat, definition);
 
-        const skiller = scoreCard(body, 'Skiller Score', score.skillerTotal || 0, SKILLER_ACCENT);
+        const skiller = scoreCard(body, 'Skiller Score', score.skillerTotal || 0);
         for (const definition of skillerSections(score)) contributionSection(skiller, definition);
 
         drawContributors(body, score);
