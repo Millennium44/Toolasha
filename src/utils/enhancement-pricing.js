@@ -32,7 +32,7 @@ import marketAPI from '../api/marketplace.js';
 import { getItemPrice, getItemPrices } from './market-data.js';
 import { getArtisanBonus } from './artisan-bonus.js';
 import { findProducingAction } from './production-index.js';
-import { leavesOutCapeBase } from './untradable-cape.js';
+import { baseCapeIsPlainZero, getCapeBaseValue, getCapeBaseValueMode, isUntradableCape } from './untradable-cape.js';
 import { getMarketValuesEpoch } from './market-values.js';
 import { taskShopTokenPrice } from './task-shop-value.js';
 import { getCustomPriceVersion } from '../features/settings/custom-price-overrides.js';
@@ -290,9 +290,8 @@ export function getProductionCostDetailed(itemHrid, mode = 'ask') {
     // Game data not loaded yet: nothing can be priced. Unpriced (cost 0, flagged partial), never a
     // throw, and not cached, so the answer is recomputed once the data arrives
     if (!dataManager.getInitClientData()) return { cost: 0, partial: true };
-    // The cape setting is not part of the key: a refined cape's bill leaves its base cape out (see
-    // leavesOutCapeBase), and an unrefined cape has no recipe to price
-    const cacheKey = `${itemHrid}|${mode}`;
+    // The cape setting is part of the key: a refined cape's upgrade item is priced by it
+    const cacheKey = `${itemHrid}|${mode}|${getCapeBaseValueMode()}`;
     const feedVersion = _feedVersion();
     const buffVersion = _buffVersion();
     const customVersion = _customVersion();
@@ -393,7 +392,7 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
 
     // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
     // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
-    if (action.upgradeItemHrid && !leavesOutCapeBase(itemHrid, action.upgradeItemHrid)) {
+    if (action.upgradeItemHrid) {
         const upgradeMarketPrice = getItemPrice(action.upgradeItemHrid, { mode, side: 'buy' }) || 0;
         const upgradeCraft = getProductionCostDetailed(action.upgradeItemHrid, mode);
         const upgradeCraftPrice = upgradeCraft.cost;
@@ -406,7 +405,12 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
             if (!upgradeMarketPrice && upgradeCraft.partial) partial = true;
         }
         if (upgradeCraft.volatile) volatile = true;
-        if (!(upgradePrice > 0)) partial = true;
+        // An untradable cape has no market and no recipe: the base of a refined one is what the cape
+        // setting assumes. Nothing is the player's own choice, a complete bill; a mirror with no price is not
+        if (!(upgradePrice > 0) && isUntradableCape(action.upgradeItemHrid)) {
+            upgradePrice = getCapeBaseValue({ mode });
+        }
+        if (!(upgradePrice > 0) && !baseCapeIsPlainZero(itemHrid, action.upgradeItemHrid)) partial = true;
         totalPrice += upgradePrice;
     }
 

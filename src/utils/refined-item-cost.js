@@ -283,9 +283,10 @@ export function resolveRefinedItemCost(itemHrid, options = {}) {
  *   refinement craft cost the way a real quote does — see `craftPreferredQuoteAt`.
  * @param {Function} [options.capeValue] - `getUntradableCapeValue` (features/enhancement/untradable-cape-value.js),
  *   injected so this util stays free of the enhancement tree. An untradable cape the market does not price
- *   is valued through it, the same figure every other panel shows. A refined cape is its refinement stones
- *   alone whatever the cape setting says (an unpriced stone leaves it unpriced); on the "base cape counts as
- *   nothing" setting an unrefined +0 cape costs a plain 0 and the basis names the setting. A cape the
+ *   is valued through it, the same figure every other panel shows (the cape setting, plus the refinement
+ *   bill and enhancing cost where it has them). On the "base cape counts as nothing" setting that value is
+ *   always a floor, so a +0 refined cape falls to its refinement bill (an unpriced material still leaves it
+ *   unpriced) and an unrefined +0 cape costs a plain 0; the basis names the setting either way. A cape the
  *   setting does not explain stays unpriced.
  * @returns {{price: number, basis: string|null, unpriced: boolean}} Unit price and its basis
  */
@@ -298,8 +299,10 @@ export function priceInputWithRefinementFallback(itemHrid, marketPrice, options 
         return { price: marketPrice, basis: marketBasis, unpriced: false };
     }
 
-    // The cape setting valuing an unrefined cape at nothing is the player's own choice, not a missing price. A
-    // refined cape never reads the setting: capeValue prices it by its refinement stones alone.
+    // The cape setting valuing the base cape at nothing is the player's own choice, not a missing price. A cape
+    // value built on it comes back "partial" for that reason, and cannot tell it from a refinement material
+    // nothing prices. The refinement bill below can (it refuses an unpriced material), so on that setting a
+    // refined cape is costed by it, base cape left out as the player set, and the basis says so.
     const assumedZeroBase = untradableCape && getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO;
     let capeFloor = false;
 
@@ -315,14 +318,15 @@ export function priceInputWithRefinementFallback(itemHrid, marketPrice, options 
         }
     }
 
-    if (isRefinedItem(itemHrid) && enhancementLevel === 0 && !untradableCape) {
+    if (isRefinedItem(itemHrid) && enhancementLevel === 0 && (!untradableCape || (assumedZeroBase && capeFloor))) {
         try {
             const resolved = resolveRefinedItemCost(itemHrid, {
                 quoteAt: (level) => craftPreferredQuoteAt(itemHrid, level),
             });
             if (resolved && resolved.itemCost > 0) {
                 let basis = marketBasis;
-                if (resolved.source === 'craft') basis = 'refinement craft cost';
+                if (untradableCape) basis = 'refinement materials, base cape counted as nothing (cape setting)';
+                else if (resolved.source === 'craft') basis = 'refinement craft cost';
                 else if (resolved.source === 'enhanced') basis = `+${resolved.fallbackLevel} listing`;
                 return { price: resolved.itemCost, basis, unpriced: false };
             }

@@ -54,17 +54,21 @@ export function isRefinedCape(itemHrid) {
 }
 
 /**
- * Whether a recipe's upgrade item is left out of its bill: a refined (★) cape is valued by its refinement
- * stones alone. The base cape it upgrades is a cape the player owns, never bought, so it is not added at
- * the cape setting's value or at anything else, and a base of nothing does not make the figure partial.
- * The one rule every refined-cape price shares (the production bill, net worth's bill, and through them
- * the history viewers, Philo and the profit tables).
+ * Whether a recipe's base cape is plainly free by the player's setting: a refined (★) cape upgraded from an
+ * untradable cape, on the "nothing" setting. Then the bill is the refinement stones alone, a complete figure
+ * (the 0 is the player's choice, not a missing price), so neither bill flags it partial. On the mirror
+ * setting the base is one mirror price, and with no mirror price the bill is an unpriced floor. The one rule
+ * both bills (the production bill and net worth's) share.
  * @param {string} outputHrid - The item the recipe makes
  * @param {string} upgradeItemHrid - The recipe's upgrade item
- * @returns {boolean} True for a refined cape upgraded from an untradable cape
+ * @returns {boolean} True for a refined cape on the "nothing" setting
  */
-export function leavesOutCapeBase(outputHrid, upgradeItemHrid) {
-    return isRefinedCape(outputHrid) && isUntradableCape(upgradeItemHrid);
+export function baseCapeIsPlainZero(outputHrid, upgradeItemHrid) {
+    return (
+        getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO &&
+        isRefinedCape(outputHrid) &&
+        isUntradableCape(upgradeItemHrid)
+    );
 }
 
 /**

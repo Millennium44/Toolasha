@@ -437,17 +437,36 @@ describe('a refined untradable cape is its refinement stones alone', () => {
         game.prices['/items/mirror_of_protection:0'] = { ask: 7000, bid: 6000 };
     });
 
-    test('the cape setting changes nothing: stones plus the coin fee, not partial, base never added', async () => {
+    test('stones plus the base by the setting: zero is complete, mirror adds one mirror price', async () => {
         const { default: config } = await import('../core/config.js');
+        const costs = {};
         for (const mode of ['zero', 'mirror']) {
             const spy = vi
                 .spyOn(config, 'getSettingValue')
                 .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
             game.buffVersion++;
-            expect(getProductionCostDetailed(REFINED, 'ask')).toEqual({ cost: 1500, partial: false });
-            expect(getProductionCostDetailed(REFINED, 'bid').cost).toBe(1400);
+            costs[mode] = getProductionCostDetailed(REFINED, 'ask');
+            if (mode === 'mirror') expect(getProductionCostDetailed(REFINED, 'bid').cost).toBe(1400 + 6000);
             spy.mockRestore();
         }
+        expect(costs.zero).toEqual({ cost: 1500, partial: false });
+        expect(costs.mirror).toEqual({ cost: 1500 + 7000, partial: false });
+    });
+
+    test('a mirror setting with no mirror price is a flagged floor, zero is not', async () => {
+        const { default: config } = await import('../core/config.js');
+        delete game.prices['/items/mirror_of_protection:0'];
+        const results = {};
+        for (const mode of ['zero', 'mirror']) {
+            const spy = vi
+                .spyOn(config, 'getSettingValue')
+                .mockImplementation((key, fallback) => (key === 'untradableCapeBaseValue' ? mode : fallback));
+            game.buffVersion++;
+            results[mode] = getProductionCostDetailed(REFINED, 'ask');
+            spy.mockRestore();
+        }
+        expect(results.zero).toEqual({ cost: 1500, partial: false });
+        expect(results.mirror).toEqual({ cost: 1500, partial: true });
     });
 
     test('an unpriced stone leaves the bill partial under either setting', async () => {

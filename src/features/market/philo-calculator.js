@@ -901,6 +901,27 @@ class PhiloCalculator {
                 this._craftBreakdowns[itemHrid] = resolved.breakdown;
             }
             const { itemCost, selfReturnUnitValue, source, fallbackLevel } = resolved;
+            // A craft whose base is an untradable cape leaves the cape itself out of the bill: add it at the
+            // cape setting's value. On "nothing" that is the player's choice, so the stones alone are the
+            // whole cost; a mirror setting with no mirror price is a missing term, which asks for a price.
+            if (source === 'craft' && resolved.baseNote === 'untradable') {
+                const baseValue = this.capeBaseValue();
+                this._craftBaseNotes = this._craftBaseNotes || {};
+                if (!(baseValue > 0)) {
+                    if (getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO) {
+                        this._craftBaseNotes[itemHrid] = 'capeZero';
+                        return { itemCost, selfReturnUnitValue, source, fallbackLevel };
+                    }
+                    this._craftBaseNotes[itemHrid] = 'needsPrice';
+                    return this.needsPriceBasis();
+                }
+                this._craftBaseNotes[itemHrid] = 'capeSetting';
+                this._craftBaseValues = this._craftBaseValues || {};
+                this._craftBaseValues[itemHrid] = baseValue;
+                const market = quoteAt(0);
+                const total = market > 0 ? Math.min(market, itemCost + baseValue) : itemCost + baseValue;
+                return { itemCost: total, selfReturnUnitValue: total, source, fallbackLevel };
+            }
             return { itemCost, selfReturnUnitValue, source, fallbackLevel };
         }
 
@@ -1701,11 +1722,19 @@ class PhiloCalculator {
                     const parts = ['Refinement craft estimate, not a listing:'];
                     for (const line of philoCalculator._craftBreakdowns?.[r.itemHrid] || []) parts.push(line);
                     const note = philoCalculator._craftBaseNotes?.[r.itemHrid];
-                    if (note === 'untradable') {
+                    if (note === 'capeSetting') {
+                        const value = philoCalculator._craftBaseValues?.[r.itemHrid] ?? 0;
                         parts.push(
-                            'Base item: untradable — a refined cape is valued by its refinement stones alone, ' +
-                                'whatever the Untradable capes setting says.'
+                            `Base item: untradable — valued at ${formatLargeNumber(Math.round(value))} ` +
+                                '(Untradable capes setting), included above.'
                         );
+                    } else if (note === 'capeZero') {
+                        parts.push(
+                            'Base item: untradable — the Untradable capes setting counts it as nothing, ' +
+                                'so this is the refinement stones alone.'
+                        );
+                    } else if (note === 'untradable') {
+                        parts.push('Base item: untradable — you bring your own, no market cost.');
                     } else if (note === 'unpriced') {
                         parts.push('Base item: tradable but unlisted — the real cost is HIGHER than shown.');
                     } else {

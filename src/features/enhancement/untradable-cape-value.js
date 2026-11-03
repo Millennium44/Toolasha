@@ -2,8 +2,8 @@
  * Untradable cape valuation (refined and enhanced)
  *
  * A cape has no market price, so what one is worth is what it cost to make: the base cape (the
- * `untradableCapeBaseValue` setting, via the shared enhancement input rule, for an unrefined cape only),
- * the refinement stones of a refined one (its base cape is never added), and the expected cost of enhancing it. Everything here goes through
+ * `untradableCapeBaseValue` setting, via the shared enhancement input rule), the refinement
+ * materials of a refined one, and the expected cost of enhancing it. Everything here goes through
  * the fork's existing enhancement path rather than a second calculation, evaluated on the
  * character's OWN bench (the `valuation` surface): nobody could sell the piece finished, so the
  * bench the player actually has is the only honest one.

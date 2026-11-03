@@ -704,18 +704,26 @@ describe('untradable capes', () => {
         expect(priceBase('/items/cloak').assumed).toBeUndefined();
     });
 
-    test('a refined cape is its refinement stones alone under either setting, never partial for a zero base', () => {
+    test('a refined cape is its stones plus the base by the setting: zero is complete, mirror adds one mirror', () => {
         addRefineRecipe();
-        for (const mode of ['zero', 'mirror']) {
-            game.capeMode = mode;
-            for (const crafting of [false, true]) {
-                game.craftingSetting = crafting;
-                const priced = priceBase(REFINED);
-                expect(priced).toMatchObject({ price: 1000, partial: false });
-                expect(priced.assumed).toBeUndefined();
-            }
-        }
+        // Nothing: the player's own choice, so the stones alone are a complete bill
+        const zero = priceBase(REFINED);
+        expect(zero).toMatchObject({ price: 1000, partial: false });
+        expect(zero.assumed).toBeUndefined();
+        game.capeMode = 'mirror';
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, partial: false, assumed: true });
+        game.craftingSetting = true;
+        expect(priceBase(REFINED)).toMatchObject({ price: 2000, assumed: true });
         game.craftingSetting = false;
+        game.capeMode = 'zero';
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: false });
+    });
+
+    test('a mirror setting with no mirror price leaves a refined cape a flagged floor, not stones alone', () => {
+        addRefineRecipe();
+        game.capeMode = 'mirror';
+        delete game.books['/items/mirror_of_protection'];
+        expect(priceBase(REFINED)).toMatchObject({ price: 1000, partial: true });
         game.capeMode = 'zero';
     });
 
