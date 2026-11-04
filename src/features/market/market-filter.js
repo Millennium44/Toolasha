@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { syncMarketFold } from './market-filter-fold.js';
 
 class MarketFilter {
     constructor() {
@@ -93,6 +94,8 @@ class MarketFilter {
     injectFilterUI(_oriFilterContainer) {
         // Check if already injected
         if (document.querySelector('#toolasha-market-filters')) {
+            // The game may have remounted the container under a row that survived
+            syncMarketFold(_oriFilterContainer);
             return;
         }
 
@@ -115,6 +118,7 @@ class MarketFilter {
         _oriFilterContainer.parentElement.insertBefore(filterDiv, _oriFilterContainer.nextSibling);
 
         this.filterContainer = filterDiv;
+        syncMarketFold(_oriFilterContainer);
 
         // Apply initial filters
         this.applyFilters();
@@ -406,6 +410,8 @@ class MarketFilter {
                 this.filterContainer.remove();
                 this.filterContainer = null;
             }
+            // The fold stays while the sort row still needs it, and goes with the last row
+            syncMarketFold();
 
             // Show what the filter hid: with its row gone there is nothing left to clear it from, and the
             // next enable starts from the defaults its dropdowns show

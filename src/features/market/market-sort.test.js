@@ -787,6 +787,24 @@ describe('sort row layout', () => {
     });
 });
 
+describe('sort row phone fold', () => {
+    test('on a phone the row folds behind a toggle that flags a non-default mode, and disable removes it', () => {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true });
+        try {
+            document.body.innerHTML = '<div><div id="filter"></div></div>';
+            marketSort.sortMode = 'alchemyProfit';
+            marketSort.injectSortUI(document.getElementById('filter'));
+            expect(document.getElementById('mwi-market-filters-toggle').textContent).toBe('Filters • ▾');
+            marketSort.disable();
+            expect(document.getElementById('mwi-market-filters-toggle')).toBeNull();
+            expect(document.querySelector('[data-mwi-market-fold]')).toBeNull();
+            expect(document.getElementById('toolasha-market-sort')).toBeNull();
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+});
+
 describe('sort cost per tile', () => {
     const names = Array.from({ length: 60 }, (_, i) => `tile_${i}`);
 

@@ -13,6 +13,7 @@ export function ensureMarketMobileStyles() {
     style.textContent = `
         .mwi-market-pricing-disclosure { display: none; }
         #mwi-market-pricing-fields { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        #mwi-market-filters-toggle { display: none; }
         @media ${MARKET_MOBILE_QUERY} {
             #mwi-market-pricing-controls { margin-left: 0 !important; flex: 1 1 100%; min-width: 0; }
             .mwi-market-pricing-disclosure {
@@ -25,6 +26,22 @@ export function ensureMarketMobileStyles() {
             #mwi-market-pricing-fields > select, #mwi-market-pricing-fields > button {
                 box-sizing: border-box; flex: 1 1 130px; min-width: 0; max-width: 100%;
                 min-height: 44px; padding: 6px !important; font-size: 16px !important;
+            }
+            #mwi-market-filters-toggle {
+                display: inline-flex !important; align-items: center; align-self: center !important;
+                flex: 0 0 auto !important; width: auto !important; height: 22px !important;
+                min-width: 0 !important; min-height: 0 !important; margin: 0 0 0 6px; padding: 0 8px;
+                box-sizing: border-box; white-space: nowrap; color: inherit; background: transparent;
+                border: 1px solid #666; border-radius: 4px; font: 12px/1 sans-serif; cursor: pointer;
+            }
+            #mwi-market-filters-toggle[data-active] { border-color: #e0b64a; color: #e0b64a; }
+            [data-mwi-market-fold="closed"]:has(> #mwi-market-filters-toggle) ~ #toolasha-market-sort,
+            [data-mwi-market-fold="closed"]:has(> #mwi-market-filters-toggle) ~ #toolasha-market-filters {
+                display: none !important;
+            }
+            #toolasha-market-sort, #toolasha-market-filters {
+                box-sizing: border-box; flex: 1 1 100%; width: 100%; max-width: 100%; min-width: 0;
+                grid-column: 1 / -1;
             }
             [${SCROLL_ATTR}] { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
             [${SCROLL_ATTR}] > table { width: max-content; min-width: 100%; }
@@ -62,7 +79,7 @@ export function ensureMarketMobileStyles() {
 /** Remove the shared rules only when the last owning UI has gone away. */
 export function releaseMarketMobileStyles() {
     const owned = document.querySelector(
-        `#mwi-market-pricing-controls, .mwi-market-order-totals, .mwi-volume-stats, [${SCROLL_ATTR}]`
+        `#mwi-market-pricing-controls, #mwi-market-filters-toggle, .mwi-market-order-totals, .mwi-volume-stats, [${SCROLL_ATTR}]`
     );
     if (!owned) {
         document.getElementById(STYLE_ID)?.remove();

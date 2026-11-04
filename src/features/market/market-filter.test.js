@@ -93,6 +93,36 @@ describe('market filter', () => {
         expect(document.getElementById('toolasha-slot-filter').value).toBe('main_hand');
     });
 
+    test('on a phone the row folds behind a toggle that flags an active filter, and disable takes it away', () => {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true });
+        try {
+            openMarketplace(['cheese', 'holy_sword']);
+            const toggle = document.getElementById('mwi-market-filters-toggle');
+            expect(toggle.textContent).toBe('Filters ▾');
+            choose('toolasha-level-min', 50);
+            expect(toggle.textContent).toBe('Filters • ▾');
+            // The game draws the row again: the toggle follows the new container and the filter still shows
+            openMarketplace(['cheese', 'holy_sword']);
+            expect(document.querySelectorAll('#mwi-market-filters-toggle')).toHaveLength(1);
+            expect(document.getElementById('mwi-market-filters-toggle').textContent).toBe('Filters • ▾');
+            marketFilter.disable();
+            expect(document.getElementById('mwi-market-filters-toggle')).toBeNull();
+            expect(document.querySelector('[data-mwi-market-fold]')).toBeNull();
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+
+    test('above the phone breakpoint no toggle is built', () => {
+        vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false });
+        try {
+            openMarketplace(['cheese']);
+            expect(document.getElementById('mwi-market-filters-toggle')).toBeNull();
+        } finally {
+            vi.restoreAllMocks();
+        }
+    });
+
     test('an item whose icon carries only xlink:href is filtered like the rest', () => {
         const grid = openMarketplace(['wooden_sword', 'holy_sword', 'holy_bow'], { xlink: ['wooden_sword'] });
         choose('toolasha-level-min', 50);

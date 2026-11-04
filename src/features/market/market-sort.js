@@ -24,6 +24,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
+import { syncMarketFold } from './market-filter-fold.js';
 import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -320,6 +321,8 @@ class MarketSort {
     injectSortUI(filterContainer) {
         // Check if already injected
         if (document.querySelector('#toolasha-market-sort')) {
+            // The game may have remounted the container under a row that survived
+            syncMarketFold(filterContainer);
             return;
         }
 
@@ -417,6 +420,7 @@ class MarketSort {
 
         // Insert after the filter container
         filterContainer.parentElement.insertBefore(sortDiv, filterContainer.nextSibling);
+        syncMarketFold(filterContainer);
     }
 
     /**
@@ -900,6 +904,8 @@ class MarketSort {
             if (sortDiv) {
                 sortDiv.remove();
             }
+            // The fold stays while the filter row still needs it, and goes with the last row
+            syncMarketFold();
 
             // Remove profit indicators
             document.querySelectorAll('.toolasha-profit-indicator').forEach((el) => el.remove());
