@@ -14601,17 +14601,20 @@ describe('upgrade results as cards', () => {
             expect(cardsOf('order')).toHaveLength(8);
         });
 
-        test("Verify on an order card verifies that order by the section's Rank by", async () => {
+        test('order cards offer no Verify of their own; the Verify top picks bar still drives them', async () => {
             ui._abilityOrderRank = 'dps';
             draw({}, [orderRow('A → B', { dpsPct: 5 }), orderRow('C → D', { dpsPct: 4 })]);
             showCards();
+            for (const card of cardsOf('order')) expect(card.querySelector('[data-card-verify]')).toBeNull();
+            // A card the tests cannot tap is also refused if asked directly
             mocks.verifyImpl = answer();
-            verifyButton('C → D', 'order').click();
+            container().querySelector('#mwi-csim-order-verify').click();
             await settle();
             expect(mocks.verifyCalls).toHaveLength(1);
             expect(mocks.verifyCalls[0].metric).toBe('dps');
-            expect(mocks.verifyCalls[0].rows.map((r) => r.candidate.description)).toEqual(['Order: C → D']);
             expect(stateOf(cardNamed('C → D', 'order'))).toBe('Verified');
+            expect(cardNamed('C → D', 'order').querySelector('[data-verify-chip]')).toBeTruthy();
+            for (const card of cardsOf('order')) expect(card.querySelector('[data-card-verify]')).toBeNull();
         });
     });
 
