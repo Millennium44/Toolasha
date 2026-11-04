@@ -534,7 +534,9 @@ describe('the sync fold of the marks', () => {
 
     test('it is registered for every character key and only the marks', async () => {
         const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
-        expect(mergeForKey('settings', 'selfUseWanted_123')?.merge).toBe(mergeMarkRecords);
+        const registration = mergeForKey('settings', 'selfUseWanted_123');
+        expect(registration?.label).toBe('Self-use marks');
+        expect(registration.merge(OLD, rec([]))).toEqual(mergeMarkRecords(OLD, rec([])));
         expect(mergeForKey('settings', 'somethingElse_123')?.label).not.toBe('Self-use marks');
     });
 

@@ -201,20 +201,26 @@ import {
     purgeLegacyTrialRecord,
     readPayoutBonuses,
     recordProvenance,
+    recordScheduled,
     recordServerTiers,
     recordTileSample,
     rollRecordToWeek,
     saveTrialRecord,
     saveWorkBases,
+    scheduledFromPayload,
+    weeklyTrialSetFrom,
+    weeklyTrialsAfter,
     scrubWaveObservations,
     tileKey,
     tilePersonalStats,
 } from './guild-trials-store.js';
 import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
 import {
+    cycleTrialsOf,
     historyRowFor,
     resultCycleCap,
     trialHistoryBest,
+    trialHistoryCell,
     trialHistoryCells,
     trialHistoryDetail,
     trialHistoryTiers,
@@ -3751,6 +3757,17 @@ class GuildTrials {
                 if (initAt !== null && Number.isFinite(held) && initAt <= held) return;
             }
 
+            // The game's own draw for the cycle, from the message that carries these trials: it joins the
+            // saved list of a running hour so a party not yet named never reads as a trial that did not run.
+            // Kept only where this session can tell it is the running cycle's (see weeklyTrialsAfter): the
+            // draw has no stamp, and a leftover one would list a trial that ran as one that did not. What
+            // it is told apart from rides on the snapshot, so it goes wherever the snapshot does
+            const sameGuild = this.currentTrials && snapshotMatchesGuild(this.currentTrials, snapshotGuildOf(data));
+            const { fresh: weeklyTrials, baseline: drawBaseline } = weeklyTrialsAfter(
+                read,
+                weeklyTrialSetFrom(data),
+                sameGuild ? this.currentTrials.drawBaseline : null
+            );
             const now = Date.now();
             // A login payload sent long ago (read back by a late start) is
             // dated when it was sent, and neither it nor its stamps bound the
@@ -3759,11 +3776,18 @@ class GuildTrials {
             const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
             const age = source === 'init' && Number.isFinite(serverNow) ? now - serverNow - offset : null;
             if (age !== null && age > INIT_PAYLOAD_FRESH_MS) {
-                this.currentTrials = { ...read, at: now - age, source, ...snapshotGuildOf(data) };
+                this.currentTrials = {
+                    ...read,
+                    at: now - age,
+                    source,
+                    ...snapshotGuildOf(data),
+                    weeklyTrials,
+                    drawBaseline,
+                };
                 this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
                 return;
             }
-            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data) };
+            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data), weeklyTrials, drawBaseline };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
             // A server clock reading is later than every stamp beside it, so it
@@ -3987,6 +4011,18 @@ class GuildTrials {
                     });
                 }
             }
+            // Which trials the game says this cycle runs, so the history can tell one that did not
+            // run from one this client saw nothing of. Only into the guild the payload was sent for
+            const recordGuild = {
+                guildId: record.guildId ?? this._guildId(),
+                guildName: record.guildName ?? this.guildName,
+            };
+            if (snapshotNamesGuild(held, recordGuild)) {
+                next = recordScheduled(
+                    next,
+                    scheduledFromPayload(held, { offset, cycleStart: record.cycleStart ?? this.cycleStartMs ?? null })
+                );
+            }
             return next;
         } catch (error) {
             console.error('[GuildTrials] Recording the guild payload’s tier clears failed:', error);
@@ -4173,11 +4209,21 @@ class GuildTrials {
                 !Number.isFinite(cycle?.cycleFrom)
         );
         if (index === -1) return record;
-        const archived = { weekStart: week, tiles: history[index].tiles || {} };
+        // The cycle's saved lists ride along, or an unchanged payload reads as a list not yet held
+        // and rewrites the record on every message
+        const archived = {
+            weekStart: week,
+            tiles: history[index].tiles || {},
+            ...(history[index].scheduled ? { scheduled: history[index].scheduled } : {}),
+        };
         const filed = this._recordServerTiers(archived, now);
         if (filed === archived) return record;
         const next = [...history];
-        next[index] = { ...history[index], tiles: filed.tiles };
+        next[index] = {
+            ...history[index],
+            tiles: filed.tiles,
+            ...(filed.scheduled ? { scheduled: filed.scheduled } : {}),
+        };
         return { ...record, history: next };
     }
 
@@ -5168,8 +5214,9 @@ class GuildTrials {
                 accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
             });
             if (next === this.record) return;
-            if (next === base) {
-                // Only the boundary moved: an ordinary merging save
+            // Only the boundary moved, or a list nothing was archived with was dropped: an ordinary
+            // merging save. The overwrite below is for the write that puts tiles away
+            if (next === base || (next.tiles === base.tiles && next.history === base.history)) {
                 this.record = next;
                 this._persistRecord();
                 return;
@@ -5997,6 +6044,7 @@ class GuildTrials {
         const resolved = bonuses || this._payoutBonuses();
         return trialResultsHistory(trialResultsOf(this.record), {
             now,
+            cycleTrials: cycleTrialsOf(this.record),
             buildersHallBonus: resolved?.buildersHall?.bonus ?? null,
         });
     }
@@ -6043,9 +6091,10 @@ class GuildTrials {
             'trial-history',
             'Trial history',
             'The tier each trial reached in every finished cycle this client saw, newest first, and ' +
-                `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;—&quot; is a ` +
-                'cycle with no result for that trial; T0 is a real result. Hover a trial for every cycle ' +
-                'and the date of its best.',
+                `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;n/r&quot; is a ` +
+                'cycle the game&#39;s own list says the trial did not run in. &quot;—&quot; is a cycle with no ' +
+                'result for that trial, where it ran or this client has no list of what ran; T0 is a real result. ' +
+                'Hover a trial for every cycle and the date of its best.',
             collapsed
         );
         const html = [
@@ -6059,7 +6108,11 @@ class GuildTrials {
                     shown
                         .map((cycle, index) => {
                             const week = row.weeks[index];
-                            return cell(Number.isFinite(week?.tier) ? `T${week.tier}` : '—', GAME_COLORS.textDim);
+                            return cell(
+                                trialHistoryCell(week),
+                                GAME_COLORS.textDim,
+                                week?.notRun ? 'The game did not run this trial that cycle' : ''
+                            );
                         })
                         .join('') +
                     cell(trialHistoryBest(row), GAME_COLORS.text, '', 600) +

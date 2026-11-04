@@ -269,6 +269,75 @@ describe('what a pull passes on', () => {
     });
 });
 
+describe('who is handed the fold context', () => {
+    const CONTEXT = { forUpload: true };
+    const argsOf = (...args) => args;
+
+    test('a merge that did not ask gets two arguments from both folds', () => {
+        registerSyncMerge({ store: 'settings', key: 'plain', merge: argsOf });
+
+        const registration = mergeForKey('settings', 'plain');
+        expect(registration.merge('local', 'incoming', CONTEXT)).toEqual(['local', 'incoming']);
+        expect(registration.mergeForPull('local', 'incoming', CONTEXT)).toEqual(['local', 'incoming']);
+    });
+
+    test('so a third parameter of its own keeps its default', () => {
+        registerSyncMerge({ store: 'settings', key: 'clock', merge: (a, b, now = 12345) => now });
+
+        expect(mergeForKey('settings', 'clock').merge('local', 'incoming', CONTEXT)).toBe(12345);
+    });
+
+    test('a merge that asked gets the context, and undefined when none is passed', () => {
+        registerSyncMerge({ store: 'settings', key: 'asks', merge: argsOf, wantsContext: true });
+
+        const registration = mergeForKey('settings', 'asks');
+        expect(registration.merge('local', 'incoming', CONTEXT)).toEqual(['local', 'incoming', CONTEXT]);
+        expect(registration.merge('local', 'incoming')).toEqual(['local', 'incoming']);
+    });
+
+    test('a cap by a setting has to see the upload, so capsLocally asks by itself', () => {
+        registerSyncMerge({ store: 'settings', key: 'capped', merge: argsOf, capsLocally: true });
+
+        expect(mergeForKey('settings', 'capped').merge('a', 'b', CONTEXT)).toEqual(['a', 'b', CONTEXT]);
+    });
+
+    test('the sync can still tell a plain pull fold by its sameness to merge, asked or not', () => {
+        registerSyncMerge({ store: 'settings', key: 'plain', merge: argsOf });
+        registerSyncMerge({ store: 'settings', key: 'asks', merge: argsOf, wantsContext: true });
+        registerSyncMerge({ store: 'settings', key: 'tabs', merge: argsOf, localWinsOnPull: true });
+        registerSyncMerge({ store: 'settings', key: 'own', merge: argsOf, pull: argsOf });
+
+        const fold = (key) => mergeForKey('settings', key);
+        expect(fold('plain').mergeForPull).toBe(fold('plain').merge);
+        expect(fold('asks').mergeForPull).toBe(fold('asks').merge);
+        expect(fold('tabs').mergeForPull).not.toBe(fold('tabs').merge);
+        expect(fold('own').mergeForPull).not.toBe(fold('own').merge);
+    });
+
+    test('localWinsOnPull turns the sides round, and passes the context only to a merge that asked', () => {
+        registerSyncMerge({ store: 'settings', key: 'plain', merge: argsOf, localWinsOnPull: true });
+        registerSyncMerge({ store: 'settings', key: 'asks', merge: argsOf, localWinsOnPull: true, wantsContext: true });
+
+        expect(mergeForKey('settings', 'plain').mergeForPull('a', 'b', CONTEXT)).toEqual(['b', 'a']);
+        expect(mergeForKey('settings', 'asks').mergeForPull('a', 'b', CONTEXT)).toEqual(['b', 'a', CONTEXT]);
+    });
+
+    test("a registration's own pull always gets the context it is handed, whatever merge asked for", () => {
+        registerSyncMerge({ store: 'settings', key: 'own', merge: argsOf, pull: argsOf });
+
+        const registration = mergeForKey('settings', 'own');
+        expect(registration.mergeForPull('a', 'b', { download: 'text' })).toEqual(['a', 'b', { download: 'text' }]);
+        expect(registration.merge('a', 'b', CONTEXT)).toEqual(['a', 'b']);
+    });
+
+    test('a bundle copy registering again changes nothing about what it is handed', () => {
+        registerSyncMerge({ store: 'settings', key: 'twice', merge: argsOf, label: 'twice' });
+        registerSyncMerge({ store: 'settings', key: 'twice', merge: argsOf, label: 'twice' });
+
+        expect(mergeForKey('settings', 'twice').merge('a', 'b', CONTEXT)).toEqual(['a', 'b']);
+    });
+});
+
 describe('retention rules', () => {
     const parse = (key) => {
         const match = /^snap_(.+)_(\d+)$/.exec(key);
