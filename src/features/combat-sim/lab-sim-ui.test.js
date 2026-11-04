@@ -141,7 +141,11 @@ vi.mock('../../core/storage.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInitClientData: () => ({ abilityDetailMap: {}, itemDetailMap: game.itemDetailMap }),
+        getInitClientData: () => ({
+            abilityDetailMap: {},
+            itemDetailMap: game.itemDetailMap,
+            guildShrineDetailMap: game.guildShrineDetailMap,
+        }),
         getItemDetails: () => null,
         getSkills: () => [],
         getInventory: () => [],
@@ -3216,6 +3220,22 @@ describe('guild shrine targets are asked for one shrine at a time', () => {
         openGrid();
 
         expect(grid().querySelector(`[data-lab-shrine-target="${FORCE}"]`).getAttribute('max')).toBe('20');
+    });
+
+    test('the Lv box and the clamps follow the ceiling the game reports once it has loaded', () => {
+        const box = ui.panel.querySelector('#mwi-labsim-shrine-target-level');
+        expect(box.max).toBe('20');
+        try {
+            game.guildShrineDetailMap = { '/guild_shrines/force': { maxLevel: 25 } };
+            ui._onUpgradeSelectionChanged();
+            expect(box.max).toBe('25');
+            box.value = '30';
+            expect(ui._getShrineTargetLevel()).toBe(25);
+        } finally {
+            game.guildShrineDetailMap = undefined;
+        }
+        box.value = '30';
+        expect(ui._getShrineTargetLevel()).toBe(20);
     });
 
     test('a closed grid is not a set of targets — the Lv box still governs', () => {

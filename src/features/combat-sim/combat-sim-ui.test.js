@@ -324,6 +324,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getInitClientData: () => ({
             levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level),
             houseRoomDetailMap: mocks.houseRoomDetailMap || {},
+            guildShrineDetailMap: mocks.guildShrineDetailMap,
             // Only the self-enhanced (cape) tests put items here; everything
             // else is unknown to the map and keeps the ordinary market path
             itemDetailMap: mocks.itemDetailMap || {},
@@ -8740,10 +8741,26 @@ describe('the guild shrine target level', () => {
         expect(seen.guildShrineTargetLevel).toBe(0);
     });
 
-    test('its Lv box tops out at the shared shrine ceiling, not a number of its own', async () => {
-        const { MAX_GUILD_SHRINE_LEVEL } = await import('./upgrade-advisor.js');
+    test('its Lv box tops out at the ceiling the game reports, the shared constant before it loads', async () => {
+        const { MAX_GUILD_SHRINE_LEVEL, getGuildShrineMaxLevel } = await import('./upgrade-advisor.js');
+        const box = () => ui.panel.querySelector('#mwi-csim-shrine-target-level');
         expect(MAX_GUILD_SHRINE_LEVEL).toBe(20);
-        expect(ui.panel.querySelector('#mwi-csim-shrine-target-level').max).toBe(String(MAX_GUILD_SHRINE_LEVEL));
+        // The template's own value, before any data
+        expect(box().max).toBe(String(MAX_GUILD_SHRINE_LEVEL));
+
+        // No map, an empty one, and junk levels all fall back to the constant
+        for (const map of [undefined, {}, { '/guild_shrines/force': { maxLevel: 0 } }, { x: null }]) {
+            mocks.guildShrineDetailMap = map;
+            expect(getGuildShrineMaxLevel()).toBe(20);
+        }
+        // The game's own number, once loaded
+        mocks.guildShrineDetailMap = {
+            '/guild_shrines/force': { maxLevel: 20 },
+            '/guild_shrines/scholar': { maxLevel: 25 },
+        };
+        ui._onUpgradeModesChanged();
+        expect(box().max).toBe('25');
+        mocks.guildShrineDetailMap = undefined;
     });
 
     test('its control is hidden until the shrine set is checked', () => {
