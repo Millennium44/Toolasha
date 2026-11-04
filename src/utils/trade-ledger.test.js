@@ -449,3 +449,67 @@ describe('repairOverRecorded', () => {
         expect(repairOverRecorded(first, c).records).toBe(first);
     });
 });
+
+describe('repairOverRecorded with a trim from a count now known to be too low', () => {
+    const fillRow = (t, quantity, extra = {}) => ({
+        t,
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        side: 'sell',
+        quantity,
+        price: 100,
+        coins: quantity * 95,
+        listingId: 1,
+        ...extra,
+    });
+    const total = (rows) => rows.reduce((sum, row) => sum + row.quantity, 0);
+    const trim = (t, quantity) => fillRow(t, quantity, { trimmed: true });
+    const cap = (n) => new Map([[1, n]]);
+
+    test('an original of 5 and a trimmed 1 at one millisecond, cap 5: the fill is whole again', () => {
+        const { records, repairedIds } = repairOverRecorded([fillRow(1, 5), trim(1, 1)], cap(5));
+        expect(records).toEqual([fillRow(1, 5)]);
+        expect(repairedIds.has(1)).toBe(true);
+    });
+
+    test('the same in the other order', () => {
+        expect(repairOverRecorded([trim(1, 1), fillRow(1, 5)], cap(5)).records).toEqual([fillRow(1, 5)]);
+    });
+
+    test('a cap between the two: cut from the original, not stacked on the trim', () => {
+        const { records } = repairOverRecorded([fillRow(1, 5), trim(1, 1)], cap(3));
+        expect(records.map((row) => row.quantity)).toEqual([3]);
+        expect(records[0].trimmed).toBe(true);
+    });
+
+    test('a trim that was right keeps standing against its original, as before', () => {
+        const rows = [fillRow(1, 3), fillRow(2, 5), trim(2, 2)];
+        expect(repairOverRecorded(rows, cap(5)).records).toEqual([fillRow(1, 3), trim(2, 2)]);
+    });
+
+    test('a doubling cannot come back through it: never more than the cap', () => {
+        // The real 5, its double, and a trim of the first from a lower count
+        const rows = [fillRow(1, 5), trim(1, 3), fillRow(2, 5)];
+        expect(total(repairOverRecorded(rows, cap(5)).records)).toBe(5);
+        expect(total(repairOverRecorded(rows, cap(9)).records)).toBe(9);
+    });
+
+    test('three copies of one fill cut to different counts count once', () => {
+        const rows = [fillRow(1, 5), trim(1, 1), trim(1, 2)];
+        for (const count of [1, 2, 3, 5]) {
+            expect(total(repairOverRecorded(rows, cap(count)).records)).toBe(count);
+        }
+    });
+
+    test('two originals at one millisecond beside a trim of one of them: both come back, up to the cap', () => {
+        const { records } = repairOverRecorded([fillRow(1, 3), fillRow(1, 2), trim(1, 1)], cap(4));
+        expect(records.map((row) => row.quantity)).toEqual([3, 1]);
+    });
+
+    test('settled: run again, or with the original back again, it gives the same rows', () => {
+        const once = repairOverRecorded([fillRow(1, 3), fillRow(1, 2), trim(1, 1)], cap(4)).records;
+        expect(repairOverRecorded(once, cap(4)).records).toBe(once);
+        const back = repairOverRecorded([...once, fillRow(1, 2)], cap(4)).records;
+        expect(back.map((row) => row.quantity)).toEqual(once.map((row) => row.quantity));
+    });
+});

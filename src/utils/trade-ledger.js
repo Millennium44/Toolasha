@@ -207,6 +207,31 @@ export function trimLedger(records, cap = LEDGER_RECORD_CAP) {
 }
 
 /**
+ * The rows of one over-recorded listing the cut walks through.
+ *
+ * A trimmed row stands in for the untrimmed rows at its millisecond, its original back from another device, and of
+ * several copies cut to different counts the highest stands. Those are kept out of the count unless that leaves the
+ * listing short of its cap. Short means the trim came from a count now known to be too low, so the originals are the
+ * better copy and the trimmed rows give way. The cut stops at the cap either way, so this cannot let a doubling back.
+ * @param {Array<Object>} rows - The listing's rows
+ * @param {number} cap - The listing's final filled quantity
+ * @returns {Array<Object>} The rows to walk, in input order
+ */
+function rowsToCut(rows, cap) {
+    const highestTrim = new Map(); // millisecond → its largest trimmed row
+    const originals = new Set(); // milliseconds holding an untrimmed row
+    for (const row of rows) {
+        if (!row.trimmed) originals.add(row.t);
+        else if (!(Number(highestTrim.get(row.t)?.quantity) >= Number(row.quantity))) highestTrim.set(row.t, row);
+    }
+    if (highestTrim.size === 0) return rows;
+    const standIns = rows.filter((row) => !highestTrim.has(row.t) || row === highestTrim.get(row.t));
+    const counted = standIns.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
+    if (counted >= cap) return standIns;
+    return rows.filter((row) => !row.trimmed || !originals.has(row.t));
+}
+
+/**
  * Cut the fills recorded for a listing down to what the listing actually filled.
  *
  * A listing cannot fill more than its log row says it did, yet a stale baseline (see `mergeStates` in the
@@ -214,8 +239,9 @@ export function trimLedger(records, cap = LEDGER_RECORD_CAP) {
  * listings that have ended, the final `filledQuantity`; a listing whose recorded quantity exceeds it keeps its
  * earliest fills up to the cap and loses the rest. The fill the cap falls inside is trimmed, its coins in
  * proportion, so a price never changes, and carries `trimmed: true`. An untrimmed row at the same millisecond
- * as a trimmed row of its listing is that row's original, back from another device, and is dropped; two
- * untrimmed rows at one millisecond are both kept, since two real partial fills can land together.
+ * as a trimmed row of its listing is that row's original, back from another device, and is dropped unless the
+ * trim leaves the listing short of its cap (see {@link rowsToCut}); two untrimmed rows at one millisecond are both
+ * kept, since two real partial fills can land together.
  *
  * Pure, idempotent, and only ever shrinks: a listing at or under its cap, or not named in `caps`, is returned
  * untouched, and the same input folded in again gives the same answer.
@@ -243,11 +269,7 @@ export function repairOverRecorded(records, caps) {
         const total = rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
         if (!(cap > 0) || total <= cap) continue;
 
-        // An untrimmed row sharing a millisecond with a trimmed one of its listing is that row's original,
-        // back from another device. Rows at one millisecond with no trimmed row among them are all real
-        const trimmedTimes = new Set(rows.filter((row) => row.trimmed).map((row) => row.t));
-        const ordered = rows
-            .filter((row) => row.trimmed || !trimmedTimes.has(row.t))
+        const ordered = rowsToCut(rows, cap)
             .map((row, index) => ({ row, index }))
             .sort((x, y) => x.row.t - y.row.t || x.index - y.index)
             .map((x) => x.row);
