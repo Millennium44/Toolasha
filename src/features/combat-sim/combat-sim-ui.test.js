@@ -14080,6 +14080,41 @@ describe('upgrade results as cards', () => {
             expect(container().querySelector('[data-card-view="table"]').textContent).toBe('Table');
         });
 
+        test('crossing the breakpoint mid-run leaves the progress alone and redraws when the run ends', () => {
+            draw();
+            ui._upgradeRunning = true;
+            container().innerHTML = '<div id="mid-run">progress</div>';
+            fireBreakpoint(true);
+            expect(container().querySelector('#mid-run')).toBeTruthy();
+            expect(container().querySelector('[data-upgrade-cards]')).toBeNull();
+            // Reopening the panel mid-run is the same
+            ui.hide({ remember: false });
+            ui.show({ remember: false });
+            expect(container().querySelector('#mid-run')).toBeTruthy();
+            expect(container().querySelector('[data-upgrade-cards]')).toBeNull();
+            // The run ends: the owed redraw is made in the current view
+            ui._upgradeRunning = false;
+            ui._redrawForViewChange();
+            expect(container().querySelector('#mid-run')).toBeNull();
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+        });
+
+        test('an empty analysis replaces the previous one, so a rotation cannot bring it back', () => {
+            draw();
+            showCards();
+            expect(cardsOf().length).toBeGreaterThan(0);
+            draw({}, []);
+            expect(container().textContent).toContain('No upgrade candidates found');
+            fireBreakpoint(true);
+            fireBreakpoint(false);
+            expect(container().textContent).toContain('No upgrade candidates found');
+            expect(container().querySelector('[data-card-verify]')).toBeNull();
+            expect(
+                container().querySelector('[data-verify-btn], [data-gold-verify], table [data-upgrade-row]')
+            ).toBeNull();
+            expect(ui._upgradeResultsData.results).toEqual([]);
+        });
+
         test('a pick is remembered for its own form factor and never changes the other', async () => {
             draw();
             showCards();
