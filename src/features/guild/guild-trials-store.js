@@ -364,13 +364,21 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         else history[same] = withScheduled(history[same], entry);
     }
 
+    // A cycle with no tiles has nothing to file its running list with, but the list can still be the fuller
+    // statement of a cycle this week's archive already holds
+    const unfiled =
+        !foreign && !Object.keys(tiles).length && Number.isFinite(record?.weekStart)
+            ? foldRunningLists([record.scheduled], history, record.weekStart)
+            : null;
     // What the lists say of the archive, taken before the dedupe and the cap as the results are
-    const cycleTrials = foreign ? [] : mergeCycleTrials(record?.cycleTrials, cycleTrialsFromHistory(cyclesToFold));
+    const cycleTrials = foreign
+        ? []
+        : mergeCycleTrials(record?.cycleTrials, cycleTrialsFromHistory(cyclesToFold), unfiled?.cycleTrials);
     const archived = {
         ...record,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
-        history: capHistory(history),
+        history: capHistory(unfiled ? unfiled.history : history),
         // Read off the whole archive before the dedupe and the cap, so a copy
         // either drops has its results kept here first (see guild-trial-results.js). A
         // record put away as another guild's takes its results with it: they
@@ -945,7 +953,7 @@ export function archiveEarlierCycles(
     });
     if (!Object.keys(earlier).length) {
         if (!lists.earlier) return record;
-        const kept = { ...record };
+        const kept = withListsFolded({ ...record }, lists.earlier);
         delete kept.scheduled;
         return lists.current ? { ...kept, scheduled: lists.current } : kept;
     }
@@ -963,7 +971,10 @@ export function archiveEarlierCycles(
         cycleFrom,
         accuracy,
     });
-    return { ...archived, tiles, ...(lists.current ? { scheduled: lists.current } : {}) };
+    // A list too old for these tiles is dropped from the running record, but it may state more of its own
+    // cycle than that cycle's archive does
+    const older = Object.fromEntries(Object.entries(lists.earlier || {}).filter(([kind]) => !archivedLists?.[kind]));
+    return withListsFolded({ ...archived, tiles, ...(lists.current ? { scheduled: lists.current } : {}) }, older);
 }
 
 /**
@@ -1008,30 +1019,87 @@ function scheduledField(value) {
 }
 
 /**
- * A record's running lists less any an archived cycle of the same week already holds.
+ * Running lists folded into the archived cycle that already holds them, and what is left running.
  *
- * A list of the same cycle as an archived one's, or an earlier cycle's, is that
- * cycle's own, seen again by a copy that had not archived yet. The test server's cycles
- * carry `cycleFrom`; live's single cycle is the week itself, so any archive of the week
- * holds it. Another week's archive says nothing about this week's lists.
+ * A list of the same cycle as an archived one's, or an earlier cycle's, is that cycle's own, seen
+ * again by a copy that had not archived yet. The test server's cycles carry `cycleFrom`; live's
+ * single cycle is the week itself, so any archive of the week holds it. Another week's archive
+ * says nothing about this week's lists.
  *
- * @param {Object|null} scheduled - Merged running lists
- * @param {Array<Object>} history - The merged archive
+ * Dropping the copy was not enough: it can be the fuller statement. A device that has not archived
+ * yet may hold a list that has filled in since the archive was taken (an archive of Alchemy beside
+ * a running Alchemy and Brewing), and a list the archive lacks reads as "n/r" for a trial that
+ * ran. So a list of the archived cycle's own is unioned into that archive and into the slim lists
+ * first, kind by kind. An earlier cycle's list is dropped as before and adds nothing: it belongs to
+ * no archive in hand, and the list's absence reads "—".
+ *
+ * Each device's lists are folded on their own, before they are merged with each other: a later
+ * cycle's list would win the merge whole, and the earlier cycle's keys would be gone before the
+ * archive saw them. The archive is read as it came in, never as folded so far, so the result does
+ * not depend on the order the lists are taken in.
+ *
+ * @param {Array<Object|null>} runningLists - Each side's running lists, kept apart
+ * @param {Array<Object>} history - The merged archive (not mutated)
  * @param {number} week - The record's week
- * @returns {Object|null} Null when nothing is left
+ * @returns {{scheduled: Object|null, history: Array<Object>, cycleTrials: Array<Object>}} The lists still
+ *   running (null when nothing is left), the archive with the lists folded in, and the keys folded in as
+ *   slim `cycleTrials` entries
  */
-function withoutArchivedLists(scheduled, history, week) {
-    if (!scheduled) return null;
-    const left = {};
-    for (const [kind, side] of Object.entries(scheduled)) {
-        const archivedLater = (history || []).some((cycle) => {
-            if (!cycle || cycle.weekStart !== week || cycle.reason === FOREIGN_CYCLE_REASON) return false;
-            const held = cleanScheduled(cycle.scheduled)?.[kind];
-            return Boolean(held) && (held.at >= side.at || sameScheduleCycle(held, side));
-        });
-        if (!archivedLater) left[kind] = side;
+function foldRunningLists(runningLists, history, week) {
+    const folded = [...history];
+    const cycleTrials = [];
+    let left = null;
+    for (const running of runningLists) {
+        const kept = {};
+        for (const [kind, side] of Object.entries(cleanScheduled(running) || {})) {
+            let archived = false;
+            history.forEach((cycle, index) => {
+                if (!cycle || cycle.weekStart !== week || cycle.reason === FOREIGN_CYCLE_REASON) return;
+                const held = cleanScheduled(cycle.scheduled)?.[kind];
+                if (!held) return;
+                const sameCycle = sameScheduleCycle(held, side);
+                if (!sameCycle && held.at < side.at) return;
+                archived = true;
+                if (!sameCycle) return;
+                const current = cleanScheduled(folded[index].scheduled);
+                const trials = [...new Set([...current[kind].trials, ...side.trials])].sort();
+                if (trials.length !== current[kind].trials.length) {
+                    const at = Math.max(current[kind].at, side.at);
+                    folded[index] = { ...folded[index], scheduled: { ...current, [kind]: { trials, at } } };
+                }
+                cycleTrials.push({
+                    weekStart: week,
+                    cycleFrom: Number.isFinite(cycle.cycleFrom) ? cycle.cycleFrom : null,
+                    [kind]: side.trials,
+                });
+            });
+            if (!archived) kept[kind] = side;
+        }
+        left = mergeScheduled(left, kept);
     }
-    return Object.keys(left).length ? left : null;
+    return { scheduled: left, history: folded, cycleTrials };
+}
+
+/**
+ * A record with lists that are leaving it folded into the archived cycle that holds their own.
+ *
+ * For the places a running list is dropped because it has no tiles or is too old to go with the tiles
+ * in hand: see {@link foldRunningLists}.
+ *
+ * @param {Object} record - The record (not mutated)
+ * @param {Object|null} lists - The lists leaving the record, per kind
+ * @returns {Object} The record, the same object when nothing was added
+ */
+function withListsFolded(record, lists) {
+    if (!lists || !Object.keys(lists).length || !Number.isFinite(record?.weekStart)) return record;
+    const history = Array.isArray(record.history) ? record.history : [];
+    const folded = foldRunningLists([lists], history, record.weekStart);
+    if (!folded.cycleTrials.length) return record;
+    return {
+        ...record,
+        history: folded.history,
+        cycleTrials: mergeCycleTrials(record.cycleTrials, folded.cycleTrials),
+    };
 }
 
 /**
@@ -1740,7 +1808,7 @@ export function mergeTrialRecords(base, incoming) {
     const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
     const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
     const history = [];
-    const seenCycles = new Set();
+    const seenCycles = new Map();
     for (const cycle of [...(base.history || []), ...(incomingForeign ? [] : incoming.history || [])]) {
         if (!cycle) continue;
         if (Number.isFinite(cycle.weekStart)) {
@@ -1757,27 +1825,32 @@ export function mergeTrialRecords(base, incoming) {
             continue;
         }
         const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;
-        if (seenCycles.has(mark)) continue;
-        seenCycles.add(mark);
+        // The copy seen again is the same archive, and it can hold a list the first lacks
+        if (seenCycles.has(mark)) {
+            const first = seenCycles.get(mark);
+            history[first] = withScheduled(history[first], cycle);
+            continue;
+        }
+        seenCycles.set(mark, history.length);
         history.push(cycle);
     }
+    // The running cycle's lists, unless a cycle of this week already holds them: a stale copy's list is
+    // the archived cycle's, and kept live it would be filed with the next cycle's tiles. What the stale
+    // copy states beyond the archive's list is added to the archive first
+    const running = foldRunningLists([base.scheduled, incomingForeign ? null : incoming.scheduled], history, baseWeek);
     // Each side's results with its own archive folded in. Known limit: the
     // foreign check above trusts the base, and sync calls this in both orders,
     // so of two sides naming different guilds the base's stands either way
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
-        history: capHistory(history),
+        history: capHistory(running.history),
         trialResults: mergeResults(trialResultsOf(base), incomingForeign ? [] : trialResultsOf(incoming)),
-        ...cycleTrialsField(mergeCycleTrials(cycleTrialsOf(base), incomingForeign ? [] : cycleTrialsOf(incoming))),
+        ...cycleTrialsField(
+            mergeCycleTrials(cycleTrialsOf(base), incomingForeign ? [] : cycleTrialsOf(incoming), running.cycleTrials)
+        ),
     };
-    // The running cycle's lists, unless a cycle of this week already holds them: a stale copy's list is
-    // the archived cycle's, and kept live it would be filed with the next cycle's tiles
-    const scheduled = withoutArchivedLists(
-        mergeScheduled(base.scheduled, incomingForeign ? null : incoming.scheduled),
-        provenance.history,
-        baseWeek
-    );
+    const scheduled = running.scheduled;
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
         const existing = tiles[key];

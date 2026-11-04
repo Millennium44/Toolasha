@@ -319,6 +319,38 @@ describe('archiveCycle — the list goes with the cycle it described', () => {
         expect(Object.keys(second.history[0].tiles)).toContain('skilling::brewing');
         expect(second.history[0].scheduled.skilling.trials).toEqual(NOV2_SKILLING);
     });
+
+    test('a cycle with no tiles folds its running list into the week’s archive instead of dropping it', () => {
+        const at = week + 2 * DAY;
+        const held = {
+            weekStart: week,
+            tiles: {},
+            history: [
+                entry(
+                    week,
+                    { 'skilling::alchemy': skillingTile('Alchemy', 20) },
+                    {
+                        reason: 'a new cycle is scheduled',
+                        scheduled: { skilling: { trials: ['alchemy'], at } },
+                    }
+                ),
+            ],
+            scheduled: { skilling: { trials: ['alchemy', 'brewing'], at: at + 10 * 60_000 } },
+        };
+        for (const next of [
+            archiveCycle(held, 'the week rolled over', week + WEEK),
+            rollRecordToWeek(held, week + WEEK),
+        ]) {
+            expect(next.history).toHaveLength(1);
+            expect(next.history[0].scheduled.skilling.trials).toEqual(['alchemy', 'brewing']);
+            expect(next.cycleTrials.find((cycle) => cycle.weekStart === week).skilling).toEqual(['alchemy', 'brewing']);
+            expect(next.scheduled).toBeUndefined();
+        }
+        // A list of another cycle is still just dropped
+        const other = { ...held, scheduled: { skilling: { trials: ['alchemy', 'cooking'], at: at + DAY } } };
+        const dropped = archiveCycle(other, 'the week rolled over', week + WEEK);
+        expect(dropped.history[0].scheduled.skilling.trials).toEqual(['alchemy']);
+    });
 });
 
 describe('archiveEarlierCycles — one list per cycle on the test server', () => {
@@ -378,6 +410,52 @@ describe('archiveEarlierCycles — one list per cycle on the test server', () =>
         const next = archiveEarlierCycles(stale, read, { offset, at: 9 });
         expect(next.history).toHaveLength(0);
         expect(next.scheduled).toEqual(current);
+    });
+
+    test('a list that outlived its tiles is folded into its own cycle’s archive when that holds a shorter one', () => {
+        const archivedOnce = {
+            archivedAt: 5,
+            reason: 'an earlier cycle of this week',
+            weekStart: 0,
+            cycleFrom: lastCycle,
+            tiles: { 'skilling::cooking': { name: 'Cooking', kind: 'skilling', tier: 20 } },
+            scheduled: { combat: { trials: ['badger'], at: lastCycle + HOUR } },
+        };
+        const stale = record({
+            scheduled: { skilling: current.skilling, combat: old.combat },
+            history: [archivedOnce],
+        });
+        stale.tiles = { 'skilling::alchemy': stale.tiles['skilling::alchemy'] };
+        const next = archiveEarlierCycles(stale, read, { offset, at: 9 });
+        expect(next.history).toHaveLength(1);
+        expect(next.history[0].scheduled.combat.trials).toEqual(['badger', 'chameleon']);
+        expect(next.cycleTrials).toEqual([
+            expect.objectContaining({ cycleFrom: lastCycle, combat: ['badger', 'chameleon'] }),
+        ]);
+        expect(next.scheduled).toEqual(current);
+    });
+
+    test('a list a cycle older than the tiles being archived is folded into its own cycle’s archive', () => {
+        const dayAgo = lastCycle - DAY;
+        const archivedBefore = {
+            archivedAt: 5,
+            reason: 'an earlier cycle of this week',
+            weekStart: 0,
+            cycleFrom: dayAgo,
+            tiles: { 'combat::trial badger': { name: 'Trial Badger', kind: 'combat', tier: 9 } },
+            scheduled: { combat: { trials: ['badger'], at: dayAgo + HOUR } },
+        };
+        const held = record({
+            scheduled: { combat: { trials: ['badger', 'chameleon'], at: dayAgo + HOUR + 5 * 60_000 } },
+            history: [archivedBefore],
+        });
+        const next = archiveEarlierCycles(held, read, { offset, at: 9 });
+        const earlier = next.history.find((cycle) => cycle.cycleFrom === dayAgo);
+        expect(earlier.scheduled.combat.trials).toEqual(['badger', 'chameleon']);
+        expect(next).not.toHaveProperty('scheduled');
+        // And the cycle being archived does not borrow it
+        const mine = next.history.find((cycle) => cycle.cycleFrom !== dayAgo);
+        expect(mine).not.toHaveProperty('scheduled');
     });
 
     test('with nothing earlier and nothing stale the same record comes back', () => {
@@ -810,5 +888,171 @@ describe('archiveEarlierCycles — a list goes only with the cycle its tiles are
         const next = archiveEarlierCycles(held, read, { offset, at: 9 });
         expect(next.history).toHaveLength(1);
         expect(next.history[0].scheduled).toEqual({ combat: held.scheduled.combat });
+    });
+});
+
+describe('a running list being archived folds into the archive instead of being dropped', () => {
+    const week = weeksAgo(1);
+    const older = weeksAgo(2);
+    const at = week + 2 * DAY;
+    const side = (extra = {}) => ({
+        weekStart: week,
+        tiles: {},
+        guildId: 'g1',
+        guildName: 'SuperMoo',
+        history: [],
+        trialResults: [],
+        ...extra,
+    });
+    /** The archive of the cycle holding only the trials this device saw listed */
+    const archivedWith = (trials) =>
+        side({
+            history: [
+                entry(
+                    week,
+                    { 'skilling::alchemy': skillingTile('Alchemy', 20) },
+                    { scheduled: { skilling: { trials, at } } }
+                ),
+            ],
+        });
+    /** A device that has not archived: the cycle is still its running one */
+    const running = (trials, when = at) => side({ scheduled: { skilling: { trials, at: when } } });
+    /** An older cycle where Brewing has a result, so its row exists and the cell for `week` can read "n/r" */
+    const brewingBefore = (record) => ({
+        ...record,
+        history: [
+            ...record.history,
+            entry(older, { 'skilling::brewing': skillingTile('Brewing', 15) }, { scheduled: nov2 }),
+        ],
+    });
+    const brewingCell = (record) => {
+        const rows = trialResultsHistory(trialResultsOf(record), { now, cycleTrials: cycleTrialsOf(record) }).rows;
+        return rows.find((row) => row.id === 'skilling:brewing').weeks[0];
+    };
+    const listOf = (record) => record.history.find((held) => held.weekStart === week).scheduled.skilling.trials;
+    const slimOf = (record) => cycleTrialsOf(record).find((held) => held.weekStart === week).skilling;
+
+    test('an archive of [Alchemy] merged with a running [Alchemy, Brewing] keeps Brewing, in both orders', () => {
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const stale = running(['alchemy', 'brewing']);
+        const ab = mergeTrialRecords(archived, stale);
+        const ba = mergeTrialRecords(stale, archived);
+
+        expect(ba).toEqual(ab);
+        expect(ab).not.toHaveProperty('scheduled');
+        expect(listOf(ab)).toEqual(['alchemy', 'brewing']);
+        expect(slimOf(ab)).toEqual(['alchemy', 'brewing']);
+        expect(ab.cycleTrials.find((held) => held.weekStart === week).skilling).toEqual(['alchemy', 'brewing']);
+        // The cell reads "—" (never seen), not "n/r" (the game did not run it)
+        expect(brewingCell(ab).notRun).toBeUndefined();
+        expect(brewingCell(ab).tier).toBeNull();
+    });
+
+    test('the archive’s partial list alone is the false "n/r" the fold prevents', () => {
+        expect(brewingCell(brewingBefore(archivedWith(['alchemy']))).notRun).toBe(true);
+    });
+
+    test('three devices fold to one answer in every grouping', () => {
+        const a = brewingBefore(archivedWith(['alchemy']));
+        const b = running(['alchemy', 'brewing'], at + 10 * 60_000);
+        const c = running(['foraging'], at + 20 * 60_000);
+        const merges = [
+            mergeTrialRecords(mergeTrialRecords(a, b), c),
+            mergeTrialRecords(a, mergeTrialRecords(b, c)),
+            mergeTrialRecords(mergeTrialRecords(c, b), a),
+            mergeTrialRecords(c, mergeTrialRecords(a, b)),
+            mergeTrialRecords(mergeTrialRecords(b, a), c),
+        ];
+        for (const merged of merges) {
+            expect(merged).toEqual(merges[0]);
+            expect(merged).not.toHaveProperty('scheduled');
+        }
+        expect(listOf(merges[0])).toEqual(['alchemy', 'brewing', 'foraging']);
+        expect(slimOf(merges[0])).toEqual(['alchemy', 'brewing', 'foraging']);
+    });
+
+    test('a running list of the archived cycle is folded in beside another device’s next-cycle list', () => {
+        // Each device's list meets the archive on its own, so the next cycle's list does not push the earlier one out
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const stale = running(['alchemy', 'brewing']);
+        const next = running(['cooking'], at + DAY);
+        for (const merged of [
+            mergeTrialRecords(mergeTrialRecords(archived, stale), next),
+            mergeTrialRecords(mergeTrialRecords(next, archived), stale),
+            mergeTrialRecords(next, mergeTrialRecords(stale, archived)),
+        ]) {
+            expect(listOf(merged)).toEqual(['alchemy', 'brewing']);
+            expect(merged.scheduled.skilling.trials).toEqual(['cooking']);
+        }
+    });
+
+    test('a later cycle’s list still wins whole beyond the window and is not folded into the archive', () => {
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const nextDay = running(['brewing', 'cooking'], at + DAY);
+        const merged = mergeTrialRecords(archived, nextDay);
+        expect(mergeTrialRecords(nextDay, archived)).toEqual(merged);
+        // Kept as the running cycle's, untouched
+        expect(merged.scheduled.skilling).toEqual({ trials: ['brewing', 'cooking'], at: at + DAY });
+        expect(listOf(merged)).toEqual(['alchemy']);
+        expect(slimOf(merged)).toEqual(['alchemy']);
+    });
+
+    test('an earlier cycle’s running list is dropped and adds nothing to a later cycle’s archive', () => {
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const earlier = running(['brewing', 'cooking'], at - DAY);
+        const merged = mergeTrialRecords(archived, earlier);
+        expect(mergeTrialRecords(earlier, archived)).toEqual(merged);
+        expect(merged).not.toHaveProperty('scheduled');
+        expect(listOf(merged)).toEqual(['alchemy']);
+    });
+
+    test('a kind folds only into its own kind’s list', () => {
+        const archived = archivedWith(['alchemy']);
+        const stale = side({ scheduled: { combat: { trials: ['swarm'], at: at + HOUR } } });
+        const merged = mergeTrialRecords(archived, stale);
+        // The archive holds no combat list, so the running one is left running, as it always was
+        expect(merged.scheduled.combat.trials).toEqual(['swarm']);
+        expect(merged.history[0].scheduled).toEqual({ skilling: { trials: ['alchemy'], at } });
+    });
+
+    test('another guild’s record contributes nothing', () => {
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const theirs = {
+            ...running(['alchemy', 'brewing']),
+            guildId: 'g2',
+            guildName: 'Elsewhere',
+            history: [entry(week, {}, { scheduled: { skilling: { trials: ['alchemy', 'brewing', 'cooking'], at } } })],
+        };
+        const merged = mergeTrialRecords(archived, theirs);
+        expect(listOf(merged)).toEqual(['alchemy']);
+        expect(merged).not.toHaveProperty('scheduled');
+        expect(slimOf(merged)).toEqual(['alchemy']);
+    });
+
+    test('tiers, points, results and Best are exactly what they were', () => {
+        const archived = brewingBefore(archivedWith(['alchemy']));
+        const merged = mergeTrialRecords(archived, running(['alchemy', 'brewing']));
+        expect(trialResultsOf(merged)).toEqual(trialResultsOf(archived));
+        const before = trialResultsHistory(trialResultsOf(archived), { now, cycleTrials: [] });
+        const after = trialResultsHistory(trialResultsOf(merged), { now, cycleTrials: cycleTrialsOf(merged) });
+        const strip = (rows) =>
+            rows.map(({ weeks, ...rest }) => ({ ...rest, weeks: weeks.map(({ notRun: _notRun, ...w }) => w) }));
+        expect(strip(after.rows)).toEqual(strip(before.rows));
+    });
+
+    test('two copies of one archived cycle that carry no week keep the fuller list of either', () => {
+        const copy = (trials) => ({
+            archivedAt: week + WEEK,
+            reason: 'a new cycle is scheduled',
+            tiles: { 'skilling::alchemy': skillingTile('Alchemy', 20) },
+            scheduled: { skilling: { trials, at } },
+        });
+        const a = side({ weekStart: week + WEEK, history: [copy(['alchemy'])] });
+        const b = side({ weekStart: week + WEEK, history: [copy(['alchemy', 'brewing'])] });
+        const ab = mergeTrialRecords(a, b);
+        const ba = mergeTrialRecords(b, a);
+        expect(ab.history).toHaveLength(1);
+        expect(ab.history[0].scheduled.skilling.trials).toEqual(['alchemy', 'brewing']);
+        expect(ba.history[0].scheduled.skilling.trials).toEqual(['alchemy', 'brewing']);
     });
 });
