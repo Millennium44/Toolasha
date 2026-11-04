@@ -149,8 +149,10 @@ describe('a character switch landing inside an unreadable pins read', () => {
             release = resolve;
         });
         const original = baseTryGet;
+        let used = false;
         storageMock.tryGet.mockImplementation(async (k, ...rest) => {
-            if (k !== key) return original(k, ...rest);
+            if (k !== key || used) return original(k, ...rest);
+            used = true;
             await gate;
             return answer;
         });
@@ -192,5 +194,26 @@ describe('a character switch landing inside an unreadable pins read', () => {
         gateRead(KEY('char1'), null)();
         expect(await pins.loadPins()).toBe(false);
         expect(pins.pins.act).toEqual(['a1']);
+    });
+
+    test('an older read answering after a newer load finished and a pin was made does not undo the pin', async () => {
+        await pins.loadPins();
+
+        const releaseOld = gateRead(KEY('char1'), null);
+        const loadingOld = pins.loadPins();
+        await Promise.resolve();
+        dataManagerMock.characterId = 'char2';
+        await pins.loadPins();
+        dataManagerMock.characterId = 'char1';
+        await pins.loadPins();
+        pins.pins = { act: ['a1', 'a-new'] };
+        await pins.savePins();
+        releaseOld();
+        await loadingOld;
+
+        expect(pins.pins.act).toEqual(['a1', 'a-new']);
+        pins.pins = { ...pins.pins, other: ['x'] };
+        await pins.savePins();
+        expect(storageMock.storeFor('settings').get(KEY('char1')).act).toEqual(['a1', 'a-new']);
     });
 });

@@ -95,6 +95,8 @@ class EnhancementItemPins {
         this.pins = {};
         /** Whose pins `this.pins` holds, so a switch never shows one character the other's */
         this.pinsOwner = null;
+        /** Counts loadPins() calls, so an answer that a newer call overtook is not applied */
+        this.loadCall = 0;
         this.unregister = null;
         this.applying = false;
         this.styleEl = null;
@@ -142,8 +144,12 @@ class EnhancementItemPins {
         const who = dataManager.getCurrentCharacterId() || null;
         const previous = who === this.pinsOwner ? this.pins : {};
         this.pinsOwner = who;
+        const call = ++this.loadCall;
         record.reset();
         const readable = await record.load();
+        // A newer load started while this one read (A to B to A leaves the owner unchanged): its answer is
+        // older than whatever has been loaded or pinned since, and putting it back would lose that
+        if (call !== this.loadCall) return false;
         // A switch inside the read overtook it: `previous` is the departed character's, and the newer
         // call owns the record now
         if ((dataManager.getCurrentCharacterId() || null) !== who) return false;
