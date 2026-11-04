@@ -699,7 +699,7 @@ class TaskRerollProtection {
                     typeLabel = item.type.charAt(0).toUpperCase() + item.type.slice(1);
                 }
 
-                const borderColor = item.isZone ? '#2a2a4e' : '#1a1a2e';
+                const borderColor = item.isZone ? GAME_COLORS.border : GAME_COLORS.raised;
                 html += `<div data-hrid="${item.hrid}" ${item.isZone ? 'data-zone="1"' : ''} style="
                     display:flex; align-items:center; gap:8px; padding:5px 4px;
                     cursor:pointer; border-bottom:1px solid ${borderColor};

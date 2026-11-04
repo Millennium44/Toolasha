@@ -552,7 +552,9 @@ export class SimEditor {
             if (this._scenarioToken !== scenario) return;
             if (!players.length) {
                 editorArea.innerHTML =
-                    '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
+                    '<div style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
                 return;
             }
 
@@ -1169,7 +1171,7 @@ export class SimEditor {
             source === 'battle'
                 ? 'The game only names the party when a battle starts, so someone joining or leaving while you are idle shows up at your next fight.'
                 : 'The game states the party once, at page load. It is re-read when your next battle starts.';
-        return `<div style="color:#666; font-size:11px; margin:-4px 0 8px;" title="${why}">
+        return `<div style="color:${GAME_COLORS.textDim}; font-size:11px; margin:-4px 0 8px;" title="${why}">
             Party as of ${from}.
         </div>`;
     }
@@ -1219,11 +1221,11 @@ export class SimEditor {
 
         const ages = loaded.map((entry) => {
             const ageMs = profileAgeMs(entry.capturedAt, now);
-            const color = isProfileStale(ageMs) ? '#c9a227' : '#777';
+            const color = isProfileStale(ageMs) ? '#c9a227' : GAME_COLORS.textDim;
             const label = `<span style="color:${color};">${escapeHtml(entry.name)} ${formatProfileAge(ageMs)}</span>`;
             return label + this._gearSourceLabel(entry, now);
         });
-        let html = `<div style="color:#666; font-size:11px; margin:-4px 0 8px;"
+        let html = `<div style="color:${GAME_COLORS.textDim}; font-size:11px; margin:-4px 0 8px;"
             title="Party members are loaded from their cached profiles, captured whenever their profile is opened in game. Older than a day is highlighted.">
             Party profiles: ${ages.join(' · ')}
         </div>`;
@@ -1249,7 +1251,9 @@ export class SimEditor {
             const age = formatProfileAge(profileAgeMs(entry.loadoutCapturedAt, now));
             return ` <span style="color:${ACCENT};">(party loadout, ${age})</span>`;
         }
-        return entry.gearSource === 'profile' ? ' <span style="color:#777;">(worn gear)</span>' : '';
+        return entry.gearSource === 'profile'
+            ? ' <span style="color:' + GAME_COLORS.textDim + ';">(worn gear)</span>'
+            : '';
     }
 
     /**
@@ -1307,7 +1311,7 @@ export class SimEditor {
         let html = `<div style="color:${ACCENT}; font-size:11px; margin:-4px 0 8px;">${escapeHtml(this._exportNote)}</div>`;
         if (this._exportNoteText) {
             html += `<textarea readonly onclick="this.select();" style="
-                width:100%; height:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                width:100%; height:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:4px; padding:6px; font-size:11px; font-family:monospace; resize:vertical;
                 box-sizing:border-box; margin:-4px 0 8px;">${escapeHtml(this._exportNoteText)}</textarea>`;
         }
@@ -1486,7 +1490,7 @@ export class SimEditor {
                         font-family:inherit; font-weight:600;">+ Import Player</button>
                     <div id="mwi-csim-import-area" style="display:none; margin-top:10px; text-align:left;">
                         <textarea id="mwi-csim-import-text" placeholder="Paste Combat Sim Export JSON here..." style="
-                            width:100%; height:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                            width:100%; height:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                             border-radius:4px; padding:6px; font-size:11px; font-family:monospace; resize:vertical;
                             box-sizing:border-box;"></textarea>
                         <div style="display:flex; gap:6px; margin-top:4px;">
@@ -1623,7 +1627,7 @@ export class SimEditor {
         const atCap = playerInfo.length >= MAX_PARTY_SIZE;
         html += `<div id="mwi-csim-import-area" style="display:none; margin-bottom:10px;">
             <textarea id="mwi-csim-import-text" placeholder="Paste Shykai export JSON here..." style="
-                width:100%; height:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                width:100%; height:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:4px; padding:6px; font-size:11px; font-family:monospace; resize:vertical;
                 box-sizing:border-box;"></textarea>
             <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; align-items:center;">
@@ -1664,7 +1668,7 @@ export class SimEditor {
             if (filteredSnapshots.length > 0 || shownLoadout) {
                 html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
                 html += `<select class="toolasha-select" id="mwi-csim-loadout-select" style="
-                    flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    flex:1; min-width:0; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                     border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
                 html += `<option value=""${!shownLoadout ? ' selected' : ''}>— Current Gear —</option>`;
                 for (const snap of filteredSnapshots) {
@@ -1770,10 +1774,10 @@ export class SimEditor {
             html += editorRowOpen(equipRow++);
             html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-            html += `<span style="color:#666; font-size:11px;">+</span>`;
+            html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">+</span>`;
             html += `<input type="number" min="0" max="20" value="${equip.enhancementLevel}"
                 data-enhance-slot="${slotType}"
-                style="width:3.5em; box-sizing:content-box; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:3.5em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += `<button data-equipment-slot="${slotType}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
             html += '</div>';
@@ -1816,10 +1820,10 @@ export class SimEditor {
             html += editorRowOpen(i);
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-            html += `<span style="color:#666; font-size:11px;">Lv</span>`;
+            html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">Lv</span>`;
             html += `<input type="number" min="1" max="200" value="${ability.level}"
                 data-ability-idx="${i}"
-                style="width:4em; box-sizing:content-box; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:4em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += this._renderTriggerButton('abilities', i, ability, gameData);
             html += `<button data-ability-slot="${i}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
@@ -1856,7 +1860,8 @@ export class SimEditor {
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
             html += editorRowOpen(i);
-            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' + GAME_COLORS.textDim + '; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
                 nameColor +
@@ -1879,7 +1884,8 @@ export class SimEditor {
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
             html += editorRowOpen(i);
-            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' + GAME_COLORS.textDim + '; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
                 nameColor +
@@ -2016,7 +2022,9 @@ export class SimEditor {
                 : items;
 
             let html =
-                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:#888; font-style:italic;"' +
+                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid ' +
+                GAME_COLORS.raised +
+                '; color:#888; font-style:italic;"' +
                 ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">Empty (clear slot)</div>';
 
             let lastCategory = '';
@@ -2026,19 +2034,25 @@ export class SimEditor {
                     html +=
                         '<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:' +
                         ACCENT +
-                        '; border-bottom:1px solid #2a2a4e; margin-top:4px;">' +
+                        '; border-bottom:1px solid ' +
+                        GAME_COLORS.border +
+                        '; margin-top:4px;">' +
                         item.categoryLabel +
                         '</div>';
                 }
 
                 const isCurrent = item.hrid === currentHrid;
                 const lvlTag =
-                    '<span style="color:#666; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ' +
+                    '<span style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ' +
                     item.itemLevel +
                     '</span>';
                 if (item.conflict) {
                     html +=
-                        '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid #1a1a2e; color:#555; cursor:default;">' +
+                        '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid ' +
+                        GAME_COLORS.raised +
+                        '; color:#555; cursor:default;">' +
                         item.name +
                         ' <span style="font-size:10px; color:#664;">(in use)</span>' +
                         lvlTag +
@@ -2049,7 +2063,9 @@ export class SimEditor {
                     html +=
                         '<div data-pick-hrid="' +
                         item.hrid +
-                        '" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:' +
+                        '" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ' +
+                        GAME_COLORS.raised +
+                        '; color:' +
                         color +
                         ';"' +
                         ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
@@ -2061,7 +2077,9 @@ export class SimEditor {
             }
             if (filtered.length > 80) {
                 html +=
-                    '<div style="color:#666; text-align:center; padding:6px;">...' +
+                    '<div style="color:' +
+                    GAME_COLORS.textDim +
+                    '; text-align:center; padding:6px;">...' +
                     (filtered.length - 80) +
                     ' more</div>';
             }
@@ -2181,23 +2199,25 @@ export class SimEditor {
             const filtered = query ? items.filter((i) => i.name.toLowerCase().includes(lower)) : items;
 
             let html =
-                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:#888; font-style:italic;"' +
+                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid ' +
+                GAME_COLORS.raised +
+                '; color:#888; font-style:italic;"' +
                 ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">Empty (remove slot)</div>';
 
             let lastCategory = '';
             for (const item of filtered.slice(0, 100)) {
                 if (item.categoryLabel !== lastCategory) {
                     lastCategory = item.categoryLabel;
-                    html += `<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:${ACCENT}; border-bottom:1px solid #2a2a4e; margin-top:4px;">${item.categoryLabel}</div>`;
+                    html += `<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:${ACCENT}; border-bottom:1px solid ${GAME_COLORS.border}; margin-top:4px;">${item.categoryLabel}</div>`;
                 }
 
                 const isCurrent = item.hrid === currentHrid;
                 const color = isCurrent ? ACCENT : '#ccc';
                 const indicator = isCurrent ? ` <span style="color:${ACCENT};">\u25cf</span>` : '';
-                const lvlTag = `<span style="color:#666; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ${item.reqLevel}</span>`;
+                const lvlTag = `<span style="color:${GAME_COLORS.textDim}; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ${item.reqLevel}</span>`;
 
                 html +=
-                    `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:${color};"` +
+                    `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ${GAME_COLORS.raised}; color:${color};"` +
                     ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
                     item.name +
                     indicator +
@@ -2205,7 +2225,7 @@ export class SimEditor {
                     '</div>';
             }
             if (filtered.length > 100) {
-                html += `<div style="color:#666; text-align:center; padding:6px;">...${filtered.length - 100} more</div>`;
+                html += `<div style="color:${GAME_COLORS.textDim}; text-align:center; padding:6px;">...${filtered.length - 100} more</div>`;
             }
             listEl.innerHTML = html;
 
@@ -2327,19 +2347,23 @@ export class SimEditor {
             const filtered = query ? items.filter((i) => i.name.toLowerCase().includes(lower)) : items;
 
             let html =
-                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:#888; font-style:italic;"' +
+                '<div data-pick-hrid="" style="display:flex; align-items:center; gap:8px; padding:4px; cursor:pointer; border-bottom:1px solid ' +
+                GAME_COLORS.raised +
+                '; color:#888; font-style:italic;"' +
                 ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">Empty (clear slot)</div>';
 
             let lastCategory = '';
             for (const item of filtered) {
                 if (item.categoryLabel !== lastCategory) {
                     lastCategory = item.categoryLabel;
-                    html += `<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:${ACCENT}; border-bottom:1px solid #2a2a4e; margin-top:4px;">${item.categoryLabel}</div>`;
+                    html += `<div style="padding:6px 0 2px; font-size:10px; font-weight:700; color:${ACCENT}; border-bottom:1px solid ${GAME_COLORS.border}; margin-top:4px;">${item.categoryLabel}</div>`;
                 }
 
                 if (item.conflict) {
                     html +=
-                        '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid #1a1a2e; color:#555; cursor:default;">' +
+                        '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid ' +
+                        GAME_COLORS.raised +
+                        '; color:#555; cursor:default;">' +
                         item.name +
                         ' <span style="font-size:10px; color:#664;">(in use)</span></div>';
                 } else {
@@ -2347,7 +2371,7 @@ export class SimEditor {
                     const color = isCurrent ? ACCENT : '#ccc';
                     const indicator = isCurrent ? ` <span style="color:${ACCENT};">\u25cf</span>` : '';
                     html +=
-                        `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid #1a1a2e; color:${color};"` +
+                        `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ${GAME_COLORS.raised}; color:${color};"` +
                         ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
                         item.name +
                         indicator +
@@ -2623,7 +2647,11 @@ export class SimEditor {
         popup.appendChild(footer);
 
         const selectStyle =
-            'flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px; font-family:inherit;';
+            'flex:1; min-width:0; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; padding:2px 4px; font-size:11px; font-family:inherit;';
 
         const buildOptions = (hrids, selected, labelFor) =>
             hrids
@@ -2642,7 +2670,7 @@ export class SimEditor {
                     const compOptions = comparatorsFor(row.conditionHrid);
                     const hideValue = valuelessComparator(row.comparatorHrid);
 
-                    html += `<div style="border:1px solid #2a2a4e; border-radius:5px; padding:6px; margin-bottom:6px;">`;
+                    html += `<div style="border:1px solid ${GAME_COLORS.border}; border-radius:5px; padding:6px; margin-bottom:6px;">`;
                     html += `<div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">`;
                     html += `<select class="toolasha-select" data-trig-dep="${i}" style="${selectStyle}">${buildOptions(depHrids, row.dependencyHrid, (h) => displayName(depMap, h))}</select>`;
                     html += `<select class="toolasha-select" data-trig-cond="${i}" style="${selectStyle}">${buildOptions(condOptions, row.conditionHrid, (h) => displayName(condMap, h))}</select>`;
@@ -2651,7 +2679,7 @@ export class SimEditor {
                     html += `<div style="display:flex; gap:4px; align-items:center;">`;
                     html += `<select class="toolasha-select" data-trig-comp="${i}" style="${selectStyle}">${buildOptions(compOptions, row.comparatorHrid, (h) => displayName(compMap, h))}</select>`;
                     html += `<input type="number" data-trig-value="${i}" value="${row.value}" min="0"
-                        style="width:70px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px;
+                        style="width:70px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:3px;
                         padding:2px 4px; font-size:11px; text-align:center; ${hideValue ? 'visibility:hidden;' : ''}">`;
                     html += `</div></div>`;
                 }
@@ -2784,7 +2812,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:70px;">${skill.label}</span>`;
             html += `<input type="number" min="1" max="200" value="${dto[skill.key]}"
                 data-skill="${skill.key}"
-                style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += '</div>';
         }
@@ -2815,7 +2843,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}</span>`;
             html += `<input type="number" min="0" max="8" value="${level}"
                 data-house-hrid="${hrid}"
-                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += '</div>';
         }
@@ -2880,7 +2908,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</span>`;
             html += `<input type="number" min="0" max="${maxLevel}" value="${level}"
                 data-guild-buff="${buffHrid}"
-                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             const cap = caps[buffHrid];
             if (Number.isFinite(cap)) {
@@ -2890,7 +2918,7 @@ export class SimEditor {
                           'right now. Typing higher sims a level the guild would have to build first.'
                         : `Your guild has not built ${label} yet, so there is no level to buy. Typing one sims ` +
                           'a shrine the guild would have to build first.';
-                html += `<span style="color:#666;" title="${escapeHtml(capTitle)}">/ ${cap}</span>`;
+                html += `<span style="color:${GAME_COLORS.textDim};" title="${escapeHtml(capTitle)}">/ ${cap}</span>`;
             }
             html += '</div>';
         }
@@ -2961,7 +2989,7 @@ export class SimEditor {
             html += `<span style="color:#888;">${label}</span>`;
             html += '</label>';
         }
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;
+        html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;
 
         html += '</div></div>';
         return html;
@@ -3033,7 +3061,7 @@ export class SimEditor {
                     : dto.achievementBuffsManual
                       ? 'Not in shared profiles — set manually.'
                       : 'From your completed achievements. Untick to sim without one.';
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">${caption}</div>`;
+        html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">${caption}</div>`;
 
         html += '</div></div>';
         return html;
@@ -3116,7 +3144,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${upgrade.label}</span>`;
             html += `<input type="number" min="0" max="12" value="${val}"
                 data-token-upgrade="${upgrade.key}"
-                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += '</div>';
         }
@@ -3150,7 +3178,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${buff.label}">${buff.label}</span>`;
             html += `<input type="number" min="0" max="${MAX_COMMUNITY_BUFF_LEVEL}" value="${val}"
                 data-community-buff="${buff.key}"
-                style="width:40px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
             html += '</div>';
         }

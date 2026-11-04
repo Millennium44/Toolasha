@@ -212,7 +212,8 @@ class Config {
                 enabled: true,
                 name: 'Expected Value Calculator',
                 category: 'Market',
-                description: 'Shows EV for openable containers (crates, chests)',
+                description:
+                    'Prices openable containers (crates, chests) for net worth, badges, combat stats and tasks; the tooltip row has its own setting',
                 settingKey: 'itemTooltip_expectedValue',
             },
             market_showListingPrices: {

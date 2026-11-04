@@ -639,7 +639,8 @@ describe('the progress strip counts stacks, not items', () => {
         bulkSell.loadoutsChecked = true;
         bulkSell._prepareCurrent();
 
-        expect(bulkSell.statusNote).toBe('Done — 1 stacks processed (12 locked items skipped)');
+        expect(bulkSell.statusNote).toBe('Done — 1 stacks processed');
+        expect(bulkSell.statusDetail).toBe('12 locked items skipped');
     });
 });
 
@@ -1189,7 +1190,10 @@ describe('confirming from the strip', () => {
     // below drives it in.
     const confirmBtn = () => bulkSell.chip.querySelector(`.${CHIP}-main`);
     const skipBtn = () => bulkSell.chip.querySelector(`.${CHIP}-skip`);
-    const statusText = () => bulkSell.chip.querySelector(`.${CHIP}-status`).textContent;
+    /** The headline and the detail under it, whether or not the detail is folded out */
+    const statusText = () =>
+        `${bulkSell.chip.querySelector(`.${CHIP}-status`).textContent}\n` +
+        bulkSell.chip.querySelector(`.${CHIP}-detail`).textContent;
     /** Only the walk's own state, which both confirm routes must leave identical */
     const walkState = () => ({ state: bulkSell.state, index: bulkSell.index, current: bulkSell.current?.itemHrid });
 
@@ -1227,7 +1231,7 @@ describe('confirming from the strip', () => {
         expect(bulkSell.state).toBe('awaiting_next');
     });
 
-    test('an above-band warning leads the strip line, ahead of the reason the strip cuts off', () => {
+    test('an above-band warning is marked on the headline and leads the detail, ahead of the reason', () => {
         const modal = openModal();
         runAtStep0();
         bulkSell.decision = {
@@ -1238,9 +1242,16 @@ describe('confirming from the strip', () => {
             warning: 'bid above the tradable range: the game may refuse it',
         };
         bulkSell._render();
-        const line = statusText();
-        expect(line.indexOf('above the tradable range')).toBeGreaterThan(-1);
-        expect(line.indexOf('above the tradable range')).toBeLessThan(line.indexOf('Cheese'));
+        const headline = bulkSell.chip.querySelector(`.${CHIP}-status`).textContent;
+        const detailBox = bulkSell.chip.querySelector(`.${CHIP}-detail`);
+        // The row says something needs a look; the words are under it, open without a click
+        expect(headline.startsWith('⚠ ')).toBe(true);
+        expect(headline).not.toContain('above the tradable range');
+        expect(detailBox.style.display).toBe('');
+        expect(detailBox.textContent.indexOf('Bid above the tradable range')).toBe(0);
+        expect(detailBox.textContent.indexOf('Bid above the tradable range')).toBeLessThan(
+            detailBox.textContent.indexOf('Supply')
+        );
         closeModalAndSettle(modal);
     });
 
@@ -1625,7 +1636,8 @@ describe('confirming from the strip', () => {
             expect(bulkSell.index).toBe(0);
             expect(bulkSell.current.itemHrid).toBe('/items/cheese');
             expect(bulkSell.current.count).toBe(7);
-            expect(statusText()).toContain('7 left after the sale; sell again');
+            expect(statusText()).toContain('7 left after the sale');
+            expect(statusText()).toContain('Press Sell again for the rest');
 
             // Its own press re-opens the same step, not the next item
             confirmBtn().click();
@@ -1645,7 +1657,7 @@ describe('confirming from the strip', () => {
 
             expect(bulkSell.state).toBe('awaiting_next');
             expect(bulkSell._sellAgain).toBe(0);
-            expect(statusText()).toContain('press Next for the next item');
+            expect(statusText()).toContain('Press Next for the next item');
             confirmBtn().click();
             expect(bulkSell.index).toBe(1);
         });
@@ -1660,7 +1672,7 @@ describe('confirming from the strip', () => {
             expect(bulkSell.state).toBe('awaiting_next');
             vi.advanceTimersByTime(3000);
             expect(bulkSell._sellAgain).toBe(0);
-            expect(statusText()).toContain('press Next for the next item');
+            expect(statusText()).toContain('Press Next for the next item');
             confirmBtn().click();
             expect(bulkSell.index).toBe(1);
         });
@@ -1733,23 +1745,28 @@ describe('confirming from the strip', () => {
         modal.remove();
     });
 
-    test('a refusal leads the status line rather than trailing off the end of it', () => {
-        // The reason used to be appended after the progress, the verb, the
-        // count, the name, the price and the decision reason — past where the
-        // strip truncates. So a Confirm that had refused for a stated reason
-        // presented as a button that did nothing, which is exactly how it was
-        // reported.
+    test('a refusal is shown in full without a click, and not repeated on the headline row', () => {
+        // The reason used to trail the progress, the verb, the count, the name, the price and the decision
+        // reason — past where the strip truncates. So a Confirm that had refused for a stated reason
+        // presented as a button that did nothing, which is exactly how it was reported. It now leads the
+        // detail row, which a refusal holds open whether or not the row is folded away.
         runAtStep0();
         document.querySelector('[class*="Modal_modalContainer"]')?.remove();
 
         confirmBtn().dispatchEvent(new Event('click'));
 
         const status = bulkSell.chip.querySelector(`.${CHIP}-status`);
-        expect(status.textContent.startsWith('can’t confirm:')).toBe(true);
-        expect(status.textContent).toContain('the sell modal is not open');
-        // and the whole line is still readable on hover, however narrow the strip
+        const detailBox = bulkSell.chip.querySelector(`.${CHIP}-detail`);
+        expect(bulkSell.statusExpanded).toBe(false);
+        expect(detailBox.style.display).toBe('');
+        expect(detailBox.textContent.startsWith('Can’t confirm: the sell modal is not open.')).toBe(true);
+        expect(status.textContent.startsWith('⚠ ')).toBe(true);
+        expect(status.textContent).not.toContain('not open');
+        // and the whole of it is still readable on hover, however narrow the strip
         expect(status.title).toContain('Cheese');
         expect(status.title).toContain('the sell modal is not open');
+        // the hint to confirm would contradict the refusal, so it is not said
+        expect(detailBox.textContent).not.toContain('Confirm in the modal');
     });
 
     /**
@@ -1874,7 +1891,7 @@ describe('confirming from the strip', () => {
 
             expect(navigations).toEqual(['/items/cheese']);
             expect(bulkSell.state).toBe('awaiting_next');
-            expect(statusText()).toMatch(/skipped \(no market data\)/);
+            expect(statusText()).toMatch(/Skipped cheese \(no market data\)/);
 
             confirmBtn().click();
             vi.advanceTimersByTime(20_000);
@@ -1890,7 +1907,7 @@ describe('confirming from the strip', () => {
 
             expect(navigations).toEqual(['/items/cheese']);
             expect(bulkSell.state).toBe('awaiting_next');
-            expect(statusText()).toMatch(/skipped \(no market data\)/);
+            expect(statusText()).toMatch(/Skipped cheese \(no market data\)/);
         });
 
         test('the Skip button is a click of its own, so it opens the next book', () => {
@@ -2602,7 +2619,7 @@ describe('confirming from the strip', () => {
             expect(gameClicks).toBe(0);
             expect(armClicks).toBe(0);
             expect(bulkSell._confirmTarget().why).toMatch(why);
-            expect(statusText()).toMatch(/can’t confirm/);
+            expect(statusText()).toMatch(/can’t confirm/i);
             expect(bulkSell._confirmSent()).toBe(false);
         });
     });
@@ -2730,6 +2747,8 @@ describe('the strip does not move its controls', () => {
         ['awaiting confirm, refused', 'awaiting_confirm', { confirmNote: 'the sell modal is not open' }],
         ['awaiting confirm, vendor', 'awaiting_confirm', { vendor: true }],
         ['dealt with', 'awaiting_next', {}],
+        // Retry and the toggle come and go in these without moving anything beside them
+        ['skipped, retry offered', 'awaiting_next', { note: 'no market data' }],
         ['done', 'done', { note: 'Sold 12 items' }],
         ['stopped', 'idle', { note: 'Stopped' }],
     ];
@@ -2888,16 +2907,17 @@ describe('the folded-out status line', () => {
         expect(more().getAttribute('aria-expanded')).toBe('false');
     });
 
-    test('folding it out shows the whole line, untruncated and wrapping', () => {
+    test('folding it out shows the detail, untruncated and wrapping, and never says the headline again', () => {
         bulkSell._buildPanel();
         atLongStep();
 
         more().click();
 
         expect(detail().style.display).toBe('');
-        expect(detail().textContent).toBe(status().textContent);
-        expect(detail().textContent).toContain('Crimson Cheese');
-        expect(detail().textContent).toContain('spread 0.6% under 2%');
+        expect(status().textContent).toBe('1/1 · Insta-sell 1,096× Crimson Cheese @ ~3.4K');
+        expect(detail().textContent).toBe('Spread 0.6% under 2%. Confirm in the modal, or press Confirm here.');
+        expect(detail().textContent).not.toContain('Crimson Cheese');
+        expect(status().title).toBe(`${status().textContent}\n${detail().textContent}`);
         // Downwards, never sideways: capped at the status line's own width
         expect(detail().style.maxWidth).toBe('340px');
         expect(detail().style.whiteSpace).toBe('normal');
@@ -2934,5 +2954,861 @@ describe('the folded-out status line', () => {
 
         expect(detail().style.display).toBe('');
         expect(more().textContent).toBe('▴');
+    });
+});
+
+/**
+ * The status bar's two rows, and the Retry button.
+ *
+ * The bar used to say the same sentence twice: a truncated copy in the row and the whole of it again
+ * when folded out. Now the row is a short headline (progress and action) and the fold-out adds only
+ * what the headline lacks. Retry starts the current step over (close what is open, open the item again,
+ * fill the amount, bring the modal back) and never sells: the confirm stays the player's press.
+ *
+ * Driven through the real step functions with the fixture's order book, for a stack of golem essence.
+ */
+describe('the status bar and its Retry button', () => {
+    const CHIP = 'mwi-bulk-sell-chip';
+    const GOLEM = '/items/golem_essence';
+    /** Insta-sell by the spread rule alone: 185 / 183 is a 1.08% spread, under the 2% limit */
+    const BOOK = {
+        asks: [{ price: 185, orderQuantity: 100, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+        bids: [{ price: 183, orderQuantity: 90000, filledQuantity: 0 }],
+    };
+    let gameClicks;
+    let closeClicks;
+
+    const part = (name) => bulkSell.chip.querySelector(`.${CHIP}-${name}`);
+    const headline = () => part('status').textContent;
+    const detail = () => part('detail').textContent;
+    const detailShown = () => part('detail').style.display !== 'none';
+    const retryBtn = () => part('retry');
+    const retryOffered = () => retryBtn().style.visibility === 'visible';
+    const retryEnabled = () => retryOffered() && !retryBtn().disabled;
+
+    /** A sell modal as the game draws it, with a close button and a confirm that counts its presses */
+    const openModal = ({ qty = 27699, header = 'Sell Now' } = {}) => {
+        const modal = document.createElement('div');
+        modal.className = 'Modal_modalContainer__abc';
+        modal.innerHTML =
+            `<div class="MarketplacePanel_header__x">${header}</div>` +
+            '<div><svg><use href="/static/media/items.svg#golem_essence"></use></svg></div>' +
+            `<div class="MarketplacePanel_quantityInputs__y"><input value="${qty}"></div>` +
+            '<button class="Button_button__1Fe9z">Post Sell Order</button>' +
+            '<button class="Modal_closeButton__z">x</button>';
+        modal.querySelector('.Button_button__1Fe9z').addEventListener('click', () => gameClicks++);
+        modal.querySelector('.Modal_closeButton__z').addEventListener('click', () => {
+            closeClicks++;
+            modal.remove();
+        });
+        document.body.appendChild(modal);
+        return modal;
+    };
+
+    const setStack = (count) => {
+        game.items = count > 0 ? [inventory(GOLEM, count), inventory('/items/milk', 4)] : [inventory('/items/milk', 4)];
+    };
+
+    /** The run parked on step 0 of two */
+    const startRun = () => {
+        bulkSell.queue = [
+            { itemHrid: GOLEM, enhancementLevel: 0, count: 27699, name: 'Golem Essence' },
+            { itemHrid: '/items/milk', enhancementLevel: 0, count: 4, name: 'Milk' },
+        ];
+        bulkSell.index = 0;
+        bulkSell._buildPanel();
+    };
+
+    /** Prepare step 0 the way a press of Start or Next does, through to the sell modal being offered */
+    const reachConfirm = async () => {
+        bulkSell._prepareCurrent();
+        bulkSell._onOrderBook({ marketItemOrderBooks: { itemHrid: GOLEM, orderBooks: [BOOK] } });
+        shortcuts.calls.at(-1).resolve();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(bulkSell.state).toBe('awaiting_confirm');
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.textContent = '';
+        gameClicks = 0;
+        closeClicks = 0;
+        navigations.length = 0;
+        shortcuts.calls.length = 0;
+        shortcuts.insta.length = 0;
+        shortcuts.listing.length = 0;
+        settings['market_bulkSellAssistant'] = true;
+        settings['market_bulkSellSupplyRatio'] = 0;
+        settings['market_bulkSellQueueDays'] = 0;
+        settings['market_bulkSellMinListingValue'] = 0;
+        settings['market_bulkSellMaxSpreadPct'] = 2;
+        settings['market_bulkSellMinPatientPremium'] = 0;
+        game.details[GOLEM] = { isTradable: true };
+        setStack(27699);
+        bulkSell._stop('');
+        bulkSell.chip = null;
+        bulkSell.statusExpanded = false;
+        bulkSell.isInitialized = true;
+        startRun();
+    });
+
+    afterEach(() => {
+        bulkSell._stop('');
+        bulkSell._removePanel();
+        bulkSell.statusExpanded = false;
+        vi.useRealTimers();
+        document.body.textContent = '';
+        window.innerWidth = 1024;
+        delete window.matchMedia;
+    });
+
+    describe('every status says its headline once, and the detail only what the headline lacks', () => {
+        /** The invariants every status shares, whatever it says */
+        const wellFormed = (name) => {
+            const h = headline();
+            const d = detail();
+            expect(h, `${name}: empty headline`).not.toBe('');
+            // No second row, and no toggle, when there is nothing to add
+            if (!d) {
+                expect(detailShown(), `${name}: an empty second row is showing`).toBe(false);
+                expect(part('more').style.visibility, `${name}: a toggle with nothing to toggle`).toBe('hidden');
+            }
+            // The detail never restates the headline, and the headline never carries the detail's sentences
+            expect(d.includes(h), `${name}: detail repeats the headline`).toBe(false);
+            for (const sentenceText of d.split(/(?<=[.!?…])\s+/).filter(Boolean)) {
+                expect(h.includes(sentenceText), `${name}: headline repeats "${sentenceText}"`).toBe(false);
+            }
+            // The hover carries both, the one place they meet
+            expect(part('status').title).toBe(d ? `${h}\n${d}` : h);
+        };
+
+        test('idle: a headline alone', () => {
+            bulkSell._render();
+            expect(headline()).toBe('Sell every tradable item, one confirm each');
+            expect(detail()).toBe('');
+            wellFormed('idle');
+        });
+
+        test('stopped: a headline alone', () => {
+            bulkSell._stop('Stopped');
+            expect(headline()).toBe('Stopped');
+            expect(detail()).toBe('');
+            wellFormed('stopped');
+        });
+
+        test('empty: says what is empty, and what was left out underneath', async () => {
+            game.items = [inventory(GOLEM, 5)];
+            game.locked.add(`${GOLEM}:0`);
+            bulkSell._stop('');
+            await bulkSell._start();
+            expect(bulkSell.state).toBe('idle');
+            expect(headline()).toBe('No tradable items in inventory');
+            expect(detail()).toBe('5 locked items skipped.');
+            wellFormed('empty');
+        });
+
+        test('a source problem: the headline alone, with no leftover detail from the run before', async () => {
+            game.items = [inventory(GOLEM, 5)];
+            game.locked.add(`${GOLEM}:0`);
+            await bulkSell._start();
+            expect(detail()).not.toBe('');
+
+            game.watched = [];
+            bulkSell.selectedTabId = 'watchlist';
+            await bulkSell._start();
+            expect(headline()).toBe('Nothing on the watchlist');
+            expect(detail()).toBe('');
+            wellFormed('error');
+        });
+
+        test('checking: progress and the item, nothing more', () => {
+            bulkSell._prepareCurrent();
+            expect(headline()).toBe('1/2 · Checking Golem Essence…');
+            expect(detail()).toBe('');
+            wellFormed('checking');
+        });
+
+        test('waiting to confirm an insta-sell: the action in the row, the why and the how underneath', async () => {
+            await reachConfirm();
+            expect(headline()).toBe('1/2 · Insta-sell 27,699× Golem Essence @ ~183');
+            expect(detail()).toBe('Spread 1.1% ≤ 2%. Confirm in the modal, or press Confirm here.');
+            // Folded away by default: the row alone, and a toggle to read the rest
+            expect(detailShown()).toBe(false);
+            expect(part('more').style.visibility).toBe('visible');
+            wellFormed('insta');
+
+            part('more').click();
+            expect(detailShown()).toBe(true);
+        });
+
+        test('waiting to confirm a listing', async () => {
+            settings['market_bulkSellMaxSpreadPct'] = 0;
+            bulkSell._prepareCurrent();
+            bulkSell._onOrderBook({ marketItemOrderBooks: { itemHrid: GOLEM, orderBooks: [BOOK] } });
+            shortcuts.calls.at(-1).resolve();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(headline()).toBe('1/2 · List 27,699× Golem Essence @ 185');
+            expect(detail()).toBe('Queue ok. Confirm in the modal, or press Confirm here.');
+            wellFormed('listing');
+        });
+
+        test('waiting to confirm a vendor sale', () => {
+            bulkSell._prepareCurrent();
+            bulkSell.decision = { insta: false, vendor: true, price: 96, reason: 'vendor 96 ≥ market net 95' };
+            bulkSell.state = 'awaiting_confirm';
+            bulkSell._render();
+            expect(headline()).toBe('1/2 · Vendor-sell 27,699× Golem Essence @ 96');
+            expect(detail()).toBe('Vendor 96 ≥ market net 95. Click Sell For in the item menu, or press Confirm here.');
+            wellFormed('vendor');
+        });
+
+        test('confirm sent: the hint says so, and Retry waits', async () => {
+            openModal();
+            await reachConfirm();
+            part('main').click();
+            expect(gameClicks).toBe(1);
+            expect(detail()).toBe('Spread 1.1% ≤ 2%. Confirm sent — waiting for the game.');
+            wellFormed('sent');
+        });
+
+        test('refused by the check: the refusal leads the detail, held open, with no hint to confirm', async () => {
+            await reachConfirm();
+            part('main').click();
+            expect(headline().startsWith('⚠ 1/2 · Insta-sell')).toBe(true);
+            expect(detail()).toBe('Can’t confirm: the sell modal is not open. Spread 1.1% ≤ 2%.');
+            // Held open though the row is folded away: the player has to see it
+            expect(bulkSell.statusExpanded).toBe(false);
+            expect(detailShown()).toBe(true);
+            expect(part('more').style.visibility).toBe('hidden');
+            wellFormed('refused');
+        });
+
+        test('refused by the game: named, and the step is free to confirm again', async () => {
+            openModal();
+            await reachConfirm();
+            part('main').click();
+            notices.handler({ level: 'error', key: 'errorNotification.itemIsLocked', variables: {}, at: Date.now() });
+            expect(detail()).toBe('Can’t confirm: the game refused the sale (itemIsLocked). Spread 1.1% ≤ 2%.');
+            expect(detailShown()).toBe(true);
+            wellFormed('refused by the game');
+        });
+
+        test('skipped: the item and the reason in the row, what to do underneath', async () => {
+            bulkSell._prepareCurrent();
+            vi.advanceTimersByTime(3100);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(headline()).toBe('1/2 · Skipped Golem Essence (no market data)');
+            expect(detail()).toBe('Press Next for the next item. Or ↻ to open this one again.');
+            wellFormed('skipped');
+        });
+
+        test('skipped by the player carries no reason and moves straight on', async () => {
+            openModal();
+            await reachConfirm();
+            part('skip').click();
+            // Skip is a click of its own, so the walk moves straight on
+            expect(bulkSell.state).toBe('preparing');
+            expect(headline()).toBe('2/2 · Moving on…');
+            expect(detail()).toBe('Skipped Golem Essence.');
+            wellFormed('skipped by the player');
+        });
+
+        test('moving on after a skip that opened nothing: says what was skipped, then the next item', () => {
+            bulkSell._prepareCurrent();
+            bulkSell._navigatedSinceClick = false;
+            bulkSell._skip('skipped');
+            expect(bulkSell.state).toBe('preparing');
+            expect(headline()).toBe('2/2 · Moving on…');
+            expect(detail()).toBe('Skipped Golem Essence.');
+            wellFormed('moving on');
+        });
+
+        test('dealt with: a short headline; the stack is gone, so nothing to retry', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            vi.advanceTimersByTime(200);
+            setStack(0);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(headline()).toBe('1/2 · Golem Essence dealt with');
+            expect(detail()).toBe('Press Next for the next item.');
+            expect(retryOffered()).toBe(false);
+            wellFormed('dealt with');
+        });
+
+        test('some left after a sale: the count in the row, the choice underneath', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            setStack(30000);
+            vi.advanceTimersByTime(200);
+            setStack(7);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(headline()).toBe('1/2 · Golem Essence: 7 left after the sale');
+            expect(detail()).toBe('Press Sell again for the rest, or Skip to leave it.');
+            wellFormed('some left');
+        });
+
+        test('waiting on the bag after the window closed', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            setStack(30000);
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(200);
+            expect(bulkSell._afterCloseWatch).not.toBeNull();
+            expect(headline()).toBe('1/2 · Golem Essence: checking the bag…');
+            expect(detail()).toBe('Waiting for the game to report any sale before moving on.');
+            wellFormed('checking the bag');
+        });
+
+        test('done: the count in the row, what was left out underneath', () => {
+            bulkSell.index = 2;
+            bulkSell.lockedSkipped = 12;
+            bulkSell._prepareCurrent();
+            expect(bulkSell.state).toBe('done');
+            expect(headline()).toBe('Done — 2 stacks processed');
+            expect(detail()).toBe('12 locked items skipped.');
+            wellFormed('done');
+            bulkSell.lockedSkipped = 0;
+        });
+    });
+
+    describe('Retry sits with Skip', () => {
+        test('an icon button with a title and an accessible name, in the game look, just before Skip', () => {
+            const retry = retryBtn();
+            expect(retry.textContent).toBe('↻');
+            expect(retry.title).toBeTruthy();
+            expect(retry.getAttribute('aria-label')).toBe('Retry this item');
+            expect(retry.type).toBe('button');
+            // The icon variant of the shared game look, as the ✕ wears it
+            expect(retry._restBg).toBe('transparent');
+            expect(retry.nextElementSibling).toBe(part('skip'));
+            expect(retry.parentElement).toBe(part('skip').parentElement);
+        });
+
+        test('it keeps its slot: hidden is never display:none', () => {
+            expect(retryBtn().style.visibility).toBe('hidden');
+            expect(retryBtn().style.display).toBe('');
+        });
+
+        test('offered while a step is open, hidden when idle, stopped, empty or done', async () => {
+            expect(retryOffered()).toBe(false);
+            bulkSell._prepareCurrent();
+            expect(retryOffered()).toBe(true);
+            bulkSell._stop('Stopped');
+            expect(retryOffered()).toBe(false);
+            bulkSell.index = 2;
+            bulkSell.queue = [{ itemHrid: GOLEM, enhancementLevel: 0, count: 1, name: 'Golem Essence' }];
+            bulkSell._prepareCurrent();
+            expect(bulkSell.state).toBe('done');
+            expect(retryOffered()).toBe(false);
+        });
+
+        test('not offered for a step the game refused on its merits', () => {
+            game.locked.add(`${GOLEM}:0`);
+            // As a press of Next or Retry leaves it: the click's one action is spent
+            bulkSell._navigatedSinceClick = true;
+            bulkSell._prepareCurrent();
+            expect(bulkSell.statusNote).toBe('locked');
+            vi.advanceTimersByTime(1000);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(retryOffered()).toBe(false);
+            game.locked.clear();
+        });
+
+        test('offered after a window closed without selling: the stack is still all there', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            vi.advanceTimersByTime(200);
+            modal.remove();
+            vi.advanceTimersByTime(2500);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(headline()).toBe('1/2 · Golem Essence dealt with');
+            expect(retryEnabled()).toBe(true);
+        });
+    });
+
+    describe('what a press of Retry does', () => {
+        test('with the modal open: closes it, waits, opens the item again, and sells nothing', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            expect(navigations).toEqual([GOLEM]);
+
+            retryBtn().click();
+
+            expect(closeClicks).toBe(1);
+            expect(modal.isConnected).toBe(false);
+            expect(gameClicks).toBe(0);
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.index).toBe(0);
+            expect(headline()).toBe('1/2 · Retrying Golem Essence…');
+            // Not yet: the close has to land first
+            expect(navigations).toEqual([GOLEM]);
+
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            expect(bulkSell.state).toBe('preparing');
+            expect(headline()).toBe('1/2 · Checking Golem Essence…');
+            expect(gameClicks).toBe(0);
+        });
+
+        test('brings the modal back: decides again, and the amount is filled in again', async () => {
+            openModal({ qty: 1 });
+            await reachConfirm();
+            retryBtn().click();
+            vi.advanceTimersByTime(600);
+
+            bulkSell._onOrderBook({ marketItemOrderBooks: { itemHrid: GOLEM, orderBooks: [BOOK] } });
+            shortcuts.calls.at(-1).resolve();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(bulkSell.state).toBe('awaiting_confirm');
+            expect(bulkSell._confirmedStep).toBeNull();
+
+            const again = openModal({ qty: 0 });
+            bulkSell._onModal(again);
+            vi.advanceTimersByTime(500);
+            expect(again.querySelector('input').value).toBe('27699');
+            expect(gameClicks).toBe(0);
+
+            // And the sale is still the player's one press
+            part('main').click();
+            expect(gameClicks).toBe(1);
+        });
+
+        test('while the book never came: the old wait is dead and a new one starts', () => {
+            bulkSell._prepareCurrent();
+            vi.advanceTimersByTime(2000);
+            retryBtn().click();
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            // 3.1 s after the first attempt began: its 3 s timeout would have skipped the step by now
+            vi.advanceTimersByTime(500);
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.statusNote).toBe('');
+            // The restarted attempt has its own full wait
+            vi.advanceTimersByTime(3000);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell.statusNote).toBe('no market data');
+        });
+
+        test('an opener still waiting from the first attempt does nothing when it times out', async () => {
+            bulkSell._prepareCurrent();
+            bulkSell._onOrderBook({ marketItemOrderBooks: { itemHrid: GOLEM, orderBooks: [BOOK] } });
+            const first = shortcuts.calls.at(-1);
+            retryBtn().click();
+            expect(first.isCancelled()).toBe(true);
+            first.reject(new Error('Timeout'));
+            await vi.advanceTimersByTimeAsync(0);
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.statusNote).toBe('');
+        });
+
+        test('the step failing again waits for Next, and Retry is offered again', () => {
+            bulkSell._prepareCurrent();
+            vi.advanceTimersByTime(3100);
+            expect(retryEnabled()).toBe(true);
+            retryBtn().click();
+            vi.advanceTimersByTime(600 + 3100);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell.index).toBe(0);
+            // One book per press, however it ended
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            vi.advanceTimersByTime(20000);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            expect(retryEnabled()).toBe(true);
+        });
+
+        test('a double press is one restart', () => {
+            bulkSell._prepareCurrent();
+            vi.advanceTimersByTime(1000);
+            retryBtn().click();
+            retryBtn().click();
+            expect(retryBtn().disabled).toBe(true);
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+        });
+
+        test('the item gone from the bag: the step is skipped, nothing is opened', async () => {
+            openModal();
+            await reachConfirm();
+            setStack(0);
+            retryBtn().click();
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM]);
+            expect(bulkSell.state).toBe('awaiting_next');
+            expect(bulkSell.statusNote).toBe('no longer in inventory');
+            expect(bulkSell.index).toBe(0);
+            expect(retryOffered()).toBe(false);
+            expect(gameClicks).toBe(0);
+        });
+
+        test('the stack changed: the restarted step sells it as it stands now', async () => {
+            openModal();
+            await reachConfirm();
+            setStack(30000);
+            retryBtn().click();
+            vi.advanceTimersByTime(600);
+            expect(bulkSell.current.count).toBe(30000);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+        });
+
+        test('after the game refused the sale: it comes back, and nothing is sold by the restart', async () => {
+            openModal();
+            await reachConfirm();
+            part('main').click();
+            expect(gameClicks).toBe(1);
+            // Sent and unanswered: a retry now could offer the stack twice
+            expect(retryOffered()).toBe(true);
+            expect(retryBtn().disabled).toBe(true);
+
+            notices.handler({ level: 'error', key: 'errorNotification.itemIsLocked', variables: {}, at: Date.now() });
+            expect(bulkSell._confirmSent()).toBe(false);
+            expect(retryEnabled()).toBe(true);
+
+            retryBtn().click();
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            expect(gameClicks).toBe(1);
+            expect(bulkSell._confirmedStep).toBeNull();
+            expect(bulkSell.confirmNote).toBe('');
+        });
+
+        test('while the confirm is on its way: nothing happens at all', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            part('main').click();
+            const step = bulkSell._confirmedStep;
+            expect(retryBtn().disabled).toBe(true);
+
+            retryBtn().click();
+            bulkSell._onRetryClick();
+            vi.advanceTimersByTime(5000);
+
+            expect(closeClicks).toBe(0);
+            expect(modal.isConnected).toBe(true);
+            expect(navigations).toEqual([GOLEM]);
+            expect(bulkSell._confirmedStep).toBe(step);
+            expect(bulkSell.state).toBe('awaiting_confirm');
+            expect(gameClicks).toBe(1);
+        });
+
+        describe('a sale confirmed in the game’s own modal', () => {
+            /** The game's confirm button in an open modal */
+            const nativeConfirm = (modal) => modal.querySelector('.Button_button__1Fe9z');
+
+            test('dims Retry and the strip’s Confirm, says so, and a press of Retry does nothing', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                expect(retryEnabled()).toBe(true);
+
+                const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+                nativeConfirm(modal).dispatchEvent(click);
+                // A passive watch: the game's own handler ran and nothing was prevented
+                expect(gameClicks).toBe(1);
+                expect(click.defaultPrevented).toBe(false);
+
+                expect(bulkSell._confirmSent()).toBe(true);
+                expect(retryOffered()).toBe(true);
+                expect(retryBtn().disabled).toBe(true);
+                expect(part('main').disabled).toBe(true);
+                expect(detail()).toContain('Confirm sent — waiting for the game.');
+
+                retryBtn().click();
+                bulkSell._onRetryClick();
+                vi.advanceTimersByTime(5000);
+                expect(closeClicks).toBe(0);
+                expect(modal.isConnected).toBe(true);
+                expect(navigations).toEqual([GOLEM]);
+                expect(bulkSell.state).toBe('awaiting_confirm');
+                // No second sale path: pressing the strip's Confirm now presses nothing
+                part('main').click();
+                bulkSell._onConfirmClick();
+                expect(gameClicks).toBe(1);
+            });
+
+            test('a refusal after it frees Retry again, and a second native confirm dims it again', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                nativeConfirm(modal).click();
+                expect(retryBtn().disabled).toBe(true);
+
+                notices.handler({
+                    level: 'error',
+                    key: 'errorNotification.itemIsLocked',
+                    variables: {},
+                    at: Date.now(),
+                });
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+                expect(part('main').disabled).toBe(false);
+                expect(detail()).not.toContain('Confirm sent');
+
+                // The modal is still open for the player's next try
+                nativeConfirm(modal).click();
+                expect(gameClicks).toBe(2);
+                expect(bulkSell._confirmSent()).toBe(true);
+                expect(retryBtn().disabled).toBe(true);
+            });
+
+            test('the modal closing with no sale lands: Retry comes back once the late-sale watch is over', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                nativeConfirm(modal).click();
+                expect(retryBtn().disabled).toBe(true);
+
+                // Seen open by the watch, then closed, and the inventory never reports a sale
+                vi.advanceTimersByTime(250);
+                modal.remove();
+                vi.advanceTimersByTime(250);
+                expect(bulkSell.state).toBe('awaiting_next');
+                vi.advanceTimersByTime(2000);
+                expect(bulkSell._afterCloseWatch).toBeNull();
+                expect(retryEnabled()).toBe(true);
+
+                retryBtn().click();
+                vi.advanceTimersByTime(600);
+                expect(navigations).toEqual([GOLEM, GOLEM]);
+                expect(bulkSell._confirmedStep).toBeNull();
+            });
+
+            test('a click on any other button of the modal does not count', async () => {
+                const modal = openModal();
+                const max = document.createElement('button');
+                max.className = 'Button_button__other';
+                max.textContent = 'Max';
+                modal.appendChild(max);
+                await reachConfirm();
+
+                max.click();
+                modal.querySelector('input').click();
+                modal.querySelector('.MarketplacePanel_header__x').click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+                expect(gameClicks).toBe(0);
+            });
+
+            test('a confirm in a modal for another item, or one the game would not take, does not count', async () => {
+                const other = openModal();
+                other.querySelector('use').setAttribute('href', '/static/media/items.svg#milk');
+                await reachConfirm();
+                nativeConfirm(other).click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                other.remove();
+
+                const empty = openModal({ qty: 0 });
+                nativeConfirm(empty).click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+            });
+
+            test('the listener goes when the modal does, and when the run is stopped', async () => {
+                const added = vi.spyOn(document, 'addEventListener');
+                const removed = vi.spyOn(document, 'removeEventListener');
+                const listeners = () =>
+                    new Set(added.mock.calls.filter(([type]) => type === 'click').map(([, fn]) => fn));
+                const removedClicks = () =>
+                    new Set(removed.mock.calls.filter(([type]) => type === 'click').map(([, fn]) => fn));
+                try {
+                    const modal = openModal();
+                    await reachConfirm();
+                    const attached = [...listeners()];
+                    expect(attached.length).toBeGreaterThan(0);
+                    expect([...removedClicks()].some((fn) => attached.includes(fn))).toBe(false);
+
+                    vi.advanceTimersByTime(250);
+                    modal.remove();
+                    vi.advanceTimersByTime(250);
+                    expect(attached.every((fn) => removedClicks().has(fn))).toBe(true);
+
+                    // And a stop: a fresh step, stopped while its modal is up
+                    removed.mockClear();
+                    added.mockClear();
+                    bulkSell.state = 'preparing';
+                    openModal();
+                    bulkSell._watchClose();
+                    bulkSell.state = 'awaiting_confirm';
+                    const second = [...listeners()];
+                    expect(second.length).toBeGreaterThan(0);
+                    bulkSell._stop('');
+                    expect(second.every((fn) => removedClicks().has(fn))).toBe(true);
+                } finally {
+                    added.mockRestore();
+                    removed.mockRestore();
+                }
+            });
+        });
+
+        test('while a vendor arming wait runs: nothing happens, and it frees up when the wait ends', async () => {
+            await reachConfirm();
+            // The wait redraws the strip itself, so the button is already dimmed when it starts
+            const wait = bulkSell._beginVendorWait(bulkSell._stepKey());
+            expect(retryBtn().disabled).toBe(true);
+            bulkSell._onRetryClick();
+            vi.advanceTimersByTime(5000);
+            expect(navigations).toEqual([GOLEM]);
+            expect(bulkSell.state).toBe('awaiting_confirm');
+
+            bulkSell._endVendorWait(wait);
+            expect(retryEnabled()).toBe(true);
+        });
+
+        test('a vendor menu is dismissed the way Skip dismisses it', async () => {
+            const menu = document.createElement('div');
+            menu.className = 'Item_actionMenu__q';
+            document.body.appendChild(menu);
+            const escapes = vi.fn();
+            document.addEventListener('keydown', escapes);
+            bulkSell._prepareCurrent();
+            retryBtn().click();
+            document.removeEventListener('keydown', escapes);
+            expect(escapes).toHaveBeenCalledTimes(1);
+            expect(escapes.mock.calls[0][0].key).toBe('Escape');
+            expect(gameClicks).toBe(0);
+        });
+
+        test('from a skipped step: starts it over without moving the queue', () => {
+            bulkSell._prepareCurrent();
+            vi.advanceTimersByTime(3100);
+            expect(bulkSell.statusNote).toBe('no market data');
+            retryBtn().click();
+            expect(bulkSell.state).toBe('preparing');
+            expect(bulkSell.index).toBe(0);
+            vi.advanceTimersByTime(600);
+            expect(navigations).toEqual([GOLEM, GOLEM]);
+            expect(bulkSell.index).toBe(0);
+        });
+
+        test('pressed when there is nothing to retry, it does nothing', () => {
+            bulkSell._onRetryClick();
+            vi.advanceTimersByTime(5000);
+            expect(navigations).toEqual([]);
+            expect(bulkSell.state).toBe('idle');
+        });
+    });
+
+    describe('and the ways the run can end under it', () => {
+        test('Stop right after Retry: the restart never happens', async () => {
+            const modal = openModal();
+            await reachConfirm();
+            retryBtn().click();
+            part('stop').click();
+            vi.advanceTimersByTime(20000);
+
+            expect(modal.isConnected).toBe(false);
+            expect(navigations).toEqual([GOLEM]);
+            expect(bulkSell.state).toBe('idle');
+            expect(bulkSell.queue).toEqual([]);
+            expect(bulkSell.retryTimeout).toBeNull();
+            expect(retryOffered()).toBe(false);
+        });
+
+        test('Skip right after Retry: the restart never happens, the walk moves on', async () => {
+            openModal();
+            await reachConfirm();
+            retryBtn().click();
+            part('skip').click();
+            vi.advanceTimersByTime(700);
+            expect(navigations).toEqual([GOLEM, '/items/milk']);
+            expect(bulkSell.index).toBe(1);
+        });
+
+        test('a character switch right after Retry: the teardown cancels the restart', async () => {
+            openModal();
+            await reachConfirm();
+            retryBtn().click();
+            bulkSell.cleanup();
+            vi.advanceTimersByTime(20000);
+            expect(navigations).toEqual([GOLEM]);
+            expect(bulkSell.state).toBe('idle');
+            expect(bulkSell.retryTimeout).toBeNull();
+            expect(bulkSell.chip).toBeNull();
+        });
+
+        test('the setting switched off right after Retry: nothing restarts and the bar is gone', async () => {
+            openModal();
+            await reachConfirm();
+            retryBtn().click();
+            settings['market_bulkSellAssistant'] = false;
+            bulkSell.disable();
+            vi.advanceTimersByTime(20000);
+            expect(navigations).toEqual([GOLEM]);
+            expect(document.querySelector(`.${CHIP}-retry`)).toBeNull();
+            expect(bulkSell.retryTimeout).toBeNull();
+        });
+
+        test('the step moved on during the wait: the restart is for a step that is over', async () => {
+            openModal();
+            await reachConfirm();
+            retryBtn().click();
+            // Something else moved the walk (the same queue entry swapped under it)
+            bulkSell.queue[0] = { ...bulkSell.queue[0], count: 5 };
+            bulkSell.current = bulkSell.queue[0];
+            vi.advanceTimersByTime(20000);
+            expect(navigations).toEqual([GOLEM]);
+        });
+
+        test('an order book arriving during the wait belongs to the discarded attempt', async () => {
+            openModal();
+            await reachConfirm();
+            const before = shortcuts.calls.length;
+            retryBtn().click();
+            bulkSell._onOrderBook({ marketItemOrderBooks: { itemHrid: GOLEM, orderBooks: [BOOK] } });
+            expect(shortcuts.calls.length).toBe(before);
+        });
+    });
+
+    describe('on a phone', () => {
+        test('every control is at least 32 px on a touch screen, the icons wide enough as well', () => {
+            window.matchMedia = (query) => ({ matches: query.includes('coarse') });
+            bulkSell._removePanel();
+            bulkSell._buildPanel();
+            for (const name of ['main', 'skip', 'retry', 'stop', 'more', 'gear', 'close']) {
+                expect(part(name).style.minHeight, name).toBe('32px');
+            }
+            for (const name of ['retry', 'more', 'gear', 'close']) {
+                expect(part(name).style.minWidth, name).toBe('32px');
+            }
+        });
+
+        test('with a mouse the sizes are left as they were', () => {
+            expect(part('retry').style.minHeight).toBe('');
+            expect(part('main').style.minHeight).toBe('');
+        });
+
+        test('at 412 px the headline takes a row of its own and wraps, losing nothing', () => {
+            window.innerWidth = 412;
+            bulkSell._removePanel();
+            bulkSell._buildPanel();
+            const status = part('status');
+            expect(status.style.flexBasis).toBe('100%');
+            expect(status.style.whiteSpace).toBe('normal');
+            expect(status.style.textOverflow).toBe('');
+            expect(status.style.width).toBe('');
+        });
+
+        test('on a wide screen it keeps its fixed width, and follows a resize either way', () => {
+            const status = part('status');
+            expect(status.style.width).toBe('340px');
+            expect(status.style.whiteSpace).toBe('nowrap');
+
+            window.innerWidth = 400;
+            window.dispatchEvent(new Event('resize'));
+            expect(status.style.flexBasis).toBe('100%');
+
+            window.innerWidth = 1280;
+            window.dispatchEvent(new Event('resize'));
+            expect(status.style.width).toBe('340px');
+            expect(status.style.whiteSpace).toBe('nowrap');
+        });
+
+        test('removing the panel takes the resize listener with it', () => {
+            const status = part('status');
+            bulkSell._removePanel();
+            window.innerWidth = 400;
+            window.dispatchEvent(new Event('resize'));
+            expect(status.style.flexBasis).not.toBe('100%');
+        });
     });
 });

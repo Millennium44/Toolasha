@@ -28,6 +28,7 @@ import {
     explainUpgradeCost,
     priceMergedAcquisition,
 } from './upgrade-advisor.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 /** Lowest skilling room level the search will probe. */
 export const SKILLING_ROOM_LEVEL_MIN = 1;
@@ -1186,11 +1187,11 @@ export function renderSkillBreakdownHtml(lines) {
             const outcome = line.affected
                 ? `${pct(line.before)} \u2192 ${pct(line.after)} ` +
                   `<span style="color:${line.delta > 0 ? '#4caf50' : '#f44336'};">(${line.delta >= 0 ? '+' : ''}${(line.delta * 100).toFixed(2)}%)</span> ` +
-                  `<span style="color:#666;">| ${tries(line.triesBefore)} \u2192 ${tries(line.triesAfter)} tries</span>`
-                : `<span style="color:#666;">unaffected \u2014 ${pct(line.before)} unchanged</span>`;
+                  `<span style="color:${GAME_COLORS.textDim};">| ${tries(line.triesBefore)} \u2192 ${tries(line.triesAfter)} tries</span>`
+                : `<span style="color:${GAME_COLORS.textDim};">unaffected \u2014 ${pct(line.before)} unchanged</span>`;
             return (
                 `<div data-skill-breakdown-line="${esc(line.skillHrid)}" style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">` +
-                `<span style="color:#aaa;">${esc(line.skillName)} <span style="color:#666;">(Lv ${line.roomLevel})</span></span>` +
+                `<span style="color:#aaa;">${esc(line.skillName)} <span style="color:${GAME_COLORS.textDim};">(Lv ${line.roomLevel})</span></span>` +
                 `<span style="white-space:nowrap;">${outcome}</span></div>`
             );
         })

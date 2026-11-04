@@ -101,6 +101,9 @@ push to `main` or merge.
   `[claude-round]`; use your own), list the changes, and what was and was not checked live. A PR that
   changes the shape of a stored or synced record says how an older build reads the new shape (and a newer
   build the old one), so a release can be rolled back without losing data.
+- **A diff touching a synced record, a sync merge or stored state is reviewed by the strongest available
+  model**, not the default one. On two such diffs (2026-11-03) a cheaper reviewer passed the code and Codex then
+  found a P1 in each.
 - **Big or core diffs get a pre-PR review** (persisted state, core modules, roughly 10+ commits): a
   fresh reviewer who did not write the code reads only the diff, finds every reader of every piece of
   state it writes and says what each now gets wrong, and checks every fixture against what the game
@@ -140,6 +143,10 @@ push to `main` or merge.
     14. Is a setting or condition checked when work is queued or scheduled but not again when it runs (turned
         off in between, from any UI)? Does queued work keep why it was queued, and does a stronger reason
         replace a weaker one when both ask?
+    15. Does a merge or fold trust weaker evidence than its sibling path demands (a cap saved without the check
+        the repair makes before cutting)? Can it remove something real?
+    16. When a record tracks a baseline, does it match what the caller actually holds, or only what is in
+        storage? A caller that keeps its own copy reads a stored addition as its own deletion.
 - **Review comments**: verify each point against the code first — some are wrong; reply with file:line
   for those. Fix every point of one review, then push once (each push triggers a full new review). Each
   fix gets a regression test that fails pre-fix and a one-line reply on its thread; then resolve it. A P2
@@ -169,6 +176,9 @@ Every brief to a sub-agent carries these lines:
   committing with `--no-verify -F <file>`.
 - **Logs, edit scripts and message files go in your session scratchpad**, never the folder above the repo
   (`../gates.log`). About 200 of them piled up there.
+- **Saved-data work names its worst failure first.** The brief says which outcome is unacceptable and which
+  is mild ("never lose an edit; a repeated prompt is mild"), and any fix a reviewer suggests is checked against
+  that before it is applied. Twice a confident fix protected against the mild failure and caused the severe one.
 - **Confirm the diagnosis before building**; if the brief's diagnosis is wrong or backwards, stop and
   say so with file:line.
 - **Consumer sweep**: list every reader and writer of the state you change, check each, and put the list

@@ -26,6 +26,7 @@ import storage from '../../core/storage.js';
 import { characterKey } from '../../utils/character-key.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 /** Where recorded runs live, in the shared settings store. */
 export const LAB_COMPARISON_KEY = 'labSimComparisonRuns';
@@ -342,21 +343,29 @@ export function renderLabComparisonPanel(runs, baselineId) {
     html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:11px;">';
     html += '<span style="color:#888;">Baseline:</span>';
     html +=
-        '<select class="toolasha-select" id="mwi-labsim-cmp-baseline" style="flex:1; background:#1a1a2e; color:#e0e0e0; ' +
-        'border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
+        '<select class="toolasha-select" id="mwi-labsim-cmp-baseline" style="flex:1; background:' +
+        GAME_COLORS.inputBackground +
+        '; color:#e0e0e0; ' +
+        'border:1px solid ' +
+        GAME_COLORS.inputBorder +
+        '; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
     for (const entry of runs) {
         const selected = entry === baselineEntry ? ' selected' : '';
         html += `<option value="${escapeHtml(entry.id)}"${selected}>${escapeHtml(entry.label)}</option>`;
     }
     html += '</select>';
     html +=
-        '<button id="mwi-labsim-cmp-clear" title="Forget every recorded run" style="background:#1a1a2e; ' +
-        'color:#ff8a8a; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; ' +
+        '<button id="mwi-labsim-cmp-clear" title="Forget every recorded run" style="background:' +
+        GAME_COLORS.raised +
+        '; ' +
+        'color:#ff8a8a; border:1px solid ' +
+        GAME_COLORS.border +
+        '; border-radius:3px; padding:2px 8px; font-size:11px; ' +
         'cursor:pointer; font-family:inherit; flex-shrink:0;">Clear All</button>';
     html += '</div>';
 
     html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
-    html += '<tr style="border-bottom:1px solid #333; color:#666;">';
+    html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
     html += '<th style="text-align:left; padding:2px 4px;">Run</th>';
     for (const metric of LAB_COMPARISON_METRICS) {
         html += `<th style="text-align:right; padding:2px 4px;" title="${escapeHtml(metric.title)}">${metric.label}</th>`;
@@ -386,7 +395,9 @@ export function renderLabComparisonPanel(runs, baselineId) {
             formatWithSeparator(entry.metrics?.attempts || 0) +
             '</td>';
         html +=
-            '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" ' +
+            '<td style="text-align:center; padding:2px; cursor:pointer; color:' +
+            GAME_COLORS.textDim +
+            ';" ' +
             `data-labsim-cmp-delete="${escapeHtml(entry.id)}" title="Forget this run">✕</td>`;
         html += '</tr>';
     }

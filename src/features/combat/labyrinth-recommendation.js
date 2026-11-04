@@ -29,6 +29,7 @@ import {
     normalizeTargetSeconds,
     recommendationBasisKey,
 } from './labyrinth-recommend-time.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 export const RECOMMEND_CLASS = 'mwi-labyrinth-recommend';
 export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
@@ -947,7 +948,11 @@ export const recommendationMethods = {
             'display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:0.8rem; flex-wrap:wrap;';
 
         const inputStyle =
-            'width:50px; background:#1a1a2e; color:#e0e0e0; border:1px solid #555; border-radius:4px; padding:2px 4px; font-size:0.75rem; text-align:center;';
+            'width:50px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:2px 4px; font-size:0.75rem; text-align:center;';
         const labelStyle = 'color:#888; font-size:0.75rem; white-space:nowrap;';
 
         const rateLabel = document.createElement('span');
