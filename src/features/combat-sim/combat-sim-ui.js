@@ -5524,7 +5524,7 @@ class CombatSimUI {
         container.innerHTML = `
             ${this._allZonesScoreControlHtml()}
             ${this._allZonesHeadline(best)}
-            <div style="overflow-x:auto;">
+            <div class="mwi-utable-wrap" style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:${minWidth}px;">
                     <thead><tr>${headerCells}</tr></thead>
                     <tbody>${bodyRows}</tbody>
@@ -6204,7 +6204,7 @@ class CombatSimUI {
                 .mwi-csim-plan-row:focus-visible { outline: 1px solid #ffb74d; }
             </style>
             ${skippedNote}
-            <div style="overflow-x:auto;">
+            <div class="mwi-utable-wrap" style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:360px;">
                     <thead><tr>${th('#')}${th('Zone', 'left')}${th('Time')}${th('Fights')}${th('Points')}${th('Thresholds crossed', 'left')}</tr></thead>
                     <tbody>${body}</tbody>
@@ -6823,7 +6823,7 @@ class CombatSimUI {
 
         container.innerHTML = `
             <div style="font-size:11px; color:#888; margin-bottom:8px;">Best sources for <strong style="color:${ACCENT};">${itemName}</strong></div>
-            <div style="overflow-x:auto;">
+            <div class="mwi-utable-wrap" style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:400px;">
                     <thead><tr>${headerCells}</tr></thead>
                     <tbody>${bodyRows}</tbody>
@@ -9546,7 +9546,7 @@ class CombatSimUI {
         html += '</div>';
 
         // Table
-        html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
+        html += '<div class="mwi-utable-wrap"><table style="width:100%; font-size:11px; border-collapse:collapse;">';
         html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
         html += '<th style="text-align:left; padding:2px 4px;">Scenario</th>';
         html += '<th style="text-align:right; padding:2px 4px;">EPH</th>';
@@ -9670,7 +9670,7 @@ class CombatSimUI {
             html += '</tr>';
         }
 
-        html += '</table>';
+        html += '</table></div>';
 
         // Add to comparison dropdown
         const available = [];
