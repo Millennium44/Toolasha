@@ -21,6 +21,7 @@
  */
 
 import { labyrinthFloorClearLevel, labyrinthFloorForLevel } from '../combat/labyrinth-formulas.js';
+import { shortFigure, isLargeFigure } from './lab-exact-figures.js';
 import {
     applyCandidateToDTO,
     applyToEquipment,
@@ -1031,14 +1032,16 @@ function esc(text) {
  * rather than reading as free.
  *
  * @param {{gold: number|null, tokens: number, cowbells: number, unpriced?: number}} cost
+ * @param {{short?: boolean}} [options] - `short`: the compact form a table cell uses ("1.2M gold")
  * @returns {string}
  */
-export function describeCost(cost) {
+export function describeCost(cost, { short = false } = {}) {
+    const fmt = short ? (value) => (isLargeFigure(value) ? shortFigure(value) : number(value)) : number;
     const parts = [];
     if (cost.gold === null) parts.push('unpriced');
-    else if (cost.gold !== 0) parts.push(`${number(cost.gold)} gold`);
-    if (cost.tokens) parts.push(`${number(cost.tokens)} tokens`);
-    if (cost.cowbells) parts.push(`${number(cost.cowbells)} cowbells/min`);
+    else if (cost.gold !== 0) parts.push(`${fmt(cost.gold)} gold`);
+    if (cost.tokens) parts.push(`${fmt(cost.tokens)} tokens`);
+    if (cost.cowbells) parts.push(`${fmt(cost.cowbells)} cowbells/min`);
     if (!parts.length) return cost.unpriced ? `${cost.unpriced} unpriced` : 'free';
     if (cost.unpriced) parts.push(`+ ${cost.unpriced} unpriced`);
     return parts.join(' + ');
@@ -1071,13 +1074,27 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
         if (showLevels) html += `<th style="${TH}">Max level</th>`;
         html += '</tr></thead><tbody>';
         for (const step of plan.steps) {
-            html += `<tr data-plan-step="${step.index}" style="border-bottom:1px solid #1a1a1a;">`;
+            // The cells print the short form; a step with a large figure opens to the exact costs
+            const exact = [
+                ['Step cost', step.cost],
+                ['Total cost', step.cumulative],
+            ].filter(([, c]) => describeCost(c, { short: true }) !== describeCost(c));
+            html += `<tr data-plan-step="${step.index}" style="border-bottom:1px solid #1a1a1a;${exact.length ? ' cursor:pointer;' : ''}"${
+                exact.length ? ` data-exact-row="step-${step.index}"` : ''
+            }>`;
             html += `<td style="${TD_NAME} width:1%;">${step.index}</td><td style="${TD_NAME}">${esc(step.description)}</td>`;
-            html += `<td style="${TD} color:#ccc;">${esc(describeCost(step.cost))}</td>`;
-            html += `<td style="${TD} color:#ccc;">${esc(describeCost(step.cumulative))}</td>`;
+            html += `<td style="${TD} color:#ccc;">${esc(describeCost(step.cost, { short: true }))}</td>`;
+            html += `<td style="${TD} color:#ccc;">${esc(describeCost(step.cumulative, { short: true }))}</td>`;
             html += `<td style="${TD} color:#4caf50; font-weight:600;">${pct(step.clearRate)}</td>`;
             if (showLevels) html += `<td style="${TD} color:#ccc;">${levelCell(step.maxRoomLevel, step.floor)}</td>`;
             html += '</tr>';
+            if (exact.length) {
+                html +=
+                    `<tr data-exact-detail="step-${step.index}" style="display:none;">` +
+                    `<td colspan="${showLevels ? 6 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px; color:#aaa;">` +
+                    `Exact: ${exact.map(([label, c]) => `${label} <b style="color:#e0e0e0;">${esc(describeCost(c))}</b>`).join(' · ')}` +
+                    `</td></tr>`;
+            }
         }
         html += '</tbody></table></div>';
     }
@@ -1124,10 +1141,26 @@ export function renderCombinationHtml(combo, { showLevels = false } = {}) {
     html += `<td style="${TD} color:${delta > 0 ? '#4caf50' : delta < 0 ? '#f44336' : '#888'}; font-weight:600;" data-combo-delta>${delta >= 0 ? '+' : ''}${delta.toFixed(2)}%</td>`;
     const xp = combo.xpPerRoomDelta;
     html += `<td style="${TD} color:#ccc;">${combo.xpPerRoom.toFixed(1)}${Math.abs(xp) > 1e-9 ? ` (${xp >= 0 ? '+' : ''}${xp.toFixed(1)})` : ''}</td>`;
-    html += `<td style="${TD} color:#ccc;" data-combo-cost>${esc(describeCost(combo.costs))}</td>`;
-    html += `<td style="${TD} color:#888;">${combo.goldPerPct === null ? '—' : number(combo.goldPerPct)}</td>`;
+    html += `<td style="${TD} color:#ccc;" data-combo-cost>${esc(describeCost(combo.costs, { short: true }))}</td>`;
+    html += `<td style="${TD} color:#888;">${combo.goldPerPct === null ? '—' : isLargeFigure(combo.goldPerPct) ? shortFigure(combo.goldPerPct) : number(combo.goldPerPct)}</td>`;
     if (showLevels) html += `<td style="${TD} color:#ccc;">${levelCell(combo.maxRoomLevel, combo.floor)}</td>`;
-    html += '</tr></tbody></table></div>';
+    html += '</tr>';
+    // The exact figures behind the short cells, when any is large
+    const exact = [];
+    if (describeCost(combo.costs, { short: true }) !== describeCost(combo.costs)) {
+        exact.push(`Total cost <b style="color:#e0e0e0;">${esc(describeCost(combo.costs))}</b>`);
+    }
+    if (isLargeFigure(combo.goldPerPct)) {
+        exact.push(`Gold/1% <b style="color:#e0e0e0;">${number(combo.goldPerPct)}</b>`);
+    }
+    if (exact.length) {
+        html +=
+            `<tr data-exact-detail="combo" style="display:none;"><td colspan="${showLevels ? 6 : 5}" ` +
+            `style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px; color:#aaa;">` +
+            `Exact: ${exact.join(' · ')}</td></tr>`;
+        html = html.replace('<tbody><tr>', '<tbody><tr data-exact-row="combo" style="cursor:pointer;">');
+    }
+    html += '</tbody></table></div>';
     return html;
 }
 
