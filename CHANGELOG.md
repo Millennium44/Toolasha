@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Compact Task Board bar on phones
+
+On a phone the Task Board bar shows the task count, timer, reroll walk and a Tools button, with sorting, highlighting, Merged crafting walk and the other controls folded under Tools. Claim Reward stays visible when there is something to claim, and every button is finger-sized.
+
 ### Market fills are saved the moment they land
 
 A fill that arrives while a sync pull is waiting for a reload, or while storage is briefly unavailable, no longer goes missing from your trade history. One that arrives during a character switch stays with the character it belongs to.

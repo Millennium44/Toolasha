@@ -122,6 +122,16 @@ test('a phone folds the bar: a Tools button, closed, with aria-expanded and ever
     expect(getComputedStyle(slots).display).toBe('contents');
 });
 
+test('the stylesheet gives the phone bar one left edge and finger-sized controls', () => {
+    feature.initialize();
+
+    const rules = document.getElementById('toolasha-tasks-panel-layout').textContent;
+    expect(rules).toContain('taskSlotCount"] > button { min-height: 32px; }');
+    expect(rules).toContain('button:not(.mwi-task-reroll-walk-advance) { min-width: 32px !important; }');
+    expect(rules).toContain('[class*="-chip-extras"]:empty { display: none; }');
+    expect(rules).toContain('> .mwi-task-protection-btn { margin-left: auto !important; }');
+});
+
 test('the stylesheet folds by default: only count, timer, walk, Claim Reward and Tools stay while closed', () => {
     fixture();
     feature.initialize();

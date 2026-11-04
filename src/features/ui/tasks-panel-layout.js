@@ -43,6 +43,12 @@ ${BAR} #${CLAIM_ID} {
     order: 3; flex: 1 1 100%; min-width: 0 !important; margin-left: 0 !important; margin-top: 6px;
 }
 ${BAR} .toolasha-reroll-spend-badge { white-space: nowrap; }
+/* One left edge, finger-sized controls, and the three header icons together at the right */
+${BAR} > ${SLOTS} > * { margin-left: 0 !important; }
+${BAR} > ${SLOTS} > button { min-height: ${TOUCH_MIN_HEIGHT}; }
+${BAR} #${WALK_CHIP_ID} [class*="-chip-extras"]:empty { display: none; }
+${BAR} #${WALK_CHIP_ID} button:not(.mwi-task-reroll-walk-advance) { min-width: ${TOUCH_MIN_HEIGHT} !important; }
+${BAR} > .mwi-task-protection-btn { margin-left: auto !important; }
 ${ACTIVE} ${INFO}[${FOLD}]:not([${OPEN}]) > ${SLOTS} > :not(#${CLAIM_ID}):not(#${WALK_CHIP_ID}),
 ${ACTIVE} ${INFO}[${FOLD}]:not([${OPEN}]) > :not(${SLOTS}):not(${TIMER}):not(#${TOOLS_ID}) {
     display: none !important;
