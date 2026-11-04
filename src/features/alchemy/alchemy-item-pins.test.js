@@ -231,6 +231,22 @@ describe('the stored pins', () => {
         expect(stored()).toEqual({ coinify: ['/items/a', '/items/d', '/items/c'] });
     });
 
+    test('the pin another tab added survives every later save of this tab, which never saw it', async () => {
+        seed({ coinify: ['/items/a'] });
+        await pins.loadPins();
+        seed({ coinify: ['/items/a', '/items/c'] });
+
+        pins.pins = togglePin(pins.pins, 'coinify', '/items/d');
+        await pins.savePins();
+        pins.pins = togglePin(pins.pins, 'coinify', '/items/e');
+        await pins.savePins();
+        expect(stored().coinify.sort()).toEqual(['/items/a', '/items/c', '/items/d', '/items/e']);
+
+        pins.pins = togglePin(pins.pins, 'coinify', '/items/a');
+        await pins.savePins();
+        expect(stored().coinify.sort()).toEqual(['/items/c', '/items/d', '/items/e']);
+    });
+
     test('once storage is back, the next save lands', async () => {
         storageMock.unavailable = true;
         await pins.loadPins();

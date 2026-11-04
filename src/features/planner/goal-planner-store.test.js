@@ -344,6 +344,26 @@ describe('a stored goal that has no id', () => {
     });
 });
 
+describe('a goal another tab added', () => {
+    test('survives every later save of this tab, and a removal made here still goes through', async () => {
+        const key = `${GOALS_KEY}_market123`;
+        const gold = (id, amount) => ({ id, type: 'gold', amount, createdAt: amount });
+        const ids = (goals) => goals.map((goal) => goal.id);
+        settings().set(key, [gold('a', 100)]);
+        const held = await loadGoals();
+        settings().set(key, [gold('a', 100), gold('other', 200), gold('another', 300)]);
+
+        const once = [...held, gold('b', 400)];
+        await saveGoals(once);
+        const twice = [...once, gold('c', 500)];
+        await saveGoals(twice);
+        expect(ids(settings().get(key)).sort()).toEqual(['a', 'another', 'b', 'c', 'other']);
+
+        await saveGoals(twice.filter((goal) => goal.id !== 'a'));
+        expect(ids(settings().get(key)).sort()).toEqual(['another', 'b', 'c', 'other']);
+    });
+});
+
 describe('merging two devices goal lists', () => {
     const goal = (id, createdAt, extra = {}) => ({
         id,

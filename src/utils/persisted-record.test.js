@@ -746,21 +746,247 @@ describe('curated record with threeWay, as two tabs', () => {
         expect(settingsStore().get(FAV)).toEqual({});
     });
 
-    test('the baseline is what was written, so an item taken in from the other tab is not revived when it removes it', async () => {
+    /**
+     * An owner as the watchlist and the item pins are: it keeps its own state and hands the record a copy
+     * on every save, without ever reading the record back.
+     * @param {Object} record - An unloaded record
+     * @returns {Promise<{state: Object, save: () => Promise<boolean>}>} The owner
+     */
+    const owner = async (record) => {
+        await record.load();
+        const state = structuredClone(record.get());
+        return {
+            state,
+            save: () => {
+                record.set(structuredClone(state));
+                return record.save();
+            },
+        };
+    };
+    /** What another tab does to the stored value, as a tab that read it fresh and saved */
+    const otherTabWrites = (value) => settingsStore().set(FAV, structuredClone(value));
+
+    test('an owner holding its own state never deletes what another tab added, on any later save', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = await owner(tab());
+        otherTabWrites({ milk: true, butter: true });
+
+        a.state.eggs = true;
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+
+        a.state.jam = true;
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+
+        a.state.tea = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true, tea: true });
+    });
+
+    test('a direct record never deletes what another tab committed between the probe and the write', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        await a.load();
+
+        const tryGet = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
+            const probed = await tryGet(key, store);
+            otherTabWrites({ milk: true, butter: true });
+            return probed;
+        });
+        a.get().eggs = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+        // The view is what this tab holds, not what is stored
+        expect(a.get()).toEqual({ milk: true, eggs: true });
+
+        a.get().jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('a direct record whose caller kept the reference it got from get() loses no edit', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = tab();
+        await a.load();
+        otherTabWrites({ milk: true, butter: true });
+
+        const list = a.get();
+        list.eggs = true;
+        await a.save();
+        expect(a.get()).toBe(list);
+        list.jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('what the other tab removed and then added back is kept: the view still held it all along', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = tab();
+        await a.load();
+
+        otherTabWrites({ milk: true });
+        a.get().eggs = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true });
+
+        otherTabWrites({ milk: true, eggs: true, cheese: true });
+        a.get().jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, cheese: true, jam: true });
+    });
+
+    test('an owner: a removal made here stays removed beside what the other tab added', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = await owner(tab());
+        otherTabWrites({ milk: true, cheese: true, butter: true });
+
+        delete a.state.milk;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true, butter: true });
+
+        delete a.state.cheese;
+        a.state.jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ butter: true, jam: true });
+    });
+
+    test('two tabs removing the same item, and a third item the other tab added, all stand', async () => {
+        settingsStore().set(FAV, { milk: true, cheese: true });
+        const a = await owner(tab());
+        const b = await owner(tab());
+
+        delete b.state.milk;
+        b.state.butter = true;
+        await b.save();
+        delete a.state.milk;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true, butter: true });
+
+        a.state.jam = true;
+        await a.save();
+        b.state.eggs = true;
+        await b.save();
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true, butter: true, jam: true, eggs: true });
+    });
+
+    test('a keyed list with keepUnidentified off keeps every id the other tab added and prunes the rest', async () => {
+        const idOf = (goal) => goal?.id;
+        const goals = () =>
+            tab({ empty: () => [], merge: mergeById(idOf), threeWay: { idOf, keepUnidentified: false } });
+        const list = (...ids) => ids.map((id) => ({ id, amount: id * 100 }));
+        settingsStore().set(FAV, list(1, 2));
+        const a = await owner(goals());
+
+        // Three additions from the other tab and a stored goal with no id
+        otherTabWrites([...list(1, 2, 3, 4, 5), { amount: 7 }]);
+        a.state.push(...list(6));
+        await a.save();
+        const ids = () => settingsStore().get(FAV).map(idOf);
+        expect(ids()).toEqual([1, 2, 6, 3, 4, 5]);
+
+        a.state.push(...list(7));
+        await a.save();
+        expect(ids()).toEqual([1, 2, 6, 7, 3, 4, 5]);
+
+        a.state.splice(0, 1);
+        await a.save();
+        expect(ids()).toEqual([2, 6, 7, 3, 4, 5]);
+    });
+
+    test('an owner whose saves coalesce onto one write keeps what the other tab added', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = await owner(tab());
+        otherTabWrites({ milk: true, butter: true });
+
+        a.state.eggs = true;
+        const running = a.save();
+        a.state.jam = true;
+        const waiting = a.save();
+        a.state.tea = true;
+        const joined = a.save();
+        await Promise.all([running, waiting, joined]);
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true, tea: true });
+
+        delete a.state.jam;
+        a.state.fig = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, tea: true, fig: true });
+    });
+
+    test('an owner whose write fails keeps its edit and what the other tab added, on the retry and after', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = await owner(tab());
+        otherTabWrites({ milk: true, butter: true });
+
+        a.state.eggs = true;
+        storageMock.set.mockImplementationOnce(async () => false);
+        expect(await a.save()).toBe(false);
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true });
+
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+
+        a.state.jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('an owner of a record that folds in one transaction keeps what the other tab added', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = await owner(tab({ atomic: true, immediate: true }));
+        otherTabWrites({ milk: true, butter: true });
+
+        a.state.eggs = true;
+        await a.save();
+        a.state.jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('a record with a prepare step, which has no fold at landing, keeps what the other tab added', async () => {
+        settingsStore().set(FAV, { milk: true });
+        const a = await owner(tab({ prepare: async () => true }));
+        otherTabWrites({ milk: true, butter: true });
+
+        a.state.eggs = true;
+        await a.save();
+        a.state.jam = true;
+        await a.save();
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('a fold that cannot run refuses the write rather than landing the held value whole', async () => {
+        settingsStore().set(FAV, ['a']);
+        const idOf = (element) => {
+            if (element === 'bad') throw new Error('no identity');
+            return element;
+        };
+        const a = tab({ empty: () => [], merge: mergeById(idOf), threeWay: { idOf } });
+        await a.load();
+        otherTabWrites(['a', 'b', 'bad']);
+        a.get().push('c');
+        expect(await a.save()).toBe(false);
+        expect(settingsStore().get(FAV)).toEqual(['a', 'b', 'bad']);
+    });
+
+    test("the other tab's item stays out of this tab's view, so that tab's later removal of it stands", async () => {
         settingsStore().set(FAV, { milk: true });
         const a = tab();
         const b = tab();
         await a.load();
         await b.load();
 
-        // The other tab adds butter; a's save takes it into memory as it folds
+        // The other tab adds butter; a's save writes it back but does not take it into a's view
         b.get().butter = true;
         await b.save();
         a.get().eggs = true;
         await a.save();
-        expect(a.get()).toEqual({ milk: true, butter: true, eggs: true });
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+        expect(a.get()).toEqual({ milk: true, eggs: true });
 
-        // The other tab removes butter again; a's next edit must not count it as added here
+        // The other tab removes butter again; a's next edit has no butter to bring back
         await b.load({ authoritative: true });
         delete b.get().butter;
         await b.save();
@@ -803,7 +1029,8 @@ describe('curated record with threeWay, as two tabs', () => {
         await b.save();
         a.get().eggs = true;
         await a.save();
-        expect(a.get()).toEqual({ milk: true, butter: true, eggs: true });
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
+        expect(a.get()).toEqual({ milk: true, eggs: true });
 
         await b.load({ authoritative: true });
         delete b.get().butter;

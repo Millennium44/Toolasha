@@ -1007,6 +1007,32 @@ describe('the stored list survives a read that cannot be made', () => {
         await flushWatchlistWrites();
         expect(storedHrids().sort()).toEqual(['/items/cheese', '/items/milk', '/items/trainee_charm']);
     });
+
+    test('what another tab added survives every later save of this tab, which never saw it', async () => {
+        settingsStore().set(KEY, { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+        await switchCharacter();
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/trainee_charm', name: 'Trainee Charm' },
+            ],
+        });
+
+        watchItem('/items/milk', 'Milk');
+        await flushWatchlistWrites();
+        watchItem('/items/rare_hat', 'Rare Hat');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual([
+            '/items/cheese',
+            '/items/milk',
+            '/items/rare_hat',
+            '/items/trainee_charm',
+        ]);
+
+        unwatchItem('/items/cheese');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual(['/items/milk', '/items/rare_hat', '/items/trainee_charm']);
+    });
 });
 
 /**

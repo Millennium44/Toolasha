@@ -126,7 +126,77 @@ describe('a threeWay record through the real debounced fold', () => {
         expect(data.get(KEY)).toEqual({ milk: true, eggs: true, jam: true });
     });
 
-    test('an item a save took in from the other tab is not revived when that tab removes it', async () => {
+    test('what another tab commits inside the debounce window survives every later save of this tab', async () => {
+        const a = tab();
+        await a.load();
+
+        a.get().eggs = true;
+        const first = a.save();
+        await vi.advanceTimersByTimeAsync(10);
+        data.set(KEY, { milk: true, butter: true });
+        expect(await landed(first)).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, eggs: true });
+
+        a.get().jam = true;
+        expect(await landed(a.save())).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    });
+
+    test('an owner holding its own state: the same, committed before the save or inside its window', async () => {
+        const record = tab();
+        await record.load();
+        const state = { ...record.get() };
+        const save = () => {
+            record.set({ ...state });
+            return record.save();
+        };
+        data.set(KEY, { milk: true, butter: true });
+
+        state.eggs = true;
+        const first = save();
+        await vi.advanceTimersByTimeAsync(10);
+        data.set(KEY, { milk: true, butter: true, tea: true });
+        expect(await landed(first)).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, tea: true, eggs: true });
+
+        state.jam = true;
+        expect(await landed(save())).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, tea: true, eggs: true, jam: true });
+
+        // Its own removal still goes through, and leaves the other tab's items alone
+        delete state.milk;
+        expect(await landed(save())).toBe(true);
+        expect(data.get(KEY)).toEqual({ butter: true, tea: true, eggs: true, jam: true });
+    });
+
+    test('a write that fails keeps the edit, and the next save still keeps what the other tab added', async () => {
+        const a = tab();
+        await a.load();
+        data.set(KEY, { milk: true, butter: true });
+
+        // The probe's transaction runs; the write's is refused
+        const transaction = storage.db.transaction;
+        let opened = 0;
+        storage.db.transaction = function (...args) {
+            opened += 1;
+            if (opened === 2) throw new Error('refused');
+            return transaction.apply(this, args);
+        };
+        a.get().eggs = true;
+        expect(await landed(a.save())).toBe(false);
+        storage.db.transaction = transaction;
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true });
+
+        a.get().jam = true;
+        expect(await landed(a.save())).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+
+        a.get().tea = true;
+        expect(await landed(a.save())).toBe(true);
+        expect(data.get(KEY)).toEqual({ milk: true, butter: true, eggs: true, jam: true, tea: true });
+    });
+
+    test('an item the other tab added and later removed is not revived by this tab, which never held it', async () => {
         const a = tab();
         const b = tab();
         await a.load();
@@ -137,6 +207,7 @@ describe('a threeWay record through the real debounced fold', () => {
         a.get().eggs = true;
         expect(await landed(a.save())).toBe(true);
         expect(data.get(KEY)).toEqual({ milk: true, butter: true, eggs: true });
+        expect(a.get()).toEqual({ milk: true, eggs: true });
 
         await b.load({ authoritative: true });
         delete b.get().butter;
