@@ -335,6 +335,23 @@ export async function listBackupStores() {
 }
 
 /**
+ * Land every save still waiting in memory or in storage's debounce queue, so `getAll` reads it.
+ *
+ * `flushPersistedRecords` returns early when no record handoff is pending, so a plain `storage.set`
+ * inside its 3 s debounce was never flushed and a backup taken then omitted it. A failed flush must not
+ * stop the backup: the file then lacks only what could not be written, as before.
+ * @returns {Promise<void>}
+ */
+async function landPendingWrites() {
+    try {
+        await flushPersistedRecords();
+        await storage.flushAll?.();
+    } catch (error) {
+        console.error('[FullBackup] Flushing pending saves before the backup failed:', error);
+    }
+}
+
+/**
  * Export the whole database as JSON text, one store at a time.
  *
  * The object form held every store's values live at once and then handed the
@@ -348,7 +365,7 @@ export async function listBackupStores() {
  */
 export async function exportEverythingJSON() {
     // A record holding its newest changes in memory for a delayed write lands them first
-    await flushPersistedRecords();
+    await landPendingWrites();
     const storeNames = await listBackupStores();
 
     const parts = [
@@ -378,7 +395,7 @@ export async function exportEverythingJSON() {
  *   Backup payload
  */
 export async function exportEverything() {
-    await flushPersistedRecords();
+    await landPendingWrites();
     const storeNames = await listBackupStores();
     const stores = {};
 

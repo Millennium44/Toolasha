@@ -144,6 +144,9 @@ class EnhancementItemPins {
         this.pinsOwner = who;
         record.reset();
         const readable = await record.load();
+        // A switch inside the read overtook it: `previous` is the departed character's, and the newer
+        // call owns the record now
+        if ((dataManager.getCurrentCharacterId() || null) !== who) return false;
         if (!readable && Object.keys(previous).length > 0) record.set({ ...previous });
         this.pins = record.get() || {};
         return readable;

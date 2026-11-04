@@ -5,7 +5,7 @@
  * layer that is already gone.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -136,5 +136,61 @@ describe('a character switch landing inside the stored-pins read', () => {
         expect(pins.isInitialized).toBe(true);
         expect(styleCount()).toBe(1);
         expect(observerMock.live).toBe(1);
+    });
+});
+
+describe('a character switch landing inside an unreadable pins read', () => {
+    const KEY = (id) => `alchemyItemPins_${id}`;
+    const baseTryGet = storageMock.tryGet.getMockImplementation();
+    afterEach(() => storageMock.tryGet.mockImplementation(baseTryGet));
+    const gateRead = (key, answer) => {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const original = baseTryGet;
+        storageMock.tryGet.mockImplementation(async (k, ...rest) => {
+            if (k !== key) return original(k, ...rest);
+            await gate;
+            return answer;
+        });
+        return release;
+    };
+
+    beforeEach(() => {
+        storageMock.reset();
+        dataManagerMock.characterId = 'char1';
+        pins.disable();
+        pins.pins = {};
+        pins.pinsOwner = null;
+        storageMock.storeFor('settings').set(KEY('char1'), { act: ['a1'] });
+        storageMock.storeFor('settings').set(KEY('char2'), { act: ['b1'] });
+    });
+
+    test("the departed character's pins are not put back for the arriving one", async () => {
+        await pins.loadPins();
+        expect(pins.pins.act).toEqual(['a1']);
+
+        const releaseA = gateRead(KEY('char1'), null);
+        const loadingA = pins.loadPins();
+        await Promise.resolve();
+        dataManagerMock.characterId = 'char2';
+        const releaseB = gateRead(KEY('char2'), { found: true, value: { act: ['b1'] } });
+        const loadingB = pins.loadPins();
+        await Promise.resolve();
+        releaseA();
+        await loadingA;
+        releaseB();
+        await loadingB;
+
+        expect(pins.pins.act).toEqual(['b1']);
+    });
+
+    test('a list that really is unreadable for the same character keeps what was held', async () => {
+        await pins.loadPins();
+
+        gateRead(KEY('char1'), null)();
+        expect(await pins.loadPins()).toBe(false);
+        expect(pins.pins.act).toEqual(['a1']);
     });
 });

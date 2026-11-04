@@ -362,6 +362,43 @@ describe('a threeWay record whose save has not landed yet', () => {
         storage.db = null;
     });
 
+    describe('a switch inside an unreadable goals read', () => {
+        const GOALS_B = `${GOALS_KEY}_B`;
+
+        test("the departed character's list is not put back into the new character's record", async () => {
+            seed({ [GOALS_A]: [goal('a1', 1)], [GOALS_B]: [goal('b1', 2)] });
+            await loadGoals();
+
+            const releaseA = holdNextRead(GOALS_A, false);
+            const loadingA = loadGoals();
+            await vi.advanceTimersByTimeAsync(5);
+            const releaseB = holdNextRead(GOALS_B);
+            character.id = 'B';
+            const loadingB = loadGoals();
+            await vi.advanceTimersByTimeAsync(5);
+            // A's read comes back unreadable after the switch, while B's is still on its way
+            releaseA();
+            await vi.advanceTimersByTimeAsync(5);
+            await loadingA;
+            releaseB();
+            await vi.advanceTimersByTimeAsync(5);
+            expect((await loadingB).map((entry) => entry.amount)).toEqual([2]);
+
+            press(() => addGoal(goal('b2', 3)));
+            await settle();
+            expect(data.get(GOALS_B).map((entry) => entry.amount)).toEqual([2, 3]);
+            expect(data.get(GOALS_A).map((entry) => entry.amount)).toEqual([1]);
+        });
+
+        test('a list that really is unreadable for the same character keeps what was held', async () => {
+            seed({ [GOALS_A]: [goal('a1', 1)] });
+            await loadGoals();
+
+            holdNextRead(GOALS_A, false)();
+            expect((await loadGoals()).map((entry) => entry.amount)).toEqual([1]);
+        });
+    });
+
     describe('across a character switch', () => {
         test('two pins, then a switch to a character with the second pinned: each list keeps its own', async () => {
             seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
