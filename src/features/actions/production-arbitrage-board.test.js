@@ -235,6 +235,16 @@ describe('open button', () => {
         expect(wood.querySelector(`.${OPEN_BUTTON_CLASS}`)).toBeNull();
     });
 
+    test('joins the mobile collapsible controls row when the filter built it first', () => {
+        const cheese = skillTitle('Cheesesmithing');
+        const row = document.createElement('div');
+        row.id = 'mwi-action-controls';
+        cheese.appendChild(row);
+        board.injectOpenButton(cheese);
+        expect(row.querySelector(`.${OPEN_BUTTON_CLASS}`)).not.toBeNull();
+        expect(cheese.querySelectorAll(`.${OPEN_BUTTON_CLASS}`)).toHaveLength(1);
+    });
+
     test('opens the board', async () => {
         const cheese = skillTitle('Brewing');
         board.injectOpenButton(cheese);

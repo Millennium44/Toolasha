@@ -214,7 +214,10 @@ class ProductionArbitrageBoard {
             event.stopPropagation();
             this.open();
         });
-        titleElement.appendChild(button);
+        // Mobile mode folds the filter's sort/pricing/craft buttons behind a "···"
+        // toggle in this wrapper; join them rather than strand a lone row under it
+        const controlsRow = titleElement.querySelector(':scope > #mwi-action-controls');
+        (controlsRow || titleElement).appendChild(button);
     }
 
     /** Show the board, computing the ranking if it is not already known */

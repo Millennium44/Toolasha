@@ -177,6 +177,21 @@ describe('ActionFilter mobile collapsible controls row', () => {
             mocks.device.mobile = true;
         });
 
+        it('folds an already-injected Arbitrage button into the row, and hands it back on teardown', async () => {
+            const title = makeTitle();
+            const arbitrage = document.createElement('button');
+            arbitrage.className = 'mwi-arbitrage-open';
+            title.appendChild(arbitrage);
+            actionFilter.injectFilterInput(title);
+            await flush();
+
+            expect(arbitrage.parentElement).toBe(wrapper());
+
+            actionFilter.cleanup();
+            expect(arbitrage.isConnected).toBe(true);
+            expect(arbitrage.parentElement).toBe(title);
+        });
+
         it('hides the controls behind a toggle by default, and the filter input stays visible and usable', async () => {
             const title = makeTitle();
             actionFilter.injectFilterInput(title);
