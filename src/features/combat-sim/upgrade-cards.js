@@ -578,7 +578,11 @@ export const UPGRADE_CARD_CSS = `
     .mwi-ucards-btn[aria-pressed="true"] { background: ${GAME_COLORS.raisedMore}; color: ${GAME_COLORS.text}; font-weight: 600; }
     .mwi-ucards { margin: 4px 0 6px; min-width: 0; max-width: 100%; }
     .mwi-ucards-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 6px; font-size: 11px; color: ${GAME_COLORS.textDim}; }
-    .mwi-ucards-rank select { max-width: 100%; }
+    .mwi-ucards-rank select {
+        max-width: 100%; background: ${GAME_COLORS.inputBackground}; color: #e0e0e0;
+        border: 1px solid ${GAME_COLORS.inputBorder}; border-radius: 3px; padding: 1px 4px;
+        font-size: 11px; font-family: inherit;
+    }
     .mwi-ucards-empty { color: #888; padding: 10px 0; font-size: 11px; }
     .mwi-ucard-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
     .mwi-ucard { min-width: 0; box-sizing: border-box; padding: 7px 9px; background: ${GAME_COLORS.raised};
@@ -615,9 +619,10 @@ export const UPGRADE_CARD_CSS = `
     .mwi-ucard-actions button { margin-left: 0 !important; }
     /* A touch screen needs a real target; a mouse does not get oversized buttons */
     @media (pointer: coarse) {
-        .mwi-ucard-details, .mwi-ucard-verify, .mwi-ucards-btn, .mwi-ucards-rank select, .mwi-ucard-actions button {
-            min-height: 44px; min-width: 44px;
+        .mwi-ucard-details, .mwi-ucard-verify, .mwi-ucards-btn, .mwi-ucard-actions button {
+            min-height: 34px; min-width: 44px;
         }
+        .mwi-ucards-rank select { min-height: 28px; }
         .mwi-ucard-details, .mwi-ucard-verify, .mwi-ucards-btn { padding-left: 12px; padding-right: 12px; }
     }
 `;
