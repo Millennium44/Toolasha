@@ -38,13 +38,14 @@ describe('sim phone layout', () => {
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/#mwi-labsim-skilling-crate-row \{\s*display: grid/);
     });
 
-    it('lets the include chips wrap and the results tables scroll sideways at phone width only', () => {
+    it('lets the include chips wrap and the results tables scroll inside their wrapper at phone width only', () => {
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/^\s*@media \(max-width: 768px\) \{/);
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\[data-lab-mode-options\] \{[^}]*flex-wrap: wrap/);
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(
-            /\.mwi-utable-wrap \{[^}]*overflow-x: auto; -webkit-overflow-scrolling: touch/
+            /\.mwi-utable-wrap \{[^}]*overflow: auto; -webkit-overflow-scrolling: touch/
         );
-        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/th:first-child,[\s\S]*position: sticky; left: 0;[^}]*background: rgb/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/th:first-child,[\s\S]*position: sticky; left: 0;/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/td:first-child:not\(\[colspan\]\) \{\s*background: rgb/);
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\.mwi-utable-detail \{[^}]*position: sticky; left: 0/);
     });
 });

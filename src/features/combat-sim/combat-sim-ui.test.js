@@ -2595,6 +2595,61 @@ describe('the panel', () => {
             return important.at(-1) || th.style.background;
         };
 
+        // The declarations of `prop` from the phone rules that match `el`, in source order
+        const declared = (el, prop) => {
+            const out = [];
+            for (const m of SIM_UPGRADE_PHONE_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+                const selectors = m[1]
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .split(',')
+                    .map((x) => x.trim());
+                if (!selectors.some((x) => el.matches(x))) continue;
+                for (const d of m[2].split(';')) {
+                    const [name, ...rest] = d.split(':');
+                    if (name.trim() === prop) out.push(rest.join(':').trim());
+                }
+            }
+            return out;
+        };
+        const tableIn = (html, cls = '') => {
+            const wrap = document.createElement('div');
+            wrap.className = 'mwi-utable-wrap';
+            wrap.innerHTML = `<table class="${cls}"><thead><tr><th>Name</th><th>Cost</th></tr></thead><tbody><tr><td>a</td><td>1</td></tr></tbody></table>`;
+            return wrap;
+        };
+
+        test('the wrapper scrolls both ways under a vh-capped height, with a vh fallback and no scroll trap', () => {
+            const wrap = tableIn();
+            expect(declared(wrap, 'overflow')).toEqual(['auto']);
+            // The fallback comes first, so a browser without dvh (which drops the second) keeps it
+            expect(declared(wrap, 'max-height')).toEqual(['70vh', 'min(70vh, calc(100dvh - 260px))']);
+            // A short table is only capped, never stretched
+            expect(declared(wrap, 'height')).toEqual([]);
+            expect(declared(wrap, 'min-height')).toEqual([]);
+            // Scrolling past the end of the table carries on into the panel
+            expect(SIM_UPGRADE_PHONE_CSS).not.toContain('overscroll-behavior');
+        });
+
+        test('every header cell sticks to the top of its wrapper, in a pick table and a plain one alike', () => {
+            for (const cls of ['', 'mwi-utable-pick']) {
+                const wrap = tableIn('', cls);
+                for (const th of wrap.querySelectorAll('th')) {
+                    expect(declared(th, 'position')).toContain('sticky');
+                    // !important, so the Lab tables' inline top:-10px cannot win
+                    expect(declared(th, 'top').at(-1)).toBe('0 !important');
+                    expect(declared(th, 'z-index').at(-1)).toMatch(/^[23] !important$/);
+                }
+            }
+            // Only the pinned first header of a plain table sticks sideways, and it is the highest
+            const plain = tableIn().querySelectorAll('th');
+            expect(declared(plain[0], 'left')).toContain('0');
+            expect(declared(plain[1], 'left')).toEqual([]);
+            expect(declared(plain[0], 'z-index').at(-1)).toBe('3 !important');
+            expect(declared(plain[1], 'z-index').at(-1)).toBe('2 !important');
+            const pick = tableIn('', 'mwi-utable-pick').querySelectorAll('th');
+            expect(declared(pick[0], 'left')).toEqual([]);
+        });
+
         test('every header cell of the gold table, the pinned one included, ends up the same solid fill', () => {
             ui._renderUpgradeResults({
                 baseline: BASELINE,
