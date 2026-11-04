@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fills during a reload prompt no longer double
+
+A market fill that lands while a sync or restore is waiting for a reload now shows once after the reload, instead of twice until the listing ends. A sync pull also keeps a day another tab wrote since the pull began.
+
 ### Back Up Everything is safer
 
 A backup now includes changes made seconds earlier, no longer risks discarding a stuck save or overwriting a restore in progress, and says Failed instead of Saved when there is no database connection. Pins, goals and Philo settings also stay with their own character if you switch while they are loading.
