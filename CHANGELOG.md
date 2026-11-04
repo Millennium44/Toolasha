@@ -16,6 +16,10 @@ At phone width the battle number no longer squeezes out the zone name beside the
 - Per-player and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
 - Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
 
+### Reset a moved game window
+
+Double-click a game window's drag bar to put that window back in the center and forget its saved position. Turning off the compact action bar or the action bar itself now also restores the header's sizing without a reload.
+
 ### Skill XP bars no longer get stuck
 
 Dragging anything while a skill gained XP could save that XP bar's width as a panel size, and it then stayed stuck on every character, even after a reload or level-up. Bars are no longer recorded and a stuck one fixes itself on load. The percent label and XP left now come from your actual XP.
