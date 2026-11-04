@@ -14,6 +14,10 @@ const runtime = {
     overrides: {},
     /** The last costed loop, or null before one has been costed this session */
     loop: null,
+    /** What the queue helper is set to (`{max, maxCap, basis, hours}`), for the strip's next-set reserve */
+    batchSpec: null,
+    /** Whether Bells you can buy now also keeps cash back for the helper's batch */
+    keepBatchCash: false,
     /** Opens or closes the panel; replaced once the panel exists */
     toggle: () => {},
 };

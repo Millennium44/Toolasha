@@ -32,7 +32,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { getInventoryCount } from '../../utils/house-cost-calculator.js';
-import { navigateToAction } from '../../utils/item-navigation.js';
+import { navigateToAction, navigateToAlchemyItem } from '../../utils/item-navigation.js';
+import { selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, resolveDetailPanel } from '../../utils/action-panel-helper.js';
@@ -222,15 +223,22 @@ function selectedItemHrid(panel) {
     const use = panel.querySelector(
         '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"] svg use'
     );
-    const id = use?.getAttribute('href')?.split('#')[1];
+    // Many item icons carry only the namespaced attribute
+    const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+    const id = href.split('#')[1];
     return id ? `/items/${id}` : null;
 }
 
 /** Human wording for one step, e.g. `craft 40 Rough Leather`. */
 function stepLabel(step) {
-    if (step.label) return step.label;
     const verb = step.kind === 'craft' ? 'craft' : 'buy';
-    return `${verb} ${formatWithSeparator(step.count)} ${step.itemName}`;
+    const base = step.label || `${verb} ${formatWithSeparator(step.count)} ${step.itemName}`;
+    if (!step.alchemyType) return base;
+    // Said plainly, because the script never presses a game button: the player's press queues the row
+    const pressNote = step.itemSelected
+        ? `${step.itemName} is chosen for you; the Start press is yours`
+        : `choose ${step.itemName} in the slot (the game cannot until it is in your bag), then press Start`;
+    return `${base} — ${pressNote}`;
 }
 
 /** The starter name Crafting Plan's own surfaces (the plan's Walk button, the task board's walk) use */
@@ -433,7 +441,21 @@ class CraftingPlanWalk {
             // Snapshotted before the player can press anything: only an action
             // id this step did not start with is their press on this step
             this.queuedBefore = this._queuedIdsFor(step.actionHrid, step.requiresItemHrid);
-            if (!navigateToAction(step.actionHrid)) {
+            let opened = false;
+            if (step.requiresItemHrid && step.alchemyType) {
+                // Alchemy is one action for every item: the game's own item-menu handler opens it with the item
+                // already in the slot (when it is in the bag), and the tab is then chosen by position. Both are
+                // navigation; the press that queues the row stays the player's.
+                const result = navigateToAlchemyItem(step.requiresItemHrid, step.alchemyType);
+                opened = result.opened;
+                step.itemSelected = result.selected;
+                if (opened) {
+                    selectAlchemyTab(step.alchemyType, this.timerRegistry.scheduleTimeout, () => {
+                        return this.active && this.steps[this.index] === step;
+                    });
+                }
+            }
+            if (!opened && !navigateToAction(step.actionHrid)) {
                 this.stop('The game could not be opened on the next step.');
                 return;
             }
@@ -529,7 +551,30 @@ class CraftingPlanWalk {
             // One alchemy action covers every item in the game, so the action
             // alone does not say this step was the one pressed.
             (!step.requiresItemHrid || row.primaryItemHash?.includes(step.requiresItemHrid));
-        if (!rows.some(isThisStep)) return;
+        const added = rows.find(isThisStep);
+        if (!added) return;
+        // A step that asks for it is checked against what the server kept: a server cap would otherwise
+        // leave the queue quietly short of what was typed
+        if (step.unlimited) {
+            // A Repeat ∞ step is checked for what it is: no count on the row
+            if (added.hasMaxCount) {
+                this.stop(
+                    `⚠ ${stepLabel(step)} was queued with a count of ${formatWithSeparator(Number(added.maxCount))} ` +
+                        'instead of Repeat ∞, so it will stop short. Walk it again to queue the rest.'
+                );
+                return;
+            }
+        } else if (step.verifyCount) {
+            const stored = added.hasMaxCount ? Number(added.maxCount) : null;
+            if (stored !== step.count) {
+                const kept = stored === null ? 'with no count' : `${formatWithSeparator(stored)}`;
+                this.stop(
+                    `⚠ The game queued ${kept} instead of the ${formatWithSeparator(step.count)} typed for ` +
+                        `${stepLabel(step)}, so the queue is short. Walk it again to queue the rest.`
+                );
+                return;
+            }
+        }
         this._advance();
     }
 

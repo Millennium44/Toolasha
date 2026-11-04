@@ -506,6 +506,23 @@ export function applyHoldings(batch, loop, state) {
 }
 
 /**
+ * The gold a set of legs earns, net of the decompose fee. An unpriced fee makes the figure unknown (null),
+ * never free: a missing price read as 0 would overstate the gold and the bells.
+ * @param {Object} loop - From `calculateStarfruitLoop`
+ * @param {number} decomposeActions - Decompose actions
+ * @param {number} coinifyActions - Coinify actions
+ * @returns {number|null} Net gold, or null when the fee has no price
+ */
+function goldOfLegs(loop, decomposeActions, coinifyActions) {
+    const fee = loop.goldOutPerFruit;
+    if (decomposeActions > 0 && !Number.isFinite(fee)) return null;
+    return (
+        coinifyActions * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
+        decomposeActions * (loop.decomposeBulk || 1) * (Number.isFinite(fee) ? fee : 0)
+    );
+}
+
+/**
  * Size a batch that keeps the queue busy for the whole of `hours`, spending what is held first.
  *
  * {@link balanceBatch} sizes a batch as if starting from nothing and {@link applyHoldings} then
@@ -568,6 +585,8 @@ export function fillBatch(loop, hours, state) {
                 if (legs(mid).time <= hours + EPS) lo = mid;
                 else hi = mid - 1;
             }
+            // Never an all-zero batch for a duration shorter than one chain: at least one action, as balanceBatch
+            if (lo === 0 && legs(0).decompose + legs(0).coinify === 0) lo = 1;
             return { ...legs(lo), trimmed: false };
         }
 
@@ -605,9 +624,7 @@ export function fillBatch(loop, hours, state) {
     const picked = solve(fruitHeld, essenceHeld);
     const scratch = fruitHeld > 0 || essenceHeld > 0 ? solve(0, 0) : picked;
 
-    const gold =
-        picked.coinify * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
-        picked.decompose * decomposeBulk * (loop.goldOutPerFruit || 0);
+    const gold = goldOfLegs(loop, picked.decompose, picked.coinify);
     const bellPrice = loop.bellPrice;
     return {
         hours: picked.time,
@@ -618,7 +635,7 @@ export function fillBatch(loop, hours, state) {
         fruit: picked.fruit,
         essence: picked.essence,
         gold,
-        bells: Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null,
+        bells: gold !== null && Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null,
         credits: [],
         holdingsNote: '',
         fill: {
@@ -644,9 +661,10 @@ export function fillBatch(loop, hours, state) {
  * for more fruit than is held: an action without its input stops the queue. What is
  * left over is fewer than one action's input (`bulk - 1` at most), and is returned as
  * `max.leftoverFruit` for the panel to say. Coinify rounds down the same way, on the
- * *expected* essence (decompose is a success rate, as in {@link balanceBatch}), so an
- * unlucky run leaves the last coinify action short at the very end of the queue, never
- * partway.
+ * *expected* essence (decompose is a success rate, as in {@link balanceBatch}), so a bad
+ * run of decompose rolls can leave the last coinify actions without essence. They are the
+ * last rows of the queue, so the queue then ends short rather than stalls midway, and a
+ * Repeat ∞ coinify row simply runs for as much essence as there turns out to be.
  *
  * `starfruitHeld` and `essenceHeld` come from `readCharacterState`, which already takes
  * off what another plan has reserved, so a reserved stack is never spent here.
@@ -685,11 +703,9 @@ export function maxBatch(loop, state) {
     const hours =
         decomposeActions / (loop.decomposeActionsPerHour || Infinity) +
         coinifyActions / (loop.coinifyActionsPerHour || Infinity);
-    const gold =
-        coinifyActions * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
-        decomposeActions * decomposeBulk * (loop.goldOutPerFruit || 0);
+    const gold = goldOfLegs(loop, decomposeActions, coinifyActions);
     const bellPrice = loop.bellPrice;
-    const bells = Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null;
+    const bells = gold !== null && Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null;
 
     return {
         reason: '',
@@ -708,6 +724,34 @@ export function maxBatch(loop, state) {
             max: { fruitName, fruitHeld, leftoverFruit: fruitHeld - fruitUsed, essenceHeld },
         },
     };
+}
+
+/**
+ * The batch the queue helper is showing, from the inputs that define it. One function for the panel, the
+ * walk and the action-bar strip, so none of them can size a different batch from the same inputs. A read:
+ * it changes nothing.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {{max?: boolean, maxCap?: number|null, basis?: 'hours'|'bells', hours?: number}|null} spec - What
+ *   the helper is set to
+ * @param {Object|null} state - From `readCharacterState`
+ * @returns {Object|null} The batch, or null when it cannot be sized (Max with nothing to use included)
+ */
+export function batchForSpec(loop, spec, state) {
+    if (!loop || !spec) return null;
+    if (spec.max) {
+        const capped =
+            state && Number.isFinite(spec.maxCap)
+                ? { ...state, starfruitHeld: Math.min(state.starfruitHeld || 0, spec.maxCap) }
+                : state;
+        return maxBatch(loop, capped).batch;
+    }
+    if ((spec.basis || 'hours') === 'hours') {
+        const filled = fillBatch(loop, spec.hours, state);
+        if (filled) return filled;
+    }
+    const batch = balanceBatch(loop, spec.hours);
+    return batch ? applyHoldings(batch, loop, state) : null;
 }
 
 /**
@@ -750,6 +794,10 @@ export function affordableBatch(loop, state, available, { max = false, hours = 0
         const capped = Number.isFinite(maxActions)
             ? { ...state, starfruitHeld: Math.min(Math.floor(Number(state?.starfruitHeld) || 0), maxActions * bulk) }
             : state;
+        if (Number.isFinite(maxActions) && maxActions < 1 && Math.floor(Number(state?.starfruitHeld) || 0) > 0) {
+            // The fruit is there; it is the gold that is short, and the reason has to say so
+            return { batch: null, hours: null, reason: 'The gold on hand does not cover even one decompose fee.' };
+        }
         const { batch, reason } = maxBatch(loop, capped);
         return { batch, hours: batch ? batch.hours : null, reason: batch ? '' : reason };
     }

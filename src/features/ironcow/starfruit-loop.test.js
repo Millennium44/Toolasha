@@ -126,6 +126,8 @@ const {
     applyHoldings,
     maxBatch,
     fillBatch,
+    batchForSpec,
+    affordableBatch,
     bellsForHours,
     hoursForBells,
     LOW_GOLD_BUFFER,
@@ -879,5 +881,54 @@ describe('Max: all the held fruit, no foraging', () => {
     test('bells are null, not zero, without a cowbell price', async () => {
         const loop = { ...(await calculateStarfruitLoop()), bellPrice: null };
         expect(maxBatch(loop, held(100)).batch.bells).toBeNull();
+    });
+});
+
+describe('review fixes to the sizing', () => {
+    const held = (starfruitHeld, essenceHeld = 0) => ({ starfruitHeld, essenceHeld, holdingsCredited: true });
+
+    test('a duration shorter than one chain of work still queues one action, as balanceBatch does', async () => {
+        const loop = await calculateStarfruitLoop();
+        const b = fillBatch(loop, 0.0001, held(0));
+        expect(b.forageActions).toBe(1);
+        expect(balanceBatch(loop, 0.0001).forageActions).toBe(1);
+    });
+
+    test('an unpriced decompose fee makes the gold and bells unknown, never free', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), goldOutPerFruit: Number.NaN };
+        const filled = fillBatch(loop, 16, held(0));
+        expect(filled.gold).toBeNull();
+        expect(filled.bells).toBeNull();
+        const maxed = maxBatch(loop, held(100)).batch;
+        expect(maxed.gold).toBeNull();
+        expect(maxed.bells).toBeNull();
+    });
+
+    test('Max with fruit held but gold under one fee says gold is the limit, not that there is no fruit', async () => {
+        const loop = await calculateStarfruitLoop();
+        const out = affordableBatch(loop, held(5000), 100, { max: true });
+        expect(out.batch).toBeNull();
+        expect(out.reason).toBe('The gold on hand does not cover even one decompose fee.');
+        expect(out.reason).not.toContain('no Star Fruit');
+    });
+
+    test('batchForSpec is the one sizing: Max, hours and bells specs, a read that changes nothing', async () => {
+        const loop = await calculateStarfruitLoop();
+        const state = held(1000, 25);
+        const spec = { max: true, maxCap: null, basis: 'hours', hours: 16 };
+        const frozen = JSON.stringify(spec);
+        expect(batchForSpec(loop, spec, state).forageActions).toBe(0);
+        // a Max spec whose fruit is gone is null, not a duration batch
+        expect(batchForSpec(loop, spec, held(0))).toBeNull();
+        expect(batchForSpec(loop, { max: false, basis: 'hours', hours: 16 }, state)).toMatchObject({
+            fill: expect.any(Object),
+        });
+        expect(batchForSpec(loop, { max: false, basis: 'bells', hours: 16 }, state).fill).toBeUndefined();
+        expect(JSON.stringify(spec)).toBe(frozen);
+        // a cap cuts Max's fruit
+        expect(batchForSpec(loop, { max: true, maxCap: 100, basis: 'hours', hours: 1 }, state).decomposeActions).toBe(
+            100
+        );
+        expect(batchForSpec(null, spec, state)).toBeNull();
     });
 });

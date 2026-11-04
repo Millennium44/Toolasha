@@ -19,6 +19,7 @@ const OTHER = '/items/apple';
 const items = { forageActionHrid: '/actions/foraging/star_fruit', starfruitHrid: FRUIT, essenceHrid: ESSENCE };
 const hash = (item) => `1::/item_locations/inventory::${item}::0`;
 const row = (actionHrid, item, extra = {}) => ({
+    ordinal: 1,
     actionHrid,
     primaryItemHash: item ? hash(item) : undefined,
     hasMaxCount: true,
@@ -28,11 +29,16 @@ const row = (actionHrid, item, extra = {}) => ({
     ...extra,
 });
 
-describe('what the game queue already holds of each leg', () => {
+/** The loop's stock arithmetic, as the engine's ledger sees it: 2 fruit a decompose, 6 essence a fruit */
+const LOOP = { fruitPerForageAction: 1, decomposeBulk: 2, essencePerFruit: 6, coinifyBulk: 10 };
+const stock = (fruitHeld, essenceHeld = 0) => ({ loop: LOOP, fruitHeld, essenceHeld });
+
+describe('what the game queue will really perform of each leg', () => {
     test('matches by action AND item: alchemy on another item is not a loop leg', () => {
         const queued = queuedLegCounts(
             [row('/actions/alchemy/decompose', OTHER), row('/actions/alchemy/coinify', FRUIT)],
-            items
+            items,
+            stock(1000, 1000)
         );
         expect(queued.decompose.count).toBe(0);
         expect(queued.coinify.count).toBe(0);
@@ -41,62 +47,159 @@ describe('what the game queue already holds of each leg', () => {
     test('counts what each unfinished row has left, the running one included, finished rows not at all', () => {
         const queued = queuedLegCounts(
             [
-                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 500, currentCount: 120 }),
-                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 50 }),
-                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 999, isDone: true }),
+                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 500, currentCount: 120, ordinal: 1 }),
+                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 50, ordinal: 2 }),
+                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 999, isDone: true, ordinal: 3 }),
             ],
-            items
+            items,
+            stock(0, 9999)
         );
-        expect(queued.coinify).toEqual({ count: 430, endless: false });
+        expect(queued.coinify).toEqual({ count: 430, performed: 430 });
+        expect(queued.starved).toEqual([]);
     });
 
-    test('a row with no count is endless', () => {
-        const queued = queuedLegCounts([row(items.forageActionHrid, null, { hasMaxCount: false })], items);
-        expect(queued.forage.endless).toBe(true);
-    });
-
-    test('does not read the queue by position: a queued leg ahead of the running one still counts', () => {
+    test('a coinify queued ahead of any essence is starved, not credited', () => {
         const queued = queuedLegCounts(
-            [row('/actions/alchemy/decompose', OTHER), row('/actions/alchemy/decompose', FRUIT, { maxCount: 7 })],
-            items
+            [row('/actions/alchemy/coinify', ESSENCE, { maxCount: 480 })],
+            items,
+            stock(0, 0)
         );
-        expect(queued.decompose.count).toBe(7);
+        expect(queued.coinify.performed).toBe(0);
+        expect(queued.starved).toEqual([{ leg: 'coinify', count: 480, performed: 0 }]);
+    });
+
+    test('a decompose asks for more than the fruit ahead of it: only the fruit is performed', () => {
+        const queued = queuedLegCounts(
+            [row('/actions/alchemy/decompose', FRUIT, { maxCount: 1800 })],
+            items,
+            stock(1600)
+        );
+        expect(queued.decompose).toEqual({ count: 1800, performed: 800 });
+        expect(queued.starved[0]).toMatchObject({ leg: 'decompose', count: 1800, performed: 800 });
+    });
+
+    test('a forage ahead feeds the decompose behind it, and the queue is read in order, not array order', () => {
+        const queued = queuedLegCounts(
+            [
+                row('/actions/alchemy/decompose', FRUIT, { maxCount: 500, ordinal: 2 }),
+                row(items.forageActionHrid, null, { maxCount: 1000, ordinal: 1 }),
+            ],
+            items,
+            stock(0)
+        );
+        expect(queued.decompose.performed).toBe(500);
+        expect(queued.starved).toEqual([]);
+        // and the other way round, the decompose runs first and has nothing
+        const reversed = queuedLegCounts(
+            [
+                row('/actions/alchemy/decompose', FRUIT, { maxCount: 500, ordinal: 1 }),
+                row(items.forageActionHrid, null, { maxCount: 1000, ordinal: 2 }),
+            ],
+            items,
+            stock(0)
+        );
+        expect(reversed.decompose.performed).toBe(0);
+        expect(reversed.starved).toHaveLength(1);
+    });
+
+    test('Repeat ∞ on an alchemy leg is limited by its materials and covered up to them', () => {
+        const queued = queuedLegCounts(
+            [
+                row('/actions/alchemy/decompose', FRUIT, { hasMaxCount: false, maxCount: 0, ordinal: 1 }),
+                row('/actions/alchemy/coinify', ESSENCE, { hasMaxCount: false, maxCount: 0, ordinal: 2 }),
+            ],
+            items,
+            stock(184_290, 0)
+        );
+        // 184,290 fruit is 92,145 decomposes of 2, making 1,105,740 essence for 110,574 coinifies
+        expect(queued.decompose.performed).toBe(92_145);
+        expect(queued.coinify.performed).toBe(110_574);
+        expect(queued.endless).toBeNull();
+        expect(queued.starved).toEqual([]);
+    });
+
+    test('a row with no count and no material limit never hands on, and the rows behind it are unreachable', () => {
+        const queued = queuedLegCounts(
+            [
+                row(items.forageActionHrid, null, { hasMaxCount: false, maxCount: 0, ordinal: 1 }),
+                row('/actions/alchemy/decompose', FRUIT, { maxCount: 50, ordinal: 2 }),
+            ],
+            items,
+            stock(1000)
+        );
+        expect(queued.endless).toBe('Forage');
+        expect(queued.decompose.performed).toBe(0);
     });
 });
 
 describe('walking only what is missing', () => {
     const batch = { forageActions: 0, decomposeActions: 1000, coinifyActions: 300 };
-    const queued = (over) => ({
-        forage: { count: 0, endless: false },
-        decompose: { count: 0, endless: false },
-        coinify: { count: 0, endless: false },
-        ...over,
-    });
+    const reduce = (actions, fruit, essence, b = batch) =>
+        reduceBatchByQueue(b, queuedLegCounts(actions, items, stock(fruit, essence)), LOOP);
 
-    test('a leg queued at a sufficient count is skipped and named', () => {
-        const out = reduceBatchByQueue(batch, queued({ coinify: { count: 300, endless: false } }));
+    test('a leg queued at a sufficient count that will perform is skipped and named', () => {
+        const out = reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 300 })], 2000, 3000);
         expect(out.batch.coinifyActions).toBe(0);
         expect(out.batch.decomposeActions).toBe(1000);
         expect(out.skipped).toEqual(['Coinify']);
+        expect(out.blocked).toBeNull();
     });
 
     test('a leg queued at less keeps only the difference', () => {
-        const out = reduceBatchByQueue(batch, queued({ decompose: { count: 400, endless: false } }));
+        const out = reduce([row('/actions/alchemy/decompose', FRUIT, { maxCount: 400 })], 2000, 0);
         expect(out.batch.decomposeActions).toBe(600);
         expect(out.partial).toEqual(['Decompose']);
     });
 
-    test('nothing queued walks the whole batch; everything queued walks nothing', () => {
-        expect(reduceBatchByQueue(batch, queued({})).batch).toMatchObject(batch);
-        const all = reduceBatchByQueue(
-            batch,
-            queued({ decompose: { count: 5000, endless: false }, coinify: { count: 0, endless: true } })
+    test('nothing queued walks the whole batch, capped to what its own inputs allow', () => {
+        const out = reduce([], 2000, 0);
+        expect(out.batch).toMatchObject({ decomposeActions: 1000, coinifyActions: 300 });
+    });
+
+    test('Queue [D 1,800, C 600] with 1,600 fruit and a new forage: refused, never a queue that idles', () => {
+        // Forage would go on LAST, behind the decompose that needed its fruit
+        const out = reduce(
+            [
+                row('/actions/alchemy/decompose', FRUIT, { maxCount: 1800, ordinal: 1 }),
+                row('/actions/alchemy/coinify', ESSENCE, { maxCount: 600, ordinal: 2 }),
+            ],
+            1600,
+            0,
+            { forageActions: 1000, decomposeActions: 1800, coinifyActions: 600 }
         );
-        expect(all.batch.decomposeActions + all.batch.coinifyActions).toBe(0);
+        expect(out.blocked).toContain('Decompose is queued for 1,800');
+        expect(out.blocked).toContain('stall');
+    });
+
+    test('a decompose queued with no fruit, and a coinify queued ahead of any essence, are refused', () => {
+        expect(reduce([row('/actions/alchemy/decompose', FRUIT, { maxCount: 1000 })], 0, 0).blocked).toContain(
+            'would stall'
+        );
+        expect(reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 480 })], 0, 0).blocked).toContain(
+            'Coinify is queued for 480'
+        );
+    });
+
+    test('a row that never ends blocks the walk behind it, and says so', () => {
+        const out = reduce([row(items.forageActionHrid, null, { hasMaxCount: false, maxCount: 0 })], 2000, 0);
+        expect(out.blocked).toBe('Forage repeats forever, so nothing queued behind it would run.');
+    });
+
+    test('with everything covered there is nothing to walk and nothing to block', () => {
+        const out = reduce(
+            [
+                row('/actions/alchemy/decompose', FRUIT, { hasMaxCount: false, maxCount: 0, ordinal: 1 }),
+                row('/actions/alchemy/coinify', ESSENCE, { hasMaxCount: false, maxCount: 0, ordinal: 2 }),
+            ],
+            2000,
+            0
+        );
+        expect(out.batch.decomposeActions + out.batch.coinifyActions + out.batch.forageActions).toBe(0);
+        expect(out.blocked).toBeNull();
     });
 
     test('does not change the batch it was given', () => {
-        reduceBatchByQueue(batch, queued({ coinify: { count: 300, endless: false } }));
+        reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 300 })], 2000, 3000);
         expect(batch.coinifyActions).toBe(300);
     });
 });
@@ -133,13 +236,15 @@ describe('the gold a batch needs behind the queue', () => {
     test('a leg the game queue already holds is walked once: only the missing part is added', () => {
         const queuedDecompose = 600;
         const walked = { stages: [{ label: 'Decompose', coinDelta: -600 * 2 * 375, earned: 0 }], stoppedAt: null };
+        const queued = queuedLegCounts(
+            [row('/actions/alchemy/decompose', FRUIT, { maxCount: queuedDecompose })],
+            items,
+            stock(5000)
+        );
         const missing = reduceBatchByQueue(
             { decomposeActions: 1000, coinifyActions: 0, forageActions: 0 },
-            {
-                forage: { count: 0, endless: false },
-                decompose: { count: queuedDecompose, endless: false },
-                coinify: { count: 0, endless: false },
-            }
+            queued,
+            LOOP
         ).batch;
         const joined = withBatchStages(walked, batchStages(loop, missing));
         // 1000 decomposes in all, each paid once

@@ -24,6 +24,9 @@ const mocks = vi.hoisted(() => ({
     dmHandlers: new Map(),
     navigatedActions: [],
     currentActions: [],
+    alchemyOpened: [],
+    alchemyResult: { opened: false, selected: false },
+    tabsSelected: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -55,6 +58,17 @@ vi.mock('../../utils/item-navigation.js', () => ({
         mocks.navigatedActions.push(actionHrid);
         return true;
     },
+    // The game's item-menu handler: by default it cannot open Alchemy on an item, so the walk falls back
+    navigateToAlchemyItem: (itemHrid, type) => {
+        mocks.alchemyOpened.push([itemHrid, type]);
+        return mocks.alchemyResult;
+    },
+}));
+
+vi.mock('../../utils/alchemy-navigation.js', () => ({
+    selectAlchemyTab: async (type) => {
+        mocks.tabsSelected.push(type);
+    },
 }));
 
 vi.mock('../../utils/marketplace-tabs.js', () => ({
@@ -69,7 +83,7 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
 }));
 
 const { default: craftingPlanWalk } = await import('../crafting-plan/crafting-plan-walk.js');
-const { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS } =
+const { buildQueueSteps, startQueueWalk, legIsUnlimited, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS } =
     await import('./ironcow-queue-walk.js');
 
 const STARFRUIT = '/items/star_fruit';
@@ -115,10 +129,19 @@ function mountPanel(actionHrid, selectedItemHrid = null) {
 }
 
 /** The action queue answering the player's own press on one action */
-function pressed(actionHrid, primaryItemHash = '') {
-    mocks.wsHandlers.get('actions_updated')?.({
-        endCharacterActions: [{ id: `new-${actionHrid}`, actionHrid, primaryItemHash }],
-    });
+function pressed(actionHrid, primaryItemHash = '', stored = undefined) {
+    // The server keeps the count that was typed, unless a test says otherwise; an unlimited step is a row
+    // with no count
+    const step = craftingPlanWalk.currentStep();
+    const row = { id: `new-${actionHrid}`, actionHrid, primaryItemHash };
+    if (stored === undefined) {
+        row.hasMaxCount = !step?.unlimited;
+        row.maxCount = step?.unlimited ? 0 : (step?.count ?? 0);
+    } else {
+        row.hasMaxCount = stored !== null;
+        row.maxCount = stored ?? 0;
+    }
+    mocks.wsHandlers.get('actions_updated')?.({ endCharacterActions: [row] });
 }
 
 beforeEach(() => {
@@ -126,6 +149,9 @@ beforeEach(() => {
     mocks.settings = {};
     mocks.navigatedActions = [];
     mocks.currentActions = [];
+    mocks.alchemyOpened = [];
+    mocks.alchemyResult = { opened: false, selected: false };
+    mocks.tabsSelected = [];
     document.body.innerHTML = '';
 });
 
@@ -149,7 +175,35 @@ describe('the three steps', () => {
         expect(forage.requiresItemHrid).toBeUndefined();
         expect(decompose.requiresItemHrid).toBe(STARFRUIT);
         expect(coinify.requiresItemHrid).toBe(ESSENCE);
-        expect(decompose.label).toContain('alchemy slot');
+        // The walk opens the alchemy panel with the item chosen (when held) and says the press is the player's
+        expect(decompose.alchemyType).toBe('decompose');
+        expect(coinify.alchemyType).toBe('coinify');
+        expect(forage.alchemyType).toBeUndefined();
+    });
+
+    test('Max queues decompose and coinify as Repeat ∞ rows with no count typed; forage would stay counted', () => {
+        const steps = buildQueueSteps(loop(), batch({ forageActions: 40, max: { fruitName: 'Star Fruit' } }));
+        const [forage, decompose, coinify] = steps;
+
+        expect(forage.unlimited).toBeUndefined();
+        expect(forage.actions).toBe(40);
+        expect(decompose.unlimited).toBe(true);
+        expect(decompose.actions).toBe(0);
+        expect(coinify.unlimited).toBe(true);
+        expect(decompose.verifyCount).toBeUndefined();
+        expect(legIsUnlimited({ max: {} }, 'forage')).toBe(false);
+        expect(legIsUnlimited({}, 'decompose')).toBe(false);
+    });
+
+    test('a count above the 32-bit limit is still split; below it is one row', () => {
+        expect(buildQueueSteps(loop(), batch({ decomposeActions: 250_000, forageActions: 0 }))[0].actions).toBe(
+            250_000
+        );
+        const huge = buildQueueSteps(loop(), batch({ forageActions: MAX_STEP_ACTIONS + 5 })).filter((s) =>
+            s.key.startsWith('ironbell:forage')
+        );
+        expect(huge.map((s) => s.actions)).toEqual([MAX_STEP_ACTIONS, 5]);
+        expect(MAX_STEP_ACTIONS).toBe(2_147_483_647);
     });
 
     test('a leg sized at nothing is not a step to stand in front of', () => {
@@ -221,6 +275,65 @@ describe('a week-sized leg over the cap splits into repeats', () => {
         // Second press ends the leg — nothing left to walk.
         pressed(FORAGE_ACTION);
         expect(craftingPlanWalk.currentStep()).toBeNull();
+    });
+});
+
+describe('the count the server kept, and opening Alchemy on the item', () => {
+    test('a server that stores less than was typed stops the walk with a plain warning', () => {
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch({ forageActions: 5000, decomposeActions: 0, coinifyActions: 0 }));
+        pressed(FORAGE_ACTION, '', 3000);
+
+        expect(craftingPlanWalk.currentStep()).toBeNull();
+        expect(document.body.textContent).toContain('The game queued 3,000 instead of the 5,000 typed');
+        expect(document.body.textContent).toContain('the queue is short');
+    });
+
+    test('a count above the old 100,000 step arrives as typed in one row', () => {
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch({ forageActions: 1_500_000, decomposeActions: 0, coinifyActions: 0 }));
+        vi.advanceTimersByTime(200);
+        expect(document.querySelector('input').value).toBe('1500000');
+        pressed(FORAGE_ACTION);
+        expect(craftingPlanWalk.currentStep()).toBeNull();
+        expect(document.body.textContent).not.toContain('instead of');
+    });
+
+    test('a Max alchemy step is checked for being Repeat ∞, not for a count', () => {
+        startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
+        // decompose ∞ first
+        pressed(DECOMPOSE_ACTION, `${DECOMPOSE_ACTION}::${STARFRUIT}`);
+        expect(craftingPlanWalk.currentStep().actionHrid).toBe(COINIFY_ACTION);
+        // a coinify that came back with a count is flagged
+        pressed(COINIFY_ACTION, `${COINIFY_ACTION}::${ESSENCE}`, 480);
+        expect(craftingPlanWalk.currentStep()).toBeNull();
+        expect(document.body.textContent).toContain('instead of Repeat ∞');
+    });
+
+    test('nothing is typed into the count box of an ∞ step', () => {
+        mountPanel(DECOMPOSE_ACTION, STARFRUIT);
+        const before = document.querySelector('input').value;
+        startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
+        vi.advanceTimersByTime(2000);
+        expect(document.querySelector('input').value).toBe(before);
+    });
+
+    test('an alchemy step opens the panel through the game’s handler with the item chosen, and says the press is theirs', () => {
+        mocks.alchemyResult = { opened: true, selected: true };
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+
+        expect(mocks.alchemyOpened).toEqual([[STARFRUIT, 'decompose']]);
+        expect(mocks.navigatedActions).toEqual([]);
+        expect(document.body.textContent).toContain('is chosen for you; the Start press is yours');
+    });
+
+    test('when the game cannot choose the item (not in the bag), it falls back to opening the action and says so', () => {
+        mocks.alchemyResult = { opened: true, selected: false };
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+
+        expect(mocks.alchemyOpened).toEqual([[ESSENCE, 'coinify']]);
+        expect(document.body.textContent).toContain('the game cannot until it is in your bag');
+        expect(document.body.textContent).toContain('then press Start');
     });
 });
 

@@ -64,7 +64,8 @@ vi.mock('../enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredict
 const { default: engine } = await import('../actions/action-time-display.js');
 const { walkQueueCoins, coinReserve, bellsAffordable, bellBudget, COWBELLS_PER_BAG } =
     await import('./coin-reserve.js');
-const { summarizeCycle, keptNote } = await import('./ironbell-cycle.js');
+const { summarizeCycle, keptNote, queuedLegCounts, reduceBatchByQueue } = await import('./ironbell-cycle.js');
+const { buildCharacterAction } = await import('../../__fixtures__/wire/character-actions.js');
 
 const STAR_FRUIT = '/items/star_fruit';
 const ESSENCE = '/items/foraging_essence';
@@ -553,5 +554,76 @@ describe('the cycle summary says when its figures are estimates', () => {
             stoppedAt: null,
         };
         expect(summarizeCycle(walked, { coins: 1_000_000, loopItems: loop }).estimated).toBe(false);
+    });
+});
+
+describe('what the queue is credited with agrees with what the engine will run', () => {
+    // 2 fruit a decompose, 6 essence a fruit (12 an action), 10 essence a coinify: the engine fixture above
+    const loop = { fruitPerForageAction: 1, decomposeBulk: 2, essencePerFruit: 6, coinifyBulk: 10 };
+    const loopItems = { forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE };
+    /** A queued row as the wire carries it (buildCharacterAction), with the alchemy item in the primary slot */
+    const row = (ordinal, actionHrid, { item = null, maxCount } = {}) =>
+        buildCharacterAction({
+            id: 5000 + ordinal,
+            ordinal,
+            actionHrid,
+            primaryItemHash: item ? `42::/item_locations/inventory::${item}::0` : '',
+            hasMaxCount: maxCount !== undefined,
+            maxCount: maxCount ?? 0,
+        });
+    const legOf = (walked, actionHrid) => walked.stages.filter((stage) => stage.actionHrid === actionHrid);
+
+    test('a decompose that asks for more fruit than is held performs only the fruit: engine and credit agree', () => {
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000)];
+        game.currentActions = [
+            row(1, DECOMPOSE, { item: STAR_FRUIT, maxCount: 1800 }),
+            row(2, COINIFY, { item: ESSENCE, maxCount: 600 }),
+        ];
+        const walked = walkQueueCoins(engine);
+        const queued = queuedLegCounts(game.currentActions, loopItems, { loop, fruitHeld: 1000, essenceHeld: 0 });
+
+        expect(legOf(walked, DECOMPOSE)[0].count).toBe(500);
+        expect(queued.decompose.performed).toBe(500);
+        expect(legOf(walked, COINIFY)[0].count).toBe(queued.coinify.performed);
+        // and a new forage behind them, whose fruit nothing consumes, is refused rather than walked
+        const batch = { forageActions: 1000, decomposeActions: 1800, coinifyActions: 600 };
+        const out = reduceBatchByQueue(batch, queued, loop);
+        expect(out.blocked).toContain('would stall');
+    });
+
+    test('a decompose with no fruit and a coinify with no essence perform nothing, in the engine and in the credit', () => {
+        game.inventory = [stack(COIN, 1_000_000)];
+        game.currentActions = [row(1, COINIFY, { item: ESSENCE, maxCount: 480 })];
+        const walked = walkQueueCoins(engine);
+        const queued = queuedLegCounts(game.currentActions, loopItems, { loop, fruitHeld: 0, essenceHeld: 0 });
+
+        expect(legOf(walked, COINIFY)[0]?.count ?? 0).toBe(0);
+        expect(queued.coinify.performed).toBe(0);
+        expect(reduceBatchByQueue({ coinifyActions: 480 }, queued, loop).blocked).toContain(
+            'Coinify is queued for 480'
+        );
+    });
+
+    test('Repeat ∞ decompose then coinify run to their materials: the maintainer’s queue shape', () => {
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000)];
+        game.currentActions = [row(1, DECOMPOSE, { item: STAR_FRUIT }), row(2, COINIFY, { item: ESSENCE })];
+        const walked = walkQueueCoins(engine);
+        const queued = queuedLegCounts(game.currentActions, loopItems, { loop, fruitHeld: 1000, essenceHeld: 0 });
+
+        expect(walked.stoppedAt).toBeNull();
+        expect(legOf(walked, DECOMPOSE)[0].count).toBe(queued.decompose.performed);
+        expect(legOf(walked, COINIFY)[0].count).toBe(queued.coinify.performed);
+        expect(queued.endless).toBeNull();
+    });
+
+    test('a forage ahead feeds the decompose behind it in both', () => {
+        game.inventory = [stack(COIN, 1_000_000)];
+        game.currentActions = [
+            row(1, FORAGE, { maxCount: 1000 }),
+            row(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 400 }),
+        ];
+        const queued = queuedLegCounts(game.currentActions, loopItems, { loop, fruitHeld: 0, essenceHeld: 0 });
+        expect(queued.decompose.performed).toBe(400);
+        expect(queued.starved).toEqual([]);
     });
 });
