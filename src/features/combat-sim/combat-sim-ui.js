@@ -15253,7 +15253,9 @@ class CombatSimUI {
                 verdictHtml: verdict ? verifyChipHtml(verdict) : '',
                 note,
                 pending,
-                offerVerify: true,
+                // A single order verify would feed conclusions built for the top-picks set; the bar above verifies
+                // the top orders, and its verdicts still show on these cards.
+                offerVerify: false,
                 canVerify,
                 verifyLabel: rankLabel,
             };
