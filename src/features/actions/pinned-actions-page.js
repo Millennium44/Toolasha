@@ -685,7 +685,7 @@ class PinnedActionsPage {
             empty.innerHTML = `
                 <div style="font-size: 2em; margin-bottom: 12px;">📌</div>
                 <div style="font-size: 1.1em; margin-bottom: 8px;">No pinned actions</div>
-                <div style="font-size: 0.85em; color: #666;">
+                <div style="font-size: 0.85em; color: ${GAME_COLORS.textDim};">
                     Pin actions using the 📌 icon on action tiles to see them here.
                 </div>
             `;
@@ -891,7 +891,7 @@ class PinnedActionsPage {
 
         const age = formatAge(action.simulatedAt);
         const simulated = age
-            ? `<span style="color: #666; font-size: 0.8em; margin-left: 6px;" title="From the last all-zones simulation">sim ${age}</span>`
+            ? `<span style="color: ${GAME_COLORS.textDim}; font-size: 0.8em; margin-left: 6px;" title="From the last all-zones simulation">sim ${age}</span>`
             : '';
         const stale = action.gearChanged
             ? `<span style="color: #d9a441; font-size: 0.8em; margin-left: 6px;"

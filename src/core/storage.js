@@ -2736,9 +2736,12 @@ class Storage {
      * handful of transactions started in the same tick.
      * @param {{awaitInFlight?: boolean}} [options] - `awaitInFlight: false` snapshots the
      *   queue without first waiting out writes a timer already started; see `closeForTeardown`
+     * @param {{countFailures?: boolean}} [options] - `countFailures: false` leaves the give-up budget
+     *   (`MAX_FLUSH_ATTEMPTS`) alone: a failed write stays queued without counting, so a caller that
+     *   flushes on a user's press (a backup) cannot be what drops a value
      * @returns {Promise<void>}
      */
-    async flushAll({ awaitInFlight = true } = {}) {
+    async flushAll({ awaitInFlight = true, countFailures = true } = {}) {
         // Clear all timers first
         for (const timer of this.saveDebounceTimers.values()) {
             if (timer) {
@@ -2871,7 +2874,7 @@ class Storage {
                                 this._writeGeneration.delete(timerKey);
                             }
                             this._flushFailures.delete(timerKey);
-                        } else if (!success) {
+                        } else if (!success && countFailures) {
                             const failures = (this._flushFailures.get(timerKey) || 0) + 1;
                             if (failures >= MAX_FLUSH_ATTEMPTS) {
                                 console.warn(

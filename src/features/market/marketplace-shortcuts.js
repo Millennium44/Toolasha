@@ -13,6 +13,7 @@ import { setReactInputValue } from '../../utils/react-input.js';
 import estimatedListingAge from './estimated-listing-age.js';
 import { formatRelativeTime, formatWithSeparator } from '../../utils/formatters.js';
 import { parseItemCount } from '../../utils/number-parser.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { isMobileMode } from '../../utils/mobile.js';
 
@@ -282,7 +283,7 @@ class MarketplaceShortcuts {
             position: fixed;
             z-index: 9999;
             flex-direction: column;
-            background: var(--color-surface, #1e1e2e);
+            background: ${GAME_COLORS.background};
             border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 6px;
             overflow: hidden;

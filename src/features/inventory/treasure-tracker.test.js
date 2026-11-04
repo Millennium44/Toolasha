@@ -805,6 +805,30 @@ describe('the popup’s item rows', () => {
         expect(labels.children[1].textContent).toBe('Qty');
     });
 
+    test('every figure column has a floor, and the grid fits inside the narrowest popup', () => {
+        const popup = build([item()]);
+        const row = popup.querySelector('[data-role="opening-labels"]').nextElementSibling;
+        const template = row.style.gridTemplateColumns;
+        // The template may keep `repeat(2, ...)` as written, so count each repeat
+        const floors = [...template.matchAll(/(?:repeat\(\s*(\d+)\s*,\s*)?minmax\(\s*([\d.]+)px/g)].flatMap((m) =>
+            Array(Number(m[1] ?? 1)).fill(parseFloat(m[2]))
+        );
+        // Qty, Value, Exp. qty, Exp. val: a "123.45K" at 11px is about 41px
+        expect(floors).toHaveLength(4);
+        expect(Math.min(...floors)).toBeGreaterThanOrEqual(46);
+
+        const fixed = [...template.replace(/minmax\([^)]*\)/g, '').matchAll(/([\d.]+)px/g)].reduce(
+            (sum, m) => sum + parseFloat(m[1]),
+            0
+        );
+        const tracks = fixed + floors.reduce((a, b) => a + b, 0);
+        const gaps = 5 * parseFloat(row.style.gap);
+        // The body's 9px side padding and the frame's 1px border
+        const needed = tracks + gaps + 2 * 9 + 2;
+        // The popup's resize handle is made with this minimum
+        expect(needed).toBeLessThanOrEqual(284);
+    });
+
     test('with nothing to list there are still no stray rows and the stats button is there', () => {
         const popup = build([]);
 

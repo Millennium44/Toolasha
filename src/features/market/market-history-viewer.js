@@ -1543,7 +1543,7 @@ class MarketHistoryViewer {
                 deleteBtn.style.cssText = `
                     background: none;
                     border: none;
-                    color: #666;
+                    color: ${GAME_COLORS.textDim};
                     cursor: pointer;
                     font-size: 13px;
                     padding: 2px 5px;
@@ -1555,7 +1555,7 @@ class MarketHistoryViewer {
                     deleteBtn.style.background = 'rgba(248,113,113,0.15)';
                 });
                 deleteBtn.addEventListener('mouseleave', () => {
-                    deleteBtn.style.color = '#666';
+                    deleteBtn.style.color = GAME_COLORS.textDim;
                     deleteBtn.style.background = 'none';
                 });
                 deleteBtn.addEventListener('click', (e) => {

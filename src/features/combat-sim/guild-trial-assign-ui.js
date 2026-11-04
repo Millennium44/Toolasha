@@ -36,6 +36,7 @@ import {
 } from './guild-trial-assign.js';
 import { TRIAL_SKILLS, parseCurrentTrialsData, trialWeekStart } from '../guild/guild-trials-math.js';
 import { currentSignup, loadoutViewStatus, roleLabel } from '../guild/guild-trial-signups.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 import { VIEW_LOADOUT_CONTEXT, getLoadout } from '../../utils/view-loadout.js';
 
 /** Skilling trials drawn per cycle */
@@ -1043,7 +1044,11 @@ export class TrialAssignPlanner {
                 input.disabled = busy || coverage.kind === 'reading';
                 input.setAttribute('aria-label', `${member.name} ${label(trial)} level`);
                 input.style.cssText =
-                    'width:56px;background:#1b2030;color:#eee;border:1px solid #495268;border-radius:4px;padding:2px;';
+                    'width:56px;background:' +
+                    GAME_COLORS.inputBackground +
+                    ';color:#eee;border:1px solid ' +
+                    GAME_COLORS.inputBorder +
+                    ';border-radius:4px;padding:2px;';
                 const typed = this.manual[member.id]?.[trial];
                 input.value = typed ?? '';
                 input.placeholder = coverage.level != null ? String(Math.round(coverage.level * 10) / 10) : '—';
@@ -1216,7 +1221,10 @@ export class TrialAssignPlanner {
             area.readOnly = true;
             area.value = message;
             area.setAttribute('aria-label', `Sign-up message ${i + 1}`);
-            area.style.cssText = 'width:100%;box-sizing:border-box;min-height:48px;background:#1b2030;color:#eee;';
+            area.style.cssText =
+                'width:100%;box-sizing:border-box;min-height:48px;background:' +
+                GAME_COLORS.inputBackground +
+                ';color:#eee;';
             text.appendChild(area);
             button(row(text), messages.length > 1 ? `Copy message ${i + 1}` : 'Copy', () => copyText(message, area));
         }

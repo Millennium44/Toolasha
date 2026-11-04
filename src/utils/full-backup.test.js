@@ -21,6 +21,7 @@ function storageDefaults() {
     return {
         listStores: () => Promise.resolve(Array.from(db.keys())),
         getAll: (storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map())),
+        flushAll: () => Promise.resolve(),
         beginRestore: () => Promise.resolve(),
         finishRestore: () => {},
         endRestore: () => Promise.resolve(),
@@ -181,6 +182,36 @@ describe('exportEverythingJSON', () => {
         // One read per store, never a read of everything at once
         expect(storage.getAll).toHaveBeenCalledTimes(3);
         expect(storage.getAll.mock.calls.map(([name]) => name)).toEqual(['settings', 'xpHistory', 'dungeonRuns']);
+    });
+
+    test('both exports land the debounced writes before they read', async () => {
+        // A plain storage.set inside its debounce is in no record's handoff, so only flushAll lands it
+        let pending = { theme: 'light' };
+        storageMock.flushAll.mockImplementation(async () => {
+            db.get('settings').set('pendingKey', pending);
+            pending = null;
+        });
+
+        const parsed = JSON.parse(await exportEverythingJSON());
+        expect(parsed.stores.settings.pendingKey).toEqual({ theme: 'light' });
+        expect(storageMock.flushAll).toHaveBeenCalledTimes(1);
+
+        storageMock.flushAll.mockClear();
+        const payload = await exportEverything();
+        expect(storageMock.flushAll).toHaveBeenCalledTimes(1);
+        expect(payload.stores.settings.theme).toBe('dark');
+    });
+
+    test('a flush that fails still produces the backup of what is stored', async () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        storageMock.flushAll.mockRejectedValue(new Error('wedged'));
+
+        const parsed = JSON.parse(await exportEverythingJSON());
+        const payload = await exportEverything();
+
+        expect(parsed.stores.settings).toEqual({ theme: 'dark' });
+        expect(payload.stores.settings).toEqual({ theme: 'dark' });
+        error.mockRestore();
     });
 
     test('an empty database is still a valid, restorable payload', async () => {

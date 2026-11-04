@@ -571,12 +571,12 @@ class TaskAutoReroll {
                    onmouseout="this.style.background=''">
                     <span style="width:18px; text-align:center; color:${checkColor}; font-weight:700;">${checkmark}</span>
                     <span style="flex:1; color:${nameColor};">${item.name}</span>
-                    <span style="color:#666; font-size:11px;">${typeLabel}</span>
+                    <span style="color:${GAME_COLORS.textDim}; font-size:11px;">${typeLabel}</span>
                 </div>`;
             }
 
             if (filtered.length > 50) {
-                html += `<div style="color:#666; text-align:center; padding:8px;">...${filtered.length - 50} more (refine search)</div>`;
+                html += `<div style="color:${GAME_COLORS.textDim}; text-align:center; padding:8px;">...${filtered.length - 50} more (refine search)</div>`;
             }
 
             listContainer.innerHTML = html;

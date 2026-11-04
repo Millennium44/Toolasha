@@ -512,6 +512,8 @@ class PhiloCalculator {
             const previous = settingsRecord.get();
             settingsRecord.set({});
             const readable = await settingsRecord.load();
+            // A switch inside the read overtook it: `previous` is the departed character's
+            if ((dataManager.getCurrentCharacterId?.() || null) !== who) return;
             if (!readable) settingsRecord.set(previous);
             const saved = readable ? settingsRecord.get() : null;
             if (saved && Object.keys(saved).length > 0) {
