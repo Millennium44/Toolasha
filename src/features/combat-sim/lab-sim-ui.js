@@ -1579,6 +1579,7 @@ class LabSimUI {
         `;
 
         const skillingCrateRow = document.createElement('div');
+        skillingCrateRow.id = 'mwi-labsim-skilling-crate-row';
         skillingCrateRow.style.cssText = `
             display: flex; align-items: center; gap: 10px;
             padding: 6px 14px; border-bottom: 1px solid #222; flex-shrink: 0; font-size: 12px;
@@ -7503,12 +7504,12 @@ class LabSimUI {
                 title +
                 verdict +
                 verifyButton +
-                `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
+                `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                 `<th style="${th} text-align:left;">Order</th>` +
                 `<th style="${th}" title="Change in expected attempts to clear this loadout’s fights; negative is better">ΔExpected attempts</th>` +
                 `<th style="${th}" title="Change in the chance of clearing this loadout’s fights in one go">ΔClear chance</th>` +
                 `<th style="${th}" title="One standard error of the change in expected attempts">Noise</th></tr></thead>` +
-                `<tbody>${rows}</tbody></table>`
+                `<tbody>${rows}</tbody></table></div>`
             );
         });
 
@@ -7716,7 +7717,7 @@ class LabSimUI {
         if (!checked && !levelsOnly) html += this._allFightsVerifyBarHtml(analysisResult, verifyPicks);
         // A run of nothing but combat levels has no gear to table
         if (!levelsOnly)
-            html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
+            html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 ${th('upgrade', 'Upgrade', 'Sort by name')}
                 ${th('cost', 'Cost', 'What it would cost in coins. Combat levels cost experience, not gold.')}
@@ -7810,7 +7811,7 @@ class LabSimUI {
             </tr>`;
             });
 
-        if (!levelsOnly) html += '</tbody></table>';
+        if (!levelsOnly) html += '</tbody></table></div>';
         const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
         if (!checked) html += this._renderAllFightsLevelSection(levelSorted, sharedStyles);
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
@@ -8028,7 +8029,7 @@ class LabSimUI {
                 better), not against the gold costs above. Level time assumes you train that skill at the XP rates
                 your fights earn now, and each row is one step on its own \u2014 they don't stack.${primaryNote}
             </div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 ${th('skill', 'Skill', 'Sort by name')}
                 ${th('time', 'Level Time', 'Hours of combat, at the XP rates your fights earn now, to earn these levels')}
@@ -8090,7 +8091,7 @@ class LabSimUI {
                     ${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
         });
-        return html + '</tbody></table></div>';
+        return html + '</tbody></table></div></div>';
     }
 
     /**
@@ -8124,7 +8125,7 @@ class LabSimUI {
                 for in every room, so each is simulated against every fight and aggregated exactly like a combat
                 level. Ranked in tokens rather than coins, and left out of the budget plan above, which is a plan
                 in gold.</div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}">Upgrade</th>
                 <th style="${thStyle}" title="Labyrinth tokens for this level">Tokens</th>
@@ -8166,7 +8167,7 @@ class LabSimUI {
             </tr>`;
         });
 
-        return html + '</tbody></table>';
+        return html + '</tbody></table></div>';
     }
 
     /**
@@ -8515,7 +8516,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Token Upgrades</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:12px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:12px;">';
             html += `<thead><tr>
                 ${th('Upgrade', 'desc', 'left')}
                 ${th('Tokens', 'tokenCost', 'right')}
@@ -8536,7 +8538,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
                 </tr>`;
             }
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             return html;
         };
 
@@ -8549,7 +8551,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gold Upgrades</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
                 ${th('Upgrade', 'desc', 'left')}
                 ${th('Cost', 'cost', 'right')}
@@ -8575,7 +8578,7 @@ class LabSimUI {
                     </td>
                 </tr>`;
             });
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             return html;
         };
 
@@ -8588,7 +8591,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
                 ${th('Upgrade', 'desc', 'left')}
                 ${th('Cowbells', 'cowbellCost', 'right')}
@@ -8608,7 +8612,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
             }
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
                 for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
@@ -9485,7 +9489,7 @@ class LabSimUI {
             </span>
         </div>`;
 
-        html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
+        html += '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">';
         html += `<thead><tr>
             <th style="${thLeftStyle}">Skill</th>
             <th style="${thStyle}">Room</th>
@@ -9530,7 +9534,7 @@ class LabSimUI {
             </tr>`;
         }
 
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         container.innerHTML = html;
         this._setStatus(
             usesSkipLevels
@@ -10146,7 +10150,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Token Upgrades</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:12px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table class="mwi-utable-pick" style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:12px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Tokens', 'tokenCost', 'right')}
@@ -10169,7 +10174,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:#888;">${row.tokensPerXpStr}</td>
                 </tr>`;
             }
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             return html;
         };
 
@@ -10182,7 +10187,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Guild Shrines</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table class="mwi-utable-pick" style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Credits', 'cost', 'right')}
@@ -10206,7 +10212,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
             }
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 Credits are valued at the cheapest items that convert into them. Guild tokens are counted, not
                 priced — nothing converts into them — so Gold/1% covers the credits only.${
@@ -10227,7 +10233,8 @@ class LabSimUI {
             };
 
             let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table class="mwi-utable-pick" style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Cowbells', 'cowbellCost', 'right')}
@@ -10246,7 +10253,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
             }
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
                 for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
@@ -10266,7 +10273,8 @@ class LabSimUI {
             let html = checked
                 ? this._checkedHeadingHtml('skilling')
                 : `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`;
-            html += '<table style="width:100%; border-collapse:collapse; font-size:11px;">';
+            html +=
+                '<div class="mwi-utable-wrap"><table class="mwi-utable-pick" style="width:100%; border-collapse:collapse; font-size:11px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
                 ${th('Cost', 'cost', 'right')}
@@ -10298,7 +10306,7 @@ class LabSimUI {
                     </td>
                 </tr>`;
             });
-            html += '</tbody></table>';
+            html += '</tbody></table></div>';
             if (goldRows.some((row) => row.keptNote)) {
                 html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">
                     <span style="color:#ff9800;">*</span> priced as the new piece alone: the combat gear it goes in

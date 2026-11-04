@@ -32,9 +32,15 @@ describe('sim phone layout', () => {
         );
     });
 
+    it('wraps the Lab chips, the solo+party loadouts and the Lab skilling crate row too', () => {
+        expect(SIM_UPGRADE_PHONE_CSS).toContain('[data-lab-mode-chip]');
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/#mwi-csim-soloparty-loadouts \{ flex-wrap: wrap/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/#mwi-labsim-skilling-crate-row \{\s*display: grid/);
+    });
+
     it('lets the include chips wrap and the results tables scroll sideways at phone width only', () => {
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/^\s*@media \(max-width: 768px\) \{/);
-        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\[data-mode-chip\] \[data-mode-options\] \{[^}]*flex-wrap: wrap/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\[data-lab-mode-options\] \{[^}]*flex-wrap: wrap/);
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(
             /\.mwi-utable-wrap \{[^}]*overflow-x: auto; -webkit-overflow-scrolling: touch/
         );

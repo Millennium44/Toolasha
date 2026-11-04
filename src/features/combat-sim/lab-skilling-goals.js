@@ -1064,7 +1064,8 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
     let html = `<div style="color:#e0e0e0; font-weight:700; font-size:12px; margin-bottom:4px;">Plan to goal</div>`;
     html += `<div style="color:#888; font-size:11px; margin-bottom:6px;">Goal: ${esc(goalText)}. Starts at ${pct(plan.baselineRate)}; ${plan.poolSize} candidates weighed per step, ${plan.sims} simulations${plan.improved ? ' (a cheaper set than the greedy one was found)' : ''}.</div>`;
     if (plan.steps.length) {
-        html += '<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>';
+        html +=
+            '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>';
         html += `<th style="${TH_LEFT}">#</th><th style="${TH_LEFT}">Upgrade</th><th style="${TH}">Step cost</th>`;
         html += `<th style="${TH}">Total cost</th><th style="${TH}">Clear</th>`;
         if (showLevels) html += `<th style="${TH}">Max level</th>`;
@@ -1078,7 +1079,7 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
             if (showLevels) html += `<td style="${TD} color:#ccc;">${levelCell(step.maxRoomLevel, step.floor)}</td>`;
             html += '</tr>';
         }
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
     }
     let verdict;
     if (plan.aborted) {
@@ -1113,7 +1114,8 @@ export function renderCombinationHtml(combo, { showLevels = false } = {}) {
             `${esc(row.candidate?.description)} and ${esc(replacedBy.candidate?.description)} are for the same slot; ` +
             `the later one was taken.</div>`;
     }
-    html += '<table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:4px;"><thead><tr>';
+    html +=
+        '<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px; margin-top:4px;"><thead><tr>';
     html += `<th style="${TH_LEFT}">Combined clear</th><th style="${TH}">Delta</th><th style="${TH}">XP/Room</th>`;
     html += `<th style="${TH}">Total cost</th><th style="${TH}">Gold/1%</th>`;
     if (showLevels) html += `<th style="${TH}">Max level</th>`;
@@ -1125,7 +1127,7 @@ export function renderCombinationHtml(combo, { showLevels = false } = {}) {
     html += `<td style="${TD} color:#ccc;" data-combo-cost>${esc(describeCost(combo.costs))}</td>`;
     html += `<td style="${TD} color:#888;">${combo.goldPerPct === null ? '—' : number(combo.goldPerPct)}</td>`;
     if (showLevels) html += `<td style="${TD} color:#ccc;">${levelCell(combo.maxRoomLevel, combo.floor)}</td>`;
-    html += '</tr></tbody></table>';
+    html += '</tr></tbody></table></div>';
     return html;
 }
 

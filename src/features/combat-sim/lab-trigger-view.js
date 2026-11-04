@@ -160,7 +160,7 @@ function fightsTableHtml(fights, afterLabel) {
     if (!fights.length) return '';
     const showAfter = fights.some((f) => f.tunedWinRate !== null && f.tunedWinRate !== undefined);
     return (
-        '<table style="border-collapse:collapse; font-size:11px; margin:4px 0 0 8px;">' +
+        '<div class="mwi-utable-wrap"><table style="border-collapse:collapse; font-size:11px; margin:4px 0 0 8px;">' +
         '<tr style="color:#888;"><td style="padding:1px 8px 1px 0;">Fight</td><td style="padding:1px 8px;">Room</td>' +
         `<td style="padding:1px 8px;">Win rate</td>${showAfter ? `<td style="padding:1px 8px;">${esc(afterLabel)}</td><td style="padding:1px 8px;">Change</td>` : ''}</tr>` +
         fights
@@ -182,7 +182,7 @@ function fightsTableHtml(fights, afterLabel) {
                 );
             })
             .join('') +
-        '</table>'
+        '</table></div>'
     );
 }
 

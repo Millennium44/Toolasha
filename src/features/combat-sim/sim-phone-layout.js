@@ -51,22 +51,34 @@ export const SIM_UPGRADE_PHONE_STYLE_ID = 'mwi-sim-upgrade-phone-layout';
 export const SIM_UPGRADE_PHONE_CSS = `
     @media ${MARKET_MOBILE_QUERY} {
         /* An include chip and the options it owns wrap inside the panel; a label stays beside its control */
-        [data-mode-chip] { max-width: 100%; box-sizing: border-box; flex-wrap: wrap; }
-        [data-mode-chip] [data-mode-options] { flex-wrap: wrap; min-width: 0; max-width: 100%; }
-        [data-mode-chip] [data-mode-options] > span:first-child { display: none; }
-        [data-mode-chip] select, [data-mode-chip] input[type="number"] { max-width: 100%; min-width: 0; }
-        [data-mode-chip] label { white-space: normal; }
+        [data-mode-chip], [data-lab-mode-chip] { max-width: 100%; box-sizing: border-box; flex-wrap: wrap; }
+        [data-mode-chip] [data-mode-options], [data-lab-mode-chip] [data-lab-mode-options] { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+        [data-mode-chip] [data-mode-options] > span:first-child,
+        [data-lab-mode-chip] [data-lab-mode-options] > span:first-child { display: none; }
+        [data-mode-chip] select, [data-mode-chip] input[type="number"],
+        [data-lab-mode-chip] select, [data-lab-mode-chip] input[type="number"] { max-width: 100%; min-width: 0; }
+        [data-mode-chip] label, [data-lab-mode-chip] label { white-space: normal; }
+
+        /* Solo zones + party dungeons: the two loadout pickers wrap instead of running off the panel */
+        #mwi-csim-soloparty-loadouts { flex-wrap: wrap; max-width: 100%; }
+        /* Lab skilling: Tea, Coffee and Food on one line, a label beside each select */
+        #mwi-labsim-skilling-crate-row {
+            display: grid !important;
+            grid-template-columns: repeat(3, auto minmax(0, 1fr));
+            gap: 6px !important;
+        }
+        #mwi-labsim-skilling-crate-row > select { min-width: 0; width: 100%; }
 
         /* A results table scrolls sideways inside its own wrapper; the panel stays still */
         .mwi-utable-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
         /* The first column names the row, so it stays put and is wide enough to read */
-        .mwi-utable-wrap > table > thead > tr > th:first-child,
-        .mwi-utable-wrap > table > tbody > tr > td:first-child:not([colspan]) {
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child,
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) {
             position: sticky; left: 0; z-index: 1; background: ${GAME_COLORS.background};
             box-sizing: border-box; width: 140px; min-width: 140px; max-width: 140px;
             white-space: normal !important; overflow-wrap: anywhere;
         }
-        .mwi-utable-wrap > table > thead > tr > th:first-child { z-index: 3; }
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child { z-index: 3; }
         /* Prose reads in a column about this wide; numbers stay on one line */
         .mwi-utable-prose { white-space: normal !important; min-width: 150px; max-width: 170px; overflow-wrap: anywhere; }
         /* An expanded row spans the whole table: its content stays at the visible width, pinned to the left */

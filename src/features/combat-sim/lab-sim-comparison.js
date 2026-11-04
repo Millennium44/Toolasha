@@ -364,7 +364,7 @@ export function renderLabComparisonPanel(runs, baselineId) {
         'cursor:pointer; font-family:inherit; flex-shrink:0;">Clear All</button>';
     html += '</div>';
 
-    html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
+    html += '<div class="mwi-utable-wrap"><table style="width:100%; font-size:11px; border-collapse:collapse;">';
     html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
     html += '<th style="text-align:left; padding:2px 4px;">Run</th>';
     for (const metric of LAB_COMPARISON_METRICS) {
@@ -402,7 +402,7 @@ export function renderLabComparisonPanel(runs, baselineId) {
         html += '</tr>';
     }
 
-    html += '</table>';
+    html += '</table></div>';
     html += '</div></div>';
     return html;
 }

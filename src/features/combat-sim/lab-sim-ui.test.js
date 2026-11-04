@@ -5439,11 +5439,11 @@ describe('Check a swap', () => {
             { checked: true }
         );
         expect(skilling.querySelector('[data-checked-toggle]').textContent).toBe('▼');
-        const tableDisplay = () => skilling.querySelector('table').style.display;
+        const tableDisplay = () => skilling.querySelector('.mwi-utable-wrap').style.display;
         expect(tableDisplay()).toBe('');
         skilling.querySelector('[data-checked-heading]').click();
         expect(tableDisplay()).toBe('none');
-        expect(rebuilt.querySelector('table').style.display).toBe('none');
+        expect(rebuilt.querySelector('.mwi-utable-wrap').style.display).toBe('none');
     });
 
     test('a kept piece worth nothing produces no resale sentence, and an unpriced one says so', () => {
