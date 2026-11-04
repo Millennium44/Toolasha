@@ -3087,7 +3087,7 @@ const MODE_OPTIONS = {
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
-            <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
+            <input id="mwi-csim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up."></span>
             <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
