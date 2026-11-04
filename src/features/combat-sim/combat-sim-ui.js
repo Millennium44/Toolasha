@@ -169,7 +169,7 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
-import { estimateConditionRun, runTriggerOptimization } from './trigger-optimizer.js';
+import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
     buildEditorChanges,
     formatChangesText,
@@ -186,7 +186,9 @@ import {
 } from './trigger-tuning.js';
 import {
     renderTriggerResultsHtml,
-    triggerChipOptionsHtml,
+    triggerSectionOptionsHtml,
+    describeTriggerEstimate,
+    triggerHeadline,
     triggerVerifyHtml,
     verifyChipHtml,
     formatVerifyFigure,
@@ -344,7 +346,7 @@ const CARD_SORT_STATE = {
     buffs: '_buffSort',
     scrolls: '_scrollSort',
 };
-/** Storage key for the Triggers chip's party mode, precision and min gain choices */
+/** Storage key for the Tune triggers section's choices (party mode, precision, min gain, ... and whether it is open) */
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 /**
  * What the trigger search's profit figures were priced under: the market snapshot and the pricing
@@ -3081,7 +3083,6 @@ const MODE_OPTIONS = {
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now."></span>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
-    triggers: triggerChipOptionsHtml(),
     guild_shrine: `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
@@ -3205,18 +3206,16 @@ const UPGRADE_MODES = [
         defaultOn: false,
         title: 'Search for the cheapest food that still avoids deaths and running out of mana',
     },
-    {
-        key: 'triggers',
-        label: 'Triggers',
-        defaultOn: false,
-        title:
-            'Tune the numbers in your trigger rows: how much enemy HP an ability waits for, and how low your own ' +
-            'HP or MP gets before a food fires. Only the numbers change, never what a trigger watches.\n\n' +
-            'It simulates each candidate value on matched seeds and keeps a change only when it clearly beats ' +
-            'the current one. Results are shown here; nothing is changed in the game. Apply writes them into ' +
-            "this simulator's trigger editor, or copy them to enter by hand.",
-    },
 ];
+
+/** What the Tune triggers section's header says on hover */
+const TRIGGER_SECTION_TITLE =
+    'Tune the numbers in your trigger rows: how much enemy HP an ability waits for, and how low your own ' +
+    'HP or MP gets before a food fires. Only the numbers change, never what a trigger watches.\n\n' +
+    'It runs on its own, for the player and fight chosen on this tab and Configure, and does not need Analyze. ' +
+    'It simulates each candidate value on matched seeds and keeps a change only when it clearly beats ' +
+    'the current one. Results are shown here; nothing is changed in the game. Apply writes them into ' +
+    "this simulator's trigger editor, or copy them to enter by hand.";
 
 /**
  * One candidate-set chip: its checkbox, label and any options it owns.
@@ -3269,6 +3268,11 @@ class CombatSimUI {
         this._runStarting = false;
         this._runStartToken = 0;
         this._upgradeRunning = false;
+        // The Tune triggers section: open or closed, and what its last result said (shown on the closed header)
+        this._triggerOpen = false;
+        this._triggerOpenKnown = false;
+        this._triggerTouched = false;
+        this._triggerSummary = '';
         this._detachDrag = null;
         // What the Bestiary plan's grouped save last saw stored, so it writes only the key that changed
         this._storedValues = new StoredValueMemo();
@@ -3912,10 +3916,30 @@ class CombatSimUI {
         // budget replan redraws that container wholesale
         const triggerBox = document.createElement('div');
         triggerBox.id = 'mwi-csim-trigger-box';
-        triggerBox.style.cssText = 'flex-shrink:0; padding:0 14px;';
+        triggerBox.style.cssText = 'flex-shrink:0;';
 
+        // The Tune triggers section: its own run, with its controls, cost line and results inside it
+        const triggerBar = document.createElement('div');
+        triggerBar.id = 'mwi-csim-trigger-bar';
+        triggerBar.style.cssText = 'padding:6px 14px; border-bottom:1px solid #222; flex-shrink:0;';
+        triggerBar.innerHTML = `
+            <div id="mwi-csim-trigger-header" style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;"
+                title="${TRIGGER_SECTION_TITLE.replace(/"/g, '&quot;')}">
+                <span id="mwi-csim-trigger-toggle" style="font-size:10px; color:#888;">▶</span>
+                <span style="color:${ACCENT}; font-weight:700; font-size:12px;">Tune triggers</span>
+                <span id="mwi-csim-trigger-summary" style="display:none; color:#aaa; font-size:11px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+            </div>
+            <div id="mwi-csim-trigger-body" style="display:none; margin-top:4px;">
+                <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
+                    ${triggerSectionOptionsHtml()}
+                    <button id="mwi-csim-trigger-run" style="${CHIP_BUTTON_STYLE}" title="Tunes the triggers now, on its own: it does not need Analyze and leaves the Analyze results alone">Tune</button>
+                    <span id="mwi-csim-trigger-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
+                </div>
+            </div>`;
+        triggerBar.querySelector('#mwi-csim-trigger-body').appendChild(triggerBox);
+
+        upgradeContent.appendChild(triggerBar);
         upgradeContent.appendChild(upgradeProgress);
-        upgradeContent.appendChild(triggerBox);
         upgradeContent.appendChild(upgradeResults);
 
         // Party tab content (hidden by default; filled by the party finder while its setting is on)
@@ -4029,16 +4053,21 @@ class CombatSimUI {
             cancelActiveSimulations();
         });
         this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => this._wireModeBox(box));
+        this.panel.querySelector('#mwi-csim-trigger-header')?.addEventListener('click', () => {
+            this._triggerOpen = !this._triggerOpen;
+            this._triggerOpenKnown = true;
+            this._triggerTouched = true;
+            this._applyTriggerSectionState();
+            this._saveTriggerChoices();
+            if (this._triggerOpen) this._refreshCachedTriggerResult();
+        });
+        this.panel.querySelector('#mwi-csim-trigger-run')?.addEventListener('click', () => this._onTuneTriggers());
         this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
             this._saveSwapAuraOnly();
         });
-        // Delegated, so one listener covers the chip's selects
+        // Delegated, so one listener covers the section's selects
         this.panel.addEventListener('change', (event) => {
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
-                if (event.target.id === TRIGGER_CHOICE_IDS.conditions && !event.target.checked) {
-                    const costEl = this.panel.querySelector('#mwi-csim-trigger-conditions-cost');
-                    if (costEl) costEl.textContent = '';
-                }
                 this._saveTriggerChoices();
                 this._refreshCachedTriggerResult();
             } else if (event.target?.id === 'mwi-csim-upgrade-player') {
@@ -10041,6 +10070,10 @@ class CombatSimUI {
         // The last trigger result carries the verify context (players, game data); the verify row lists point
         // into the analysis that has just been dropped
         this._shownTriggerResult = null;
+        this._triggerOpen = false;
+        this._triggerOpenKnown = false;
+        this._triggerTouched = false;
+        this._triggerSummary = '';
         this._goldVerifyRows = null;
         this._orderVerifyRows = null;
         this._unwatchNarrowWindow();
@@ -10347,7 +10380,6 @@ class CombatSimUI {
         box.addEventListener('change', () => {
             this._onUpgradeModesChanged();
             this._saveUpgradeModes();
-            this._refreshCachedTriggerResult();
         });
     }
 
@@ -10659,7 +10691,7 @@ class CombatSimUI {
     }
 
     /**
-     * Persist the Triggers chip's party mode, precision and min gain.
+     * Persist the Tune triggers section's choices and whether it is open.
      * @private
      */
     async _saveTriggerChoices() {
@@ -10688,6 +10720,10 @@ class CombatSimUI {
                     ...(Number.isFinite(minGain) ? { minGain } : {}),
                     ...(objective !== undefined ? { objective } : {}),
                     ...(conditions !== undefined ? { conditions } : {}),
+                    // Whether the Tune triggers section is open; an older build keeps it untouched in the record
+                    // (written only once the stored value was read or the player toggled it, so an early save
+                    // of another choice cannot close a section the record says is open)
+                    ...(this._triggerOpenKnown ? { open: this._triggerOpen === true } : {}),
                 }),
                 'settings'
             );
@@ -10697,12 +10733,18 @@ class CombatSimUI {
     }
 
     /**
-     * Restore the remembered Triggers chip choices. A missing or invalid value leaves the default.
+     * Restore the remembered Tune triggers section choices. A missing or invalid value leaves the default.
      * @private
      */
     async _restoreTriggerChoices() {
         try {
             const saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+            if (!this.panel) return;
+            this._triggerOpenKnown = true;
+            // No record, or one from before the section existed (no `open`): it starts closed. A header
+            // click made before this read finished is the player's latest word and stays
+            if (!this._triggerTouched) this._triggerOpen = saved?.open === true;
+            this._applyTriggerSectionState();
             if (!saved || typeof saved !== 'object') return;
             const apply = (id, value, valid) => {
                 const select = this.panel?.querySelector(`#${id}`);
@@ -10914,7 +10956,10 @@ class CombatSimUI {
      * @private
      */
     async _onUpgradeAnalyze() {
-        if (this._isBusy()) return;
+        if (this._isBusy()) {
+            if (this._triggerRunning) this._setStatus('Trigger tuning is running. Press Stop or wait, then Analyze.');
+            return;
+        }
 
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
@@ -10929,10 +10974,8 @@ class CombatSimUI {
             )
         );
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
-        const allModes = this._getUpgradeModes();
-        // Trigger tuning is its own run; it does not feed the candidate ranking
-        const wantsTriggers = allModes.includes('triggers');
-        const upgradeModes = allModes.filter((mode) => mode !== 'triggers');
+        // Trigger tuning is its own run (the Tune triggers section); Analyze never runs it
+        const upgradeModes = this._getUpgradeModes();
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
         let abilityTargetLevel = Math.min(
             200,
@@ -10949,10 +10992,6 @@ class CombatSimUI {
         }
 
         if (!upgradeModes.length) {
-            if (wantsTriggers) {
-                await this._onTriggerAnalyze();
-                return;
-            }
             this._setStatus('Check at least one upgrade type to include.');
             return;
         }
@@ -11023,8 +11062,7 @@ class CombatSimUI {
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
-        const staleTriggerBox = this.panel.querySelector('#mwi-csim-trigger-box');
-        if (staleTriggerBox) staleTriggerBox.innerHTML = '';
+        this._setTuneButtonBusy(true);
         // A new run replaces the table the menu was configuring, so the menu
         // goes with it rather than reappearing over the results that arrive
         this._setUpgradeColumnMenuOpen(false);
@@ -11204,12 +11242,9 @@ class CombatSimUI {
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
+            if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
             // A view change during the run was held back; a run that drew its own results is already in the view
             if (this._viewRedrawOwed && this._stillSameCharacter(ownerId)) this._redrawForViewChange();
-        }
-
-        if (wantsTriggers && !analysisFailed && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
-            await this._onTriggerAnalyze({ append: true });
         }
 
         // Close calls get a second look on fresh seeds when the player asked for it. Never after Stop, a failure
@@ -11226,7 +11261,7 @@ class CombatSimUI {
     }
 
     /**
-     * The Triggers chip's choices and the zone, tier and player they apply to, as the run reads them.
+     * The Tune triggers section's choices and the zone, tier and player they apply to, as the run reads them.
      * @returns {Object} `{ zoneHrid, difficultyTier, playerIndex, scope, include, precision, minGain, objective,
      *   searchConditions }`
      * @private
@@ -11314,13 +11349,95 @@ class CombatSimUI {
     }
 
     /**
-     * Show the remembered trigger result when the Triggers chip is on and the setup still matches the one
+     * Draw the Tune triggers section open or closed. While it is closed its header says what the last
+     * result found (the result itself is inside the hidden body).
+     * @private
+     */
+    _applyTriggerSectionState() {
+        const open = this._triggerOpen === true;
+        const body = this.panel?.querySelector('#mwi-csim-trigger-body');
+        if (body) body.style.display = open ? 'block' : 'none';
+        const toggle = this.panel?.querySelector('#mwi-csim-trigger-toggle');
+        if (toggle) toggle.textContent = open ? '▼' : '▶';
+        const summary = this.panel?.querySelector('#mwi-csim-trigger-summary');
+        if (summary) {
+            const text = this._triggerSummary || '';
+            summary.textContent = text ? `— ${text}` : '';
+            summary.style.display = !open && text ? 'inline' : 'none';
+        }
+    }
+
+    /**
+     * Set what the closed section's header says, from a result (null: stopped before the baseline).
+     * @param {Object|null|undefined} result - A tuner result, or `undefined` to clear
+     * @private
+     */
+    _setTriggerSummary(result) {
+        this._triggerSummary =
+            result === undefined ? '' : triggerHeadline(result) + (result?.stopped ? ' (stopped)' : '');
+        this._applyTriggerSectionState();
+    }
+
+    /**
+     * Grey out Tune while another run owns the panel (Analyze, or its own run).
+     * @param {boolean} busy
+     * @private
+     */
+    _setTuneButtonBusy(busy) {
+        const button = this.panel?.querySelector('#mwi-csim-trigger-run');
+        if (button) button.disabled = Boolean(busy);
+    }
+
+    /**
+     * Say what a run would cost, before it is started: the sims for the rows the selected player (or the
+     * whole party) has, and the condition search's ceiling when it is ticked.
+     * @private
+     */
+    async _refreshTriggerEstimate() {
+        const gen = (this._triggerEstimateGen = (this._triggerEstimateGen || 0) + 1);
+        const ownerId = dataManager.getCurrentCharacterId();
+        const el = () => this.panel?.querySelector('#mwi-csim-trigger-estimate');
+        try {
+            if (!el() || this._triggerOpen !== true || this._isBusy()) return;
+            const choices = this._readTriggerChoices();
+            const gameData = buildGameDataPayload();
+            if (!gameData || !choices.zoneHrid) {
+                el().textContent = '';
+                return;
+            }
+            const party = await this._loadTriggerParty(choices.playerIndex);
+            if (gen !== this._triggerEstimateGen || !el() || !this._stillSameCharacter(ownerId)) return;
+            if (!party.simDTOs?.[party.playerIndex]) {
+                el().textContent = '';
+                return;
+            }
+            const estimate = estimateTriggerRun({
+                gameData,
+                playerDTOs: party.simDTOs,
+                playerIndex: party.playerIndex,
+                zoneHrid: choices.zoneHrid,
+                scope: choices.scope,
+                include: choices.include,
+                precision: choices.precision,
+                searchConditions: choices.searchConditions,
+            });
+            el().textContent = describeTriggerEstimate(estimate);
+        } catch (error) {
+            console.error('[CombatSimUI] Estimating trigger tuning failed:', error);
+            const target = el();
+            if (target) target.textContent = '';
+        }
+    }
+
+    /**
+     * Show the remembered trigger result when the section is open and the setup still matches the one
      * it was found for; take a remembered result down when it no longer matches. A result drawn by a run
-     * in this panel is never replaced.
+     * in this panel is never replaced. Also refreshes the cost line.
      * @private
      */
     async _refreshCachedTriggerResult() {
         const gen = (this._triggerCacheGen = (this._triggerCacheGen || 0) + 1);
+        void this._refreshTriggerEstimate();
         try {
             const box = this.panel?.querySelector('#mwi-csim-trigger-box');
             if (!box || this._isBusy()) return;
@@ -11330,10 +11447,12 @@ class CombatSimUI {
                 if (box.dataset.cached !== '1') return;
                 box.innerHTML = '';
                 delete box.dataset.cached;
+                this._setTriggerSummary(undefined);
             };
             const choices = this._readTriggerChoices();
-            if (!this._getUpgradeModes().includes('triggers') || !choices.zoneHrid) {
-                takeDown();
+            if (this._triggerOpen !== true || !choices.zoneHrid) {
+                // Closed: a remembered result stays as it is (and on the header) until the section is opened
+                if (this._triggerOpen === true) takeDown();
                 return;
             }
             const ownerId = dataManager.getCurrentCharacterId();
@@ -11363,24 +11482,34 @@ class CombatSimUI {
             this._enhanceCollapsibles(box);
             box.dataset.cached = '1';
             this._wireTriggerResultButtons(cached, gameData, party.liveDTOs, runContext);
-            box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTriggerAnalyze());
+            this._setTriggerSummary(cached);
+            box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTuneTriggers());
         } catch (error) {
             console.error('[CombatSimUI] Failed to show the remembered trigger result:', error);
         }
     }
 
     /**
-     * Run the trigger optimizer from the Upgrade tab. Show-only: the result is
-     * drawn in a box, and the buttons under it either write into this panel's
-     * own sim editor or copy text. Nothing here touches the game.
-     * @param {Object} [options]
-     * @param {boolean} [options.append] - Add the box under results already drawn instead of replacing them
+     * Tune the triggers, from the Tune triggers section. Its own run: it needs no Analyze, leaves the
+     * Analyze results alone, and shows its result inside the section. Show-only: the buttons under the
+     * result either write into this panel's own sim editor or copy text. Nothing here touches the game.
      * @private
      */
-    async _onTriggerAnalyze({ append = false } = {}) {
-        if (this._isBusy()) return;
+    async _onTuneTriggers() {
+        if (this._isBusy()) {
+            this._setStatus(
+                this._triggerRunning
+                    ? 'Trigger tuning is already running. Press Stop to cancel it.'
+                    : 'Another run is going. Press Stop or wait for it to finish, then tune.'
+            );
+            return;
+        }
 
+        const panel = this.panel;
+        if (!panel) return;
         const ownerId = dataManager.getCurrentCharacterId();
+        // A character switch or a closed feature destroys this panel; the run then belongs to nobody
+        const isCurrent = () => this.panel === panel && this._stillSameCharacter(ownerId);
         const choices = this._readTriggerChoices();
         const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective, searchConditions } = choices;
         if (!zoneHrid) {
@@ -11394,25 +11523,37 @@ class CombatSimUI {
         }
 
         this._upgradeRunning = true;
+        this._triggerRunning = true;
         this._analysisGen = (this._analysisGen || 0) + 1;
         const latchGen = this._analysisGen;
+        // A run started after a character switch owns the latch by now
+        const release = () => {
+            if (latchGen !== this._analysisGen) return;
+            this._upgradeRunning = false;
+            this._triggerRunning = false;
+        };
+        const tuneBtn = panel.querySelector('#mwi-csim-trigger-run');
+        if (tuneBtn) tuneBtn.disabled = true;
         this._shownTriggerResult = null;
         let party;
         try {
             party = await this._loadTriggerParty(choices.playerIndex);
         } catch (error) {
-            if (latchGen === this._analysisGen) this._upgradeRunning = false;
+            release();
+            if (tuneBtn) tuneBtn.disabled = false;
             console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
-            this._setStatus('Trigger tuning failed: ' + error.message);
+            if (isCurrent()) this._setStatus('Trigger tuning failed: ' + error.message);
             return;
         }
-        if (!this._stillSameCharacter(ownerId)) {
-            if (latchGen === this._analysisGen) this._upgradeRunning = false;
+        if (!isCurrent()) {
+            release();
+            if (tuneBtn) tuneBtn.disabled = false;
             return;
         }
         const playerIndex = party.playerIndex;
         if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
-            if (latchGen === this._analysisGen) this._upgradeRunning = false;
+            release();
+            if (tuneBtn) tuneBtn.disabled = false;
             this._setStatus('No player data available. Configure a simulation first.');
             return;
         }
@@ -11431,21 +11572,17 @@ class CombatSimUI {
         });
         const playerDTOs = structuredClone(party.simDTOs);
 
-        const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
-        const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
-        const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
-        const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
-        const triggerBox = this.panel.querySelector('#mwi-csim-trigger-box');
+        const progressEl = panel.querySelector('#mwi-csim-upgrade-progress');
+        const runBtn = panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = panel.querySelector('#mwi-csim-upgrade-stop');
+        const triggerBox = panel.querySelector('#mwi-csim-trigger-box');
         progressEl.style.display = 'block';
-        const fillEl = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
+        const fillEl = panel.querySelector('#mwi-csim-upgrade-progress-fill');
         if (fillEl) fillEl.style.width = '0%';
-        if (!append) {
-            // Triggers alone: the old ranking table would otherwise come back on the next re-render
-            resultsEl.innerHTML = '';
-            this._upgradeResultsData = null;
-        }
+        // Only the section's own result is replaced: the Analyze results table is left as it is
         triggerBox.innerHTML = '';
         delete triggerBox.dataset.cached;
+        this._setTriggerSummary(undefined);
         runBtn.style.display = 'none';
         stopBtn.style.display = 'inline-block';
         this._upgradeAborted = false;
@@ -11454,18 +11591,18 @@ class CombatSimUI {
         try {
             const playerNames = {};
             for (const info of this._editor?.getPlayerInfo?.() || []) playerNames[info.hrid] = info.name;
-            // What the slow search will cost, said before it starts and left beside its checkbox
-            const costEl = this.panel.querySelector('#mwi-csim-trigger-conditions-cost');
-            if (costEl) {
-                const estimate = searchConditions
-                    ? estimateConditionRun({ gameData, dto: playerDTOs[playerIndex], zoneHrid, include, precision })
-                    : null;
-                costEl.textContent = estimate
-                    ? estimate.slots > 0
-                        ? `up to ${estimate.sims.toLocaleString('en-US')} more sims (${estimate.slots} slot${estimate.slots === 1 ? '' : 's'})`
-                        : 'no slot to search'
-                    : '';
-            }
+            const runEstimate = estimateTriggerRun({
+                gameData,
+                playerDTOs,
+                playerIndex,
+                zoneHrid,
+                scope,
+                include,
+                precision,
+                searchConditions,
+                playerNames,
+            });
+            this._setStatus(`Tuning triggers: ${describeTriggerEstimate(runEstimate)} Stop cancels at any point.`);
             const result = await runTriggerOptimization(
                 {
                     gameData,
@@ -11484,18 +11621,19 @@ class CombatSimUI {
                     playerNames,
                 },
                 ({ current, total, description }) => {
-                    if (this._upgradeAborted) return;
-                    const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
-                    const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
+                    if (this._upgradeAborted || !isCurrent()) return;
+                    const fill = panel.querySelector('#mwi-csim-upgrade-progress-fill');
+                    const text = panel.querySelector('#mwi-csim-upgrade-progress-text');
                     const fraction = total > 0 ? Math.min(1, (current || 0) / total) : 0;
                     const { text: remaining } = eta.update(fraction);
                     if (fill) fill.style.width = Math.round(fraction * 100) + '%';
                     if (text) text.textContent = `${current || 0} / ${total}` + (remaining ? ` · ${remaining}` : '');
                     if (description) this._setStatus(description);
                 },
-                { abortSignal: () => this._upgradeAborted }
+                { abortSignal: () => this._upgradeAborted || !isCurrent() }
             );
-            if (!this._stillSameCharacter(ownerId)) return;
+            // A switched character or a destroyed panel draws nothing and saves nothing
+            if (!isCurrent()) return;
 
             triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
@@ -11503,7 +11641,9 @@ class CombatSimUI {
             });
             this._enhanceCollapsibles(triggerBox);
             this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
+            this._setTriggerSummary(result);
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
+            if (!isCurrent()) return;
             // Condition wins count too: a loadout with no numeric thresholds can still gain a new condition
             const foundCount = (result?.changes?.length || 0) + (result?.conditions?.changes?.length || 0);
             this._setStatus(
@@ -11514,17 +11654,19 @@ class CombatSimUI {
                       : 'Trigger tuning complete: nothing clearly better found.'
             );
         } catch (error) {
-            // Not a Stop: make sure sims already queued do not keep running behind the re-enabled button
-            this._upgradeAborted = true;
-            cancelActiveSimulations();
             console.error('[CombatSimUI] Trigger tuning failed:', error);
-            this._setStatus('Trigger tuning failed: ' + error.message);
+            if (isCurrent()) {
+                // Not a Stop: make sure sims already queued do not keep running behind the re-enabled button
+                this._upgradeAborted = true;
+                cancelActiveSimulations();
+                this._setStatus('Trigger tuning failed: ' + error.message);
+            }
         } finally {
-            // A run started after a character switch owns the latch by now
-            if (latchGen === this._analysisGen) this._upgradeRunning = false;
+            release();
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
+            if (tuneBtn) tuneBtn.disabled = false;
         }
     }
 

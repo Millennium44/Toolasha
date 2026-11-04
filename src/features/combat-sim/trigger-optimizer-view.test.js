@@ -6,8 +6,9 @@
 import { describe, test, expect } from 'vitest';
 import {
     renderTriggerResultsHtml,
-    triggerChipOptionsHtml,
+    triggerSectionOptionsHtml,
     triggerHeadline,
+    describeTriggerEstimate,
     esc,
     triggerVerifyHtml,
     verifyChipHtml,
@@ -358,17 +359,17 @@ describe('new conditions block', () => {
         expect(render({ changes: [], bestMeasured: [], capped: true })).toContain('limit on condition-search sims');
     });
 
-    test('the chip offers the unchecked "Search new conditions (slow)" box', () => {
-        const html = triggerChipOptionsHtml();
+    test('the section offers the unchecked "Search new conditions (slow)" box', () => {
+        const html = triggerSectionOptionsHtml();
         expect(html).toContain('id="mwi-csim-trigger-conditions"');
         expect(html).toContain('Search new conditions (slow)');
         expect(html).not.toMatch(/id="mwi-csim-trigger-conditions"[^>]*checked/);
     });
 });
 
-describe('triggerChipOptionsHtml', () => {
+describe('triggerSectionOptionsHtml', () => {
     test('offers Optimize for: Balanced (selected), XP/h and Profit/h', () => {
-        const html = triggerChipOptionsHtml();
+        const html = triggerSectionOptionsHtml();
         expect(html).toContain('Optimize for');
         expect(html).toContain('id="mwi-csim-trigger-objective"');
         expect(html).toContain('<option value="balanced" selected>Balanced</option>');
@@ -377,14 +378,14 @@ describe('triggerChipOptionsHtml', () => {
     });
 
     test('keeps Optimize for beside its select in one unbreakable group', () => {
-        const html = triggerChipOptionsHtml();
+        const html = triggerSectionOptionsHtml();
         expect(html).toMatch(
             /flex-wrap:nowrap;">\s*<span[^>]*>Optimize for<\/span>\s*<select[^>]*mwi-csim-trigger-objective/
         );
     });
 
     test('offers Just me / Whole party and the three precisions, Standard selected', () => {
-        const html = triggerChipOptionsHtml();
+        const html = triggerSectionOptionsHtml();
         expect(html).toContain('value="me" selected');
         expect(html).toContain('value="party"');
         expect(html).toContain('value="quick"');
@@ -656,5 +657,44 @@ describe('the Verify block on a condition-only result', () => {
 
     test('without the verify option nothing is added', () => {
         expect(renderTriggerResultsHtml(condOnly(), gameData)).not.toContain('mwi-csim-trigger-verify');
+    });
+});
+
+describe('the Tune triggers section options', () => {
+    test('are bare controls: no hidden chip wrapper and no cost span left from the chip', () => {
+        const html = triggerSectionOptionsHtml();
+        expect(html).not.toContain('data-mode-options');
+        expect(html).not.toContain('display:none');
+        expect(html).not.toContain('conditions-cost');
+    });
+});
+
+describe('describeTriggerEstimate', () => {
+    const estimate = (rows, thresholdSims, condition = { slots: 0, counts: [], sims: 0 }) => ({
+        tunables: Array.from({ length: rows }, (_, i) => ({ key: `t${i}` })),
+        thresholdSims,
+        condition,
+    });
+
+    test('says About N fight sims and the number of trigger rows, as the Lab does', () => {
+        expect(describeTriggerEstimate(estimate(3, 12345))).toBe('About 12,345 fight sims (3 trigger rows).');
+        expect(describeTriggerEstimate(estimate(1, 900))).toBe('About 900 fight sims (1 trigger row).');
+    });
+
+    test('adds the condition search ceiling on its own', () => {
+        expect(describeTriggerEstimate(estimate(2, 500, { slots: 1, counts: [4], sims: 20000 }))).toBe(
+            'About 500 fight sims (2 trigger rows). Condition search: up to 20,000 more fight sims (1 slot).'
+        );
+    });
+
+    test('a loadout with no rows says so, and still names a condition search that has slots', () => {
+        expect(describeTriggerEstimate(estimate(0, 0))).toBe('No tunable trigger rows for this player.');
+        expect(describeTriggerEstimate(estimate(0, 0, { slots: 2, counts: [1, 1], sims: 70 }))).toBe(
+            'Condition search: up to 70 more fight sims (2 slots).'
+        );
+    });
+
+    test('no estimate says nothing', () => {
+        expect(describeTriggerEstimate(null)).toBe('');
     });
 });

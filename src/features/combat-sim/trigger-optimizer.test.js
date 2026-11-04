@@ -26,7 +26,8 @@ vi.mock('./combat-sim-adapter.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => false } }));
 
-const { runTriggerOptimization, sampleFromResult, monsterMaxHpReader } = await import('./trigger-optimizer.js');
+const { runTriggerOptimization, estimateTriggerRun, sampleFromResult, monsterMaxHpReader } =
+    await import('./trigger-optimizer.js');
 const { getGameData, setGameData } = await import('./engine/game-data.js');
 const { seedSimPriceCache } = await import('./combat-sim-adapter.js');
 const { runSimulation } = await import('./combat-sim-runner.js');
@@ -284,6 +285,38 @@ describe('runTriggerOptimization', () => {
         const last = events[events.length - 1];
         expect(last.current).toBe(last.total);
         expect(events.every((p) => p.current <= p.total)).toBe(true);
+    });
+
+    test('the cost estimate is the total the progress bar counts, for the same choices', async () => {
+        for (const scope of ['me', 'party']) {
+            const params = {
+                ...base,
+                playerDTOs: [dto('player1'), dto('player2')],
+                playerIndex: 0,
+                scope,
+                include: 'abilities',
+            };
+            const estimate = estimateTriggerRun(params);
+            const events = [];
+            await runTriggerOptimization(params, (p) => events.push(p));
+            expect(estimate.total).toBe(events[events.length - 1].total);
+            // one Fireball row per tuned player
+            expect(estimate.tunables).toHaveLength(scope === 'party' ? 2 : 1);
+            expect(estimate.wholeParty).toBe(scope === 'party');
+            expect(estimate.thresholdSims).toBeGreaterThan(0);
+        }
+    });
+
+    test('the estimate for a player with no trigger rows is empty, and counts at least one sim for the bar', () => {
+        const estimate = estimateTriggerRun({
+            ...base,
+            playerDTOs: [{ hrid: 'player1', abilities: [], food: [], drinks: [] }],
+            playerIndex: 0,
+            scope: 'me',
+        });
+        expect(estimate.tunables).toHaveLength(0);
+        expect(estimate.thresholdSims).toBe(0);
+        expect(estimate.total).toBe(1);
     });
 
     test('tunes the selected player, simulating the whole party on shared seeds', async () => {

@@ -44,10 +44,10 @@ export function esc(text) {
 }
 
 /**
- * The scope and precision selectors shown inside the chip while it is checked.
+ * The Tune triggers section's controls: party scope, which triggers, objective, precision, min gain, condition search.
  * @returns {string} HTML
  */
-export function triggerChipOptionsHtml() {
+export function triggerSectionOptionsHtml() {
     const precisionOptions = Object.values(PRECISIONS)
         .map(
             (p) => `<option value="${p.key}"${p.key === DEFAULT_PRECISION ? ' selected' : ''}>${esc(p.label)}</option>`
@@ -60,8 +60,6 @@ export function triggerChipOptionsHtml() {
         (v) => `<option value="${v}"${v === MIN_GAIN ? ' selected' : ''}>Min gain ${v}</option>`
     ).join('');
     return `
-        <span data-mode-options="triggers" style="display:none; align-items:center; gap:4px;">
-            <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-csim-trigger-scope" style="${SELECT_STYLE}"
                 title="Just me tunes only the selected player's triggers and judges them on that player's results. Whole party tunes every member's triggers and judges the party total.">
                 <option value="me" selected>Just me</option>
@@ -91,9 +89,30 @@ export function triggerChipOptionsHtml() {
             <label style="display:inline-flex; align-items:center; gap:4px; color:#888; font-size:11px; cursor:pointer;"
                 title="Also try different trigger conditions, not just different numbers: the buffs this zone's monsters cast on themselves or on you, your own buffs, and HP/MP readings, alone and ANDed in pairs. Runs after the threshold tuning for the selected player's abilities and food/drinks (per the choice above), takes many more sims, and its results are for you to enter by hand.">
                 <input type="checkbox" id="mwi-csim-trigger-conditions" style="margin:0; cursor:pointer;">Search new conditions (slow)
-            </label>
-            <span id="mwi-csim-trigger-conditions-cost" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
-        </span>`;
+            </label>`;
+}
+
+/**
+ * The cost line shown before a run, in the same words the Lab's section uses.
+ * @param {Object|null} estimate - From `estimateTriggerRun`
+ * @returns {string} Plain text ('' when there is no estimate)
+ */
+export function describeTriggerEstimate(estimate) {
+    if (!estimate) return '';
+    const rows = estimate.tunables?.length || 0;
+    const conditionSims = Number(estimate.condition?.sims) || 0;
+    const slots = estimate.condition?.slots || 0;
+    const conditions =
+        slots > 0
+            ? `Condition search: up to ${conditionSims.toLocaleString('en-US')} more fight sims ` +
+              `(${slots} slot${slots === 1 ? '' : 's'}).`
+            : '';
+    if (rows === 0) return conditions || 'No tunable trigger rows for this player.';
+    return (
+        `About ${estimate.thresholdSims.toLocaleString('en-US')} fight sims ` +
+        `(${rows} trigger row${rows === 1 ? '' : 's'}).` +
+        (conditions ? ` ${conditions}` : '')
+    );
 }
 
 const sign = (v, text) => (v < 0 ? text : `+${text}`);

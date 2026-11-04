@@ -286,6 +286,43 @@ export function estimateConditionRun({
 }
 
 /**
+ * What a trigger run will cost, before it starts, and the rows it would tune. The run itself takes its
+ * progress total from this, so the cost line and the progress bar cannot disagree.
+ * @param {Object} params - The run's own parameters (see {@link runTriggerOptimization}); `precision` is a key
+ * @returns {{tunables: Array<Object>, wholeParty: boolean, condition: {slots: number, counts: Array<number>, sims: number},
+ *   thresholdSims: number, total: number}} `total` is the sims the progress bar counts (at least 1)
+ */
+export function estimateTriggerRun({
+    gameData,
+    playerDTOs,
+    playerIndex,
+    zoneHrid,
+    scope = 'me',
+    include = 'both',
+    precision = DEFAULT_PRECISION,
+    searchConditions = false,
+    maxConditionSims = MAX_CONDITION_SIMS,
+    playerNames = {},
+}) {
+    const precisionKey = (PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION]).key;
+    const wholeParty = scope === 'party' && playerDTOs.length > 1;
+    const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
+    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
+    const condition = searchConditions
+        ? estimateConditionRun({
+              gameData,
+              dto: playerDTOs[playerIndex],
+              zoneHrid,
+              include,
+              precision: precisionKey,
+              maxConditionSims,
+          })
+        : { slots: 0, counts: [], sims: 0 };
+    const thresholdSims = tunables.length > 0 ? estimateTriggerSims(tunables.length, precisionKey) : 0;
+    return { tunables, wholeParty, condition, thresholdSims, total: Math.max(1, thresholdSims + condition.sims) };
+}
+
+/**
  * Search for better threshold values on the chosen players' triggers.
  * @param {Object} params
  * @param {Object} params.gameData - Game data payload
@@ -336,18 +373,19 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const precision = PRECISIONS[precisionKey] || PRECISIONS[DEFAULT_PRECISION];
     const wholeParty = scope === 'party' && playerDTOs.length > 1;
 
-    const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
-    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
-    const conditionEstimate = searchConditions
-        ? estimateConditionRun({
-              gameData,
-              dto: playerDTOs[playerIndex],
-              zoneHrid,
-              include,
-              precision: precisionKey,
-              maxConditionSims,
-          })
-        : { slots: 0, counts: [], sims: 0 };
+    const runEstimate = estimateTriggerRun({
+        gameData,
+        playerDTOs,
+        playerIndex,
+        zoneHrid,
+        scope,
+        include,
+        precision: precisionKey,
+        searchConditions,
+        maxConditionSims,
+        playerNames,
+    });
+    const { tunables, condition: conditionEstimate } = runEstimate;
     if (tunables.length === 0 && conditionEstimate.slots === 0) {
         return { noTunables: true, scope: wholeParty ? 'party' : 'me', include, objective, changes: [] };
     }
@@ -357,10 +395,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     const scopeHrids = wholeParty ? allHrids : [playerDTOs[playerIndex].hrid];
     const baseSeed = randomSeed();
     const limit = createLimiter(concurrency());
-    const total = Math.max(
-        1,
-        (tunables.length > 0 ? estimateTriggerSims(tunables.length, precision.key) : 0) + conditionEstimate.sims
-    );
+    const total = runEstimate.total;
     let simCount = 0;
     // Sims the condition search launched (a cache hit costs nothing); the cap is on this
     let conditionSimCount = 0;

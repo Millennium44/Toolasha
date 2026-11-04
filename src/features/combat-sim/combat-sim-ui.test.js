@@ -26,6 +26,9 @@ const mocks = vi.hoisted(() => ({
     scrollRate: null,
     upgradeResult: { baseline: null, results: [], food: null },
     onRun: null,
+    /** Called inside the trigger optimizer mock, before it answers (may return a promise) */
+    onTrigger: null,
+    triggerEstimate: null,
     /** What `confirmUpgradeBudgetPlan` resolves with; null means "not called yet" */
     confirmResult: { ok: true, metrics: {}, deltas: {}, economics: {}, noise: {}, totalCost: 0 },
     /** Called with (picks, context) whenever the "Confirm together" button runs the basket */
@@ -166,9 +169,17 @@ vi.mock('./trigger-optimizer.js', () => ({
     triggerUseFromResult: () => ({}),
     sampleFromResult: () => ({}),
     monsterMaxHpReader: () => () => 0,
-    estimateConditionRun: () => ({ slots: 0, counts: [], sims: 0 }),
+    estimateTriggerRun: (params) =>
+        mocks.triggerEstimate?.(params) ?? {
+            tunables: [],
+            wholeParty: false,
+            condition: { slots: 0, counts: [], sims: 0 },
+            thresholdSims: 0,
+            total: 1,
+        },
     runTriggerOptimization: async (params) => {
         mocks.triggerRuns.push(params);
+        await mocks.onTrigger?.(params);
         if (mocks.triggerFail) throw mocks.triggerFail;
         return mocks.triggerResult;
     },
@@ -3576,9 +3587,6 @@ describe('results outliving the character they were run for', () => {
     test('a trigger run that ends after a newer one claimed the latch leaves it alone', async () => {
         ui.buildPanel();
         selectZone();
-        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
-            box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
-        });
         mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
         const result = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
         Object.defineProperty(mocks, 'triggerResult', {
@@ -3590,7 +3598,7 @@ describe('results outliving the character they were run for', () => {
             },
         });
         try {
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
         } finally {
             delete mocks.triggerResult;
             mocks.triggerResult = null;
@@ -11778,11 +11786,11 @@ describe('the Triggers option', () => {
         deltaDeaths: 0,
     };
 
-    /** Every candidate set off except Triggers (a few are on by default) */
-    function onlyTriggers() {
-        ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
-            box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
-        });
+    /** The Tune triggers section opened, as a click on its header leaves it */
+    function openSection() {
+        ui._triggerOpen = true;
+        ui._triggerTouched = true;
+        ui._applyTriggerSectionState();
     }
 
     beforeEach(() => {
@@ -11801,19 +11809,124 @@ describe('the Triggers option', () => {
         vi.restoreAllMocks();
     });
 
-    test('is always offered, unchecked by default', () => {
+    test('is a Tune triggers section of its own, closed by default, and no longer an Include tick-box', () => {
         ui.buildPanel();
-        const box = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
-        expect(box).not.toBeNull();
-        expect(box.checked).toBe(false);
+        expect(ui.panel.querySelector('[data-upgrade-mode="triggers"]')).toBeNull();
+        expect(ui.panel.querySelector('[data-mode-chip="triggers"]')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-header').textContent).toContain('Tune triggers');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-body').style.display).toBe('none');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-run').textContent).toBe('Tune');
         expect(ui.panel.querySelector('#mwi-csim-trigger-scope')).not.toBeNull();
         expect(ui.panel.querySelector('#mwi-csim-trigger-precision').value).toBe('standard');
+        // the results slot lives inside the section, not beside the Analyze results
+        expect(ui.panel.querySelector('#mwi-csim-trigger-bar #mwi-csim-trigger-box')).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-results #mwi-csim-trigger-box')).toBeNull();
+    });
+
+    test('the header opens and closes the section, and the open state is remembered with the other choices', async () => {
+        const settle = async () => {
+            for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        ui.buildPanel();
+        await settle();
+        const header = () => ui.panel.querySelector('#mwi-csim-trigger-header');
+        const body = () => ui.panel.querySelector('#mwi-csim-trigger-body');
+        header().click();
+        expect(body().style.display).toBe('block');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-toggle').textContent).toBe('▼');
+        await settle();
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        expect(body().style.display).toBe('block');
+        header().click();
+        await settle();
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        expect(body().style.display).toBe('none');
+    });
+
+    test('a record saved before the section existed has no open state and starts closed', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimTriggerChoices', { scope: 'party', precision: 'quick' });
+        ui.buildPanel();
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(ui.panel.querySelector('#mwi-csim-trigger-body').style.display).toBe('none');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-scope').value).toBe('party');
+    });
+
+    test('saving another choice keeps the stored open state, and keeps fields an older build wrote', async () => {
+        const { writeScoped, readScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimTriggerChoices', { open: true, somethingNew: 7, scope: 'me' });
+        ui.buildPanel();
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        const precision = ui.panel.querySelector('#mwi-csim-trigger-precision');
+        precision.value = 'quick';
+        precision.dispatchEvent(new Event('change', { bubbles: true }));
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        const saved = await readScoped('combatSimTriggerChoices', 'settings', null);
+        expect(saved).toMatchObject({ open: true, somethingNew: 7, precision: 'quick' });
+    });
+
+    test('the cost line says About N fight sims for the chosen player before anything runs, and follows the choices', async () => {
+        const settle = async () => {
+            for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const asked = [];
+        mocks.triggerEstimate = (params) => {
+            asked.push(params);
+            const rows = params.scope === 'party' ? 4 : 2;
+            return {
+                tunables: Array.from({ length: rows }, () => ({})),
+                wholeParty: params.scope === 'party',
+                condition: params.searchConditions
+                    ? { slots: 1, counts: [3], sims: 900 }
+                    : { slots: 0, counts: [], sims: 0 },
+                thresholdSims: rows * 1000,
+                total: rows * 1000,
+            };
+        };
+        ui.buildPanel();
+        await settle();
+        selectZone();
+        const estimate = () => ui.panel.querySelector('#mwi-csim-trigger-estimate').textContent;
+        // closed: nothing is computed for a section nobody can see
+        expect(estimate()).toBe('');
+        ui.panel.querySelector('#mwi-csim-trigger-header').click();
+        await settle();
+        expect(estimate()).toBe('About 2,000 fight sims (2 trigger rows).');
+        const scope = ui.panel.querySelector('#mwi-csim-trigger-scope');
+        scope.value = 'party';
+        scope.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+        expect(estimate()).toBe('About 4,000 fight sims (4 trigger rows).');
+        const conditions = ui.panel.querySelector('#mwi-csim-trigger-conditions');
+        conditions.checked = true;
+        conditions.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+        expect(estimate()).toContain('Condition search: up to 900 more fight sims (1 slot).');
+        expect(asked.at(-1)).toMatchObject({ scope: 'party', searchConditions: true, zoneHrid: expect.any(String) });
+        mocks.triggerEstimate = null;
+    });
+
+    test('Tune is a button of its own: it runs the optimizer without Analyze, whatever Include says', async () => {
+        ui.buildPanel();
+        selectZone();
+        openSection();
+        for (const box of ui.panel.querySelectorAll('[data-upgrade-mode]')) box.checked = false;
+        mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+        const before = mocks.upgradeRuns;
+        ui.panel.querySelector('#mwi-csim-trigger-run').click();
+        for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(mocks.triggerRuns).toHaveLength(1);
+        expect(mocks.upgradeRuns).toBe(before);
     });
 
     test('alone, it runs the optimizer and never the candidate ranking', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         ui.panel.querySelector('#mwi-csim-trigger-scope').value = 'party';
         ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
         ui.panel.querySelector('#mwi-csim-trigger-include').value = 'abilities';
@@ -11821,7 +11934,7 @@ describe('the Triggers option', () => {
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         const before = mocks.upgradeRuns;
 
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         expect(mocks.upgradeRuns).toBe(before);
         expect(mocks.triggerRuns).toHaveLength(1);
@@ -11836,9 +11949,9 @@ describe('the Triggers option', () => {
         const run = async () => {
             ui.buildPanel();
             selectZone();
-            onlyTriggers();
+            openSection();
             mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
             return mocks.triggerRuns.at(-1).selfHrid;
         };
         mocks.editorSelfHrid = 'player1';
@@ -11852,9 +11965,9 @@ describe('the Triggers option', () => {
         ui.buildPanel();
         ui._collapsedSections = {};
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         const head = () => ui.panel.querySelector('#mwi-csim-trigger-box [data-collapse-key="trigger"]');
         const body = () => ui.panel.querySelector('#mwi-csim-trigger-results');
@@ -11865,7 +11978,7 @@ describe('the Triggers option', () => {
         expect(head().textContent).toContain('1 change recommended');
 
         mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         expect(hidden()).toBe(true);
         expect(head().textContent).toContain('No change beat the current thresholds');
         head().click();
@@ -11876,16 +11989,16 @@ describe('the Triggers option', () => {
     test('the condition search is off by default and is passed to the run only when ticked', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         const box = ui.panel.querySelector('#mwi-csim-trigger-conditions');
         expect(box.checked).toBe(false);
         mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
 
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         expect(mocks.triggerRuns[0].searchConditions).toBe(false);
 
         box.checked = true;
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         expect(mocks.triggerRuns[1].searchConditions).toBe(true);
     });
 
@@ -11903,15 +12016,32 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-trigger-conditions').checked).toBe(true);
     });
 
-    test('remembered modes naming Triggers restore it as checked', async () => {
+    test('remembered modes naming only Triggers fall back to the defaults, without error', async () => {
         const { writeScoped } = await import('../../utils/character-key.js');
         await writeScoped('combatSimUpgradeModes', ['triggers']);
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
         ui.buildPanel();
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
         const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')]
             .filter((box) => box.checked)
             .map((box) => box.getAttribute('data-upgrade-mode'));
-        expect(checked).toEqual(['triggers']);
+        expect(checked).toEqual(['equipment', 'ability_level']);
+        expect(errors).not.toHaveBeenCalled();
+    });
+
+    test('remembered modes that also name Triggers keep the others and never run the tuner from Analyze', async () => {
+        const { writeScoped } = await import('../../utils/character-key.js');
+        await writeScoped('combatSimUpgradeModes', ['equipment', 'triggers']);
+        ui.buildPanel();
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        selectZone();
+        const checked = [...ui.panel.querySelectorAll('[data-upgrade-mode]')]
+            .filter((box) => box.checked)
+            .map((box) => box.getAttribute('data-upgrade-mode'));
+        expect(checked).toEqual(['equipment']);
+        mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+        await ui._onUpgradeAnalyze();
+        expect(mocks.triggerRuns).toHaveLength(0);
     });
 
     test('a remembered set saved before Ability order existed still loads, with it unchecked', async () => {
@@ -12049,14 +12179,14 @@ describe('the Triggers option', () => {
         };
         const box = () => ui.panel.querySelector('#mwi-csim-trigger-box');
         const openTriggers = () => {
-            const chip = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
-            chip.checked = true;
-            chip.dispatchEvent(new Event('change', { bubbles: true }));
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            // the click toggles: a section already open is toggled shut, so open it again
+            if (!ui._triggerOpen) ui.panel.querySelector('#mwi-csim-trigger-header').click();
         };
         async function finishOneRun() {
             ui.buildPanel();
             selectZone();
-            onlyTriggers();
+            openSection();
             mocks.triggerResult = {
                 scope: 'me',
                 objective: 'balanced',
@@ -12066,12 +12196,12 @@ describe('the Triggers option', () => {
                 simCount: 10,
                 stopped: false,
             };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
             ui.destroy();
             ui.buildPanel();
             await settle();
             selectZone();
-            onlyTriggers();
+            openSection();
         }
 
         test('is shown when Triggers opens on the same setup, labelled, with Run again', async () => {
@@ -12093,6 +12223,43 @@ describe('the Triggers option', () => {
             await settle();
             expect(mocks.triggerRuns.length).toBe(runs + 1);
             expect(box().textContent).not.toContain('Last result');
+        });
+
+        test('a remembered result stays out of the closed section, and an older saved shape still draws inside it', async () => {
+            await finishOneRun();
+            // the section was opened by the helper: close it, then strip the record to what an older build stored
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            expect(ui._triggerOpen).toBe(false);
+            const [key, record] = [...mocks.store.entries()].find(([k]) => k.includes('combatSimTriggerLastResult'));
+            const older = { ...record, result: { ...record.result } };
+            for (const field of ['unchanged', 'unused', 'notPriced', 'combined', 'bestMeasured', 'conditions']) {
+                delete older.result[field];
+            }
+            delete older.result.precision;
+            delete older.result.objective;
+            mocks.store.set(key, older);
+            await settle();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-body').style.display).toBe('none');
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            await settle();
+            expect(box().textContent).toContain('Last result (unchanged setup)');
+            expect(box().textContent).toContain('Fireball');
+            expect(box().textContent).not.toContain('could not be drawn');
+            // a remembered result is not Applied blind: the same context guard as a fresh one stands
+            expect(box().querySelector('#mwi-csim-trigger-apply')).not.toBeNull();
+        });
+
+        test('a remembered result is not drawn while a run owns the panel', async () => {
+            await finishOneRun();
+            const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+            ui._upgradeRunning = true;
+            box().innerHTML = '';
+            delete box().dataset.cached;
+            await ui._refreshCachedTriggerResult();
+            await settle();
+            ui._upgradeRunning = false;
+            expect(box().innerHTML).toBe('');
+            expect(errors).not.toHaveBeenCalled();
         });
 
         test('a remembered result cannot be verified: no button, a muted line says to re-run', async () => {
@@ -12169,7 +12336,7 @@ describe('the Triggers option', () => {
         test('a stopped run is not remembered', async () => {
             ui.buildPanel();
             selectZone();
-            onlyTriggers();
+            openSection();
             mocks.triggerResult = {
                 scope: 'me',
                 changes: [],
@@ -12178,7 +12345,7 @@ describe('the Triggers option', () => {
                 simCount: 3,
                 stopped: true,
             };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
             expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
         });
     });
@@ -12188,40 +12355,291 @@ describe('the Triggers option', () => {
         selectZone();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
-        ui.panel.querySelector('[data-upgrade-mode="triggers"]').checked = true;
+        openSection();
 
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         const box = ui.panel.querySelector('#mwi-csim-trigger-results');
         expect(box).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-bar').contains(box)).toBe(true);
         expect(ui.panel.querySelector('#mwi-csim-upgrade-results').contains(box)).toBe(false);
         ui._renderUpgradeResults(mocks.upgradeResult);
         expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
     });
 
-    test('a triggers-only run drops the stale ranking so a re-render cannot bring it back', async () => {
+    test('Tune leaves the Analyze results alone, and Analyze leaves the Tune result alone', async () => {
         ui.buildPanel();
         selectZone();
+        openSection();
         mocks.upgradeResult = { baseline: BASELINE, results: [row('Main gear')], food: null };
         await ui._onUpgradeAnalyze();
         expect(ui._upgradeResultsData).not.toBeNull();
 
-        onlyTriggers();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
+        expect(ui._upgradeResultsData).not.toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('Main gear');
+        expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
 
-        expect(ui._upgradeResultsData).toBeNull();
-        expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Main gear');
+        await ui._onUpgradeAnalyze();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
+        expect(mocks.triggerRuns).toHaveLength(1);
+    });
+
+    describe('every way a Tune can end', () => {
+        const headerSummary = () => ui.panel.querySelector('#mwi-csim-trigger-summary');
+        const statusText = () => ui.panel.querySelector('#mwi-csim-status').textContent;
+        const settle = async () => {
+            for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+
+        test('complete with a better setting: the result, the summary on the closed header, the status', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            await ui._onTuneTriggers();
+            expect(statusText()).toBe('Trigger tuning complete: 1 change(s) found.');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Fireball');
+            // open: the result is in view, so the header stays plain
+            expect(headerSummary().style.display).toBe('none');
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            expect(headerSummary().style.display).toBe('inline');
+            expect(headerSummary().textContent).toContain('1 change recommended');
+        });
+
+        test('nothing better: says so in the status, the box and the closed header', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 10 };
+            await ui._onTuneTriggers();
+            expect(statusText()).toBe('Trigger tuning complete: nothing clearly better found.');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain(
+                'No change beat the current thresholds'
+            );
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            expect(headerSummary().textContent).toContain('No change beat the current thresholds');
+        });
+
+        test('stopped midway: what was accepted is shown but not remembered, and the header says stopped', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 4,
+                stopped: true,
+            };
+            const stopAfter = mocks.triggerResult;
+            // the real run reads the abort flag; the mock reports what the flag already says
+            mocks.onTrigger = () => {
+                ui._upgradeAborted = true;
+            };
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            expect(statusText()).toBe('Trigger tuning stopped: 1 change(s) found.');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('stopped early');
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            expect(headerSummary().textContent).toContain('(stopped)');
+            expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
+            expect(stopAfter.stopped).toBe(true);
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-run').style.display).toBe('inline-block');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-stop').style.display).toBe('none');
+        });
+
+        test('stopped before the baseline finished: a null result says so', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = null;
+            mocks.onTrigger = () => {
+                ui._upgradeAborted = true;
+            };
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            expect(statusText()).toBe('Trigger tuning stopped.');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain(
+                'Stopped before the baseline finished'
+            );
+            expect(ui._triggerRunning).toBe(false);
+        });
+
+        test('no trigger rows: the box says why and the cost line says no rows, with no sims run', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                noTunables: true,
+                scope: 'me',
+                include: 'both',
+                objective: 'balanced',
+                changes: [],
+            };
+            await ui._onTuneTriggers();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain('Nothing to tune');
+            expect(statusText()).toBe('Trigger tuning complete: nothing clearly better found.');
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            expect(headerSummary().textContent).toContain('Nothing to tune');
+        });
+
+        test('failed: the status says so, the buttons come back, nothing is remembered', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerFail = new Error('worker crashed');
+            await ui._onTuneTriggers();
+            mocks.triggerFail = null;
+            expect(statusText()).toBe('Trigger tuning failed: worker crashed');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-run').disabled).toBe(false);
+            expect(ui._triggerRunning).toBe(false);
+            expect(ui._upgradeRunning).toBe(false);
+            expect(headerSummary().textContent).toBe('');
+        });
+
+        test('Tune while Analyze runs does nothing but say so; Analyze while Tune runs likewise', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            ui._upgradeRunning = true;
+            ui._setTuneButtonBusy(true);
+            ui.panel.querySelector('#mwi-csim-trigger-run').disabled = false;
+            await ui._onTuneTriggers();
+            expect(mocks.triggerRuns).toHaveLength(0);
+            expect(statusText()).toContain('Another run is going');
+            ui._upgradeRunning = false;
+
+            let during;
+            mocks.onTrigger = () => {
+                during = {
+                    tuneDisabled: ui.panel.querySelector('#mwi-csim-trigger-run').disabled,
+                    analyzeHidden: ui.panel.querySelector('#mwi-csim-upgrade-run').style.display,
+                    stopShown: ui.panel.querySelector('#mwi-csim-upgrade-stop').style.display,
+                    progress: ui.panel.querySelector('#mwi-csim-upgrade-progress').style.display,
+                };
+                const before = mocks.upgradeRuns;
+                return ui._onUpgradeAnalyze().then(() => {
+                    during.analyzeRuns = mocks.upgradeRuns - before;
+                    during.status = statusText();
+                    return ui._onTuneTriggers().then(() => {
+                        during.status2 = statusText();
+                    });
+                });
+            };
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            expect(during).toMatchObject({
+                tuneDisabled: true,
+                analyzeHidden: 'none',
+                stopShown: 'inline-block',
+                progress: 'block',
+                analyzeRuns: 0,
+            });
+            expect(during.status).toContain('Trigger tuning is running');
+            expect(during.status2).toContain('already running');
+            expect(mocks.triggerRuns).toHaveLength(1);
+        });
+
+        test('Analyze greys Tune out while it runs and gives it back after', async () => {
+            ui.buildPanel();
+            selectZone();
+            let during;
+            mocks.onRun = () => {
+                during = ui.panel.querySelector('#mwi-csim-trigger-run').disabled;
+            };
+            await ui._onUpgradeAnalyze();
+            mocks.onRun = null;
+            expect(during).toBe(true);
+            expect(ui.panel.querySelector('#mwi-csim-trigger-run').disabled).toBe(false);
+        });
+
+        test('a character switch during the run draws nothing and saves nothing in the new panel', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            mocks.onTrigger = () => {
+                mocks.characterId = 'someone-else';
+            };
+            const original = mocks.characterId;
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            mocks.characterId = original;
+            expect(ui.panel.querySelector('#mwi-csim-trigger-box').innerHTML).toBe('');
+            expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
+            expect(ui._upgradeRunning).toBe(false);
+        });
+
+        test('the panel destroyed during the run: no error, nothing drawn, the latch released', async () => {
+            ui.buildPanel();
+            // the start-up restore of the remembered choices must be done before the panel is torn down
+            await settle();
+            selectZone();
+            openSection();
+            const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            mocks.onTrigger = () => {
+                ui.destroy();
+            };
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            await settle();
+            expect(errors).not.toHaveBeenCalled();
+            expect(ui.panel).toBeNull();
+            expect(ui._upgradeRunning).toBe(false);
+            expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
+        });
+
+        test('the panel hidden during the run still gets the result', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            mocks.onTrigger = () => {
+                ui.hide({ remember: false });
+            };
+            await ui._onTuneTriggers();
+            mocks.onTrigger = null;
+            expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
+        });
     });
 
     test('a failing optimizer cancels queued sims before the button comes back', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         const cancelsBefore = mocks.cancelActiveCalls;
         mocks.triggerFail = new Error('worker crashed');
 
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         mocks.triggerFail = null;
 
         expect(mocks.cancelActiveCalls).toBe(cancelsBefore + 1);
@@ -12229,14 +12647,14 @@ describe('the Triggers option', () => {
         expect(ui.panel.querySelector('#mwi-csim-upgrade-run').style.display).toBe('inline-block');
     });
 
-    test('in a combined run, triggers do not start after the ranking analysis threw', async () => {
+    test('Analyze never starts trigger tuning, whether the ranking finished or threw', async () => {
         ui.buildPanel();
         selectZone();
-        ui.panel.querySelector('[data-upgrade-mode="triggers"]').checked = true;
+        openSection();
+        await ui._onUpgradeAnalyze();
         mocks.onRun = () => {
             throw new Error('ranking failed');
         };
-
         await ui._onUpgradeAnalyze();
         mocks.onRun = null;
 
@@ -12246,10 +12664,10 @@ describe('the Triggers option', () => {
     test('Apply that skips everything leaves the button usable and says why', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         mocks.applyOutcome = { applied: 0, skipped: [{ reason: 'changed since analysis' }] };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         ui.panel.querySelector('#mwi-csim-trigger-apply').click();
         mocks.applyOutcome = null;
@@ -12261,24 +12679,24 @@ describe('the Triggers option', () => {
     test('the Min gain select defaults to 0.5 and its choice reaches the optimizer', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         const select = ui.panel.querySelector('#mwi-csim-trigger-mingain');
         expect(select.value).toBe('0.5');
         mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         expect(mocks.triggerRuns[0].minGain).toBe(0.5);
 
         select.value = '2';
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
         expect(mocks.triggerRuns[1].minGain).toBe(2);
     });
 
     test('Apply writes the changes into the sim editor and nothing else', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         ui.panel.querySelector('#mwi-csim-trigger-apply').click();
 
@@ -12292,9 +12710,9 @@ describe('the Triggers option', () => {
     test('the analysis runs on private copies of the editor DTOs', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         const [run] = mocks.triggerRuns;
         expect(run.playerDTOs[0]).not.toBe(mocks.editedDTOs.player1);
@@ -12305,9 +12723,9 @@ describe('the Triggers option', () => {
     test('Apply skips a player whose build was edited in place during the analysis', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         mocks.editedDTOs.player1.equipment = { '/equipment_types/main_hand': { itemHrid: '/items/sword' } };
         ui.panel.querySelector('#mwi-csim-trigger-apply').click();
@@ -12320,9 +12738,9 @@ describe('the Triggers option', () => {
     test('Apply writes nothing after a guild shrine or scroll edit made during the analysis', async () => {
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         mocks.editedDTOs.player1.guildShrineLevels = { '/guild_shrines/attack': 3 };
         ui.panel.querySelector('#mwi-csim-trigger-apply').click();
@@ -12335,9 +12753,9 @@ describe('the Triggers option', () => {
         mocks.editedDTOs.player2 = { hrid: 'player2', equipment: {}, attackLevel: 50 };
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         mocks.editedDTOs.player2.attackLevel = 90;
         ui.panel.querySelector('#mwi-csim-trigger-apply').click();
@@ -12362,13 +12780,13 @@ describe('the Triggers option', () => {
         async function runWithPlayerSelected(index) {
             ui.buildPanel();
             selectZone();
-            onlyTriggers();
+            openSection();
             ui._populateUpgradePlayerSelector();
             const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
             select.innerHTML = '<option value="0">One</option><option value="1">Two</option>';
             select.value = String(index);
             mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
             return mocks.triggerRuns[0];
         }
 
@@ -12429,7 +12847,7 @@ describe('the Triggers option', () => {
             mocks.editorActivePlayer = 'player2';
             ui.buildPanel();
             selectZone();
-            onlyTriggers();
+            openSection();
             mocks.triggerResult = {
                 scope: 'me',
                 changes: [{ ...fireballChange, playerHrid: 'player2' }],
@@ -12437,7 +12855,7 @@ describe('the Triggers option', () => {
                 combined: null,
                 simCount: 1,
             };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
 
             ui.panel.querySelector('#mwi-csim-trigger-apply').click();
 
@@ -12465,7 +12883,7 @@ describe('the Triggers option', () => {
             const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
             select.innerHTML = '<option value="0">One</option><option value="1">Two</option>';
             select.value = '0';
-            onlyTriggers();
+            openSection();
         }
 
         /** Analyze, then (for the cached case) reopen the panel so the remembered result is what Apply sees */
@@ -12480,13 +12898,11 @@ describe('the Triggers option', () => {
                 combined: null,
                 simCount: 10,
             };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
             if (!cached) return;
             ui.destroy();
             setUpPanel();
-            const chip = ui.panel.querySelector('[data-upgrade-mode="triggers"]');
-            chip.checked = true;
-            chip.dispatchEvent(new Event('change', { bubbles: true }));
+            await ui._refreshCachedTriggerResult();
             await settle();
             expect(ui.panel.querySelector('#mwi-csim-trigger-box').textContent).toContain('Last result');
         }
@@ -12543,9 +12959,9 @@ describe('the Triggers option', () => {
         Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
         ui.buildPanel();
         selectZone();
-        onlyTriggers();
+        openSection();
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
-        await ui._onUpgradeAnalyze();
+        await ui._onTuneTriggers();
 
         ui.panel.querySelector('#mwi-csim-trigger-copy').click();
         await Promise.resolve();
@@ -13471,9 +13887,9 @@ describe('verifying close calls on fresh seeds', () => {
         };
         const runTriggers = async (extra = {}) => {
             selectZone();
-            ui.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => {
-                box.checked = box.getAttribute('data-upgrade-mode') === 'triggers';
-            });
+            ui._triggerOpen = true;
+            ui._triggerTouched = true;
+            ui._applyTriggerSectionState();
             mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
             mocks.triggerResult = {
                 scope: 'me',
@@ -13485,7 +13901,7 @@ describe('verifying close calls on fresh seeds', () => {
                 verifyContext: { tunables: [], playerDTOs: [] },
                 ...extra,
             };
-            await ui._onUpgradeAnalyze();
+            await ui._onTuneTriggers();
         };
         const block = () => ui.panel.querySelector('#mwi-csim-trigger-verify');
         afterEach(() => {
