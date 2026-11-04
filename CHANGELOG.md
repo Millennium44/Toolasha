@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Watchlist, item pins and goals keep your edits across tabs
 
 With the game open in two tabs, an older tab no longer erases pins, watchlist rows or planner goals you added in the other tab, and no longer brings back ones you removed there.
+
 ### Rank badges sync between devices again
 
 Leaderboard rank badges captured on one device reach your other devices again, and syncing no longer keeps rewriting the gist for them.
