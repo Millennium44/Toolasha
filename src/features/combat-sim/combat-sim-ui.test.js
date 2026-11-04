@@ -1521,6 +1521,21 @@ describe('the panel', () => {
         ui._upgradeColumnMenuOpen = false;
     });
 
+    test('the Upgrade results tables sit in a scroll wrapper and their detail rows keep a pinned inner block', () => {
+        ui._renderUpgradeResults({
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 })],
+            food: null,
+        });
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const table = container.querySelector('table');
+        expect(table.parentElement.classList.contains('mwi-utable-wrap')).toBe(true);
+        const detail = container.querySelector('tr[data-upgrade-detail] > td[colspan] > .mwi-utable-detail');
+        expect(detail).toBeTruthy();
+        // The wrapper closes right after the table: nothing else is swallowed into the scroller
+        expect(table.parentElement.children).toHaveLength(1);
+    });
+
     test('food with an unknown recommendation cost does not claim cheapest or savings', () => {
         ui._renderUpgradeResults({
             baseline: null,
@@ -1623,7 +1638,8 @@ describe('the panel', () => {
         ];
         const draw = () => ui._renderUpgradeResults({ baseline: BASELINE, results: rowsFor(), food: null });
         const header = (key) => ui.panel.querySelector(`[data-collapse-key="${key}"]`);
-        const tableHidden = () => ui.panel.querySelector('#mwi-csim-upgrade-results table').style.display === 'none';
+        const tableHidden = () =>
+            ui.panel.querySelector('#mwi-csim-upgrade-results .mwi-utable-wrap').style.display === 'none';
 
         beforeEach(() => {
             // The panel is a singleton and remembers what was minimized
@@ -1836,7 +1852,7 @@ describe('the panel', () => {
             await ui._loadUpgradeColumnPrefs();
             expect(ui._abilityOrderRank).toBe('xp');
             expect(ui._abilityOrderShowAll).toBe(true);
-            expect(section().querySelector('table').style.display).toBe('none');
+            expect(section().querySelector('.mwi-utable-wrap').style.display).toBe('none');
         });
 
         test('a persisted eph rank is restored and an unknown one falls back to Profit/hr', async () => {

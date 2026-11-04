@@ -376,6 +376,13 @@ describe('triggerChipOptionsHtml', () => {
         expect(html).toContain('<option value="profit">Profit/h</option>');
     });
 
+    test('keeps Optimize for beside its select in one unbreakable group', () => {
+        const html = triggerChipOptionsHtml();
+        expect(html).toMatch(
+            /flex-wrap:nowrap;">\s*<span[^>]*>Optimize for<\/span>\s*<select[^>]*mwi-csim-trigger-objective/
+        );
+    });
+
     test('offers Just me / Whole party and the three precisions, Standard selected', () => {
         const html = triggerChipOptionsHtml();
         expect(html).toContain('value="me" selected');

@@ -40,7 +40,7 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
-import { ensureSimPhoneStyles } from './sim-phone-layout.js';
+import { ensureSimPhoneStyles, ensureSimUpgradePhoneStyles } from './sim-phone-layout.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
 import {
@@ -3047,8 +3047,8 @@ const MODE_OPTIONS = {
     combat_level: `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
-            <label style="color:#888; font-size:12px;">Charm</label>
-            <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select>
+            <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Charm</label>
+            <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select></span>
             <input id="mwi-csim-charm-enh" type="number" min="0" max="20" placeholder="+" style="
                 width:44px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Enhancement level to sim the charm at (e.g. 5 for Expert +5). Leave blank to keep the equipped charm's level.">
@@ -3057,20 +3057,20 @@ const MODE_OPTIONS = {
     house: `
         <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
-            <label style="color:#888; font-size:12px;">Lv</label>
+            <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now.">
+                title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now."></span>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
     triggers: triggerChipOptionsHtml(),
     guild_shrine: `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
-            <label style="color:#888; font-size:12px;">Lv</label>
+            <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up.">
+                title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up."></span>
             <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
             <label id="mwi-csim-shrine-cap-label" title="Only rank shrine levels your guild's shrine buildings can actually sell you: a shrine the guild has not built is left out entirely, and one built to Lv4 stops at Lv4. Uncheck to plan against shrines the guild would have to upgrade first — those rows say so." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
@@ -3080,10 +3080,10 @@ const MODE_OPTIONS = {
     community_buff: `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
-            <label style="color:#888; font-size:12px;">Lv</label>
+            <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-community-target-level" type="number" min="1" max="20" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Level to sim each community buff at, rather than one level up — Lv3 → Lv8 in one row. Capped at 20, which the game calls max. It changes nothing about the cost: a community buff's level is what the whole server's donated minutes add up to, so there is no per-level price either way. A buff already at 20 still measures what the whole buff is worth, by simulating it off.">
+                title="Level to sim each community buff at, rather than one level up — Lv3 → Lv8 in one row. Capped at 20, which the game calls max. It changes nothing about the cost: a community buff's level is what the whole server's donated minutes add up to, so there is no per-level price either way. A buff already at 20 still measures what the whole buff is worth, by simulating it off."></span>
         </span>`,
 };
 
@@ -3363,6 +3363,7 @@ class CombatSimUI {
         if (this.panel) return;
 
         ensureSimPhoneStyles();
+        ensureSimUpgradePhoneStyles();
         addStyles(UPGRADE_CARD_CSS, UPGRADE_CARD_STYLE_ID);
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
@@ -12174,7 +12175,7 @@ class CombatSimUI {
             return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts })}</div>`;
         }
         let html = `${head}
-        <table style="width:100%; border-collapse:collapse; font-size:10px;">
+        <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead><tr>`;
         for (const c of columns) {
             const title = c.title ? ` title="${c.title}"` : '';
@@ -12211,14 +12212,14 @@ class CombatSimUI {
                 `${verdict ? 'again' : 'verify'}</button></td>`;
             html += `</tr>
             <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="${columns.length + 1}" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
+                <td colspan="${columns.length + 1}" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
                     ${this._budgetToggleButtons(r)}
-                    ${this._renderUpgradeDetailCells(r, baseline)}
+                    ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
         });
 
-        return html + '</tbody></table></div>';
+        return html + '</tbody></table></div></div>';
     }
 
     /**
@@ -12698,7 +12699,7 @@ class CombatSimUI {
         if (this._upgradeView() === 'cards') {
             return `${html}${this._levelCards({ sorted, baseline, sortKey, effective, hoursPer, fmtLevelTime, scoreTitle })}</div>`;
         }
-        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
+        html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
@@ -12740,13 +12741,13 @@ class CombatSimUI {
                 <td style="${tdStyle}${levelScoreColor(r) ? ` color:${levelScoreColor(r)};` : ''}" data-level-score>${formatScore(r.score)}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
-                <td colspan="${detailColspan}" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
-                    ${this._renderUpgradeDetailCells(r, baseline)}
+                <td colspan="${detailColspan}" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
+                    ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
         });
 
-        return html + '</tbody></table></div>';
+        return html + '</tbody></table></div></div>';
     }
 
     /**
@@ -12821,7 +12822,7 @@ class CombatSimUI {
         if (this._upgradeView() === 'cards') {
             return `${html}${this._unpricedCards({ sorted, baseline, sortKey, cell })}</div>`;
         }
-        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
+        html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-unpriced-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-unpriced-sort-key="why">Why no price${arrow('why')}</th>
@@ -12836,19 +12837,19 @@ class CombatSimUI {
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
                 <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
-                <td style="${tdStyle} color:#888;">${missing}</td>
+                <td class="mwi-utable-prose" style="${tdStyle} color:#888;">${missing}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
             </tr>
             <tr data-unpriced-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
-                    ${this._renderUpgradeDetailCells(r, baseline)}
+                <td colspan="5" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
+                    ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
         });
 
-        return html + '</tbody></table></div>';
+        return html + '</tbody></table></div></div>';
     }
 
     /**
@@ -12994,7 +12995,7 @@ class CombatSimUI {
                 lossScoreTitle,
             })}</div>`;
         }
-        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
+        html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-scroll-sort-key="upgrade">Scroll${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-scroll-sort-key="dps">ΔDPS${arrow('dps')}</th>
@@ -13028,14 +13029,14 @@ class CombatSimUI {
                 }>${formatScore(r.score)}</td>
             </tr>
             <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="10" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
+                <td colspan="10" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
                     <div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>
-                    ${this._renderUpgradeDetailCells(r, baseline)}
+                    ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
         });
 
-        return html + '</tbody></table></div>';
+        return html + '</tbody></table></div></div>';
     }
 
     /**
@@ -14515,10 +14516,10 @@ class CombatSimUI {
                       money,
                       pct,
                   })
-                : `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
+                : `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                   `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
                   `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
-                  `<tbody>${rowsHtml}</tbody></table>`;
+                  `<tbody>${rowsHtml}</tbody></table></div>`;
         const toggle =
             total > ABILITY_ORDER_TOP
                 ? `<button id="mwi-csim-order-showall" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +

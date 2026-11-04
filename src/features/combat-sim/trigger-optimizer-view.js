@@ -73,11 +73,13 @@ export function triggerChipOptionsHtml() {
                 <option value="abilities">Abilities only</option>
                 <option value="consumables">Food &amp; drinks only</option>
             </select>
-            <span style="color:#888; font-size:11px;">Optimize for</span>
-            <select class="toolasha-select" id="mwi-csim-trigger-objective" style="${SELECT_STYLE}"
-                title="Optimize for: Balanced weighs EXP/h, profit/h, DPS and encounters/h equally. XP/h or Profit/h judges a change on that one rate alone. Every choice loses 10 points per extra death per hour.">
-                ${objectiveOptions}
-            </select>
+            <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;">
+                <span style="color:#888; font-size:11px;">Optimize for</span>
+                <select class="toolasha-select" id="mwi-csim-trigger-objective" style="${SELECT_STYLE}"
+                    title="Optimize for: Balanced weighs EXP/h, profit/h, DPS and encounters/h equally. XP/h or Profit/h judges a change on that one rate alone. Every choice loses 10 points per extra death per hour.">
+                    ${objectiveOptions}
+                </select>
+            </span>
             <select class="toolasha-select" id="mwi-csim-trigger-precision" style="${SELECT_STYLE}"
                 title="How long each candidate value is simulated. Quick is a rough pass; Precise tightens the error bars and takes several times longer.">
                 ${precisionOptions}
