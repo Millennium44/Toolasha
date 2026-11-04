@@ -20,6 +20,10 @@ At phone width the battle number no longer squeezes out the zone name beside the
 
 Dragging anything while a skill gained XP could save that XP bar's width as a panel size, and it then stayed stuck on every character, even after a reload or level-up. Bars are no longer recorded and a stuck one fixes itself on load.
 
+### Market history chart is easier to read
+
+Busy items now group into 3-hour medians by default, with a new control to show every reading. The spread is shaded, volume sits as bars under the prices, longer ranges show dates, and Avg is hidden until you click it in the legend, which it remembers.
+
 ### Minimized market chart stays minimized
 
 Opening an item while the Market History chart was minimized made it grow past the bottom of the screen. It now stays folded, shows the new item's name, and draws that item when you expand it.

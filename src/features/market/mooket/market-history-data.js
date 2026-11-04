@@ -457,5 +457,9 @@ export function priceTickLabel(value, ticks, low, short, exact) {
     if (hasLow && value < low - Math.abs(low) * 1e-9) return '';
     const shown = (ticks || []).filter((tick) => !hasLow || tick.value >= low - Math.abs(low) * 1e-9);
     const labels = shown.map((tick) => short(tick.value));
-    return new Set(labels).size < labels.length ? exact(value) : short(value);
+    const repeats = new Set(labels).size < labels.length;
+    // 995 beside 1.0K reads as two different scales, so a mixed axis is written out too
+    const abbreviated = shown.filter((tick) => short(tick.value) !== exact(tick.value)).length;
+    const mixed = abbreviated > 0 && abbreviated < shown.length;
+    return repeats || mixed ? exact(value) : short(value);
 }

@@ -237,6 +237,10 @@ describe('priceTickLabel', () => {
     const ticks = (values) => values.map((value) => ({ value }));
     const labels = (values, low) => ticks(values).map((t) => priceTickLabel(t.value, ticks(values), low, short, exact));
 
+    test('an axis mixing plain and abbreviated numbers is written out', () => {
+        expect(labels([990, 995, 1000], 990)).toEqual(['990', '995', '1,000']);
+    });
+
     test('a narrow range around 1,000 is written out instead of 1.0K twice', () => {
         expect(labels([998, 999, 1000, 1001, 1002], 998)).toEqual(['998', '999', '1,000', '1,001', '1,002']);
     });
