@@ -18,7 +18,7 @@ At phone width the battle number no longer squeezes out the zone name beside the
 
 ### Skill XP bars no longer get stuck
 
-Dragging anything while a skill gained XP could save that XP bar's width as a panel size, and it then stayed stuck on every character, even after a reload or level-up. Bars are no longer recorded and a stuck one fixes itself on load.
+Dragging anything while a skill gained XP could save that XP bar's width as a panel size, and it then stayed stuck on every character, even after a reload or level-up. Bars are no longer recorded and a stuck one fixes itself on load. The percent label and XP left now come from your actual XP.
 
 ### Market history chart is easier to read
 

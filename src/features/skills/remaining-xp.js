@@ -10,6 +10,7 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { getSkillHridFromIconHref, getIconHref } from '../../utils/game-lookups.js';
+import { experienceToNextLevel } from '../../utils/skill-progress.js';
 
 class RemainingXP {
     constructor() {
@@ -153,8 +154,7 @@ class RemainingXP {
             const skill = skillHrid || labelText;
             if (!skill) return;
 
-            // Calculate remaining XP for this skill using progress bar width (like XP percentage does)
-            const remainingXP = this.calculateRemainingXPFromProgressBar(progressBar, skill);
+            const remainingXP = this.calculateRemainingXP(skill);
             if (remainingXP === null) return;
 
             // Find the progress bar container (parent of the progress bar)
@@ -195,55 +195,23 @@ class RemainingXP {
     }
 
     /**
-     * Calculate remaining XP from progress bar width (real-time, like XP percentage)
-     * @param {HTMLElement} progressBar - The progress bar element
+     * XP left in the level, from the skill's actual experience. Not from the bar: its width is only
+     * what the page currently shows, and a stuck or lagging bar must not become a wrong number here.
      * @param {string} skillRef - The skill's HRID ("/skills/milking"), or its English name ("Milking")
-     * @returns {number|null} Remaining XP or null if unavailable
+     * @returns {number|null} Remaining XP, or null at the cap or when the figures are not loaded
      */
-    calculateRemainingXPFromProgressBar(progressBar, skillRef) {
+    calculateRemainingXP(skillRef) {
         const skillHrid = skillRef.startsWith('/skills/') ? skillRef : `/skills/${skillRef.toLowerCase()}`;
 
-        // Get character skills data for level info
-        const characterData = dataManager.characterData;
-        if (!characterData || !characterData.characterSkills) {
-            return null;
-        }
+        const skill = dataManager.characterData?.characterSkills?.find((s) => s.skillHrid === skillHrid);
+        if (!skill) return null;
 
-        // Find the skill to get current level
-        const skill = characterData.characterSkills.find((s) => s.skillHrid === skillHrid);
-        if (!skill) {
-            return null;
-        }
-
-        // Get level experience table
-        const gameData = dataManager.getInitClientData();
-        if (!gameData || !gameData.levelExperienceTable) return null;
-
-        const currentLevel = skill.level;
-        const nextLevel = currentLevel + 1;
-
-        // Get XP required for current and next level
-        const expForCurrentLevel = gameData.levelExperienceTable[currentLevel] || 0;
-        const expForNextLevel = gameData.levelExperienceTable[nextLevel];
-        if (expForNextLevel === undefined) return null; // Max level
-
-        // Extract percentage from progress bar width (updated by game in real-time)
-        const widthStyle = progressBar.style.width;
-        if (!widthStyle) return null;
-
-        const percentage = parseFloat(widthStyle.replace('%', ''));
-        if (isNaN(percentage)) return null;
-
-        // Calculate XP needed for this level
-        const xpNeededForLevel = expForNextLevel - expForCurrentLevel;
-
-        // Calculate current XP within this level based on progress bar
-        const currentXPInLevel = (percentage / 100) * xpNeededForLevel;
-
-        // Calculate remaining XP
-        const remainingXP = xpNeededForLevel - currentXPInLevel;
-
-        return Math.max(0, Math.ceil(remainingXP));
+        const remaining = experienceToNextLevel(
+            skill.experience,
+            skill.level,
+            dataManager.getInitClientData()?.levelExperienceTable
+        );
+        return remaining === null ? null : Math.ceil(remaining);
     }
 
     /**

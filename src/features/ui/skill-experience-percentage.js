@@ -3,11 +3,14 @@
  * Shows XP progress percentage in the left sidebar skill list
  */
 
+import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { formatPercentage } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { getSkillHridFromIconHref, getIconHref } from '../../utils/game-lookups.js';
+import { levelProgressPercent } from '../../utils/skill-progress.js';
 
 class SkillExperiencePercentage {
     constructor() {
@@ -115,6 +118,29 @@ class SkillExperiencePercentage {
     }
 
     /**
+     * How far through its level a bar's skill is. From the skill's actual experience, so a stuck or
+     * lagging bar cannot put a wrong figure here; the bar's width only answers when the experience
+     * cannot (not loaded yet, a skill at the cap, a row that cannot be named).
+     * @param {Element} progressBar - The progress bar element
+     * @returns {number|null} 0 to 100, or null when neither source has a figure
+     */
+    percentageFor(progressBar) {
+        const navEntry = progressBar.closest('[class*="NavigationBar_nav"]');
+        const label = navEntry?.querySelector('[class*="NavigationBar_label"]')?.textContent.trim();
+        const skillHrid =
+            (navEntry && getSkillHridFromIconHref(getIconHref(navEntry, 'skills_sprite'))) ||
+            (label ? `/skills/${label.toLowerCase()}` : null);
+        const skill = skillHrid && dataManager.characterData?.characterSkills?.find((s) => s.skillHrid === skillHrid);
+        const fromExperience = skill
+            ? levelProgressPercent(skill.experience, skill.level, dataManager.getInitClientData()?.levelExperienceTable)
+            : null;
+        if (fromExperience !== null) return fromExperience;
+
+        const fromBar = parseFloat(progressBar.style.width);
+        return Number.isNaN(fromBar) ? null : fromBar;
+    }
+
+    /**
      * Update a single skill's percentage display
      * @param {Element} progressBar - The progress bar element
      */
@@ -140,12 +166,8 @@ class SkillExperiencePercentage {
             levelSpan.style.width = 'auto';
         }
 
-        // Extract percentage from progress bar width
-        const widthStyle = progressBar.style.width;
-        if (!widthStyle) return;
-
-        const percentage = parseFloat(widthStyle.replace('%', ''));
-        if (isNaN(percentage)) return;
+        const percentage = this.percentageFor(progressBar);
+        if (percentage === null) return;
 
         // Format with 1 decimal place (convert from percentage to decimal first)
         const formattedPercentage = formatPercentage(percentage / 100, 1);

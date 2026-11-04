@@ -56,6 +56,23 @@ export function experienceToNextLevel(experience, level, levelExperienceTable) {
 }
 
 /**
+ * How far through the current level a skill is.
+ *
+ * @param {number} experience - Cumulative experience in the skill
+ * @param {number} level - Current level
+ * @param {number[]} levelExperienceTable - Cumulative experience per level, indexed by level
+ * @returns {number|null} 0 to 100, or null at the cap or without the figures to say
+ */
+export function levelProgressPercent(experience, level, levelExperienceTable) {
+    const floor = levelExperienceTable?.[level];
+    const ceiling = levelExperienceTable?.[level + 1];
+    if (floor === undefined || ceiling === undefined || !(ceiling > floor) || !Number.isFinite(experience)) {
+        return null;
+    }
+    return Math.min(100, Math.max(0, ((experience - floor) / (ceiling - floor)) * 100));
+}
+
+/**
  * How long the next level will take at the rate being achieved.
  *
  * @param {Object} input - What it needs
