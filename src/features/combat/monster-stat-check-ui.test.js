@@ -9,6 +9,7 @@
  * snapshot of one room down to the oldest and then persisted the loss.
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const stored = vi.hoisted(() => ({ value: null }));
@@ -171,6 +172,8 @@ const {
     PANEL_TOP_FRACTION,
     PANEL_MAX_HEIGHT_FRACTION,
     PANEL_HEIGHT_BUDGET,
+    PHONE_PANEL_CSS,
+    PHONE_TEXT_SCALE,
 } = await import('./monster-stat-check-ui.js');
 
 /** A recorded snapshot of one monster/level in one buff state */
@@ -755,5 +758,51 @@ describe('the panel fits the viewport it is placed in', () => {
         // it to satisfy the check above would trade one bug for another
         expect(PANEL_MAX_HEIGHT_FRACTION).toBeGreaterThan(0.8);
         expect(PANEL_TOP_FRACTION).toBeGreaterThan(0);
+    });
+});
+
+describe('the panel on a phone', () => {
+    const PHONE_STYLE = 'toolasha-monster-stat-check-phone';
+
+    test('every font size scales through the phone variable, so desktop sizes compute as before', () => {
+        // A bare rem size would be left at the game's shrunken phone root (7-9 px)
+        const source = readFileSync('src/features/combat/monster-stat-check-ui.js', 'utf8');
+        const bare = source.match(/font-size:\s*[\d.]+rem/g) || [];
+        expect(bare).toEqual([]);
+        expect(source).toContain('calc(${headerRow ?');
+        expect(source).toContain('var(--msc-scale, 1)');
+    });
+
+    test('the sheet sets the scale and the width only inside the phone query, and installs and leaves with the panel', () => {
+        panel._ensureBuilt();
+        const style = document.getElementById(PHONE_STYLE);
+        expect(style.textContent).toBe(PHONE_PANEL_CSS);
+        const media = PHONE_PANEL_CSS.indexOf('@media (max-width: 768px)');
+        expect(media).toBeGreaterThan(-1);
+        expect(PHONE_PANEL_CSS.slice(0, media).trim()).toBe('');
+        expect(PHONE_PANEL_CSS).toContain(`--msc-scale: ${PHONE_TEXT_SCALE}`);
+        expect(PHONE_TEXT_SCALE).toBeGreaterThan(1.25);
+        expect(PHONE_PANEL_CSS).not.toMatch(/zoom|transform/);
+        // A second build does not stack a second sheet
+        panel._ensureBuilt();
+        expect(document.querySelectorAll(`#${PHONE_STYLE}`)).toHaveLength(1);
+        monsterStatCheck.disable();
+        expect(document.getElementById(PHONE_STYLE)).toBeNull();
+    });
+
+    test('the three action buttons carry the spacing class and sit in a section', () => {
+        panel._ensureBuilt();
+        panel.showFor({
+            hrid: '/monsters/vampire',
+            name: 'Vampire',
+            difficultyTier: 0,
+            combatDetails: { combatStats: { combatStyleHrid: '/combat_styles/smash' } },
+            combatBuffMap: {},
+        });
+        const runs = [...panel.body.querySelectorAll('button.msc-run')];
+        expect(runs.map((b) => b.textContent)).toEqual(['Run blind sim', 'Run uptime harness', 'Check my build']);
+        for (const b of runs) expect(b.parentElement.className).toBe('msc-section');
+        // The text carries the scale variable inline
+        expect(panel.body.querySelector('button.msc-run').style.cssText).toContain('--msc-scale');
     });
 });

@@ -45,6 +45,7 @@ import { captureFile, startCapture, lastFightRoomLevel } from './labyrinth-tick-
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
@@ -110,6 +111,32 @@ const TRIAL_NOT_MODELLED =
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
 const PANEL_ID = 'toolasha-monster-stat-check';
+const PHONE_STYLE_ID = 'toolasha-monster-stat-check-phone';
+
+/** How much larger the panel's text runs on a phone. Every font size is `calc(<n>rem * var(--msc-scale, 1))`. */
+export const PHONE_TEXT_SCALE = 1.35;
+
+/**
+ * The phone rules. The game shrinks its root font size on a phone, which left this panel's rem sizes at 7-9 px; the
+ * scale variable brings them to 10-12 px without a transform or zoom. Above the breakpoint the variable is unset
+ * (fallback 1), so the sizes compute exactly as before. The three action buttons become blocks with one top margin,
+ * because as inline buttons their gaps followed whatever line box sat above them. The grid override stops the Game, Sim and delta columns being
+ * pushed out by wide values (a grid track's automatic minimum is its content). Nothing here touches stored geometry.
+ */
+export const PHONE_PANEL_CSS = `
+@media ${MARKET_MOBILE_QUERY} {
+    #${PANEL_ID} {
+        --msc-scale: ${PHONE_TEXT_SCALE};
+        width: min(calc(100vw - 16px), 460px) !important;
+        max-width: calc(100vw - 16px) !important;
+    }
+    #${PANEL_ID} [style*="grid-template-columns"] {
+        grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto !important;
+    }
+    #${PANEL_ID} .msc-run { display: block; margin-top: 8px !important; line-height: 1.2; }
+    #${PANEL_ID} .msc-run:first-child { margin-top: 0 !important; }
+}
+`;
 
 /**
  * Where the panel's top edge sits and how tall it may grow, both as fractions
@@ -1153,7 +1180,7 @@ class MonsterStatCheckPanel {
         `;
 
         const title = document.createElement('span');
-        title.style.cssText = `font-size: 0.85rem; font-weight: 600; color: ${GAME_COLORS.text}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
+        title.style.cssText = `font-size: calc(0.85rem * var(--msc-scale, 1)); font-weight: 600; color: ${GAME_COLORS.text}; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;`;
         title.textContent = 'Monster Stat Check';
 
         const controls = document.createElement('div');
@@ -1162,7 +1189,7 @@ class MonsterStatCheckPanel {
         const copyBtn = document.createElement('button');
         copyBtn.textContent = '⧉';
         copyBtn.title = 'Copy all results (player build + every monster) to the clipboard (as text)';
-        copyBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 4px;`;
+        copyBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: calc(1rem * var(--msc-scale, 1)); line-height: 1; cursor: pointer; padding: 0 4px;`;
         copyBtn.addEventListener('mouseenter', () => (copyBtn.style.color = '#fff'));
         copyBtn.addEventListener('mouseleave', () => (copyBtn.style.color = '#aaa'));
         copyBtn.addEventListener('click', (e) => {
@@ -1173,7 +1200,7 @@ class MonsterStatCheckPanel {
         const exportBtn = document.createElement('button');
         exportBtn.textContent = '⭳';
         exportBtn.title = 'Export the session’s discrepancy log (JSON)';
-        exportBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 4px;`;
+        exportBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: calc(1rem * var(--msc-scale, 1)); line-height: 1; cursor: pointer; padding: 0 4px;`;
         exportBtn.addEventListener('mouseenter', () => (exportBtn.style.color = '#fff'));
         exportBtn.addEventListener('mouseleave', () => (exportBtn.style.color = '#aaa'));
         exportBtn.addEventListener('click', (e) => {
@@ -1184,7 +1211,7 @@ class MonsterStatCheckPanel {
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '×';
         closeBtn.title = 'Close';
-        closeBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 0 2px;`;
+        closeBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: calc(1.2rem * var(--msc-scale, 1)); line-height: 1; cursor: pointer; padding: 0 2px;`;
         closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#fff'));
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#aaa'));
         closeBtn.addEventListener('click', () => this.close());
@@ -1202,6 +1229,12 @@ class MonsterStatCheckPanel {
         container.appendChild(body);
         document.body.appendChild(container);
         registerFloatingPanel(container);
+        if (!document.getElementById(PHONE_STYLE_ID)) {
+            const phoneStyle = document.createElement('style');
+            phoneStyle.id = PHONE_STYLE_ID;
+            phoneStyle.textContent = PHONE_PANEL_CSS;
+            document.head.appendChild(phoneStyle);
+        }
 
         this.container = container;
         this.header = header;
@@ -1242,7 +1275,7 @@ class MonsterStatCheckPanel {
         b.textContent = glyph;
         b.title = title;
         b.disabled = !enabled;
-        b.style.cssText = `background:none; border:none; color:${enabled ? '#aaa' : 'rgba(255,255,255,0.2)'}; font-size:0.8rem; cursor:${enabled ? 'pointer' : 'default'}; padding:0 2px; line-height:1;`;
+        b.style.cssText = `background:none; border:none; color:${enabled ? '#aaa' : 'rgba(255,255,255,0.2)'}; font-size:calc(0.8rem * var(--msc-scale, 1)); cursor:${enabled ? 'pointer' : 'default'}; padding:0 2px; line-height:1;`;
         if (enabled) {
             b.addEventListener('mouseenter', () => (b.style.color = '#fff'));
             b.addEventListener('mouseleave', () => (b.style.color = '#aaa'));
@@ -1260,7 +1293,7 @@ class MonsterStatCheckPanel {
         b.textContent = text;
         b.title = title;
         b.style.cssText =
-            'background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:#aaa; font-size:0.64rem; cursor:pointer; padding:1px 5px; white-space:nowrap;';
+            'background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:#aaa; font-size:calc(0.64rem * var(--msc-scale, 1)); cursor:pointer; padding:1px 5px; white-space:nowrap;';
         b.addEventListener('mouseenter', () => (b.style.color = '#fff'));
         b.addEventListener('mouseleave', () => (b.style.color = '#aaa'));
         b.addEventListener('click', (e) => {
@@ -1283,7 +1316,7 @@ class MonsterStatCheckPanel {
 
         const nav = document.createElement('div');
         nav.style.cssText =
-            'display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
+            'display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-bottom:8px; font-size:calc(0.7rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.55);';
 
         if (total > 0) {
             nav.appendChild(this._navButton('▲', 'Previous (↑)', () => this._navigate(-1), index > 0));
@@ -1359,7 +1392,8 @@ class MonsterStatCheckPanel {
             // A trial boss is not "unbuilt" — it is deliberately only partly
             // modelled, and saying so is the whole point of the branch.
             const note = document.createElement('div');
-            note.style.cssText = 'font-size: 0.72rem; color: #e0b64a; padding: 6px 0; font-style: italic;';
+            note.style.cssText =
+                'font-size: calc(0.72rem * var(--msc-scale, 1)); color: #e0b64a; padding: 6px 0; font-style: italic;';
             note.textContent = `Trial boss at T${snapshot.trial.tier} (trial scaling). ${TRIAL_NOT_MODELLED}`;
             body.appendChild(note);
             if (!simBuilt) {
@@ -1381,14 +1415,15 @@ class MonsterStatCheckPanel {
             }
         } else if (!simBuilt) {
             const warn = document.createElement('div');
-            warn.style.cssText = 'font-size: 0.72rem; color: #e56b6b; padding: 8px 0; font-style: italic;';
+            warn.style.cssText =
+                'font-size: calc(0.72rem * var(--msc-scale, 1)); color: #e56b6b; padding: 8px 0; font-style: italic;';
             warn.textContent = 'Sim could not build this monster — showing game values only.';
             body.appendChild(warn);
         }
 
         for (const group of groups) {
             const heading = document.createElement('div');
-            heading.style.cssText = `font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.4); margin: 8px 0 2px;`;
+            heading.style.cssText = `font-size: calc(0.68rem * var(--msc-scale, 1)); text-transform: uppercase; letter-spacing: 0.5px; color: rgba(255,255,255,0.4); margin: 8px 0 2px;`;
             heading.textContent = group.group;
             body.appendChild(heading);
 
@@ -1407,7 +1442,7 @@ class MonsterStatCheckPanel {
 
         // Footer: active buffs and the legend that reads a gap.
         const footer = document.createElement('div');
-        footer.style.cssText = `margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 0.7rem; line-height: 1.5; color: rgba(255,255,255,0.55);`;
+        footer.style.cssText = `margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); font-size: calc(0.7rem * var(--msc-scale, 1)); line-height: 1.5; color: rgba(255,255,255,0.55);`;
 
         const buffLine = document.createElement('div');
         if (buffs.length) {
@@ -1442,7 +1477,7 @@ class MonsterStatCheckPanel {
     /** A small caption line under a section heading. */
     _caption(text, color = 'rgba(255,255,255,0.45)') {
         const el = document.createElement('div');
-        el.style.cssText = `font-size:0.66rem; color:${color}; margin-bottom:2px;`;
+        el.style.cssText = `font-size:calc(0.66rem * var(--msc-scale, 1)); color:${color}; margin-bottom:2px;`;
         el.textContent = text;
         return el;
     }
@@ -1450,13 +1485,14 @@ class MonsterStatCheckPanel {
     /** The player-build section: a Check button, and your-vs-sim stat diff. */
     _renderPlayerCheck(footer) {
         const wrap = document.createElement('div');
+        wrap.className = 'msc-section';
         wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
 
         const pc = this.playerCheck;
         if (pc) {
             const head = document.createElement('div');
             head.style.cssText =
-                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+                'font-size:calc(0.68rem * var(--msc-scale, 1)); text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
             head.textContent = 'Player build — you vs sim';
             wrap.appendChild(head);
 
@@ -1468,7 +1504,7 @@ class MonsterStatCheckPanel {
 
             if (pc.error) {
                 const err = document.createElement('div');
-                err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                err.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#e0b64a; font-style:italic;';
                 err.textContent = pc.error;
                 wrap.appendChild(err);
             } else {
@@ -1497,7 +1533,7 @@ class MonsterStatCheckPanel {
                     for (const group of view.groups) {
                         const heading = document.createElement('div');
                         heading.style.cssText =
-                            'font-size:0.66rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.35); margin:6px 0 1px;';
+                            'font-size:calc(0.66rem * var(--msc-scale, 1)); text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.35); margin:6px 0 1px;';
                         heading.textContent = group.group;
                         wrap.appendChild(heading);
                         for (const row of group.rows) {
@@ -1520,7 +1556,8 @@ class MonsterStatCheckPanel {
                 const fold = pc.fold || {};
                 if (folding && fold.folded?.length) {
                     const fx = document.createElement('div');
-                    fx.style.cssText = 'margin-top:4px; font-size:0.66rem; color:rgba(255,255,255,0.55);';
+                    fx.style.cssText =
+                        'margin-top:4px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.55);';
                     fx.innerHTML = `<span style="color:#e0b64a;">Folded into the sim:</span> ${fold.folded.join(', ')}`;
                     wrap.appendChild(fx);
                 }
@@ -1531,20 +1568,22 @@ class MonsterStatCheckPanel {
                 }
                 if (fold.notModelled?.length) {
                     const nm = document.createElement('div');
-                    nm.style.cssText = 'margin-top:2px; font-size:0.66rem; color:#e0b64a;';
+                    nm.style.cssText = 'margin-top:2px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:#e0b64a;';
                     nm.textContent = `Not modelled by the sim: ${fold.notModelled.join(', ')}`;
                     nm.title = 'The sim engine has no term for these buff types, so neither column carries them';
                     wrap.appendChild(nm);
                 }
                 if (!folding && pc.effects?.length) {
                     const fx = document.createElement('div');
-                    fx.style.cssText = 'margin-top:4px; font-size:0.66rem; color:rgba(255,255,255,0.55);';
+                    fx.style.cssText =
+                        'margin-top:4px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.55);';
                     fx.innerHTML = `<span style="color:#e0b64a;">Effects on you (not applied to sim):</span> ${pc.effects.join(', ')}`;
                     wrap.appendChild(fx);
                 }
 
                 const note = document.createElement('div');
-                note.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+                note.style.cssText =
+                    'margin-top:3px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.45);';
                 if (folding) {
                     note.innerHTML = view?.hasMismatch
                         ? '<span style="color:#e56b6b;">⚠ off</span> = a gap with your own buffs applied to both sides — a gear, ability-level or buff-init gap in the sim.'
@@ -1569,8 +1608,9 @@ class MonsterStatCheckPanel {
         const btn = document.createElement('button');
         btn.textContent = this._playerView() ? 'Re-check my build' : 'Check my build';
         btn.title = 'Compare the sim’s build of your character against your live in-game stats (click yourself first)';
+        btn.className = 'msc-run';
         btn.style.cssText =
-            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:calc(0.7rem * var(--msc-scale, 1)); cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
         btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
         btn.addEventListener('click', (e) => {
@@ -1587,13 +1627,14 @@ class MonsterStatCheckPanel {
     /** The uptime-harness section: a Run button, and the incoming-damage diff. */
     _renderUptime(footer, snapshot) {
         const wrap = document.createElement('div');
+        wrap.className = 'msc-section';
         wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
 
         const up = snapshot.uptime;
         if (up) {
             const head = document.createElement('div');
             head.style.cssText =
-                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+                'font-size:calc(0.68rem * var(--msc-scale, 1)); text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
             head.textContent = 'Uptime harness — incoming damage / ability';
             wrap.appendChild(head);
             const label = simPlayerLabel(up.simPlayer);
@@ -1603,29 +1644,31 @@ class MonsterStatCheckPanel {
             // partials excluded, and whether the capture opened mid-fight.
             if (up.fightsLabel) {
                 const fights = document.createElement('div');
-                fights.style.cssText = 'font-size:0.66rem; color:rgba(255,255,255,0.45); margin-bottom:2px;';
+                fights.style.cssText =
+                    'font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.45); margin-bottom:2px;';
                 fights.textContent = up.fightsLabel;
                 wrap.appendChild(fights);
             }
 
             if (up.notModelled) {
                 const none = document.createElement('div');
-                none.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                none.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#e0b64a; font-style:italic;';
                 none.textContent = TRIAL_NOT_MODELLED;
                 wrap.appendChild(none);
             } else if (up.armed) {
                 const armed = document.createElement('div');
-                armed.style.cssText = 'font-size:0.72rem; color:#6fce7f; font-style:italic;';
+                armed.style.cssText =
+                    'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#6fce7f; font-style:italic;';
                 armed.textContent = up.message;
                 wrap.appendChild(armed);
             } else if (up.error) {
                 const err = document.createElement('div');
-                err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                err.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#e0b64a; font-style:italic;';
                 err.textContent = up.error;
                 wrap.appendChild(err);
             } else if (!up.rows?.length) {
                 const none = document.createElement('div');
-                none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                none.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.5);';
                 none.textContent = 'No attacks found in the capture.';
                 wrap.appendChild(none);
             } else {
@@ -1636,14 +1679,14 @@ class MonsterStatCheckPanel {
                 // model of YOUR abilities, checked the same way.
                 const outHead = document.createElement('div');
                 outHead.style.cssText =
-                    'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin:8px 0 2px;';
+                    'font-size:calc(0.68rem * var(--msc-scale, 1)); text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin:8px 0 2px;';
                 outHead.textContent = 'Uptime harness — outgoing damage / ability';
                 wrap.appendChild(outHead);
                 if (up.outgoingRows?.length) {
                     this._uptimeTable(wrap, up.outgoingRows, true);
                 } else {
                     const none = document.createElement('div');
-                    none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                    none.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.5);';
                     // null = a result saved before the outgoing direction
                     // existed; [] = a run that genuinely found no swings.
                     none.textContent = up.outgoingRows
@@ -1660,8 +1703,9 @@ class MonsterStatCheckPanel {
         btn.title = snapshot.trial
             ? TRIAL_NOT_MODELLED
             : 'Decompose the monster’s incoming damage per ability vs the sim. With no capture yet, arms one for the next fight.';
+        btn.className = 'msc-run';
         btn.style.cssText =
-            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:calc(0.7rem * var(--msc-scale, 1)); cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
         btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
         btn.addEventListener('click', (e) => {
@@ -1686,7 +1730,7 @@ class MonsterStatCheckPanel {
     _uptimeTable(wrap, rows, outgoing) {
         const header = document.createElement('div');
         header.style.cssText =
-            'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:0.64rem; color:rgba(255,255,255,0.4); padding:1px 0;';
+            'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:calc(0.64rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.4); padding:1px 0;';
         header.innerHTML =
             '<span>ability</span><span style="text-align:right;">real dmg%</span><span style="text-align:right;">sim dmg%</span><span></span>';
         wrap.appendChild(header);
@@ -1695,7 +1739,7 @@ class MonsterStatCheckPanel {
             const style = UPTIME_VERDICT[r.verdict] || UPTIME_VERDICT.ok;
             const line = document.createElement('div');
             line.style.cssText =
-                'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+                'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:calc(0.74rem * var(--msc-scale, 1)); padding:1px 0;';
             const num = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}`);
             const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
             const name = document.createElement('span');
@@ -1723,7 +1767,8 @@ class MonsterStatCheckPanel {
             wrap.appendChild(line);
         }
         const key = document.createElement('div');
-        key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+        key.style.cssText =
+            'margin-top:3px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.45);';
         const whose = outgoing ? 'your outgoing damage' : 'incoming damage';
         key.innerHTML =
             `<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of ${whose} than reality (or lands it for a smaller mean). ` +
@@ -1743,13 +1788,14 @@ class MonsterStatCheckPanel {
     /** The blind-sim section: a Run button, and the produced-vs-live buff diff. */
     _renderBlind(footer, snapshot) {
         const wrap = document.createElement('div');
+        wrap.className = 'msc-section';
         wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
 
         const blind = snapshot.blind;
         if (blind) {
             const head = document.createElement('div');
             head.style.cssText =
-                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+                'font-size:calc(0.68rem * var(--msc-scale, 1)); text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
             head.textContent = 'Blind sim — buffs it produces';
             wrap.appendChild(head);
             const label = simPlayerLabel(blind.simPlayer);
@@ -1757,17 +1803,17 @@ class MonsterStatCheckPanel {
 
             if (blind.notModelled) {
                 const none = document.createElement('div');
-                none.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                none.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#e0b64a; font-style:italic;';
                 none.textContent = TRIAL_NOT_MODELLED;
                 wrap.appendChild(none);
             } else if (!blind.ran) {
                 const err = document.createElement('div');
-                err.style.cssText = 'font-size:0.72rem; color:#e56b6b; font-style:italic;';
+                err.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:#e56b6b; font-style:italic;';
                 err.textContent = 'Blind fight could not run (no loadout or sim data).';
                 wrap.appendChild(err);
             } else if (!blind.rows.length) {
                 const none = document.createElement('div');
-                none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                none.style.cssText = 'font-size:calc(0.72rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.5);';
                 none.textContent = 'No buffs on either side.';
                 wrap.appendChild(none);
             } else {
@@ -1775,7 +1821,7 @@ class MonsterStatCheckPanel {
                     const style = BLIND_VERDICT[r.verdict] || BLIND_VERDICT.match;
                     const line = document.createElement('div');
                     line.style.cssText =
-                        'display:grid; grid-template-columns: 1.4fr 0.8fr 0.8fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+                        'display:grid; grid-template-columns: 1.4fr 0.8fr 0.8fr auto; gap:4px; align-items:baseline; font-size:calc(0.74rem * var(--msc-scale, 1)); padding:1px 0;';
                     const name = document.createElement('span');
                     name.textContent = r.name;
                     name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
@@ -1797,7 +1843,8 @@ class MonsterStatCheckPanel {
                     wrap.appendChild(line);
                 }
                 const key = document.createElement('div');
-                key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+                key.style.cssText =
+                    'margin-top:3px; font-size:calc(0.66rem * var(--msc-scale, 1)); color:rgba(255,255,255,0.45);';
                 key.innerHTML =
                     '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced an effect the game shows · ' +
                     '<span style="color:#e0b64a;">≠</span> different strength · ' +
@@ -1813,8 +1860,9 @@ class MonsterStatCheckPanel {
         btn.title = snapshot.trial
             ? TRIAL_NOT_MODELLED
             : 'Simulate a fight fed only the monster + level (no live buffs) and list the buffs the sim produces';
+        btn.className = 'msc-run';
         btn.style.cssText =
-            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:calc(0.7rem * var(--msc-scale, 1)); cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
         btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
         btn.addEventListener('click', (e) => {
@@ -1836,7 +1884,7 @@ class MonsterStatCheckPanel {
      */
     _rowEl({ label, game, sim, delta, verdict }, { headerRow = false } = {}) {
         const row = document.createElement('div');
-        row.style.cssText = `display: grid; grid-template-columns: 1.35fr 1fr 1fr 0.9fr; gap: 4px; align-items: baseline; padding: 2px 0; font-size: ${headerRow ? '0.66rem' : '0.78rem'};`;
+        row.style.cssText = `display: grid; grid-template-columns: 1.35fr 1fr 1fr 0.9fr; gap: 4px; align-items: baseline; padding: 2px 0; font-size: calc(${headerRow ? '0.66rem' : '0.78rem'} * var(--msc-scale, 1));`;
         if (headerRow) row.style.color = 'rgba(255,255,255,0.4)';
 
         const name = document.createElement('span');
@@ -1852,7 +1900,8 @@ class MonsterStatCheckPanel {
         simEl.style.cssText = 'text-align: right; font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.75);';
 
         const deltaEl = document.createElement('span');
-        deltaEl.style.cssText = 'text-align: right; font-variant-numeric: tabular-nums; font-size: 0.72rem;';
+        deltaEl.style.cssText =
+            'text-align: right; font-variant-numeric: tabular-nums; font-size: calc(0.72rem * var(--msc-scale, 1));';
         const style = verdict ? VERDICT_STYLE[verdict] : null;
         if (headerRow) {
             deltaEl.textContent = 'Δ';
@@ -1928,6 +1977,7 @@ class MonsterStatCheckPanel {
             this.container.remove();
             this.container = null;
         }
+        document.getElementById(PHONE_STYLE_ID)?.remove();
         this.body = null;
         this.header = null;
         this.isDragging = false;
