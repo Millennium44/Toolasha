@@ -5075,8 +5075,17 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                             baseline: baselineMetrics,
                             upgraded: bothMetrics,
                         });
-                        if (row.costUnpriced?.length || newlyUnpricedCosts(baselineMetrics, bothMetrics).length) {
+                        // What the combined run left unpriced, with the level's own: the combined profit is a ceiling
+                        // on both counts. Kept on `alongside` (additive) so a card showing the combined figure can say so
+                        const bothUnpriced = [
+                            ...new Set([
+                                ...(row.costUnpriced || []),
+                                ...newlyUnpricedCosts(baselineMetrics, bothMetrics),
+                            ]),
+                        ];
+                        if (bothUnpriced.length) {
                             row.alongside.significantBy.profit = false;
+                            row.alongside.costUnpriced = bothUnpriced;
                         }
                     }
                 }

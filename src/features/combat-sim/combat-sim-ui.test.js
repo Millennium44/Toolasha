@@ -14954,6 +14954,25 @@ describe('upgrade results as cards', () => {
                 expect(within(cardNamed('Attack', 'levels'))).toBeNull();
             });
 
+            test('a combined run\'s unpriced cost makes the combined profit a ceiling, not "within noise"', () => {
+                const lvl = levelRow('Attack 135 → 140', 5, { profit: 1 });
+                lvl.noise = NOISY;
+                lvl.significantBy = NOT_SIGNIFICANT;
+                // The level alone priced everything; the combined run spends an item nothing prices
+                lvl.alongside = combined({
+                    noise: NOISY,
+                    significantBy: NOT_SIGNIFICANT,
+                    costUnpriced: ['Wisdom Coffee'],
+                });
+                ui._upgradeLevelSort = { key: 'profit', asc: true };
+                draw({}, [lvl]);
+                showCards();
+                const card = cardNamed('Attack', 'levels');
+                expect(within(card)).toBeNull();
+                expect(card.textContent).toContain('Profit gain is a ceiling');
+                expect(card.textContent).toContain('Wisdom Coffee');
+            });
+
             test('a level card with an unpriced running cost shows the ceiling, not "within noise"', () => {
                 const lvl = levelRow('Attack 135 → 140', 5, { profit: 1 });
                 lvl.noise = NOISY;
