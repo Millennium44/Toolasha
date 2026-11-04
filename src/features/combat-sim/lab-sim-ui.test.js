@@ -7593,7 +7593,7 @@ describe('large token, credit and cowbell figures in the lab tables', () => {
         expect(guild.textContent).toContain('715.0M');
         expect(guild.textContent).not.toContain('715,000,000');
         const guildDetail = container.querySelector('[data-skilling-exact-detail^="guild"]');
-        expect(guildDetail.textContent).toContain('Credits 715,000,000 credits');
+        expect(guildDetail.textContent).toContain('Cost 715,000,000 coins');
         expect(guildDetail.textContent).toContain('Tokens 3,000 guild tokens');
 
         const gold = [...container.querySelectorAll('tr[data-skilling-gold-row]')];
@@ -7891,5 +7891,281 @@ describe('Lab upgrade results as cards', () => {
         } finally {
             delete storage.values.labSimResultsView;
         }
+    });
+});
+
+describe('Lab upgrade cards: the review round', () => {
+    let container;
+    const KEY = 'labSimUpgradeResults-fullkit_me';
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        storage.written = {};
+        container = ui.panel.querySelector('#mwi-labsim-upgrade-results');
+        ui._viewChoices = { wide: 'cards', narrow: null };
+    });
+
+    afterEach(() => {
+        game.rememberUpgradeResults = false;
+        storage.values = {};
+        window.matchMedia = undefined;
+        ui.destroy();
+    });
+
+    const fight = (i, winRate) => ({
+        monsterHrid: `/monsters/m${i}`,
+        monsterName: `Monster ${i}`,
+        loadoutName: 'Loadout',
+        roomLevel: 100,
+        winRate,
+        winRateDelta: winRate - 0.5,
+        applied: true,
+        trials: 1000,
+    });
+    const allFights = (name = 'Gear') => ({
+        baseline: { fights: [fight(0, 0.5)], runClearChance: 0.5, expectedAttempts: 2 },
+        results: [
+            {
+                candidate: { type: 'tier', description: name },
+                costType: 'gold',
+                cost: 1_000_000,
+                fights: [fight(0, 0.6)],
+                appliedFights: 1,
+                expectedAttempts: 1.8,
+                attemptsDelta: -0.2,
+                attemptsDeltaNoise: 0.05,
+                significant: true,
+                avgWinDelta: 0.1,
+                attemptsSavedPerMillion: 0.2,
+                costDetail: null,
+            },
+        ],
+    });
+    const single = (name = 'Solo') => ({
+        baseline: { winRate: 0.5 },
+        results: [
+            {
+                candidate: { type: 'tier', description: name },
+                costType: 'gold',
+                cost: 1000,
+                winRate: 0.55,
+                winRateDelta: 0.05,
+                metricType: 'winRate',
+                costDetail: null,
+            },
+        ],
+    });
+    const shows = (selector) => container.querySelector(selector) !== null;
+
+    test('the last draw owns the shared container: single, all, single', () => {
+        ui._renderUpgradeResults(single(), container);
+        ui._renderAllFightsResults(allFights(), container);
+        ui._renderUpgradeResults(single(), container);
+        ui._pickLabView('table');
+        expect(shows('tr[data-gold-row]')).toBe(true);
+        expect(shows('tr[data-allfights-row]')).toBe(false);
+    });
+
+    test('the last draw owns the shared container: all, single, all', () => {
+        ui._renderAllFightsResults(allFights(), container);
+        ui._renderUpgradeResults(single(), container);
+        ui._renderAllFightsResults(allFights(), container);
+        ui._pickLabView('table');
+        expect(shows('tr[data-allfights-row]')).toBe(true);
+        expect(shows('tr[data-gold-row]')).toBe(false);
+    });
+
+    test('all, single, then a view tap leaves the status line and Export CSV alone', () => {
+        ui._renderAllFightsResults(allFights(), container);
+        ui._renderUpgradeResults(single(), container);
+        const status = vi.spyOn(ui, '_setStatus');
+        const csv = vi.spyOn(ui, '_addCsvExport');
+        ui._pickLabView('table');
+        expect(shows('tr[data-gold-row]')).toBe(true);
+        expect(status).not.toHaveBeenCalled();
+        expect(csv).not.toHaveBeenCalled();
+        // The all-fights table redrawing for a view change is quiet too
+        ui._renderAllFightsResults(allFights(), container);
+        status.mockClear();
+        ui._pickLabView('cards');
+        expect(status).not.toHaveBeenCalled();
+    });
+
+    test('checked swaps follow a view change, combat and skilling', () => {
+        const combat = document.createElement('div');
+        const skilling = document.createElement('div');
+        document.body.append(combat, skilling);
+        ui._renderAllFightsResults(allFights(), combat, { checked: true });
+        ui._renderSkillingUpgradeResults(
+            {
+                baseline: { clearRate: 0.6, xpPerRoom: 1 },
+                results: [
+                    {
+                        candidate: { type: 'skilling_gear', description: 'T', skillKey: '/skills/cooking' },
+                        costType: 'gold',
+                        cost: 10,
+                        clearRate: 0.7,
+                        clearRateDelta: 0.1,
+                    },
+                ],
+            },
+            skilling,
+            { checked: true }
+        );
+        expect(combat.querySelectorAll('.mwi-ucard')).toHaveLength(1);
+        ui._pickLabView('table');
+        expect(combat.querySelector('table')).not.toBeNull();
+        expect(combat.querySelectorAll('.mwi-ucard')).toHaveLength(0);
+        expect(skilling.querySelector('table')).not.toBeNull();
+        combat.remove();
+        skilling.remove();
+    });
+
+    test('a view tap during a plain simulation is paid when it ends, and the switch moves at the tap', async () => {
+        ui._renderUpgradeResults(single(), container);
+        ui.isRunning = true;
+        ui._pickLabView('table');
+        expect(container.querySelector('[data-card-view="table"]').getAttribute('aria-pressed')).toBe('true');
+        expect(container.querySelector('[data-card-view="cards"]').getAttribute('aria-pressed')).toBe('false');
+        expect(shows('table')).toBe(false);
+        ui.isRunning = false;
+        await settle();
+        expect(shows('table')).toBe(true);
+        ui._runStarting = true;
+        ui._pickLabView('cards');
+        expect(shows('.mwi-ucard')).toBe(false);
+        ui._runStarting = false;
+        await settle();
+        expect(shows('.mwi-ucard')).toBe(true);
+    });
+
+    test('an order-only run still has a switch after an earlier table', () => {
+        ui._renderUpgradeResults(single(), container);
+        // A new run empties the container; the earlier table registered a redraw that is now dead
+        container.innerHTML = '';
+        ui._upgradeOrderSection = {
+            groups: [
+                {
+                    loadoutName: 'Lab',
+                    currentName: 'A > B',
+                    orders: [
+                        {
+                            name: 'B > A',
+                            order: ['b', 'a'],
+                            attemptsDelta: -1,
+                            runClearDelta: 0.01,
+                            attemptsDeltaNoise: 0.1,
+                            significant: true,
+                        },
+                    ],
+                },
+            ],
+        };
+        ui._drawUpgradeAbilityOrder();
+        expect(ui._abilityOrderContainer().querySelector('[data-card-view]')).not.toBeNull();
+    });
+
+    test('a pull that removes the remembered result clears it in Cards too; a fresh run is never overwritten', async () => {
+        game.rememberUpgradeResults = true;
+        ui._saveLabUpgradeResults(single('Remembered'), { characterName: 'Me' });
+        await settle();
+        storage.values = { [KEY]: storage.written[KEY] };
+        container.innerHTML = '';
+        ui._upgradeRunStarted = false;
+        await ui._restoreUpgradeResults();
+        expect(container.textContent).toContain('Remembered');
+        expect(shows('.mwi-ucard')).toBe(true);
+        expect(shows('table')).toBe(false);
+
+        // Another device cleared it: the pull removes the key and the replace empties the Cards
+        storage.values = {};
+        await ui._restoreUpgradeResults({ replace: true });
+        expect(container.querySelector('.mwi-ucard')).toBeNull();
+        expect(container.querySelector('[data-upgrade-cards]')).toBeNull();
+
+        // A fresh run drawn as cards is not painted over by a restore that was out
+        ui._renderUpgradeResults(single('Fresh'), container);
+        storage.values = { [KEY]: storage.written[KEY] };
+        await ui._restoreUpgradeResults();
+        expect(container.textContent).toContain('Fresh');
+        expect(container.textContent).not.toContain('Remembered');
+    });
+
+    test('guild figures are coins, not credits', () => {
+        const analysis = {
+            baseline: { clearRate: 0.6, xpPerRoom: 100 },
+            results: [
+                {
+                    candidate: { type: 'guild_shrine', description: 'Shrine Lv9' },
+                    costType: 'guild',
+                    cost: 715_000_000,
+                    tokenCost: 3_000,
+                    clearRate: 0.65,
+                    clearRateDelta: 0.05,
+                },
+            ],
+        };
+        ui._renderSkillingUpgradeResults(analysis, container);
+        const card = container.querySelector('.mwi-ucard').textContent;
+        expect(card).toContain('Cost 715,000,000 coins');
+        expect(card).toContain('Tokens 3,000 guild tokens');
+        expect(container.textContent).not.toMatch(/\d credits/);
+        container.querySelector('[data-card-glossary]').click();
+        expect(container.querySelector('.mwi-ucards-gloss-body').textContent).not.toMatch(/Guild credits|Credits per/);
+        ui._pickLabView('table');
+        expect(container.textContent).not.toContain('Credits');
+    });
+
+    test('Rank by does not claim Name while the gear cards are in analysis order', () => {
+        ui._allFightsSort = undefined;
+        ui._renderAllFightsResults(allFights(), container);
+        const select = container.querySelector('[data-card-rank]');
+        expect(select.querySelector('option[selected]').textContent).toBe('Analysis order');
+        select.value = 'cost';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(ui._allFightsSort).toEqual({ key: 'cost', dir: 'asc' });
+        const back = container.querySelector('[data-card-rank]');
+        back.value = '';
+        back.dispatchEvent(new window.Event('change', { bubbles: true }));
+        expect(ui._allFightsSort).toBeNull();
+    });
+
+    test('a panel rebuilt before the write lands keeps the pick', async () => {
+        const storageModule = (await import('../../core/storage.js')).default;
+        let release;
+        const set = vi
+            .spyOn(storageModule, 'set')
+            .mockImplementation(() => new Promise((resolve) => (release = () => resolve(true))));
+        try {
+            ui._viewChoices = { wide: null, narrow: null };
+            ui._pickLabView('cards');
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            expect(ui._viewChoices.wide).toBe('cards');
+        } finally {
+            release?.();
+            set.mockRestore();
+        }
+    });
+
+    test('a missing all-fights token cost reads unknown in the table as it does on the card', () => {
+        const data = allFights();
+        data.results.push({
+            ...data.results[0],
+            candidate: { type: 'token', description: 'No cost token' },
+            costType: 'token',
+            cost: null,
+            tokenCost: undefined,
+            attemptsSavedPerHundredTokens: 0.1,
+        });
+        ui._viewChoices = { wide: 'table', narrow: null };
+        ui._renderAllFightsResults(data, container);
+        const tableCell = container.querySelector('tr[data-allfights-token-row] td:nth-child(2)').textContent.trim();
+        ui._pickLabView('cards');
+        const card = [...container.querySelectorAll('.mwi-ucard')].find((c) => c.textContent.includes('No cost token'));
+        expect(tableCell).toBe('unknown');
+        expect(card.textContent).toContain('unknown');
     });
 });

@@ -1036,6 +1036,24 @@ class LabSimUI {
         if (!value) Promise.resolve().then(() => this._flushViewRedraw?.());
     }
 
+    get isRunning() {
+        return Boolean(this._isRunningFlag);
+    }
+
+    set isRunning(value) {
+        this._isRunningFlag = value;
+        if (!value) Promise.resolve().then(() => this._flushViewRedraw?.());
+    }
+
+    get _runStarting() {
+        return Boolean(this._runStartingFlag);
+    }
+
+    set _runStarting(value) {
+        this._runStartingFlag = value;
+        if (!value) Promise.resolve().then(() => this._flushViewRedraw?.());
+    }
+
     get _skillingRunning() {
         return Boolean(this._skillingRunningFlag);
     }
@@ -6832,6 +6850,11 @@ class LabSimUI {
     _pickLabView(view) {
         this._viewChoices = withViewChoice(this._viewChoices, this._isNarrow(), view);
         void this._persistViewChoices();
+        // The tap shows at once even when the redraw has to wait for a run
+        const shown = this._labView();
+        this.panel?.querySelectorAll('[data-card-view]').forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.getAttribute('data-card-view') === shown));
+        });
         this._redrawForViewChange();
     }
 
@@ -6859,7 +6882,44 @@ class LabSimUI {
      * @private
      */
     _registerViewRedraw(key, container, redraw) {
-        this._viewRedraws.set(key, { container, redraw, view: this._labView() });
+        // The last draw owns a container: an area of another kind drawn there earlier is no longer on screen
+        for (const [other, entry] of this._viewRedraws) {
+            if (other !== key && entry.container === container) this._viewRedraws.delete(other);
+        }
+        this._viewRedraws.set(key, { container, redraw, view: this._labView(), first: container.firstElementChild });
+    }
+
+    /**
+     * Whether a registered area is still what its container shows: the container was not emptied or drawn into by
+     * something else since (a redraw replaces its first element, and so does every other writer).
+     * @param {{container: HTMLElement, first: Element|null}} entry - From `_registerViewRedraw`
+     * @returns {boolean}
+     * @private
+     */
+    _isAreaLive(entry) {
+        return Boolean(entry.first) && entry.container.isConnected && entry.container.firstElementChild === entry.first;
+    }
+
+    /**
+     * Whether the Upgrade tab's results container still shows a table or cards (so its own Cards | Table switch
+     * is on screen).
+     * @returns {boolean}
+     * @private
+     */
+    _hasLiveUpgradeResults() {
+        return [...this._viewRedraws.values()].some(
+            (entry) => entry.container.id === 'mwi-labsim-upgrade-results' && this._isAreaLive(entry)
+        );
+    }
+
+    /**
+     * Whether a results container holds a drawn table or cards.
+     * @param {HTMLElement|null} container - The results container
+     * @returns {boolean}
+     * @private
+     */
+    _hasDrawnResults(container) {
+        return Boolean(container?.querySelector('table, [data-upgrade-cards]'));
     }
 
     /**
@@ -6880,7 +6940,7 @@ class LabSimUI {
         }
         this._viewRedrawOwed = false;
         for (const [key, entry] of stale) {
-            if (!entry.container.isConnected || !entry.container.querySelector('[data-card-view]')) {
+            if (!this._isAreaLive(entry)) {
                 this._viewRedraws.delete(key);
                 continue;
             }
@@ -7039,10 +7099,14 @@ class LabSimUI {
     /** Remember the pick, counting the edit so a read that was out does not overwrite it @private */
     async _persistViewChoices() {
         this._viewEdits = (this._viewEdits || 0) + 1;
+        // The write is debounced and a read sees only what has landed: while one is out, memory is the newer copy
+        this._viewWritesOut = (this._viewWritesOut || 0) + 1;
         try {
             await storage.set(RESULTS_VIEW_KEY, this._viewChoices, 'settings');
         } catch (error) {
             console.error('[LabSimUI] Failed to save the results view:', error);
+        } finally {
+            this._viewWritesOut -= 1;
         }
     }
 
@@ -7052,9 +7116,11 @@ class LabSimUI {
      */
     async _loadViewChoices() {
         const editsBefore = this._viewEdits || 0;
+        // A pick still being written is newer than anything a read can return
+        if (this._viewWritesOut > 0) return;
         try {
             const saved = await storage.get(RESULTS_VIEW_KEY, 'settings', null);
-            if ((this._viewEdits || 0) !== editsBefore) return;
+            if ((this._viewEdits || 0) !== editsBefore || this._viewWritesOut > 0) return;
             this._viewChoices = normalizeViewChoices(saved);
             this._redrawForViewChange();
         } catch (error) {
@@ -8021,7 +8087,7 @@ class LabSimUI {
             `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
             `simulated and ranked by expected attempts saved. Free to apply: set it in the game.</div>` +
             // An order-only run has no table above to switch from, so the section brings the switch itself
-            (this._viewRedraws.has('combat') || this._viewRedraws.has('single') ? '' : this._labViewSwitchHtml()) +
+            (this._hasLiveUpgradeResults() ? '' : this._labViewSwitchHtml()) +
             verifyNote +
             body +
             toggle +
@@ -8289,7 +8355,10 @@ class LabSimUI {
         const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
         // The gear rows as cards, in the order the table sorted them
         const redrawAll = () =>
-            this._renderAllFightsResults(checked ? analysisResult : this._allFightsResult, container, options);
+            this._renderAllFightsResults(checked ? analysisResult : this._allFightsResult, container, {
+                ...options,
+                quiet: true,
+            });
         if (!levelsOnly && asCards) {
             html += this._allFightsGearCards({
                 sorted,
@@ -8670,7 +8739,7 @@ class LabSimUI {
                     : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-token-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
-                <td style="${tdStyle} color:#aaa;">${shortFigure(r.tokenCost || 0)}</td>
+                <td style="${tdStyle} color:#aaa;">${Number.isFinite(r.tokenCost) ? shortFigure(r.tokenCost) : UNKNOWN_TEXT}</td>
                 <td style="${tdStyle} color:${measured && r.attemptsSavedPerHundredTokens > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perTokens(r.attemptsSavedPerHundredTokens ?? null)}</td>
                 <td style="${tdStyle}">${fmtAttempts(r.expectedAttempts)}</td>
                 <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'};"
@@ -8839,6 +8908,8 @@ class LabSimUI {
             emptyText: 'No upgrades to show.',
             rank: {
                 options: [
+                    // No sort in force: the analysis's own order, which no column header names
+                    { key: '', label: 'Analysis order' },
                     { key: 'upgrade', label: 'Name' },
                     { key: 'cost', label: 'Cost' },
                     { key: 'perMillion', label: 'Per 1M' },
@@ -8849,7 +8920,7 @@ class LabSimUI {
                 ],
                 state: sort || null,
                 bestDir,
-                apply: (key) => setSort({ key, dir: SORTS[key].dir }),
+                apply: (key) => setSort(SORTS[key] ? { key, dir: SORTS[key].dir } : null),
                 bestFirst: () => {
                     if (sort?.key && SORTS[sort.key]) setSort({ key: sort.key, dir: SORTS[sort.key].dir });
                 },
@@ -9055,7 +9126,7 @@ class LabSimUI {
         try {
             const panel = this.panel;
             const container = panel?.querySelector('#mwi-labsim-upgrade-results');
-            if (!container || (container.querySelector('table') && !replace)) return;
+            if (!container || (this._hasDrawnResults(container) && !replace)) return;
             // The read is scoped to whoever is current now; captured so a switch while it is out is noticed
             const ownerId = dataManager.getCurrentCharacterId();
             const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
@@ -9066,7 +9137,7 @@ class LabSimUI {
             // or finished while it was out owns the panel, and the older saved payload must not paint over it
             if (this._upgradeRunning || this._upgradeRunStarted) return;
             if (!payload) {
-                if (replace && this.panel && (container.querySelector('table') || this._upgradeOrderSection)) {
+                if (replace && this.panel && (this._hasDrawnResults(container) || this._upgradeOrderSection)) {
                     this._restoredUpgradeAt = null;
                     this._restoredUpgradeMeta = null;
                     container.innerHTML = '';
@@ -9075,7 +9146,7 @@ class LabSimUI {
                 }
                 return;
             }
-            if (!this.panel || (container.querySelector('table') && !replace)) return;
+            if (!this.panel || (this._hasDrawnResults(container) && !replace)) return;
             this._restoredUpgradeAt = payload.savedAt || null;
             this._restoredUpgradeMeta = {
                 characterName: payload.characterName || null,
@@ -11124,9 +11195,9 @@ class LabSimUI {
                 tokenCost: r.tokenCost || 0,
                 tokenCostStr: shortFigure(r.tokenCost || 0),
                 exactHtml: exactFiguresHtml([
-                    { label: 'Credits', value: r.cost == null ? null : cost, unit: 'credits' },
+                    { label: 'Cost', value: r.cost == null ? null : cost, unit: 'coins' },
                     { label: 'Tokens', value: r.tokenCost || 0, unit: 'guild tokens' },
-                    { label: 'Gold/1%', value: goldPerPct > 0 ? goldPerPct : null, unit: 'credits' },
+                    { label: 'Gold/1%', value: goldPerPct > 0 ? goldPerPct : null, unit: 'coins' },
                 ]),
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
@@ -11307,7 +11378,7 @@ class LabSimUI {
                 '<div class="mwi-utable-wrap"><table class="mwi-utable-pick" style="width:100%; border-collapse:collapse; font-size:11px; margin-bottom:4px;">';
             html += `<thead><tr>
                 ${pickTh}${th('Upgrade', 'desc', 'left')}
-                ${th('Credits', 'cost', 'right')}
+                ${th('Cost', 'cost', 'right')}
                 ${th('Tokens', 'tokenCost', 'right')}
                 ${th('Clear Rate', 'clearRate', 'right')}
                 ${th('Delta', 'deltaVal', 'right')}${roomLevels ? th('Levels', 'roomLevelDelta', 'right') + th('Floor', 'floorVal', 'right') : ''}
@@ -11330,8 +11401,9 @@ class LabSimUI {
             });
             html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
-                Credits are valued at the cheapest items that convert into them. Guild tokens are counted, not
-                priced — nothing converts into them — so Gold/1% covers the credits only.${
+                Cost is in coins: the shrine credits at the cheapest items that convert into them, plus the guild
+                tokens at the guild shop's exchange rate when one is known (with none, the credits alone). The
+                tokens are also counted in their own column.${
                     guildRows.some((row) => row.shrineNote)
                         ? ' <span style="color:#ff9800;">*</span> needs a guild shrine upgrade first.'
                         : ''
@@ -11586,7 +11658,7 @@ class LabSimUI {
                 emptyText: 'No guild shrines to show.',
                 options: [
                     { key: 'desc', label: 'Name' },
-                    { key: 'cost', label: 'Credits' },
+                    { key: 'cost', label: 'Cost' },
                     { key: 'tokenCost', label: 'Tokens' },
                     { key: 'clearRate', label: 'Clear rate' },
                     { key: 'deltaVal', label: 'Delta' },
@@ -11604,10 +11676,10 @@ class LabSimUI {
                 columns: [
                     {
                         key: 'cost',
-                        label: 'Credits',
+                        label: 'Cost',
                         band: 'face',
                         html: (row) => dashToUnknown(row.costStr),
-                        title: 'Guild credits, valued at the cheapest items that convert into them.',
+                        title: 'Coins: the shrine credits at the cheapest items that convert into them, plus the guild tokens at the exchange rate when one is known.',
                     },
                     {
                         key: 'tokenCost',
@@ -11622,7 +11694,7 @@ class LabSimUI {
                         label: 'Gold/1%',
                         band: 'face',
                         html: (row) => (row.costStr === '\u2014' ? UNKNOWN_TEXT : row.goldPerPctStr),
-                        title: 'Credits per +1 percentage point of clear rate. It covers the credits only, not the tokens.',
+                        title: 'Coins per +1 percentage point of clear rate, on the Cost above.',
                     },
                     deltaColumn,
                     xpColumn,
