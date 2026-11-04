@@ -118,6 +118,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/script-version.js')), 'Toolasha.Utils.scriptVersion'],
     [normalize(join(__dirname, 'src/utils/dom.js')), 'Toolasha.Utils.dom'],
     [normalize(join(__dirname, 'src/utils/dom-observer-helpers.js')), 'Toolasha.Utils.domObserverHelpers'],
+    [normalize(join(__dirname, 'src/utils/phone-compact-buttons.js')), 'Toolasha.Utils.phoneCompactButtons'],
     [normalize(join(__dirname, 'src/utils/timer-registry.js')), 'Toolasha.Utils.timerRegistry'],
     [normalize(join(__dirname, 'src/utils/bonus-revenue-calculator.js')), 'Toolasha.Utils.bonusRevenueCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-multipliers.js')), 'Toolasha.Utils.enhancementMultipliers'],

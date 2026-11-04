@@ -13,8 +13,10 @@ describe('sim phone layout', () => {
         expect(document.querySelectorAll(`#${SIM_PHONE_STYLE_ID}`)).toHaveLength(1);
     });
 
-    it('wraps the lab crate row at phone width only', () => {
-        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-labsim-crate-row \{ flex-wrap: wrap; \}/);
+    it('lays the lab crate row on one grid line, labels beside their selects, at phone width only', () => {
+        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-labsim-crate-row \{\s*display: grid/);
+        expect(SIM_PHONE_CSS).toContain('grid-template-columns: repeat(3, auto minmax(0, 1fr))');
+        expect(SIM_PHONE_CSS).not.toContain('flex-wrap');
     });
 
     it('spans both sim panels across the viewport at phone width, over any saved geometry', () => {

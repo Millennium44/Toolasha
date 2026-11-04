@@ -24,7 +24,13 @@ export const SIM_PHONE_CSS = `
             max-width: 100vw !important;
             box-sizing: border-box;
         }
-        #mwi-labsim-crate-row { flex-wrap: wrap; }
+        /* Tea, Coffee and Food share one line; a grid keeps each label beside its select */
+        #mwi-labsim-crate-row {
+            display: grid !important;
+            grid-template-columns: repeat(3, auto minmax(0, 1fr));
+            gap: 6px !important;
+        }
+        #mwi-labsim-crate-row > select { min-width: 0; width: 100%; }
         /* Zone takes a line of its own (label + select); Tier, Hours and Simulate wrap onto the next */
         #mwi-csim-zone { flex: 1 1 calc(100% - 60px) !important; }
     }

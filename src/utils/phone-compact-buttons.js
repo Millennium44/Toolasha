@@ -7,14 +7,13 @@
  * start of the line. Wider than that the stylesheet is inert and the inline look is untouched.
  */
 
-import { MARKET_MOBILE_QUERY } from '../features/market/market-mobile-layout.js';
 import { addStyles } from './dom.js';
 
 export const PHONE_COMPACT_BUTTONS_STYLE_ID = 'mwi-phone-compact-buttons';
 
 /** The stylesheet text. Exported so tests can read the rules without a layout engine. */
 export const PHONE_COMPACT_BUTTONS_CSS = `
-    @media ${MARKET_MOBILE_QUERY} {
+    @media (max-width: 768px) {
         .mwi-philo-calc-button,
         .mwi-xph-calc-btn {
             width: fit-content;

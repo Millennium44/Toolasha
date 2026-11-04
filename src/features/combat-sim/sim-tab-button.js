@@ -5,7 +5,8 @@
  * neighboring tabs' font size, padding and height by itself. The compact
  * 12px / 4px 10px sizing only belongs on a wide screen, so it is a stylesheet
  * rule scoped to wide screens rather than inline styles, which would also win
- * on a phone. Same breakpoint as MARKET_MOBILE_QUERY.
+ * on a phone. Same breakpoint as MARKET_MOBILE_QUERY. It is `!important` because
+ * the game's tab class has the same specificity and, measured live, wins without it.
  */
 
 import { addStyles, removeStyles } from '../../utils/dom.js';
@@ -13,7 +14,7 @@ import { addStyles, removeStyles } from '../../utils/dom.js';
 const STYLE_ID = 'toolasha-sim-tab-style';
 const SIM_TAB_SELECTOR = '.toolasha-combat-sim-btn, .toolasha-lab-sim-btn';
 const CSS = `@media (min-width: 769px) {
-    ${SIM_TAB_SELECTOR} { padding: 4px 10px; font-size: 12px; }
+    ${SIM_TAB_SELECTOR} { padding: 4px 10px !important; font-size: 12px !important; }
 }`;
 
 /**

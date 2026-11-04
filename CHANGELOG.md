@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Phone header shows the zone during combat
+
+At phone width the battle number no longer squeezes out the zone name beside the boss countdown, and the header stays on screen instead of pushing your avatar off the edge. The battle number is still on the Combat page's Battle tab.
+
+### Tidier phone screens
+
+- Combat Sim and Lab Sim panels span the phone's width, Zone gets its own line and Lab Sim's Food dropdown is no longer cut off.
+- Per-player, Philo Gamba and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
+- Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
+
+### Buff Board rows are easier to read
+
+Each source line now sits with its own row, rows have a clear divider, and a source that only repeats the section title is left out.
+
 ### Fills during a reload prompt no longer double
 
 A market fill that lands while a sync or restore is waiting for a reload now shows once after the reload, instead of twice until the listing ends. A sync pull also keeps a day another tab wrote since the pull began.

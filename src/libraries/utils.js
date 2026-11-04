@@ -16,6 +16,7 @@ import * as dom from '../utils/dom.js';
 import * as mobile from '../utils/mobile.js';
 import * as visualViewport from '../utils/visual-viewport.js';
 import * as domObserverHelpers from '../utils/dom-observer-helpers.js';
+import * as phoneCompactButtons from '../utils/phone-compact-buttons.js';
 import * as timerRegistry from '../utils/timer-registry.js';
 import * as bonusRevenueCalculator from '../utils/bonus-revenue-calculator.js';
 import * as enhancementMultipliers from '../utils/enhancement-multipliers.js';
@@ -220,6 +221,7 @@ toolashaRoot.Utils = {
     mobile,
     visualViewport,
     domObserverHelpers,
+    phoneCompactButtons,
     timerRegistry,
     bonusRevenueCalculator,
     enhancementMultipliers,
