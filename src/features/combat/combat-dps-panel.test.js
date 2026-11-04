@@ -335,6 +335,8 @@ describe('the opener, and the lifecycle', () => {
         expect(button().nextElementSibling).toBe(battle);
         expect(button().style.position).toBe('relative');
         expect(button().style.zIndex).toBe('auto');
+        // Docked, it stays a compact button rather than a bar across the whole row
+        expect(button().style.width).toBe('fit-content');
         expect(area.textContent).toBe('727 DPS');
         // Only the battle area remounts; the docked opener itself is still
         // connected above it. Its desktop home must switch to the new tiles.
@@ -354,6 +356,7 @@ describe('the opener, and the lifecycle', () => {
         expect(button().parentElement).toBe(newArea);
         expect(button().style.position).toBe('absolute');
         expect(button().style.top).toBe('2px');
+        expect(button().style.width).toBe('');
         feature.cleanup();
         expect(area.style.position).toBe('');
         // The new native area's existing position is not ours to erase.

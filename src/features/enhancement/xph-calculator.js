@@ -26,6 +26,7 @@ import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { ensurePhoneCompactButtonStyles } from '../../utils/phone-compact-buttons.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -316,6 +317,7 @@ class XPHCalculator {
         btn.addEventListener('mouseover', () => (btn.style.background = BUTTON_LOOK.primary.hover));
         btn.addEventListener('mouseout', () => (btn.style.background = BUTTON_LOOK.primary.rest));
         btn.addEventListener('click', () => this._toggle());
+        ensurePhoneCompactButtonStyles();
         panel.insertBefore(btn, panel.firstChild);
     }
 

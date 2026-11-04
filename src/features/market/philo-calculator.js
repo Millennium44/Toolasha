@@ -39,6 +39,7 @@ import {
 } from '../../utils/untradable-cape.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
+import { ensurePhoneCompactButtonStyles } from '../../utils/phone-compact-buttons.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
 const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
@@ -314,6 +315,7 @@ class PhiloCalculator {
             button.textContent = 'Philo Gamba';
             styleGameButton(button, 'primary');
             button.style.margin = '10px';
+            ensurePhoneCompactButtonStyles();
 
             button.addEventListener('click', () => {
                 this.openModal();

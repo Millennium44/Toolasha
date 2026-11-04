@@ -1323,8 +1323,10 @@ function inject() {
             measure:
                 battleArea.closest('[class*="GamePage_mainPanel"], [class*="GamePage_gamePanel"]') ||
                 battleArea.parentElement,
+            // The dock gives a toolbar the full row; this one stays the small desktop button. The dock saved
+            // the wide width before this runs and puts it back before onChange(false).
             onChange: (narrow) => {
-                button.style.minHeight = narrow ? '28px' : '';
+                if (narrow) button.style.width = 'fit-content';
             },
         });
     }
