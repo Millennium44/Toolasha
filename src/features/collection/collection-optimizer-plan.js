@@ -454,7 +454,8 @@ export function bestOptions(counts, index, { maxSeconds = Infinity, sellable, bu
  * Takes the first option in the sort's order, credits every count it adds (the
  * target and anything else the route collects), counts what it sells against
  * what the market takes, and looks again: the item's next rung is then on
- * offer at its new price. Stops at the target or after `maxSteps`.
+ * offer at its new price. Stops at the target, when no option is left, or after `maxSteps`
+ * (`capped` tells the last two apart: the step limit stopped it with options still on offer).
  * @param {Map<string, number>} counts - Current counts (not modified)
  * @param {Map<string, Array<Object>>} index - From {@link indexRoutes}
  * @param {number} targetPoints - Points wanted
@@ -465,7 +466,8 @@ export function bestOptions(counts, index, { maxSeconds = Infinity, sellable, bu
  * @param {(purchase: Object, units: number, already: number) => Object} [opts.buyQuote] - What buying a source
  *   costs after `already` units were bought by earlier steps ({@link buyCost})
  * @param {string} [opts.sort='profit'] - A {@link SORT_MODES} key
- * @returns {{steps: Array<Object>, points: number, gold: number, seconds: number, reached: boolean}}
+ * @returns {{steps: Array<Object>, points: number, gold: number, seconds: number, reached: boolean,
+ *   capped: boolean, maxSteps: number}}
  */
 export function planTarget(
     counts,
@@ -499,5 +501,26 @@ export function planTarget(
         seconds += pick.seconds;
         steps.push(pick);
     }
-    return { steps, points: gained, gold, seconds, reached: gained >= want };
+    const reached = gained >= want;
+    // Out of steps with a rung still on offer: the plan is short because of the limit, not the options
+    const capped =
+        !reached &&
+        steps.length >= maxSteps &&
+        bestOptions(working, index, { maxSeconds, sellable: room, buyQuote: quote, sort }).length > 0;
+    return { steps, points: gained, gold, seconds, reached, capped, maxSteps };
+}
+
+/**
+ * The line over a plan: what it reached, and why it stopped short when it did.
+ * @param {{points: number, reached: boolean, capped?: boolean, maxSteps?: number}} plan - From {@link planTarget}
+ * @param {number} wanted - Points asked for
+ * @param {string} totals - The cost and time summary
+ * @returns {string}
+ */
+export function planHeadline(plan, wanted, totals) {
+    if (plan.reached) return `+${plan.points} points: ${totals}`;
+    if (plan.capped) {
+        return `Stopped at the ${plan.maxSteps}-step limit with +${plan.points} of +${wanted} points; more are on offer: ${totals}`;
+    }
+    return `Only +${plan.points} points found: ${totals}`;
 }

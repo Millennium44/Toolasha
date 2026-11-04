@@ -57,6 +57,7 @@ import {
     collectionCounts,
     indexRoutes,
     nextAchievementTarget,
+    planHeadline,
     planTarget,
     totalCollectionPoints,
     validSort,
@@ -1490,9 +1491,7 @@ class CollectionOptimizer {
             });
             result.replaceChildren();
             const totals = `net ${formatNet(plan.gold)} gold, ${timeReadable(plan.seconds)}`;
-            const head = plan.reached
-                ? `+${plan.points} points: ${totals}`
-                : `Only +${plan.points} points found: ${totals}`;
+            const head = planHeadline(plan, wanted, totals);
             result.appendChild(el('div', 'color:#9cf;', head));
             const list = el('ol', 'margin:2px 0 4px 18px;padding:0;');
             for (const step of plan.steps) {

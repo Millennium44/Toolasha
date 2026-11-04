@@ -21,6 +21,7 @@ import {
     evaluateOption,
     indexRoutes,
     nextAchievementTarget,
+    planHeadline,
     planTarget,
     pointsStep,
     totalCollectionPoints,
@@ -281,6 +282,55 @@ describe('the "+N points" plan', () => {
         const counts = new Map([['/items/cheese', 5]]);
         planTarget(counts, indexRoutes({ sources: [cheeseSword()] }), 10);
         expect(counts.get('/items/cheese')).toBe(5);
+    });
+});
+
+describe('a plan that stops at its step limit', () => {
+    const index = () => indexRoutes({ sources: [cheeseSword('shop', 50)] });
+
+    test('the limit stopping it is told apart from running out of options', () => {
+        const limited = planTarget(new Map(), index(), 1e9, { maxSteps: 2 });
+        expect(limited.steps).toHaveLength(2);
+        expect(limited.reached).toBe(false);
+        expect(limited.capped).toBe(true);
+        expect(limited.maxSteps).toBe(2);
+
+        // Nothing on offer within the time: out of options, not out of steps
+        const timed = planTarget(new Map(), index(), 1e9, { maxSteps: 2, maxSeconds: 1 });
+        expect(timed).toMatchObject({ steps: [], reached: false, capped: false });
+        // Empty index and a zero limit
+        expect(planTarget(new Map(), new Map(), 5, { maxSteps: 0 }).capped).toBe(false);
+        expect(planTarget(new Map(), index(), 5, { maxSteps: 0 }).capped).toBe(true);
+    });
+
+    test('a target reached on the last step is not capped', () => {
+        const plan = planTarget(new Map(), index(), 3, { maxSteps: 1 });
+        expect(plan).toMatchObject({ reached: true, capped: false });
+    });
+
+    test('the default limit is 300 steps', () => {
+        // 40 items, each with a ladder of a dozen rungs: more than 300 steps on offer
+        const craft = Array.from({ length: 40 }, (_, i) => ({
+            route: 'craft',
+            itemHrid: `/items/item_${i}`,
+            unitCost: 10 + i,
+            unitSeconds: 1,
+        }));
+        const plan = planTarget(new Map(), indexRoutes({ craft }), 1e9);
+        expect(plan.steps).toHaveLength(300);
+        expect(plan.capped).toBe(true);
+        expect(plan.maxSteps).toBe(300);
+    });
+
+    test('the headline names the limit only when the limit stopped it', () => {
+        const totals = 'net 1 gold, 1s';
+        expect(planHeadline({ points: 5, reached: true, capped: false }, 5, totals)).toBe('+5 points: net 1 gold, 1s');
+        expect(planHeadline({ points: 2, reached: false, capped: false }, 5, totals)).toBe(
+            'Only +2 points found: net 1 gold, 1s'
+        );
+        const capped = planHeadline({ points: 2, reached: false, capped: true, maxSteps: 300 }, 5, totals);
+        expect(capped).toContain('300-step limit');
+        expect(capped).toContain('+2 of +5');
     });
 });
 
