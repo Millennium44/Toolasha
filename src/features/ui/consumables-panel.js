@@ -2528,7 +2528,7 @@ class ConsumablesPanel {
             option.value = value;
             option.textContent = label;
             // The game's dark theme does not reach native dropdown lists
-            option.style.background = '#101420';
+            option.style.background = GAME_COLORS.inputBackground;
             option.style.color = COLORS.text;
             select.appendChild(option);
         }

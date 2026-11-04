@@ -74,6 +74,7 @@ import { exportEverythingJSON, importEverything } from '../../utils/full-backup.
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
@@ -1591,7 +1592,8 @@ class SettingsUI {
             'A preset turns feature switches on and off in one go. Numbers, dropdowns and colors are left alone, ' +
             'and Restore undoes the last one. A mode — the pressed-in chip — is not a one-off: it stays on ' +
             'alongside whichever preset you pick.';
-        note.style.cssText = 'font-size: 11px; color: #666; margin-bottom: 8px; line-height: 1.4;';
+        note.style.cssText =
+            'font-size: 11px; color: ' + GAME_COLORS.textDim + '; margin-bottom: 8px; line-height: 1.4;';
         wrapper.appendChild(note);
 
         const row = document.createElement('div');
@@ -4593,7 +4595,7 @@ class SettingsUI {
         const dragHandle = document.createElement('span');
         dragHandle.textContent = '⋮⋮';
         dragHandle.style.cssText = `
-            color: #666;
+            color: ${GAME_COLORS.textDim};
             font-size: 16px;
             cursor: move;
         `;
@@ -4603,7 +4605,7 @@ class SettingsUI {
         content.style.cssText = 'flex: 1; color: #e0e0e0; font-size: 13px;';
 
         if (item.type === 'variable') {
-            content.innerHTML = `<strong style="color: var(--color-text-dark-mode, #e7e7e7);">${item.label}</strong> <span style="color: #666; font-family: monospace;">${item.key}</span>`;
+            content.innerHTML = `<strong style="color: var(--color-text-dark-mode, #e7e7e7);">${item.label}</strong> <span style="color: ${GAME_COLORS.textDim}; font-family: monospace;">${item.key}</span>`;
         } else {
             // Editable text
             const textInput = document.createElement('input');

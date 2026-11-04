@@ -1241,7 +1241,7 @@ export function protectSweepHTML({
         return (
             '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
             '<div class="mwi-enh-toggle" data-target="mwi-enh-protsweep" style="color: #9bd; font-weight: bold; font-size: 0.95em; cursor: pointer;">' +
-            `Protect-from sweep to +${targetLevel} <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>` +
+            `Protect-from sweep to +${targetLevel} <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>` +
             mirrorSummaryLine(mirrorSummary, coins) +
             '<div id="mwi-enh-protsweep" style="display: none;">' +
             pickerHTML +
@@ -1342,7 +1342,7 @@ function formatEnhancementDisplay(
 
     if (totalSuccess > 0) {
         lines.push(
-            `<div class="mwi-enh-toggle" data-target="mwi-enh-success" style="color: #88ff88; cursor: pointer;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-success" style="color: #88ff88; cursor: pointer;"><span style="color: #888;">Success:</span> +${totalSuccess.toFixed(2)}% <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>`
         );
         lines.push('<div id="mwi-enh-success" style="display: none;">');
 
@@ -1363,7 +1363,7 @@ function formatEnhancementDisplay(
             });
             const finalRate = Math.min(100, baseRate * successMultiplier);
             lines.push(
-                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">+${currentLevel} → +${currentLevel + 1}:</span> ${baseRate}% → ${finalRate.toFixed(2)}%</div>`
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">+${currentLevel} → +${currentLevel + 1}:</span> ${baseRate}% → ${finalRate.toFixed(2)}%</div>`
             );
         }
 
@@ -1373,30 +1373,30 @@ function formatEnhancementDisplay(
 
         if (equipmentSuccess > 0) {
             lines.push(
-                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentSuccess.toFixed(2)}%</div>`
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Equipment:</span> +${equipmentSuccess.toFixed(2)}%</div>`
             );
             const successSlots = (params.slotBreakdown || []).filter((s) => s.success > 0);
             for (const slot of successSlots) {
                 const label = slot.enhancementLevel > 0 ? `${slot.name} +${slot.enhancementLevel}` : slot.name;
                 lines.push(
-                    `<div style="color: #88ff88; font-size: 0.75em; padding-left: 20px;"><span style="color: #555;">└</span> ${label}: +${slot.success.toFixed(2)}%</div>`
+                    `<div style="color: #88ff88; font-size: 0.75em; padding-left: 20px;"><span style="color: ${GAME_COLORS.textDim};">└</span> ${label}: +${slot.success.toFixed(2)}%</div>`
                 );
             }
         }
         if (houseSuccess > 0) {
             lines.push(
-                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${houseSuccess.toFixed(2)}%</div>`
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">House (Observatory):</span> +${houseSuccess.toFixed(2)}%</div>`
             );
         }
         const achievementSuccess = params.achievementSuccessBonus || 0;
         if (achievementSuccess > 0) {
             lines.push(
-                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementSuccess.toFixed(2)}%</div>`
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Achievement:</span> +${achievementSuccess.toFixed(2)}%</div>`
             );
         }
         if (successLevelAdvantage > 0) {
             lines.push(
-                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`
+                `<div style="color: #88ff88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Level advantage:</span> +${successLevelAdvantage.toFixed(2)}%</div>`
             );
         }
         lines.push('</div>');
@@ -1407,51 +1407,51 @@ function formatEnhancementDisplay(
 
     if (totalSpeed > 0) {
         lines.push(
-            `<div class="mwi-enh-toggle" data-target="mwi-enh-speed" style="color: #88ccff; cursor: pointer;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-speed" style="color: #88ccff; cursor: pointer;"><span style="color: #888;">Speed:</span> +${totalSpeed.toFixed(1)}% <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>`
         );
         lines.push('<div id="mwi-enh-speed" style="display: none;">');
 
         // Show breakdown from buff maps (each value is decimal, convert to %)
         if (speedBreakdown.equipment > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${(speedBreakdown.equipment * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Equipment:</span> +${(speedBreakdown.equipment * 100).toFixed(1)}%</div>`
             );
             const speedSlots = (params.slotBreakdown || []).filter((s) => s.speed > 0);
             for (const slot of speedSlots) {
                 const label = slot.enhancementLevel > 0 ? `${slot.name} +${slot.enhancementLevel}` : slot.name;
                 lines.push(
-                    `<div style="color: #aaddff; font-size: 0.75em; padding-left: 20px;"><span style="color: #555;">└</span> ${label}: +${slot.speed.toFixed(1)}%</div>`
+                    `<div style="color: #aaddff; font-size: 0.75em; padding-left: 20px;"><span style="color: ${GAME_COLORS.textDim};">└</span> ${label}: +${slot.speed.toFixed(1)}%</div>`
                 );
             }
         }
         if (speedBreakdown.house > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House (Observatory):</span> +${(speedBreakdown.house * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">House (Observatory):</span> +${(speedBreakdown.house * 100).toFixed(1)}%</div>`
             );
         }
         if (speedBreakdown.community > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community:</span> +${(speedBreakdown.community * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Community:</span> +${(speedBreakdown.community * 100).toFixed(1)}%</div>`
             );
         }
         if (speedBreakdown.consumable > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Tea:</span> +${(speedBreakdown.consumable * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Tea:</span> +${(speedBreakdown.consumable * 100).toFixed(1)}%</div>`
             );
         }
         if (speedBreakdown.other > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">MooPass / guild / achievement:</span> +${(speedBreakdown.other * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">MooPass / guild / achievement:</span> +${(speedBreakdown.other * 100).toFixed(1)}%</div>`
             );
         }
         if (speedBreakdown.personal > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Labyrinth:</span> +${(speedBreakdown.personal * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Labyrinth:</span> +${(speedBreakdown.personal * 100).toFixed(1)}%</div>`
             );
         }
         if (speedBreakdown.levelAdvantage > 0) {
             lines.push(
-                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Level advantage:</span> +${(speedBreakdown.levelAdvantage * 100).toFixed(1)}%</div>`
+                `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Level advantage:</span> +${(speedBreakdown.levelAdvantage * 100).toFixed(1)}%</div>`
             );
         }
         lines.push('</div>');
@@ -1461,23 +1461,23 @@ function formatEnhancementDisplay(
 
     // Base → effective action time
     lines.push(
-        `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Base:</span> ${baseTime.toFixed(2)}s → ${perActionTime.toFixed(2)}s</div>`
+        `<div style="color: #aaddff; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Base:</span> ${baseTime.toFixed(2)}s → ${perActionTime.toFixed(2)}s</div>`
     );
 
     if (params.teas.blessed) {
         const blessedBonus = 1.1;
         lines.push(
-            `<div class="mwi-enh-toggle" data-target="mwi-enh-blessed" style="color: #ffdd88; cursor: pointer;"><span style="color: #888;">Blessed:</span> +${blessedBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-blessed" style="color: #ffdd88; cursor: pointer;"><span style="color: #888;">Blessed:</span> +${blessedBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>`
         );
         lines.push('<div id="mwi-enh-blessed" style="display: none;">');
         lines.push(
-            `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Blessed Tea:</span> ${blessedBonus}% chance to skip a level</div>`
+            `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Blessed Tea:</span> ${blessedBonus}% chance to skip a level</div>`
         );
         lines.push('</div>');
     }
     if (params.rareFindBonus > 0) {
         lines.push(
-            `<div class="mwi-enh-toggle" data-target="mwi-enh-rarefind" style="color: #ffaa55; cursor: pointer;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-rarefind" style="color: #ffaa55; cursor: pointer;"><span style="color: #888;">Rare Find:</span> +${params.rareFindBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>`
         );
         lines.push('<div id="mwi-enh-rarefind" style="display: none;">');
 
@@ -1489,31 +1489,31 @@ function formatEnhancementDisplay(
         );
         if (equipmentRareFind > 0) {
             lines.push(
-                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentRareFind.toFixed(1)}%</div>`
+                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Equipment:</span> +${equipmentRareFind.toFixed(1)}%</div>`
             );
             const rfSlots = (params.slotBreakdown || []).filter((s) => s.rareFind > 0);
             for (const slot of rfSlots) {
                 const label = slot.enhancementLevel > 0 ? `${slot.name} +${slot.enhancementLevel}` : slot.name;
                 lines.push(
-                    `<div style="color: #ffaa55; font-size: 0.75em; padding-left: 20px;"><span style="color: #555;">└</span> ${label}: +${slot.rareFind.toFixed(1)}%</div>`
+                    `<div style="color: #ffaa55; font-size: 0.75em; padding-left: 20px;"><span style="color: ${GAME_COLORS.textDim};">└</span> ${label}: +${slot.rareFind.toFixed(1)}%</div>`
                 );
             }
         }
         if (params.houseRareFindBonus > 0) {
             lines.push(
-                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms:</span> +${params.houseRareFindBonus.toFixed(1)}%</div>`
+                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">House Rooms:</span> +${params.houseRareFindBonus.toFixed(1)}%</div>`
             );
         }
         if (achievementRareFind > 0) {
             lines.push(
-                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementRareFind.toFixed(1)}%</div>`
+                `<div style="color: #ffaa55; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Achievement:</span> +${achievementRareFind.toFixed(1)}%</div>`
             );
         }
         lines.push('</div>');
     }
     if (params.experienceBonus > 0) {
         lines.push(
-            `<div class="mwi-enh-toggle" data-target="mwi-enh-experience" style="color: #ffdd88; cursor: pointer;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>`
+            `<div class="mwi-enh-toggle" data-target="mwi-enh-experience" style="color: #ffdd88; cursor: pointer;"><span style="color: #888;">Experience:</span> +${params.experienceBonus.toFixed(1)}% <span class="mwi-enh-arrow" style="color: ${GAME_COLORS.textDim}; font-size: 0.8em;">▸</span></div>`
         );
         lines.push('<div id="mwi-enh-experience" style="display: none;">');
 
@@ -1530,40 +1530,40 @@ function formatEnhancementDisplay(
 
         if (equipmentExperience > 0) {
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Equipment:</span> +${equipmentExperience.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Equipment:</span> +${equipmentExperience.toFixed(1)}%</div>`
             );
             const expSlots = (params.slotBreakdown || []).filter((s) => s.experience > 0);
             for (const slot of expSlots) {
                 const label = slot.enhancementLevel > 0 ? `${slot.name} +${slot.enhancementLevel}` : slot.name;
                 lines.push(
-                    `<div style="color: #ffdd88; font-size: 0.75em; padding-left: 20px;"><span style="color: #555;">└</span> ${label}: +${slot.experience.toFixed(1)}%</div>`
+                    `<div style="color: #ffdd88; font-size: 0.75em; padding-left: 20px;"><span style="color: ${GAME_COLORS.textDim};">└</span> ${label}: +${slot.experience.toFixed(1)}%</div>`
                 );
             }
         }
         if (houseWisdom > 0) {
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">House Rooms (Wisdom):</span> +${houseWisdom.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">House Rooms (Wisdom):</span> +${houseWisdom.toFixed(1)}%</div>`
             );
         }
         if (communityWisdom > 0) {
             const wisdomLevel = params.communityWisdomLevel || 0;
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Community (Wisdom T${wisdomLevel}):</span> +${communityWisdom.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Community (Wisdom T${wisdomLevel}):</span> +${communityWisdom.toFixed(1)}%</div>`
             );
         }
         if (teaWisdom > 0) {
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Wisdom Tea:</span> +${teaWisdom.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Wisdom Tea:</span> +${teaWisdom.toFixed(1)}%</div>`
             );
         }
         if (achievementWisdom > 0) {
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">Achievement:</span> +${achievementWisdom.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">Achievement:</span> +${achievementWisdom.toFixed(1)}%</div>`
             );
         }
         if (otherWisdom > 0) {
             lines.push(
-                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: #666;">MooPass / guild / scroll:</span> +${otherWisdom.toFixed(1)}%</div>`
+                `<div style="color: #ffdd88; font-size: 0.8em; padding-left: 10px;"><span style="color: ${GAME_COLORS.textDim};">MooPass / guild / scroll:</span> +${otherWisdom.toFixed(1)}%</div>`
             );
         }
         lines.push('</div>');
@@ -1665,7 +1665,9 @@ function formatEnhancementDisplay(
     }
 
     // Footer notes
-    lines.push('<div style="margin-top: 8px; color: #666; font-size: 0.75em; line-height: 1.3;">');
+    lines.push(
+        '<div style="margin-top: 8px; color: ' + GAME_COLORS.textDim + '; font-size: 0.75em; line-height: 1.3;">'
+    );
 
     // Only show protection note if actually using protection
     if (protectFromLevel >= 2) {

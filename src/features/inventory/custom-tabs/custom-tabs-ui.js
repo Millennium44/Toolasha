@@ -234,7 +234,7 @@ export const PANEL_CSS = `
 }
 .toolasha-ct-section-count {
     font-size: 11px;
-    color: #666;
+    color: ${GAME_COLORS.textDim};
 }
 .toolasha-ct-section-value {
     font-size: 11px;
@@ -455,7 +455,7 @@ export const PANEL_CSS = `
 }
 .toolasha-ct-expand-btn {
     margin-left: auto;
-    color: #666;
+    color: ${GAME_COLORS.textDim};
     font-size: 11px;
     flex-shrink: 0;
     padding: 0 2px;
@@ -482,7 +482,7 @@ export const PANEL_CSS = `
 }
 .toolasha-ct-drag-handle {
     cursor: grab;
-    color: #555;
+    color: ${GAME_COLORS.textDim};
     font-size: 14px;
     flex-shrink: 0;
     user-select: none;

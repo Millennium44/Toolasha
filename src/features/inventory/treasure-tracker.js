@@ -183,8 +183,17 @@ const ACTUAL_GRID = '15px 1fr 1fr 54px';
 const EXPECTED_GRID = '1fr 1fr 8px 1fr 1fr';
 /** The popup's item icon. The icon column below is this plus 1px, so with the rows' 3px gap it leaves 4px before Qty. */
 const OPENING_ICON_SIZE = 18;
+/** The least a figure column gets: "123.45K" at 11px, so a narrow popup never cuts a number to "1.2…" */
+const OPENING_FIGURE_FLOOR = 42;
 /** The popup's one-line item row: icon, qty, value, vs exp., expected qty, expected value */
-const OPENING_GRID = `${OPENING_ICON_SIZE + 1}px repeat(2, minmax(0, 1fr)) 46px repeat(2, minmax(0, 1fr))`;
+const OPENING_GRID =
+    `${OPENING_ICON_SIZE + 1}px repeat(2, minmax(${OPENING_FIGURE_FLOOR}px, 1fr)) 46px ` +
+    `repeat(2, minmax(${OPENING_FIGURE_FLOOR}px, 1fr))`;
+/**
+ * The narrowest the popup can be and still hold that grid: icon + 46px + four floors + five 3px gaps, plus the
+ * body's 9px side padding and the frame's 1px border.
+ */
+const OPENING_MIN_WIDTH = OPENING_ICON_SIZE + 1 + 46 + 4 * OPENING_FIGURE_FLOOR + 5 * 3 + 2 * 9 + 2;
 
 /** What each expanded-chest heading's sub-columns mean */
 const COLUMN_HELP = [
@@ -899,7 +908,7 @@ class TreasureTracker {
         // stored geometry — or, worse, un-hide a popup whose own restore is
         // still in flight. Identity is checked rather than mere existence
         const popup = this.popup;
-        restoreGeometry(popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned })
+        restoreGeometry(popup, POPUP_GEOMETRY_KEY, { width: OPENING_MIN_WIDTH, height: 120 }, { position: pinned })
             .then(() => {
                 // The height fits the chest being shown, not the chest the popup was
                 // once resized on. capHeightToWindow already sized it to its content
@@ -1545,7 +1554,7 @@ class TreasureTracker {
             saveGeometry(POPUP_GEOMETRY_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
         this._detachPopupResize = makeResizable(popup, {
-            minWidth: 240,
+            minWidth: OPENING_MIN_WIDTH,
             minHeight: 120,
             onResize: (size) => saveGeometry(POPUP_GEOMETRY_KEY, size),
         });

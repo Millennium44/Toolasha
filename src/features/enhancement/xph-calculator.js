@@ -451,7 +451,9 @@ class XPHCalculator {
         const status = document.createElement('div');
         status.id = 'mwi-xph-status';
         status.style.cssText =
-            'padding:6px 14px; color:#555; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
+            'padding:6px 14px; color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
         status.textContent = 'Enter parameters and click Calculate.';
 
         this.panel.appendChild(header);

@@ -82,7 +82,11 @@ function field(parent, label, value, change, { type = 'number', min, max, step =
             : value;
     input.disabled = disabled;
     input.style.cssText =
-        'width:100%;box-sizing:border-box;background:#1b2030;color:#eee;border:1px solid #495268;border-radius:4px;padding:5px;';
+        'width:100%;box-sizing:border-box;background:' +
+        GAME_COLORS.inputBackground +
+        ';color:#eee;border:1px solid ' +
+        GAME_COLORS.inputBorder +
+        ';border-radius:4px;padding:5px;';
     if (type === 'number') {
         input.step = step;
         if (min !== undefined) input.min = min;
@@ -99,7 +103,12 @@ function select(parent, label, value, options, change, disabled = false) {
     wrapper.style.cssText = 'display:flex;flex-direction:column;gap:3px;flex:1;min-width:140px;';
     wrapper.appendChild(document.createTextNode(label));
     const input = document.createElement('select');
-    input.style.cssText = 'background:#1b2030;color:#eee;border:1px solid #495268;border-radius:4px;padding:5px;';
+    input.style.cssText =
+        'background:' +
+        GAME_COLORS.inputBackground +
+        ';color:#eee;border:1px solid ' +
+        GAME_COLORS.inputBorder +
+        ';border-radius:4px;padding:5px;';
     input.disabled = disabled;
     for (const [key, text] of options) {
         const option = document.createElement('option');
@@ -994,7 +1003,10 @@ export class GuildTrialSim {
             const area = document.createElement('textarea');
             area.setAttribute('aria-label', 'Capture, build or setup JSON');
             area.value = this.importText;
-            area.style.cssText = 'width:100%;box-sizing:border-box;min-height:80px;background:#1b2030;color:#eee;';
+            area.style.cssText =
+                'width:100%;box-sizing:border-box;min-height:80px;background:' +
+                GAME_COLORS.inputBackground +
+                ';color:#eee;';
             area.disabled = busy;
             area.addEventListener('input', () => {
                 this.importText = area.value;
