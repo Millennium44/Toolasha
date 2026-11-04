@@ -1494,6 +1494,7 @@ class LabSimUI {
                 <input type="checkbox" id="mwi-labsim-skilling-useskip" checked style="margin:0; cursor:pointer;">
                 Use Skip Levels
             </label>
+            <span style="display:inline-flex; align-items:center; gap:8px;">
             <label style="color:#888; font-size:12px;">Skill</label>
             <select class="toolasha-select" id="mwi-labsim-skilling-filter" title="Restrict calculations, upgrade analysis, and the loadout table to one skill" style="
                 background:${GAME_COLORS.inputBackground};
@@ -1515,11 +1516,14 @@ class LabSimUI {
                 <option value="/skills/alchemy">Alchemy</option>
                 <option value="/skills/enhancing">Enhancing</option>
             </select>
+            </span>
+            <span style="display:inline-flex; align-items:center; gap:8px;">
             <label style="color:#888; font-size:12px;">Community Lv</label>
             <input id="mwi-labsim-skilling-community-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}"
                 placeholder="Lv" title="Sim each community buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own." style="
                 width:52px; text-align:center; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:4px; padding:4px 6px; font-size:11px; font-family:inherit;">
+            </span>
             <button id="mwi-labsim-skilling-calc" style="
                 margin-left: auto;
                 ${GAME_BTN_CSS}
