@@ -14,6 +14,10 @@ Turning off "Show expected value for openable containers" now only hides the too
 
 The Bulk Sell bar now shows a short headline with a second row only for what the headline lacks, instead of the same sentence twice. A new ↻ button starts the current item over without ever selling for you, and the bar fits phone screens.
 
+### Party alert
+
+A new setting, "Notify when your party starts or stops fighting" (off by default), tells you when your party goes into a fight or comes out of one. It announces real changes only, not a party already fighting when you log in.
+
 ### What's New shows only what is new
 
 After an update, What's New lists only the changes since the version you were running. A recent release's notes had no titles, which made the panel show the whole recent history instead.
