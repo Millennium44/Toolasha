@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial history marks trials that did not run
+
+Trial history now shows `n/r` for a cycle where the game's own list says a trial was not on the schedule, so it no longer looks like a miss. `—` still means a result was not seen, and cycles saved before this update keep showing `—`.
+
 ### Expected value setting only controls the tooltip
 
 Turning off "Show expected value for openable containers" now only hides the tooltip row. Net worth, combat stats and task values for crates and chests no longer change partway through a session depending on which panel you opened first.
