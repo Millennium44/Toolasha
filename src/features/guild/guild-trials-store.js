@@ -67,6 +67,7 @@ import {
     mergeScheduled,
     mergeTrialFacts,
     resultsFromHistory,
+    sameScheduleCycle,
     splitScheduled,
     trialResultsOf,
     withTrialResults,
@@ -521,6 +522,70 @@ export function trialHourStartedAt(entry, offset) {
 }
 
 /**
+ * How far before a cycle's start a finished kind's oldest stamp may sit and still be that cycle's.
+ * Stamps and the cycle start are placed through the same clock offset, so only the offset's drift
+ * between two readings (a trip or so) separates them; a stale list's oldest stamp is an hour back.
+ */
+const FINISHED_LIST_SLACK_MS = 10_000;
+
+/**
+ * Where a finished kind's list is placed, when its stamps say it belongs to the running cycle.
+ *
+ * A finished payload outlives its cycle: at the next cycle's skilling hour the combat side still
+ * states the last cycle's trials, finished a moment before the new cycle began. The list is placed
+ * at its newest stamp, but only when every stamp it carries lies inside the cycle's own span
+ * (its start to two hours on), which a list from the cycle before never does: its oldest stamp
+ * is an hour before the new cycle began, however close its newest sits to the boundary.
+ *
+ * With no cycle start to hold the stamps against, the test server (a cycle a day, the previous
+ * one a few stamps away) is unknown; live runs one cycle a week, and the week the stamps share
+ * is the check.
+ *
+ * @param {number[]} stamps - Client ms, one per stamp the kind's parties carry
+ * @param {number|null} cycleStart - Client ms the running cycle's skilling hour began (test server)
+ * @returns {number|null} Client ms, or null when unsure
+ */
+function finishedListAt(stamps, cycleStart) {
+    if (!stamps.length) return null;
+    const newest = Math.max(...stamps);
+    const oldest = Math.min(...stamps);
+    if (Number.isFinite(cycleStart)) {
+        if (oldest < cycleStart - FINISHED_LIST_SLACK_MS) return null;
+        if (newest > cycleStart + 2 * TRIAL_BUDGET_MS + CYCLE_START_SLACK_MS) return null;
+        return newest;
+    }
+    if (isTestServer()) return null;
+    return trialWeekStart(oldest) === trialWeekStart(newest) ? newest : null;
+}
+
+/**
+ * The trial keys of each kind the game's own draw for the cycle names.
+ *
+ * `guildWeeklyTrialSet` (`{skillHrids, combatHrids}`) sits beside `guild` on `guild_updated` and on
+ * the login payload. It names the trials the cycle runs before any party exists, but carries no
+ * stamp and outlives its cycle, so it can place nothing in a cycle by itself.
+ *
+ * @param {Object|null} data - A `guild_updated` or login payload
+ * @returns {{skilling: string[], combat: string[]}|null} Null when the payload carries no draw
+ */
+export function weeklyTrialSetFrom(data) {
+    const set = data?.guildWeeklyTrialSet;
+    if (!set || typeof set !== 'object' || (!Array.isArray(set.skillHrids) && !Array.isArray(set.combatHrids))) {
+        return null;
+    }
+    const keys = (hrids, kind) =>
+        [
+            ...new Set(
+                (Array.isArray(hrids) ? hrids : [])
+                    .map((hrid) => trialFromHrid(hrid))
+                    .filter((trial) => trial && trial.kind === kind)
+                    .map((trial) => trial.key)
+            ),
+        ].sort();
+    return { skilling: keys(set.skillHrids, 'skilling'), combat: keys(set.combatHrids, 'combat') };
+}
+
+/**
  * The lists of trials the guild payload says are running, per kind, placed on this client's clock.
  *
  * A kind is read only when its `parties` name at least one known trial — an empty
@@ -528,11 +593,13 @@ export function trialHourStartedAt(entry, offset) {
  * its own: combat's hour starts an hour after skilling's, so one kind's list says
  * nothing of the other's, and a kind with no list here is unknown.
  *
- * A list is placed at its hour's start while that kind is `in_progress`. A kind that
- * is over is placed at its parties' newest stamp instead (needs the clock offset), and
- * not at all when that is before the running cycle began: a finished payload outlives
- * its cycle, and at the next cycle's skilling hour the combat side still states the last
- * cycle's trials.
+ * A list is placed at its hour's start while that kind is `in_progress`, and then also
+ * holds the trials the game's own draw (`held.weeklyTrials`, see {@link weeklyTrialSetFrom})
+ * names for that kind: `parties` fills in as the hour goes, and a trial it has not named yet
+ * must not read as one that did not run. The draw adds to a list and never makes one. A kind
+ * that is over is placed at its parties' newest stamp instead ({@link finishedListAt}, needs
+ * the clock offset), from its parties alone: a finished payload outlives its cycle, and so
+ * does the draw.
  *
  * @param {Object|null} held - `currentTrials`: the parsed payload with `at`, when this client had it
  * @param {Object} [options] - Context
@@ -544,27 +611,26 @@ export function scheduledFromPayload(held, { offset = null, cycleStart = null } 
     const out = {};
     for (const kind of ['skilling', 'combat']) {
         const entry = held?.[kind];
-        const trials = [
-            ...new Set(
-                Object.keys(entry?.trials || {})
-                    .map((hrid) => trialFromHrid(hrid))
-                    .filter((trial) => trial && trial.kind === kind)
-                    .map((trial) => trial.key)
-            ),
-        ].sort();
-        if (!trials.length) continue;
+        const named = Object.keys(entry?.trials || {})
+            .map((hrid) => trialFromHrid(hrid))
+            .filter((trial) => trial && trial.kind === kind)
+            .map((trial) => trial.key);
+        if (!named.length) continue;
 
         let at = null;
+        let drawn = [];
         if (entry.inProgress) {
             const start = trialHourStartedAt(entry, offset);
             at = Number.isFinite(start) ? start : held.at;
+            drawn = Array.isArray(held?.weeklyTrials?.[kind]) ? held.weeklyTrials[kind] : [];
         } else if (Number.isFinite(offset)) {
             const stamps = Object.values(entry.trials)
                 .flatMap((party) => [party?.highestTierReachedAtMs, party?.tierStartedAtMs])
-                .filter((stamp) => Number.isFinite(stamp));
-            if (stamps.length) at = Math.max(...stamps) + offset;
-            if (Number.isFinite(at) && Number.isFinite(cycleStart) && at < cycleStart - CYCLE_START_SLACK_MS) at = null;
+                .filter((stamp) => Number.isFinite(stamp))
+                .map((stamp) => stamp + offset);
+            at = finishedListAt(stamps, cycleStart);
         }
+        const trials = [...new Set([...named, ...drawn])].sort();
         if (Number.isFinite(at)) out[kind] = { trials, at };
     }
     return out;
@@ -576,7 +642,7 @@ export function scheduledFromPayload(held, { offset = null, cycleStart = null } 
  * Only a list placed inside the record's own week: a payload read across a rollover
  * belongs to the week it was placed in, and the record in hand may already be the next.
  * A list is added to the record's by {@link mergeScheduled}; one the record already
- * holds, or a subset of it in the same slot, changes nothing and the same record comes back.
+ * holds, or a subset of it from the same cycle, changes nothing and the same record comes back.
  *
  * @param {Object|null} record - The week's record
  * @param {Object|null} scheduled - From {@link scheduledFromPayload}
@@ -590,8 +656,8 @@ export function recordScheduled(record, scheduled) {
         const side = cleanScheduled(scheduled)?.[kind];
         if (!side || trialWeekStart(side.at) !== record.weekStart) continue;
         const have = held?.[kind];
-        const sameSlot = have && Math.floor(have.at / TRIAL_BUDGET_MS) === Math.floor(side.at / TRIAL_BUDGET_MS);
-        if (sameSlot && side.trials.every((trial) => have.trials.includes(trial))) continue;
+        const sameCycle = have && sameScheduleCycle(have, side);
+        if (sameCycle && side.trials.every((trial) => have.trials.includes(trial))) continue;
         incoming[kind] = side;
     }
     if (!Object.keys(incoming).length) return record;
@@ -797,6 +863,21 @@ function earlierCyclePart(tile, from) {
 }
 
 /**
+ * The lists that sit in the cycle some tiles' stamps are from.
+ * @param {Object|null} scheduled - Lists placed before the current cycle
+ * @param {number[]} stamps - Every moment the tiles are stamped with, client ms
+ * @returns {Object|null} The kinds whose list is within a cycle window of one of the stamps; null when none
+ */
+function listsOfTheirCycle(scheduled, stamps) {
+    if (!scheduled) return null;
+    const kept = {};
+    for (const [kind, side] of Object.entries(scheduled)) {
+        if (stamps.some((stamp) => sameScheduleCycle({ at: stamp }, side))) kept[kind] = side;
+    }
+    return Object.keys(kept).length ? kept : null;
+}
+
+/**
  * Archive what an earlier cycle of this week left on the record.
  *
  * The record is the week's, and the test server runs several cycles in one:
@@ -872,7 +953,13 @@ export function archiveEarlierCycles(
     // To the minute: the offset the start is derived through tightens by a trip
     // or so between messages, and one boundary must stay one archive
     const cycleFrom = Math.round(cycleBegan / 60_000) * 60_000;
-    const archived = archiveCycle({ ...record, tiles: earlier, scheduled: lists.earlier }, EARLIER_CYCLE_REASON, at, {
+    // …and a list goes with these tiles only when it sits in their own cycle. One a cycle or more
+    // older (this record kept it, or a stored copy brought it back) is not what ran when they did
+    const archivedLists = listsOfTheirCycle(
+        lists.earlier,
+        Object.values(earlier).flatMap((tile) => tileStamps(tile))
+    );
+    const archived = archiveCycle({ ...record, tiles: earlier, scheduled: archivedLists }, EARLIER_CYCLE_REASON, at, {
         cycleFrom,
         accuracy,
     });
@@ -923,7 +1010,7 @@ function scheduledField(value) {
 /**
  * A record's running lists less any an archived cycle of the same week already holds.
  *
- * A list placed in the same slot as an archived cycle's, or an earlier one, is that
+ * A list of the same cycle as an archived one's, or an earlier cycle's, is that
  * cycle's own, seen again by a copy that had not archived yet. The test server's cycles
  * carry `cycleFrom`; live's single cycle is the week itself, so any archive of the week
  * holds it. Another week's archive says nothing about this week's lists.
@@ -940,7 +1027,7 @@ function withoutArchivedLists(scheduled, history, week) {
         const archivedLater = (history || []).some((cycle) => {
             if (!cycle || cycle.weekStart !== week || cycle.reason === FOREIGN_CYCLE_REASON) return false;
             const held = cleanScheduled(cycle.scheduled)?.[kind];
-            return Boolean(held) && Math.floor(held.at / TRIAL_BUDGET_MS) >= Math.floor(side.at / TRIAL_BUDGET_MS);
+            return Boolean(held) && (held.at >= side.at || sameScheduleCycle(held, side));
         });
         if (!archivedLater) left[kind] = side;
     }

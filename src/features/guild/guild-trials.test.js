@@ -328,7 +328,9 @@ const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
 const { trialResultsOf } = await import('./guild-trial-results.js');
-const { emptyRecord, saveTrialRecord, tilePersonalStats } = await import('./guild-trials-store.js');
+const { emptyRecord, saveTrialRecord, tilePersonalStats, WEEK_ROLLOVER_REASON } =
+    await import('./guild-trials-store.js');
+const { buildGuildUpdated } = await import('../../__fixtures__/wire/guild-trial.js');
 const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
@@ -9443,6 +9445,89 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
         const record = weekRecord({ weekStart: trialWeekStart(stamp) - 7 * 24 * 60 * 60 * 1000 });
         expect(guildTrials._recordServerTiers(record, Date.now())).not.toHaveProperty('scheduled');
     });
+
+    test('the game’s draw for the cycle joins the running hour’s list, and combat, with no party yet, stays unknown', () => {
+        // The wire fixture's draw: Alchemy, Brewing, Foraging and Woodcutting, Jellyfish and Swarm
+        const { guildWeeklyTrialSet } = buildGuildUpdated();
+        guildTrials._noteCurrentTrials({ ...message(), guildWeeklyTrialSet });
+        const record = guildTrials._recordServerTiers(weekRecord(), Date.now());
+
+        expect(record.scheduled.skilling.trials).toEqual([
+            'alchemy',
+            'brewing',
+            'cooking',
+            'foraging',
+            'milking',
+            'woodcutting',
+        ]);
+        expect(record.scheduled).not.toHaveProperty('combat');
+    });
+
+    test('a draw on a message that names another guild is never filed under this one', () => {
+        const { guildWeeklyTrialSet } = buildGuildUpdated();
+        guildTrials._noteCurrentTrials({ ...message({ id: 'g2', name: 'Elsewhere' }), guildWeeklyTrialSet });
+        expect(guildTrials._recordServerTiers(weekRecord(), Date.now())).not.toHaveProperty('scheduled');
+    });
+
+    describe('the last hour of a cycle running past the rollover', () => {
+        const NEXT_WEEK = trialWeekStart(stamp + 8 * 24 * 60 * 60 * 1000);
+        const party = (started, remaining) => ({
+            highestTier: 3,
+            budgetRemainingMs: remaining,
+            tierStartedAtMs: started,
+            highestTierReachedAtMs: started,
+            nextTierProgress: 0.5,
+            done: false,
+        });
+        // The hour began 20 minutes before the new week; the message lands a minute into it
+        const payload = JSON.stringify({
+            skilling: {
+                status: 'in_progress',
+                parties: {
+                    '/guild_skilling/alchemy': party(NEXT_WEEK + 60_000, 39 * 60_000),
+                    '/guild_skilling/brewing': party(NEXT_WEEK + 60_000, 39 * 60_000),
+                },
+            },
+            combat: { status: '', parties: null },
+        });
+        const straddle = (scheduled) => ({
+            weekStart: NEXT_WEEK,
+            tiles: {},
+            guildId: 'g1',
+            guildName: 'SuperMoo',
+            history: [
+                {
+                    archivedAt: NEXT_WEEK,
+                    reason: WEEK_ROLLOVER_REASON,
+                    weekStart: NEXT_WEEK - 7 * 24 * 60 * 60 * 1000,
+                    tiles: {},
+                    ...(scheduled ? { scheduled } : {}),
+                },
+            ],
+        });
+
+        beforeEach(() => {
+            vi.setSystemTime(NEXT_WEEK + 60_000 + TRIP);
+            guildTrials._noteCurrentTrials({ guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: payload } });
+        });
+
+        test('files the list into the week it began in, and hearing the same payload again writes nothing', () => {
+            const first = guildTrials._fileIntoPayloadWeek(straddle(null), Date.now());
+            expect(first.history[0].scheduled.skilling.trials).toEqual(['alchemy', 'brewing']);
+
+            vi.setSystemTime(Date.now() + 20_000);
+            guildTrials._noteCurrentTrials({ guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: payload } });
+            expect(guildTrials._fileIntoPayloadWeek(first, Date.now())).toBe(first);
+        });
+
+        test('a list the archive already holds is not written again', () => {
+            const held = guildTrials._fileIntoPayloadWeek(straddle(null), Date.now());
+            const again = guildTrials._fileIntoPayloadWeek(straddle(held.history[0].scheduled), Date.now());
+            // The tiles the payload starts are new to this copy and are written once; the list is not
+            expect(again.history[0].scheduled).toEqual(held.history[0].scheduled);
+            expect(guildTrials._fileIntoPayloadWeek(again, Date.now())).toBe(again);
+        });
+    });
 });
 
 describe('a week with more than one cycle in it', () => {
@@ -9600,6 +9685,24 @@ describe('a week with more than one cycle in it', () => {
             holdHour('combat', T0 + HOUR, T0 + HOUR + 5 * 60_000);
             guildTrials._archiveEarlierCycles(T0 + HOUR + 5 * 60_000);
             expect(guildTrials.record.history).toHaveLength(1);
+        });
+
+        test('dropping a list nothing was archived with is an ordinary save, never an overwrite', () => {
+            game.testServer = true;
+            guildTrials.record = recordWith({
+                scheduled: { combat: { trials: ['badger'], at: T0 - 24 * HOUR + HOUR } },
+            });
+            holdHour('skilling', T0, T0 + 20 * 60_000);
+            const persist = vi.spyOn(guildTrials, '_persistRecord').mockResolvedValue(true);
+            try {
+                guildTrials._archiveEarlierCycles(T0 + 20 * 60_000);
+                expect(guildTrials.record).not.toHaveProperty('scheduled');
+                expect(guildTrials.record.history).toHaveLength(0);
+                expect(persist).toHaveBeenCalledTimes(1);
+                expect(persist).toHaveBeenCalledWith();
+            } finally {
+                persist.mockRestore();
+            }
         });
 
         test('a genuinely new cycle still archives the last one', () => {

@@ -512,23 +512,38 @@ export function cleanScheduled(scheduled) {
 }
 
 /**
- * Which hour-sized slot a list is placed in. Two lists of one cycle fall in the
- * same slot or neighboring ones; two cycles are further apart than a slot.
- * @param {{at: number}} side - A cleaned side
- * @returns {number} The slot
+ * How far apart two lists of one kind can be placed and still be one cycle's.
+ *
+ * A kind's placements within a cycle all fall inside that kind's hour (its start, or its newest
+ * stamp, an hour later at most), so they are an hour apart at most, plus the skew between two
+ * devices' clocks. The next cycle's list of the same kind is a cycle later: a day on the test
+ * server, a week on live, two hours at the very least. The window sits between the two.
+ *
+ * It is a distance and not a grid of hour-wide slots: a cycle's hour starts on the hour or
+ * half past, so a grid put one cycle's start-of-hour list and its end-of-hour list in
+ * neighboring slots, and a fuller list was replaced by a partial one.
  */
-function scheduleSlot(side) {
-    return Math.floor(side.at / TRIAL_BUDGET_MS);
+export const SAME_CYCLE_WINDOW_MS = 1.5 * TRIAL_BUDGET_MS;
+
+/**
+ * Whether two lists of one kind are one cycle's, stated twice.
+ * @param {{at: number}} a - A cleaned side
+ * @param {{at: number}} b - Another
+ * @returns {boolean} True when they are placed within {@link SAME_CYCLE_WINDOW_MS} of each other
+ */
+export function sameScheduleCycle(a, b) {
+    return Math.abs(a.at - b.at) < SAME_CYCLE_WINDOW_MS;
 }
 
 /**
  * Two copies of one kind's list as one.
  *
- * The later slot wins whole: it is the later cycle's, and an earlier cycle's list
- * must not be added to it. In one slot the lists are one cycle's, stated twice,
- * and the fuller (the union) stands. Slots rather than a distance between stamps
- * so the rule gives one answer whichever way round, and in whatever grouping,
- * copies are folded: a merge between devices must converge.
+ * Lists of one cycle are one statement made more than once, and the fuller (the union) stands:
+ * a `parties` list fills in as the cycle goes, and a copy placed later is not a fuller one.
+ * Lists of two cycles are not added: the later cycle's wins whole, and an earlier cycle's list
+ * must not be added to it. Which is which is {@link sameScheduleCycle}. A kind's placements
+ * never span more than the window, so the rule gives one answer whichever way round, and in
+ * whatever grouping, copies are folded: a merge between devices converges.
  *
  * @param {Object|null} a - One side
  * @param {Object|null} b - The other
@@ -538,8 +553,7 @@ export function mergeScheduledSide(a, b) {
     const left = cleanScheduledSide(a);
     const right = cleanScheduledSide(b);
     if (!left || !right) return left || right;
-    const [slotLeft, slotRight] = [scheduleSlot(left), scheduleSlot(right)];
-    if (slotLeft !== slotRight) return slotLeft > slotRight ? left : right;
+    if (!sameScheduleCycle(left, right)) return left.at > right.at ? left : right;
     return { trials: cleanTrialKeys([...left.trials, ...right.trials]), at: Math.max(left.at, right.at) };
 }
 

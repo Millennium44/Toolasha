@@ -208,6 +208,7 @@ import {
     saveTrialRecord,
     saveWorkBases,
     scheduledFromPayload,
+    weeklyTrialSetFrom,
     scrubWaveObservations,
     tileKey,
     tilePersonalStats,
@@ -216,7 +217,6 @@ import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle 
 import {
     cycleTrialsOf,
     historyRowFor,
-    mergeScheduled,
     resultCycleCap,
     trialHistoryBest,
     trialHistoryCell,
@@ -3756,6 +3756,9 @@ class GuildTrials {
                 if (initAt !== null && Number.isFinite(held) && initAt <= held) return;
             }
 
+            // The game's own draw for the cycle, from the message that carries these trials: it joins the
+            // saved list of a running hour so a party not yet named never reads as a trial that did not run
+            const weeklyTrials = weeklyTrialSetFrom(data);
             const now = Date.now();
             // A login payload sent long ago (read back by a late start) is
             // dated when it was sent, and neither it nor its stamps bound the
@@ -3764,11 +3767,11 @@ class GuildTrials {
             const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
             const age = source === 'init' && Number.isFinite(serverNow) ? now - serverNow - offset : null;
             if (age !== null && age > INIT_PAYLOAD_FRESH_MS) {
-                this.currentTrials = { ...read, at: now - age, source, ...snapshotGuildOf(data) };
+                this.currentTrials = { ...read, at: now - age, source, ...snapshotGuildOf(data), weeklyTrials };
                 this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
                 return;
             }
-            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data) };
+            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data), weeklyTrials };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
             // A server clock reading is later than every stamp beside it, so it
@@ -4190,12 +4193,21 @@ class GuildTrials {
                 !Number.isFinite(cycle?.cycleFrom)
         );
         if (index === -1) return record;
-        const archived = { weekStart: week, tiles: history[index].tiles || {} };
+        // The cycle's saved lists ride along, or an unchanged payload reads as a list not yet held
+        // and rewrites the record on every message
+        const archived = {
+            weekStart: week,
+            tiles: history[index].tiles || {},
+            ...(history[index].scheduled ? { scheduled: history[index].scheduled } : {}),
+        };
         const filed = this._recordServerTiers(archived, now);
         if (filed === archived) return record;
         const next = [...history];
-        const scheduled = mergeScheduled(history[index].scheduled, filed.scheduled);
-        next[index] = { ...history[index], tiles: filed.tiles, ...(scheduled ? { scheduled } : {}) };
+        next[index] = {
+            ...history[index],
+            tiles: filed.tiles,
+            ...(filed.scheduled ? { scheduled: filed.scheduled } : {}),
+        };
         return { ...record, history: next };
     }
 
@@ -5186,8 +5198,9 @@ class GuildTrials {
                 accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
             });
             if (next === this.record) return;
-            if (next === base) {
-                // Only the boundary moved: an ordinary merging save
+            // Only the boundary moved, or a list nothing was archived with was dropped: an ordinary
+            // merging save. The overwrite below is for the write that puts tiles away
+            if (next === base || (next.tiles === base.tiles && next.history === base.history)) {
                 this.record = next;
                 this._persistRecord();
                 return;

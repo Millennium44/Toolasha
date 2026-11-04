@@ -54,12 +54,14 @@ import {
     rollRecordToWeek,
     scheduledFromPayload,
     trialHourStartedAt,
+    weeklyTrialSetFrom,
 } from './guild-trials-store.js';
 import { pastCycles, summariseArchivedCycle, FOREIGN_CYCLE_REASON } from './guild-trial-history.js';
 import { TRIAL_BUDGET_MS, parseCurrentTrialsData, trialWeekStart } from './guild-trials-math.js';
 import { NOV2_CURRENT_TRIALS_DATA } from './guild-trial-points.fixture.js';
 import { CURRENT_TRIALS_DATA_SKILLING } from './guild-trial-messages.fixture.js';
 import * as CLEARS from './guild-trial-tier-clears.fixture.js';
+import { buildGuildUpdated } from '../../__fixtures__/wire/guild-trial.js';
 
 const HOUR = TRIAL_BUDGET_MS;
 const DAY = 24 * HOUR;
@@ -600,5 +602,213 @@ describe('the history — "n/r" against "—"', () => {
         const second = { weekStart: w1, cycleFrom: w1 + 6 * HOUR, skilling: ['cooking'] };
         const merged = mergeCycleTrials([second], [first]);
         expect(merged).toEqual([first, second]);
+    });
+});
+
+describe('a finished kind’s list counts only inside the cycle that is running', () => {
+    const read = parseCurrentTrialsData(NOV2_CURRENT_TRIALS_DATA);
+    const offset = 44;
+    const held = { ...read, at: 1793660000000 };
+    // Skilling's hour ended at 1793656808120, so it began an hour before; combat's began as it ended
+    const cycleStart = 1793656808120 - HOUR + offset;
+
+    test('both finished lists are filed against the cycle they ran in', () => {
+        game.testServer = true;
+        const lists = scheduledFromPayload(held, { offset, cycleStart });
+        expect(lists.skilling.trials).toEqual(NOV2_SKILLING);
+        expect(lists.combat.trials).toEqual(NOV2_COMBAT);
+    });
+
+    test('a last cycle’s combat list whose newest stamp is inside the 60 s window is not this cycle’s', () => {
+        game.testServer = true;
+        // The next cycle began 30 s after the last combat party banked its tier
+        const next = 1793658094676 + offset + 30_000;
+        expect(scheduledFromPayload({ ...held, at: next + 1_000 }, { offset, cycleStart: next })).toEqual({});
+    });
+
+    test('a list with one stamp before the cycle began is no list, whatever the others say', () => {
+        game.testServer = true;
+        const mixed = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: { status: 'completed', parties: null },
+                combat: {
+                    status: 'completed',
+                    parties: {
+                        '/guild_combat/jellyfish': {
+                            highestTier: 3,
+                            budgetRemainingMs: 0,
+                            highestTierReachedAtMs: cycleStart - HOUR,
+                            tierStartedAtMs: cycleStart - 20_000,
+                            done: true,
+                        },
+                    },
+                },
+            })
+        );
+        expect(scheduledFromPayload({ ...mixed, at: cycleStart }, { offset: 0, cycleStart })).toEqual({});
+    });
+
+    test('a list stamped after the cycle’s span is a later cycle’s, which this cycle’s start cannot place', () => {
+        game.testServer = true;
+        expect(scheduledFromPayload(held, { offset, cycleStart: cycleStart - DAY })).toEqual({});
+    });
+
+    test('on the test server a finished list with no cycle start to hold it against is unknown', () => {
+        game.testServer = true;
+        expect(scheduledFromPayload(held, { offset })).toEqual({});
+    });
+
+    test('on live a finished list whose stamps are in two weeks is unknown', () => {
+        const wide = parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: { status: 'completed', parties: null },
+                combat: {
+                    status: 'completed',
+                    parties: {
+                        '/guild_combat/jellyfish': {
+                            highestTier: 3,
+                            budgetRemainingMs: 0,
+                            highestTierReachedAtMs: thisWeek - 1000,
+                            tierStartedAtMs: thisWeek + 1000,
+                            done: true,
+                        },
+                    },
+                },
+            })
+        );
+        expect(scheduledFromPayload({ ...wide, at: thisWeek }, { offset: 0 })).toEqual({});
+    });
+});
+
+describe('the game’s draw for the cycle joins a running list and never makes one', () => {
+    const draw = weeklyTrialSetFrom(buildGuildUpdated());
+    const running = (skilling, combat = { status: '', parties: null }) =>
+        parseCurrentTrialsData(JSON.stringify({ skilling, combat }));
+    const party = (started) => ({
+        highestTier: 1,
+        budgetRemainingMs: HOUR - 60_000,
+        tierStartedAtMs: started,
+        highestTierReachedAtMs: started,
+        done: false,
+    });
+    const T = 1793700000000;
+
+    test('reads the wire shape: hrids to trial keys, per kind', () => {
+        expect(draw).toEqual({ skilling: NOV2_SKILLING, combat: NOV2_COMBAT });
+        expect(weeklyTrialSetFrom({})).toBeNull();
+        expect(weeklyTrialSetFrom({ guildWeeklyTrialSet: 'x' })).toBeNull();
+        // A hrid under the wrong list, or one this build does not know, is no trial of that kind
+        expect(
+            weeklyTrialSetFrom({
+                guildWeeklyTrialSet: {
+                    skillHrids: ['/guild_combat/swarm', '/guild_skilling/swimming'],
+                    combatHrids: [],
+                },
+            })
+        ).toEqual({ skilling: [], combat: [] });
+    });
+
+    test('a running hour whose parties name two of the four drawn trials is filed with all four', () => {
+        const read = running({
+            status: 'in_progress',
+            parties: { '/guild_skilling/alchemy': party(T), '/guild_skilling/woodcutting': party(T) },
+        });
+        const lists = scheduledFromPayload({ ...read, at: T, weeklyTrials: draw }, { offset: 0 });
+        expect(lists.skilling.trials).toEqual(NOV2_SKILLING);
+        // Without the draw the same payload would have marked Brewing and Foraging as not run
+        expect(scheduledFromPayload({ ...read, at: T }, { offset: 0 }).skilling.trials).toEqual([
+            'alchemy',
+            'woodcutting',
+        ]);
+    });
+
+    test('the draw alone files nothing: a kind with no party named is still unknown', () => {
+        const read = running({ status: 'in_progress', parties: {} });
+        expect(scheduledFromPayload({ ...read, at: T, weeklyTrials: draw }, { offset: 0 })).toEqual({});
+        // …and combat, not yet started, takes nothing from a draw that names its trials
+        const skillingOnly = running({ status: 'in_progress', parties: { '/guild_skilling/alchemy': party(T) } });
+        const lists = scheduledFromPayload({ ...skillingOnly, at: T, weeklyTrials: draw }, { offset: 0 });
+        expect(Object.keys(lists)).toEqual(['skilling']);
+    });
+
+    test('a finished kind is read from its parties alone: the draw outlives its cycle', () => {
+        game.testServer = true;
+        const read = parseCurrentTrialsData(NOV2_CURRENT_TRIALS_DATA);
+        const finished = { ...read, at: 1793660000000, weeklyTrials: { skilling: ['cooking'], combat: ['badger'] } };
+        const lists = scheduledFromPayload(finished, { offset: 44, cycleStart: 1793656808120 - HOUR + 44 });
+        expect(lists.skilling.trials).toEqual(NOV2_SKILLING);
+        expect(lists.combat.trials).toEqual(NOV2_COMBAT);
+    });
+});
+
+describe('one cycle’s lists are one cycle whichever hour slot they were placed in', () => {
+    // A cycle that began at half past: its start-of-hour list and its end-of-hour list straddle a wall-clock hour
+    const startOfHour = weeksAgo(1) + 2 * DAY + 30 * 60_000;
+    const full = { skilling: { trials: NOV2_SKILLING, at: startOfHour } };
+    const partial = { skilling: { trials: ['alchemy', 'brewing'], at: startOfHour + 50 * 60_000 } };
+
+    test('a partial list placed in a later hour slot does not shrink the fuller one, in either order', () => {
+        expect(Math.floor(partial.skilling.at / HOUR)).toBeGreaterThan(Math.floor(full.skilling.at / HOUR));
+        const merged = mergeScheduled(full, partial);
+        expect(merged.skilling.trials).toEqual(NOV2_SKILLING);
+        expect(mergeScheduled(partial, full)).toEqual(merged);
+    });
+
+    test('filing a partial list from a later slot leaves the record as it was', () => {
+        const record = { weekStart: weeksAgo(1), tiles: {}, scheduled: full };
+        expect(recordScheduled(record, partial)).toBe(record);
+    });
+
+    test('a fuller list from a later slot is added to the held one', () => {
+        const record = { weekStart: weeksAgo(1), tiles: {}, scheduled: partial };
+        expect(recordScheduled(record, full).scheduled.skilling.trials).toEqual(NOV2_SKILLING);
+    });
+
+    test('the next day’s list is still a new cycle’s, and replaces the last whole', () => {
+        const nextDay = { skilling: { trials: ['cooking'], at: startOfHour + DAY } };
+        expect(mergeScheduled(full, nextDay)).toEqual(nextDay);
+        expect(mergeScheduled(nextDay, mergeScheduled(full, partial))).toEqual(nextDay);
+    });
+
+    test('three devices fold to one answer in every grouping', () => {
+        const third = { skilling: { trials: ['foraging'], at: startOfHour + 10 * 60_000 } };
+        const orders = [
+            mergeScheduled(mergeScheduled(full, partial), third),
+            mergeScheduled(full, mergeScheduled(partial, third)),
+            mergeScheduled(mergeScheduled(third, partial), full),
+        ];
+        for (const order of orders) expect(order).toEqual(orders[0]);
+        expect(orders[0].skilling.trials).toEqual(NOV2_SKILLING);
+    });
+});
+
+describe('archiveEarlierCycles — a list goes only with the cycle its tiles are from', () => {
+    const read = parseCurrentTrialsData(
+        JSON.stringify({
+            skilling: { status: 'in_progress', parties: CLEARS.LAST_PAYLOAD_PARTIES },
+            combat: { status: '', parties: null },
+        })
+    );
+    const offset = CLEARS.SERVER_CLOCK_OFFSET_MS;
+    const skillingStart = trialHourStartedAt(read.skilling, offset);
+    const lastCycle = skillingStart - DAY;
+    const tiles = {
+        'skilling::cooking': { name: 'Cooking', kind: 'skilling', tierSeenAt: { 20: lastCycle + 60_000 }, tier: 20 },
+    };
+
+    test('a list from the cycle before that one is not archived as that one’s', () => {
+        // This cycle's list was never filed; the day before's was left on the record (or a stored copy brought it back)
+        const held = {
+            weekStart: 0,
+            tiles,
+            history: [],
+            scheduled: {
+                skilling: { trials: ['alchemy'], at: lastCycle - DAY },
+                combat: { trials: ['badger'], at: lastCycle + HOUR },
+            },
+        };
+        const next = archiveEarlierCycles(held, read, { offset, at: 9 });
+        expect(next.history).toHaveLength(1);
+        expect(next.history[0].scheduled).toEqual({ combat: held.scheduled.combat });
     });
 });
