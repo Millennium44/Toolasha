@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
     scrollRate: null,
     upgradeResult: { baseline: null, results: [], food: null },
     onRun: null,
+    /** Called inside the editor stub's applyTriggerValueChanges, to change the build the way a real apply does */
+    onApply: null,
     /** Called inside the trigger optimizer mock, before it answers (may return a promise) */
     onTrigger: null,
     triggerEstimate: null,
@@ -637,6 +639,7 @@ vi.mock('./sim-editor.js', () => ({
         }
         applyTriggerValueChanges(changes) {
             mocks.triggerApplied.push(changes);
+            mocks.onApply?.(changes);
             return mocks.applyOutcome || { applied: changes.length, skipped: [] };
         }
         isInitialized() {
@@ -12610,6 +12613,124 @@ describe('the Triggers option', () => {
             expect(ui.panel).toBeNull();
             expect(ui._upgradeRunning).toBe(false);
             expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
+        });
+
+        describe('a result belongs to the setup it was found for', () => {
+            const tune = async () => {
+                ui.buildPanel();
+                await settle();
+                selectZone();
+                openSection();
+                mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+                mocks.triggerResult = {
+                    scope: 'me',
+                    changes: [fireballChange],
+                    unchanged: [],
+                    combined: null,
+                    simCount: 10,
+                    verifyContext: { tunables: [], playerDTOs: [] },
+                };
+                await ui._onTuneTriggers();
+                expect(ui.panel.querySelector('#mwi-csim-trigger-results')).not.toBeNull();
+            };
+            const setZone = (hrid) => {
+                const zone = ui.panel.querySelector('#mwi-csim-zone');
+                zone.innerHTML = `<option value="${hrid}">${hrid}</option>`;
+                zone.value = hrid;
+            };
+            const box = () => ui.panel.querySelector('#mwi-csim-trigger-box');
+
+            test('a different zone takes the result and its header summary down, even while the section is closed', async () => {
+                await tune();
+                ui.panel.querySelector('#mwi-csim-trigger-header').click();
+                expect(headerSummary().textContent).toContain('1 change recommended');
+                setZone('/actions/combat/other');
+                await ui._refreshCachedTriggerResult();
+                expect(box().innerHTML).toBe('');
+                expect(headerSummary().textContent).toBe('');
+                expect(ui._shownTriggerResult).toBeNull();
+            });
+
+            test('a different tier, player, choice or build each take it down', async () => {
+                const changes = [
+                    () => {
+                        ui.panel.querySelector('#mwi-csim-tier').innerHTML =
+                            '<option value="0">0</option><option value="2">2</option>';
+                        ui.panel.querySelector('#mwi-csim-tier').value = '2';
+                    },
+                    () => {
+                        ui.panel.querySelector('#mwi-csim-upgrade-player').innerHTML =
+                            '<option value="0">a</option><option value="1">b</option>';
+                        ui.panel.querySelector('#mwi-csim-upgrade-player').value = '1';
+                    },
+                    () => {
+                        ui.panel.querySelector('#mwi-csim-trigger-precision').value = 'quick';
+                    },
+                    () => {
+                        mocks.editedDTOs.player1.abilities = [{ hrid: '/abilities/x', level: 3 }];
+                    },
+                ];
+                for (const change of changes) {
+                    await tune();
+                    change();
+                    await ui._refreshCachedTriggerResult();
+                    expect(box().innerHTML).toBe('');
+                    ui.destroy();
+                }
+            });
+
+            test('Copy and Verify refuse a result whose setup moved on, say why and clear it', async () => {
+                const writeText = vi.fn().mockResolvedValue(undefined);
+                Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+                await tune();
+                const copy = ui.panel.querySelector('#mwi-csim-trigger-copy');
+                const verify = ui.panel.querySelector('#mwi-csim-trigger-verify-btn');
+                setZone('/actions/combat/other');
+                copy.click();
+                await settle();
+                expect(writeText).not.toHaveBeenCalled();
+                expect(statusText()).toContain('The setup changed since this was tuned');
+                expect(box().innerHTML).toBe('');
+                const before = mocks.triggerVerifyCalls.length;
+                verify?.click();
+                await settle();
+                expect(mocks.triggerVerifyCalls.length).toBe(before);
+                delete navigator.clipboard;
+            });
+
+            test('Applying a result does not make it stale for its own Apply', async () => {
+                await tune();
+                mocks.applyOutcome = { applied: 1, skipped: [] };
+                mocks.onApply = () => {
+                    mocks.editedDTOs.player1.abilities = [{ hrid: '/abilities/fireball', level: 1, triggers: [{}] }];
+                };
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                mocks.applyOutcome = null;
+                mocks.onApply = null;
+                await ui._refreshCachedTriggerResult();
+                expect(box().innerHTML).not.toBe('');
+            });
+
+            test('a setup change made while it ran: the result is not drawn under the new setup', async () => {
+                ui.buildPanel();
+                await settle();
+                selectZone();
+                openSection();
+                mocks.triggerResult = {
+                    scope: 'me',
+                    changes: [fireballChange],
+                    unchanged: [],
+                    combined: null,
+                    simCount: 10,
+                };
+                mocks.onTrigger = () => setZone('/actions/combat/other');
+                await ui._onTuneTriggers();
+                mocks.onTrigger = null;
+                expect(box().innerHTML).toBe('');
+                expect(headerSummary().textContent).toBe('');
+                expect(statusText()).toBe('The setup changed while tuning, so the result was not shown. Tune again.');
+                expect(ui._upgradeRunning).toBe(false);
+            });
         });
 
         test('the panel hidden during the run still gets the result', async () => {

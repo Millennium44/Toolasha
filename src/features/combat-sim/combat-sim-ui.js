@@ -10071,6 +10071,7 @@ class CombatSimUI {
         // The last trigger result carries the verify context (players, game data); the verify row lists point
         // into the analysis that has just been dropped
         this._shownTriggerResult = null;
+        this._shownTriggerRun = null;
         this._triggerOpen = false;
         this._triggerOpenKnown = false;
         this._triggerTouched = false;
@@ -11434,6 +11435,94 @@ class CombatSimUI {
     }
 
     /**
+     * The choices a result depends on, as one comparable string.
+     * @param {Object} choices - From {@link _readTriggerChoices}
+     * @returns {string}
+     * @private
+     */
+    _triggerChoicesKey(choices) {
+        const c = choices || {};
+        return JSON.stringify([
+            c.zoneHrid,
+            c.difficultyTier,
+            c.playerIndex,
+            c.scope,
+            c.include,
+            c.precision,
+            c.minGain,
+            c.objective,
+            c.searchConditions === true,
+        ]);
+    }
+
+    /**
+     * Whether the setup on screen is still the one a trigger result was found for: the choices, zone, tier,
+     * simulated player, Solo, roster and (unless `ignoreBuild`) every member's build.
+     * @param {{choicesKey: string, context: Object|null}|null} run - Taken when the result was wired
+     * @param {Object} [options]
+     * @param {boolean} [options.ignoreBuild] - Leave the build fingerprints to Apply
+     * @returns {boolean}
+     * @private
+     */
+    _triggerSetupMatches(run, { ignoreBuild = false } = {}) {
+        if (!run) return true;
+        const now = this._readTriggerChoices();
+        if (this._triggerChoicesKey(now) !== run.choicesKey) return false;
+        const edited = this._editor?.getEditedDTOs();
+        if (!edited || !run.context) return true;
+        const ctx = this._triggerRunContext(now, this._resolveEditorTriggerParty(edited, now.playerIndex));
+        const then = run.context;
+        if (
+            ctx.zoneHrid !== then.zoneHrid ||
+            ctx.difficultyTier !== then.difficultyTier ||
+            ctx.playerHrid !== then.playerHrid ||
+            ctx.soloApplied !== then.soloApplied ||
+            [...ctx.signatures.keys()].sort().join('|') !== [...then.signatures.keys()].sort().join('|')
+        ) {
+            return false;
+        }
+        if (ignoreBuild) return true;
+        return [...then.signatures].every(([hrid, sig]) => ctx.signatures.get(hrid) === sig);
+    }
+
+    /**
+     * Take the trigger result down: the box, its header summary and what Apply, Copy and Verify held.
+     * @private
+     */
+    _clearTriggerResult() {
+        const box = this.panel?.querySelector('#mwi-csim-trigger-box');
+        if (box) {
+            box.innerHTML = '';
+            delete box.dataset.cached;
+        }
+        this._shownTriggerResult = null;
+        this._shownTriggerRun = null;
+        this._setTriggerSummary(undefined);
+    }
+
+    /**
+     * Take down a result drawn for a setup that is no longer the one on screen, even while the section is
+     * closed (its header would keep saying "N changes recommended" for the wrong fight). Never during a run.
+     * @private
+     */
+    _revalidateTriggerResult() {
+        if (!this._shownTriggerRun || this._isBusy() || !this.panel) return;
+        if (!this._triggerSetupMatches(this._shownTriggerRun)) this._clearTriggerResult();
+    }
+
+    /**
+     * Refuse Copy and Verify for a result whose setup has moved on, and take it down.
+     * @returns {boolean} true when the result was refused
+     * @private
+     */
+    _refuseStaleTriggerResult() {
+        if (this._triggerSetupMatches(this._shownTriggerRun)) return false;
+        this._clearTriggerResult();
+        this._setStatus('The setup changed since this was tuned, so the result was cleared. Tune again.');
+        return true;
+    }
+
+    /**
      * Show the remembered trigger result when the section is open and the setup still matches the one
      * it was found for; take a remembered result down when it no longer matches. A result drawn by a run
      * in this panel is never replaced. Also refreshes the cost line.
@@ -11448,6 +11537,7 @@ class CombatSimUI {
         };
         void this._refreshTriggerEstimate(this._readTriggerChoices(), getParty);
         try {
+            this._revalidateTriggerResult();
             const box = this.panel?.querySelector('#mwi-csim-trigger-box');
             if (!box || this._isBusy()) return;
             const showingCached = box.dataset.cached === '1';
@@ -11490,7 +11580,7 @@ class CombatSimUI {
             });
             this._enhanceCollapsibles(box);
             box.dataset.cached = '1';
-            this._wireTriggerResultButtons(cached, gameData, party.liveDTOs, runContext);
+            this._wireTriggerResultButtons(cached, gameData, party.liveDTOs, runContext, choices);
             this._setTriggerSummary(cached);
             box.querySelector('#mwi-csim-trigger-rerun')?.addEventListener('click', () => this._onTuneTriggers());
         } catch (error) {
@@ -11553,6 +11643,7 @@ class CombatSimUI {
             if (tuneBtn) tuneBtn.disabled = true;
             // The previous result goes first: its Verify and Copy must not stay live while this run loads
             this._shownTriggerResult = null;
+            this._shownTriggerRun = null;
             if (triggerBox) {
                 triggerBox.innerHTML = '';
                 delete triggerBox.dataset.cached;
@@ -11636,15 +11727,28 @@ class CombatSimUI {
             // A switched character or a destroyed panel draws nothing and saves nothing
             if (!isCurrent()) return;
 
-            triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
-                canApply: Boolean(this._editor?.getEditedDTOs()),
-                verify: { canVerify: canVerifyTriggerResult(result) },
-            });
-            this._enhanceCollapsibles(triggerBox);
-            this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext, choices);
-            this._setTriggerSummary(result);
+            // The zone, tier, player, build or choices moved while it ran: this is an answer for the setup it
+            // started with, so it is not drawn under the setup on screen now (it is still remembered for its own)
+            // (a build edited in place is Apply's to catch, member by member, as before)
+            const sameSetup = this._triggerSetupMatches(
+                { choicesKey: this._triggerChoicesKey(choices), context: runContext },
+                { ignoreBuild: true }
+            );
+            if (sameSetup) {
+                triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
+                    canApply: Boolean(this._editor?.getEditedDTOs()),
+                    verify: { canVerify: canVerifyTriggerResult(result) },
+                });
+                this._enhanceCollapsibles(triggerBox);
+                this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext, choices);
+                this._setTriggerSummary(result);
+            }
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
             if (!isCurrent()) return;
+            if (!sameSetup) {
+                this._setStatus('The setup changed while tuning, so the result was not shown. Tune again.');
+                return;
+            }
             // Condition wins count too: a loadout with no numeric thresholds can still gain a new condition
             const foundCount = (result?.changes?.length || 0) + (result?.conditions?.changes?.length || 0);
             this._setStatus(
@@ -11709,6 +11813,8 @@ class CombatSimUI {
      */
     _wireTriggerResultButtons(result, gameData, playerDTOs, runContext = null, choices = null) {
         this._shownTriggerResult = result || null;
+        // What this result was found for, so it can be taken down (or refused) when the setup moves on
+        this._shownTriggerRun = choices ? { choicesKey: this._triggerChoicesKey(choices), context: runContext } : null;
         this._wireTriggerVerify(result);
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
@@ -11751,7 +11857,21 @@ class CombatSimUI {
                 ...outcome.skipped,
                 ...changedBuild.map((change) => ({ change, reason: 'changed since analysis' })),
             ];
-            if (applied > 0) applyBtn.disabled = true;
+            if (applied > 0) {
+                applyBtn.disabled = true;
+                // The result stays for the setup it was applied to: the build its own Apply just changed is
+                // that setup now, not a reason to take the result down
+                if (this._shownTriggerRun) {
+                    const afterChoices = this._readTriggerChoices();
+                    this._shownTriggerRun = {
+                        choicesKey: this._triggerChoicesKey(afterChoices),
+                        context: this._triggerRunContext(
+                            afterChoices,
+                            this._resolveEditorTriggerParty(this._editor.getEditedDTOs(), afterChoices.playerIndex)
+                        ),
+                    };
+                }
+            }
             this._setStatus(
                 (applied > 0
                     ? `Applied ${applied} trigger value${applied === 1 ? '' : 's'} to the sim editor`
@@ -11761,6 +11881,7 @@ class CombatSimUI {
             );
         });
         this.panel.querySelector('#mwi-csim-trigger-copy')?.addEventListener('click', async () => {
+            if (this._refuseStaleTriggerResult()) return;
             try {
                 await navigator.clipboard.writeText(formatChangesText(result, gameData));
                 this._setStatus('Copied the trigger changes.');
@@ -14433,6 +14554,8 @@ class CombatSimUI {
      */
     async _onTriggerVerify(result) {
         if (this._isBusy() || !canVerifyTriggerResult(result)) return;
+        // A button left over from a result that has been taken down verifies nothing
+        if (this._shownTriggerResult !== result || this._refuseStaleTriggerResult()) return;
         const ownerId = dataManager.getCurrentCharacterId();
         const gen = this._analysisGen;
         const current = () =>
