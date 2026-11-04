@@ -126,7 +126,7 @@ const stripTags = (html) =>
  * A tooltip is unreachable by touch and by keyboard, so the card shows none: the HTML comes back without
  * them and the sentences come back beside the visible words they were attached to, for the Details to print.
  * @param {string} html - Markup built by the table's cell functions
- * @returns {{html: string, titles: Array<{label: string, text: string}>}}
+ * @returns {{html: string, titles: Array<{label: string, text: string, tag: string}>}}
  */
 export function liftTitles(html) {
     const titles = [];
@@ -135,13 +135,13 @@ export function liftTitles(html) {
     out = out.replace(
         /<(span|button|td|th)\b([^>]*?)\stitle="([^"]*)"([^>]*)>([\s\S]*?)<\/\1>/g,
         (match, tag, before, title, after, inner) => {
-            titles.push({ label: stripTags(inner), text: decode(title).trim() });
+            titles.push({ label: stripTags(inner), text: decode(title).trim(), tag });
             return `<${tag}${before}${after}>${inner}</${tag}>`;
         }
     );
     // Whatever is left (an element nested inside another, a self-closing tag)
     out = out.replace(/\stitle="([^"]*)"/g, (match, title) => {
-        titles.push({ label: '', text: decode(title).trim() });
+        titles.push({ label: '', text: decode(title).trim(), tag: '' });
         return '';
     });
     return { html: out, titles: titles.filter((t) => t.text) };
@@ -272,6 +272,11 @@ export function buildUpgradeCards({
     open = null,
     remembered = false,
 }) {
+    // Pass one: every entry's figures with the tooltips lifted out, hidden entries included, so what is
+    // generic is judged against the whole section and does not change with Show all
+    const prepared = entries.map((entry) => prepareEntry(entry));
+    const generic = genericTexts(prepared.filter((p, i) => !entries[i].baseline));
+
     const seen = new Map();
     let rank = 0;
     let kept = 0;
@@ -292,32 +297,9 @@ export function buildUpgradeCards({
             remembered,
             unpriced: entry.unpriced,
         });
-        const lifted = [];
-        const lift = (html, label) => {
-            const out = liftTitles(html);
-            for (const t of out.titles) lifted.push({ label: t.label || label || '', text: t.text });
-            return out.html;
-        };
-        const liftFigure = (figure) =>
-            figure
-                ? {
-                      label: figure.label,
-                      html: lift(figure.html, figure.label),
-                      tone: figure.tone || 'neutral',
-                      explain: figure.title ? { label: figure.label, text: figure.title } : null,
-                  }
-                : null;
-
-        const headline = liftFigure(entry.headline);
-        const lines = (entry.lines || []).map((line) => line.map(liftFigure));
-        const facts = (entry.facts || []).map(liftFigure);
-        for (const f of [headline, ...lines.flat(), ...facts]) if (f?.explain) lifted.push(f.explain);
-        const notesHtml = lift(entry.notesHtml || '', '');
-        const detailHtml = lift(entry.detailHtml || '', '');
-        const actionsHtml = lift(entry.actionsHtml || '', '');
-        const verdictHtml = lift(entry.verdictHtml || '', 'Verify');
-
-        if (entry.within) lifted.push({ label: 'Within noise', text: WITHIN_NOISE_TEXT });
+        const { headline, lines, facts, notesHtml, detailHtml, actionsHtml, verdictHtml, lifted } = prepared[index];
+        const own = [...lifted];
+        if (entry.within) own.push({ label: 'Within noise', text: WITHIN_NOISE_TEXT, kind: 'within' });
         const offered = Boolean(entry.offerVerify) && !entry.baseline;
         let reason = '';
         if (offered && !entry.canVerify) reason = 'Re-run the analysis to verify.';
@@ -339,7 +321,9 @@ export function buildUpgradeCards({
             verdictHtml,
             state,
             noteText: entry.note?.text || '',
-            explain: dedupeExplanations(lifted),
+            // What is true of this row only; the generic meanings are the section's, drawn once
+            explain: dedupeExplanations(own.filter((item) => !isGenericItem(item, generic))),
+            sectionExplain: entry.baseline ? [] : own.filter((item) => isGenericItem(item, generic)),
             verify: {
                 offered,
                 enabled: offered && Boolean(entry.canVerify) && !entry.pending,
@@ -357,8 +341,127 @@ export function buildUpgradeCards({
         shown: cards.filter((c) => !c.baseline).length,
         canToggle: rankable > top,
         showAll: Boolean(showAll),
+        glossary: sectionGlossary(cards),
         cards,
     };
+}
+
+/**
+ * One entry's figures with every tooltip lifted out, and the lifted sentences tagged with where they came from.
+ * @param {CardEntry} entry - A card entry
+ * @returns {Object} The lifted figures and markup, and `lifted`: `{label, text, kind}` for each sentence
+ */
+function prepareEntry(entry) {
+    const lifted = [];
+    // kind: column (a column's own explanation), inline (a tooltip inside a cell), note (a chip beside the name),
+    // verdict (the verify chip), button (a control's help, wherever it sits)
+    const lift = (html, label, kind) => {
+        const out = liftTitles(html);
+        for (const t of out.titles) {
+            // A blank or dash has no arithmetic to show
+            if (t.label === '\u2014' && t.tag !== 'button') continue;
+            lifted.push({ label: t.label || label || '', text: t.text, kind: t.tag === 'button' ? 'button' : kind });
+        }
+        return out.html;
+    };
+    const liftFigure = (f) => {
+        if (!f) return null;
+        const html = lift(f.html, f.label, 'inline');
+        if (f.title) lifted.push({ label: f.label, text: f.title, kind: 'column' });
+        return { label: f.label, html, tone: f.tone || 'neutral' };
+    };
+    const headline = liftFigure(entry.headline);
+    const lines = (entry.lines || []).map((line) => line.map(liftFigure));
+    const facts = (entry.facts || []).map(liftFigure);
+    return {
+        headline,
+        lines,
+        facts,
+        notesHtml: lift(entry.notesHtml || '', '', 'note'),
+        detailHtml: lift(entry.detailHtml || '', '', 'inline'),
+        actionsHtml: lift(entry.actionsHtml || '', '', 'inline'),
+        verdictHtml: lift(entry.verdictHtml || '', 'Verify', 'verdict'),
+        lifted,
+    };
+}
+
+/** Whether a sentence quotes a figure of its own, ignoring the "0.01%" every score column names */
+const hasRowNumbers = (text) => /\d/.test(String(text).replace(/0\.01%|1yr/g, ''));
+
+/**
+ * Which explanations are the same on every card of a section (the meaning of a column or a button) and which
+ * are about one row. Decided from the data, not a list of words:
+ * - a chip beside the name, a verify chip, a within-noise note: always about the row;
+ * - a column's explanation: generic when the column is on every row and two or more rows carry the identical
+ *   sentence, so a figure only some rows have (the ceiling) stays on its rows;
+ * - a button's help: generic when two or more rows carry the identical sentence;
+ * - a lone row has nothing to compare with: a sentence that quotes no figure of its own is generic;
+ * - any other tooltip inside a cell: generic only when every row of the section carries the identical
+ *   sentence, so a note that only some rows have (a ceiling, a cost source) stays on the rows it is true of.
+ * @param {Array<{lifted: Array<{text: string, kind: string}>}>} prepared - The section's non-baseline entries
+ * @returns {Set<string>} The sentences that are generic
+ */
+function genericTexts(prepared) {
+    const holders = new Map();
+    const columnRows = new Map();
+    prepared.forEach((p, i) => {
+        for (const item of p.lifted) {
+            const h = holders.get(item.text) || { rows: new Set(), kinds: new Set(), columns: new Set() };
+            h.rows.add(i);
+            h.kinds.add(item.kind);
+            holders.set(item.text, h);
+            if (item.kind === 'column') {
+                h.columns.add(item.label);
+                const rows = columnRows.get(item.label) || new Set();
+                rows.add(i);
+                columnRows.set(item.label, rows);
+            }
+        }
+    });
+    const out = new Set();
+    const total = prepared.length;
+    for (const [text, h] of holders) {
+        if (h.kinds.has('note') || h.kinds.has('verdict')) continue;
+        const shared = total < 2 ? !hasRowNumbers(text) : h.rows.size >= 2;
+        const onEveryRow = total < 2 || [...h.columns].some((label) => columnRows.get(label).size === total);
+        if (h.kinds.has('column') || h.kinds.has('button')) {
+            if (shared && (h.kinds.has('button') || onEveryRow)) out.add(text);
+        } else if (total >= 2 && h.rows.size === total) {
+            out.add(text);
+        }
+    }
+    return out;
+}
+
+const isGenericItem = (item, generic) => item.kind !== 'within' && generic.has(item.text);
+
+/**
+ * The meanings every card of a section shares, each once, for the cards that are drawn.
+ * @param {Array<Object>} cards - Built cards
+ * @returns {Array<{label: string, text: string}>}
+ */
+function sectionGlossary(cards) {
+    const byText = new Map();
+    for (const card of cards) {
+        for (const item of card.sectionExplain) {
+            const g = byText.get(item.text) || { labels: new Set(), kind: item.kind };
+            g.labels.add(String(item.label || '').trim());
+            byText.set(item.text, g);
+        }
+    }
+    const list = [];
+    for (const [text, g] of byText) {
+        // The same sentence on figures with different values has no one label to quote
+        list.push({ label: g.labels.size === 1 ? [...g.labels][0] : '', text });
+    }
+    const verifyLabels = new Set(cards.filter((c) => c.verify.offered && c.verify.label).map((c) => c.verify.label));
+    if (verifyLabels.size) {
+        list.push({
+            label: 'Verify',
+            text: `Re-measures the row on fresh seeds by ${[...verifyLabels].join(' / ')}.`,
+        });
+    }
+    return dedupeExplanations(list);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -411,17 +514,13 @@ function cardHtml(card, section, position) {
         )
         .join('');
     const explain = card.explain.length
-        ? `<div class="mwi-ucard-explain"><div class="mwi-ucard-h">What this means</div>${card.explain
+        ? `<div class="mwi-ucard-explain"><div class="mwi-ucard-h">On this row</div>${card.explain
               .map(
                   (e) =>
                       `<p class="mwi-ucard-p">${e.label ? `<strong>${esc(e.label)}:</strong> ` : ''}${esc(e.text)}</p>`
               )
               .join('')}</div>`
         : '';
-    const verifyHow =
-        verify.offered && verify.label
-            ? `<p class="mwi-ucard-p">Verify re-measures this on fresh seeds by ${esc(verify.label)}.</p>`
-            : '';
     const noteText = card.noteText ? `<p class="mwi-ucard-p mwi-ucard-t-warn">${esc(card.noteText)}</p>` : '';
 
     return (
@@ -440,7 +539,30 @@ function cardHtml(card, section, position) {
         (verify.reason ? `<div class="mwi-ucard-why" data-card-why>${esc(verify.reason)}</div>` : '') +
         `<div class="mwi-ucard-detail" id="${detailId}"${card.open ? '' : ' hidden'}>` +
         `${noteText}${facts}${card.detailHtml}${card.actionsHtml ? `<div class="mwi-ucard-actions">${card.actionsHtml}</div>` : ''}` +
-        `${verifyHow}${explain}</div></li>`
+        `${explain}</div></li>`
+    );
+}
+
+/**
+ * The one disclosure per section that holds the meanings every card shares.
+ * @param {string} section - Section id
+ * @param {Array<{label: string, text: string}>} glossary - From {@link buildUpgradeCards}
+ * @param {boolean} open - Whether it is open
+ * @returns {string} HTML
+ */
+function glossaryHtml(section, glossary, open) {
+    const id = `mwi-ucards-gloss-${esc(section)}`;
+    return (
+        `<div class="mwi-ucards-gloss">` +
+        `<button type="button" class="mwi-ucards-btn mwi-ucards-gloss-btn" data-card-glossary="${esc(section)}" ` +
+        `aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}">What the columns mean ${open ? '▾' : '▸'}</button>` +
+        `<div class="mwi-ucards-gloss-body" id="${id}"${open ? '' : ' hidden'}>` +
+        glossary
+            .map(
+                (e) => `<p class="mwi-ucard-p">${e.label ? `<strong>${esc(e.label)}:</strong> ` : ''}${esc(e.text)}</p>`
+            )
+            .join('') +
+        `</div></div>`
     );
 }
 
@@ -452,11 +574,18 @@ function cardHtml(card, section, position) {
  * @param {boolean} [options.worstFirst] - The sort is currently reversed (a header click on the table)
  * @param {string} [options.emptyText] - Said when there is nothing to show
  * @param {boolean} [options.toggle] - Draw the Show all button (a section with its own leaves it out)
+ * @param {boolean} [options.glossaryOpen] - The "What the columns mean" disclosure is open
  * @returns {string} HTML
  */
 export function upgradeCardsHtml(
     model,
-    { rankBy = null, worstFirst = false, emptyText = 'Nothing to show.', toggle: withToggle = true } = {}
+    {
+        rankBy = null,
+        worstFirst = false,
+        emptyText = 'Nothing to show.',
+        toggle: withToggle = true,
+        glossaryOpen = false,
+    } = {}
 ) {
     const section = esc(model.section);
     let bar = '';
@@ -480,6 +609,7 @@ export function upgradeCardsHtml(
             model.showAll || !model.canToggle ? `All ${model.total}` : `Top ${model.shown} of ${model.total}`
         }</span>`;
     }
+    const glossary = model.glossary?.length ? glossaryHtml(model.section, model.glossary, glossaryOpen) : '';
     const body = model.cards.length
         ? `<ol class="mwi-ucard-list">${model.cards.map((c, i) => cardHtml(c, model.section, i)).join('')}</ol>`
         : `<div class="mwi-ucards-empty">${esc(emptyText)}</div>`;
@@ -489,7 +619,7 @@ export function upgradeCardsHtml(
                   model.showAll ? `Show top ${model.top}` : `Show all ${model.total}`
               }</button>`
             : '';
-    return `<div class="mwi-ucards" data-upgrade-cards="${section}">${bar ? `<div class="mwi-ucards-bar">${bar}</div>` : ''}${body}${toggle}</div>`;
+    return `<div class="mwi-ucards" data-upgrade-cards="${section}">${bar ? `<div class="mwi-ucards-bar">${bar}</div>` : ''}${glossary}${body}${toggle}</div>`;
 }
 
 /**
@@ -520,8 +650,9 @@ export function viewSwitchHtml(view, narrow) {
  * @param {(section: string) => void} handlers.onShowAll - Show all / Show top pressed
  * @param {(section: string, key: string) => void} handlers.onRank - Rank by changed
  * @param {(section: string) => void} handlers.onBestFirst - Reversed sort put right
+ * @param {(section: string, open: boolean) => void} [handlers.onGlossary] - "What the columns mean" opened or closed
  */
-export function wireUpgradeCards(root, { onToggle, onVerify, onShowAll, onRank, onBestFirst }) {
+export function wireUpgradeCards(root, { onToggle, onVerify, onShowAll, onRank, onBestFirst, onGlossary = () => {} }) {
     root.querySelectorAll('[data-card-details]').forEach((button) => {
         button.addEventListener('click', () => {
             const id = button.getAttribute('data-card-details');
@@ -532,6 +663,16 @@ export function wireUpgradeCards(root, { onToggle, onVerify, onShowAll, onRank, 
             if (detail) detail.hidden = !open;
             button.closest('.mwi-ucard')?.setAttribute('data-open', String(open));
             onToggle(id, open);
+        });
+    });
+    root.querySelectorAll('[data-card-glossary]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const open = button.getAttribute('aria-expanded') !== 'true';
+            button.setAttribute('aria-expanded', String(open));
+            button.textContent = `What the columns mean ${open ? '▾' : '▸'}`;
+            const body = root.ownerDocument.getElementById(button.getAttribute('aria-controls'));
+            if (body) body.hidden = !open;
+            onGlossary(button.getAttribute('data-card-glossary'), open);
         });
     });
     root.querySelectorAll('[data-card-verify]').forEach((button) => {
@@ -616,6 +757,9 @@ export const UPGRADE_CARD_CSS = `
     .mwi-ucard-detail > div { min-width: 0; }
     .mwi-ucard-fact { margin: 2px 0; }
     .mwi-ucard-h { color: #888; font-weight: 600; margin: 6px 0 2px; }
+    .mwi-ucards-gloss { margin: 0 0 6px; }
+    .mwi-ucards-gloss-body { margin-top: 4px; padding: 4px 8px; background: ${GAME_COLORS.raised}; border: 1px solid ${GAME_COLORS.border}; border-radius: 4px; }
+    .mwi-ucards-gloss-body[hidden] { display: none; }
     .mwi-ucard-p { margin: 2px 0; color: #aaa; font-size: 10px; line-height: 1.4; white-space: pre-line; }
     .mwi-ucard-actions { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
     .mwi-ucard-actions button { margin-left: 0 !important; }

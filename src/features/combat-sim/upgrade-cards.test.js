@@ -86,8 +86,8 @@ describe('liftTitles', () => {
         expect(out.html).not.toContain('title=');
         expect(out.html).toContain('>12M</span>');
         expect(out.titles).toEqual([
-            { label: '12M', text: 'Cost of one 0.01% DPS "step".' },
-            { label: 'Watch', text: 'Add to the watchlist' },
+            { label: '12M', text: 'Cost of one 0.01% DPS "step".', tag: 'span' },
+            { label: 'Watch', text: 'Add to the watchlist', tag: 'button' },
         ]);
     });
 
@@ -213,7 +213,7 @@ describe('buildUpgradeCards', () => {
         });
         const html = upgradeCardsHtml(model);
         expect(html).not.toMatch(/title="/);
-        const text = model.cards[0].explain.map((e) => e.text);
+        const text = [...model.cards[0].explain, ...model.glossary].map((e) => e.text);
         expect(text).toEqual(
             expect.arrayContaining([
                 'Pays for itself.',
@@ -268,6 +268,84 @@ describe('buildUpgradeCards', () => {
             entries: [entry('Current', { ...base, baseline: true })],
         }).cards[0];
         expect(baseline.verify.offered).toBe(false);
+    });
+});
+
+describe('row meanings and the section glossary', () => {
+    const cost = 'Cost of one 0.01% DPS step. Lower is better.';
+    const pin = 'Always include this purchase in the plan';
+    const rowEntry = (name, extra = {}) =>
+        entry(name, {
+            lines: [[figure('Cost', '12M', 'neutral', cost)]],
+            actionsHtml: `<button type="button" title="${pin}">Pin</button>`,
+            ...extra,
+        });
+    const model = buildUpgradeCards({
+        section: 'gold',
+        entries: [
+            rowEntry('Ring', {
+                notesHtml: '<span title="Cost assumes 3 books.">fresh book</span>',
+                detailHtml: '<span title="7.45 baseline \u2192 8.14 with this upgrade = +0.69">+0.69</span>',
+            }),
+            rowEntry('Sword', {
+                detailHtml:
+                    '<span title="1.00 baseline \u2192 1.00 with this upgrade = \u2014">\u2014</span>' +
+                    '<span title="2.00 baseline \u2192 3.50 with this upgrade = +1.50">+1.50</span>',
+            }),
+        ],
+    });
+    const html = upgradeCardsHtml(model);
+
+    test('a sentence every card carries is said once, in the section glossary, not in the cards', () => {
+        expect(model.glossary.map((g) => g.text)).toEqual(expect.arrayContaining([cost, pin]));
+        expect(html.split(cost)).toHaveLength(2);
+        expect(html.split(pin)).toHaveLength(2);
+        expect(model.cards.every((c) => c.explain.every((e) => e.text !== cost && e.text !== pin))).toBe(true);
+    });
+
+    test("a row's own note and arithmetic stay in its card only", () => {
+        const [ring, sword] = model.cards;
+        expect(ring.explain.map((e) => e.text)).toEqual([
+            'Cost assumes 3 books.',
+            '7.45 baseline \u2192 8.14 with this upgrade = +0.69',
+        ]);
+        expect(sword.explain.map((e) => e.text)).toEqual(['2.00 baseline \u2192 3.50 with this upgrade = +1.50']);
+        expect(model.glossary.map((g) => g.text)).not.toContain('Cost assumes 3 books.');
+    });
+
+    test('a blank figure gets no arithmetic line', () => {
+        expect(html).not.toContain('= \u2014');
+    });
+
+    test('the glossary is one closed button with aria-expanded, above the cards', () => {
+        expect(html).toMatch(
+            /<button type="button" class="[^"]*" data-card-glossary="gold" aria-expanded="false" aria-controls="mwi-ucards-gloss-gold">What the columns mean/
+        );
+        expect(html).toMatch(/id="mwi-ucards-gloss-gold" hidden/);
+        expect(html.indexOf('data-card-glossary')).toBeLessThan(html.indexOf('<ol'));
+        const open = upgradeCardsHtml(model, { glossaryOpen: true });
+        expect(open).toContain('aria-expanded="true"');
+        expect(open).not.toMatch(/id="mwi-ucards-gloss-gold" hidden/);
+    });
+
+    test('a note only some cards have stays row-specific even when two share it', () => {
+        const ceiling = 'Counted as free in the profit, so this gain is only a ceiling.';
+        const m = buildUpgradeCards({
+            section: 'gold',
+            entries: ['A', 'B', 'C'].map((n, i) =>
+                rowEntry(
+                    n,
+                    i < 2 ? { facts: [figure('Profit gain is a ceiling', 'no price for X', 'warn', ceiling)] } : {}
+                )
+            ),
+        });
+        expect(m.glossary.map((g) => g.text)).not.toContain(ceiling);
+        expect(m.cards[0].explain.map((e) => e.text)).toContain(ceiling);
+    });
+
+    test('no glossary is drawn when no card has anything generic to say', () => {
+        const m = buildUpgradeCards({ section: 'gold', entries: [entry('Plain')] });
+        expect(upgradeCardsHtml(m)).not.toContain('data-card-glossary');
     });
 });
 

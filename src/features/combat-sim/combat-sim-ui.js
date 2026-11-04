@@ -3346,6 +3346,7 @@ class CombatSimUI {
         this._viewChoices = normalizeViewChoices(null);
         this._openCards = new Set();
         this._cardShowAll = new Set();
+        this._openGlossaries = new Set();
         this._cardRegistry = new Map();
         this._cardPending = null;
         this._cardNotes = null;
@@ -10026,6 +10027,7 @@ class CombatSimUI {
         this._unwatchNarrowWindow();
         this._openCards = new Set();
         this._cardShowAll = new Set();
+        this._openGlossaries = new Set();
         this._cardRegistry = new Map();
         this._cardPending = null;
         this._cardNotes = null;
@@ -14968,6 +14970,7 @@ class CombatSimUI {
             rankBy: rankOptions ? { options: rankOptions, selected: sortKey } : null,
             worstFirst: Boolean(sortState && sortState.asc === false),
             emptyText,
+            glossaryOpen: this._openGlossaries.has(section),
             // The Ability order section keeps its own Show all button, which the saved prefs remember
             toggle: !isOrder,
         });
@@ -15354,6 +15357,10 @@ class CombatSimUI {
             onToggle: (id, open) => {
                 if (open) this._openCards.add(id);
                 else this._openCards.delete(id);
+            },
+            onGlossary: (section, open) => {
+                if (open) this._openGlossaries.add(section);
+                else this._openGlossaries.delete(section);
             },
             onVerify: (id) => this._verifyFromCard(id),
             onShowAll: (section) => {
