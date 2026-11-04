@@ -442,6 +442,16 @@ describe('the Lab Sim panel remembers where it was left', () => {
         ui.destroy();
     });
 
+    test('building the panel installs the Upgrade tab phone rules too, without the Combat Sim panel', () => {
+        document.getElementById('mwi-sim-upgrade-phone-layout')?.remove();
+        ui.buildPanel();
+        expect(document.querySelectorAll('#mwi-sim-upgrade-phone-layout')).toHaveLength(1);
+        expect(document.getElementById('mwi-sim-upgrade-phone-layout').textContent).toContain('.mwi-utable-wrap');
+        // Closing the panel leaves the shared style for the other panel
+        ui.destroy();
+        expect(document.getElementById('mwi-sim-upgrade-phone-layout')).not.toBeNull();
+    });
+
     test('with nothing saved it opens at its designed corner', async () => {
         ui.buildPanel();
         await Promise.resolve();
