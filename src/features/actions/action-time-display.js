@@ -236,6 +236,73 @@ const QUEUE_EDIT_MENU_CSS = `
  */
 
 /**
+ * Inline sizing this module has put on the header's action name and its ancestors, so it can be
+ * handed back exactly: element -> property -> { prior, ours }. `prior` is what the element held
+ * before the first write (value and priority, '' when absent), `ours` is what this module last
+ * left there. Restoring only touches a property whose current value is still `ours`, so a value
+ * the game wrote in between is never overwritten, and an element the game has since replaced
+ * simply has nothing recorded.
+ * @type {Map<Element, Map<string, {prior: {value: string, priority: string}, ours: {value: string, priority: string}}>>}
+ */
+const widthEdits = new Map();
+
+/** Drop records of elements the game has removed from the page. */
+function pruneWidthEdits() {
+    for (const el of widthEdits.keys()) {
+        if (!el.isConnected) widthEdits.delete(el);
+    }
+}
+
+/**
+ * Set one inline property, remembering what was there before the first time.
+ * @param {HTMLElement} el - Element to size
+ * @param {string} prop - CSS property name
+ * @param {string} value - New value
+ * @param {string} priority - 'important' or ''
+ */
+function setSizing(el, prop, value, priority = 'important') {
+    let props = widthEdits.get(el);
+    if (!props) {
+        props = new Map();
+        widthEdits.set(el, props);
+    }
+    if (!props.has(prop)) {
+        props.set(prop, {
+            prior: { value: el.style.getPropertyValue(prop), priority: el.style.getPropertyPriority(prop) },
+            ours: { value: '', priority: '' },
+        });
+    }
+    el.style.setProperty(prop, value, priority);
+    props.get(prop).ours = { value: el.style.getPropertyValue(prop), priority: el.style.getPropertyPriority(prop) };
+}
+
+/**
+ * Hand properties back to what they held before this module touched them. A property is left
+ * alone when it was never edited here or when something else has rewritten it since.
+ * @param {HTMLElement} el - Element to restore
+ * @param {string[]} [only] - Restrict to these properties; all recorded ones when omitted
+ */
+function restoreSizing(el, only) {
+    const props = widthEdits.get(el);
+    if (!props) return;
+    for (const [prop, { prior, ours }] of [...props]) {
+        if (only && !only.includes(prop)) continue;
+        props.delete(prop);
+        const nowValue = el.style.getPropertyValue(prop);
+        const nowPriority = el.style.getPropertyPriority(prop);
+        if (nowValue !== ours.value || nowPriority !== ours.priority) continue;
+        if (prior.value) el.style.setProperty(prop, prior.value, prior.priority);
+        else el.style.removeProperty(prop);
+    }
+    if (props.size === 0) widthEdits.delete(el);
+}
+
+/** Hand every element this module sized back to how the game left it. */
+function restoreAllSizing() {
+    for (const el of [...widthEdits.keys()]) restoreSizing(el);
+}
+
+/**
  * Whether an element in the action-name row was put there by a script rather
  * than by the game — Toolasha's own annotations all carry an `mwi-` class or
  * id, and anything else following that convention is equally not part of the
@@ -1988,6 +2055,8 @@ class ActionTimeDisplay {
             }
         });
 
+        registry.registerCleanup(() => this.restoreActionBarWidth());
+
         registry.registerCleanup(() => {
             if (this.waitForPanelTimeout) {
                 clearTimeout(this.waitForPanelTimeout);
@@ -2612,6 +2681,7 @@ class ActionTimeDisplay {
         if (oldActionNameElement) {
             this.clearAppendedStats(oldActionNameElement);
         }
+        this.restoreActionBarWidth();
 
         // Disconnect old action name observer (watching removed element)
         if (this.actionNameObserver) {
@@ -3376,34 +3446,8 @@ class ActionTimeDisplay {
         const materialTime =
             materialLimit !== null ? Math.max(0, materialLimit * perActionTime - elapsedInCurrentUnit) : null;
 
-        // Apply CSS overrides for non-combat display
-        const enhCompact = config.getSetting('actionBar_compactWidth') || isMobileMode();
-        if (enhCompact) {
-            actionNameElement.style.setProperty('max-width', '800px', 'important');
-            actionNameElement.style.setProperty('overflow', 'hidden', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('width', '', 'important');
-        } else {
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('max-width', 'none', 'important');
-            actionNameElement.style.setProperty('width', 'auto', 'important');
-
-            const parent1 = actionNameElement.parentElement;
-            const parent2 = parent1?.parentElement;
-            if (parent1) {
-                parent1.style.setProperty('max-width', 'none', 'important');
-                parent1.style.setProperty('width', 'auto', 'important');
-                parent1.style.setProperty('overflow', 'visible', 'important');
-            }
-            if (parent2) {
-                parent2.style.setProperty('max-width', 'none', 'important');
-                parent2.style.setProperty('width', 'auto', 'important');
-                parent2.style.setProperty('overflow', 'visible', 'important');
-            }
-        }
+        // Enhancing is never combat; the width policy is the same one every other action gets
+        this.applyActionBarWidth(actionNameElement, false);
 
         // Build stats line — enhancing is always infinite, so skip queue count display
         const statsToAppend = [];
@@ -3667,48 +3711,55 @@ class ActionTimeDisplay {
         const parent1 = actionNameElement.parentElement;
         const parent2 = parent1?.parentElement;
         const SIZING = ['overflow', 'text-overflow', 'white-space', 'max-width', 'width', 'min-width'];
+        pruneWidthEdits();
 
         if (compact && isCombat) {
-            // Hand the whole column back to the game
-            for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+            // Hand the whole column back to the game: whatever this module set goes back to what was
+            // there before, and nothing the game wrote is cleared
+            restoreSizing(actionNameElement, SIZING);
             let parent = parent1;
             for (let levels = 0; parent && levels < 5; levels++) {
-                for (const prop of SIZING) parent.style.removeProperty(prop);
+                restoreSizing(parent, SIZING);
                 parent = parent.parentElement;
             }
             return;
         }
 
         if (compact) {
-            actionNameElement.style.setProperty('max-width', '800px', 'important');
-            actionNameElement.style.setProperty('overflow', 'hidden', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('width', '', 'important');
+            setSizing(actionNameElement, 'max-width', '800px');
+            setSizing(actionNameElement, 'overflow', 'hidden');
+            setSizing(actionNameElement, 'text-overflow', 'clip');
+            setSizing(actionNameElement, 'white-space', 'nowrap');
+            restoreSizing(actionNameElement, ['width']);
             for (const parent of [parent1, parent2]) {
-                if (!parent) continue;
-                parent.style.removeProperty('max-width');
-                parent.style.removeProperty('width');
-                parent.style.removeProperty('overflow');
+                if (parent) restoreSizing(parent, ['max-width', 'width', 'overflow']);
             }
             return;
         }
 
         if (isCombat) {
-            for (const prop of SIZING) actionNameElement.style.removeProperty(prop);
+            restoreSizing(actionNameElement, SIZING);
         } else {
-            actionNameElement.style.setProperty('overflow', 'visible', 'important');
-            actionNameElement.style.setProperty('text-overflow', 'clip', 'important');
-            actionNameElement.style.setProperty('white-space', 'nowrap', 'important');
-            actionNameElement.style.setProperty('max-width', 'none', 'important');
-            actionNameElement.style.setProperty('width', 'auto', 'important');
+            setSizing(actionNameElement, 'overflow', 'visible');
+            setSizing(actionNameElement, 'text-overflow', 'clip');
+            setSizing(actionNameElement, 'white-space', 'nowrap');
+            setSizing(actionNameElement, 'max-width', 'none');
+            setSizing(actionNameElement, 'width', 'auto');
         }
         for (const parent of [parent1, parent2]) {
             if (!parent) continue;
-            parent.style.setProperty('max-width', 'none', 'important');
-            parent.style.setProperty('width', 'auto', 'important');
-            parent.style.setProperty('overflow', 'visible', 'important');
+            setSizing(parent, 'max-width', 'none');
+            setSizing(parent, 'width', 'auto');
+            setSizing(parent, 'overflow', 'visible');
         }
+    }
+
+    /**
+     * Give back every inline size this module put on the header, as it was before. Called when the
+     * bar or the whole feature is switched off, and when the character changes.
+     */
+    restoreActionBarWidth() {
+        restoreAllSizing();
     }
 
     matchCurrentActionFromText(currentActions, actionNameText) {
@@ -6329,6 +6380,7 @@ class ActionTimeDisplay {
 
             this.cleanupRegistry.cleanupAll();
             this.barCleanupRegistry.cleanupAll();
+            this.restoreActionBarWidth();
             this.displayElement = null;
             this.profitElement = null;
             this.runElement = null;
