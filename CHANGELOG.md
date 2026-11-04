@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 Turning off "Show expected value for openable containers" now only hides the tooltip row. Net worth, combat stats and task values for crates and chests no longer change partway through a session depending on which panel you opened first.
 
+### Bulk Sell bar says each thing once, and gets a Retry button
+
+The Bulk Sell bar now shows a short headline with a second row only for what the headline lacks, instead of the same sentence twice. A new ↻ button starts the current item over without ever selling for you, and the bar fits phone screens.
+
 ### What's New shows only what is new
 
 After an update, What's New lists only the changes since the version you were running. A recent release's notes had no titles, which made the panel show the whole recent history instead.
