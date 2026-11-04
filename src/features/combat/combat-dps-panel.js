@@ -450,6 +450,33 @@ export function classTagHTML(verdict) {
     );
 }
 
+/**
+ * Whether the "How this is measured" notes are unfolded. One flag for every tab and for the saved-session view,
+ * kept here (not in the DOM, which every redraw replaces) and not saved: it is a reading preference for this
+ * session, and a fresh page starts folded.
+ */
+let notesOpen = false;
+
+/**
+ * The fold above a tab's figures. A short `warn` line a player needs to trust the numbers stays visible
+ * while the long explanation folds behind the toggle.
+ *
+ * @param {Object} note - An entry of {@link NOTES}
+ * @returns {string} HTML
+ */
+function notesHTML(note) {
+    const { dim } = BOARD_COLORS;
+    const toggle =
+        `<div data-notes-toggle role="button" tabindex="0" aria-expanded="${notesOpen}" ` +
+        `style="cursor:pointer; color:${dim}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+        `How this is measured <span aria-hidden="true">${notesOpen ? '▾' : '▸'}</span></div>`;
+    return (
+        (note.warn ? boardNoteHTML(note.warn, { color: note.color }) : '') +
+        toggle +
+        (notesOpen ? boardNoteHTML(note.strong, { color: note.color, strong: true }) + boardNoteHTML(note.detail) : '')
+    );
+}
+
 /** What each tab's figures are, said once at the top rather than per row */
 const NOTES = {
     damage: {
@@ -463,6 +490,7 @@ const NOTES = {
     },
     taken: {
         strong: 'Health lost after mitigation, beside the healing each player received.',
+        warn: 'Taken is a floor — health lost after mitigation, not the game’s own figure.',
         color: BOARD_COLORS.warn,
         detail:
             'Taken is a floor: damage healed back on the same tick was never visible, and it is not the game’s ' +
@@ -472,6 +500,7 @@ const NOTES = {
     },
     healing: {
         strong: 'Healing done — credited only where the feed shows who did it.',
+        warn: 'Credited only where the feed shows who healed.',
         color: BOARD_COLORS.good,
         detail:
             'A rise goes to a healing ability cast on that tick, to life-steal on the hitter’s own bar (auto-attacks ' +
@@ -1022,8 +1051,7 @@ export function drawBoard(body, sources) {
         boardTabsHTML(TABS, tab) +
         // DPS-over-time graph — dps-graph.js, or the saved session's own
         (tab === 'damage' ? (sources?.graphHTML ? sources.graphHTML() : dpsGraphHTML()) : '') +
-        boardNoteHTML(note.strong, { color: note.color, strong: true }) +
-        boardNoteHTML(note.detail) +
+        notesHTML(note) +
         reconcile +
         partyNote +
         list +
@@ -1166,6 +1194,19 @@ function wireBoard(body, sources) {
         button.addEventListener('click', () => {
             scope = button.dataset.scope;
             drawBoard(body, sources);
+        });
+    });
+    // Fresh nodes every draw, so this listener goes with the node it sits on
+    body.querySelectorAll('[data-notes-toggle]').forEach((element) => {
+        const toggle = () => {
+            notesOpen = !notesOpen;
+            drawBoard(body, sources);
+        };
+        element.addEventListener('click', toggle);
+        element.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            toggle();
         });
     });
     body.querySelectorAll('[data-expand]').forEach((element) => {
@@ -1430,6 +1471,7 @@ export default {
         tab = 'damage';
         scope = 'session';
         expanded.clear();
+        notesOpen = false;
         historyOpen = false;
         viewing = null;
     },

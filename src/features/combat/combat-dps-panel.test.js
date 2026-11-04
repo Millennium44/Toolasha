@@ -238,18 +238,51 @@ describe('what the board says about its figures', () => {
         opts.taken = { seconds: 100, players: [{ name: 'Alice', damage: 400, dps: 4, regen: 900, hps: 9 }] };
     });
 
-    test('the damage tab names where the figures came from and what shares them', () => {
-        const text = board().textContent;
+    test('the damage tab names where the figures came from and what shares them, behind a fold', () => {
+        const body = board();
+        expect(body.textContent).not.toContain('own battle feed');
+        expect(body.textContent).toContain('How this is measured');
+
+        body.querySelector('[data-notes-toggle]').click();
+        const text = body.textContent;
 
         expect(text).toContain('own battle feed');
         expect(text).toContain('split evenly only in a crowd');
         expect(text).toContain('Alice');
     });
 
+    test('the fold survives redraws, tab switches and a new body, and one toggle opens one note', () => {
+        const body = board();
+        body.querySelector('[data-notes-toggle]').click();
+        expect(body.textContent).toContain('own battle feed');
+
+        // The timer redraw, then a tab switch, then a reopen into a fresh body
+        drawBoard(body);
+        expect(body.textContent).toContain('own battle feed');
+        body.querySelector('[data-tab="taken"]').click();
+        expect(body.textContent).toContain('Healing done says who healed');
+        expect(body.querySelectorAll('[data-notes-toggle]')).toHaveLength(1);
+        expect(body.querySelector('[data-notes-toggle]').getAttribute('aria-expanded')).toBe('true');
+        expect(board().textContent).toContain('pre-mitigation');
+
+        // Folding it again holds across a redraw
+        body.querySelector('[data-notes-toggle]').click();
+        drawBoard(body);
+        expect(body.textContent).not.toContain('Healing done says who healed');
+        expect(body.querySelector('[data-notes-toggle]').getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('the keyboard opens the fold', () => {
+        const body = board();
+        body.querySelector('[data-notes-toggle]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        expect(body.textContent).toContain('own battle feed');
+    });
+
     test('there is no Healed tab; Taken shows received and net, and does not claim who healed', () => {
         const body = board();
         expect(body.querySelector('[data-tab="healed"]')).toBeNull();
         body.querySelector('[data-tab="taken"]').click();
+        body.querySelector('[data-notes-toggle]').click();
 
         const text = body.textContent;
         expect(text).toContain('received 900 · net +500');
@@ -1053,7 +1086,12 @@ describe('the healing done tab', () => {
 
     test('draws HPS and says what it leaves out', () => {
         feature._setTab('healing');
-        const text = board().textContent;
+        const body = board();
+        // The short warning is visible while the notes are folded
+        expect(body.textContent).toContain('Credited only where the feed shows who healed');
+        expect(body.textContent).not.toContain('life-steal');
+        body.querySelector('[data-notes-toggle]').click();
+        const text = body.textContent;
 
         expect(text).toContain('party hps');
         expect(text).toContain('credited only where the feed shows who did it');
