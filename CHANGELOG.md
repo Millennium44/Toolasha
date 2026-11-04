@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The Upgrade tab's Triggers tick-box is now a Tune triggers section, as in Lab Sim: it says what a run will cost, runs without Analyze and shows its result in place. A result clears once its setup changes, and Apply waits for a running sim, flagging an Analyze table measured before the build changed.
 
+### Lab Sim upgrades as cards or a table
+
+Lab Sim's Upgrade and Skilling results can now show as cards, the default on a phone, or as a table with shortened numbers so more fits without scrolling. Exact figures are in the expanded row. Guild shrine costs now say coins, and a level with no known token cost reads "unknown" instead of 0.
+
 ### Phone header shows the zone during combat
 
 At phone width the battle number no longer squeezes out the zone name beside the boss countdown, and the header stays on screen instead of pushing your avatar off the edge. The battle number is still on the Combat page's Battle tab.
