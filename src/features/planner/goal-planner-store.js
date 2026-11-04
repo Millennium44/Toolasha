@@ -121,6 +121,9 @@ const goalsRecord = createCuratedRecord({
     store: 'settings',
     empty: () => [],
     merge: mergeById((goal) => goal?.id),
+    // A stored goal with no id gets a fresh one every time it is read (see normalizeGoal), so its held copy
+    // never equals it: drop it from the fold, as mergeById did, rather than write it beside that copy
+    threeWay: { idOf: (goal) => goal?.id, keepUnidentified: false },
     migrate: 'discard',
     label: 'GoalPlanner',
 });
@@ -204,7 +207,16 @@ export async function loadGoals() {
  * @returns {Promise<Array<Object>>} What was actually written
  */
 export async function saveGoals(goals) {
-    const clean = cleanGoals(goals).slice(0, MAX_GOALS);
+    return writeGoals(cleanGoals(goals).slice(0, MAX_GOALS));
+}
+
+/**
+ * Write a list that may already be over {@link MAX_GOALS}. Two tabs each adding near the cap fold to a
+ * longer list, whose every goal somebody asked for; cutting it here would read as removing them.
+ * @param {Array<Object>} clean - Normalized goals
+ * @returns {Promise<Array<Object>>} What was written
+ */
+async function writeGoals(clean) {
     try {
         claimGoals();
         goalsRecord.set(clean);
@@ -245,8 +257,10 @@ export async function addGoal(raw) {
 
     const key = (entry) => JSON.stringify({ ...entry, id: null, createdAt: null });
     if (goals.some((existing) => key(existing) === key(goal))) return goals;
+    // The cap stops a new goal; it never takes out one already on the list
+    if (goals.length >= MAX_GOALS) return goals;
 
-    return saveGoals([...goals, goal]);
+    return writeGoals([...goals, goal]);
 }
 
 /**
@@ -261,7 +275,7 @@ export async function removeGoal(goalId) {
     const goals = await loadGoals();
     if (currentOwner() !== owner) return goals;
 
-    return saveGoals(goals.filter((goal) => goal.id !== goalId));
+    return writeGoals(goals.filter((goal) => goal.id !== goalId));
 }
 
 /**

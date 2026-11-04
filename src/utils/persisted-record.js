@@ -213,6 +213,137 @@ export function mergeSeriesMaps(keyOf, sort = null) {
     };
 }
 
+/** A plain object: not an array, a date, or null */
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+}
+
+/**
+ * Deep equality for stored values: plain objects, arrays, dates and scalars. A key whose value is
+ * undefined counts as absent, as it does once the value has been stored.
+ * @param {*} a
+ * @param {*} b
+ * @returns {boolean}
+ */
+function valuesEqual(a, b) {
+    if (Object.is(a, b)) return true;
+    if (a instanceof Date || b instanceof Date) {
+        return a instanceof Date && b instanceof Date && a.getTime() === b.getTime();
+    }
+    if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+    if (Array.isArray(a) || Array.isArray(b)) {
+        return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => valuesEqual(v, b[i]));
+    }
+    const keysA = Object.keys(a).filter((key) => a[key] !== undefined);
+    const keysB = Object.keys(b).filter((key) => b[key] !== undefined);
+    return keysA.length === keysB.length && keysA.every((key) => valuesEqual(a[key], b[key]));
+}
+
+/**
+ * A copy of a value that later edits cannot reach, boxed so a value that cannot be copied is told apart
+ * from an absent one.
+ * @param {*} value
+ * @returns {{value: *}|null} null when the value cannot be copied
+ */
+function snapshotOf(value) {
+    try {
+        return { value: structuredClone(value) };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Three-way merge of a stored value and this tab's held one, against the value both started from.
+ *
+ * What this tab changed since `base` is written; what it left alone is whatever is stored now — so
+ * another tab's addition survives, and so does its removal. A removal this tab made stays removed even
+ * if the stored copy still has the item. Where both changed the same thing, the held value wins. Objects
+ * merge key by key. Arrays merge by element identity when `idOf` is given (an element only one side
+ * changed follows that side; the held order is kept and the other tab's additions follow it; one side's
+ * edit outlives the other's removal of that element, in either direction, because a row brought back
+ * costs one click and a row lost is gone); without `idOf` an array both tabs changed is taken whole from
+ * the held side, which can drop the other tab's edit to it.
+ *
+ * @param {*} base - What this tab's own view held the last time it read or saved
+ * @param {*} stored - What is stored now
+ * @param {*} held - What this tab holds
+ * @param {Object} [options]
+ * @param {(element: *) => *} [options.idOf] - Identity of an array element; null/undefined means none
+ * @param {boolean} [options.keepUnidentified=true] - Whether a stored element with no identity is kept
+ *   (unless the held side has an equal one). A list whose load gives every element an identity of its
+ *   own, so that the held copy of a stored element is no longer equal to it, sets this false: the held
+ *   copy stands for it, and keeping both would add one more on every save
+ * @returns {*} The merged value; undefined means the value should not exist
+ */
+export function mergeThreeWay(base, stored, held, options = {}) {
+    if (valuesEqual(held, base)) return stored;
+    if (valuesEqual(stored, base) || valuesEqual(stored, held)) return held;
+    if (isPlainObject(held) && isPlainObject(stored)) {
+        const from = isPlainObject(base) ? base : {};
+        const out = {};
+        for (const key of new Set([...Object.keys(from), ...Object.keys(stored), ...Object.keys(held)])) {
+            const merged = mergeThreeWay(from[key], stored[key], held[key], options);
+            if (merged !== undefined) out[key] = merged;
+        }
+        return out;
+    }
+    if (Array.isArray(held) && Array.isArray(stored) && typeof options.idOf === 'function') {
+        return mergeKeyedArrays(Array.isArray(base) ? base : [], stored, held, options);
+    }
+    return held;
+}
+
+/**
+ * The array half of {@link mergeThreeWay}: elements matched by `idOf`, held order first.
+ * @param {Array} base
+ * @param {Array} stored
+ * @param {Array} held
+ * @param {{idOf: (element: *) => *}} options
+ * @returns {Array}
+ */
+function mergeKeyedArrays(base, stored, held, options) {
+    const index = (list) => {
+        const byId = new Map();
+        for (const element of list) {
+            const id = element == null ? null : options.idOf(element);
+            if (id !== null && id !== undefined && !byId.has(id)) byId.set(id, element);
+        }
+        return byId;
+    };
+    const baseById = index(base);
+    const storedById = index(stored);
+    const heldById = index(held);
+    const out = [];
+    for (const element of held) {
+        const id = element == null ? null : options.idOf(element);
+        if (id === null || id === undefined) {
+            out.push(element);
+            continue;
+        }
+        if (!baseById.has(id)) {
+            // Added here, or added in both tabs
+            out.push(storedById.has(id) ? mergeThreeWay(undefined, storedById.get(id), element, options) : element);
+        } else if (!storedById.has(id)) {
+            // The other tab removed it: that stands unless this tab changed it since
+            if (!valuesEqual(element, baseById.get(id))) out.push(element);
+        } else {
+            out.push(mergeThreeWay(baseById.get(id), storedById.get(id), element, options));
+        }
+    }
+    for (const element of stored) {
+        const id = element == null ? null : options.idOf(element);
+        if (id === null || id === undefined) {
+            if (options.keepUnidentified !== false && !held.some((own) => valuesEqual(own, element))) out.push(element);
+        } else if (!heldById.has(id) && (!baseById.has(id) || !valuesEqual(element, baseById.get(id)))) {
+            // Added by the other tab, or changed there since. One this tab removed that nobody changed is in
+            // base as it is here, and stays removed
+            out.push(element);
+        }
+    }
+    return out;
+}
+
 /**
  * Create a persisted record.
  *
@@ -825,13 +956,19 @@ export function createPersistedRecord({
  * keep tombstones). That is for a list two tabs edit at once, where memory
  * written whole puts back what the other tab removed and drops what it added.
  *
+ * `threeWay` is the way to serve two tabs without tombstones or a change to
+ * the stored shape: see {@link createThreeWayRecord}.
+ *
  * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
  *   to {@link mergeMaps} and is only consulted before the first readable load
  *   unless `keepMerging` is set
  * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
+ * @param {boolean|{idOf?: (element: *) => *, keepUnidentified?: boolean}} [options.threeWay=false] - Fold saves against
+ *   the copy they were made from; `idOf` names an array element's identity (see {@link mergeThreeWay})
  * @returns {Object} The record handle
  */
-export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, ...options }) {
+export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, threeWay = false, ...options }) {
+    if (threeWay && !keepMerging) return createThreeWayRecord({ merge, threeWay, ...options });
     let trustMemory = false;
     const record = createPersistedRecord({
         ...options,
@@ -851,6 +988,222 @@ export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, 
     return record;
 }
 
+/**
+ * A curated record whose saves fold against the copy they were made from.
+ *
+ * What this tab changed is written; what it left alone follows whatever is stored now ({@link
+ * mergeThreeWay}). So a stale tab neither drops what the other tab added nor brings back what the other
+ * tab removed, and its own removal stays removed.
+ *
+ * Every load starts a `line`: the key it read and what that read gave. Every save is an `ask` on the
+ * current line, carrying a copy of the view, and it folds against that line when it lands. Nothing after
+ * the ask can change what it means: a load starts a new line and leaves this one alone, a reset drops the
+ * record's hold on it, and it lands on the key its view was read from, so a save asked as one character
+ * never folds against, or into, another's list. A line's `base` moves only when one of its own asks is
+ * known to have landed, and to what that ask's view held: never to what the write put down, which can
+ * hold what another tab added and this view has not got, so that its absence would read as a removal made
+ * here.
+ *
+ * An ask goes straight to `storage.set` rather than through the save chain, which would hold it behind the
+ * one before for that one's whole debounce, out of reach of a flush. Storage's queue coalesces them: the
+ * newest ask of a key replaces the one waiting, whose edits its view already carries or has undone.
+ *
+ * A load cannot see an ask that has not landed, and the owner adopts what the load gives, so the load folds
+ * that ask over what it read and restates it on the new line. The view keeps this tab's own edits and
+ * there is still one write waiting.
+ *
+ * Before the first readable load, and during one, there is no line to trust: an ask folds through `merge`,
+ * which keeps everything on both sides. A write that fails moves nothing and its ask stays unlanded, so the
+ * next save or load still carries it. Storage then lands it from its requeue, or commits it late after
+ * reporting failure, and tells nobody, so from that failure `base` may be behind what is stored, and a
+ * re-added item would read as one another tab removed. So a failure marks its line untrusted, and every ask
+ * of that line, the failed one included, folds through `merge` when it lands. Nothing is deleted; a removal
+ * made on that line waits and comes back at the next load, which is what ends it: a new line's `base` is what
+ * that load read, its view holds all of that (a failed ask folds over it as a union), so only a removal made
+ * after it can take anything out. With no load a line stays untrusted for the rest of the page.
+ *
+ * Once loaded, memory stays exactly what the owner last `set` or mutated: what another tab added reaches
+ * this tab's view at its next load. An owner must adopt `get()` after a load.
+ *
+ * @param {Object} options - As {@link createCuratedRecord}, without `atomic` or `prepare`: the fold runs
+ *   inside storage's own write
+ * @returns {Object} The record handle
+ */
+function createThreeWayRecord({ merge, threeWay, ...options }) {
+    const { base, store = 'settings', scoped = true, immediate = false, label = 'PersistedRecord' } = options;
+    if (options.atomic || options.prepare) {
+        throw new Error(`[${label}] a threeWay record folds inside storage's own write: no atomic, no prepare`);
+    }
+    const mergeOptions = typeof threeWay === 'object' ? threeWay : {};
+    const keyNow = () => (scoped ? characterKey(base) : base);
+
+    let trustMemory = false;
+    /**
+     * The newest readable load's `{key, base, landed, untrusted}`: what it read, which ask last moved that on,
+     * and whether a write of this line has failed, so that `base` can no longer be relied on
+     */
+    let line = null;
+    /** Bumped by every load and reset, so one that was overtaken does not speak for the record */
+    let epoch = 0;
+    let lastSeq = 0;
+    /** The key the newest load reads */
+    let readKey = null;
+    /** The ask unlanded when that load began, as it stood then: it may land before the load gets to use it */
+    let carried = null;
+    /** Each key's newest ask that has not landed. Outlives a reset: it is still on its way to that key */
+    const unlanded = new Map();
+    let lastLanding = Promise.resolve(true);
+
+    /**
+     * What an ask puts down over a stored value. `under` is an older ask of another line, which its view
+     * was not read over, so its edits are folded in first rather than replaced. Untrusted is read here, as
+     * the fold runs, so a failed ask's requeue is held to it as well.
+     * @param {{value: *, line: ?{base: *, untrusted: boolean}, under: ?Object}} ask
+     * @param {*} stored - undefined when nothing is stored
+     * @returns {*} The value to write
+     */
+    const foldAsk = (ask, stored) => {
+        const beneath = ask.under ? foldAsk(ask.under, stored) : stored;
+        if (beneath === undefined) return ask.value;
+        return ask.line && !ask.line.untrusted
+            ? mergeThreeWay(ask.line.base, beneath, ask.value, mergeOptions)
+            : merge(beneath, ask.value);
+    };
+
+    /**
+     * Hand an ask to storage. Synchronous up to `storage.set`, which queues it at once when the database is
+     * open, so every flush from here on reaches it.
+     * @param {{key: string, value: *, line: ?Object, under: ?Object}} fields - What is asked
+     * @returns {Promise<boolean>} Whether a write that carries it landed
+     */
+    const land = (fields) => {
+        const seq = ++lastSeq;
+        const ask = { ...fields, seq, folded: false, refused: false };
+        unlanded.set(ask.key, ask);
+        const fold = (stored) => {
+            ask.refused = false;
+            try {
+                const next = foldAsk(ask, stored);
+                ask.folded = true;
+                return next;
+            } catch (error) {
+                // The stored copy goes back as it was: writing the view whole could erase the other tab's edits
+                console.error(`[${label}] Folding ${base} failed; leaving the stored copy:`, error);
+                ask.refused = true;
+                return stored;
+            }
+        };
+        const landing = (async () => {
+            let written = false;
+            try {
+                written = await storage.set(ask.key, ask.value, store, immediate, { fold });
+                // Answered for a write that was not this one: a flush in flight when this was queued shares its
+                // callers with the slot, and a plain write can replace it. Still on its way, so ask again
+                if (written && !ask.folded && !ask.refused && unlanded.get(ask.key) === ask) {
+                    written = await storage.set(ask.key, ask.value, store, immediate, { fold });
+                }
+            } catch (error) {
+                console.error(`[${label}] Saving ${base} failed:`, error);
+            }
+            if (!written && ask.line) ask.line.untrusted = true;
+            // A refused fold wrote the stored copy back as it was, so `base` is no further behind than it was
+            if (!written || ask.refused) return false;
+            // An ask a newer one replaced in the queue never ran: what landed is the newer one's business
+            if (ask.folded) {
+                if (unlanded.get(ask.key) === ask) unlanded.delete(ask.key);
+                if (ask.line && seq > ask.line.landed) {
+                    ask.line.base = ask.value;
+                    ask.line.landed = seq;
+                }
+            }
+            return true;
+        })();
+        lastLanding = landing;
+        return landing;
+    };
+
+    const record = createPersistedRecord({
+        ...options,
+        // Only a load reaches this: saves fold through their asks, and a clear states its value outright
+        merge: (stored, memory) => {
+            const read = snapshotOf(stored);
+            const folded = merge(stored, memory);
+            line = read ? { key: readKey, base: read.value, landed: 0, untrusted: false } : null;
+            const newest = unlanded.get(readKey);
+            const ask = !newest || newest.seq === carried?.seq ? carried : newest;
+            const rebased = ask ? snapshotOf(foldAsk(ask, folded)) : null;
+            if (!rebased) return folded;
+            land({ key: readKey, value: rebased.value, line, under: null });
+            return structuredClone(rebased.value);
+        },
+    });
+
+    const { load, reset, save, flushed } = record;
+    record.load = async (loadOptions) => {
+        trustMemory = false;
+        epoch += 1;
+        const asked = epoch;
+        readKey = keyNow();
+        const before = unlanded.get(readKey);
+        const from = before?.line;
+        // Its base as it stood, but whether it failed as it stands: that can come while this load is reading
+        carried = before
+            ? {
+                  ...before,
+                  line: from && {
+                      base: from.base,
+                      get untrusted() {
+                          return from.untrusted;
+                      },
+                  },
+              }
+            : null;
+        const readable = await load(loadOptions);
+        if (asked === epoch) trustMemory = readable;
+        return readable;
+    };
+    record.reset = () => {
+        trustMemory = false;
+        line = null;
+        carried = null;
+        epoch += 1;
+        reset();
+    };
+    /** A clear: its value is stated outright, over whatever was waiting */
+    const overwrite = async (saveOptions) => {
+        const copy = snapshotOf(record.get());
+        const cleared = line;
+        unlanded.delete(cleared ? cleared.key : keyNow());
+        const seq = ++lastSeq;
+        const written = await save(saveOptions);
+        // Storage requeues a failed clear like any other write
+        if (!written && cleared) cleared.untrusted = true;
+        if (written && copy && cleared && seq > cleared.landed) {
+            cleared.base = copy.value;
+            cleared.landed = seq;
+        }
+        return written;
+    };
+    record.save = (saveOptions = {}) => {
+        if (saveOptions.overwrite) return overwrite(saveOptions);
+        const copy = snapshotOf(record.get());
+        const viewLine = trustMemory && copy ? line : null;
+        const key = viewLine ? viewLine.key : keyNow();
+        const waiting = unlanded.get(key);
+        return land({
+            key,
+            value: copy ? copy.value : record.get(),
+            line: viewLine,
+            under: waiting && waiting.line !== viewLine ? waiting : null,
+        });
+    };
+    record.flushed = async () => {
+        const [, landed] = await Promise.all([flushed(), lastLanding]);
+        return landed;
+    };
+    return record;
+}
+
 export default {
     createPersistedRecord,
     createCuratedRecord,
@@ -859,4 +1212,5 @@ export default {
     mergeById,
     mergeMaps,
     mergeSeriesMaps,
+    mergeThreeWay,
 };

@@ -14,6 +14,10 @@ A sync pull no longer brings back trade ledger fills the repair already removed,
 
 On the Task Board bar, the docked reroll walk button is now first and a fixed width, so the Claim Reward button, the Rerolls count and its own label can no longer move it. A long step name ends in an ellipsis, with the full text on hover.
 
+### Watchlist, item pins and goals keep your edits across tabs
+
+With the game open in two tabs, an older tab no longer erases pins, watchlist rows or planner goals you added in the other tab, and no longer brings back ones you removed there.
+
 ### Rank badges sync between devices again
 
 Leaderboard rank badges captured on one device reach your other devices again, and syncing no longer keeps rewriting the gist for them.
