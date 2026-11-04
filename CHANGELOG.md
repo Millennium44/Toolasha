@@ -22,7 +22,7 @@ Market item controls and Settings no longer use oversized buttons and dropdowns 
 
 ### Upgrade results as cards on a phone
 
-Combat Sim upgrade results now show as ranked cards at phone width, with the same figures as the table, tap-to-open details, and Verify on the upgrades the table can verify. A Cards or Table switch keeps the full table a tap away, and desktop can use cards too. On a phone, Combat Sim and Lab Sim tables now scroll sideways with names pinned, and option rows stay inside the panel.
+Combat Sim upgrade results now show as ranked cards at phone width, with the same figures as the table, tap-to-open details, and Verify on the upgrades the table can verify. A Cards or Table switch keeps the full table a tap away, and desktop can use cards too. Community buffs get their own Buffs section. On a phone, Combat Sim and Lab Sim tables scroll sideways with names pinned, and option rows stay inside the panel.
 
 ### Reset a moved game window
 
