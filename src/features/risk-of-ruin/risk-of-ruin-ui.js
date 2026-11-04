@@ -483,7 +483,11 @@ class RiskOfRuinUI {
     _bodyHTML() {
         const labelStyle = 'color:#888; font-size:12px; display:block; margin-bottom:2px;';
         const inputStyle =
-            'width:100%; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:5px 8px; font-size:12px; box-sizing:border-box;';
+            'width:100%; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:5px 8px; font-size:12px; box-sizing:border-box;';
 
         return `
             <label style="${labelStyle}">Mode</label>
@@ -519,7 +523,11 @@ class RiskOfRuinUI {
         const container = this.panel.querySelector('#mwi-ror-mode-inputs');
         const labelStyle = 'color:#888; font-size:12px; display:block; margin-bottom:2px;';
         const inputStyle =
-            'width:100%; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:5px 8px; font-size:12px; box-sizing:border-box; margin-bottom:10px;';
+            'width:100%; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:5px 8px; font-size:12px; box-sizing:border-box; margin-bottom:10px;';
 
         if (mode === 'chest') {
             const options = CHEST_HRIDS.map((hrid) => {

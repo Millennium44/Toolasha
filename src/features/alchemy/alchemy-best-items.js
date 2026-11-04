@@ -1075,7 +1075,7 @@ class AlchemyBestItems {
         searchInput.setAttribute('data-mwi-best-search', 'true');
         searchInput.style.cssText = `
             flex: 1; padding: 5px 10px; border-radius: 4px;
-            border: 1px solid #555; background: #1a1a2e; color: #fff;
+            border: 1px solid ${GAME_COLORS.inputBorder}; background: ${GAME_COLORS.inputBackground}; color: #fff;
             font-size: 0.8rem; outline: none;
         `;
         searchInput.addEventListener('input', () => {
@@ -1092,7 +1092,7 @@ class AlchemyBestItems {
 
         const filterInputStyle = `
             width: 70px; padding: 3px 6px; border-radius: 3px;
-            border: 1px solid #555; background: #1a1a2e; color: #fff;
+            border: 1px solid ${GAME_COLORS.inputBorder}; background: ${GAME_COLORS.inputBackground}; color: #fff;
             font-size: 0.75rem; outline: none;
         `;
 

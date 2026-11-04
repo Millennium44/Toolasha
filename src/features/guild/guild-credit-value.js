@@ -52,6 +52,7 @@ import {
     captureTokenExchangeFromModal,
     hydrateCapturedTokenExchanges,
 } from './guild-token-exchange-capture.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
 
@@ -2464,7 +2465,7 @@ class GuildCreditValue {
                 input.value = String(currentLevel);
                 input.dataset.buffHrid = buffHrid;
                 input.style.cssText = `
-                    width:52px; padding:2px 4px; background:#1a1a2e; border:1px solid #374151;
+                    width:52px; padding:2px 4px; background:${GAME_COLORS.inputBackground}; border:1px solid ${GAME_COLORS.inputBorder};
                     border-radius:3px; color:#e0e0e0; font-size:11px; text-align:center;
                 `;
                 input.addEventListener('input', () => {

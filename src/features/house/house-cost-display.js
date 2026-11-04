@@ -26,6 +26,7 @@ import {
     visibleTabsContainer,
     attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const PANEL_LAYOUT_STYLE_ID = 'toolasha-house-panel-layout';
 
@@ -341,7 +342,11 @@ class HouseCostDisplay {
         level.max = '8';
         level.value = '8';
         level.style.cssText =
-            'width:40px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;';
+            'width:40px; text-align:center; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; padding:2px 4px; font-size:12px;';
         level.title = 'Target level for every room';
 
         const button = document.createElement('button');

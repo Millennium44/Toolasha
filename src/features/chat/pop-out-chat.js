@@ -829,7 +829,7 @@ class PopOutChat {
      carry does nothing here without this copy. Firefox draws the open
      dropdown on a native popup that ignores the select's inline background,
      so options need an explicit background AND text color of their own. */
-  .toolasha-select option { background-color: #1a1a2e; color: var(--text); }
+  .toolasha-select option { background-color: var(--input-bg); color: var(--text); }
   .pane-close-btn {
     background: none; border: none; color: var(--muted);
     font-size: 14px; cursor: pointer; padding: 0 2px; line-height: 1;
