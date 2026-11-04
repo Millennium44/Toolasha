@@ -1174,4 +1174,127 @@ describe('the Lab Sim Verify controls', () => {
             expect(ui._verifyLive.trigger).toBeNull();
         });
     });
+
+    describe('the all-fights cards', () => {
+        const cardsOn = () => {
+            ui._viewChoices = { wide: 'cards', narrow: null };
+        };
+        const cards = () => [...resultsEl().querySelectorAll('.mwi-ucard')];
+        const verifyCardButtons = () => [...resultsEl().querySelectorAll('[data-card-verify]')];
+        const names = () => cards().map((c) => c.querySelector('.mwi-ucard-name').textContent.trim());
+        const tableNames = () =>
+            [...resultsEl().querySelectorAll('tr[data-allfights-row] td:first-child')].map((td) =>
+                td.textContent.replace(/verify|verifying…/g, '').trim()
+            );
+
+        test('card N is table row N, for the same run', async () => {
+            await analyze(analysisOf(fiveRows()));
+            const tableOrder = tableNames();
+            cardsOn();
+            ui._redrawForViewChange();
+            expect(names()).toEqual(tableOrder);
+            // And again after a sort, which both views share
+            resultsEl().querySelector('[data-card-rank]').value = 'cost';
+            resultsEl()
+                .querySelector('[data-card-rank]')
+                .dispatchEvent(new window.Event('change', { bubbles: true }));
+            const rankedCards = names();
+            ui._viewChoices = { wide: 'table', narrow: null };
+            ui._redrawForViewChange();
+            expect(tableNames()).toEqual(rankedCards);
+        });
+
+        test('Rank by writes the sort a header click writes', async () => {
+            await analyze(analysisOf(fiveRows()));
+            cardsOn();
+            ui._redrawForViewChange();
+            const select = resultsEl().querySelector('[data-card-rank]');
+            select.value = 'perMillion';
+            select.dispatchEvent(new window.Event('change', { bubbles: true }));
+            expect(ui._allFightsSort).toEqual({ key: 'perMillion', dir: 'desc' });
+        });
+
+        test('Verify on a card measures that row once, however often it is tapped', async () => {
+            await analyze(analysisOf(fiveRows()));
+            cardsOn();
+            ui._redrawForViewChange();
+            let release;
+            verify.lab = ({ rows }) =>
+                new Promise((resolve) => {
+                    release = () =>
+                        resolve({
+                            rows: rows.map((row) => verdictRow(keyOf(row), 'confirmed', -0.9)),
+                            metric: 'attempts',
+                            unit: 'attempts',
+                            seeds: 8,
+                            stopped: false,
+                        });
+                });
+            const button = verifyCardButtons()[1];
+            button.click();
+            button.click();
+            await settle();
+            expect(verify.labCalls).toHaveLength(1);
+            expect(verify.labCalls[0].rows.map((r) => r.candidate.description)).toEqual(['Gear 2']);
+            // Another card's Verify is refused while it runs, and its state is not replaced
+            const other = verifyCardButtons().find((b) => !b.disabled);
+            other?.click();
+            expect(verify.labCalls).toHaveLength(1);
+            release();
+            await settle();
+            const confirmed = cards().filter((c) => c.getAttribute('data-card-state') === 'confirmed');
+            expect(confirmed).toHaveLength(1);
+            expect(confirmed[0].textContent).toContain('Gear 2');
+        });
+
+        test('a remembered run refuses Verify and says to re-run', async () => {
+            const analysis = analysisOf(fiveRows());
+            ui._rememberedLabResults = analysis;
+            ui._renderAllFightsResults(analysis, resultsEl());
+            cardsOn();
+            ui._redrawForViewChange();
+            expect(verifyCardButtons().every((b) => b.disabled)).toBe(true);
+            expect(resultsEl().textContent).toContain('Re-run the analysis to verify.');
+            expect(cards()[0].getAttribute('data-card-state')).toBe('remembered');
+            expect(verify.labCalls).toHaveLength(0);
+        });
+
+        test('the checked-swaps cards offer no Verify', async () => {
+            cardsOn();
+            ui._renderAllFightsResults(analysisOf(fiveRows()), resultsEl(), { checked: true });
+            expect(cards().length).toBeGreaterThan(0);
+            expect(verifyCardButtons()).toHaveLength(0);
+        });
+
+        test('a view change during a run waits for the run, and an empty result replaces old cards', async () => {
+            await analyze(analysisOf(fiveRows()));
+            ui._upgradeRunning = true;
+            ui._viewChoices = { wide: 'cards', narrow: null };
+            ui._redrawForViewChange();
+            expect(cards()).toHaveLength(0);
+            expect(ui._viewRedrawOwed).toBe(true);
+            ui._upgradeRunning = false;
+            await settle();
+            expect(cards().length).toBeGreaterThan(0);
+            ui._renderAllFightsResults(analysisOf([]), resultsEl());
+            expect(cards()).toHaveLength(0);
+            expect(ui._viewRedraws.has('combat')).toBe(false);
+        });
+
+        test('a token buff card is priced in tokens, never coins', async () => {
+            const token = {
+                ...upgradeRow(9, -1, 0.1, true),
+                candidate: { type: 'token', description: 'Token buff' },
+                costType: 'token',
+                tokenCost: 12500,
+                attemptsSavedPerHundredTokens: 0.2,
+            };
+            cardsOn();
+            ui._renderAllFightsResults(analysisOf([upgradeRow(1, -3, 0.1, true), token]), resultsEl());
+            const card = cards().find((c) => c.textContent.includes('Token buff'));
+            expect(card.textContent).toContain('Tokens');
+            expect(card.textContent).toContain('12.5K');
+            expect(card.textContent).not.toMatch(/coins|free/);
+        });
+    });
 });

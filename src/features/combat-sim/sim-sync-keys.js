@@ -37,6 +37,15 @@ export const LAB_SIM_KEYS = Object.freeze({
     triggerChoices: 'labSimTriggerChoices',
 });
 
+/**
+ * The Lab Sim panel's keys that belong to the device, not a character, all in `settings`. The Cards | Table pick
+ * is `{wide, narrow}`, each null until picked on that form factor. An older build never reads it and a build with
+ * no record uses the defaults, so it can be rolled back without losing anything.
+ */
+export const LAB_SIM_GLOBAL_KEYS = Object.freeze({
+    resultsView: 'labSimResultsView',
+});
+
 /** The Combat Sim panel's keys in `settings`: per character unless marked global */
 export const COMBAT_SIM_KEYS = Object.freeze({
     upgradeModes: 'combatSimUpgradeModes',
@@ -142,6 +151,7 @@ const LAB_LABELS = {
     triggerChoices: 'Lab Sim trigger tuning choices',
 };
 for (const [name, base] of Object.entries(LAB_SIM_KEYS)) register('settings', base, incomingWins, LAB_LABELS[name]);
+register('settings', LAB_SIM_GLOBAL_KEYS.resultsView, incomingWins, 'Lab Sim results view');
 
 const COMBAT_LABELS = {
     upgradeModes: 'Combat Sim upgrade sets',
