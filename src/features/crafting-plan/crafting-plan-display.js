@@ -23,6 +23,7 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { artisanTeaShortfall } from '../../utils/drink-calculator.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 import { nextPricingMode } from '../../utils/pricing-mode.js';
 import { PRICING_SIDE_SETTING_KEYS } from '../../utils/pricing-side-select.js';
 import { parseShorthandAmount } from '../../utils/number-parser.js';
@@ -536,7 +537,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
     goldInput.placeholder = '500000';
     goldInput.style.cssText = `
         width: 80px; margin-left: auto; padding: 2px 4px;
-        background: var(--input-bg, #1a1a2e); border: 1px solid var(--border-color, #333);
+        background: var(--input-bg, ${GAME_COLORS.inputBackground}); border: 1px solid var(--border-color, ${GAME_COLORS.inputBorder});
         border-radius: 3px; color: var(--text-color-primary, #fff); font-size: 0.85em;
     `;
     goldInput.style.display = timeCostEnabled ? '' : 'none';
@@ -804,7 +805,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             walkButton.textContent = 'Start guided walk';
             walkButton.style.cssText = `
                 width: 100%; margin-top: 6px; padding: 6px;
-                background: var(--bg-color-tertiary, #1a1a2e);
+                background: var(--bg-color-tertiary, ${GAME_COLORS.raised});
                 border: 1px solid var(--border-color, #60a5fa); border-radius: 4px;
                 color: var(--text-color-primary, #fff); cursor: pointer; font-size: 0.85em;
             `;

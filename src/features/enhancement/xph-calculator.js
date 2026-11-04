@@ -381,7 +381,11 @@ class XPHCalculator {
         const defaultProtect = config.getSettingValue('enhancementXPH_protectFrom') || '0';
 
         const inputStyle =
-            'width:46px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
+            'width:46px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
 
         controls.innerHTML = `
             <label style="color:#888; font-size:12px;">Max level</label>
@@ -409,7 +413,7 @@ class XPHCalculator {
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <label style="color:#888; font-size:12px;">Enhance any item</label>
                 <input id="mwi-xph-item" list="mwi-xph-item-list" placeholder="type an item name…"
-                    style="flex:1; min-width:140px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    style="flex:1; min-width:140px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                     border-radius:4px; padding:3px 8px; font-size:12px;">
                 <datalist id="mwi-xph-item-list"></datalist>
                 <label style="color:#888; font-size:12px;">to +</label>
@@ -430,7 +434,7 @@ class XPHCalculator {
             'padding:6px 10px; font-weight:600; font-size:11px; cursor:pointer; white-space:nowrap; border-bottom:1px solid #222; color:#888;';
         tableContainer.innerHTML = `
             <table style="width:100%; border-collapse:collapse;">
-                <thead style="position:sticky; top:0; background:#0a0a14; z-index:1;">
+                <thead style="position:sticky; top:0; background:${GAME_COLORS.background}; z-index:1;">
                     <tr>
                         <th id="mwi-xph-th-name" style="${thBase} text-align:left;"># Item</th>
                         <th id="mwi-xph-th-xph"  style="${thBase} text-align:right;">XP/hr ▼</th>

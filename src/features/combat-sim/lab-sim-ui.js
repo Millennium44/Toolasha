@@ -488,7 +488,11 @@ const GAME_BTN_HOVER = `onmouseover="this.style.background='${BUTTON_LOOK.primar
 
 /** Shared styling for the small inputs and buttons inside an upgrade chip. */
 const CHIP_INPUT_STYLE =
-    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
+    'background:' +
+    GAME_COLORS.inputBackground +
+    '; color:#e0e0e0; border:1px solid ' +
+    GAME_COLORS.inputBorder +
+    '; border-radius:3px; padding:3px 5px; font-size:12px;';
 const CHIP_BUTTON_STYLE =
     'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
     'font-size:11px; cursor:pointer; font-family:inherit;';
@@ -504,7 +508,7 @@ const CHIP_BUTTON_STYLE =
 const LAB_MODE_OPTIONS = {
     ability_level: `
         <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
@@ -516,7 +520,7 @@ const LAB_MODE_OPTIONS = {
         </span>`,
     ability_swap: `
         <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-labsim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for the loadout's archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own aura choice." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-labsim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
@@ -524,12 +528,12 @@ const LAB_MODE_OPTIONS = {
         </span>`,
     combat_level: `
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`,
     house: `
         <span id="mwi-labsim-house-group" data-lab-mode-options="house" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-house-target-level" type="number" min="1" max="${MAX_HOUSE_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${MAX_HOUSE_LEVEL}.">
@@ -537,7 +541,7 @@ const LAB_MODE_OPTIONS = {
         </span>`,
     guild_shrine: `
         <span id="mwi-labsim-shrine-group" data-lab-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Buy every shrine buff up to this level in one row, costed at every level in between. Blank means one level up. Capped at each buff's own maximum.">
@@ -549,7 +553,7 @@ const LAB_MODE_OPTIONS = {
         </span>`,
     community_buff: `
         <span id="mwi-labsim-community-group" data-lab-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-community-target-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Sim the buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which is what the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own.">
@@ -1027,9 +1031,17 @@ class LabSimUI {
         `;
 
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; flex:1; min-width:0;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px; flex:1; min-width:0;';
         const inputStyle =
-            'width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
+            'width:60px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
 
         // ── Configure tab ──
         const configureContent = document.createElement('div');
@@ -1061,7 +1073,11 @@ class LabSimUI {
             font-size: 12px;
         `;
         const crateSelectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px;';
         crateRow.innerHTML = `
             <label style="color:#888;">Tea</label>
             <select class="toolasha-select" id="mwi-labsim-tea" style="${crateSelectStyle}">
@@ -1090,7 +1106,9 @@ class LabSimUI {
         editorArea.id = 'mwi-labsim-editor';
         editorArea.style.cssText = 'flex:0 0 auto; padding:10px 14px;';
         editorArea.innerHTML =
-            '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
+            '<div style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
 
         this._editor = new SimEditor({
             editorEl: editorArea,
@@ -1174,18 +1192,18 @@ class LabSimUI {
                 <input type="checkbox" id="mwi-labsim-findmax" style="margin:0; cursor:pointer;">
                 Find Max \u2265
             </label>
-            <input id="mwi-labsim-threshold" type="number" min="1" max="100" value="${config.getSettingValue('labyrinthRecommendTargetRate', 70)}" style="width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+            <input id="mwi-labsim-threshold" type="number" min="1" max="100" value="${config.getSettingValue('labyrinthRecommendTargetRate', 70)}" style="width:44px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             <span style="color:#888; font-size:12px;">%</span>
             <span style="width:1px; height:16px; background:#333; margin:0 2px;"></span>
             <label style="display:flex; align-items:center; gap:4px; color:#888;" title="How tightly to pin each fight's win rate down before its sim stops, in percentage points. A settled fight reaches it in a few hundred trials; one near a coin toss needs thousands. Lower is more accurate but slower.">
                 Precision ±
-                <input id="mwi-labsim-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
                 <span style="font-size:12px;">%</span>
             </label>
             <span style="width:1px; height:16px; background:#333; margin:0 2px;"></span>
             <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for the run, in hours — the fight clock inside the sim, not how long you wait. Precision usually ends it first. Tick Uncapped to ignore it. Shared with every other labyrinth sim and with Settings.">
                 Max hrs
-                <input id="mwi-labsim-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
             <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the fight budget and the time ceiling and run until the precision target is met. One stopping rule for every labyrinth sim — the floor map and the Automation tab follow it too.">
                 <input type="checkbox" id="mwi-labsim-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthSimCaps', 'capped') === 'precision' ? ' checked' : ''}>
@@ -1198,7 +1216,7 @@ class LabSimUI {
         maxLevelProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
         maxLevelProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                <div style="flex:1; background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-labsim-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-labsim-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0%</span>
                 </div>
@@ -1235,7 +1253,11 @@ class LabSimUI {
         // squeezed Player and Mode down to a caret and nothing else. These size
         // to their content with a floor, and the row wraps instead of crushing.
         const upgradeSelectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; ' +
             'padding:3px 6px; font-size:12px; flex:0 1 auto; min-width:150px; max-width:100%;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
@@ -1244,7 +1266,7 @@ class LabSimUI {
             ${LAB_UPGRADE_DIMENSIONS.map(
                 (dimension) => `
             <span data-lab-mode-chip="${dimension.key}" style="display:inline-flex; align-items:center; gap:6px;
-                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                padding:3px 8px; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
                 <label data-lab-mode-label="${dimension.key}" title="${dimension.title.replace(/"/g, '&quot;')}"
                     style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                     <input type="checkbox" data-lab-upgrade-dimension="${dimension.key}" style="margin:0; cursor:pointer;"${
@@ -1257,12 +1279,12 @@ class LabSimUI {
             ).join('')}
             <label style="display:flex; align-items:center; gap:4px; color:#888;" title="How tightly to pin each comparison's win rate down before its baseline sim stops, in percentage points. Lower is more accurate but slower. Shared with the Single Sim tab and Settings.">
                 Precision ±
-                <input id="mwi-labsim-upgrade-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-upgrade-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
                 <span style="font-size:12px;">%</span>
             </label>
             <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for each comparison sim, in hours — the fight clock inside the sim, not how long you wait. Precision usually ends it first. Tick Uncapped to ignore it. Shared with every other labyrinth sim and with Settings.">
                 Max hrs
-                <input id="mwi-labsim-upgrade-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <input id="mwi-labsim-upgrade-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthSimMaxHours', DEFAULT_LAB_SIM_MAX_HOURS)) || DEFAULT_LAB_SIM_MAX_HOURS)}" style="width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
             <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the fight budget and the time ceiling and run each comparison's baseline to the precision target. One stopping rule for every labyrinth sim — the floor map and the Automation tab follow it too.">
                 <input type="checkbox" id="mwi-labsim-upgrade-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthSimCaps', 'capped') === 'precision' ? ' checked' : ''}>
@@ -1316,7 +1338,7 @@ class LabSimUI {
                             `<option value="${levelSource.key}" title="${levelSource.title.replace(/"/g, '&quot;')}">${levelSource.label}</option>`
                     ).join('')}
                 </select>
-                <span id="mwi-labsim-level-source-resolved" style="color:#666; font-size:11px; white-space:nowrap;"></span>
+                <span id="mwi-labsim-level-source-resolved" style="color:${GAME_COLORS.textDim}; font-size:11px; white-space:nowrap;"></span>
             </label>
             <label id="mwi-labsim-room-levels-label" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
                 title="After the win-rate pass, measure the top ${ROOM_LEVEL_SHORTLIST_SIZE} upgrades in room levels: how much deeper this character clears at the Target Win % bar, and which floor that reaches. Floor N runs levels 20N to 20N+20, and reaching a floor means clearing the TOP of its band — the exit sits in the far corner, so a floor you cannot finish is a floor you have not got. Configure-fight scope only, and it adds a binary search of sims per measured upgrade.">
@@ -1327,10 +1349,10 @@ class LabSimUI {
                 title="The floor you are trying to finish. Its requirement is the top of its own band — floor N needs room level 20N+20, the exit room — and the rows say which upgrades reach it.">
                 Floor
                 <input id="mwi-labsim-upgrade-target-floor" type="number" min="1" step="1" placeholder="—" style="
-                    width:48px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    width:48px; text-align:center; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                     border-radius:4px; padding:3px 4px; font-size:12px;">
             </label>
-            <span id="mwi-labsim-scope-summary" style="color:#666; font-size:11px;"></span>
+            <span id="mwi-labsim-scope-summary" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
         `;
 
         // The subset picker itself: one checkbox per labyrinth fight, filled in
@@ -1356,7 +1378,9 @@ class LabSimUI {
         labCombatTargets.style.cssText =
             'display:none; padding:4px 14px 8px; flex-shrink:0; gap:8px 14px; flex-wrap:wrap; align-items:center;';
         labCombatTargets.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
             [
                 ['staminaLevel', 'Stamina'],
                 ['intelligenceLevel', 'Int'],
@@ -1371,7 +1395,7 @@ class LabSimUI {
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${label}</label>
                     <input type="number" min="1" max="200" data-lab-combat-target="${key}" style="
-                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -1397,7 +1421,7 @@ class LabSimUI {
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
         upgradeProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                <div style="flex:1; background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-labsim-upgrade-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-labsim-upgrade-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0 / 0</span>
                 </div>
@@ -1463,9 +1487,9 @@ class LabSimUI {
             </label>
             <label style="color:#888; font-size:12px;">Skill</label>
             <select class="toolasha-select" id="mwi-labsim-skilling-filter" title="Restrict calculations, upgrade analysis, and the loadout table to one skill" style="
-                background:#1a1a2e;
+                background:${GAME_COLORS.inputBackground};
                 color:#e0e0e0;
-                border:1px solid #444;
+                border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:4px;
                 padding:4px 6px;
                 font-size:11px;
@@ -1485,7 +1509,7 @@ class LabSimUI {
             <label style="color:#888; font-size:12px;">Community Lv</label>
             <input id="mwi-labsim-skilling-community-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}"
                 placeholder="Lv" title="Sim each community buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own." style="
-                width:52px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                width:52px; text-align:center; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:4px; padding:4px 6px; font-size:11px; font-family:inherit;">
             <button id="mwi-labsim-skilling-calc" style="
                 margin-left: auto;
@@ -1523,7 +1547,11 @@ class LabSimUI {
             padding: 6px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
         `;
         const goalInputStyle =
-            'width:48px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px;';
+            'width:48px; text-align:center; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 4px; font-size:12px;';
         const goalButtonStyle = `background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;`;
         skillingGoalRow.innerHTML = `
             <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;"
@@ -1544,7 +1572,7 @@ class LabSimUI {
             </label>
             <button id="mwi-labsim-skilling-plan" title="Needs Analyze Upgrades first. From today's setup, repeatedly takes the upgrade with the best cost per point of clear rate (simmed together with the ones already taken) until the goal is met or nothing helps." style="${goalButtonStyle}">Plan to goal</button>
             <button id="mwi-labsim-skilling-combine" title="Sims every checked row at once, one upgrade per slot (a later pick replaces an earlier one for the same slot)." style="${goalButtonStyle}">Sim together</button>
-            <span id="mwi-labsim-skilling-checked-count" style="color:#666; font-size:11px;"></span>
+            <span id="mwi-labsim-skilling-checked-count" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
         `;
 
         const skillingCrateRow = document.createElement('div');
@@ -1560,7 +1588,7 @@ class LabSimUI {
                 <option value="/items/advanced_tea_crate">Advanced</option>
                 <option value="/items/expert_tea_crate" selected>Expert</option>
             </select>
-            <span style="color:#666;">Only the tea crate applies in skilling rooms</span>
+            <span style="color:${GAME_COLORS.textDim};">Only the tea crate applies in skilling rooms</span>
         `;
 
         const skillingLoadoutArea = document.createElement('div');
@@ -1584,7 +1612,9 @@ class LabSimUI {
         skillingEditorArea.id = 'mwi-labsim-skilling-editor';
         skillingEditorArea.style.cssText = 'display:none; padding:10px 14px; flex-shrink:0;';
         skillingEditorArea.innerHTML =
-            '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
+            '<div style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>';
 
         skillingEditorHeader.addEventListener('click', () => {
             const isOpen = skillingEditorArea.style.display !== 'none';
@@ -1601,7 +1631,7 @@ class LabSimUI {
         skillingProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
         skillingProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                <div style="flex:1; background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-labsim-skilling-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${ACCENT_BTN_BG}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-labsim-skilling-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0 / 0</span>
                 </div>
@@ -1642,7 +1672,9 @@ class LabSimUI {
         const status = document.createElement('div');
         status.id = 'mwi-labsim-status';
         status.style.cssText =
-            'padding:6px 14px; color:#555; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
+            'padding:6px 14px; color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
         status.textContent = 'Select a monster in Configure, then use Single Sim or Upgrade to simulate.';
 
         // Assemble
@@ -2180,13 +2212,17 @@ class LabSimUI {
 
         if (!fights.length) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No labyrinth fights resolve to a room level yet — ' +
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No labyrinth fights resolve to a room level yet — ' +
                 'set combat skip levels in the game, or enter the labyrinth.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Rooms to weigh — leave out the ones you ' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;">Rooms to weigh — leave out the ones you ' +
             'already clear comfortably:</span>' +
             '<span style="display:inline-flex; gap:6px; flex-basis:100%; margin-bottom:2px;">' +
             `<button data-lab-target-all="1" style="${CHIP_BUTTON_STYLE}">All</button>` +
@@ -2200,7 +2236,7 @@ class LabSimUI {
                     <input type="checkbox" data-lab-target="${fight.monsterHrid}" style="margin:0; cursor:pointer;"${
                         previouslyChosen.has(fight.monsterHrid) ? ' checked' : ''
                     }>
-                    ${fight.monsterName} <span style="color:#666;">L${fight.roomLevel}</span>
+                    ${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">L${fight.roomLevel}</span>
                 </label>`
                 )
                 .join('');
@@ -2261,7 +2297,7 @@ class LabSimUI {
             const key = chip.getAttribute('data-lab-mode-chip');
             const on = dimensions.has(key);
             const usable = availability[key]?.enabled !== false;
-            chip.style.borderColor = on ? ACCENT_BTN_BORDER : '#2a2a4a';
+            chip.style.borderColor = on ? ACCENT_BTN_BORDER : GAME_COLORS.border;
             chip.style.background = on ? ACCENT_BG : 'transparent';
             chip.style.opacity = usable ? '1' : '0.45';
             const label = chip.querySelector('label');
@@ -2720,7 +2756,7 @@ class LabSimUI {
 
         const info = dataManager.characterData?.characterInfo;
         if (!info) {
-            container.innerHTML = '<div style="color:#555;">No character data available.</div>';
+            container.innerHTML = '<div style="color:' + GAME_COLORS.textDim + ';">No character data available.</div>';
             return;
         }
 
@@ -2728,11 +2764,13 @@ class LabSimUI {
         const simulated = this._resolvedTokenLevels();
 
         let html =
-            '<div style="color:#666; padding:2px 0 4px;">Combat levels are what the sims run under — change one ' +
+            '<div style="color:' +
+            GAME_COLORS.textDim +
+            '; padding:2px 0 4px;">Combat levels are what the sims run under — change one ' +
             'to ask what those tokens would do. Blank restores the live level.</div>';
 
         for (const group of LAB_TOKEN_BUFF_GROUPS) {
-            html += `<div style="color:#666; font-weight:600; font-size:10px; text-transform:uppercase; margin-top:4px; margin-bottom:2px;">${group.label}</div>`;
+            html += `<div style="color:${GAME_COLORS.textDim}; font-weight:600; font-size:10px; text-transform:uppercase; margin-top:4px; margin-bottom:2px;">${group.label}</div>`;
             html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:1px 16px;">';
             for (const buff of group.buffs) {
                 const liveLevel = live[buff.key];
@@ -2753,9 +2791,9 @@ class LabSimUI {
                         <input type="number" min="0" max="${MAX_LAB_TOKEN_LEVEL}" value="${chosen}"
                             data-lab-token-buff="${buff.key}"
                             title="Level to simulate. Live: ${liveLevel}/${MAX_LAB_TOKEN_LEVEL}."
-                            style="width:44px; text-align:center; background:#1a1a2e;
+                            style="width:44px; text-align:center; background:${GAME_COLORS.inputBackground};
                             color:${differs ? '#ffb74d' : '#e0e0e0'};
-                            border:1px solid ${differs ? '#ffb74d' : '#444'};
+                            border:1px solid ${differs ? '#ffb74d' : GAME_COLORS.inputBorder};
                             border-radius:3px; padding:1px 3px; font-size:11px;">
                         <span style="color:${differs ? '#ffb74d' : '#666'}; min-width:56px;">${
                             differs ? `live ${liveLevel}` : `/${MAX_LAB_TOKEN_LEVEL}`
@@ -3215,7 +3253,7 @@ class LabSimUI {
                     <div><span style="color:#888;">Deaths:</span> <span style="color:${deaths > 0 ? '#f44336' : '#4caf50'};">${formatWithSeparator(deaths)}</span></div>
                     <div><span style="color:#888;">Sim Time:</span> ${simHours.toFixed(1)}h</div>
                 </div>
-                <div style="color:#555; font-size:10px; margin-top:6px;">Completed in ${totalElapsed}</div>
+                <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:6px;">Completed in ${totalElapsed}</div>
             </div>
             <div id="mwi-labsim-comparison"></div>
         `;
@@ -3404,7 +3442,7 @@ class LabSimUI {
                 </div>
                 ${headline}
                 ${detail}
-                <div style="color:#555; font-size:10px; margin-top:6px;">Completed in ${totalElapsed} (${maxResult.steps} steps, levels ${maxResult.minLevel}\u2013${maxResult.maxSearched})</div>
+                <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:6px;">Completed in ${totalElapsed} (${maxResult.steps} steps, levels ${maxResult.minLevel}\u2013${maxResult.maxSearched})</div>
             </div>
         `;
 
@@ -3430,7 +3468,11 @@ class LabSimUI {
         bar.id = `mwi-labsim-swap-bar-${kind}`;
         bar.style.cssText = 'padding:6px 14px; border-bottom:1px solid #222; flex-shrink:0;';
         const inputStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px;';
         const buttonStyle =
             'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
             'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
@@ -3447,7 +3489,7 @@ class LabSimUI {
                 title="${escapeHtmlAttribute(what)}">
                 <span id="mwi-labsim-swap-toggle-${kind}" style="font-size:10px; color:#888;">▶</span>
                 <span style="color:${ACCENT}; font-weight:700; font-size:12px;">Check a swap</span>
-                <span id="mwi-labsim-swap-count-${kind}" style="color:#666; font-size:11px;"></span>
+                <span id="mwi-labsim-swap-count-${kind}" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
             </div>
             <div id="mwi-labsim-swap-body-${kind}" style="display:none; margin-top:4px;">
             <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px;">
@@ -3465,7 +3507,7 @@ class LabSimUI {
                     <input type="checkbox" id="mwi-labsim-swap-all-${kind}" style="margin:0; cursor:pointer;">
                     All loadouts
                 </label>
-                <span id="mwi-labsim-swap-note-${kind}" style="color:#666; font-size:11px;"></span>
+                <span id="mwi-labsim-swap-note-${kind}" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
             </div>
             <div id="mwi-labsim-swap-chips-${kind}" style="display:flex; flex-wrap:wrap; gap:4px 6px; margin-top:4px;"></div>
             </div>
@@ -3483,7 +3525,11 @@ class LabSimUI {
         bar.id = 'mwi-labsim-trigger-bar';
         bar.style.cssText = 'padding:6px 14px; border-bottom:1px solid #222; flex-shrink:0;';
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px;';
         const buttonStyle =
             'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa; border-radius:6px; ' +
             'padding:4px 10px; font-size:12px; cursor:pointer; font-family:inherit;';
@@ -3504,7 +3550,7 @@ class LabSimUI {
                 <div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:4px;">
                     ${labTriggerOptionsHtml(this._triggerChoices, selectStyle)}
                     <button id="mwi-labsim-trigger-run" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Tune</button>
-                    <span id="mwi-labsim-trigger-estimate" style="color:#666; font-size:11px;"></span>
+                    <span id="mwi-labsim-trigger-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
                 </div>
                 <div id="mwi-labsim-trigger-results" style="display:none; margin-top:8px;"></div>
             </div>
@@ -4214,7 +4260,7 @@ class LabSimUI {
         const note = this.panel?.querySelector(`#mwi-labsim-swap-note-${kind}`);
         if (!note) return;
         note.textContent = text;
-        note.style.color = isError ? '#ff9800' : '#666';
+        note.style.color = isError ? '#ff9800' : GAME_COLORS.textDim;
     }
 
     /**
@@ -5423,13 +5469,17 @@ class LabSimUI {
 
         if (!rooms.length) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No house room in this game data carries a buff that could ' +
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No house room in this game data carries a buff that could ' +
                 'move a labyrinth win rate.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ ' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ ' +
             'current level skips the room; used instead of the Lv box while open):</span>' +
             rooms
                 .map(
@@ -5439,7 +5489,7 @@ class LabSimUI {
                     <input type="number" min="1" max="${MAX_HOUSE_LEVEL}" data-lab-house-target="${room.hrid}"
                         value="${room.level >= MAX_HOUSE_LEVEL ? '' : Math.min(MAX_HOUSE_LEVEL, Math.max(uniform, room.level + 1))}"
                         ${room.level >= MAX_HOUSE_LEVEL ? 'disabled title="Already at max level"' : ''} style="
-                        width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -5482,13 +5532,17 @@ class LabSimUI {
 
         if (!shrines.length) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No combat guild shrine reached the client — join a ' +
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No combat guild shrine reached the client — join a ' +
                 'guild, or open the shrine screen once, so the levels are known.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
             'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
             'box while open):</span>' +
             shrines
@@ -5503,7 +5557,7 @@ class LabSimUI {
                                 : Math.min(shrine.maxLevel, Math.max(uniform, shrine.level + 1))
                         }"
                         ${shrine.level >= shrine.maxLevel ? 'disabled title="Already at max level"' : ''} style="
-                        width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -6090,13 +6144,17 @@ class LabSimUI {
         const entries = this._upgradeAbilityEntries(playerSelector);
         if (!entries.length) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
             return;
         }
 
         const multiLoadout = entries.some((entry) => entry.loadouts.length > 0);
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level ' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;">Target levels (blank or ≤ current level ' +
             'skips the ability; used instead of the +Levels boost while open)' +
             (multiLoadout ? ' — every ability across the checked fights, with the loadouts it is slotted in' : '') +
             ':</span>' +
@@ -6111,9 +6169,9 @@ class LabSimUI {
                     const target = Math.min(200, typed[entry.hrid] || highest + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:#666;">${loadoutText}</span></label>
+                    <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:${GAME_COLORS.textDim};">${loadoutText}</span></label>
                     <input type="number" min="1" max="200" data-ability-target="${entry.hrid}" value="${target}" style="
-                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`;
                 })
@@ -6245,7 +6303,11 @@ class LabSimUI {
         const button = document.createElement('button');
         button.textContent = 'Export CSV';
         button.style.cssText =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; ' +
             'padding:2px 8px; font-size:11px; cursor:pointer;';
 
         const flash = (text) => {
@@ -6308,10 +6370,18 @@ class LabSimUI {
         const baselineFights = baseline?.fights || [];
         const money = (value) => formatKMB(Math.round(value));
         const inputStyle =
-            'width:90px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'width:90px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; ' +
             'padding:2px 6px; font-size:11px;';
         const btnStyle =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; ' +
             'padding:2px 8px; font-size:11px; cursor:pointer;';
 
         let body = '';
@@ -6338,7 +6408,7 @@ class LabSimUI {
                         const rooms = pick.rooms ?? 0;
                         return `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
                                 <span style="color:#e0e0e0;">${pick.candidate.description}
-                                    <span style="color:#666;">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
+                                    <span style="color:${GAME_COLORS.textDim};">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
                                     ${combatSimUI.upgradeRowActionsHtml(pick)}</span>
                                 <span style="white-space:nowrap; color:#aaa;">${goldCostCell(pick.cost)}
                                     <span style="color:#4caf50;">−${(pick.marginalAttemptsSaved ?? -pick.attemptsDelta).toFixed(1)} attempts</span></span>
@@ -6367,7 +6437,7 @@ class LabSimUI {
                                 : ''
                         } ·
                         <span style="color:#4caf50; font-weight:600;">−${plan.attemptsSaved.toFixed(1)} attempts</span>
-                        <span style="color:#666;"> if gains in different slots add up</span>
+                        <span style="color:${GAME_COLORS.textDim};"> if gains in different slots add up</span>
                         <button id="mwi-labsim-verify-combo" style="${btnStyle} margin-left:8px;"
                             title="Runs the whole run again with every pick installed at once — each loadout wearing all of the picks that apply to it, and the better one where two picks share a slot. Upgrades that fix the same failing room overlap, and the total above counts that room twice.">Verify together</button>
                         ${
@@ -6378,20 +6448,20 @@ class LabSimUI {
                         }
                     </div>` +
                     (noise
-                        ? `<div style="color:#666; font-size:10px; margin-top:2px;">${noise} skipped as within the simulation's own error</div>`
+                        ? `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">${noise} skipped as within the simulation's own error</div>`
                         : '') +
                     `<div id="mwi-labsim-combo-result" style="margin-top:4px; font-size:11px;"></div>`;
             }
         }
 
-        return `<div id="mwi-labsim-budget" style="margin-bottom:8px; padding:6px 8px; background:#0d0d1a;
+        return `<div id="mwi-labsim-budget" style="margin-bottom:8px; padding:6px 8px; background:${GAME_COLORS.box};
             border:1px solid #222; border-radius:4px;">
             <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888;">
                 <span style="color:${ACCENT}; font-weight:700;">Budget</span>
                 <input id="mwi-labsim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
                     value="${this._allFightsBudgetText || ''}" style="${inputStyle}">
                 <button id="mwi-labsim-budget-plan" style="${btnStyle}">Plan</button>
-                <span style="color:#555;">best set that fits — most rooms covered per coin, skipping gains inside the noise</span>
+                <span style="color:${GAME_COLORS.textDim};">best set that fits — most rooms covered per coin, skipping gains inside the noise</span>
             </div>
             ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
         </div>`;
@@ -6489,14 +6559,14 @@ class LabSimUI {
         const share = promised > 0 ? Math.round((lost / promised) * 100) : 0;
         const color = lost > check.noise ? '#ff9800' : '#4caf50';
         return `<span style="color:#e0e0e0;">Together: <b>−${actual.toFixed(1)}</b> attempts</span>
-            <span style="color:#666;">(each loadout wearing every pick that fits it, up to ${worn} at once)</span>
+            <span style="color:${GAME_COLORS.textDim};">(each loadout wearing every pick that fits it, up to ${worn} at once)</span>
             <span style="color:#888;">vs −${promised.toFixed(1)} promised by the parts</span>
             <span style="color:${color};">${
                 lost > check.noise
                     ? `— ${share}% of it was double-counted (they overlap)`
                     : '— they do not overlap, the sum holds'
             }</span>
-            <span style="color:#555;">±${check.noise.toFixed(1)}</span>`;
+            <span style="color:${GAME_COLORS.textDim};">±${check.noise.toFixed(1)}</span>`;
     }
 
     /**
@@ -6999,7 +7069,7 @@ class LabSimUI {
         let html = verdict ? verifyChipHtml(verdict, { partial: verdict.partial }) : '';
         if (live && !running) {
             html +=
-                `<button ${dataAttr}="${index}" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ` +
+                `<button ${dataAttr}="${index}" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +
                 `border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit; margin-left:6px;">` +
                 `${verdict ? 'verify again' : 'verify'}</button>`;
         }
@@ -7015,7 +7085,7 @@ class LabSimUI {
      * @private
      */
     _allFightsVerifyBarHtml(analysis, picks) {
-        const style = 'color:#777; font-size:11px; margin:0 0 8px;';
+        const style = 'color:' + GAME_COLORS.textDim + '; font-size:11px; margin:0 0 8px;';
         if (!this._isVerifyLive('all', analysis)) {
             return (
                 `<div data-verify-bar="all" style="${style}">Verify: re-run the analysis to verify. A remembered ` +
@@ -7032,7 +7102,7 @@ class LabSimUI {
                 picks.length
                     ? 'Re-run the best improving rows longer, on fresh paired seeds'
                     : 'No improving row to verify'
-            }" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; ` +
+            }" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:2px 8px; ` +
             `font-size:11px; cursor:${busy || !picks.length ? 'default' : 'pointer'}; font-family:inherit;">Verify top ${top}</button>` +
             `${running?.scope === 'all' ? ' <span>Verifying on fresh seeds… Stop cancels.</span>' : ''}` +
             `${note ? ` <span data-verify-note>${escapeHtmlAttribute(note)}</span>` : ''}</div>`
@@ -7330,7 +7400,10 @@ class LabSimUI {
         const sign = (v) => (v > 0 ? '+' : v < 0 ? '−' : '');
         const attemptsText = (v) => `${sign(v)}${Math.abs(v).toFixed(1)}`;
         const clearText = (v) => `${sign(v)}${Math.abs(v * 100).toFixed(2)}%`;
-        const td = 'padding:3px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap; text-align:right;';
+        const td =
+            'padding:3px 6px; border-bottom:1px solid ' +
+            GAME_COLORS.raised +
+            '; white-space:nowrap; text-align:right;';
         const th = 'padding:3px 6px; text-align:right; border-bottom:1px solid #333; color:#888; font-weight:600;';
         const noteStyle = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
         const note = (text, color = '#aaa') =>
@@ -7418,7 +7491,7 @@ class LabSimUI {
                 verifyLive && verifyPicks
                     ? `<div style="margin:4px 0;"><button data-order-verify="${gi}" ${verifyBusy ? 'disabled' : ''} ` +
                       `title="Re-run this loadout's best improving orders longer, on fresh paired seeds" ` +
-                      `style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
+                      `style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; ` +
                       `padding:2px 8px; font-size:11px; cursor:${verifyBusy ? 'default' : 'pointer'}; font-family:inherit;">` +
                       `Verify top ${verifyPicks}</button>` +
                       `${verifyRunning?.scope === 'order' ? ' <span style="color:#8ab4f8; font-size:11px;">Verifying on fresh seeds… Stop cancels.</span>' : ''}</div>`
@@ -7467,25 +7540,27 @@ class LabSimUI {
             verifyNote = `<div data-verify-note style="color:#9ab; font-size:11px; margin:4px 0;">${escapeHtmlAttribute(this._verify.notes.order)}</div>`;
         } else if (!verifyLive && improvable) {
             verifyNote =
-                '<div data-verify-note style="color:#777; font-size:11px; margin:4px 0;">Verify: re-run the analysis to ' +
+                '<div data-verify-note style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px; margin:4px 0;">Verify: re-run the analysis to ' +
                 'verify. A remembered result carries no simulation to re-measure.</div>';
         }
         const needsToggle = groups.some((g) => g.orders.length > top);
         const toggle = needsToggle
-            ? `<button data-order-showall style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ` +
+            ? `<button data-order-showall style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; ` +
               `padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;">` +
               `${showAll ? `Show top ${top}` : `Show all ${orderCount}`}</button>`
             : '';
         return (
-            `<div id="mwi-labsim-order-section" style="margin-top:14px; padding:8px 10px; background:#0d0d1a; ` +
-            `border:1px solid #2a2a4a; border-radius:6px;">` +
+            `<div id="mwi-labsim-order-section" style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; ` +
+            `border:1px solid ${GAME_COLORS.border}; border-radius:6px;">` +
             collapseHeaderHtml({
                 key: 'abilityOrder',
                 title: 'Ability order',
                 summary,
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             }) +
-            `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
+            `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
             `simulated and ranked by expected attempts saved. Free to apply: set it in the game.</div>` +
             verifyNote +
             body +
@@ -7570,12 +7645,16 @@ class LabSimUI {
         // with the top of the scroll area rather than floating below it.
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
-            'white-space:nowrap; position:sticky; top:-10px; z-index:2; background:#12121f;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+            'white-space:nowrap; position:sticky; top:-10px; z-index:2; background:' +
+            GAME_COLORS.raisedMore +
+            ';';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
         // Only the Upgrade name reflows; a two-piece swap label is long enough
         // to push every measured column off the panel if it is kept to one line
         const tdNameStyle =
-            'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:normal; ' +
+            'padding:4px 6px; border-bottom:1px solid ' +
+            GAME_COLORS.raised +
+            '; white-space:normal; ' +
             'overflow-wrap:anywhere; line-height:1.4;';
         const bestDelta = Math.min(...goldResults.map((r) => r.attemptsDelta));
         const sharedStyles = { thStyle, tdStyle, tdNameStyle, fmtAttempts, fmtAttemptsDelta, attemptsDeltaColor };
@@ -7625,7 +7704,7 @@ class LabSimUI {
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
                 expected combat attempts to clear all ${baseline.fights.length} fights
-                <span style="color:#555; font-size:10px; margin-left:6px;">Σ 1/win rate per fight, at its skip level with its assigned loadout — retries included</span>
+                <span style="color:${GAME_COLORS.textDim}; font-size:10px; margin-left:6px;">Σ 1/win rate per fight, at its skip level with its assigned loadout — retries included</span>
             </div>
             `;
         // Verify top N: the first rows of this table, in the order it is showing, that the analysis found improving
@@ -7658,13 +7737,13 @@ class LabSimUI {
                 // list looks like a fight that was not run
                 const outcome =
                     fight.applied === false
-                        ? `<span style="color:#666;">${fight.skipReason || 'not in this loadout'} — ${pct(base.winRate)} unchanged</span>`
+                        ? `<span style="color:${GAME_COLORS.textDim};">${fight.skipReason || 'not in this loadout'} — ${pct(base.winRate)} unchanged</span>`
                         : `${pct(base.winRate)} → ${pct(fight.winRate)}
                         <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
-                        <span style="color:#666;">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
+                        <span style="color:${GAME_COLORS.textDim};">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
                           `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
                 fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
-                    <span style="color:#aaa;">${fight.monsterName} <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                    <span style="color:#aaa;">${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
             }
@@ -7705,7 +7784,7 @@ class LabSimUI {
                 const measured = r.significant !== false;
                 const noise =
                     r.attemptsDeltaNoise > 0
-                        ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                        ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
                         : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}${
@@ -7723,7 +7802,7 @@ class LabSimUI {
                 // Per-fight breakdown (hidden until the row is clicked)
                 const fightRows = fightBreakdown(r);
                 html += `<tr data-allfights-detail="${i}" style="display:none;">
-                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
                     ${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
             });
@@ -7939,9 +8018,9 @@ class LabSimUI {
             : '';
         const bestDelta = Math.min(...levelRows.map((r) => r.attemptsDelta));
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
-            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
                 Levels can't be bought, so these are ranked by hours of grind per expected attempt saved (lower is
                 better), not against the gold costs above. Level time assumes you train that skill at the XP rates
                 your fights earn now, and each row is one step on its own \u2014 they don't stack.${primaryNote}
@@ -7961,7 +8040,7 @@ class LabSimUI {
             const measured = r.significant !== false;
             const noise =
                 r.attemptsDeltaNoise > 0
-                    ? ` <span style="color:#555;">\u00B1${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                    ? ` <span style="color:${GAME_COLORS.textDim};">\u00B1${r.attemptsDeltaNoise.toFixed(1)}</span>`
                     : '';
             const reach = r.appliedFights ?? r.fights.length;
             const total = r.fights.length;
@@ -7974,15 +8053,15 @@ class LabSimUI {
                 alongLine = along
                     .map(
                         (a) =>
-                            `<div style="color:#777; font-size:10px;">+ ${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel} along the way${
+                            `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">+ ${a.label} ${a.currentLevel} \u2192 ${a.upgradeLevel} along the way${
                                 a.fights < total ? ` (trained in ${a.fights} of ${total} rooms)` : ''
                             }</div>`
                     )
                     .join('');
             } else if (r.isMainSkill) {
-                alongLine = `<div style="color:#555; font-size:10px;">your weapon's own skill</div>`;
+                alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">your weapon's own skill</div>`;
             } else if (r.primarySkills?.length) {
-                alongLine = `<div style="color:#555; font-size:10px;">${r.primarySkills.map(label).join(' / ')} gains no level along the way</div>`;
+                alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">${r.primarySkills.map(label).join(' / ')} gains no level along the way</div>`;
             }
             const timeTitle = Number.isFinite(r.levelTimeHours)
                 ? 'Grinding time at the XP rates your fights earn now, to earn these levels'
@@ -8004,7 +8083,7 @@ class LabSimUI {
                 <td style="${tdStyle}${scoreColor ? ` color:${scoreColor};` : ''}" data-level-score>${combatSimUI.formatScore(r.score)}</td>
             </tr>
             <tr data-allfights-level-detail="${i}" style="display:none;">
-                <td colspan="7" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
                     ${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
         });
@@ -8038,7 +8117,7 @@ class LabSimUI {
             v === null ? '—' : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toPrecision(2);
 
         let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin:14px 0 4px;">Labyrinth Token Buffs</div>
-            <div style="color:#666; font-size:10px; margin-bottom:4px;">Bought once with labyrinth tokens and paid
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:4px;">Bought once with labyrinth tokens and paid
                 for in every room, so each is simulated against every fight and aggregated exactly like a combat
                 level. Ranked in tokens rather than coins, and left out of the budget plan above, which is a plan
                 in gold.</div>
@@ -8055,7 +8134,9 @@ class LabSimUI {
         tokenResults.forEach((r, i) => {
             const measured = r.significant !== false;
             const noise =
-                r.attemptsDeltaNoise > 0 ? ` <span style="color:#555;">±${r.attemptsDeltaNoise.toFixed(1)}</span>` : '';
+                r.attemptsDeltaNoise > 0
+                    ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                    : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-token-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
                 <td style="${tdStyle} color:#aaa;">${formatWithSeparator(r.tokenCost || 0)}</td>
@@ -8070,14 +8151,14 @@ class LabSimUI {
                 .map(
                     (fight) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                         <span style="color:#aaa;">${fight.monsterName}
-                            <span style="color:#666;">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                            <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                         <span style="white-space:nowrap; color:#888;">${(fight.winRate * 100).toFixed(1)}%
                             <span style="color:${fight.winRateDelta > 0.0001 ? '#4caf50' : fight.winRateDelta < -0.0001 ? '#f44336' : '#888'};">(${deltaPct(fight.winRateDelta || 0)})</span></span>
                     </div>`
                 )
                 .join('');
             html += `<tr data-allfights-token-detail="${i}" style="display:none;">
-                <td colspan="6" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222; font-size:11px;">
+                <td colspan="6" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
                     ${fightRows}</td>
             </tr>`;
         });
@@ -8250,7 +8331,9 @@ class LabSimUI {
             const note = this._houseScanNote ? ` House rooms: ${this._houseScanNote}.` : '';
             container.innerHTML =
                 '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.' +
-                (note ? `<div style="margin-top:6px; color:#666; font-size:11px;">${note.trim()}</div>` : '') +
+                (note
+                    ? `<div style="margin-top:6px; color:${GAME_COLORS.textDim}; font-size:11px;">${note.trim()}</div>`
+                    : '') +
                 '</div>';
             this._setStatus(`No upgrade candidates found.${note}`);
             return;
@@ -8484,7 +8567,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
                 </tr>
                 <tr data-gold-detail="${i}" style="display:none;">
-                    <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
                         ${row.detailHtml}
                     </td>
                 </tr>`;
@@ -8523,7 +8606,7 @@ class LabSimUI {
                 </tr>`;
             }
             html += '</tbody></table>';
-            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+            html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
                 for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
                 buff running. Neither of these can change whether a fight is won, so the win-rate columns are left
@@ -8584,7 +8667,9 @@ class LabSimUI {
             // The verify engine re-measures every fight an upgrade reaches; the single-fight analysis keeps
             // no such record, so there is nothing to offer here
             html +=
-                '<div data-verify-single-note style="color:#666; font-size:10px; margin:0 0 6px;">' +
+                '<div data-verify-single-note style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:10px; margin:0 0 6px;">' +
                 'Verify needs the All or Chosen targets scope: this single-fight table cannot be re-measured.</div>';
             if (roomLevels) html += renderRoomLevelSummary();
             if (tokenResults.length > 0) html += renderTokenTable();
@@ -8828,7 +8913,7 @@ class LabSimUI {
         const parts = [];
 
         if (!detail) {
-            return line('No cost breakdown available for this candidate.', '#666');
+            return line('No cost breakdown available for this candidate.', GAME_COLORS.textDim);
         }
 
         // A shrine level is bought with guild credits and guild tokens. Credits
@@ -9111,7 +9196,11 @@ class LabSimUI {
         }
 
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; font-size:11px; width:100%;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; padding:1px 4px; font-size:11px; width:100%;';
 
         const targetSkill = this.panel.querySelector('#mwi-labsim-skilling-filter')?.value || '';
         const visibleSkills = targetSkill ? skills.filter((s) => s.hrid === targetSkill) : skills;
@@ -10115,7 +10204,7 @@ class LabSimUI {
                 </tr>`;
             }
             html += '</tbody></table>';
-            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+            html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 Credits are valued at the cheapest items that convert into them. Guild tokens are counted, not
                 priced — nothing converts into them — so Gold/1% covers the credits only.${
                     guildRows.some((row) => row.shrineNote)
@@ -10155,7 +10244,7 @@ class LabSimUI {
                 </tr>`;
             }
             html += '</tbody></table>';
-            html += `<div style="color:#666; font-size:10px; margin-bottom:12px;">
+            html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
                 for one more level to rank on — the cowbell figure is what the game charges per minute to keep the
                 buff running. A buff already at Lv${MAX_COMMUNITY_BUFF_LEVEL} (max) has no next level and is left out.
@@ -10200,7 +10289,7 @@ class LabSimUI {
                     <td style="${tdStyle} color:${row.triesDeltaColor};">${row.triesDeltaStr}</td>
                 </tr>
                 <tr data-skilling-gold-detail="${i}" style="display:none;">
-                    <td colspan="${9 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:#0d0d1a; border-bottom:1px solid #222;">
+                    <td colspan="${9 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
                         <div data-skill-breakdown style="margin-bottom:4px; font-size:11px;"></div>
                         ${row.detailHtml}
                     </td>
@@ -10208,7 +10297,7 @@ class LabSimUI {
             });
             html += '</tbody></table>';
             if (goldRows.some((row) => row.keptNote)) {
-                html += `<div style="color:#666; font-size:10px; margin-top:4px;">
+                html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">
                     <span style="color:#ff9800;">*</span> priced as the new piece alone: the combat gear it goes in
                     place of is kept for its loadout, so its resale is not credited against the purchase.
                 </div>`;
