@@ -2507,6 +2507,29 @@ describe('party_updated', () => {
         dataManager.off('party_status_changed', listener);
     });
 
+    test('party_status_changed from a stale socket is never emitted, and the first status carries no earlier one', async () => {
+        const dataManager = await loggedIn();
+        const listener = vi.fn();
+        dataManager.on('party_status_changed', listener);
+
+        // A late message from the departing character's connection
+        dataManager.activeSocket = {};
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a']), { socket: {} });
+        webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']), { socket: {} });
+        dataManager.activeSocket = null;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).not.toHaveBeenCalled();
+
+        // The login payload above carried a slot map and no party status, so the first status seen has no
+        // earlier one: the event says so, and that is what lets a subscriber tell "arrived" from "changed"
+        webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener.mock.calls.map(([e]) => [e.previousStatus, e.status, e.started])).toEqual([
+            [null, 'battling', true],
+        ]);
+        dataManager.off('party_status_changed', listener);
+    });
+
     test('names come from sharableCharacterMap, then the last fight roster, never the bare slot entry', async () => {
         const dataManager = await loggedIn();
         webSocketHandlers.get('new_battle')({

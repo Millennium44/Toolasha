@@ -2588,3 +2588,111 @@ describe('the Gist ID box', () => {
         expect(box.querySelector('.toolasha-sync-gist-note').textContent).toContain('creates a new gist');
     });
 });
+
+describe('a tap on a switch row on a touch screen', () => {
+    /** The change events the card's delegated handler received, with the real handler still running. */
+    let changes;
+
+    /**
+     * @param {string} id - A checkbox setting
+     * @returns {HTMLInputElement} Its box
+     */
+    function box(id) {
+        return row(id).querySelector('input[type="checkbox"]');
+    }
+
+    /** Writes made for one setting. @param {string} id - A setting id @returns {Array} */
+    function writesFor(id) {
+        return mocks.written.filter(([written]) => written === id);
+    }
+
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        mocks.coarsePointer = true;
+        drawPanel();
+        changes = vi.spyOn(settingsUI, 'handleSettingChange');
+    });
+
+    afterEach(() => {
+        changes.mockRestore();
+    });
+
+    test('a tap on the label text toggles the box once and saves through the change handler once', async () => {
+        const before = box('networth').checked;
+        row('networth').querySelector('.toolasha-setting-label').click();
+        await settle();
+
+        expect(box('networth').checked).toBe(!before);
+        expect(changes).toHaveBeenCalledTimes(1);
+        expect(writesFor('networth')).toEqual([['networth', !before]]);
+    });
+
+    test('a tap on the help line or the empty part of the row counts as a tap on the label', async () => {
+        const before = box('networth').checked;
+        row('networth').querySelector('.toolasha-setting-help').click();
+        await settle();
+        expect(box('networth').checked).toBe(!before);
+
+        row('networth').click();
+        await settle();
+        expect(box('networth').checked).toBe(before);
+        expect(changes).toHaveBeenCalledTimes(2);
+    });
+
+    test('a tap on the box itself still toggles it exactly once', async () => {
+        const before = box('networth').checked;
+        box('networth').click();
+        await settle();
+
+        expect(box('networth').checked).toBe(!before);
+        expect(changes).toHaveBeenCalledTimes(1);
+        expect(writesFor('networth')).toHaveLength(1);
+    });
+
+    test('a link, a button or the reload tag inside the label keeps its own tap', async () => {
+        const label = row('networth').querySelector('.toolasha-setting-label');
+        const link = document.createElement('a');
+        link.href = '#docs';
+        link.textContent = 'docs';
+        const tag = document.createElement('span');
+        tag.className = 'toolasha-refresh-tag';
+        tag.title = 'This one only takes effect after you refresh the page';
+        const button = document.createElement('button');
+        label.append(link, tag, button);
+        const before = box('networth').checked;
+
+        // A link navigates; stop it so the test page does not
+        link.addEventListener('click', (e) => e.preventDefault());
+        for (const control of [link, tag, button]) control.click();
+        await settle();
+
+        expect(box('networth').checked).toBe(before);
+        expect(changes).not.toHaveBeenCalled();
+    });
+
+    test('a fine pointer leaves the label inert, as before', async () => {
+        mocks.coarsePointer = false;
+        const before = box('networth').checked;
+        row('networth').querySelector('.toolasha-setting-label').click();
+        row('networth').click();
+        await settle();
+
+        expect(box('networth').checked).toBe(before);
+        expect(changes).not.toHaveBeenCalled();
+    });
+
+    test('rows that are not plain switches do nothing from a label tap', async () => {
+        row('mobileMode').querySelector('.toolasha-setting-label').click();
+        row('spawnCensusExport').querySelector('.toolasha-setting-label').click();
+        await settle();
+
+        expect(changes).not.toHaveBeenCalled();
+        expect(mocks.censusCalls).toHaveLength(0);
+    });
+
+    test('every plain switch row has exactly one box for the tap to find', () => {
+        for (const switchRow of document.querySelectorAll('.toolasha-setting[data-type="checkbox"]')) {
+            expect(switchRow.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+        }
+    });
+});

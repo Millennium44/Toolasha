@@ -544,3 +544,73 @@
         min-height: 36px;
     }
 }
+
+/* Touch: every control is at least 32px tall, at any width (a tablet is coarse and wider than the phone block).
+   The checkbox, the color and number fields and some selects carry inline sizes, hence the !important on those.
+   A fine pointer keeps the compact desktop sizes. */
+@media (pointer: coarse) {
+    .toolasha-setting {
+        min-height: 40px;
+    }
+
+    .toolasha-setting-input {
+        min-height: 32px;
+    }
+
+    .toolasha-setting-input input[type='checkbox'] {
+        display: block;
+        width: 32px !important;
+        height: 32px !important;
+        margin: 0;
+    }
+
+    .toolasha-color-input {
+        height: 32px;
+        min-width: 50px;
+    }
+
+    /* 16px keeps iOS from zooming the page when a field takes focus */
+    .toolasha-color-text-input,
+    .toolasha-setting-input input[type='number'] {
+        min-height: 32px;
+        box-sizing: border-box;
+        font-size: 16px !important;
+    }
+
+    .toolasha-color-text-input {
+        width: 96px !important;
+    }
+
+    .toolasha-setting-input select,
+    .toolasha-text-input,
+    .toolasha-number-input,
+    .toolasha-select-input {
+        min-height: 32px;
+        box-sizing: border-box;
+    }
+
+    .toolasha-slider-input,
+    .toolasha-setting-action-btn,
+    .toolasha-text-vars-btn,
+    .toolasha-template-edit-btn,
+    .toolasha-custom-price-edit-btn,
+    .toolasha-scroll-defaults-btn {
+        min-height: 32px;
+    }
+}
+
+/* The touch floor above comes after the phone block and would otherwise lower its 36px to 32px */
+@media (pointer: coarse) and (max-width: 480px) {
+    .toolasha-setting-input select,
+    .toolasha-text-input,
+    .toolasha-number-input,
+    .toolasha-select-input,
+    .toolasha-slider-input,
+    .toolasha-setting-action-btn,
+    .toolasha-text-vars-btn,
+    .toolasha-template-edit-btn,
+    .toolasha-custom-price-edit-btn,
+    .toolasha-scroll-defaults-btn {
+        min-height: 36px;
+    }
+}
