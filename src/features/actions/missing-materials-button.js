@@ -110,7 +110,11 @@ let storedEnhancementContext = null;
  */
 const enhancementAdjustments = new WeakMap();
 const CONTROLS_ID = 'mwi-missing-mats-controls';
-const ADJUST_MAX = 9999;
+/**
+ * Not a limit on what a player may ask for, a guard against a pasted or garbled figure: past a billion
+ * attempts or copies the bill (times the cost per attempt) leaves the range numbers stay exact in.
+ */
+const ADJUST_GUARD = 1e9;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
 let storedMaterialList = null;
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
@@ -671,16 +675,17 @@ function updateEnhancementButton(panel) {
 }
 
 /**
- * Clamp a typed adjustment to 1-9999
+ * Read a typed adjustment: a whole number of at least 1. Only a figure past {@link ADJUST_GUARD} is cut.
  * @param {string} raw - Input text
- * @returns {number|null} Whole number in range, or null when empty/unparseable
+ * @param {number|null} [computed] - The automatic figure, which an edit never shrinks below
+ * @returns {number|null} Whole number, or null when empty/unparseable/not finite
  */
 function clampAdjustment(raw, computed = null) {
     if (raw === '' || raw === null || raw === undefined) return null;
     const value = Math.floor(Number(raw));
     if (!Number.isFinite(value)) return null;
-    // An edit never shrinks an automatic figure that is itself past the usual cap
-    return Math.max(1, Math.min(Math.max(ADJUST_MAX, computed || 0), value));
+    // An edit never shrinks an automatic figure that is itself past the guard
+    return Math.max(1, Math.min(Math.max(ADJUST_GUARD, computed || 0), value));
 }
 
 /**
@@ -704,7 +709,6 @@ function createAdjustControls(adjust) {
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '1';
-        if (field === 'copies') input.max = String(ADJUST_MAX);
         input.step = '1';
         input.dataset.mwiAdjust = field;
         input.value = initial === null || initial === undefined ? '' : String(initial);
@@ -715,7 +719,10 @@ function createAdjustControls(adjust) {
             color: '#e8ecf5',
             fontSize: '11px',
             padding: '2px 4px',
-            width: '60px',
+            // Room for ten digits and the spinner; the row wraps when two fields do not fit a phone
+            width: '96px',
+            maxWidth: '100%',
+            boxSizing: 'border-box',
         });
         // Typing must not reach the game's hotkeys
         for (const type of ['keydown', 'keyup', 'keypress']) {

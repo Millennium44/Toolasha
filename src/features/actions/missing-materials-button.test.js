@@ -416,12 +416,25 @@ describe('enhancement missing-material reservation handoff', () => {
             expect(state.enhancementCalls.at(-1)[7]).toBe(3);
         });
 
-        test('values are clamped to 1-9999 and key events stay out of the game', async () => {
+        test('large figures are kept; only zero, junk and absurd ones change, and key events stay out of the game', async () => {
             missingMaterials.initialize();
             await vi.advanceTimersByTimeAsync(600);
 
             await type(field('attempts'), '99999');
-            expect(state.enhancementCalls.at(-1)[5]).toBe(9999);
+            expect(state.enhancementCalls.at(-1)[5]).toBe(99999);
+            await type(field('attempts'), '2500000');
+            expect(state.enhancementCalls.at(-1)[5]).toBe(2500000);
+            await type(field('copies'), '12000');
+            expect(state.enhancementCalls.at(-1)[7]).toBe(12000);
+            expect(field('copies').max).toBe('');
+            // Past a billion is a garbled figure, cut to the guard; the box shows what the bill used
+            await type(field('copies'), '1e15');
+            expect(state.enhancementCalls.at(-1)[7]).toBe(1e9);
+            field('copies').dispatchEvent(new Event('change', { bubbles: true }));
+            expect(field('copies').value).toBe('1000000000');
+            // Not a number: copies fall back to 1
+            await type(field('copies'), 'abc');
+            expect(state.enhancementCalls.at(-1)[7]).toBe(1);
             await type(field('copies'), '0');
             expect(state.enhancementCalls.at(-1)[7]).toBe(1);
 
@@ -429,6 +442,22 @@ describe('enhancement missing-material reservation handoff', () => {
             document.body.addEventListener('keydown', seen);
             field('attempts').dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
             expect(seen).not.toHaveBeenCalled();
+        });
+
+        test('a large attempts and copies figure reaches the marketplace hand-off whole', async () => {
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+
+            await type(field('attempts'), '123456');
+            await type(field('copies'), '20000');
+            const button = document.querySelector('#mwi-missing-mats-button');
+            expect(button.title).toContain('123456 attempts × 20000 copies');
+            state.enhancementCalls = [];
+            button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            await vi.advanceTimersByTimeAsync(200);
+            await Promise.resolve();
+            expect(state.enhancementCalls.at(-1)[5]).toBe(123456);
+            expect(state.enhancementCalls.at(-1)[7]).toBe(20000);
         });
 
         test('a computed value that moves without a key change is still not treated as manual', async () => {
@@ -451,9 +480,9 @@ describe('enhancement missing-material reservation handoff', () => {
             field('attempts').dispatchEvent(new Event('change', { bubbles: true }));
             expect(field('attempts').value).toBe('9');
 
-            // An automatic figure past 9999 is not shrunk by an edit
+            // An automatic figure past the old 9999 cap is just a figure
             await type(field('attempts'), '20000');
-            expect(state.enhancementCalls.at(-1)[5]).toBe(9999);
+            expect(state.enhancementCalls.at(-1)[5]).toBe(20000);
             state.wholeAttempts = 20000;
             missingMaterials.cleanup();
             missingMaterials.initialize();
