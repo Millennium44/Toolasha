@@ -106,8 +106,14 @@ export function describeTriggerEstimate(estimate) {
         slots > 0
             ? `Condition search: up to ${conditionSims.toLocaleString('en-US')} more fight sims ` +
               `(${slots} slot${slots === 1 ? '' : 's'}).`
-            : '';
-    if (rows === 0) return conditions || 'No tunable trigger rows for this player.';
+            : estimate.searchConditions
+              ? 'Condition search: no slot to search.'
+              : '';
+    if (rows === 0) {
+        if (slots > 0) return conditions;
+        const none = `No tunable trigger rows for ${estimate.wholeParty ? 'this party' : 'this player'}.`;
+        return conditions ? `${none} ${conditions}` : none;
+    }
     return (
         `About ${estimate.thresholdSims.toLocaleString('en-US')} fight sims ` +
         `(${rows} trigger row${rows === 1 ? '' : 's'}).` +
