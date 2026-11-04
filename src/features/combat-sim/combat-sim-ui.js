@@ -3322,6 +3322,7 @@ class CombatSimUI {
         this._narrowQuery = null;
         this._narrowListener = null;
         this._viewDrawn = null;
+        this._viewRedrawOwed = false;
     }
 
     /**
@@ -9913,9 +9914,7 @@ class CombatSimUI {
         bringPanelToFront(this.panel);
         // The breakpoint is only watched while the panel is up; a window resized while it was closed is caught up here
         this._watchNarrowWindow();
-        if (this._upgradeResultsData && this._upgradeView() !== this._viewDrawn) {
-            this._renderUpgradeResults(this._upgradeResultsData);
-        }
+        this._redrawForViewChange();
         this.populateZones();
         if (!this._editor.isInitialized()) {
             this._editor.initEditor();
@@ -10001,6 +10000,7 @@ class CombatSimUI {
         this._cardPending = null;
         this._cardNotes = null;
         this._viewDrawn = null;
+        this._viewRedrawOwed = false;
         this.isRunning = false;
         this._runStartToken++;
         this._runStarting = false;
@@ -11151,6 +11151,8 @@ class CombatSimUI {
             progressEl.style.display = 'none';
             runBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
+            // A view change during the run was held back; a run that drew its own results is already in the view
+            if (this._viewRedrawOwed && this._stillSameCharacter(ownerId)) this._redrawForViewChange();
         }
 
         if (wantsTriggers && !analysisFailed && !this._upgradeAborted && this._stillSameCharacter(ownerId)) {
@@ -14532,6 +14534,12 @@ class CombatSimUI {
         const foodHtml = results.food ? this._renderFoodRecommendation(results.food) : '';
 
         if (!results.results.length) {
+            // An empty analysis is the analysis on screen: the previous one must not come back under it
+            if (results !== this._upgradeResultsData) {
+                this._budgetConfirm = null;
+                this._cardNotes = null;
+            }
+            this._upgradeResultsData = results;
             container.innerHTML =
                 foodHtml ||
                 `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
@@ -14812,11 +14820,24 @@ class CombatSimUI {
         const query = window.matchMedia(MARKET_MOBILE_QUERY);
         if (!query || typeof query.addEventListener !== 'function') return;
         this._narrowQuery = query;
-        this._narrowListener = () => {
-            if (!this.panel || !this._upgradeResultsData || this._upgradeView() === this._viewDrawn) return;
-            this._renderUpgradeResults(this._upgradeResultsData);
-        };
+        this._narrowListener = () => this._redrawForViewChange();
         query.addEventListener('change', this._narrowListener);
+    }
+
+    /**
+     * Draw the results again when the view they should be in is not the one on screen. Never while a run is
+     * going: its container is emptied under the progress bar, and the analysis still held is the previous one.
+     * The redraw is owed instead and made when the run ends.
+     * @private
+     */
+    _redrawForViewChange() {
+        if (!this.panel || !this._upgradeResultsData || this._upgradeView() === this._viewDrawn) return;
+        if (this._isBusy()) {
+            this._viewRedrawOwed = true;
+            return;
+        }
+        this._viewRedrawOwed = false;
+        this._renderUpgradeResults(this._upgradeResultsData);
     }
 
     /** @private */
