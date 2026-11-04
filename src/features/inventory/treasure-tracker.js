@@ -184,7 +184,7 @@ const EXPECTED_GRID = '1fr 1fr 8px 1fr 1fr';
 /** The popup's item icon. The icon column below is this plus 1px, so with the rows' 3px gap it leaves 4px before Qty. */
 const OPENING_ICON_SIZE = 18;
 /** The least a figure column gets: "123.45K" at 11px, so a narrow popup never cuts a number to "1.2…" */
-const OPENING_FIGURE_FLOOR = 42;
+const OPENING_FIGURE_FLOOR = 46;
 /** The popup's one-line item row: icon, qty, value, vs exp., expected qty, expected value */
 const OPENING_GRID =
     `${OPENING_ICON_SIZE + 1}px repeat(2, minmax(${OPENING_FIGURE_FLOOR}px, 1fr)) 46px ` +

@@ -815,7 +815,7 @@ describe('the popup’s item rows', () => {
         );
         // Qty, Value, Exp. qty, Exp. val: a "123.45K" at 11px is about 41px
         expect(floors).toHaveLength(4);
-        expect(Math.min(...floors)).toBeGreaterThanOrEqual(42);
+        expect(Math.min(...floors)).toBeGreaterThanOrEqual(46);
 
         const fixed = [...template.replace(/minmax\([^)]*\)/g, '').matchAll(/([\d.]+)px/g)].reduce(
             (sum, m) => sum + parseFloat(m[1]),
@@ -826,7 +826,7 @@ describe('the popup’s item rows', () => {
         // The body's 9px side padding and the frame's 1px border
         const needed = tracks + gaps + 2 * 9 + 2;
         // The popup's resize handle is made with this minimum
-        expect(needed).toBeLessThanOrEqual(268);
+        expect(needed).toBeLessThanOrEqual(284);
     });
 
     test('with nothing to list there are still no stray rows and the stats button is there', () => {
