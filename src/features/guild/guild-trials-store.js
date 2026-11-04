@@ -52,15 +52,23 @@ import {
     TRIAL_ACTIVE_MS,
     TRIAL_BUDGET_MS,
     TRIAL_MAX_TIER,
+    trialFromHrid,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { isPlausibleReading } from './guild-trials-scrape.js';
 import { FOREIGN_CYCLE_REASON, statesAsMuch } from './guild-trial-history.js';
 import {
     boundSignupLevels,
+    cleanScheduled,
+    cycleTrialsFromHistory,
+    cycleTrialsOf,
+    mergeCycleTrials,
     mergeResults,
+    mergeScheduled,
     mergeTrialFacts,
     resultsFromHistory,
+    sameScheduleCycle,
+    splitScheduled,
     trialResultsOf,
     withTrialResults,
 } from './guild-trial-results.js';
@@ -328,6 +336,10 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
 
     if (Object.keys(tiles).length) {
         const entry = { archivedAt: at, reason, weekStart: record?.weekStart ?? null, tiles };
+        // The game's list of what the cycle ran goes with its tiles: what was seen of it is only
+        // readable against what ran. A foreign cycle is another guild's and keeps none
+        const scheduled = foreign ? null : cleanScheduled(record?.scheduled);
+        if (scheduled) entry.scheduled = scheduled;
         cyclesToFold.push(entry);
         // Additive: written only when there is something to write, so an entry
         // with no `accuracy` key is an archive from before this existed rather
@@ -348,14 +360,25 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
               )
             : -1;
         if (same === -1) history.push(entry);
-        else if (statesAsMuch(entry, history[same])) history[same] = entry;
+        else if (statesAsMuch(entry, history[same])) history[same] = withScheduled(entry, history[same]);
+        else history[same] = withScheduled(history[same], entry);
     }
 
-    return {
+    // A cycle with no tiles has nothing to file its running list with, but the list can still be the fuller
+    // statement of a cycle this week's archive already holds
+    const unfiled =
+        !foreign && !Object.keys(tiles).length && Number.isFinite(record?.weekStart)
+            ? foldRunningLists([record.scheduled], history, record.weekStart)
+            : null;
+    // What the lists say of the archive, taken before the dedupe and the cap as the results are
+    const cycleTrials = foreign
+        ? []
+        : mergeCycleTrials(record?.cycleTrials, cycleTrialsFromHistory(cyclesToFold), unfiled?.cycleTrials);
+    const archived = {
         ...record,
         weekStart: record?.weekStart ?? trialWeekStart(at),
         tiles: {},
-        history: capHistory(history),
+        history: capHistory(unfiled ? unfiled.history : history),
         // Read off the whole archive before the dedupe and the cap, so a copy
         // either drops has its results kept here first (see guild-trial-results.js). A
         // record put away as another guild's takes its results with it: they
@@ -363,6 +386,27 @@ export function archiveCycle(record, reason, at = Date.now(), { accuracy = null,
         // as this guild's
         trialResults: foreign ? [] : mergeResults(record?.trialResults, resultsFromHistory(cyclesToFold)),
     };
+    // The running cycle's lists went into the archive (or, with no tiles, belonged to nothing worth keeping)
+    delete archived.scheduled;
+    delete archived.cycleTrials;
+    return cycleTrials.length ? { ...archived, cycleTrials } : archived;
+}
+
+/**
+ * An archived cycle with the lists another copy of it holds folded in.
+ *
+ * Two copies of one cycle are kept as one entry whole, and the one dropped can
+ * hold a list the kept one lacks.
+ *
+ * @param {Object} kept - The archive that is kept
+ * @param {Object|null} other - The other copy
+ * @returns {Object} `kept`, the same object when the other adds nothing
+ */
+function withScheduled(kept, other) {
+    const merged = mergeScheduled(kept?.scheduled, other?.scheduled);
+    if (!merged) return kept;
+    if (JSON.stringify(merged) === JSON.stringify(cleanScheduled(kept?.scheduled))) return kept;
+    return { ...kept, scheduled: merged };
 }
 
 /** How many finished cycles are kept beside the live one */
@@ -450,6 +494,7 @@ export function rollRecordToWeek(record, weekStart, { guildId = null, guildName 
         guildName: record.guildName ?? guildName ?? null,
         history: archived.history,
         trialResults: archived.trialResults,
+        ...(archived.cycleTrials ? { cycleTrials: archived.cycleTrials } : {}),
     };
 }
 
@@ -482,6 +527,215 @@ export function trialHourStartedAt(entry, offset) {
         .sort((a, b) => a - b);
     if (!ends.length) return null;
     return ends[Math.floor(ends.length / 2)] - TRIAL_BUDGET_MS + offset;
+}
+
+/**
+ * How far before a cycle's start a finished kind's oldest stamp may sit and still be that cycle's.
+ * Stamps and the cycle start are placed through the same clock offset, so only the offset's drift
+ * between two readings (a trip or so) separates them; a stale list's oldest stamp is an hour back.
+ */
+const FINISHED_LIST_SLACK_MS = 10_000;
+
+/**
+ * Where a finished kind's list is placed, when its stamps say it belongs to the running cycle.
+ *
+ * A finished payload outlives its cycle: at the next cycle's skilling hour the combat side still
+ * states the last cycle's trials, finished a moment before the new cycle began. The list is placed
+ * at its newest stamp, but only when every stamp it carries lies inside the cycle's own span
+ * (its start to two hours on), which a list from the cycle before never does: its oldest stamp
+ * is an hour before the new cycle began, however close its newest sits to the boundary.
+ *
+ * With no cycle start to hold the stamps against, the test server (a cycle a day, the previous
+ * one a few stamps away) is unknown; live runs one cycle a week, and the week the stamps share
+ * is the check.
+ *
+ * @param {number[]} stamps - Client ms, one per stamp the kind's parties carry
+ * @param {number|null} cycleStart - Client ms the running cycle's skilling hour began (test server)
+ * @returns {number|null} Client ms, or null when unsure
+ */
+function finishedListAt(stamps, cycleStart) {
+    if (!stamps.length) return null;
+    const newest = Math.max(...stamps);
+    const oldest = Math.min(...stamps);
+    if (Number.isFinite(cycleStart)) {
+        if (oldest < cycleStart - FINISHED_LIST_SLACK_MS) return null;
+        if (newest > cycleStart + 2 * TRIAL_BUDGET_MS + CYCLE_START_SLACK_MS) return null;
+        return newest;
+    }
+    if (isTestServer()) return null;
+    return trialWeekStart(oldest) === trialWeekStart(newest) ? newest : null;
+}
+
+/**
+ * The trial keys of each kind the game's own draw for the cycle names.
+ *
+ * `guildWeeklyTrialSet` (`{skillHrids, combatHrids}`) sits beside `guild` on `guild_updated` and on
+ * the login payload. It names the trials the cycle runs before any party exists, but carries no
+ * stamp and outlives its cycle, so it can place nothing in a cycle by itself.
+ *
+ * @param {Object|null} data - A `guild_updated` or login payload
+ * @returns {{skilling: string[], combat: string[]}|null} Null when the payload carries no draw
+ */
+export function weeklyTrialSetFrom(data) {
+    const set = data?.guildWeeklyTrialSet;
+    if (!set || typeof set !== 'object' || (!Array.isArray(set.skillHrids) && !Array.isArray(set.combatHrids))) {
+        return null;
+    }
+    const keys = (hrids, kind) =>
+        [
+            ...new Set(
+                (Array.isArray(hrids) ? hrids : [])
+                    .map((hrid) => trialFromHrid(hrid))
+                    .filter((trial) => trial && trial.kind === kind)
+                    .map((trial) => trial.key)
+            ),
+        ].sort();
+    return { skilling: keys(set.skillHrids, 'skilling'), combat: keys(set.combatHrids, 'combat') };
+}
+
+/**
+ * The trial keys a kind's parties name, for the kind.
+ * @param {Object|null} entry - `parseCurrentTrialsData(...)[kind]`
+ * @param {string} kind - `skilling` or `combat`
+ * @returns {string[]} Sorted, once each
+ */
+function namedTrialKeys(entry, kind) {
+    return [
+        ...new Set(
+            Object.keys(entry?.trials || {})
+                .map((hrid) => trialFromHrid(hrid))
+                .filter((trial) => trial && trial.kind === kind)
+                .map((trial) => trial.key)
+        ),
+    ].sort();
+}
+
+/**
+ * Which of the game's draws a message states can be told to belong to the cycle its parties are in, and
+ * what the next message should be held against.
+ *
+ * The draw carries no stamp and outlives its cycle, so a draw read beside a running hour is no proof of
+ * that hour's trials: one left over from the cycle before can cover the parties named so far by chance
+ * and omit a trial that really ran, and a list filed from it would read that trial as "did not run". It
+ * is taken for this cycle's only when this session has the evidence:
+ *
+ * - the baseline is the draw this session read beside the same kind's last finished parties (it covered
+ *   them), that is, the cycle before the running one's draw;
+ * - the running hour's parties name a trial that baseline does not, so the baseline is not this hour's;
+ * - the draw now stated covers every party named.
+ *
+ * Anything short of that, a login mid-hour (no baseline), the same trials two cycles running (nothing
+ * outside the baseline), a draw missing a party the hour has, is no evidence, and the kind has no draw.
+ *
+ * @param {Object|null} read - `parseCurrentTrialsData` of the message
+ * @param {{skilling: string[], combat: string[]}|null} draw - From {@link weeklyTrialSetFrom}
+ * @param {{skilling?: string[], combat?: string[]}|null} baseline - The previous message's baseline
+ * @returns {{fresh: {skilling?: string[], combat?: string[]}, baseline: {skilling?: string[], combat?: string[]}}}
+ *   The draws proven this cycle's (per kind, absent when unproven), and the baseline to hold for the next message
+ */
+export function weeklyTrialsAfter(read, draw, baseline) {
+    const fresh = {};
+    const next = {};
+    for (const kind of ['skilling', 'combat']) {
+        if (Array.isArray(baseline?.[kind]) && baseline[kind].length) next[kind] = baseline[kind];
+        const entry = read?.[kind];
+        const named = namedTrialKeys(entry, kind);
+        const drawn = Array.isArray(draw?.[kind]) ? draw[kind] : [];
+        if (!entry || !named.length || !drawn.length || !named.every((key) => drawn.includes(key))) continue;
+        if (!entry.inProgress) {
+            // A kind that is over: the draw beside its parties is the cycle that just ended
+            next[kind] = drawn;
+            continue;
+        }
+        const before = next[kind];
+        if (before && !named.every((key) => before.includes(key))) fresh[kind] = drawn;
+    }
+    return { fresh, baseline: next };
+}
+
+/**
+ * The lists of trials the guild payload says are running, per kind, placed on this client's clock.
+ *
+ * A kind is read only when its `parties` name at least one known trial — an empty
+ * record is one not filled in yet, not a cycle that ran nothing — and each kind on
+ * its own: combat's hour starts an hour after skilling's, so one kind's list says
+ * nothing of the other's, and a kind with no list here is unknown.
+ *
+ * A list is placed at its hour's start while that kind is `in_progress`, and is the trials the
+ * game's own draw names for that kind (`held.weeklyTrials`, only a draw {@link weeklyTrialsAfter}
+ * proved this cycle's) with the parties' own: `parties` may fill in as the hour goes, and a trial
+ * it has not named yet must not read as one that did not run. A running kind with no proven draw,
+ * or one that omits a party, writes nothing and reads as unknown: its cell stays "—" until the
+ * kind is over. A kind that is over is placed at its parties' newest stamp instead
+ * ({@link finishedListAt}, needs the clock offset), from its parties alone: a finished payload
+ * outlives its cycle, and so does the draw.
+ *
+ * @param {Object|null} held - `currentTrials`: the parsed payload with `at`, when this client had it
+ * @param {Object} [options] - Context
+ * @param {number|null} [options.offset] - From `serverClockOffset`, client minus server
+ * @param {number|null} [options.cycleStart] - Client ms the running cycle's skilling hour began (test server)
+ * @returns {Object} `{skilling?: {trials, at}, combat?: {trials, at}}`; empty when nothing is known
+ */
+export function scheduledFromPayload(held, { offset = null, cycleStart = null } = {}) {
+    const out = {};
+    for (const kind of ['skilling', 'combat']) {
+        const entry = held?.[kind];
+        const named = Object.keys(entry?.trials || {})
+            .map((hrid) => trialFromHrid(hrid))
+            .filter((trial) => trial && trial.kind === kind)
+            .map((trial) => trial.key);
+        if (!named.length) continue;
+
+        let at = null;
+        let drawn = [];
+        if (entry.inProgress) {
+            const start = trialHourStartedAt(entry, offset);
+            at = Number.isFinite(start) ? start : held.at;
+            drawn = Array.isArray(held?.weeklyTrials?.[kind]) ? held.weeklyTrials[kind] : [];
+            // A running hour is listed only beside a draw proven to be this cycle's that covers its parties:
+            // parties alone may not have filled in, and a draw of unknown age may be last cycle's
+            if (!drawn.length || !named.every((key) => drawn.includes(key))) continue;
+        } else if (Number.isFinite(offset)) {
+            const stamps = Object.values(entry.trials)
+                .flatMap((party) => [party?.highestTierReachedAtMs, party?.tierStartedAtMs])
+                .filter((stamp) => Number.isFinite(stamp))
+                .map((stamp) => stamp + offset);
+            at = finishedListAt(stamps, cycleStart);
+        }
+        const trials = [...new Set([...named, ...drawn])].sort();
+        if (Number.isFinite(at)) out[kind] = { trials, at };
+    }
+    return out;
+}
+
+/**
+ * File the lists the payload states into a record, whichever tab is open.
+ *
+ * Only a list placed inside the record's own week: a payload read across a rollover
+ * belongs to the week it was placed in, and the record in hand may already be the next.
+ * A list is added to the record's by {@link mergeScheduled}; one the record already
+ * holds, or a subset of it from the same cycle, changes nothing and the same record comes back.
+ *
+ * @param {Object|null} record - The week's record
+ * @param {Object|null} scheduled - From {@link scheduledFromPayload}
+ * @returns {Object|null} The record, the same object when nothing was written
+ */
+export function recordScheduled(record, scheduled) {
+    if (!record || !Number.isFinite(record.weekStart)) return record;
+    const held = cleanScheduled(record.scheduled);
+    const incoming = {};
+    for (const kind of ['skilling', 'combat']) {
+        const side = cleanScheduled(scheduled)?.[kind];
+        if (!side || trialWeekStart(side.at) !== record.weekStart) continue;
+        const have = held?.[kind];
+        const sameCycle = have && sameScheduleCycle(have, side);
+        if (sameCycle && side.trials.every((trial) => have.trials.includes(trial))) continue;
+        incoming[kind] = side;
+    }
+    if (!Object.keys(incoming).length) return record;
+    const merged = mergeScheduled(held, incoming);
+    // A list from an earlier cycle than the one held loses the merge and adds nothing
+    return JSON.stringify(merged) === JSON.stringify(held) ? record : { ...record, scheduled: merged };
 }
 
 /**
@@ -681,6 +935,21 @@ function earlierCyclePart(tile, from) {
 }
 
 /**
+ * The lists that sit in the cycle some tiles' stamps are from.
+ * @param {Object|null} scheduled - Lists placed before the current cycle
+ * @param {number[]} stamps - Every moment the tiles are stamped with, client ms
+ * @returns {Object|null} The kinds whose list is within a cycle window of one of the stamps; null when none
+ */
+function listsOfTheirCycle(scheduled, stamps) {
+    if (!scheduled) return null;
+    const kept = {};
+    for (const [kind, side] of Object.entries(scheduled)) {
+        if (stamps.some((stamp) => sameScheduleCycle({ at: stamp }, side))) kept[kind] = side;
+    }
+    return Object.keys(kept).length ? kept : null;
+}
+
+/**
  * Archive what an earlier cycle of this week left on the record.
  *
  * The record is the week's, and the test server runs several cycles in one:
@@ -739,12 +1008,37 @@ export function archiveEarlierCycles(
         const current = currentCyclePart(tile, from);
         if (current) tiles[key] = current;
     }
-    if (!Object.keys(earlier).length) return record;
+    // The game's lists are cut at the same boundary, kind by kind: a list placed before the cycle
+    // began is an earlier cycle's. One that outlived its tiles has nothing to be archived with and
+    // is dropped here, or it would be filed with the next cycle's tiles as that cycle's own
+    const lists = splitScheduled(record?.scheduled, {
+        skilling: Number.isFinite(skillingStart) ? skillingStart - CYCLE_START_SLACK_MS : null,
+        combat: Number.isFinite(cycleBegan) ? cycleBegan - CYCLE_START_SLACK_MS : null,
+    });
+    if (!Object.keys(earlier).length) {
+        if (!lists.earlier) return record;
+        const kept = withListsFolded({ ...record }, lists.earlier);
+        delete kept.scheduled;
+        return lists.current ? { ...kept, scheduled: lists.current } : kept;
+    }
 
     // To the minute: the offset the start is derived through tightens by a trip
     // or so between messages, and one boundary must stay one archive
     const cycleFrom = Math.round(cycleBegan / 60_000) * 60_000;
-    return { ...archiveCycle({ ...record, tiles: earlier }, EARLIER_CYCLE_REASON, at, { cycleFrom, accuracy }), tiles };
+    // …and a list goes with these tiles only when it sits in their own cycle. One a cycle or more
+    // older (this record kept it, or a stored copy brought it back) is not what ran when they did
+    const archivedLists = listsOfTheirCycle(
+        lists.earlier,
+        Object.values(earlier).flatMap((tile) => tileStamps(tile))
+    );
+    const archived = archiveCycle({ ...record, tiles: earlier, scheduled: archivedLists }, EARLIER_CYCLE_REASON, at, {
+        cycleFrom,
+        accuracy,
+    });
+    // A list too old for these tiles is dropped from the running record, but it may state more of its own
+    // cycle than that cycle's archive does
+    const older = Object.fromEntries(Object.entries(lists.earlier || {}).filter(([kind]) => !archivedLists?.[kind]));
+    return withListsFolded({ ...archived, tiles, ...(lists.current ? { scheduled: lists.current } : {}) }, older);
 }
 
 /**
@@ -763,6 +1057,113 @@ export function archiveEarlierCycles(
 function cycleStartField(value, writtenAt) {
     if (!Number.isFinite(value)) return {};
     return Number.isFinite(writtenAt) ? { cycleStart: value, cycleStartAt: writtenAt } : { cycleStart: value };
+}
+
+/**
+ * The `cycleTrials` field of a record, or nothing.
+ *
+ * Absent rather than empty when no cycle kept a list, so a record that never had one is not
+ * rewritten into a different shape.
+ *
+ * @param {Array<Object>} list - From `cycleTrialsOf`
+ * @returns {{cycleTrials: Array<Object>}|{}} Spreadable
+ */
+function cycleTrialsField(list) {
+    return Array.isArray(list) && list.length ? { cycleTrials: list } : {};
+}
+
+/**
+ * The `scheduled` field of a record, or nothing: the kinds that hold a usable list.
+ * @param {*} value - A stored or merged value
+ * @returns {{scheduled: Object}|{}} Spreadable
+ */
+function scheduledField(value) {
+    const scheduled = cleanScheduled(value);
+    return scheduled ? { scheduled } : {};
+}
+
+/**
+ * Running lists folded into the archived cycle that already holds them, and what is left running.
+ *
+ * A list of the same cycle as an archived one's, or an earlier cycle's, is that cycle's own, seen
+ * again by a copy that had not archived yet. The test server's cycles carry `cycleFrom`; live's
+ * single cycle is the week itself, so any archive of the week holds it. Another week's archive
+ * says nothing about this week's lists.
+ *
+ * Dropping the copy was not enough: it can be the fuller statement. A device that has not archived
+ * yet may hold a list that has filled in since the archive was taken (an archive of Alchemy beside
+ * a running Alchemy and Brewing), and a list the archive lacks reads as "n/r" for a trial that
+ * ran. So a list of the archived cycle's own is unioned into that archive and into the slim lists
+ * first, kind by kind. An earlier cycle's list is dropped as before and adds nothing: it belongs to
+ * no archive in hand, and the list's absence reads "—".
+ *
+ * Each device's lists are folded on their own, before they are merged with each other: a later
+ * cycle's list would win the merge whole, and the earlier cycle's keys would be gone before the
+ * archive saw them. The archive is read as it came in, never as folded so far, so the result does
+ * not depend on the order the lists are taken in.
+ *
+ * @param {Array<Object|null>} runningLists - Each side's running lists, kept apart
+ * @param {Array<Object>} history - The merged archive (not mutated)
+ * @param {number} week - The record's week
+ * @returns {{scheduled: Object|null, history: Array<Object>, cycleTrials: Array<Object>}} The lists still
+ *   running (null when nothing is left), the archive with the lists folded in, and the keys folded in as
+ *   slim `cycleTrials` entries
+ */
+function foldRunningLists(runningLists, history, week) {
+    const folded = [...history];
+    const cycleTrials = [];
+    let left = null;
+    for (const running of runningLists) {
+        const kept = {};
+        for (const [kind, side] of Object.entries(cleanScheduled(running) || {})) {
+            let archived = false;
+            history.forEach((cycle, index) => {
+                if (!cycle || cycle.weekStart !== week || cycle.reason === FOREIGN_CYCLE_REASON) return;
+                const held = cleanScheduled(cycle.scheduled)?.[kind];
+                if (!held) return;
+                const sameCycle = sameScheduleCycle(held, side);
+                if (!sameCycle && held.at < side.at) return;
+                archived = true;
+                if (!sameCycle) return;
+                const current = cleanScheduled(folded[index].scheduled);
+                const trials = [...new Set([...current[kind].trials, ...side.trials])].sort();
+                if (trials.length !== current[kind].trials.length) {
+                    const at = Math.max(current[kind].at, side.at);
+                    folded[index] = { ...folded[index], scheduled: { ...current, [kind]: { trials, at } } };
+                }
+                cycleTrials.push({
+                    weekStart: week,
+                    cycleFrom: Number.isFinite(cycle.cycleFrom) ? cycle.cycleFrom : null,
+                    [kind]: side.trials,
+                });
+            });
+            if (!archived) kept[kind] = side;
+        }
+        left = mergeScheduled(left, kept);
+    }
+    return { scheduled: left, history: folded, cycleTrials };
+}
+
+/**
+ * A record with lists that are leaving it folded into the archived cycle that holds their own.
+ *
+ * For the places a running list is dropped because it has no tiles or is too old to go with the tiles
+ * in hand: see {@link foldRunningLists}.
+ *
+ * @param {Object} record - The record (not mutated)
+ * @param {Object|null} lists - The lists leaving the record, per kind
+ * @returns {Object} The record, the same object when nothing was added
+ */
+function withListsFolded(record, lists) {
+    if (!lists || !Object.keys(lists).length || !Number.isFinite(record?.weekStart)) return record;
+    const history = Array.isArray(record.history) ? record.history : [];
+    const folded = foldRunningLists([lists], history, record.weekStart);
+    if (!folded.cycleTrials.length) return record;
+    return {
+        ...record,
+        history: folded.history,
+        cycleTrials: mergeCycleTrials(record.cycleTrials, folded.cycleTrials),
+    };
 }
 
 /**
@@ -1442,6 +1843,8 @@ export function mergeTrialRecords(base, incoming) {
         guildName: record.guildName ?? null,
         history: Array.isArray(record.history) ? record.history : [],
         trialResults: trialResultsOf(record),
+        ...cycleTrialsField(cycleTrialsOf(record)),
+        ...scheduledField(record.scheduled),
         ...cycleStartField(record.cycleStart, record.cycleStartAt),
     });
     if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
@@ -1469,7 +1872,7 @@ export function mergeTrialRecords(base, incoming) {
     const guild = { guildId: base.guildId ?? null, guildName: base.guildName ?? null };
     const incomingForeign = recordProvenance(incoming, guild) === 'foreign';
     const history = [];
-    const seenCycles = new Set();
+    const seenCycles = new Map();
     for (const cycle of [...(base.history || []), ...(incomingForeign ? [] : incoming.history || [])]) {
         if (!cycle) continue;
         if (Number.isFinite(cycle.weekStart)) {
@@ -1480,24 +1883,38 @@ export function mergeTrialRecords(base, incoming) {
                     (held.cycleFrom ?? null) === (cycle.cycleFrom ?? null)
             );
             if (same === -1) history.push(cycle);
-            else if (statesAsMuch(history[same], cycle)) history[same] = foldArchivedCycle(history[same], cycle);
-            else history[same] = foldArchivedCycle(cycle, history[same]);
+            else if (statesAsMuch(history[same], cycle)) {
+                history[same] = withScheduled(foldArchivedCycle(history[same], cycle), cycle);
+            } else history[same] = withScheduled(foldArchivedCycle(cycle, history[same]), history[same]);
             continue;
         }
         const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}:${cycle.cycleFrom ?? ''}`;
-        if (seenCycles.has(mark)) continue;
-        seenCycles.add(mark);
+        // The copy seen again is the same archive, and it can hold a list the first lacks
+        if (seenCycles.has(mark)) {
+            const first = seenCycles.get(mark);
+            history[first] = withScheduled(history[first], cycle);
+            continue;
+        }
+        seenCycles.set(mark, history.length);
         history.push(cycle);
     }
+    // The running cycle's lists, unless a cycle of this week already holds them: a stale copy's list is
+    // the archived cycle's, and kept live it would be filed with the next cycle's tiles. What the stale
+    // copy states beyond the archive's list is added to the archive first
+    const running = foldRunningLists([base.scheduled, incomingForeign ? null : incoming.scheduled], history, baseWeek);
     // Each side's results with its own archive folded in. Known limit: the
     // foreign check above trusts the base, and sync calls this in both orders,
     // so of two sides naming different guilds the base's stands either way
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
-        history: capHistory(history),
+        history: capHistory(running.history),
         trialResults: mergeResults(trialResultsOf(base), incomingForeign ? [] : trialResultsOf(incoming)),
+        ...cycleTrialsField(
+            mergeCycleTrials(cycleTrialsOf(base), incomingForeign ? [] : cycleTrialsOf(incoming), running.cycleTrials)
+        ),
     };
+    const scheduled = running.scheduled;
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
         const existing = tiles[key];
@@ -1619,7 +2036,13 @@ export function mergeTrialRecords(base, incoming) {
         }
     }
 
-    return { weekStart: baseWeek, tiles, ...provenance, ...mergedCycleStart(base, incoming) };
+    return {
+        weekStart: baseWeek,
+        tiles,
+        ...provenance,
+        ...scheduledField(scheduled),
+        ...mergedCycleStart(base, incoming),
+    };
 }
 
 /*
@@ -1686,6 +2109,8 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
             tiles: record.tiles || {},
             history: Array.isArray(record.history) ? record.history : [],
             trialResults: Array.isArray(record.trialResults) ? record.trialResults : [],
+            ...cycleTrialsField(Array.isArray(record.cycleTrials) ? record.cycleTrials : []),
+            ...scheduledField(record.scheduled),
             guildId: record.guildId ?? guildId,
             guildName: record.guildName ?? guildName,
             ...cycleStartField(record.cycleStart, record.cycleStartAt),

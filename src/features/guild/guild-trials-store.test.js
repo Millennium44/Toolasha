@@ -366,6 +366,29 @@ describe('loading and saving', () => {
         expect(Object.keys(record.tiles)).toEqual(['skilling::milking']);
     });
 
+    test('the game’s lists survive a save and a load, and a record with none stays the shape it was', async () => {
+        const scheduled = { skilling: { trials: ['alchemy', 'brewing'], at: thisWeek + 3_600_000 } };
+        const slim = [{ weekStart: thisWeek - 7 * 24 * 3600_000, cycleFrom: null, skilling: ['alchemy'] }];
+        const record = { weekStart: thisWeek, tiles: {}, guildName: 'Milky Way', scheduled, cycleTrials: slim };
+        expect(await saveTrialRecord('Milky Way', record)).toBe(true);
+        const stored = game.store['guildTrials_Milky Way'];
+        expect(stored.scheduled).toEqual(scheduled);
+        expect(stored.cycleTrials).toEqual(slim);
+
+        const loaded = await loadTrialRecord('Milky Way', now);
+        expect(loaded.scheduled).toEqual(scheduled);
+        expect(loaded.cycleTrials).toEqual(slim);
+
+        // A record from before the lists existed has neither, loaded or saved
+        game.store['guildTrials_Milky Way'] = { weekStart: thisWeek, tiles: {}, guildName: 'Milky Way' };
+        const old = await loadTrialRecord('Milky Way', now);
+        expect(old).not.toHaveProperty('scheduled');
+        expect(old).not.toHaveProperty('cycleTrials');
+        await saveTrialRecord('Milky Way', old);
+        expect(game.store['guildTrials_Milky Way']).not.toHaveProperty('scheduled');
+        expect(game.store['guildTrials_Milky Way']).not.toHaveProperty('cycleTrials');
+    });
+
     test('a record from last week is discarded, not merged', async () => {
         game.store['guildTrials_Milky Way'] = {
             weekStart: thisWeek - 7 * 24 * 3600_000,
