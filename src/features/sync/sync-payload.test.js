@@ -1973,6 +1973,7 @@ describe('mergeForUpload, which writes nothing local', () => {
                     .sort((x, y) => y - x)
                     .slice(0, context?.forUpload ? Infinity : 2),
             }),
+            wantsContext: true,
             label: 'capped',
         });
         const full = (value) =>

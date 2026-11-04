@@ -4267,6 +4267,7 @@ registerSyncMerge({
     // limit, which an uncapped gist outgrew, so a Clear never reached it
     merge: (local, incoming, context) =>
         mergeRoomLogsCleared(local, incoming, context?.forUpload ? MAX_LOG_SESSIONS : labyrinthRoomLogs.logSize()),
+    wantsContext: true,
     label: 'Labyrinth room logs',
     capsLocally: true,
     // Every write goes through `this.record`, a plain persisted record; only the user's Clear overwrites

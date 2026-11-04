@@ -2865,6 +2865,7 @@ registerSyncMerge({
     store: LISTINGS_STORE,
     base: LISTINGS_BASE,
     merge: mergeListingLogsForSync,
+    wantsContext: true,
     // Its own pull fold: see mergeListingLogsForPull. Without it a pull in the orientation where only this
     // device moved would trim this device's log by retention, with no archive write
     pull: mergeListingLogsForPull,
