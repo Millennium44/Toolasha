@@ -66,6 +66,7 @@ import {
     houseRoomMovesWinRate,
     MAX_HOUSE_LEVEL,
     MAX_GUILD_SHRINE_LEVEL,
+    getGuildShrineMaxLevel,
     candidateAssignmentKey,
 } from './upgrade-advisor.js';
 import {
@@ -2428,6 +2429,9 @@ class LabSimUI {
         this.panel.querySelectorAll('[data-lab-mode-options]').forEach((group) => {
             group.style.display = dimensions.has(group.getAttribute('data-lab-mode-options')) ? 'inline-flex' : 'none';
         });
+        // The ceiling the game reports, once its data has loaded; the template carries the fallback
+        const shrineBox = this.panel.querySelector('#mwi-labsim-shrine-target-level');
+        if (shrineBox) shrineBox.max = String(getGuildShrineMaxLevel());
 
         // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
         // since one number drives both — same arrangement as the combat sim
@@ -5643,7 +5647,7 @@ class LabSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const uniform = Math.min(MAX_GUILD_SHRINE_LEVEL, Math.max(0, this._getShrineTargetLevel()));
+        const uniform = Math.min(getGuildShrineMaxLevel(), Math.max(0, this._getShrineTargetLevel()));
 
         const shrines = Object.entries(detailMap)
             .filter(([, detail]) => Boolean(detail?.isCombat))
@@ -5651,7 +5655,7 @@ class LabSimUI {
                 buffHrid,
                 name: shrineDisplayName(detail.shrineHrid || buffHrid),
                 level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
-                maxLevel: Math.min(MAX_GUILD_SHRINE_LEVEL, guildBuffMaxLevel(detail) || MAX_GUILD_SHRINE_LEVEL),
+                maxLevel: Math.min(getGuildShrineMaxLevel(), guildBuffMaxLevel(detail) || getGuildShrineMaxLevel()),
             }))
             .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -5719,7 +5723,7 @@ class LabSimUI {
             } else if (value <= 0) {
                 targets[input.dataset.labShrineTarget] = 0;
             } else {
-                targets[input.dataset.labShrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
+                targets[input.dataset.labShrineTarget] = Math.min(getGuildShrineMaxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -6131,7 +6135,7 @@ class LabSimUI {
      */
     _getShrineTargetLevel() {
         const value = parseInt(this.panel?.querySelector('#mwi-labsim-shrine-target-level')?.value, 10);
-        return Number.isFinite(value) && value > 0 ? Math.min(MAX_GUILD_SHRINE_LEVEL, value) : 0;
+        return Number.isFinite(value) && value > 0 ? Math.min(getGuildShrineMaxLevel(), value) : 0;
     }
 
     /**

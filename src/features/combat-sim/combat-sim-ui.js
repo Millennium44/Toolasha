@@ -151,6 +151,7 @@ import {
     SCORE_METRICS,
     DEFAULT_SCORE_KEYS,
     MAX_GUILD_SHRINE_LEVEL,
+    getGuildShrineMaxLevel,
     shrineName,
     SIGNIFICANCE_Z,
     generateAbilityOrderCandidates,
@@ -10411,6 +10412,9 @@ class CombatSimUI {
      * @private
      */
     _onUpgradeModesChanged() {
+        // The ceiling the game reports, once its data has loaded; the template carries the fallback
+        const shrineBox = this.panel.querySelector('#mwi-csim-shrine-target-level');
+        if (shrineBox) shrineBox.max = String(getGuildShrineMaxLevel());
         const modes = new Set(this._getUpgradeModes());
         const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
         const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
@@ -10575,7 +10579,7 @@ class CombatSimUI {
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const uniform = Math.min(
-            MAX_GUILD_SHRINE_LEVEL,
+            getGuildShrineMaxLevel(),
             Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
         );
 
@@ -10585,7 +10589,7 @@ class CombatSimUI {
                 buffHrid,
                 name: shrineName(detail.shrineHrid || buffHrid),
                 level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
-                maxLevel: Math.min(MAX_GUILD_SHRINE_LEVEL, guildBuffMaxLevel(detail) || MAX_GUILD_SHRINE_LEVEL),
+                maxLevel: Math.min(getGuildShrineMaxLevel(), guildBuffMaxLevel(detail) || getGuildShrineMaxLevel()),
             }))
             .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -10650,7 +10654,7 @@ class CombatSimUI {
             } else if (value <= 0) {
                 targets[input.dataset.shrineTarget] = 0;
             } else {
-                targets[input.dataset.shrineTarget] = Math.min(MAX_GUILD_SHRINE_LEVEL, value);
+                targets[input.dataset.shrineTarget] = Math.min(getGuildShrineMaxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -11128,7 +11132,10 @@ class CombatSimUI {
             const houseTargets = isHouseMode ? this._getHouseTargets() : null;
             // Blank means "one level up", which is what the advisor reads a 0 as
             const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
-                ? Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+                ? Math.min(
+                      getGuildShrineMaxLevel(),
+                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+                  )
                 : 0;
             // Per-shrine grid, when open, overrides the uniform Lv above — the
             // advisor's `guildShrineTargets` takes precedence over the single

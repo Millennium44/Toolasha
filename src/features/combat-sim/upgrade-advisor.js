@@ -85,6 +85,19 @@ export const MAX_HOUSE_LEVEL = 8;
 export const MAX_GUILD_SHRINE_LEVEL = 20;
 
 /**
+ * The shrine ceiling the game itself reports: the highest `maxLevel` in `guildShrineDetailMap` (20 for every
+ * shrine, measured on the test server), or {@link MAX_GUILD_SHRINE_LEVEL} before that map has loaded.
+ * @returns {number}
+ */
+export function getGuildShrineMaxLevel() {
+    const map = dataManager.getInitClientData?.()?.guildShrineDetailMap;
+    const levels = Object.values(map && typeof map === 'object' ? map : {})
+        .map((detail) => Math.floor(Number(detail?.maxLevel)))
+        .filter((level) => Number.isFinite(level) && level > 0);
+    return levels.length > 0 ? Math.max(...levels) : MAX_GUILD_SHRINE_LEVEL;
+}
+
+/**
  * Seed for one analysis run, or null to leave every sim on independent randomness.
  * Sharing a seed across the baseline and all candidates cancels the shared random
  * draws out of each delta; the setting exists because it also freezes the luck of
