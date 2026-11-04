@@ -235,6 +235,13 @@ describe('open button', () => {
         expect(wood.querySelector(`.${OPEN_BUTTON_CLASS}`)).toBeNull();
     });
 
+    test('sits before the skill name, beside the other controls', () => {
+        const cheese = skillTitle('Cheesesmithing');
+        board.injectOpenButton(cheese);
+        const button = cheese.querySelector(`.${OPEN_BUTTON_CLASS}`);
+        expect(button.nextElementSibling?.textContent).toContain('Cheesesmithing');
+    });
+
     test('joins the mobile collapsible controls row when the filter built it first', () => {
         const cheese = skillTitle('Cheesesmithing');
         const row = document.createElement('div');

@@ -17,9 +17,10 @@ describe('phone compact buttons', () => {
         expect(document.querySelectorAll(`#${PHONE_COMPACT_BUTTONS_STYLE_ID}`)).toHaveLength(1);
     });
 
-    it('sizes the Philo Gamba and XPH Calc buttons to their label at phone width only', () => {
-        expect(PHONE_COMPACT_BUTTONS_CSS).toMatch(
-            /@media \(max-width: 768px\)\s*\{\s*\.mwi-philo-calc-button,\s*\.mwi-xph-calc-btn \{[^}]*width: fit-content/
-        );
+    it('sizes Philo Gamba to its label at every width and XPH Calc at phone width only', () => {
+        const [wide, phone] = PHONE_COMPACT_BUTTONS_CSS.split('@media');
+        expect(wide).toMatch(/\.mwi-philo-calc-button \{[^}]*width: fit-content/);
+        expect(wide).not.toContain('.mwi-xph-calc-btn');
+        expect(phone).toMatch(/\(max-width: 768px\)\s*\{\s*\.mwi-xph-calc-btn \{[^}]*width: fit-content/);
     });
 });

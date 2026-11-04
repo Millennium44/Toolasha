@@ -13,8 +13,12 @@ At phone width the battle number no longer squeezes out the zone name beside the
 ### Tidier phone screens
 
 - Combat Sim and Lab Sim panels span the phone's width, Zone gets its own line and Lab Sim's Food dropdown is no longer cut off.
-- Per-player, Philo Gamba and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
+- Per-player and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
 - Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
+
+### Philo Gamba and Arbitrage sit where they belong
+
+Philo Gamba is a compact button instead of a bar across all of Settings, on desktop and phone. Arbitrage now sits with the other skill page controls instead of after the skill name.
 
 ### Buff Board rows are easier to read
 

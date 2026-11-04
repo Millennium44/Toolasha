@@ -217,7 +217,13 @@ class ProductionArbitrageBoard {
         // Mobile mode folds the filter's sort/pricing/craft buttons behind a "···"
         // toggle in this wrapper; join them rather than strand a lone row under it
         const controlsRow = titleElement.querySelector(':scope > #mwi-action-controls');
-        (controlsRow || titleElement).appendChild(button);
+        if (controlsRow) {
+            controlsRow.appendChild(button);
+            return;
+        }
+        // Beside the other controls, not on the far side of the skill name
+        const skillName = [...titleElement.children].find((child) => child.tagName === 'DIV');
+        titleElement.insertBefore(button, skillName || null);
     }
 
     /** Show the board, computing the ranking if it is not already known */

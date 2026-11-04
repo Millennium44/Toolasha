@@ -4,7 +4,8 @@
  * The Philo Gamba (Settings) and XPH Calc (Enhancing) buttons are inserted as direct children of a
  * game panel that lays its children out as a column, where a button stretches across the whole panel
  * and reads as a stray bar. Below the shared phone breakpoint they size to their label and sit at the
- * start of the line. Wider than that the stylesheet is inert and the inline look is untouched.
+ * start of the line. Philo Gamba stretches on a desktop panel as well (measured 1,432 px), so its rule
+ * applies at every width; XPH Calc's wide-screen look is untouched.
  */
 
 import { addStyles } from './dom.js';
@@ -13,8 +14,13 @@ export const PHONE_COMPACT_BUTTONS_STYLE_ID = 'mwi-phone-compact-buttons';
 
 /** The stylesheet text. Exported so tests can read the rules without a layout engine. */
 export const PHONE_COMPACT_BUTTONS_CSS = `
+    .mwi-philo-calc-button {
+        width: fit-content;
+        max-width: 100%;
+        align-self: flex-start;
+        justify-self: start;
+    }
     @media (max-width: 768px) {
-        .mwi-philo-calc-button,
         .mwi-xph-calc-btn {
             width: fit-content;
             max-width: 100%;
