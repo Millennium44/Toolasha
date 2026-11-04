@@ -52,6 +52,8 @@ function fakeDb() {
         close() {},
         /** Stands in for storage in trouble: every transaction refused, reads and writes alike */
         broken: false,
+        /** Stands in for a transaction that aborts: reads answer, no write sticks, `abort` fires instead of `complete` */
+        aborting: false,
         transaction(names) {
             if (db.broken) throw new Error('the database refused the transaction');
             const name = Array.isArray(names) ? names[0] : names;
@@ -64,8 +66,9 @@ function fakeDb() {
                 if (open === 0 && !scheduled) {
                     scheduled = true;
                     setTimeout(() => {
-                        if (open === 0) txn.oncomplete?.();
-                        else scheduled = false;
+                        if (open !== 0) scheduled = false;
+                        else if (db.aborting) txn.onabort?.();
+                        else txn.oncomplete?.();
                     }, 0);
                 }
             };
@@ -84,12 +87,12 @@ function fakeDb() {
                 get: (k) => req(() => (map.has(k) ? structuredClone(map.get(k)) : undefined)),
                 put: (v, k) =>
                     req(() => {
-                        map.set(k, structuredClone(v));
+                        if (!db.aborting) map.set(k, structuredClone(v));
                         return k;
                     }),
                 delete: (k) =>
                     req(() => {
-                        map.delete(k);
+                        if (!db.aborting) map.delete(k);
                     }),
                 getAllKeys: () => req(() => [...map.keys()]),
             });
@@ -100,7 +103,7 @@ function fakeDb() {
 }
 
 const { default: storage } = await import('../../core/storage.js');
-const { default: store, recordKey, bucketOf } = await import('./trade-ledger-store.js');
+const { default: store, recordKey, bucketOf, advanceStoredBaselines } = await import('./trade-ledger-store.js');
 const { mergeForKey, announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const STORE = 'marketListings';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -417,22 +420,15 @@ describe('a fill while the reload prompt is up', () => {
         expect(qty(rows, 300)).toBe(0);
     });
 
-    test('a backup restore latches the whole store: the fill is kept and a duplicate is the worst of it', async () => {
+    test('a latch on the whole store: the fill and its baseline land together, and it is counted once', async () => {
         await openBook();
         storage.finishRestore([STORE]);
 
         fillEvent(3);
         await sleep(80);
         await storage.flushAll();
-        // The baseline is latched too, so it stays behind its row
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
-        expect(diskBaseline(100)).toBe(0);
-        await closeAndOpenNewPage();
-        expect(qty(store.getRecords(), 100)).toBe(6);
-
-        // Mild, because the repair cuts it once the listing ends
-        disk.set('marketListingTimestamps_c1', [{ id: 100, status: 'filled', filledQuantity: 3 }]);
-        dm.listings = [wire(300, 1)];
+        expect(diskBaseline(100)).toBe(3);
         await closeAndOpenNewPage();
         expect(qty(store.getRecords(), 100)).toBe(3);
     });
@@ -904,5 +900,414 @@ describe('the departing-character guard never refuses a fill for good', () => {
         await storage.flushAll();
         expect(qty(disk.get(recordKey('c2', bucketOf({ t: Date.now() }))), 700)).toBe(5);
         expect(qty(disk.get(dayKey(today)), 700)).toBe(0);
+    });
+});
+
+/*
+ * The baseline record latched as well as the day. The worst outcome is a baseline ahead of its row, which loses the fill
+ * for good, and the next worst is writing over what a pull or a restore stored. A row counted twice is the mild one.
+ */
+describe('a fill with the baseline record latched', () => {
+    afterEach(allowDayRecords);
+    const latchBoth = () => storage.finishRestore(new Map([[STORE, [dayKey(today), STATE_KEY]]]));
+    const latchBaseline = () => storage.finishRestore(new Map([[STORE, [STATE_KEY]]]));
+
+    test('prompt accepted: row and entry land in one write, the rest stays as pulled, counted once', async () => {
+        await openBook();
+        const pulled = { 100: baseline(0), 300: { ...baseline(1), price: 77 }, 400: baseline(7) };
+        disk.set(STATE_KEY, pulled);
+        latchBoth();
+        const batches = [];
+        storage.putAll = async (name, entries, options) => {
+            batches.push(Object.keys(entries));
+            return REAL_PUT_ALL(name, entries, options);
+        };
+
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(batches).toEqual([[dayKey(today), STATE_KEY]]);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(disk.get(STATE_KEY)).toEqual({ ...pulled, 100: baseline(3) });
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(3);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+    });
+
+    test('prompt dismissed for hours: each compare starts from the last move, none stalls or skips', async () => {
+        await openBook();
+        latchBoth();
+        let total = 0;
+        for (const filled of [2, 3, 7]) {
+            fillEvent(filled);
+            await sleep(80);
+            total = filled;
+            expect(diskBaseline(100)).toBe(total);
+            expect(qty(disk.get(dayKey(today)), 100)).toBe(total);
+        }
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(7);
+    });
+
+    test('reloaded with the listing open, and it then ends unseen: no doubled row is left behind', async () => {
+        await openBook();
+        latchBoth();
+        fillEvent(3);
+        await sleep(80);
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(3);
+
+        dm.listings = [wire(300, 1)];
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(3);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+    });
+
+    test('the listing ending during the prompt, unclaimed in the book at reload: counted once', async () => {
+        await openBook();
+        latchBoth();
+        fillEvent(4);
+        await sleep(80);
+        fillEvent(10, FILLED);
+        await sleep(80);
+        expect(disk.get(STATE_KEY)[100]).toEqual({ done: true });
+
+        dm.listings = [wire(100, 10, FILLED), wire(300, 1)];
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(10);
+    });
+
+    test.each([
+        ['higher', baseline(5)],
+        ['finished', { done: true }],
+    ])('a pull stored a %s entry: it stays exactly as stored and the row still lands', async (_label, stored) => {
+        await openBook();
+        disk.set(STATE_KEY, { 100: stored, 300: baseline(1) });
+        latchBoth();
+
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(disk.get(STATE_KEY)[100]).toEqual(stored);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(store._unsavedFills.size).toBe(0);
+    });
+
+    test('a restore older than memory: no silent advance past its rows; a duplicate is the worst of it', async () => {
+        await openBook();
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+        expect(diskBaseline(100)).toBe(3);
+
+        // Rolled back to a point where this listing had filled one
+        disk.set(dayKey(today), [row(100, today, 1)]);
+        disk.set(STATE_KEY, { 100: baseline(1), 300: baseline(1) });
+        latchBoth();
+        fillEvent(5);
+        await sleep(80);
+        await storage.flushAll();
+        expect(diskBaseline(100)).toBe(1);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+
+        await closeAndOpenNewPage();
+        // 1 restored + 2 from the fill + 4 found again from the restored baseline: over, never under, the real 5
+        expect(qty(store.getRecords(), 100)).toBe(7);
+    });
+
+    test('a restore older than memory, then the listing ends: the repair cuts the duplicate to the log', async () => {
+        await openBook();
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        disk.set(dayKey(today), [row(100, today, 1)]);
+        disk.set(STATE_KEY, { 100: baseline(1), 300: baseline(1) });
+        latchBoth();
+        fillEvent(5);
+        await sleep(80);
+        await storage.flushAll();
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(7);
+
+        disk.set('marketListingTimestamps_c1', [{ id: 100, status: 'filled', filledQuantity: 5 }]);
+        dm.listings = [wire(300, 1)];
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(5);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(5);
+    });
+
+    test('a restore matching memory: the move is exactly the row beside it, and the sum stays right', async () => {
+        await openBook();
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        disk.set(dayKey(today), [row(100, today, 3)]);
+        disk.set(STATE_KEY, { 100: baseline(3), 300: baseline(1) });
+        latchBoth();
+        fillEvent(5);
+        await sleep(80);
+
+        expect(diskBaseline(100)).toBe(5);
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(5);
+    });
+
+    test('no baseline record stored: none is created, so a load still falls back to the old key', async () => {
+        await openBook();
+        disk.delete(STATE_KEY);
+        storage.finishRestore([STORE]);
+
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(disk.has(STATE_KEY)).toBe(false);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(store._unsavedFills.size).toBe(0);
+    });
+
+    test('a listing placed and filled during the prompt moves its entry; a placement alone stays out', async () => {
+        await openBook();
+        latchBoth();
+        dm.listings = [wire(100, 0), wire(300, 1), wire(101, 2), wire(102, 0)];
+        event(dm.listings, [wire(101, 2), wire(102, 0)]);
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(diskBaseline(101)).toBe(2);
+        expect(disk.get(STATE_KEY)[102]).toBeUndefined();
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 101)).toBe(2);
+    });
+
+    test('a transaction that aborts: neither moves, and the retry brings both, chained, in one write', async () => {
+        await openBook();
+        latchBoth();
+        db.aborting = true;
+        fillEvent(3);
+        await sleep(80);
+        fillEvent(5);
+        await sleep(80);
+        expect(disk.get(dayKey(today)).some((r) => r.listingId === 100)).toBe(false);
+        expect(diskBaseline(100)).toBe(0);
+        expect(store._unsavedFills.get('c1').size).toBe(2);
+
+        db.aborting = false;
+        event(dm.listings, []);
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(5);
+        expect(diskBaseline(100)).toBe(5);
+        expect(store._unsavedFills.size).toBe(0);
+    });
+
+    test('a later fill landing while an earlier one is refused: the baseline waits behind the unsaved row', async () => {
+        await openBook();
+        latchBaseline();
+        const now = vi.spyOn(Date, 'now');
+        const first = Date.UTC(2031, 0, 1, 23, 59);
+        const second = Date.UTC(2031, 0, 2, 0, 1);
+        storage.putAll = async (name, entries, options) =>
+            dayKey(first) in entries ? 0 : REAL_PUT_ALL(name, entries, options);
+        try {
+            now.mockReturnValue(first);
+            fillEvent(3);
+            await sleep(80);
+            now.mockReturnValue(second);
+            fillEvent(5);
+            await sleep(80);
+            expect(qty(disk.get(dayKey(second)), 100)).toBe(2);
+            expect(diskBaseline(100)).toBe(0);
+
+            storage.putAll = REAL_PUT_ALL;
+            event(dm.listings, []);
+            await sleep(80);
+            expect(qty(disk.get(dayKey(first)), 100)).toBe(3);
+            // Caught up to its own row and no further: the next load finds the rest again, over and never under
+            expect(diskBaseline(100)).toBe(3);
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    test('a switch with the row held: its entry moves under its own character, not the arriving one', async () => {
+        await openBook();
+        disk.set('tradeLedgerState_c2', { 900: baseline(0) });
+        latchBoth();
+        refuseDayRecords();
+        fillEvent(3);
+        await sleep(80);
+
+        dm.characterId = 'c2';
+        disk.set('tradeLedgerRecordsSplit_c2', { at: 1, records: 0 });
+        dm.listings = [wire(900, 0)];
+        await store.handleCharacterSwitch();
+        await sleep(80);
+        allowDayRecords();
+        event(dm.listings, []);
+        store._retryUnsaved();
+        await sleep(80);
+        await storage.flushAll();
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(diskBaseline(100)).toBe(3);
+        expect(disk.get('tradeLedgerState_c2')[100]).toBeUndefined();
+
+        await backToC1([wire(100, 3), wire(300, 1)]);
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('the switch gap: a departing save would be refused, and the entry still moves with the row', async () => {
+        await openBook();
+        latchBoth();
+        await eventInTheGap('c2', () => {
+            const moved = owned('c1', 100, 3);
+            event([moved, owned('c1', 300, 1)], [moved]);
+        });
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(diskBaseline(100)).toBe(3);
+        expect(c2Rows()).toEqual([]);
+        await backToC1([wire(100, 3), wire(300, 1)]);
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('page close with the row held: the last write takes the entry with it, counted once', async () => {
+        await openBook();
+        latchBoth();
+        refuseDayRecords();
+        fillEvent(3);
+        await sleep(80);
+        allowDayRecords();
+
+        await closeAndOpenNewPage();
+
+        expect(qty(store.getRecords(), 100)).toBe(3);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+    });
+
+    test('page close with storage refusing: nothing moved, and an open listing is found again', async () => {
+        await openBook();
+        latchBoth();
+        db.broken = true;
+        fillEvent(3);
+        await sleep(80);
+        await storage.closeForTeardown('pagehide');
+        await sleep(80);
+        db.broken = false;
+        expect(diskBaseline(100)).toBe(0);
+
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('the ledger switched off with the row held: row and entry still land together', async () => {
+        await openBook();
+        latchBoth();
+        refuseDayRecords();
+        fillEvent(3);
+        await sleep(80);
+        allowDayRecords();
+
+        store.disable();
+        await sleep(80);
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(diskBaseline(100)).toBe(3);
+        expect(store._unsavedFills.size).toBe(0);
+    });
+
+    test('a second pull running: nothing moves until it has landed, whose copy could take the row', async () => {
+        await openBook();
+        latchBoth();
+
+        await storage.beginRestore();
+        dm.listings = [wire(100, 3), wire(300, 1)];
+        event(dm.listings, [wire(100, 3)]);
+        await sleep(80);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(diskBaseline(100)).toBe(0);
+
+        // This pull's copy of the day goes down whole, without the row
+        await storage.putAll(STORE, { [dayKey(today)]: [row(301, today, 2)] }, { bypassRestoreLatch: true });
+        latchBoth();
+        await storage.endRestore();
+        expect(diskBaseline(100)).toBe(0);
+        announceSyncPullApplied({ [STORE]: [dayKey(today)] });
+        await sleep(80);
+        await storage.flushAll();
+
+        const rows = disk.get(dayKey(today));
+        expect(qty(rows, 100)).toBe(3);
+        expect(qty(rows, 301)).toBe(2);
+        expect(diskBaseline(100)).toBe(3);
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('sync: the moved entry beats the old copy either way round and is a plain baseline', async () => {
+        await openBook();
+        latchBoth();
+        fillEvent(3);
+        await sleep(80);
+
+        const { merge } = mergeForKey(STORE, STATE_KEY);
+        const gist = { 100: baseline(0), 400: baseline(7) };
+        for (const merged of [merge(gist, disk.get(STATE_KEY)), merge(disk.get(STATE_KEY), gist)]) {
+            expect(merged[100]).toEqual(baseline(3));
+            expect(merged[400]).toEqual(baseline(7));
+            expect(merged[300]).toEqual(baseline(1));
+        }
+    });
+
+    test('a latch on the day alone: the write stays one key, and the baseline takes its usual road', async () => {
+        await openBook();
+        storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
+        const batches = [];
+        storage.putAll = async (name, entries, options) => {
+            batches.push(Object.keys(entries));
+            return REAL_PUT_ALL(name, entries, options);
+        };
+
+        fillEvent(3);
+        await sleep(80);
+
+        expect(batches[0]).toEqual([dayKey(today)]);
+        await storage.flushAll();
+        expect(diskBaseline(100)).toBe(3);
+    });
+});
+
+describe('advanceStoredBaselines', () => {
+    const LEAVE = Symbol('leave');
+    const move = { id: '100', from: baseline(0), to: baseline(3) };
+
+    test.each([
+        ['an array', [1]],
+        ['a string', 'x'],
+        ['a number', 0],
+    ])('a stored %s is handed back as it is, never undefined', (_label, stored) => {
+        expect(advanceStoredBaselines(stored, [move], LEAVE)).toBe(stored);
+    });
+
+    test('nothing stored answers the sentinel, and a move with an empty list changes nothing', () => {
+        expect(advanceStoredBaselines(undefined, [move], LEAVE)).toBe(LEAVE);
+        expect(advanceStoredBaselines(null, [move], LEAVE)).toBe(LEAVE);
+        expect(advanceStoredBaselines({ 100: baseline(0) }, [], LEAVE)).toEqual({ 100: baseline(0) });
+    });
+
+    test('three moves on one listing chain, and a gap in the chain stops it behind the missing fill', () => {
+        const three = [
+            move,
+            { id: '100', from: baseline(3), to: baseline(5) },
+            { id: '100', from: baseline(5), to: { done: true } },
+        ];
+        expect(advanceStoredBaselines({ 100: baseline(0) }, three, LEAVE)[100]).toEqual({ done: true });
+        expect(advanceStoredBaselines({ 100: baseline(0) }, three.slice(1), LEAVE)[100]).toEqual(baseline(0));
     });
 });
