@@ -12149,7 +12149,7 @@ class CombatSimUI {
         // Numbers right-align and never wrap; only the Upgrade name may reflow,
         // which is what keeps sixteen columns inside a panel this wide
         const align = (c) => (c.numeric ? 'text-align:right; white-space:nowrap;' : 'text-align:left;');
-        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        const arrow = (k) => (sortKey === k ? (sortAsc ? '\u00a0▴' : '\u00a0▾') : '');
 
         // Best value per column, for the green highlight
         const best = new Map();
@@ -12671,7 +12671,7 @@ class CombatSimUI {
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
-        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        const arrow = (k) => (sortKey === k ? (sortAsc ? '\u00a0▴' : '\u00a0▾') : '');
         const fmtLevelTime = (h) => {
             if (!Number.isFinite(h)) return '—';
             if (h < 24) return `${h.toFixed(1)}h`;
@@ -12855,7 +12855,7 @@ class CombatSimUI {
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
             'cursor:pointer; user-select:none; white-space:nowrap;';
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
-        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        const arrow = (k) => (sortKey === k ? (sortAsc ? '\u00a0▴' : '\u00a0▾') : '');
 
         // Greyed rather than colored when the delta is inside the run's own
         // error, so an unpriced row cannot imply a finding it did not make
@@ -13003,7 +13003,7 @@ class CombatSimUI {
         // Headers and names wrap so the table fits the panel; the figures stay on one line
         const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
         const nameStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; min-width:120px;';
-        const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
+        const arrow = (k) => (sortKey === k ? (sortAsc ? '\u00a0▴' : '\u00a0▾') : '');
         // Greyed when the delta is inside the run's own error, as in the unpriced table
         const cell = (r, key) => {
             const value = added(r, key);

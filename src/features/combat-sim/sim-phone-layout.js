@@ -71,14 +71,25 @@ export const SIM_UPGRADE_PHONE_CSS = `
 
         /* A results table scrolls sideways inside its own wrapper; the panel stays still */
         .mwi-utable-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
-        /* The first column names the row, so it stays put and is wide enough to read */
+        /* A header may take two lines ("Hours/0.01%" over "Profit"); some tables set nowrap inline, so this wins
+           with !important. The sort arrow is joined to its label by a no-break space and stays with it.
+           Data cells keep their one line. */
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th { white-space: normal !important; min-width: 64px; }
+        /* The first column names the row, so it stays put and is wide enough to read. The z-index and the
+           background are !important because a table may set its own inline (the gold table's headers are
+           sticky at z-index 2): without that the later header cells paint over the pinned one while scrolling */
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child,
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) {
-            position: sticky; left: 0; z-index: 1; background: ${GAME_COLORS.background};
+            position: sticky; left: 0; z-index: 1 !important; background: ${GAME_COLORS.background} !important;
             box-sizing: border-box; width: 140px; min-width: 140px; max-width: 140px;
             white-space: normal !important; overflow-wrap: anywhere;
         }
-        .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child { z-index: 3; }
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child { z-index: 3 !important; }
+        /* Chips and buttons under a row's name wrap beneath it rather than widening the pinned column */
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) button,
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) span {
+            white-space: normal; max-width: 100%; box-sizing: border-box; margin: 3px 4px 0 0 !important;
+        }
         /* An expanded row spans the whole table: its content stays at the visible width, pinned to the left */
         .mwi-utable-wrap .mwi-utable-detail { position: sticky; left: 0; box-sizing: border-box; width: calc(100vw - 80px); max-width: 100%; }
         .mwi-utable-wrap .mwi-utable-detail > div[style*="grid-template-columns"] {

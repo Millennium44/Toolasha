@@ -18,6 +18,7 @@ vi.mock('../profile/build-score-row.js', () => ({
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));
 import { readScoped } from '../../utils/character-key.js';
 import storage from '../../core/storage.js';
+import { SIM_UPGRADE_PHONE_CSS } from './sim-phone-layout.js';
 
 const mocks = vi.hoisted(() => ({
     /** What the scroll table reads as the best gold/token; null means the shop prices nothing */
@@ -2537,6 +2538,72 @@ describe('the panel', () => {
         expect(seek).toBeTruthy();
         expect(seek.build().rows[0]).toMatchObject({ zone: 'Smelly Planet', tier: 2, itemsPerHour: 1.5 });
         delete ui._wireCsvButton;
+    });
+
+    describe('the phone rules against the real tables', () => {
+        // The CSS rules whose selector list contains `needle`, as { selectors, body }
+        const rulesWith = (needle) => {
+            const out = [];
+            for (const m of SIM_UPGRADE_PHONE_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+                const selectors = m[1]
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .split(',')
+                    .map((x) => x.trim());
+                if (selectors.some((x) => x.includes(needle))) out.push({ selectors, body: m[2] });
+            }
+            return out;
+        };
+
+        test('the pinned header cell of the gold table is matched, sits above its siblings, and is solid', () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Priced ring', { cost: 100, profitGain: 50 })],
+                food: null,
+            });
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const table = container.querySelector('[data-upgrade-row]').closest('table');
+            const th = table.querySelector('thead > tr > th:first-child');
+            expect(table.closest('.mwi-utable-wrap')).toBeTruthy();
+            // The gold table's header cells carry their own inline sticky and z-index, which beat a plain rule
+            expect(th.getAttribute('style')).toMatch(/z-index:\s*2/);
+            const header = rulesWith('th:first-child').filter((r) => r.selectors.some((x) => th.matches(x)));
+            expect(header.length).toBeGreaterThan(0);
+            const zIndexes = header.map((r) => r.body.match(/z-index:\s*(\d+)\s*(!important)?/)).filter(Boolean);
+            // Higher than the inline 2 of the other header cells, and !important so that inline cannot win
+            expect(zIndexes.some((z) => Number(z[1]) > 2 && z[2])).toBe(true);
+            expect(header.some((r) => /background:[^;]*!important/.test(r.body))).toBe(true);
+            // The body cells of that column are matched by the same rule
+            const td = table.querySelector('tbody > tr > td:first-child');
+            expect(rulesWith('td:first-child').some((r) => r.selectors.some((x) => td.matches(x)))).toBe(true);
+        });
+
+        test('header cells may wrap whatever their inline white-space says, and the arrow sticks to the label', () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Priced ring', { cost: 100 })],
+                food: null,
+            });
+            const th = ui.panel.querySelector('[data-sort-key="dps"]');
+            expect(th).toBeTruthy();
+            const rule = rulesWith('thead > tr > th').find(
+                (r) => r.selectors.some((x) => th.matches(x)) && /white-space/.test(r.body)
+            );
+            expect(rule.body).toMatch(/white-space:\s*normal\s*!important/);
+            ui._upgradeSort = { key: 'dps', asc: true };
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Priced ring', { cost: 100 })],
+                food: null,
+            });
+            expect(ui.panel.querySelector('[data-sort-key="dps"]').textContent).toContain('\u00a0▴');
+        });
+
+        test('chips and buttons under the name wrap inside the pinned column', () => {
+            const rules = rulesWith('td:first-child:not([colspan]) button');
+            expect(rules.length).toBe(1);
+            expect(rules[0].body).toMatch(/white-space:\s*normal/);
+            expect(rules[0].body).toMatch(/max-width:\s*100%/);
+        });
     });
 
     describe('the Buffs section', () => {
