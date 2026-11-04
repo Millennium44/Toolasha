@@ -352,8 +352,12 @@ describe('fill record identity', () => {
     });
 
     test('both the single key and the day records are registered as merges for a sync pull', () => {
-        expect(mergeForKey('marketListings', RECORDS_KEY)?.merge).toBe(mergeRecords);
-        expect(mergeForKey('marketListings', REC(DAY1))?.merge).toBe(mergeRecords);
+        const mine = [fill(1, DAY1)];
+        const theirs = [fill(2, DAY2 + 1000), fill(3, DAY2 + 2000)];
+        const expected = mergeRecords(mine, theirs);
+        expect(expected).toHaveLength(3);
+        expect(mergeForKey('marketListings', RECORDS_KEY)?.merge(mine, theirs)).toEqual(expected);
+        expect(mergeForKey('marketListings', REC(DAY1))?.merge(mine, theirs)).toEqual(expected);
     });
 });
 
@@ -1525,7 +1529,7 @@ describe('a sync pull that only brings back rows the repair cuts reads as unchan
     const stored = (t) => structuredClone(LEDGER().get(REC(t)));
     const pull = (t, incoming) => {
         const local = stored(t);
-        return { local, result: registration(t).mergeForPull(local, incoming) };
+        return { local, result: registration(t).mergeForPull(local, incoming, { download: { [REC(t)]: incoming } }) };
     };
     const loadAndRepair = async () => {
         dataManagerMock.characterData ||= {};
@@ -1537,7 +1541,10 @@ describe('a sync pull that only brings back rows the repair cuts reads as unchan
 
     test('the registration folds a pull through the store and an upload through the plain union', () => {
         expect(registration(T1).mergeForPull).not.toBe(registration(T1).merge);
-        expect(registration(T1).merge).toBe(mergeRecords);
+        const one = [fill(1, T1)];
+        const other = [fill(2, T1)];
+        expect(registration(T1).merge(one, other)).toEqual(mergeRecords(one, other));
+        expect(registration(T1).merge(one, other)).toHaveLength(2);
     });
 
     test("doubled rows the gist still holds: the pulled day is this device's own copy, not a change", async () => {
@@ -1552,7 +1559,77 @@ describe('a sync pull that only brings back rows the repair cuts reads as unchan
         expect(local.map((r) => r.listingId)).toEqual([6]);
         expect(result).toBe(local);
         // Folding again, as the write-time refold does, gives the same answer
-        expect(registration(T3).mergeForPull(local, gist)).toBe(local);
+        expect(registration(T3).mergeForPull(local, gist, { download: { [REC(T3)]: gist } })).toBe(local);
+    });
+
+    test.each([
+        ['no context', undefined],
+        ['no download', {}],
+        ['a null download', { download: null }],
+        ['a download that is not a keyed object', { download: [] }],
+    ])('%s: the fold cannot see the other days, so it is the plain union', async (_name, context) => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+
+        const result = registration(T3).mergeForPull(stored(T3), [fill(5, T3), fill(6, T3 + 3)], context);
+
+        expect(listingsOf(result, 5)).toHaveLength(1);
+    });
+
+    test('another day of the download that is not a list changes nothing: what is held there stands', async () => {
+        seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const gist = [fill(5, T3), fill(6, T3 + 3)];
+        const local = stored(T3);
+
+        const result = registration(T3).mergeForPull(local, gist, { download: { [REC(T1)]: 'junk', [REC(T3)]: gist } });
+
+        expect(result).toBe(local);
+    });
+
+    test("another character's trimmed copy of the same listing and time is no reason to keep a row", async () => {
+        seedSplit([fill(5, T1, { quantity: 10, coins: 950 }), fill(6, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        const gist = [fill(6, T2), fill(5, T2 + 5)];
+        const local = stored(T2);
+        const download = {
+            [recordKey('other456', bucketOf({ t: T1 }))]: [fill(5, T1, { quantity: 5, trimmed: true })],
+            [REC(T2)]: gist,
+        };
+
+        expect(registration(T2).mergeForPull(local, gist, { download })).toBe(local);
+    });
+
+    test('a row memory already holds trimmed, another device trimming it differently: the fold still cuts', async () => {
+        const row = (t) => fill(5, t, { quantity: 4, coins: 380 });
+        seedSplit([row(T1), row(T2), row(T3)]);
+        LEDGER().set(REC(T3 + 86400e3), [fill(6, T3 + 86400e3)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+        await loadAndRepair();
+        expect(stored(T3)).toEqual([expect.objectContaining({ trimmed: true, quantity: 2 })]);
+        const T4 = T3 + 86400e3;
+        const gist = [fill(6, T4), fill(5, T4 + 5)];
+        const local = stored(T4);
+        const download = { [REC(T3)]: [{ ...row(T3), trimmed: true, quantity: 3 }], [REC(T4)]: gist };
+
+        expect(registration(T4).mergeForPull(local, gist, { download })).toBe(local);
+    });
+
+    test('only the listing a trimmed copy touches is kept: another listing in the same fold is still cut', async () => {
+        const big = fill(5, T1, { quantity: 10, coins: 950 });
+        seedSplit([big, fill(8, T1 + 1), fill(8, T1 + 2), fill(6, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(8, 10)]);
+        await loadAndRepair();
+        const gist = [fill(6, T2), fill(5, T2 + 5), fill(8, T2 + 6)];
+        const download = { [REC(T1)]: [{ ...big, trimmed: true, quantity: 5, coins: 475 }], [REC(T2)]: gist };
+
+        const result = registration(T2).mergeForPull(stored(T2), gist, { download });
+
+        expect(listingsOf(result, 5).map((r) => r.quantity)).toEqual([5]);
+        expect(listingsOf(result, 8)).toHaveLength(0);
     });
 
     test('the same pull through the plain union (an upload) does bring them back', async () => {
@@ -2235,7 +2312,7 @@ describe('a listing the log has no count for is cut only with two or more rows',
     const registration = (t) => mergeForKey('marketListings', REC(t));
     const pull = (t, incoming) => {
         const local = stored(t);
-        return { local, result: registration(t).mergeForPull(local, incoming) };
+        return { local, result: registration(t).mergeForPull(local, incoming, { download: { [REC(t)]: incoming } }) };
     };
     const loadAndRepair = async () => {
         dataManagerMock.characterData ||= {};

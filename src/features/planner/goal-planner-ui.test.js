@@ -51,8 +51,9 @@ vi.mock('../../core/storage.js', () => ({
         },
         tryGet: async (key) =>
             store.data[key] != null ? { found: true, value: store.data[key] } : { found: false, value: null },
-        set: async (key, value) => {
-            store.data[key] = value;
+        set: async (key, value, _name, _immediate, options = {}) => {
+            const folded = options?.fold ? options.fold(store.data[key] ?? undefined, value) : undefined;
+            store.data[key] = folded === undefined ? value : folded;
             return true;
         },
         delete: async (key) => {

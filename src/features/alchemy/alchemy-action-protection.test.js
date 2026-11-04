@@ -59,6 +59,7 @@ vi.mock('../actions/action-panel-sort.js', () => ({
     default: { isPinned: () => false, togglePin: async () => {} },
 }));
 vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (base) => `${base}_char1`,
     readScoped: async () => ({}),
     writeScoped: async () => {},
 }));

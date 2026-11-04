@@ -43,9 +43,10 @@ const mockStorage = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(store.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, storeName = 'settings') => {
+        set: vi.fn(async (key, value, storeName = 'settings', _immediate = false, options = {}) => {
             if (mockStorage.unavailable) return false;
-            storeFor(storeName).set(key, structuredClone(value));
+            const folded = options?.fold ? options.fold(storeFor(storeName).get(key), value) : undefined;
+            storeFor(storeName).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         }),
         delete: vi.fn(async (key, storeName = 'settings') => {
@@ -322,6 +323,45 @@ describe('the goal list and a store that cannot be read', () => {
         // list this time and lands beside it
         await addGoal({ id: 'b', type: 'gold', amount: 900 });
         expect(ids(settings().get(goalsKey())).sort()).toEqual(['a', 'b']);
+    });
+});
+
+describe('a stored goal that has no id', () => {
+    test('is never shown, and a save that folds in another tab prunes it as before rather than keeping it', async () => {
+        const key = `${GOALS_KEY}_market123`;
+        settings().set(key, [{ type: 'gold', amount: 500, createdAt: 1 }]);
+        expect(await loadGoals()).toEqual([]);
+
+        // Another tab adds a goal, so this tab's save has to fold rather than write its list as it is
+        settings().set(key, [
+            { type: 'gold', amount: 500, createdAt: 1 },
+            { id: 'goal-gold-2-1', type: 'gold', amount: 700, createdAt: 2 },
+        ]);
+        await saveGoals([{ type: 'gold', amount: 900 }]);
+
+        const stored = settings().get(key);
+        expect(stored.map((goal) => goal.amount).sort()).toEqual([700, 900]);
+        expect(stored.every((goal) => goal.id)).toBe(true);
+    });
+});
+
+describe('a goal another tab added', () => {
+    test('survives every later save of this tab, and a removal made here still goes through', async () => {
+        const key = `${GOALS_KEY}_market123`;
+        const gold = (id, amount) => ({ id, type: 'gold', amount, createdAt: amount });
+        const ids = (goals) => goals.map((goal) => goal.id);
+        settings().set(key, [gold('a', 100)]);
+        const held = await loadGoals();
+        settings().set(key, [gold('a', 100), gold('other', 200), gold('another', 300)]);
+
+        const once = [...held, gold('b', 400)];
+        await saveGoals(once);
+        const twice = [...once, gold('c', 500)];
+        await saveGoals(twice);
+        expect(ids(settings().get(key)).sort()).toEqual(['a', 'another', 'b', 'c', 'other']);
+
+        await saveGoals(twice.filter((goal) => goal.id !== 'a'));
+        expect(ids(settings().get(key)).sort()).toEqual(['another', 'b', 'c', 'other']);
     });
 });
 

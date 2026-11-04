@@ -628,6 +628,8 @@ class ChunkedHistory {
             prefix: `${this.prefix}_`,
             label: `${this.label} records`,
             merge,
+            // An upload offers everything: `pruneIncoming` is for what a pull writes here
+            wantsContext: true,
             pull,
             // Every write of a record goes through `_writeChunk`'s fold, which keeps what a pull put on disk
             liveSafe: this.liveSafe,
@@ -657,6 +659,7 @@ class ChunkedHistory {
                 base: legacyBase,
                 label: `${this.label} legacy key`,
                 merge,
+                wantsContext: true,
                 pull,
                 split: (key, value) => this._splitLegacy(legacyBase, key, value),
             });

@@ -42,6 +42,15 @@
  * cannot combine. A merge must never swap its arguments to change who wins.
  * A record whose PULL must keep this device's copy on a tie declares
  * `localWinsOnPull` instead, and the pull alone folds through `mergeForPull`.
+ *
+ * **A fold context goes only to a merge that asked for it.** A merge is a plain
+ * two-argument fold, and often a function its owner also calls directly, with a
+ * third argument that means something else: `mergeBoards` and
+ * `mergeAverageBaselines` take a clock there. Handed the context as that clock,
+ * the first stamped every board in the gist `NaN` and the second lost its
+ * future-stamp guard. So `merge` is called with two arguments unless the
+ * registration says `wantsContext`. A registration's own `pull` exists only for
+ * the sync to call, and always takes the context it is given.
  */
 
 /**
@@ -51,8 +60,9 @@
  * `context.forUpload` is set when the fold builds an automatic upload rather
  * than a local apply. A merge that caps or prunes by this device's live
  * settings must keep everything then — the gist is every device's copy, and
- * one device's retention choice is not the others'. Constant, build-wide caps
- * fold identically everywhere and may ignore it.
+ * one device's retention choice is not the others'. Such a merge declares
+ * `wantsContext`, and it reaches no other merge. Constant, build-wide caps fold
+ * identically everywhere and need not ask.
  */
 
 /**
@@ -109,6 +119,11 @@ export function scopedKeyMatcher(base) {
  * @param {string} [options.prefix] - Raw key prefix
  * @param {(key: string) => boolean} [options.match] - Key predicate
  * @param {SyncMerge} options.merge - `(local, incoming) => merged`, ties to `incoming`
+ * @param {boolean} [options.wantsContext] - `merge` reads the fold context as its third argument (it trims by
+ *   this device's settings and must not when `forUpload`). Without this it is called with two arguments only, so
+ *   a merge that takes something else third, such as a clock, keeps its own default. Forgetting it on a merge that
+ *   reads `forUpload` is the worse mistake: the upload trims the gist. `capsLocally` implies it, since a cap that
+ *   cannot see `forUpload` is that mistake. `sync-merge-context.coverage.test.js` checks every registration both ways
  * @param {boolean} [options.localWinsOnPull] - A pull keeps this device's copy where the fold ties
  *   (`mergeForPull` folds with the arguments turned round); uploads still use `merge`
  * @param {SyncMerge} [options.pull] - The fold a pull applies, when it must differ from `merge`: a record
@@ -134,6 +149,7 @@ export function registerSyncMerge({
     prefix,
     match,
     merge,
+    wantsContext = false,
     localWinsOnPull = false,
     pull,
     label,
@@ -166,12 +182,20 @@ export function registerSyncMerge({
     else if (typeof base === 'string') claim = `base:${base}`;
     else claim = `prefix:${prefix}`;
 
+    // One function for both fields when a pull folds the way `merge` does: the sync reads that sameness to
+    // decide whether this device's side may take the ties (`mergeForPull === merge`)
+    const fold = wantsContext === true || capsLocally === true ? merge : (local, incoming) => merge(local, incoming);
     const mergeForPull =
-        typeof pull === 'function' ? pull : localWinsOnPull ? (local, incoming) => merge(incoming, local) : merge;
+        typeof pull === 'function'
+            ? pull
+            : localWinsOnPull
+              ? (local, incoming, context) => fold(incoming, local, context)
+              : fold;
+
     const registration = {
         store,
         match: matcher,
-        merge,
+        merge: fold,
         mergeForPull,
         foldPull: typeof pull === 'function' ? pull : (local, incoming) => mergeForPull(local, incoming),
         label: label || key || base || prefix || store,

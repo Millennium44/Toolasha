@@ -10,9 +10,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 A sync pull no longer brings back trade ledger fills the repair already removed, so the reload prompt stops repeating for those days.
 
+### Reroll walk button stays in one spot
+
+On the Task Board bar, the docked reroll walk button is now first and a fixed width, so the Claim Reward button, the Rerolls count and its own label can no longer move it. A long step name ends in an ellipsis, with the full text on hover.
+
+### Watchlist, item pins and goals keep your edits across tabs
+
+With the game open in two tabs, an older tab no longer erases pins, watchlist rows or planner goals you added in the other tab, and no longer brings back ones you removed there.
+
+### Rank badges sync between devices again
+
+Leaderboard rank badges captured on one device reach your other devices again, and syncing no longer keeps rewriting the gist for them.
+
 ### Sim and tool controls match the game's look
 
 Inputs, dropdowns, buttons and boxes in the Combat Simulator, Lab Sim and other Toolasha panels no longer use an old navy that clashed with the game's near-black panels. Faint help text in the sims is now the game's dim gray, so it is much easier to read.
+
+### Trial history marks trials that did not run
+
+Trial history now shows `n/r` for a cycle where the game's own list says a trial was not on the schedule, so it no longer looks like a miss. `—` still means a result was not seen, and cycles saved before this update keep showing `—`.
 
 ### Settings panel is easier to use on a touch screen
 

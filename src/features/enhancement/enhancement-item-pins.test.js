@@ -25,9 +25,10 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, store = 'settings') => {
+        set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
             if (storageMock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const folded = options?.fold ? options.fold(storeFor(store).get(key), value) : undefined;
+            storeFor(store).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -170,6 +171,22 @@ describe('the stored pins', () => {
         pins.pins = togglePin(pins.pins, 'enhance', '/items/a');
         await pins.savePins();
         expect(stored()).toEqual({ enhance: ['/items/b'] });
+    });
+
+    test('the pin another tab added survives every later save of this tab, which never saw it', async () => {
+        seed({ enhance: ['/items/a'] });
+        await pins.loadPins();
+        seed({ enhance: ['/items/a', '/items/c'] });
+
+        pins.pins = togglePin(pins.pins, 'enhance', '/items/d');
+        await pins.savePins();
+        pins.pins = togglePin(pins.pins, 'enhance', '/items/e');
+        await pins.savePins();
+        expect(stored().enhance.sort()).toEqual(['/items/a', '/items/c', '/items/d', '/items/e']);
+
+        pins.pins = togglePin(pins.pins, 'enhance', '/items/a');
+        await pins.savePins();
+        expect(stored().enhance.sort()).toEqual(['/items/c', '/items/d', '/items/e']);
     });
 
     test('once storage is back, the next save lands', async () => {

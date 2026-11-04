@@ -134,6 +134,7 @@ const record = createCuratedRecord({
     store: 'settings',
     empty: emptyState,
     merge: mergeStates,
+    threeWay: { idOf: entryKey },
     label: 'Watchlist',
 });
 

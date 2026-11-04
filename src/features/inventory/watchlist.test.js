@@ -48,9 +48,10 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         },
-        set: async (key, value, store = 'settings') => {
+        set: async (key, value, store = 'settings', _immediate = false, options = {}) => {
             if (storageMock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const folded = options?.fold ? options.fold(storeFor(store).get(key), value) : undefined;
+            storeFor(store).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         },
         setJSON: async (key, value, store = 'settings') => {
@@ -985,6 +986,53 @@ describe('the stored list survives a read that cannot be made', () => {
         await flushWatchlistWrites();
         expect(storedHrids()).toEqual(['/items/rare_hat', '/items/trainee_charm']);
         expect(isWatched('/items/cheese')).toBe(false);
+    });
+
+    test('a stale tab keeps what the other tab added and does not bring back what it removed', async () => {
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/rare_hat', name: 'Rare Hat' },
+            ],
+        });
+        await switchCharacter();
+        // The other tab removed the hat and added a charm while this one sat open
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/trainee_charm', name: 'Trainee Charm' },
+            ],
+        });
+
+        watchItem('/items/milk', 'Milk');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual(['/items/cheese', '/items/milk', '/items/trainee_charm']);
+    });
+
+    test('what another tab added survives every later save of this tab, which never saw it', async () => {
+        settingsStore().set(KEY, { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+        await switchCharacter();
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/trainee_charm', name: 'Trainee Charm' },
+            ],
+        });
+
+        watchItem('/items/milk', 'Milk');
+        await flushWatchlistWrites();
+        watchItem('/items/rare_hat', 'Rare Hat');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual([
+            '/items/cheese',
+            '/items/milk',
+            '/items/rare_hat',
+            '/items/trainee_charm',
+        ]);
+
+        unwatchItem('/items/cheese');
+        await flushWatchlistWrites();
+        expect(storedHrids().sort()).toEqual(['/items/milk', '/items/rare_hat', '/items/trainee_charm']);
     });
 });
 
