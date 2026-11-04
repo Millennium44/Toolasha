@@ -15,6 +15,8 @@ export const SIM_PHONE_STYLE_ID = 'mwi-sim-phone-layout';
 export const SIM_PHONE_CSS = `
     @media ${MARKET_MOBILE_QUERY} {
         #mwi-labsim-crate-row { flex-wrap: wrap; }
+        /* Zone takes a line of its own (label + select); Tier, Hours and Simulate wrap onto the next */
+        #mwi-csim-zone { flex: 1 1 calc(100% - 60px) !important; }
     }
 `;
 

@@ -40,6 +40,7 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
+import { ensureSimPhoneStyles } from './sim-phone-layout.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
@@ -3230,6 +3231,7 @@ class CombatSimUI {
     buildPanel() {
         if (this.panel) return;
 
+        ensureSimPhoneStyles();
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
         this.panel.style.cssText = `

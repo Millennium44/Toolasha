@@ -16,4 +16,8 @@ describe('sim phone layout', () => {
     it('wraps the lab crate row at phone width only', () => {
         expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-labsim-crate-row \{ flex-wrap: wrap; \}/);
     });
+
+    it('gives the combat zone select a line of its own at phone width', () => {
+        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-csim-zone \{ flex: 1 1 calc\(100% - 60px\)/);
+    });
 });
