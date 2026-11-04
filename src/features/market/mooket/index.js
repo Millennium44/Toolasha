@@ -52,6 +52,8 @@ import {
 import { priceKey } from './market-prices.js';
 import {
     addWatched,
+    MAX_WATCHED,
+    watchlistIsFull,
     removeWatched,
     moveWatched,
     nextDisplayMode,
@@ -401,6 +403,8 @@ class MarketHistoryPanel {
         // removed, so the next initialize() returned early and every History
         // click after that read `.style` off a null panel until a refresh
         noteTeardown(this);
+        clearTimeout(this.pinFlashTimer);
+        this.pinFlashTimer = null;
         try {
             unregisterCommand('Market History Viewer');
             this.chart?.destroy();
@@ -1142,6 +1146,32 @@ class MarketHistoryPanel {
         return true;
     }
 
+    /**
+     * Whether a pin for this item would be refused because the list is full, so a caller that
+     * could not pin can say why.
+     * @param {string} itemHrid - Item
+     * @param {number} enhancementLevel - Its enhancement level
+     * @returns {boolean}
+     */
+    watchlistFullFor(itemHrid, enhancementLevel = 0) {
+        return Boolean(this.isInitialized) && watchlistIsFull(this.watchlist, priceKey(itemHrid, enhancementLevel));
+    }
+
+    /** Tell the player, on the pin button they pressed, that the list has no room */
+    flashPinFull() {
+        const button = this.pinButton;
+        if (!button) return;
+        button.textContent = `List full (${MAX_WATCHED})`;
+        button.title = `The price panel holds ${MAX_WATCHED} items. Unpin one to make room.`;
+        clearTimeout(this.pinFlashTimer);
+        this.pinFlashTimer = setTimeout(() => {
+            this.pinFlashTimer = null;
+            if (this.pinButton !== button) return;
+            button.textContent = '📌';
+            button.title = 'Pin this item to the price panel';
+        }, 2500);
+    }
+
     /** @param {number|null} change - Percentage move */
     changeColor(change) {
         if (change === null || change === 0) return '#e7e7e7';
@@ -1458,6 +1488,10 @@ class MarketHistoryPanel {
             if (!this.current) return;
             const key = priceKey(this.current.itemHrid, this.current.enhancementLevel);
             const price = marketPriceStore.get(this.current.itemHrid, this.current.enhancementLevel);
+            if (watchlistIsFull(this.watchlist, key)) {
+                this.flashPinFull();
+                return;
+            }
             this.watchlist = addWatched(this.watchlist, key, price);
             this.renderChips();
             this.savePrefs();

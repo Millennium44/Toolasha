@@ -2711,15 +2711,19 @@ function requireHandoff(writer, name) {
 
 function seedWatchlistPriceTarget(itemHrid, enhancementLevel, rawCost) {
     const cost = rawCost === '' || rawCost == null ? null : Number(rawCost);
-    if (!Number.isFinite(cost) || !(cost > 0)) return;
+    if (!Number.isFinite(cost) || !(cost > 0)) return false;
 
     try {
-        marketHistoryPanel()?.seedPriceTarget?.(itemHrid, enhancementLevel, cost);
+        const panel = marketHistoryPanel();
+        const pinned = panel?.seedPriceTarget?.(itemHrid, enhancementLevel, cost);
+        // Not pinned for want of room is the one refusal the player can act on
+        return !pinned && Boolean(panel?.watchlistFullFor?.(itemHrid, enhancementLevel));
     } catch (error) {
         // Never at the expense of the watch that did work: the inventory entry
         // is already made, and a failed pin is not a failed handoff
         console.error('[CombatSimUI] Seeding a price target failed:', error);
     }
+    return false;
 }
 
 /**
@@ -2823,8 +2827,12 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // on the same row: a "+5" watched as a +0 lands on the list
                     // priced at a fraction of what the row was quoting
                     requireHandoff(marketWatchItem(), 'watchItem')(itemHrid, null, enhancementLevel);
-                    seedWatchlistPriceTarget(itemHrid, enhancementLevel, button.getAttribute('data-buy-cost'));
-                    button.textContent = 'Watching ✓';
+                    const pinsFull = seedWatchlistPriceTarget(
+                        itemHrid,
+                        enhancementLevel,
+                        button.getAttribute('data-buy-cost')
+                    );
+                    button.textContent = pinsFull ? 'Watching ✓ · price panel full' : 'Watching ✓';
                 }
             } catch (error) {
                 console.error(`[${logPrefix}] Handing the row off failed:`, error);
