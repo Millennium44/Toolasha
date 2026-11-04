@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Trade ledger stops asking for reloads
 
 A sync pull no longer brings back trade ledger fills the repair already removed, so the reload prompt stops repeating for those days.
+
 ### Sim and tool controls match the game's look
 
 Inputs, dropdowns, buttons and boxes in the Combat Simulator, Lab Sim and other Toolasha panels no longer use an old navy that clashed with the game's near-black panels. Faint help text in the sims is now the game's dim gray, so it is much easier to read.
