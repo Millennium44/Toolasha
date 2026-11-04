@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party alert
+
+A new setting, "Notify when your party starts or stops fighting" (off by default), tells you when your party goes into a fight or comes out of one. It announces real changes only, not a party already fighting when you log in.
+
 ### What's New shows only what is new
 
 After an update, What's New lists only the changes since the version you were running. A recent release's notes had no titles, which made the panel show the whole recent history instead.
