@@ -8740,6 +8740,12 @@ describe('the guild shrine target level', () => {
         expect(seen.guildShrineTargetLevel).toBe(0);
     });
 
+    test('its Lv box tops out at the shared shrine ceiling, not a number of its own', async () => {
+        const { MAX_GUILD_SHRINE_LEVEL } = await import('./upgrade-advisor.js');
+        expect(MAX_GUILD_SHRINE_LEVEL).toBe(20);
+        expect(ui.panel.querySelector('#mwi-csim-shrine-target-level').max).toBe(String(MAX_GUILD_SHRINE_LEVEL));
+    });
+
     test('its control is hidden until the shrine set is checked', () => {
         const group = ui.panel.querySelector('#mwi-csim-shrine-group');
         ui.panel.querySelector('[data-upgrade-mode="guild_shrine"]').checked = false;
