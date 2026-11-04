@@ -12,6 +12,7 @@
  */
 
 import { COWBELLS_PER_BAG } from './coin-reserve.js';
+import { formatDateTime, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 
 /** The alchemy actions the loop uses; the item is chosen in the slot, so it is read off the hash */
 export const DECOMPOSE_ACTION = '/actions/alchemy/decompose';
@@ -198,5 +199,125 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
         // An endless cycle outlasts any cap; an untimed one cannot be said to
         outlastsCap: capHours !== null && (endless ? true : timed ? seconds > capHours * 3600 : false),
         capHours,
+    };
+}
+
+/**
+ * What the game queue still holds of each loop leg, by action AND item (alchemy is one action for
+ * every item, so the action alone says nothing). Every unfinished row counts, the running one
+ * included, at what it has left to do; the queue is never read by position.
+ *
+ * @param {Array<Object>|null} actions - `dataManager.getCurrentActions()`
+ * @param {Object|null} loopItems - From `resolveLoopItems`
+ * @returns {{forage: {count: number, endless: boolean}, decompose: {count: number, endless: boolean},
+ *   coinify: {count: number, endless: boolean}}} `endless` when a matching row has no count (Repeat ∞)
+ */
+export function queuedLegCounts(actions, loopItems) {
+    const legs = {
+        forage: { count: 0, endless: false },
+        decompose: { count: 0, endless: false },
+        coinify: { count: 0, endless: false },
+    };
+    for (const action of actions || []) {
+        if (!action || action.isDone) continue;
+        const leg = loopLegOf(action, loopItems);
+        if (!leg) continue;
+        if (action.hasMaxCount) {
+            legs[leg].count += Math.max(0, (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0));
+        } else {
+            legs[leg].endless = true;
+        }
+    }
+    return legs;
+}
+
+/** Display names of the legs, for the walk button's note */
+const LEG_NAMES = { forage: 'Forage', decompose: 'Decompose', coinify: 'Coinify' };
+
+/**
+ * Take off a batch what the game queue already holds, leg by leg.
+ *
+ * A leg queued at a sufficient count (or with no count, which never ends) is skipped; one queued at less
+ * than the batch needs keeps only the difference. The batch itself is not changed, only the copy the walk
+ * is built from.
+ *
+ * @param {Object|null} batch - Counts as `forageActions` / `decomposeActions` / `coinifyActions`
+ * @param {ReturnType<typeof queuedLegCounts>} queued - From {@link queuedLegCounts}
+ * @returns {{batch: Object|null, skipped: Array<string>, partial: Array<string>}} The batch to walk, the
+ *   legs left out entirely and the legs cut to a difference
+ */
+export function reduceBatchByQueue(batch, queued) {
+    if (!batch) return { batch, skipped: [], partial: [] };
+    const reduced = { ...batch };
+    const skipped = [];
+    const partial = [];
+    for (const leg of ['forage', 'decompose', 'coinify']) {
+        const key = `${leg}Actions`;
+        const need = batch[key] || 0;
+        if (need <= 0) continue;
+        const have = queued?.[leg];
+        if (!have) continue;
+        if (have.endless || have.count >= need) {
+            reduced[key] = 0;
+            skipped.push(LEG_NAMES[leg]);
+        } else if (have.count > 0) {
+            reduced[key] = need - have.count;
+            partial.push(LEG_NAMES[leg]);
+        }
+    }
+    return { batch: reduced, skipped, partial };
+}
+
+/**
+ * A clock time `seconds` from `now`, with the date when it is not today.
+ * @param {number} seconds - From now
+ * @param {number} [now] - Epoch ms
+ * @returns {string} e.g. "11-04 3:05 PM"
+ */
+export function clockAfterSeconds(seconds, now = Date.now()) {
+    const at = new Date(now + seconds * 1000);
+    const today = at.toDateString() === new Date(now).toDateString();
+    return formatDateTime(at, { includeDate: !today, includeSeconds: false });
+}
+
+/**
+ * When the queue runs out and about what the bell balance would be then.
+ *
+ * Bells by then are an estimate: the gold on hand plus the coinify the queue is expected to pay (its rolls
+ * can fail) less the fees it takes, at the price a bell can be bought at now, whole bags of ten.
+ *
+ * @param {Object|null} walked - From `walkQueueCoins`
+ * @param {Object|null} cycle - From {@link summarizeCycle} over the same walk
+ * @param {{coins: number, bellPrice?: number|null, now?: number}} params
+ * @returns {{text: string, title: string}|null} Null when the queue could not be read
+ */
+export function queueEndText(walked, cycle, { coins, bellPrice = null, now = Date.now() }) {
+    if (!walked || !cycle) return null;
+    if (cycle.endless) {
+        return {
+            text: `The queue repeats ${cycle.endless} forever, so it never runs out.`,
+            title: 'A row with no count never hands on to the rows behind it.',
+        };
+    }
+    if (!walked.stages?.length) return { text: 'The queue is empty.', title: 'Nothing is queued to run.' };
+    if (cycle.seconds === null) {
+        return {
+            text: 'The queue holds a fight that cannot be timed, so when it runs out is unknown.',
+            title: 'Counted fights have no fixed length.',
+        };
+    }
+    const when = `${clockAfterSeconds(cycle.seconds, now)} (in ${timeReadable(cycle.seconds)})`;
+    const priced = Number.isFinite(bellPrice) && bellPrice > 0;
+    let bellsText = '';
+    if (priced) {
+        const held = Number.isFinite(coins) ? Math.max(0, coins) : 0;
+        const bags = Math.floor(Math.max(0, held + cycle.net) / (bellPrice * COWBELLS_PER_BAG) + 1e-9);
+        bellsText = ` — about ${formatWithSeparator(bags * COWBELLS_PER_BAG)} bells by then (estimate)`;
+    }
+    return {
+        text: `The queue runs out ${when}${bellsText}.`,
+        title:
+            'Estimate: the gold on hand plus the coinify the queue is expected to pay (its rolls can fail), ' +
+            'less its decompose fees, in whole bags of ten at the price you can buy at now.',
     };
 }

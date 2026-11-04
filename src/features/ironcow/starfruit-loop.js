@@ -711,6 +711,70 @@ export function maxBatch(loop, state) {
 }
 
 /**
+ * The largest batch the gold on hand can pay for.
+ *
+ * Decompose is the only leg that costs gold and it runs before any coinify income, so the gold a batch
+ * needs at its lowest point is its decompose fees: `decomposeActions * bulk * goldOutPerFruit`. This
+ * finds the largest batch whose fees fit in `available`, from the same {@link fillBatch} /
+ * {@link maxBatch} sizing the helper shows, so the batch it returns is one the helper could have
+ * shown for some duration.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {Object|null} state - From `readCharacterState`
+ * @param {number} available - Gold the batch may spend (never read as 0 when unknown: pass a number)
+ * @param {Object} how
+ * @param {boolean} [how.max] - Size from all the held fruit (Max) rather than from a duration
+ * @param {number} [how.hours] - The duration to stay under, when not Max
+ * @param {number} [how.queuedDecompose] - Decompose actions of this item already queued, whose fees are
+ *   already in the queue's own need
+ * @returns {{batch: Object|null, hours: number|null, reason: string}} `batch` null with a reason when
+ *   the fee is not priced or not even one decompose is affordable
+ */
+export function affordableBatch(loop, state, available, { max = false, hours = 0, queuedDecompose = 0 } = {}) {
+    const perFruit = loop?.goldOutPerFruit;
+    if (!Number.isFinite(perFruit) || perFruit < 0) {
+        return {
+            batch: null,
+            hours: null,
+            reason: 'The decompose fee has no price, so what you can afford is unknown.',
+        };
+    }
+    const perAction = (loop.decomposeBulk || 1) * perFruit;
+    const purse = Number.isFinite(available) ? Math.max(0, available) : 0;
+    // Decomposes already queued are paid for in the queue's own fees, so they do not use up `available`
+    const maxActions =
+        perAction > 0 ? Math.floor(purse / perAction + 1e-9) + Math.max(0, queuedDecompose || 0) : Infinity;
+
+    if (max) {
+        const bulk = loop.decomposeBulk || 1;
+        const capped = Number.isFinite(maxActions)
+            ? { ...state, starfruitHeld: Math.min(Math.floor(Number(state?.starfruitHeld) || 0), maxActions * bulk) }
+            : state;
+        const { batch, reason } = maxBatch(loop, capped);
+        return { batch, hours: batch ? batch.hours : null, reason: batch ? '' : reason };
+    }
+
+    const whole = fillBatch(loop, hours, state);
+    if (!whole) return { batch: null, hours: null, reason: 'This loop cannot be sized into a batch.' };
+    if (whole.decomposeActions <= maxActions) return { batch: whole, hours, reason: '' };
+
+    // Decompose fees grow with the hours, so bisect for the longest duration whose fees still fit
+    let lo = 0;
+    let hi = hours;
+    for (let step = 0; step < 60; step++) {
+        const mid = (lo + hi) / 2;
+        const probe = mid > 0 ? fillBatch(loop, mid, state) : null;
+        if (probe && probe.decomposeActions <= maxActions) lo = mid;
+        else hi = mid;
+    }
+    const batch = lo > 0 ? fillBatch(loop, lo, state) : null;
+    if (!batch || batch.forageActions + batch.decomposeActions + batch.coinifyActions <= 0) {
+        return { batch: null, hours: null, reason: 'The gold on hand does not cover even one decompose fee.' };
+    }
+    return { batch, hours: lo, reason: '' };
+}
+
+/**
  * What is wrong with the loop as it is set up right now.
  *
  * @param {Object} state - From `readCharacterState`
