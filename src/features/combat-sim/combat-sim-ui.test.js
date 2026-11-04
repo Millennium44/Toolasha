@@ -12615,6 +12615,146 @@ describe('the Triggers option', () => {
             expect([...mocks.store.keys()].some((key) => key.includes('combatSimTriggerLastResult'))).toBe(false);
         });
 
+        describe('Tune, Apply and an Analyze table on screen', () => {
+            const note = () => ui.panel.querySelector('#mwi-csim-analysis-note');
+            async function analyzeThenTune() {
+                ui.buildPanel();
+                await settle();
+                selectZone();
+                openSection();
+                mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
+                mocks.upgradeResult = {
+                    baseline: BASELINE,
+                    results: [row('Main gear')],
+                    food: null,
+                    context: { gameData: {} },
+                };
+                await ui._onUpgradeAnalyze();
+                mocks.triggerResult = {
+                    scope: 'me',
+                    changes: [fireballChange],
+                    unchanged: [],
+                    combined: null,
+                    simCount: 10,
+                };
+                await ui._onTuneTriggers();
+            }
+            const applyChangesTheBuild = () => {
+                mocks.onApply = () => {
+                    mocks.editedDTOs.player1.abilities = [{ hrid: '/abilities/fireball', level: 1, triggers: [{}] }];
+                };
+            };
+            afterEach(() => {
+                mocks.onApply = null;
+                mocks.upgradeResult = { baseline: null, results: [], food: null };
+            });
+
+            test('Apply refuses while Analyze runs and writes nothing into the editor', async () => {
+                await analyzeThenTune();
+                let during;
+                mocks.onRun = () => {
+                    ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                    during = statusText();
+                };
+                await ui._onUpgradeAnalyze();
+                mocks.onRun = null;
+                expect(mocks.triggerApplied).toHaveLength(0);
+                expect(during).toContain('A run is going');
+            });
+
+            test('Apply refuses while a verify or a Tune owns the panel too', async () => {
+                await analyzeThenTune();
+                ui._upgradeRunning = true;
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                ui._upgradeRunning = false;
+                expect(mocks.triggerApplied).toHaveLength(0);
+                expect(statusText()).toContain('A run is going');
+            });
+
+            test('Apply refuses while a basket confirmation runs', async () => {
+                await analyzeThenTune();
+                ui._budgetConfirm = { key: 'k', status: 'running', result: null, error: null };
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                expect(mocks.triggerApplied).toHaveLength(0);
+            });
+
+            test('after an Apply changed the build the Analyze table says it is out of date and Verify refuses it', async () => {
+                await analyzeThenTune();
+                expect(note().style.display).toBe('none');
+                applyChangesTheBuild();
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                expect(mocks.triggerApplied).toHaveLength(1);
+                expect(note().style.display).toBe('block');
+                expect(note().textContent).toContain('Analyze again');
+                const results = ui._upgradeResultsData;
+                const before = mocks.verifyCalls.length;
+                const outcome = await ui._verifyRows({ results, rows: [results.results[0]], metric: 'profit' });
+                expect(outcome).toBeNull();
+                expect(mocks.verifyCalls.length).toBe(before);
+                expect(statusText()).toBe(
+                    'Cannot verify: The build changed after this analysis was measured. Analyze again.'
+                );
+                // a fresh Analyze measures the new build, and the note goes
+                await ui._onUpgradeAnalyze();
+                expect(note().style.display).toBe('none');
+            });
+
+            test('Confirm refuses an analysis measured before the build changed, with that reason', async () => {
+                await analyzeThenTune();
+                applyChangesTheBuild();
+                ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+                const holder = document.createElement('div');
+                holder.innerHTML = '<button id="mwi-csim-budget-confirm"></button>';
+                ui._budgetConfirm = { key: 'k', status: 'idle', result: null, error: null };
+                ui._wireBudgetConfirm(holder);
+                holder.querySelector('#mwi-csim-budget-confirm').click();
+                await settle();
+                expect(ui._budgetConfirm.status).toBe('error');
+                expect(ui._budgetConfirm.error).toBe(
+                    'The build changed after this analysis was measured. Analyze again.'
+                );
+            });
+
+            test('a build edited in Configure, not by Apply, is refused the same way', async () => {
+                await analyzeThenTune();
+                mocks.editedDTOs.player1.food = [{ hrid: '/items/donut' }];
+                const results = ui._upgradeResultsData;
+                expect(await ui._verifyRows({ results, rows: [results.results[0]], metric: 'profit' })).toBeNull();
+                expect(statusText()).toContain('Analyze again');
+            });
+
+            test('Confirm waits while another run owns the panel, and Tune waits while Confirm runs', async () => {
+                await analyzeThenTune();
+                const holder = document.createElement('div');
+                holder.innerHTML = '<button id="mwi-csim-budget-confirm"></button>';
+                ui._budgetConfirm = { key: 'k', status: 'idle', result: null, error: null };
+                ui._wireBudgetConfirm(holder);
+                ui._upgradeRunning = true;
+                holder.querySelector('#mwi-csim-budget-confirm').click();
+                ui._upgradeRunning = false;
+                expect(statusText()).toContain('Another run is going. Confirm when it finishes.');
+                expect(ui._budgetConfirm.status).toBe('idle');
+
+                ui._budgetConfirm = { key: 'k', status: 'running', result: null, error: null };
+                const runs = mocks.triggerRuns.length;
+                const cancels = mocks.cancelActiveCalls;
+                await ui._onTuneTriggers();
+                expect(mocks.triggerRuns.length).toBe(runs);
+                expect(mocks.cancelActiveCalls).toBe(cancels);
+                expect(statusText()).toContain('A basket confirmation is running');
+            });
+
+            test('Verify in the table says so when another run owns the panel', async () => {
+                await analyzeThenTune();
+                const results = ui._upgradeResultsData;
+                ui._upgradeRunning = true;
+                const outcome = await ui._verifyRows({ results, rows: [results.results[0]], metric: 'profit' });
+                ui._upgradeRunning = false;
+                expect(outcome).toBeNull();
+                expect(statusText()).toBe('Another run is going. Verify when it finishes.');
+            });
+        });
+
         describe('a result belongs to the setup it was found for', () => {
             const tune = async () => {
                 ui.buildPanel();

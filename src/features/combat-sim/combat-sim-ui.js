@@ -3208,6 +3208,9 @@ const UPGRADE_MODES = [
     },
 ];
 
+/** Why Confirm and Verify refuse an analysis measured on a build that has since changed */
+const BUILD_CHANGED_TEXT = 'The build changed after this analysis was measured. Analyze again.';
+
 /** What the Tune triggers section's header says on hover */
 const TRIGGER_SECTION_TITLE =
     'Tune the numbers in your trigger rows: how much enemy HP an ability waits for, and how low your own ' +
@@ -3940,7 +3943,12 @@ class CombatSimUI {
         triggerBar.querySelector('#mwi-csim-trigger-body').appendChild(triggerBox);
 
         upgradeContent.appendChild(triggerBar);
+        const analysisNote = document.createElement('div');
+        analysisNote.id = 'mwi-csim-analysis-note';
+        analysisNote.style.cssText = 'display:none; flex-shrink:0; padding:6px 14px 0; color:#ff9800; font-size:12px;';
+
         upgradeContent.appendChild(upgradeProgress);
+        upgradeContent.appendChild(analysisNote);
         upgradeContent.appendChild(upgradeResults);
 
         // Party tab content (hidden by default; filled by the party finder while its setting is on)
@@ -6984,6 +6992,7 @@ class CombatSimUI {
             if (idle) this._setStatus('Select a player and click Analyze.');
             // The zone, tier or build may have been changed on Configure since a remembered result was drawn
             this._refreshCachedTriggerResult();
+            this._refreshAnalysisNote();
         } else if (tab === 'party') {
             if (partyContent) partyContent.style.display = 'flex';
             if (tabParty) tabParty.style.cssText = activeStyle;
@@ -11126,6 +11135,9 @@ class CombatSimUI {
             const auraSwapsOnly =
                 upgradeModes.includes('ability_swap') &&
                 Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
+            // The builds this analysis measures from, taken before its baseline: an Apply or any edit afterwards
+            // makes every later Confirm and Verify measure a different build against this baseline
+            const buildSigs = new Map(playerDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -11171,6 +11183,14 @@ class CombatSimUI {
             // measurement, and throwing them away meant a run stopped one short
             // of the end showed nothing at all
             const completed = results?.results?.length || 0;
+            // Not enumerable: it is memory-only, so it is neither saved with a remembered run nor copied
+            if (results && typeof results === 'object') {
+                Object.defineProperty(results, '_buildSigs', {
+                    value: buildSigs,
+                    enumerable: false,
+                    configurable: true,
+                });
+            }
             // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
             // remembered run restores with the rate its profit deltas were measured against, not today's.
             if (results) results.scrollTokenRate = scrollTokenRate();
@@ -11435,6 +11455,39 @@ class CombatSimUI {
     }
 
     /**
+     * Whether the build was changed (by Apply, or by any edit in Configure) after this analysis measured its
+     * baseline. Its rows are then differences from a build that is no longer the one in the editor, and a
+     * Confirm or Verify would measure the new build against the old baseline. A remembered run has no recorded
+     * build and no live context to measure from, so it is never flagged.
+     * @param {Object|null} results - The analysis on screen
+     * @returns {boolean}
+     * @private
+     */
+    _buildChangedSinceAnalysis(results = this._upgradeResultsData) {
+        const sigs = results?._buildSigs;
+        const now = this._editor?.getEditedDTOs();
+        if (!sigs || !now) return false;
+        for (const [hrid, sig] of sigs) {
+            if (now[hrid] && buildDtoSignature(now[hrid]) !== sig) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Say, above the Analyze results, that they were measured before the build changed.
+     * @private
+     */
+    _refreshAnalysisNote() {
+        const note = this.panel?.querySelector('#mwi-csim-analysis-note');
+        if (!note) return;
+        const stale = this._buildChangedSinceAnalysis();
+        note.textContent = stale
+            ? 'These results were measured before the build changed (for example by Apply). Analyze again: Confirm and Verify are off for them.'
+            : '';
+        note.style.display = stale ? 'block' : 'none';
+    }
+
+    /**
      * The choices a result depends on, as one comparable string.
      * @param {Object} choices - From {@link _readTriggerChoices}
      * @returns {string}
@@ -11604,6 +11657,11 @@ class CombatSimUI {
             return;
         }
 
+        if (this._budgetConfirm?.status === 'running') {
+            // Not counted by _isBusy, but a stop or a failure here cancels every simulation, its own included
+            this._setStatus('A basket confirmation is running. Tune when it finishes.');
+            return;
+        }
         const panel = this.panel;
         if (!panel) return;
         const ownerId = dataManager.getCurrentCharacterId();
@@ -11818,6 +11876,12 @@ class CombatSimUI {
         this._wireTriggerVerify(result);
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
         applyBtn?.addEventListener('click', () => {
+            // The editor's builds are what a running Analyze, Verify or Confirm is measuring: writing into them
+            // now would put the new thresholds into rows measured against the old baseline
+            if (this._isBusy() || this._budgetConfirm?.status === 'running') {
+                this._setStatus('A run is going. Press Stop or wait for it to finish, then Apply.');
+                return;
+            }
             if (!this._editor?.getEditedDTOs()) {
                 this._setStatus('Open the sim editor first (Configure tab) so there is a setup to write into.');
                 return;
@@ -11863,6 +11927,7 @@ class CombatSimUI {
                 // that setup now, not a reason to take the result down
                 if (this._shownTriggerRun) {
                     const afterChoices = this._readTriggerChoices();
+                    this._refreshAnalysisNote();
                     this._shownTriggerRun = {
                         choicesKey: this._triggerChoicesKey(afterChoices),
                         context: this._triggerRunContext(
@@ -14016,11 +14081,22 @@ class CombatSimUI {
         if (!btn || !this._budgetConfirm) return;
         const key = this._budgetConfirm.key;
         btn.addEventListener('click', async () => {
+            // Confirming simulates the whole zone and stopping any run cancels every simulation, so the two
+            // never overlap: while another run owns the panel the button says so and waits
+            if (this._isBusy()) {
+                this._setStatus('Another run is going. Confirm when it finishes.');
+                return;
+            }
             // Captured before the await: the confirmation belongs to this analysis, for this character
             const ownerId = dataManager.getCurrentCharacterId();
             const analysis = this._upgradeResultsData;
             const context = analysis?.context;
             const plan = this._lastBudgetPlan;
+            if (this._buildChangedSinceAnalysis(analysis)) {
+                this._budgetConfirm = { key, status: 'error', result: null, error: BUILD_CHANGED_TEXT };
+                this._renderUpgradeResults(this._upgradeResultsData);
+                return;
+            }
             if (!context || !plan || this._budgetPlanKey(plan) !== key) {
                 this._budgetConfirm = {
                     key,
@@ -14342,8 +14418,18 @@ class CombatSimUI {
      * @private
      */
     async _verifyRows({ results, rows, metric, statusPrefix = null }) {
-        if (this._isBusy() || !rows?.length || !this._canVerifyResults(results)) return null;
+        if (!rows?.length || !this._canVerifyResults(results)) return null;
+        if (this._isBusy()) {
+            // Said, not swallowed: a tap on Verify while another run owns the panel would otherwise do nothing
+            this._setStatus('Another run is going. Verify when it finishes.');
+            return null;
+        }
         if (results !== this._upgradeResultsData) return null;
+        if (this._buildChangedSinceAnalysis(results)) {
+            this._setStatus(`Cannot verify: ${BUILD_CHANGED_TEXT}`);
+            this._refreshAnalysisNote();
+            return null;
+        }
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
         const gen = this._analysisGen;
@@ -14950,6 +15036,7 @@ class CombatSimUI {
                 this._cardNotes = null;
             }
             this._upgradeResultsData = results;
+            this._refreshAnalysisNote();
             container.innerHTML =
                 foodHtml ||
                 `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
@@ -14968,6 +15055,7 @@ class CombatSimUI {
             this._cardNotes = null;
         }
         this._upgradeResultsData = results;
+        this._refreshAnalysisNote();
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
         this._rescoreUpgrades();
