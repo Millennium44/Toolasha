@@ -86,7 +86,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 const { default: tradeLedgerStore, recordKey, bucketOf } = await import('../market/trade-ledger-store.js');
-const { applyPayload, addsToRemote, resetLeftOutLogForTests } = await import('./sync-payload.js');
+const { applyPayload, addsToRemote, exchangeBaseline, resetLeftOutLogForTests } = await import('./sync-payload.js');
 const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
 const { mergeBoards, boardKey } = await import('../../utils/rank-badge-data.js');
 
@@ -294,6 +294,12 @@ describe('a pull that holds a real fill the caps did not know of', () => {
 describe('a pull whose other days change what a listing has recorded', () => {
     const written = () => importedPayloads[0].stores[STORE];
     const unitsOf = (rows, id) => rows.filter((row) => row.listingId === id).reduce((sum, r) => sum + r.quantity, 0);
+    const coinsOf = (disk, id) =>
+        Object.keys(disk)
+            .filter((key) => key.startsWith('tradeLedgerRec_'))
+            .flatMap((key) => disk[key])
+            .filter((row) => row.listingId === id)
+            .reduce((sum, row) => sum + row.coins, 0);
     /** What the next page reads: the pull's write landed, and the repair ran on the whole ledger */
     const landAndReload = async () => {
         Object.assign(storeState.stores[STORE], structuredClone(written()));
@@ -330,18 +336,109 @@ describe('a pull whose other days change what a listing has recorded', () => {
 
         const result = await applyPayload(payloadOf(inOrder(order)));
 
-        // The whole-ledger repair of this union keeps 5 + 3 + 2. Counting the original against the other days cut both
-        expect(written()[dayA]).toEqual([trimmedCopy]);
+        // The whole-ledger repair of this union keeps 5 + 3 + 2. Counting the original on other days cut both.
+        // Whether the trim stands turns on rows this fold cannot promise will land, so day A keeps both copies
+        expect(written()[dayA]).toEqual([original, trimmedCopy]);
         expect(written()[dayB]).toEqual([otherB, threeOnB]);
         expect(written()[dayC]).toEqual([otherC, twoOnC]);
         expect(result.merged.map((entry) => entry.key).sort()).toEqual([dayA, dayB, dayC].sort());
 
-        // Nothing is cut by the reload, and the next pull of the same gist is quiet
+        // The reload's repair settles it on what landed, and the next pull of the same gist is quiet
         await landAndReload();
-        const rows = tradeLedgerStore.getRecords();
-        expect(unitsOf(rows, 5)).toBe(10);
+        expect(unitsOf(tradeLedgerStore.getRecords(), 5)).toBe(10);
+        const disk = storeState.stores[STORE];
+        expect(disk[dayA]).toEqual([trimmedCopy]);
+        expect(disk[dayB]).toEqual([otherB, threeOnB]);
+        expect(disk[dayC]).toEqual([otherC, twoOnC]);
+        expect(coinsOf(disk, 5)).toBe(950);
         await applyPayload(payloadOf(gist()));
         expect(written()).toEqual({});
+        await landAndReload();
+        expect(disk[dayA]).toEqual([trimmedCopy]);
+        expect(disk[dayB]).toEqual([otherB, threeOnB]);
+    });
+
+    test('the same the other way round: the trim here, the original and the rest of the listing there', async () => {
+        await repairedLedger([trimmedCopy, otherB, otherC], [logRow(5, 10)]);
+        const pulled = { ...gist(), [dayA]: [structuredClone(original)] };
+
+        await applyPayload(payloadOf(pulled));
+        expect(written()[dayA]).toEqual([trimmedCopy, original]);
+
+        await landAndReload();
+        const disk = storeState.stores[STORE];
+        expect(disk[dayA]).toEqual([trimmedCopy]);
+        expect(disk[dayB]).toEqual([otherB, threeOnB]);
+        expect(disk[dayC]).toEqual([otherC, twoOnC]);
+        await applyPayload(payloadOf(pulled));
+        expect(written()).toEqual({});
+    });
+
+    test('other rows that do not make up the shortfall: the original stands and its day reads as unchanged', async () => {
+        await repairedLedger([original, otherB, otherC], [logRow(5, 10)]);
+
+        await applyPayload(payloadOf({ [dayA]: [structuredClone(trimmedCopy)], [dayC]: [structuredClone(twoOnC)] }));
+
+        // 5 + 2 is not 10, so the whole-ledger repair of this union keeps the original: day A reads as unchanged
+        expect(Object.keys(written())).not.toContain(dayA);
+    });
+
+    test('no rows anywhere else: a trim from a low count never replaces its original', async () => {
+        await repairedLedger([original, otherB, otherC], [logRow(5, 10)]);
+
+        await applyPayload(payloadOf({ [dayA]: [structuredClone(trimmedCopy)] }));
+
+        expect(written()).toEqual({});
+        expect(storeState.stores[STORE][dayA]).toEqual([original]);
+    });
+
+    test('a row memory and the download both hold counts once: it cannot make a low trim look justified', async () => {
+        const five = fill(5, T(10));
+        const twoOfIt = { ...five, trimmed: true, quantity: 2, coins: 190 };
+        await repairedLedger([five, threeOnB], [logRow(5, 8)]);
+
+        // 5 + 3 is the cap. The trim would count 2 + 3, and 2 + 3 + 3 only if the shared row were counted twice
+        await applyPayload(payloadOf({ [dayA]: [twoOfIt], [dayB]: [structuredClone(threeOnB)] }));
+
+        expect(written()).toEqual({});
+    });
+
+    test('the other days are settled by the last exchange and do not land: the fill stays whole', async () => {
+        await repairedLedger([original, otherB, otherC], [logRow(5, 10)]);
+        const exchanged = payloadOf({
+            [dayA]: [original],
+            [dayB]: [otherB, threeOnB],
+            [dayC]: [otherC, twoOnC],
+        });
+
+        await applyPayload(payloadOf(gist()), { mode: 'merge', baseline: exchangeBaseline(exchanged, exchanged) });
+        expect(Object.keys(written())).not.toContain(dayB);
+        expect(Object.keys(written())).not.toContain(dayC);
+
+        await landAndReload();
+        expect(unitsOf(tradeLedgerStore.getRecords(), 5)).toBe(10);
+        expect(storeState.stores[STORE][dayA]).toEqual([original]);
+    });
+
+    test('the other days are below a floor and do not land: the fill stays whole', async () => {
+        const last = fill(5, T(13), { quantity: 10, coins: 950 });
+        const lastTrim = { ...last, trimmed: true, quantity: 5, coins: 475 };
+        await repairedLedger([last], [logRow(5, 10)]);
+        const floor = `tradeLedgerRecFloor_market123_${bucketOf({ t: T(13) })}`;
+
+        await applyPayload(
+            payloadOf({
+                [floor]: { floor: bucketOf({ t: T(13) }) },
+                [keyOf(T(13))]: [lastTrim],
+                [dayB]: [structuredClone(threeOnB)],
+                [dayC]: [structuredClone(twoOnC)],
+            })
+        );
+        expect(Object.keys(written())).not.toContain(dayB);
+
+        await landAndReload();
+        expect(unitsOf(tradeLedgerStore.getRecords(), 5)).toBe(10);
+        expect(storeState.stores[STORE][keyOf(T(13))]).toEqual([last]);
     });
 
     test('the in-step comparison sees the same: those rows are news', async () => {

@@ -506,6 +506,60 @@ describe('repairOverRecorded with a trim from a count now known to be too low', 
         expect(records.map((row) => row.quantity)).toEqual([3, 1]);
     });
 
+    describe('with rows elsewhere that may or may not land', () => {
+        const elsewhere = (...rows) => new Map([[1, rows]]);
+
+        test('they would make up the shortfall: the listing is left alone', () => {
+            const rows = [fillRow(1, 5), trim(1, 1)];
+            const result = repairOverRecorded(rows, cap(5), elsewhere(fillRow(2, 4)));
+            expect(result.records).toBe(rows);
+            expect(result.repairedIds.size).toBe(0);
+        });
+
+        test('they would not: the original comes back, as with none', () => {
+            const { records } = repairOverRecorded([fillRow(1, 5), trim(1, 1)], cap(5), elsewhere(fillRow(2, 3)));
+            expect(records).toEqual([fillRow(1, 5)]);
+        });
+
+        test('copies of one fill among them count once', () => {
+            const there = elsewhere(fillRow(2, 4), trim(2, 2), trim(2, 3));
+            const { records } = repairOverRecorded([fillRow(1, 5), trim(1, 1)], cap(5), there);
+            expect(records).toEqual([fillRow(1, 5)]);
+            const enough = elsewhere(fillRow(2, 4), trim(2, 3), fillRow(3, 1));
+            expect(repairOverRecorded([fillRow(1, 5), trim(1, 1)], cap(5), enough).repairedIds.size).toBe(0);
+        });
+
+        test('a trim the rows here already justify is not asked about them', () => {
+            const rows = [fillRow(1, 3), fillRow(2, 5), trim(2, 2)];
+            expect(repairOverRecorded(rows, cap(5), elsewhere(fillRow(3, 9))).records).toEqual([
+                fillRow(1, 3),
+                trim(2, 2),
+            ]);
+        });
+
+        test('with no trim in view they change nothing: the cut is the plain one', () => {
+            const rows = [fillRow(1, 5), fillRow(2, 5), fillRow(3, 5)];
+            const { records } = repairOverRecorded(rows, cap(10), elsewhere(fillRow(4, 50), trim(4, 1)));
+            expect(records).toEqual([fillRow(1, 5), fillRow(2, 5)]);
+        });
+
+        test('they never join the result, and another listing on the same pass is still cut', () => {
+            const other = (t, quantity) => fillRow(t, quantity, { listingId: 2 });
+            const rows = [fillRow(1, 5), trim(1, 1), other(1, 4), other(2, 4)];
+            const caps = new Map([
+                [1, 5],
+                [2, 4],
+            ]);
+            const { records, repairedIds } = repairOverRecorded(rows, caps, elsewhere(fillRow(9, 4)));
+            expect([...repairedIds]).toEqual([2]);
+            expect(records.map((row) => [row.listingId, row.t, row.quantity])).toEqual([
+                [1, 1, 5],
+                [1, 1, 1],
+                [2, 1, 4],
+            ]);
+        });
+    });
+
     test('settled: run again, or with the original back again, it gives the same rows', () => {
         const once = repairOverRecorded([fillRow(1, 3), fillRow(1, 2), trim(1, 1)], cap(4)).records;
         expect(repairOverRecorded(once, cap(4)).records).toBe(once);

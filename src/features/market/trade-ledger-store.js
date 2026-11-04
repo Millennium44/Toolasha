@@ -745,6 +745,11 @@ class TradeLedgerStore {
      * The one thing that makes memory count too much is a row the download holds trimmed on its own day, whose fold
      * replaces memory's original: that listing is not cut here at all (see {@link _listingsTrimmedElsewhere}).
      *
+     * For the same reason a trim on this day is never judged good on the strength of the download's other days: they
+     * may not land, by retention or because the last exchange settled them, and a fill cut to its trim then stays short
+     * for good. Those rows can only stop a cut. A trim memory's rows leave short of its cap, which those rows would
+     * make up, keeps both copies, and the load's repair decides on what did land (see {@link _rowsElsewhere}).
+     *
      * Falls back to the plain union, as before, when no checked caps are held, they are another character's (or
      * were dropped because the ledger was switched off), the ledger is not loaded or still the single key, the rows
      * span more than one day, or there is no download to read the other days from. A result holding exactly this
@@ -783,9 +788,35 @@ class TradeLedgerStore {
         const others = this.records.filter((record) => held.caps.has(record.listingId) && bucketOf(record) !== day);
         const caps = this._capsForFold(rows, others, held, charId, download);
         if (caps.size === 0) return rows;
-        const { records, repairedIds } = repairOverRecorded([...others, ...rows], caps);
+        const elsewhere = this._rowsElsewhere(caps, rows, others, this._readDownload(download, charId), day);
+        const { records, repairedIds } = repairOverRecorded([...others, ...rows], caps, elsewhere);
         if (repairedIds.size === 0) return rows;
         return records.filter((record) => bucketOf(record) === day);
+    }
+
+    /**
+     * The download's rows on other days of each listing with a trimmed row on this day, less those memory holds too.
+     * A row in both is one the count already has, and adding it again could make a trim look justified.
+     * @param {Map<number, number>} caps - The listings this fold may cut
+     * @param {Array<Object>} rows - The folded day's rows
+     * @param {Array<Object>} others - Rows on other days, from memory
+     * @param {{rows: Map<number, Array<Object>>}} pulled - What the download holds
+     * @param {string} day - The folded day
+     * @returns {Map<number, Array<Object>>} Listing id to rows that may or may not land
+     * @private
+     */
+    _rowsElsewhere(caps, rows, others, pulled, day) {
+        const elsewhere = new Map();
+        const trimmedHere = new Set();
+        for (const row of rows) if (row.trimmed && caps.has(row.listingId)) trimmedHere.add(row.listingId);
+        if (trimmedHere.size === 0) return elsewhere;
+        const held = new Set();
+        for (const row of [...others, ...rows]) if (trimmedHere.has(row.listingId)) held.add(fillKey(row));
+        for (const id of trimmedHere) {
+            const there = (pulled.rows.get(id) || []).filter((r) => bucketOf(r) !== day && !held.has(fillKey(r)));
+            if (there.length > 0) elsewhere.set(id, there);
+        }
+        return elsewhere;
     }
 
     /**
@@ -852,11 +883,11 @@ class TradeLedgerStore {
     /**
      * What a fold needs from the rest of a download, read once per download and only when a day has something a held
      * cap applies to: the highest fill count it holds for each listing of one character (its log, its archive months
-     * and its baselines), and that character's trimmed rows.
+     * and its baselines), and that character's day rows.
      * @param {Object<string, *>} download - The whole download of this store
      * @param {string} charId - Whose rows
-     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>}} Listing id to count, and the
-     *   trimmed rows by {@link trimStamp}
+     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>, rows: Map<number, Array<Object>>}}
+     *   Listing id to count, the trimmed rows by {@link trimStamp}, and listing id to its day rows
      * @private
      */
     _readDownload(download, charId) {
@@ -864,6 +895,7 @@ class TradeLedgerStore {
         if (memo && memo.charId === charId) return memo;
         const counts = new Map();
         const trims = new Set();
+        const rows = new Map();
         const raise = (id, filled) => {
             const count = Number(filled);
             if (Number.isFinite(id) && count > 0 && !(counts.get(id) >= count)) counts.set(id, count);
@@ -879,10 +911,15 @@ class TradeLedgerStore {
             } else if ((key === logKey || key.startsWith(archiveMonths)) && Array.isArray(value)) {
                 for (const row of value) raise(Number(row?.id), row?.filledQuantity);
             } else if (key.startsWith(dayRecords) && Array.isArray(value)) {
-                for (const row of value) if (row?.trimmed) trims.add(trimStamp(row));
+                for (const row of value) {
+                    if (!row?.itemHrid) continue;
+                    if (row.trimmed) trims.add(trimStamp(row));
+                    if (rows.has(row.listingId)) rows.get(row.listingId).push(row);
+                    else rows.set(row.listingId, [row]);
+                }
             }
         }
-        const read = { charId, counts, trims };
+        const read = { charId, counts, trims, rows };
         this._pulledCountsMemo.set(download, read);
         return read;
     }

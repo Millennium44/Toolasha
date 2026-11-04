@@ -207,27 +207,50 @@ export function trimLedger(records, cap = LEDGER_RECORD_CAP) {
 }
 
 /**
- * The rows of one over-recorded listing the cut walks through.
- *
- * A trimmed row stands in for the untrimmed rows at its millisecond, its original back from another device, and of
- * several copies cut to different counts the highest stands. Those are kept out of the count unless that leaves the
- * listing short of its cap. Short means the trim came from a count now known to be too low, so the originals are the
- * better copy and the trimmed rows give way. The cut stops at the cap either way, so this cannot let a doubling back.
+ * A listing's rows with each trimmed row standing in for the rest of its millisecond: its original, back from another
+ * device, and of several copies cut to different counts the highest.
  * @param {Array<Object>} rows - The listing's rows
- * @param {number} cap - The listing's final filled quantity
- * @returns {Array<Object>} The rows to walk, in input order
+ * @returns {Array<Object>} `rows` itself when none is trimmed, else the stand-ins, in input order
  */
-function rowsToCut(rows, cap) {
+function standInsOf(rows) {
     const highestTrim = new Map(); // millisecond → its largest trimmed row
-    const originals = new Set(); // milliseconds holding an untrimmed row
     for (const row of rows) {
-        if (!row.trimmed) originals.add(row.t);
-        else if (!(Number(highestTrim.get(row.t)?.quantity) >= Number(row.quantity))) highestTrim.set(row.t, row);
+        if (row.trimmed && !(Number(highestTrim.get(row.t)?.quantity) >= Number(row.quantity))) {
+            highestTrim.set(row.t, row);
+        }
     }
     if (highestTrim.size === 0) return rows;
-    const standIns = rows.filter((row) => !highestTrim.has(row.t) || row === highestTrim.get(row.t));
-    const counted = standIns.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
-    if (counted >= cap) return standIns;
+    return rows.filter((row) => !highestTrim.has(row.t) || row === highestTrim.get(row.t));
+}
+
+/**
+ * @param {Array<Object>} rows - Fill records
+ * @returns {number} Their units
+ */
+function unitsOf(rows) {
+    return rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
+}
+
+/**
+ * The rows of one over-recorded listing the cut walks through.
+ *
+ * The stand-ins (see {@link standInsOf}) are counted unless that leaves the listing short of its cap. Short means the
+ * trim came from a count now known to be too low, so the originals are the better copy and the trimmed rows give way.
+ * The cut stops at the cap either way, so this cannot let a doubling back.
+ *
+ * Short is only known when every row is in view. Rows the caller cannot promise (`elsewhere`) can never justify a trim,
+ * since the fill would be gone if they failed to arrive and the cut only ever shrinks. If they would make up the
+ * shortfall, the answer is null: the caller cannot judge this listing and must leave it alone.
+ * @param {Array<Object>} rows - The listing's rows
+ * @param {number} cap - The listing's final filled quantity
+ * @param {Array<Object>} [elsewhere] - More rows of the listing that may or may not end up beside these
+ * @returns {Array<Object>|null} The rows to walk, in input order, or null when they cannot be judged yet
+ */
+function rowsToCut(rows, cap, elsewhere = []) {
+    const standIns = standInsOf(rows);
+    if (standIns === rows || unitsOf(standIns) >= cap) return standIns;
+    if (elsewhere.length > 0 && unitsOf(standInsOf([...rows, ...elsewhere])) >= cap) return null;
+    const originals = new Set(rows.filter((row) => !row.trimmed).map((row) => row.t));
     return rows.filter((row) => !row.trimmed || !originals.has(row.t));
 }
 
@@ -247,10 +270,12 @@ function rowsToCut(rows, cap) {
  * untouched, and the same input folded in again gives the same answer.
  * @param {Array<Object>} records - Fill records
  * @param {Map<number, number>} caps - Listing id → final filled quantity (positive) of an ended listing
+ * @param {Map<number, Array<Object>>} [elsewhere] - Listing id → rows outside `records` that may or may not land. They
+ *   are never kept, cut or counted against the cap; they only stop a listing being cut (see {@link rowsToCut})
  * @returns {{records: Array<Object>, repairedIds: Set<number>}} The repaired ledger (input order kept for
  *   untouched listings) and the listings that were cut
  */
-export function repairOverRecorded(records, caps) {
+export function repairOverRecorded(records, caps, elsewhere = null) {
     const list = Array.isArray(records) ? records : [];
     const repairedIds = new Set();
     if (!(caps instanceof Map) || caps.size === 0) return { records: list, repairedIds };
@@ -269,7 +294,9 @@ export function repairOverRecorded(records, caps) {
         const total = rows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
         if (!(cap > 0) || total <= cap) continue;
 
-        const ordered = rowsToCut(rows, cap)
+        const walk = rowsToCut(rows, cap, elsewhere?.get(id));
+        if (!walk) continue;
+        const ordered = walk
             .map((row, index) => ({ row, index }))
             .sort((x, y) => x.row.t - y.row.t || x.index - y.index)
             .map((x) => x.row);
