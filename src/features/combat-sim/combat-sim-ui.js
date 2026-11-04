@@ -15148,6 +15148,10 @@ class CombatSimUI {
         const METRIC_OF = { dps: 'dps', hpDps: 'dps', xp: 'xp', hpXp: 'xp', profit: 'profit', hpProfit: 'profit' };
         const entries = sorted.map((r) => {
             const e = effective(r);
+            // The figures are the combined run's when there is one, so the ceiling is the combined run's too:
+            // it can leave an item unpriced that the level alone does not. A record from before that was kept
+            // has no list on `alongside`, and the level's own list stands as it always did
+            const unpricedOf = e !== r && e.costUnpriced?.length ? e : r;
             const titles = levelRowTitles(r, baseline);
             const gain = (label, delta, pct) =>
                 figure(label, levelDeltaCell(delta, pct), signTone(delta), titles.alongTitle);
@@ -15162,7 +15166,7 @@ class CombatSimUI {
                 hpXp: hours('Hours/0.01% EXP', 'xp', 'EXP/hr'),
                 hpProfit: hours('Hours/0.01% Profit', 'profit', 'Profit/hr'),
                 score: figure('Score', formatScore(r.score), 'neutral', scoreTitle),
-                ceiling: ceilingFigure(r),
+                ceiling: ceilingFigure(unpricedOf),
             };
             const others = (keys) => keys.filter((k) => k !== key).map((k) => figs[k]);
             const metric = METRIC_OF[key];
@@ -15173,10 +15177,10 @@ class CombatSimUI {
                 headline: figs[key === 'upgrade' ? 'score' : key],
                 // The combined measurement carries its own error (see `alongside` in the advisor); a record from
                 // before that has none, and then the card makes no claim either way
-                within: cardWithinNoise(e, metric, r),
+                within: cardWithinNoise(e, metric, unpricedOf),
                 lines: [
                     others(['time', 'score']),
-                    others(['dps', 'xp', 'profit', ...(ceilingFigure(r) ? ['ceiling'] : [])]),
+                    others(['dps', 'xp', 'profit', ...(figs.ceiling ? ['ceiling'] : [])]),
                     others(['hpDps', 'hpXp', 'hpProfit']),
                     titles.alongText ? [figure('Along the way', escapeAttribute(titles.alongText), 'muted')] : [],
                 ],
