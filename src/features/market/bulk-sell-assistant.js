@@ -423,6 +423,8 @@ class BulkSellAssistant {
         this._confirmedStep = null;
         /** Unsubscribe for the server-refusal watch of the step just pressed */
         this._refusalUnsub = null;
+        /** Stops the passive watch for the player's own click on the sell modal's confirm button */
+        this._nativeConfirmStop = null;
         this._refusalTimer = null;
         /**
          * Whether an order book has been opened since the player's last click
@@ -2828,6 +2830,46 @@ class BulkSellAssistant {
     }
 
     /**
+     * Watch, without touching it, for the player's own click on the sell modal's confirm button. That click
+     * is this step's sale just as the strip's Confirm is, so the step counts as sent (Retry, the Confirm
+     * button and the status line all read that mark) and the server-refusal watch starts. The listener
+     * only marks: it never prevents or stops the click, and the game's handler runs as ever. Live from the
+     * modal being offered until it closes, the step moves on, or `_clearTransient` ends the run.
+     *
+     * The button is found the way `_confirmTarget` finds it (variant class first, label as the fallback)
+     * and must belong to a sell form for the queued item and level. The quantity is not compared: a player
+     * who edited it has still sold this stack. A click on any other button, or a form the game would not
+     * take (a zero quantity), does not count.
+     */
+    _watchNativeConfirm() {
+        this._stopWatchingNativeConfirm();
+        const onClick = (event) => {
+            if (this.state !== 'awaiting_confirm' || !this.current || this.decision?.vendor) return;
+            // Our own press marks the step before it clicks, and a second click changes nothing
+            if (this._confirmSent()) return;
+            const modal = event.target?.closest?.('[class*="Modal_modalContainer"]');
+            if (!modal) return;
+            const pressed = event.target.closest('button');
+            if (!pressed || pressed !== this._findModalConfirmButton(modal) || isButtonDisabled(pressed)) return;
+            if (this._modalIdentityProblem(modal)) return;
+            const quantity = this._modalQuantity(modal);
+            if (quantity !== null && quantity <= 0) return;
+            this.confirmNote = '';
+            this._confirmedStep = this._stepKey();
+            this._watchForRefusal();
+            this._render();
+        };
+        document.addEventListener('click', onClick, true);
+        this._nativeConfirmStop = () => document.removeEventListener('click', onClick, true);
+    }
+
+    _stopWatchingNativeConfirm() {
+        if (!this._nativeConfirmStop) return;
+        this._nativeConfirmStop();
+        this._nativeConfirmStop = null;
+    }
+
+    /**
      * Advance to the next item when the given element closes — confirmed or
      * dismissed, either way this item is dealt with.
      * @param {string} [selector] - Element whose disappearance means done
@@ -2840,15 +2882,20 @@ class BulkSellAssistant {
             clearInterval(this.modalPoll);
             this.modalPoll = null;
         }
+        this._stopWatchingNativeConfirm();
         let seen = false;
         // Only a market sell modal can leave a remainder; the vendor menu has its own quantity check
         const market = selector === '[class*="Modal_modalContainer"]';
+        // The player may confirm in the game's own modal rather than from the strip; that is a sale on its
+        // way just the same, so Retry has to wait for it
+        if (market) this._watchNativeConfirm();
         // The most the stack stood at while the modal was open: a sale is the stack ending below it
         let peak = 0;
         this.modalPoll = setInterval(() => {
             if (this.state !== 'awaiting_confirm') {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
+                this._stopWatchingNativeConfirm();
                 return;
             }
             const open = !!document.querySelector(selector);
@@ -2858,6 +2905,7 @@ class BulkSellAssistant {
             } else if (seen) {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
+                this._stopWatchingNativeConfirm();
                 // Not straight to the next item: the click that closed this
                 // modal has already done its one game action (the sale), and
                 // opening the next item's book is another. The run waits for
@@ -2967,6 +3015,7 @@ class BulkSellAssistant {
         this._cancelVendorWait();
         this._releaseSaleGuard();
         this._stopTrackingVendorArming();
+        this._stopWatchingNativeConfirm();
         if (this.bookTimeout) {
             clearTimeout(this.bookTimeout);
             this.bookTimeout = null;

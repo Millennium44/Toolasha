@@ -3494,6 +3494,152 @@ describe('the status bar and its Retry button', () => {
             expect(gameClicks).toBe(1);
         });
 
+        describe('a sale confirmed in the game’s own modal', () => {
+            /** The game's confirm button in an open modal */
+            const nativeConfirm = (modal) => modal.querySelector('.Button_button__1Fe9z');
+
+            test('dims Retry and the strip’s Confirm, says so, and a press of Retry does nothing', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                expect(retryEnabled()).toBe(true);
+
+                const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+                nativeConfirm(modal).dispatchEvent(click);
+                // A passive watch: the game's own handler ran and nothing was prevented
+                expect(gameClicks).toBe(1);
+                expect(click.defaultPrevented).toBe(false);
+
+                expect(bulkSell._confirmSent()).toBe(true);
+                expect(retryOffered()).toBe(true);
+                expect(retryBtn().disabled).toBe(true);
+                expect(part('main').disabled).toBe(true);
+                expect(detail()).toContain('Confirm sent — waiting for the game.');
+
+                retryBtn().click();
+                bulkSell._onRetryClick();
+                vi.advanceTimersByTime(5000);
+                expect(closeClicks).toBe(0);
+                expect(modal.isConnected).toBe(true);
+                expect(navigations).toEqual([GOLEM]);
+                expect(bulkSell.state).toBe('awaiting_confirm');
+                // No second sale path: pressing the strip's Confirm now presses nothing
+                part('main').click();
+                bulkSell._onConfirmClick();
+                expect(gameClicks).toBe(1);
+            });
+
+            test('a refusal after it frees Retry again, and a second native confirm dims it again', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                nativeConfirm(modal).click();
+                expect(retryBtn().disabled).toBe(true);
+
+                notices.handler({
+                    level: 'error',
+                    key: 'errorNotification.itemIsLocked',
+                    variables: {},
+                    at: Date.now(),
+                });
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+                expect(part('main').disabled).toBe(false);
+                expect(detail()).not.toContain('Confirm sent');
+
+                // The modal is still open for the player's next try
+                nativeConfirm(modal).click();
+                expect(gameClicks).toBe(2);
+                expect(bulkSell._confirmSent()).toBe(true);
+                expect(retryBtn().disabled).toBe(true);
+            });
+
+            test('the modal closing with no sale lands: Retry comes back once the late-sale watch is over', async () => {
+                const modal = openModal();
+                await reachConfirm();
+                nativeConfirm(modal).click();
+                expect(retryBtn().disabled).toBe(true);
+
+                // Seen open by the watch, then closed, and the inventory never reports a sale
+                vi.advanceTimersByTime(250);
+                modal.remove();
+                vi.advanceTimersByTime(250);
+                expect(bulkSell.state).toBe('awaiting_next');
+                vi.advanceTimersByTime(2000);
+                expect(bulkSell._afterCloseWatch).toBeNull();
+                expect(retryEnabled()).toBe(true);
+
+                retryBtn().click();
+                vi.advanceTimersByTime(600);
+                expect(navigations).toEqual([GOLEM, GOLEM]);
+                expect(bulkSell._confirmedStep).toBeNull();
+            });
+
+            test('a click on any other button of the modal does not count', async () => {
+                const modal = openModal();
+                const max = document.createElement('button');
+                max.className = 'Button_button__other';
+                max.textContent = 'Max';
+                modal.appendChild(max);
+                await reachConfirm();
+
+                max.click();
+                modal.querySelector('input').click();
+                modal.querySelector('.MarketplacePanel_header__x').click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+                expect(gameClicks).toBe(0);
+            });
+
+            test('a confirm in a modal for another item, or one the game would not take, does not count', async () => {
+                const other = openModal();
+                other.querySelector('use').setAttribute('href', '/static/media/items.svg#milk');
+                await reachConfirm();
+                nativeConfirm(other).click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                other.remove();
+
+                const empty = openModal({ qty: 0 });
+                nativeConfirm(empty).click();
+                expect(bulkSell._confirmSent()).toBe(false);
+                expect(retryEnabled()).toBe(true);
+            });
+
+            test('the listener goes when the modal does, and when the run is stopped', async () => {
+                const added = vi.spyOn(document, 'addEventListener');
+                const removed = vi.spyOn(document, 'removeEventListener');
+                const listeners = () =>
+                    new Set(added.mock.calls.filter(([type]) => type === 'click').map(([, fn]) => fn));
+                const removedClicks = () =>
+                    new Set(removed.mock.calls.filter(([type]) => type === 'click').map(([, fn]) => fn));
+                try {
+                    const modal = openModal();
+                    await reachConfirm();
+                    const attached = [...listeners()];
+                    expect(attached.length).toBeGreaterThan(0);
+                    expect([...removedClicks()].some((fn) => attached.includes(fn))).toBe(false);
+
+                    vi.advanceTimersByTime(250);
+                    modal.remove();
+                    vi.advanceTimersByTime(250);
+                    expect(attached.every((fn) => removedClicks().has(fn))).toBe(true);
+
+                    // And a stop: a fresh step, stopped while its modal is up
+                    removed.mockClear();
+                    added.mockClear();
+                    bulkSell.state = 'preparing';
+                    openModal();
+                    bulkSell._watchClose();
+                    bulkSell.state = 'awaiting_confirm';
+                    const second = [...listeners()];
+                    expect(second.length).toBeGreaterThan(0);
+                    bulkSell._stop('');
+                    expect(second.every((fn) => removedClicks().has(fn))).toBe(true);
+                } finally {
+                    added.mockRestore();
+                    removed.mockRestore();
+                }
+            });
+        });
+
         test('while a vendor arming wait runs: nothing happens, and it frees up when the wait ends', async () => {
             await reachConfirm();
             // The wait redraws the strip itself, so the button is already dimmed when it starts
