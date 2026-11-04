@@ -7,7 +7,7 @@
  * back rows the repair cuts again.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, test, expect, beforeEach, vi } from 'vitest';
 
 const storeState = vi.hoisted(() => ({ stores: {}, pending: {} }));
 const importedPayloads = vi.hoisted(() => []);
@@ -87,6 +87,8 @@ vi.mock('../../core/config.js', () => ({
 
 const { default: tradeLedgerStore, recordKey, bucketOf } = await import('../market/trade-ledger-store.js');
 const { applyPayload, addsToRemote, resetLeftOutLogForTests } = await import('./sync-payload.js');
+const { registerSyncMerge } = await import('../../utils/sync-merge-registry.js');
+const { mergeBoards, boardKey } = await import('../../utils/rank-badge-data.js');
 
 const STORE = 'marketListings';
 const LOG_KEY = 'marketListingTimestamps_market123';
@@ -127,6 +129,7 @@ async function repairedLedger(rows, log) {
         [LOG_KEY]: log,
     });
     await tradeLedgerStore.load();
+    await tradeLedgerStore._repairChain;
     await tradeLedgerStore._recordsChain;
 }
 
@@ -140,6 +143,7 @@ beforeEach(() => {
     tradeLedgerStore.isLoaded = false;
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
+    tradeLedgerStore._repairChain = null;
     tradeLedgerStore._pullCaps = null;
     archive.rows = [];
 });
@@ -305,6 +309,7 @@ describe('over reloads', () => {
             tradeLedgerStore.isLoaded = false;
             tradeLedgerStore._pullCaps = null;
             await tradeLedgerStore.load();
+            await tradeLedgerStore._repairChain;
             await tradeLedgerStore._recordsChain;
 
             const result = await applyPayload(payloadOf(structuredClone(gist)));
@@ -335,5 +340,87 @@ describe('a pull whose write is redone against a newer stored copy', () => {
             [6, T(11, 2)],
             [7, T(11, 9000)],
         ]);
+    });
+});
+
+describe('the download goes to a registration of its own pull fold, and nowhere else', () => {
+    const KEY = 'pullContextProbe';
+    const local = { side: 'local' };
+    const gist = { side: 'gist' };
+    let remove = null;
+    const registerProbe = (options) => {
+        remove = registerSyncMerge({ store: STORE, key: KEY, label: 'probe', ...options });
+    };
+    const pull = async () => {
+        storeState.stores[STORE][KEY] = structuredClone(local);
+        return applyPayload(payloadOf({ [KEY]: structuredClone(gist) }));
+    };
+    const compare = () =>
+        addsToRemote(payloadOf({ [KEY]: structuredClone(gist) }), payloadOf({ [KEY]: structuredClone(local) }), {
+            forUpload: false,
+        });
+
+    afterEach(() => {
+        remove?.();
+        remove = null;
+    });
+
+    test.each([
+        ['a pull', pull],
+        ['the in-step comparison', compare],
+    ])('%s hands a plain merge exactly its two arguments', async (_name, run) => {
+        const merge = vi.fn((_mine, theirs) => theirs);
+        registerProbe({ merge });
+
+        await run();
+
+        expect(merge).toHaveBeenCalled();
+        for (const call of merge.mock.calls) expect(call).toHaveLength(2);
+    });
+
+    test.each([
+        ['a pull', pull],
+        ['the in-step comparison', compare],
+    ])('%s hands a localWinsOnPull merge exactly its two arguments, turned round', async (_name, run) => {
+        const merge = vi.fn((_theirs, mine) => mine);
+        registerProbe({ merge, localWinsOnPull: true });
+
+        await run();
+
+        expect(merge).toHaveBeenCalled();
+        for (const call of merge.mock.calls) expect(call).toHaveLength(2);
+    });
+
+    test('a pull hands an own pull fold the download, whole', async () => {
+        const merge = vi.fn((_mine, theirs) => theirs);
+        const own = vi.fn((_mine, theirs) => theirs);
+        registerProbe({ merge, pull: own });
+
+        await pull();
+
+        expect(merge).not.toHaveBeenCalled();
+        expect(own.mock.calls[0][2].download[KEY]).toEqual(gist);
+    });
+
+    test('the in-step comparison hands an own pull fold the download too', () => {
+        const own = vi.fn((_mine, theirs) => theirs);
+        registerProbe({ merge: vi.fn(), pull: own });
+
+        compare();
+
+        expect(own.mock.calls[0][2].download[KEY]).toEqual(gist);
+    });
+
+    test('the leaderboard cache survives a pull: a merge whose third parameter is `now` keeps its boards', async () => {
+        const key = boardKey('standard', 'milking');
+        const board = (at, name) => ({ at, source: 'local', rows: [[name, 1]] });
+        registerProbe({ merge: mergeBoards });
+        storeState.stores[STORE][KEY] = { [key]: board(1000, 'Mine') };
+
+        await applyPayload(payloadOf({ [KEY]: { [key]: board(2000, 'Theirs') } }));
+
+        const written = importedPayloads[0].stores[STORE][KEY];
+        expect(written[key].at).toBe(2000);
+        expect(written[key].rows).toEqual([['Theirs', 1]]);
     });
 });

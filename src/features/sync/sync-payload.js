@@ -809,9 +809,7 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     registration.mergeForPull === registration.merge;
                 const incoming = entries[key];
                 const fold = (local) =>
-                    localWins
-                        ? registration.merge(incoming, local)
-                        : registration.mergeForPull(local, incoming, context);
+                    localWins ? registration.merge(incoming, local) : registration.foldPull(local, incoming, context);
                 // Row counts for the pull report, taken before the fold so a merge that edits its inputs cannot
                 // change them. Numbers only: the report never holds a value.
                 const localRows = countRows(probed.value);
@@ -2299,7 +2297,7 @@ function* addsToRemoteSteps(localText, remoteText, { forUpload = true } = {}) {
                     // local apply — the way a pull here would fold it
                     folded = forUpload
                         ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
-                        : registration.mergeForPull(theirs[key], value, { download: entries });
+                        : registration.foldPull(theirs[key], value, { download: entries });
                 } catch {
                     folded = value;
                 }
