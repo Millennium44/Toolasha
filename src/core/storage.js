@@ -2587,9 +2587,10 @@ class Storage {
      * through here, so a blanket exemption let exactly the writer the latch
      * names put its pre-restore array back on top of the restore. The restore
      * itself, the sync bookkeeping that records it, and a row recorded after the
-     * restore and folded into the stored copy (the trade ledger's new fills) are
-     * the writers that genuinely are not pre-restore state, and they say so with
-     * `bypassRestoreLatch`.
+     * restore and folded into the stored copy (the trade ledger's new fills, with
+     * the one baseline entry each accounts for, moved only from the value stored)
+     * are the writers that genuinely are not pre-restore state, and they say so
+     * with `bypassRestoreLatch`.
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
      * @param {{bypassRestoreLatch?: boolean, folds?: Record<string, Function>}} [options] - `bypassRestoreLatch`

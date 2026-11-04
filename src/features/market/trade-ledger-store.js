@@ -268,6 +268,39 @@ export function mergeStates(base, fresh) {
 }
 
 /**
+ * A latched baseline record with the entries these fills moved stepped forward, for the write that lands their rows.
+ *
+ * Runs inside that write's transaction, so a baseline only ever moves together with the row that accounts for it. An
+ * entry moves only from the value its fill was detected from, so what a pull or a restore stored instead stays (the
+ * next load then records the fill again, which the repair can cut; a skipped fill nothing can bring back). Each step
+ * starts from the one before, so serial fills on a listing chain, and a step whose earlier fill is still unsaved finds
+ * no match. Everything else in the record is left as stored.
+ *
+ * Never answers undefined and never throws: `foldForWrite` would then write the placeholder over every baseline.
+ * @param {*} stored - The record as the transaction read it
+ * @param {Array<{id: string, from: Object|undefined, to: Object}>} advances - Each fill's move, oldest first
+ * @param {symbol} leaveAbsent - The fold's answer for a record that is not there: it stays not there, since a load
+ *   only falls back to the pre-split baseline key when this record is absent
+ * @returns {*} The record to put
+ */
+export function advanceStoredBaselines(stored, advances, leaveAbsent) {
+    if (stored === undefined || stored === null) return leaveAbsent;
+    if (typeof stored !== 'object' || Array.isArray(stored)) return stored;
+    try {
+        const next = { ...stored };
+        for (const { id, from, to } of advances) {
+            const entry = next[id];
+            const matches = from ? !entry?.done && entry?.filledQuantity === from.filledQuantity : !entry;
+            if (matches && to) next[id] = to;
+        }
+        return next;
+    } catch (error) {
+        console.error('[TradeLedger] Could not step the stored baselines; leaving them:', error);
+        return stored;
+    }
+}
+
+/**
  * Which day record a fill belongs in.
  * @param {Object} record - Fill record
  * @returns {string} `YYYY-MM-DD`, in UTC
@@ -469,12 +502,14 @@ class TradeLedgerStore {
          */
         this._writtenDays = new Map();
         /**
-         * Fills this tab has found and has not yet seen committed: `charId → Map(fillKey → {row, writing, singleKey})`.
+         * Fills this tab has found and has not yet seen committed:
+         * `charId → Map(fillKey → {row, writing, singleKey, advance})`, `advance` being the baseline move the fill's
+         * detection made (see {@link advanceStoredBaselines}).
          *
          * Normally a row is here for the milliseconds its transaction takes. It stays while storage is failing, and
          * while it does no baseline moves: {@link saveStates} stores nothing for a character with a row here. By
          * character, because a row found under one character is still that character's after a switch.
-         * @type {Map<string, Map<string, {row: Object, writing: boolean, singleKey: boolean}>>}
+         * @type {Map<string, Map<string, {row: Object, writing: boolean, singleKey: boolean, advance: Object}>>}
          */
         this._unsavedFills = new Map();
         /** The writes of those rows now in flight, so a baseline can wait for them. @type {Set<Promise<void>>} */
@@ -519,15 +554,21 @@ class TradeLedgerStore {
      * Hold new fills until they are seen committed.
      * @param {string} charId - Whose fills
      * @param {Array<Object>} fills - Fill records
+     * @param {Object<string, Object>} before - The baselines these fills were detected from
+     * @param {Object<string, Object>} after - The baselines detection left
      * @private
      */
-    _noteFills(charId, fills) {
+    _noteFills(charId, fills, before, after) {
         let held = this._unsavedFills.get(charId);
         if (!held) {
             held = new Map();
             this._unsavedFills.set(charId, held);
         }
-        for (const row of fills) held.set(fillKey(row), { row, writing: false, singleKey: this._legacy });
+        for (const row of fills) {
+            const id = String(row.listingId);
+            const advance = { id, from: before[id], to: after[id] };
+            held.set(fillKey(row), { row, writing: false, singleKey: this._legacy, advance });
+        }
     }
 
     /**
@@ -586,7 +627,8 @@ class TradeLedgerStore {
      *   there, and it stays up for all of that memory (`saveRecords`). A fill found after the restore is not
      *   pre-restore state and the fold takes nothing away. It cannot wait for the reload the latch asks for: a
      *   listing that ends in the meantime is gone from the next snapshot, so its row would never be found again.
-     * - Nothing new reaches disk: a row in a day record, as any build reads it.
+     * - Nothing new reaches disk: a row in a day record, as any build reads it, and past a latch on the baseline
+     *   record the entry that row accounts for, in the shape it always has (see {@link _writeFills}).
      * @param {{force?: boolean}} [options] - `force` also writes rows whose earlier write has not answered, for page
      *   close
      * @returns {Promise<Array<void>>} Settles when every write in flight has answered; never rejects
@@ -621,29 +663,34 @@ class TradeLedgerStore {
      * A write that lands while a restore is running stays held and is written again afterwards. The restore's copy
      * of the record was worked out before this row existed, and for a day this device held no copy of when it read
      * (the first fill of a UTC day) that copy then goes down whole, row or no row.
+     *
+     * With the character's baseline record latched, {@link saveStates} is refused until the reload, and the next load
+     * would find this fill again from the old baseline. So its entry moves here, past the latch like the row and in
+     * the same transaction: both land or neither does, and it stays out of a restore that is still running, whose copy
+     * can take the row away. A latch on the day records alone changes nothing here, and `saveStates` does this job.
      * @param {string} charId - Whose fills
      * @param {string} key - The record they go in
-     * @param {Array<{row: Object, writing: boolean, singleKey: boolean}>} entries - The held rows
+     * @param {Array<{row: Object, writing: boolean, singleKey: boolean, advance: Object}>} entries - The held rows
      * @returns {Promise<void>}
      * @private
      */
     async _writeFills(charId, key, entries) {
         const duringRestore = storage.isRestoreInProgress?.() === true;
         for (const entry of entries) entry.writing = true;
+        const batch = { [key]: entries.map((entry) => entry.row) };
+        const folds = {
+            [key]: (stored, rows) => (Array.isArray(stored) && Array.isArray(rows) ? mergeRecords(stored, rows) : rows),
+        };
+        const statesKey = charKey(STATE_BASE, charId);
+        if (!duringRestore && storage.isRestorePending?.(LEDGER_STORE, statesKey) === true) {
+            const advances = entries.map((entry) => entry.advance);
+            batch[statesKey] = {};
+            folds[statesKey] = (stored) => advanceStoredBaselines(stored, advances, storage.FOLD_DELETE);
+        }
         let landed = false;
         try {
-            const written = await storage.putAll(
-                LEDGER_STORE,
-                { [key]: entries.map((entry) => entry.row) },
-                {
-                    bypassRestoreLatch: true,
-                    folds: {
-                        [key]: (stored, rows) =>
-                            Array.isArray(stored) && Array.isArray(rows) ? mergeRecords(stored, rows) : rows,
-                    },
-                }
-            );
-            landed = written === 1;
+            const written = await storage.putAll(LEDGER_STORE, batch, { bypassRestoreLatch: true, folds });
+            landed = written === Object.keys(batch).length;
         } catch (error) {
             console.error('[TradeLedger] Failed to write new fills:', error);
         }
@@ -1559,7 +1606,8 @@ class TradeLedgerStore {
         // Fills belong to whoever memory belongs to, never to whoever the id says by the time this runs
         const owner = departing || ledgerCharId();
 
-        const { fills, states, changed } = detectFills(this.states, batch, { snapshot, changedIds });
+        const previous = this.states;
+        const { fills, states, changed } = detectFills(previous, batch, { snapshot, changedIds });
         this.states = states;
 
         let dirty = null;
@@ -1578,7 +1626,7 @@ class TradeLedgerStore {
             }
 
             this.records = after;
-            this._noteFills(owner, fills);
+            this._noteFills(owner, fills, previous, states);
         }
         const writes = this._unsavedFills.size > 0 ? this._flushUnsaved() : null;
         if (departing) {
