@@ -66,11 +66,17 @@ push to `main` or merge.
 
 ### The fork changelog
 
-- Record every change under the current `## Unreleased — branch main` heading in `CHANGELOG.md`, **in
+- Record every change a player would notice under the current `## Unreleased — branch main` heading in `CHANGELOG.md`, **in
   the same commit that makes the change**. A branch handed off without its entries leaves someone else
   to reconstruct them.
-- One or two sentences per change: what changed and why it matters to a player. The mechanism and the
+- Each entry is a `### Title` plus one or two sentences (or a few terse bullets under the title): what
+  changed and why it matters to a player. Never a bare bullet with no title. The mechanism and the
   story of how it was found belong in the commit body.
+- Only changes a player would notice get an entry. Tooling, tests and contributor process go in the
+  commit message instead.
+- `scripts/changelog-format.test.js` enforces the format (a title on every entry, no duplicate titles within a release, a
+  body of at most 600 characters) from the `## Unreleased` heading down to the `3.73.0` marker, so the
+  suite and CI catch it. The What's New panel counts `###` titles as entries.
 - Never edit the upstream changelog section below the fork's.
 
 ### Handing work off
