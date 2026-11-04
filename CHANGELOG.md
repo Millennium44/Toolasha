@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Faint text is readable everywhere
+
+Gray help text, labels and footers across the panels now use the game's lighter gray, and the last navy fields match the game's inputs. The Treasure popup also no longer cuts a figure when narrow, so its smallest width is a little wider.
+
 <!-- shipped in 3.75.0 -->
 
 ### Compact Task Board bar on phones
