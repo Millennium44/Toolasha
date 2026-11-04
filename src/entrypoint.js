@@ -2824,6 +2824,16 @@ function registerFeatures() {
             liveStop: true,
         },
         {
+            key: 'partyStatusAlerts',
+            name: 'Party Status Alerts',
+            category: 'Notifications',
+            module: UI.partyStatusAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry
+            customCheck: () => config.getSetting('notifications_partyStatus'),
+            liveStop: true,
+        },
+        {
             key: 'taskSlotAlerts',
             name: 'Task Slot Alerts',
             category: 'Notifications',

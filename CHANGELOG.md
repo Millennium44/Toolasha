@@ -6,9 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings panel is easier to use on a touch screen
+
+On a touch screen the settings switches, color pickers, number boxes and dropdowns are now finger-sized, and tapping a switch's label or its row flips it instead of needing the small box. Desktop is unchanged.
+
 ### Expected value setting only controls the tooltip
 
 Turning off "Show expected value for openable containers" now only hides the tooltip row. Net worth, combat stats and task values for crates and chests no longer change partway through a session depending on which panel you opened first.
+
+### Bulk Sell bar says each thing once, and gets a Retry button
+
+The Bulk Sell bar now shows a short headline with a second row only for what the headline lacks, instead of the same sentence twice. A new ↻ button starts the current item over without ever selling for you, and the bar fits phone screens.
+
+### Party alert
+
+A new setting, "Notify when your party starts or stops fighting" (off by default), tells you when your party goes into a fight or comes out of one. It announces real changes only, not a party already fighting when you log in.
 
 ### What's New shows only what is new
 

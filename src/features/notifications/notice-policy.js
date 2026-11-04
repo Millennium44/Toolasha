@@ -63,6 +63,7 @@ export const NOTICE_KINDS = [
     { prefix: 'consumable-low', category: 'consumables', noun: { one: 'running dry', many: 'running dry' } },
     { prefix: 'empty-queue', category: 'queue', noun: { one: 'queue empty', many: 'queue empty' } },
     { prefix: 'combat-death', category: 'combat', noun: { one: 'death', many: 'deaths' } },
+    { prefix: 'party-status', category: 'other', noun: { one: 'party change', many: 'party changes' } },
     { prefix: 'task-slots', category: 'tasks', noun: { one: 'slot warning', many: 'slot warnings' } },
     { prefix: 'labyrinth-entry', category: 'labyrinth', noun: { one: 'entry ready', many: 'entries ready' } },
     { prefix: 'labyrinth-stopped', category: 'labyrinth', noun: { one: 'run finished', many: 'runs finished' } },

@@ -26,7 +26,7 @@ import {
     createPricingSideSelect,
     syncPricingSideSelect,
 } from '../../utils/pricing-side-select.js';
-import { detectedModeLabel, isMobileMode } from '../../utils/mobile.js';
+import { detectedModeLabel, hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
 import spawnCensus from '../combat/spawn-census.js';
 import whatsNew from './whats-new.js';
@@ -594,6 +594,7 @@ class SettingsUI {
 
         // Add click listener for template edit buttons
         card.addEventListener('click', (e) => {
+            this.handleSwitchRowTap(e);
             if (e.target.classList.contains('toolasha-template-edit-btn')) {
                 const settingId = e.target.dataset.settingId;
                 this.openTemplateEditor(settingId);
@@ -622,6 +623,27 @@ class SettingsUI {
         });
 
         return panel;
+    }
+
+    /**
+     * On a touch screen a switch row toggles from a tap anywhere on the row, not only on the 24px box.
+     *
+     * The label is a plain span, so a tap on its text did nothing; this is the one delegated listener (the
+     * card's click handler) rather than one per row. It clicks the checkbox itself, so the card's change
+     * handler runs once exactly as for a tap on the box. Anything that is its own control (links, buttons,
+     * fields, the reload tag's hover help, the box itself) keeps its own tap. A fine pointer is untouched.
+     *
+     * @param {MouseEvent} event - Click inside the card
+     */
+    handleSwitchRowTap(event) {
+        const target = event.target;
+        if (!(target instanceof Element) || event.defaultPrevented || !hasCoarsePointer()) return;
+        const row = target.closest('.toolasha-setting[data-type="checkbox"]');
+        if (!row) return;
+        if (target.closest('a, button, input, select, textarea, label, .toolasha-refresh-tag')) return;
+        const box = row.querySelector('input[type="checkbox"]');
+        if (!box || box.disabled) return;
+        box.click();
     }
 
     /**
