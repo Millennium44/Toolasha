@@ -506,6 +506,131 @@ export function applyHoldings(batch, loop, state) {
 }
 
 /**
+ * Size a batch that keeps the queue busy for the whole of `hours`, spending what is held first.
+ *
+ * {@link balanceBatch} sizes a batch as if starting from nothing and {@link applyHoldings} then
+ * takes the held stock off it, which leaves the queue busy for less time than was asked. This
+ * solves the other way round, from each leg's own time per action (`forageActionsPerHour`,
+ * `decomposeActionsPerHour`, `coinifyActionsPerHour`, the same rates the rest of the loop
+ * uses): held fruit and held essence go in first, and the forage leg is whatever is needed to
+ * make up the rest of the time.
+ *
+ * For `F` forage actions the legs are
+ * `D = floor((held + F * fruitPerForageAction) / bulk)` decomposes,
+ * `C = floor((D * bulk * essencePerFruit + essenceHeld) / coinifyBulk)` coinifies, and the time is
+ * `F / forageRate + D / decomposeRate + C / coinifyRate`. That is non-decreasing in `F`, so the
+ * largest `F` whose time does not pass `hours` is found by bisection. The batch therefore
+ * never runs past the time asked and falls short of it by at most one forage action's worth of
+ * downstream work. Every leg rounds down, as in {@link balanceBatch}, so none asks for more input
+ * than the leg before it makes (decompose is a success rate, so coinify is on expected essence).
+ *
+ * When what is held already fills more than `hours`, there is no forage leg and the batch is cut
+ * to fit: held essence is coinified first (it earns without a fee), then as much fruit is
+ * decomposed as the remaining time allows (again by bisection).
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {number} hours - How long the queue should stay busy
+ * @param {Object|null} state - From `readCharacterState` (`starfruitHeld`, `essenceHeld`)
+ * @returns {Object|null} A batch shaped like {@link balanceBatch}'s plus `fill`
+ *   (`{fruitHeld, essenceHeld, scratchForage, trimmed}`), or null when it cannot be sized
+ *   (the caller falls back to {@link balanceBatch} + {@link applyHoldings}); also null when the
+ *   loop items could not be resolved (`holdingsCredited === false`), so the fallback can say so
+ */
+export function fillBatch(loop, hours, state) {
+    if (!loop || loop.missing?.length) return null;
+    if (!Number.isFinite(hours) || hours <= 0) return null;
+    if (state?.holdingsCredited === false) return null;
+
+    const fruitPerForageAction = loop.fruitPerForageAction || 0;
+    const forageRate = loop.forageActionsPerHour || 0;
+    const decomposeRate = loop.decomposeActionsPerHour || 0;
+    const coinifyRate = loop.coinifyActionsPerHour || 0;
+    if (!(fruitPerForageAction > 0 && forageRate > 0 && decomposeRate > 0 && coinifyRate > 0)) return null;
+    const decomposeBulk = loop.decomposeBulk || 1;
+    const coinifyBulk = loop.coinifyBulk || 1;
+    const essencePerFruit = loop.essencePerFruit || 0;
+
+    const EPS = 1e-9;
+    const solve = (fruitHeld, essenceHeld) => {
+        const legs = (forage) => {
+            const fruit = fruitHeld + forage * fruitPerForageAction;
+            const decompose = Math.floor(fruit / decomposeBulk);
+            const essence = decompose * decomposeBulk * essencePerFruit + essenceHeld;
+            const coinify = Math.floor(essence / coinifyBulk);
+            const time = forage / forageRate + decompose / decomposeRate + coinify / coinifyRate;
+            return { forage, decompose, coinify, fruit, essence, time };
+        };
+        if (legs(0).time <= hours + EPS) {
+            let lo = 0;
+            let hi = Math.ceil(hours * forageRate) + 1;
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                if (legs(mid).time <= hours + EPS) lo = mid;
+                else hi = mid - 1;
+            }
+            return { ...legs(lo), trimmed: false };
+        }
+
+        // Held stock alone is longer than the time asked: no forage, and only what fits
+        const coinifyOf = (decompose) =>
+            Math.floor((decompose * decomposeBulk * essencePerFruit + essenceHeld) / coinifyBulk);
+        const timeOf = (decompose) => decompose / decomposeRate + coinifyOf(decompose) / coinifyRate;
+        let decompose = 0;
+        if (timeOf(0) <= hours + EPS) {
+            let lo = 0;
+            let hi = Math.floor(fruitHeld / decomposeBulk);
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                if (timeOf(mid) <= hours + EPS) lo = mid;
+                else hi = mid - 1;
+            }
+            decompose = lo;
+        }
+        const coinify = Math.min(coinifyOf(decompose), Math.floor(hours * coinifyRate + EPS));
+        const fruit = fruitHeld;
+        const essence = decompose * decomposeBulk * essencePerFruit + essenceHeld;
+        return {
+            forage: 0,
+            decompose,
+            coinify,
+            fruit,
+            essence,
+            time: decompose / decomposeRate + coinify / coinifyRate,
+            trimmed: true,
+        };
+    };
+
+    const fruitHeld = Math.max(0, Math.floor(Number(state?.starfruitHeld) || 0));
+    const essenceHeld = Math.max(0, Math.floor(Number(state?.essenceHeld) || 0));
+    const picked = solve(fruitHeld, essenceHeld);
+    const scratch = fruitHeld > 0 || essenceHeld > 0 ? solve(0, 0) : picked;
+
+    const gold =
+        picked.coinify * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
+        picked.decompose * decomposeBulk * (loop.goldOutPerFruit || 0);
+    const bellPrice = loop.bellPrice;
+    return {
+        hours: picked.time,
+        requestedHours: hours,
+        forageActions: picked.forage,
+        decomposeActions: picked.decompose,
+        coinifyActions: picked.coinify,
+        fruit: picked.fruit,
+        essence: picked.essence,
+        gold,
+        bells: Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null,
+        credits: [],
+        holdingsNote: '',
+        fill: {
+            fruitHeld,
+            essenceHeld,
+            scratchForage: scratch.forage,
+            trimmed: picked.trimmed,
+        },
+    };
+}
+
+/**
  * The largest batch that uses ALL the Star Fruit held and forages none.
  *
  * The inverse of {@link balanceBatch}: that one starts from a duration and works out

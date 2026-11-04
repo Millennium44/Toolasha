@@ -1067,7 +1067,12 @@ describe('the queue helper', () => {
         await ironCowFarmPanel.refresh();
 
         // 1,600 forages at 16h, minus the 300 already held.
-        expect(text()).toContain('1,300');
+        // Held fruit is used first and the forage leg makes up the rest of the 16h: 300 held fruit
+        // need no foraging, so the same 16h forages 1,383 and decomposes 1,683 (not 1,300 and 1,600,
+        // which left the queue busy for 14.1h).
+        expect(text()).toContain('1,383');
+        expect(text()).toContain('1,683');
+        expect(text()).toContain('Keeps the queue busy about 16h');
         expect(text()).toContain('You have 300 Star Fruit');
         expect(text()).not.toContain(FAILED);
     });
@@ -1083,6 +1088,100 @@ describe('the queue helper', () => {
 
         expect(walk.started).toHaveLength(1);
         expect(walk.started[0]).toMatchObject({ forageActions: 1600, decomposeActions: 1600, coinifyActions: 480 });
+    });
+
+    describe('hours fill the time, bells keep the least work', () => {
+        const withHrids = () =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+            });
+
+        test('a preset keeps the queue busy for the whole time and the bells follow the result', async () => {
+            plan.state = character({ starfruitHeld: 40_000, essenceHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((b) => b.textContent === '2 weeks').click();
+
+            // the held stock alone is ~292h, so 336h needs forage for the rest
+            expect(boxes()[0].value).toBe('336');
+            expect(text()).toContain('Keeps the queue busy about 336h');
+            expect(text()).not.toContain('not 336h');
+            // 336h at 277.5K/h is ~98 bells from scratch; the held stock is extra work, so the bells are not fewer
+            expect(Number(boxes()[1].value)).toBeGreaterThanOrEqual(Math.round((277_500 * 336) / 950_000) - 1);
+        });
+
+        test('a bell target keeps its own meaning: the least work, with the sooner finish said', async () => {
+            plan.state = character({ starfruitHeld: 5000, essenceHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            boxes()[1].value = '40';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+
+            expect(ironCowFarmPanel.batchBasis).toBe('bells');
+            expect(text()).toContain('sooner than the');
+            // the hours box follows the result, shorter than the 40 bells take from scratch
+            expect(Number(boxes()[0].value)).toBeLessThan((40 * 950_000) / 277_500);
+            expect(boxes()[1].value).toBe('40');
+        });
+
+        test('typing hours afterwards goes back to filling the time', async () => {
+            plan.state = character({ starfruitHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            boxes()[1].value = '40';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+            boxes()[0].value = '48';
+            boxes()[0].dispatchEvent(new Event('input', { bubbles: true }));
+
+            expect(ironCowFarmPanel.batchBasis).toBe('hours');
+            expect(text()).not.toContain('sooner than the');
+            expect(boxes()[0].value).toBe('48');
+        });
+
+        test('held stock longer than the time asked is cut to fit and says so', async () => {
+            plan.state = character({ starfruitHeld: 367_751, essenceHeld: 17_172, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((b) => b.textContent === '1 day').click();
+
+            expect(text()).toContain('only what fits is queued');
+            [...ironCowFarmPanel.panel.querySelectorAll('button')]
+                .find((b) => b.textContent.startsWith('Walk it'))
+                .click();
+            expect(walk.started[0].forageActions).toBe(0);
+        });
+
+        test('warns when the decompose fees are more gold than is held', async () => {
+            plan.state = character({ coins: 1000, starfruitHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            // 16h = 1,600 decomposes at 375 each = 600K against 1K held
+            expect(text()).toContain('Decompose fees come to');
+            expect(text()).toContain('short by');
+        });
+
+        test('missing fee price or unread purse says nothing rather than a wrong figure', async () => {
+            plan.state = character({ coins: undefined, starfruitHeld: 0, holdingsCredited: true });
+            loop.result = { ...withHrids(), goldOutPerFruit: undefined };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            expect(text()).not.toContain('Decompose fees come to');
+            expect(text()).not.toContain(FAILED);
+        });
     });
 
     describe('Max', () => {

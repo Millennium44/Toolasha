@@ -43,10 +43,10 @@ import {
     ASSUMED_OFFLINE_HOURS,
     applyHoldings,
     balanceBatch,
-    bellsForHours,
     calculateStarfruitLoop,
     cowbellPricing,
     hoursForBells,
+    fillBatch,
     loopWarnings,
     maxBatch,
     offlineWindow,
@@ -281,6 +281,12 @@ class IronCowFarmPanel {
         this.batchUnit = 'h';
         /** True while the helper is sized by the Max button (all held fruit) rather than by a duration */
         this.queueMax = false;
+        /**
+         * What drives the numbers when Max is off: 'hours' keeps the queue busy for `batchHours` (held stock
+         * first, forage for the rest); 'bells' sizes the least work that earns the bells typed, which can
+         * finish sooner than the hours it was converted from
+         */
+        this.batchBasis = 'hours';
         this.queueRefs = null;
         this.busy = false;
         this.loaded = null;
@@ -372,6 +378,7 @@ class IronCowFarmPanel {
         this._loadGen++;
         this.loaded = null;
         this.queueMax = false;
+        this.batchBasis = 'hours';
         this._remove();
     }
 
@@ -428,6 +435,7 @@ class IronCowFarmPanel {
             if (window?.hours > 0) this.batchHours = window.hours;
             this.batchUnit = 'h';
             this.queueMax = false;
+            this.batchBasis = 'hours';
         }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
@@ -1097,11 +1105,13 @@ class IronCowFarmPanel {
             return holder;
         }
 
-        // In Max the duration is an output (how long the held fruit keeps the queue busy), so the boxes follow it
+        // In Max the duration is an output (how long the held fruit keeps the queue busy); so it is for a bell
+        // target. Only a typed duration is an input, and then the box shows what was asked.
         if (batch.max) this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+        this.shownHours = this._shownHoursFor(batch);
 
-        // Shown in the unit the select is on: batchHours is always hours, and the select remembers 'd'
-        const shownDuration = this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours;
+        // Shown in the unit the select is on: shownHours is always hours, and the select remembers 'd'
+        const shownDuration = this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours;
         const hoursBox = numberBox(round1(shownDuration), (raw) => this._setBatchHours(Number(raw), 'hours'));
         const unit = document.createElement('select');
         for (const [value, label] of [
@@ -1124,7 +1134,7 @@ class IronCowFarmPanel {
         unit.addEventListener('change', () => {
             this._edits.batch++;
             this.batchUnit = unit.value;
-            hoursBox.value = String(round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours));
+            hoursBox.value = String(round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours));
         });
 
         const durationRow = document.createElement('div');
@@ -1151,7 +1161,7 @@ class IronCowFarmPanel {
             );
         }
 
-        const bellsBox = numberBox(hasBellPrice ? Math.round(bellsForHours(loop, this.batchHours) || 0) : '', (raw) =>
+        const bellsBox = numberBox(hasBellPrice ? Math.round(batch.bells || 0) : '', (raw) =>
             this._setBatchBells(Number(raw))
         );
         const bellsRow = document.createElement('div');
@@ -1215,6 +1225,12 @@ class IronCowFarmPanel {
             // rather than keep a Max that no longer describes anything
             this.queueMax = false;
         }
+        if (this.batchBasis === 'hours') {
+            // Fill the whole time asked: held stock first, forage for the rest. Null (items unresolved, a
+            // rate missing) drops to the from-scratch sizing below, which says why when it credits nothing.
+            const filled = fillBatch(this.loop, hours, state);
+            if (filled) return filled;
+        }
         const batch = balanceBatch(this.loop, hours);
         if (!batch) return null;
         return applyHoldings(batch, this.loop, state);
@@ -1258,10 +1274,19 @@ class IronCowFarmPanel {
         const presses = steps.length === 1 ? '1 press' : `${formatWithSeparator(steps.length)} presses`;
         // Stock on hand can shrink the batch well below the duration asked; say so
         // rather than leave a short figure next to a longer request unexplained.
-        const shortened =
-            batch.credits?.length && batch.requestedHours > 0 && batch.hours < batch.requestedHours * 0.99
-                ? ` (not ${round1(batch.requestedHours)}h: what you hold replaces the legs that would have made it)`
-                : '';
+        let shortened = '';
+        if (batch.fill?.trimmed) {
+            shortened = ` (not ${round1(batch.requestedHours)}h: what you hold already fills more than that, so only what fits is queued)`;
+        } else if (
+            !batch.fill &&
+            !batch.max &&
+            batch.credits?.length &&
+            batch.requestedHours > 0 &&
+            batch.hours < batch.requestedHours * 0.99
+        ) {
+            // Bell target: the least work that earns the bells, which finishes sooner than the hours they convert to
+            shortened = ` (sooner than the ${round1(batch.requestedHours)}h these bells take from scratch: what you hold replaces the legs that would have made them)`;
+        }
         refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${shortened}${earns} — ${presses}.`;
 
         if (refs.walk) refs.walk.textContent = steps.length ? `Walk it — ${presses}` : 'Walk it';
@@ -1277,6 +1302,27 @@ class IronCowFarmPanel {
      */
     _creditLines(batch) {
         const lines = [];
+        const dim = { display: 'block', color: COLORS.textDim, fontSize: '11px' };
+        if (batch.fill) {
+            const { fruitHeld, essenceHeld, scratchForage } = batch.fill;
+            const fruitName = this.loop?.items?.starfruitName || 'Star Fruit';
+            const essenceName = this.loop?.items?.essenceName || 'essence';
+            if (fruitHeld > 0) {
+                const saved = Math.max(0, scratchForage - batch.forageActions);
+                lines.push(
+                    span(
+                        `You have ${formatWithSeparator(fruitHeld)} ${fruitName} — used first, ` +
+                            `${formatWithSeparator(saved)} fewer forage actions.`,
+                        dim
+                    )
+                );
+            }
+            if (essenceHeld > 0) {
+                lines.push(span(`You have ${formatWithSeparator(essenceHeld)} ${essenceName} — coinified first.`, dim));
+            }
+        }
+        const fee = this._decomposeFeeWarning(batch);
+        if (fee) lines.push(span(fee, { display: 'block', color: COLORS.warn, fontSize: '11px' }));
         if (batch.max) {
             const { fruitName, fruitHeld, leftoverFruit, essenceHeld } = batch.max;
             const left =
@@ -1315,23 +1361,69 @@ class IronCowFarmPanel {
         if (!Number.isFinite(hours) || hours <= 0) return;
         this._edits.batch++;
         this.queueMax = false;
+        // Typed or pressed hours are the input (held stock first, forage for the rest); a bell target is
+        // converted to hours and sized as the least work that earns it
+        this.batchBasis = source === 'bells' ? 'bells' : 'hours';
         const inDays = source === 'hours' && this.batchUnit === 'd';
         this.batchHours = Math.min(MAX_QUEUE_HOURS, inDays ? hours * HOURS_PER_DAY : hours);
 
         const refs = this.queueRefs;
+        // What is held is read again on every press: the card may have been drawn a while ago
+        this._freshState();
         const batch = this._batchFor(this.batchHours);
         if (!refs || !batch) return;
 
-        // The field the player is typing in is left alone; the other two follow.
+        // The field the player is typing in is left alone; the other follows from the result.
+        this.shownHours = this._shownHoursFor(batch);
         if (source !== 'hours') {
             refs.hoursBox.value = String(
-                round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours)
+                round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours)
             );
         }
         if (source !== 'bells' && refs.hasBellPrice) {
-            refs.bellsBox.value = String(Math.round(bellsForHours(this.loop, this.batchHours) || 0));
+            refs.bellsBox.value = String(Math.round(batch.bells || 0));
         }
         this._drawBatch(batch);
+    }
+
+    /**
+     * Read the character again and keep it as the state the card sizes against.
+     * @returns {Object|null} The fresh state, or null when it cannot be read (the old one is kept)
+     * @private
+     */
+    _freshState() {
+        const state = this._safeState();
+        if (state) this._queueState = state;
+        return state;
+    }
+
+    /**
+     * The hours the duration box should show: what was asked when the duration is the input, the batch's own
+     * figure when the output (Max, or a bell target).
+     * @param {Object} batch - From `_batchFor`
+     * @returns {number} Hours
+     * @private
+     */
+    _shownHoursFor(batch) {
+        const derived = this.queueMax || this.batchBasis === 'bells';
+        return derived ? Math.min(MAX_QUEUE_HOURS, batch.hours) : this.batchHours;
+    }
+
+    /**
+     * Warn when the decompose fees for a batch come to more gold than is held. The decompose leg runs before
+     * any coinify income, so the queue stalls on fees if the gold is not there up front.
+     * @param {Object} batch - From `_batchFor`
+     * @returns {string} The warning, or '' when affordable or the fee cannot be priced
+     * @private
+     */
+    _decomposeFeeWarning(batch) {
+        const perFruit = this.loop?.goldOutPerFruit;
+        const coinsHeld = this._queueState?.coins;
+        // A missing fee or an unread purse is not zero: say nothing rather than a wrong figure
+        if (!Number.isFinite(perFruit) || perFruit <= 0 || !Number.isFinite(coinsHeld)) return '';
+        const need = batch.decomposeActions * (this.loop.decomposeBulk || 1) * perFruit;
+        if (need <= coinsHeld) return '';
+        return `Decompose fees come to ${coins(need)} and you hold ${coins(coinsHeld)} — short by ${coins(need - coinsHeld)}, so the queue would stall on gold.`;
     }
 
     /**
@@ -1374,8 +1466,9 @@ class IronCowFarmPanel {
     _syncFields(batch) {
         const refs = this.queueRefs;
         if (!refs) return;
+        this.shownHours = this._shownHoursFor(batch);
         refs.hoursBox.value = String(
-            round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours)
+            round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours)
         );
         if (refs.hasBellPrice) refs.bellsBox.value = String(Math.round(batch.bells || 0));
         this._drawBatch(batch);
