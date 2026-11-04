@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { UPGRADE_CARD_CSS } from './upgrade-cards.js';
 
 // The advisor's mirror and base prices go through the shared enhancement input rule; this file is not
 // about prices, so nothing is priced
@@ -7606,5 +7607,289 @@ describe('large token, credit and cowbell figures in the lab tables', () => {
             `[data-skilling-gold-detail="${unpriced.dataset.skillingGoldRow}"]`
         );
         expect(unpricedDetail.querySelector('[data-exact-figures]')).toBeNull();
+    });
+});
+
+describe('Lab upgrade results as cards', () => {
+    let container;
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        storage.written = {};
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        ui._viewChoices = { wide: 'cards', narrow: null };
+    });
+
+    afterEach(() => {
+        container.remove();
+        window.matchMedia = undefined;
+        ui.destroy();
+    });
+
+    const cards = (root = container) => [...root.querySelectorAll('.mwi-ucard')];
+    const cardNames = (root = container) =>
+        cards(root).map((c) => c.querySelector('.mwi-ucard-name').textContent.trim());
+    const tableNames = (selector) =>
+        [...container.querySelectorAll(selector)].map((tr) => tr.querySelector('td').childNodes[0].textContent.trim());
+
+    const gold = (name, cost, delta, extra = {}) => ({
+        candidate: { type: 'tier', description: name },
+        costType: 'gold',
+        cost,
+        winRate: 0.5 + delta,
+        winRateDelta: delta,
+        metricType: 'winRate',
+        costDetail: null,
+        ...extra,
+    });
+    const singleFight = (rows) => ({ baseline: { winRate: 0.5 }, results: rows });
+    const sevenGold = () =>
+        singleFight([
+            gold('Alpha', 2_000_000, 0.02),
+            gold('Bravo', 5_190_259_500, 0.05),
+            gold('Charlie', null, 0.01),
+            gold('Delta', 0, 0.01),
+            gold('Echo', -17_700_000, 0.04),
+            gold('Foxtrot', 800_000, 0.005),
+            gold('Golf', 900_000, 0.006),
+        ]);
+
+    test('a phone defaults to Cards and a wide window to Table; a pick is kept for its own form factor only', async () => {
+        ui._viewChoices = { wide: null, narrow: null };
+        ui._narrowQuery = null;
+        expect(ui._labView()).toBe('table');
+        window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+        expect(ui._labView()).toBe('cards');
+        ui._renderUpgradeResults(sevenGold(), container);
+        expect(container.querySelector('[data-card-view="table"]').textContent).toBe('Full table');
+        container.querySelector('[data-card-view="table"]').click();
+        expect(ui._viewChoices).toEqual({ wide: null, narrow: 'table' });
+        await settle();
+        expect(storage.written.labSimResultsView).toEqual({ wide: null, narrow: 'table' });
+        expect(container.querySelector('table')).not.toBeNull();
+        expect(cards()).toHaveLength(0);
+    });
+
+    test('card N is table row N for the single-fight gold table, top 5 then Show all', () => {
+        ui._renderUpgradeResults(sevenGold(), container);
+        expect(cards()).toHaveLength(5);
+        const cardOrder = cardNames();
+        container.querySelector('[data-card-showall]').click();
+        const allCards = cardNames();
+        expect(allCards).toHaveLength(7);
+        expect(allCards.slice(0, 5).map((n) => n.replace(/^#\d+\s*/, ''))).toEqual(
+            cardOrder.map((n) => n.replace(/^#\d+\s*/, ''))
+        );
+        ui._pickLabView('table');
+        const rows = tableNames('tr[data-gold-row]');
+        expect(allCards.map((n) => n.replace(/^#\d+\s*/, ''))).toEqual(rows);
+    });
+
+    test('unknown cost reads unknown, a credit reads as coins back, free stays free, never 0', () => {
+        ui._renderUpgradeResults(sevenGold(), container);
+        container.querySelector('[data-card-showall]').click();
+        const text = (name) =>
+            cards().find((c) => c.querySelector('.mwi-ucard-name').textContent.includes(name)).textContent;
+        expect(text('Charlie')).toContain('unknown');
+        expect(text('Charlie')).not.toMatch(/Cost\s*0\b/);
+        expect(text('Echo')).toContain('+17.7M back');
+        expect(text('Delta')).toContain('free');
+        expect(text('Bravo')).toContain('5.2B');
+        // The exact number is in Details with a label
+        expect(text('Bravo')).toContain('Cost 5,190,259,500 coins');
+        expect(
+            cards()
+                .find((c) => c.querySelector('.mwi-ucard-name').textContent.includes('Charlie'))
+                .getAttribute('data-card-state')
+        ).toBe('unpriced');
+    });
+
+    test('Rank by writes the sort a header click writes, and worst first can be put right', () => {
+        ui._renderUpgradeResults(sevenGold(), container);
+        const select = container.querySelector('[data-card-rank]');
+        select.value = 'cost';
+        select.dispatchEvent(new window.Event('change', { bubbles: true }));
+        // A header click on a new column starts descending; cards say so and offer the good end
+        const bar = container.querySelector('[data-card-best-first]');
+        expect(bar).not.toBeNull();
+        const worstFirst = cardNames().map((n) => n.replace(/^#\d+\s*/, ''));
+        bar.click();
+        const bestFirst = cardNames().map((n) => n.replace(/^#\d+\s*/, ''));
+        expect(bestFirst).not.toEqual(worstFirst);
+        expect(container.querySelector('[data-card-best-first]')).toBeNull();
+    });
+
+    test('a card holds no title attribute, and its Details hold only that row plus one closed glossary', () => {
+        ui._renderUpgradeResults(sevenGold(), container);
+        expect(container.querySelectorAll('.mwi-ucard [title]')).toHaveLength(0);
+        const gloss = container.querySelector('[data-card-glossary]');
+        expect(gloss.getAttribute('aria-expanded')).toBe('false');
+        expect(gloss.textContent).toContain('What the columns mean');
+    });
+
+    test('token cards say tokens and the rate each row is measured by; community rows keep win rate blank', () => {
+        ui._renderUpgradeResults(
+            singleFight([
+                {
+                    candidate: { type: 'token', description: 'Win token' },
+                    costType: 'token',
+                    tokenCost: 12_500,
+                    winRate: 0.55,
+                    winRateDelta: 0.05,
+                    metricType: 'winRate',
+                },
+                {
+                    candidate: { type: 'token', description: 'Clear token' },
+                    costType: 'token',
+                    tokenCost: 0,
+                    clearRate: 0.42,
+                    clearRateDelta: 0.03,
+                    metricType: 'clearRate',
+                },
+                {
+                    candidate: { type: 'community_buff', description: 'XP buff' },
+                    costType: 'community',
+                    cowbellCost: 2_400_000,
+                    xpPerRoom: 5000,
+                    xpPerRoomDelta: 125,
+                },
+            ]),
+            container
+        );
+        const text = (name) =>
+            cards().find((c) => c.querySelector('.mwi-ucard-name').textContent.includes(name)).textContent;
+        expect(text('Win token')).toContain('Win rate');
+        expect(text('Win token')).toContain('12.5K');
+        expect(text('Win token')).not.toMatch(/coins|free/);
+        expect(text('Clear token')).toContain('Clear rate');
+        expect(text('Clear token')).toContain('42.0%');
+        // A token level with no recorded cost is unknown, not 0
+        expect(text('Clear token')).toContain('unknown');
+        expect(text('XP buff')).toContain('2.4M/min');
+    });
+
+    test('no results, and one candidate', () => {
+        ui._renderUpgradeResults(singleFight([]), container);
+        expect(cards()).toHaveLength(0);
+        expect(ui._viewRedraws.has('single')).toBe(false);
+        ui._renderUpgradeResults(singleFight([gold('Only', 1000, 0.01)]), container);
+        expect(cards()).toHaveLength(1);
+        expect(container.querySelector('[data-card-showall]')).toBeNull();
+        expect(container.querySelector('.mwi-ucards-count').textContent).toBe('All 1');
+    });
+
+    test('a long name wraps instead of widening the card', () => {
+        const long =
+            'Royal Nature Robe Top +7 + Royal Nature Robe Bottoms +7 → Maelstrom Plate Body +10 + Maelstrom Plate Legs +10';
+        ui._renderUpgradeResults(singleFight([gold(long, 1000, 0.01)]), container);
+        expect(cardNames()[0]).toContain(long);
+        expect(UPGRADE_CARD_CSS).toContain('overflow-wrap: anywhere');
+    });
+
+    test('duplicate names are two cards with their own Details', () => {
+        ui._renderUpgradeResults(singleFight([gold('Same', 1000, 0.01), gold('Same', 2000, 0.02)]), container);
+        const ids = cards().map((c) => c.getAttribute('data-card-id'));
+        expect(new Set(ids).size).toBe(2);
+    });
+
+    test('skilling: the pick box on a card is the table’s pick, in the same state', () => {
+        const analysis = {
+            baseline: { clearRate: 0.6, xpPerRoom: 100 },
+            results: [
+                {
+                    candidate: { type: 'skilling_gear', description: 'Tool A', skillKey: '/skills/cooking' },
+                    costType: 'gold',
+                    cost: 5_000_000,
+                    clearRate: 0.65,
+                    clearRateDelta: 0.05,
+                },
+                {
+                    candidate: { type: 'skilling_gear', description: 'Tool B', skillKey: '/skills/cooking' },
+                    costType: 'gold',
+                    cost: 1_000,
+                    clearRate: 0.7,
+                    clearRateDelta: 0.1,
+                },
+            ],
+        };
+        ui._renderSkillingUpgradeResults(analysis, container);
+        const boxes = [...container.querySelectorAll('.mwi-ucard input[data-skilling-pick]')];
+        expect(boxes).toHaveLength(2);
+        const b = boxes.find((box) => box.closest('.mwi-ucard').textContent.includes('Tool B'));
+        b.click();
+        expect(ui._skillingChecked).toEqual([Number(b.dataset.skillingPick)]);
+        // Drawn again as the table, the same row is ticked
+        ui._pickLabView('table');
+        const ticked = [...container.querySelectorAll('table input[data-skilling-pick]')].filter((x) => x.checked);
+        expect(ticked.map((x) => Number(x.dataset.skillingPick))).toEqual([Number(b.dataset.skillingPick)]);
+        // And the checked-swaps table has no pick boxes in either view
+        const other = document.createElement('div');
+        document.body.appendChild(other);
+        ui._viewChoices = { wide: 'cards', narrow: null };
+        ui._renderSkillingUpgradeResults(analysis, other, { checked: true });
+        expect(other.querySelectorAll('input[data-skilling-pick]')).toHaveLength(0);
+        expect(other.querySelectorAll('.mwi-ucard')).toHaveLength(2);
+        other.remove();
+    });
+
+    test('a view change redraws only a container that still holds results', () => {
+        ui._renderUpgradeResults(sevenGold(), container);
+        expect(cards()).toHaveLength(5);
+        container.innerHTML = '<div>progress…</div>';
+        ui._pickLabView('table');
+        expect(container.textContent).toBe('progress…');
+        expect(ui._viewRedraws.has('single')).toBe(false);
+    });
+
+    test('ability order: orders as cards, the current order a baseline, within noise marked, no per-card Verify', () => {
+        ui._upgradeOrderSection = {
+            groups: [
+                {
+                    loadoutName: 'Lab',
+                    currentName: 'A > B > C',
+                    orders: [
+                        {
+                            name: 'B > A > C',
+                            order: ['b', 'a', 'c'],
+                            attemptsDelta: -1.2,
+                            runClearDelta: 0.03,
+                            attemptsDeltaNoise: 0.2,
+                            significant: true,
+                        },
+                        {
+                            name: 'C > A > B',
+                            order: ['c', 'a', 'b'],
+                            attemptsDelta: -0.1,
+                            runClearDelta: 0.001,
+                            attemptsDeltaNoise: 0.3,
+                            significant: false,
+                        },
+                    ],
+                },
+            ],
+        };
+        const el = ui._abilityOrderContainer();
+        ui._drawUpgradeAbilityOrder();
+        const orderCards = [...el.querySelectorAll('.mwi-ucard')];
+        expect(orderCards.length).toBe(3);
+        expect(orderCards.some((c) => c.hasAttribute('data-card-baseline'))).toBe(true);
+        expect(el.textContent).toContain('within noise');
+        expect(el.querySelectorAll('[data-card-verify]')).toHaveLength(0);
+    });
+
+    test('a pick a sync pull brings is adopted, and an older or empty record means the defaults', async () => {
+        ui._viewChoices = { wide: null, narrow: null };
+        storage.values.labSimResultsView = { wide: 'cards', narrow: 'bogus' };
+        try {
+            await ui._adoptPulledSettings({ settings: ['labSimResultsView'] });
+            expect(ui._viewChoices).toEqual({ wide: 'cards', narrow: null });
+            storage.values.labSimResultsView = 'not a record';
+            await ui._loadViewChoices();
+            expect(ui._viewChoices).toEqual({ wide: null, narrow: null });
+        } finally {
+            delete storage.values.labSimResultsView;
+        }
     });
 });

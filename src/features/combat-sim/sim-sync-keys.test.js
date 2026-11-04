@@ -69,6 +69,8 @@ const KEYS = [
     ['settings', 'labSimComparisonRuns'],
     ['settings', 'labSimComparisonBaseline'],
     ['combatExport', 'labSimUpgradeResults-fullkit'],
+    // Lab Sim, global: the Cards | Table pick
+    ['settings', 'labSimResultsView'],
     // Combat Sim
     ['settings', 'combatSimUpgradeModes'],
     ['settings', 'combatSimTriggerChoices'],

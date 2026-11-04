@@ -11,7 +11,33 @@ import { characterKey, readScoped, writeScoped } from '../../utils/character-key
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
 import { shortFigure, exactFiguresHtml, wireExactRows } from './lab-exact-figures.js';
-import { LAB_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
+import {
+    UPGRADE_CARD_CSS,
+    UPGRADE_CARD_STYLE_ID,
+    buildUpgradeCards,
+    upgradeCardsHtml,
+    viewSwitchHtml,
+    wireUpgradeCards,
+    wireViewSwitch,
+    UNKNOWN_TEXT,
+    signTone,
+    figure,
+} from './upgrade-cards.js';
+import {
+    LAB_CARD_CSS,
+    LAB_CARD_STYLE_ID,
+    labCardEntries,
+    dashToUnknown,
+    isWorstFirst,
+    singleFightHeaderSort,
+    SINGLE_FIGHT_BEST_DIR,
+    normalizeViewChoices,
+    resolveCardView,
+    withViewChoice,
+} from './lab-upgrade-cards.js';
+import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
+import { addStyles } from '../../utils/dom.js';
+import { LAB_SIM_KEYS, LAB_SIM_GLOBAL_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -190,6 +216,13 @@ const PANEL_ID = 'mwi-lab-sim-panel';
  * left open is a panel you were using, and closing it says so.
  */
 const GEOMETRY_KEY = 'labSimPanel';
+
+/**
+ * The Cards | Table pick for the upgrade results, `{wide, narrow}`: each null until the player picks on that form
+ * factor. One global record (a display choice, not a fact about a character); synced like the Lab's other panel
+ * choices (`sim-sync-keys.js`). An older build never reads it; a build with no record uses the defaults.
+ */
+const RESULTS_VIEW_KEY = 'labSimResultsView';
 
 /**
  * Storage key for the last Upgrade-tab results, remembered across refreshes
@@ -955,6 +988,22 @@ class LabSimUI {
         onSyncPullApplied((written) => this._adoptPulledSettings(written));
         // What the grouped saves last saw stored, so each writes only the key that changed
         this._storedValues = new StoredValueMemo();
+        // Upgrade results as cards: the pick per form factor, what is open, which sections show everything, and
+        // what each drawn card acts on. All in memory except the pick.
+        this._viewChoices = normalizeViewChoices(null);
+        this._viewEdits = 0;
+        this._openCards = new Set();
+        this._cardShowAll = new Set();
+        this._openGlossaries = new Set();
+        this._cardRegistry = new Map();
+        this._cardSections = new Map();
+        this._viewRedraws = new Map();
+        this._viewRedrawOwed = false;
+        this._orderViewDrawn = null;
+        this._rememberedLabResults = null;
+        this._rememberedOrderSection = null;
+        this._narrowQuery = null;
+        this._narrowListener = null;
         this._upgradeSortHandler = null;
         this._skillingSortHandler = null;
         // Recorded single-target runs, so a fight can be read against the last
@@ -976,6 +1025,26 @@ class LabSimUI {
         this._optionEdits = [];
     }
 
+    // A run ending is when a view change made during it is paid. These two flags are how every run says so, at
+    // each of the places that clear them, so the redraw owed is made from one spot.
+    get _upgradeRunning() {
+        return Boolean(this._upgradeRunningFlag);
+    }
+
+    set _upgradeRunning(value) {
+        this._upgradeRunningFlag = value;
+        if (!value) Promise.resolve().then(() => this._flushViewRedraw?.());
+    }
+
+    get _skillingRunning() {
+        return Boolean(this._skillingRunningFlag);
+    }
+
+    set _skillingRunning(value) {
+        this._skillingRunningFlag = value;
+        if (!value) Promise.resolve().then(() => this._flushViewRedraw?.());
+    }
+
     buildPanel() {
         if (this.panel) return;
 
@@ -987,6 +1056,8 @@ class LabSimUI {
 
         ensureSimPhoneStyles();
         ensureSimUpgradePhoneStyles();
+        addStyles(UPGRADE_CARD_CSS, UPGRADE_CARD_STYLE_ID);
+        addStyles(LAB_CARD_CSS, LAB_CARD_STYLE_ID);
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
         this.panel.style.cssText = `
@@ -1915,6 +1986,8 @@ class LabSimUI {
         });
         void this._restoreUpgradeSelection();
         void this._restoreTokenBuffLevels();
+        void this._loadViewChoices();
+        this._watchNarrowWindow();
         void this._restoreUpgradeResults();
         this._wireSwapBars();
         this._wireLabSections();
@@ -2518,6 +2591,8 @@ class LabSimUI {
                 ...Object.fromEntries(Object.entries(LAB_SIM_KEYS).map(([name, base]) => [name, characterKey(base)])),
                 comparisonRuns: characterKey(LAB_COMPARISON_KEY),
                 comparisonBaseline: characterKey(LAB_COMPARISON_BASELINE_KEY),
+                // Global: the key is its own name, not scoped to a character
+                ...LAB_SIM_GLOBAL_KEYS,
             });
             const results = pulledNames(written, 'combatExport', {
                 upgradeResults: characterKey(LAB_UPGRADE_RESULTS_KEY),
@@ -2547,6 +2622,7 @@ class LabSimUI {
                 work.push(this._restoreSkillingGoalInputs());
             }
             if (has('tokenBuffLevels')) work.push(this._restoreTokenBuffLevels());
+            if (has('resultsView')) work.push(this._loadViewChoices());
             if (has('checkedSwaps')) work.push(this._restoreCheckedSwaps({ replace: true }));
             if (has('triggerChoices')) work.push(this._restoreTriggerChoices());
             if (has('comparisonRuns', 'comparisonBaseline')) {
@@ -6701,6 +6777,291 @@ class LabSimUI {
         }
     }
 
+    // ---- Upgrade results as cards ------------------------------------------------------------------
+    //
+    // The same rows the tables draw, in the same order, with the same cell text (see `lab-upgrade-cards.js`).
+    // One Cards | Table pick covers every Lab results table. The pick is remembered per form factor, and only
+    // once the player makes one: a phone defaults to Cards, a wide window to Table.
+
+    /** @returns {boolean} Whether the window is at the phone breakpoint @private */
+    _isNarrow() {
+        try {
+            const query = this._narrowQuery || window.matchMedia?.(MARKET_MOBILE_QUERY);
+            return Boolean(query?.matches);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Redraw the results when the window crosses the breakpoint and that changes the view. One listener, taken
+     * off again in `destroy()`.
+     * @private
+     */
+    _watchNarrowWindow() {
+        if (this._narrowQuery || typeof window.matchMedia !== 'function') return;
+        const query = window.matchMedia(MARKET_MOBILE_QUERY);
+        if (!query || typeof query.addEventListener !== 'function') return;
+        this._narrowQuery = query;
+        this._narrowListener = () => this._redrawForViewChange();
+        query.addEventListener('change', this._narrowListener);
+    }
+
+    /** @private */
+    _unwatchNarrowWindow() {
+        this._narrowQuery?.removeEventListener?.('change', this._narrowListener);
+        this._narrowQuery = null;
+        this._narrowListener = null;
+    }
+
+    /**
+     * The view the upgrade results are drawn in: the pick for this form factor, else Cards on a phone and Table
+     * on a wide window.
+     * @returns {'cards'|'table'}
+     * @private
+     */
+    _labView() {
+        return resolveCardView(this._viewChoices, this._isNarrow());
+    }
+
+    /**
+     * The player picked Cards or Table. Remembered for this form factor only.
+     * @param {string} view - 'cards' or 'table'
+     * @private
+     */
+    _pickLabView(view) {
+        this._viewChoices = withViewChoice(this._viewChoices, this._isNarrow(), view);
+        void this._persistViewChoices();
+        this._redrawForViewChange();
+    }
+
+    /**
+     * Whether any run is going: a results container is emptied under a run's progress bar, and a redraw then would
+     * draw the analysis that is being replaced.
+     * @returns {boolean}
+     * @private
+     */
+    _isLabBusy() {
+        return Boolean(
+            this._upgradeRunning ||
+            this._skillingRunning ||
+            this._runStarting ||
+            this.isRunning ||
+            this._verify?.running
+        );
+    }
+
+    /**
+     * Remember how to draw a results container again, so a change of view redraws exactly what is on screen.
+     * @param {string} key - The area ('combat', 'checked-combat', 'skilling', 'checked-skilling', 'single')
+     * @param {HTMLElement} container - Where it is drawn
+     * @param {Function} redraw - Draws the same analysis into the container again
+     * @private
+     */
+    _registerViewRedraw(key, container, redraw) {
+        this._viewRedraws.set(key, { container, redraw, view: this._labView() });
+    }
+
+    /**
+     * Draw every results area again when the view they should be in is not the one on screen. Never while a
+     * run is going; the redraw is owed and made when the run ends. An area that no longer holds results (it was
+     * emptied for a new run or an empty result) is dropped, never redrawn.
+     * @private
+     */
+    _redrawForViewChange() {
+        if (!this.panel) return;
+        const view = this._labView();
+        const stale = [...this._viewRedraws.entries()].filter(([, entry]) => entry.view !== view);
+        const orderStale = Boolean(this._orderViewDrawn) && this._orderViewDrawn !== view;
+        if (!stale.length && !orderStale) return;
+        if (this._isLabBusy()) {
+            this._viewRedrawOwed = true;
+            return;
+        }
+        this._viewRedrawOwed = false;
+        for (const [key, entry] of stale) {
+            if (!entry.container.isConnected || !entry.container.querySelector('[data-card-view]')) {
+                this._viewRedraws.delete(key);
+                continue;
+            }
+            entry.redraw();
+        }
+        if (orderStale) this._drawUpgradeAbilityOrder();
+    }
+
+    /** Pay a redraw owed to a run that has ended @private */
+    _flushViewRedraw() {
+        if (this._viewRedrawOwed && !this._isLabBusy()) this._redrawForViewChange();
+    }
+
+    /**
+     * Whether these results are the remembered set restored from storage. Tied to the object, not to the
+     * banner: Clear forgets the saved copy and hides the banner, but the table on screen is still the restored one.
+     * A fresh Analyze builds a new object, so it is never remembered.
+     * @param {Object|null} results - The analysis result
+     * @returns {boolean}
+     * @private
+     */
+    _isRememberedLab(results) {
+        return Boolean(results) && (results === this._rememberedLabResults || results === this._rememberedOrderSection);
+    }
+
+    /** The Cards | Table switch, drawn once above a tab's results @private */
+    _labViewSwitchHtml() {
+        return viewSwitchHtml(this._labView(), this._isNarrow());
+    }
+
+    /**
+     * Draw one section's rows as cards and remember what its controls act on.
+     * @param {Object} spec
+     * @param {string} spec.section - Section id, unique across the panel
+     * @param {Array<Object>} spec.entries - From `labCardEntries`, in the table's order
+     * @param {Object|null} [spec.rank] - `{options, state, bestDir, apply(key), bestFirst()}` for Rank by
+     * @param {Function} spec.redraw - Draws this section's analysis again
+     * @param {Object|null} [spec.results] - The analysis the rows belong to (Verify acts only on it)
+     * @param {string} [spec.emptyText] - Said when there are no rows
+     * @param {boolean} [spec.order] - The Ability order section: its Show all is the saved one
+     * @returns {string} HTML
+     * @private
+     */
+    _labCardsSection({ section, entries, rank = null, redraw, results = null, emptyText, order = false }) {
+        const model = buildUpgradeCards({
+            section,
+            entries,
+            top: order ? LAB_ABILITY_ORDER_TOP : undefined,
+            showAll: order ? Boolean(this._swapOptions.orderShowAll) : this._cardShowAll.has(section),
+            open: this._openCards,
+            remembered: this._isRememberedLab(results),
+        });
+        for (const card of model.cards) this._cardRegistry.set(card.id, { section, row: card.row, results });
+        this._cardSections.set(section, { rank, redraw });
+        const options = rank?.options || [];
+        return upgradeCardsHtml(model, {
+            rankBy: rank
+                ? { options, selected: options.some((o) => o.key === rank.state?.key) ? rank.state.key : '' }
+                : null,
+            worstFirst: Boolean(rank && isWorstFirst(rank.state, rank.bestDir)),
+            emptyText,
+            glossaryOpen: this._openGlossaries.has(section),
+            toggle: !order,
+        });
+    }
+
+    /**
+     * Wire the cards and the Cards | Table switch under a freshly drawn container.
+     * @param {HTMLElement} container - A results container
+     * @private
+     */
+    _wireLabCards(container) {
+        wireViewSwitch(container, (view) => this._pickLabView(view));
+        wireUpgradeCards(container, {
+            onToggle: (id, open) => {
+                if (open) {
+                    this._openCards.add(id);
+                    this._fillCardBreakdown(container, id);
+                } else this._openCards.delete(id);
+            },
+            onGlossary: (section, open) => {
+                if (open) this._openGlossaries.add(section);
+                else this._openGlossaries.delete(section);
+            },
+            onVerify: (id) => this._verifyFromLabCard(id),
+            onShowAll: (section) => {
+                if (this._cardShowAll.has(section)) this._cardShowAll.delete(section);
+                else this._cardShowAll.add(section);
+                this._cardSections.get(section)?.redraw?.();
+            },
+            onRank: (section, key) => {
+                const entry = this._cardSections.get(section);
+                if (!entry?.rank) return;
+                entry.rank.apply(key);
+                entry.redraw?.();
+            },
+            onBestFirst: (section) => {
+                const entry = this._cardSections.get(section);
+                if (!entry?.rank) return;
+                entry.rank.bestFirst();
+                entry.redraw?.();
+            },
+        });
+        for (const id of this._openCards) this._fillCardBreakdown(container, id);
+    }
+
+    /**
+     * Work out a skilling gear card's room breakdown the first time its Details open, as the table does for its
+     * expanded row: it is a few room evaluations per row, which nobody pays for the cards they never open.
+     * @param {HTMLElement} container - The results container the card is in
+     * @param {string} id - The card's id
+     * @private
+     */
+    _fillCardBreakdown(container, id) {
+        const picked = this._cardRegistry.get(id);
+        if (!picked?.row?.result || !picked.section.endsWith('-gold')) return;
+        const card = [...container.querySelectorAll('[data-card-id]')].find(
+            (el) => el.getAttribute('data-card-id') === id
+        );
+        const slot = card?.querySelector('[data-skill-breakdown]');
+        if (slot && !slot.dataset.filled) {
+            slot.dataset.filled = '1';
+            slot.innerHTML = this._renderSkillBreakdown(picked.row.result);
+        }
+    }
+
+    /**
+     * A card's Verify: the all-fights pipeline for exactly that row. Refused (false, so the button is given
+     * back) when the card is no longer a row of the analysis on screen, when that analysis is a remembered one or
+     * not the live one, or when any run is going; a second tap while one is running is such a refusal.
+     * @param {string} id - The card's id
+     * @returns {boolean} Whether a verify started
+     * @private
+     */
+    _verifyFromLabCard(id) {
+        const picked = this._cardRegistry.get(id);
+        const analysis = this._allFightsResult;
+        if (
+            picked?.section !== 'af-gold' ||
+            !picked.row ||
+            !analysis ||
+            picked.results !== analysis ||
+            !analysis.results.includes(picked.row) ||
+            !this._isVerifyLive('all', analysis)
+        ) {
+            return false;
+        }
+        if (this._isLabBusy()) {
+            this._setStatus('Wait for the current run to finish, then verify.');
+            return false;
+        }
+        void this._runLabVerify({ scope: 'all', items: [{ key: this._allRowKey(picked.row), row: picked.row }] });
+        return true;
+    }
+
+    /** Remember the pick, counting the edit so a read that was out does not overwrite it @private */
+    async _persistViewChoices() {
+        this._viewEdits = (this._viewEdits || 0) + 1;
+        try {
+            await storage.set(RESULTS_VIEW_KEY, this._viewChoices, 'settings');
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save the results view:', error);
+        }
+    }
+
+    /**
+     * Read the remembered pick. A pick made while the read was out is newer than what it read and stands.
+     * @private
+     */
+    async _loadViewChoices() {
+        const editsBefore = this._viewEdits || 0;
+        try {
+            const saved = await storage.get(RESULTS_VIEW_KEY, 'settings', null);
+            if ((this._viewEdits || 0) !== editsBefore) return;
+            this._viewChoices = normalizeViewChoices(saved);
+            this._redrawForViewChange();
+        } catch (error) {
+            console.error('[LabSimUI] Failed to read the results view:', error);
+        }
+    }
+
     // ---- Verify: re-measuring the winners on fresh paired seeds -----------------------------------
 
     /**
@@ -7298,11 +7659,14 @@ class LabSimUI {
         if (!section) {
             el.innerHTML = '';
             el.style.display = 'none';
+            this._orderViewDrawn = null;
             return;
         }
+        this._orderViewDrawn = this._labView();
         el.style.display = 'block';
         el.innerHTML = this._renderLabAbilityOrderSection(section);
         this._wireLabAbilityOrder(el, () => this._drawUpgradeAbilityOrder());
+        this._wireLabCards(el);
     }
 
     /**
@@ -7455,6 +7819,68 @@ class LabSimUI {
                 .map((o) => ({ order: o, verdict: verdictOf(gi, o) }))
                 .filter((x) => x.verdict?.verdict === 'confirmed')
                 .sort((a, b) => a.verdict.mean - b.verdict.mean)[0] || null;
+        const asCards = this._labView() === 'cards';
+        // One loadout's orders as cards: the current order is an unranked baseline card, the rest are ranked in the
+        // order the table draws them. No per-card Verify: an order's verdict is judged inside its loadout's top
+        // set, so the button above it verifies that set and the verdicts show on the cards
+        const orderCards = (gi, group, allEntries) => {
+            const running = this._verify.running;
+            const list = allEntries.map((e) => {
+                if (e.current) {
+                    return {
+                        row: null,
+                        key: `order-current-${gi}`,
+                        name: group.currentName,
+                        baseline: true,
+                        lines: [[figure('', 'Your current order: every order here is compared with it.', 'muted')]],
+                    };
+                }
+                const verdict = verdictOf(gi, e);
+                const rowKey = this._orderRowKey(gi, e);
+                return {
+                    row: e,
+                    key: rowKey,
+                    name: e.name,
+                    headline: figure(
+                        '\u0394Expected attempts',
+                        attemptsText(e.attemptsDelta),
+                        !e.significant ? 'muted' : signTone(e.attemptsDelta, { lowerIsBetter: true }),
+                        'Change in expected attempts to clear this loadout\u2019s fights; negative is better'
+                    ),
+                    within: !e.significant,
+                    lines: [
+                        [
+                            figure(
+                                '\u0394Clear chance',
+                                clearText(e.runClearDelta),
+                                !e.significant ? 'muted' : signTone(e.runClearDelta),
+                                'Change in the chance of clearing this loadout\u2019s fights in one go'
+                            ),
+                            figure(
+                                'Noise',
+                                Number.isFinite(e.attemptsDeltaNoise)
+                                    ? `\u00B1${e.attemptsDeltaNoise.toFixed(1)}`
+                                    : UNKNOWN_TEXT,
+                                'muted',
+                                'One standard error of the change in expected attempts'
+                            ),
+                        ],
+                    ],
+                    verdict: verdict ? { ...verdict, stopped: Boolean(verdict.partial) } : null,
+                    verdictHtml: verdict ? verifyChipHtml(verdict, { partial: verdict.partial }) : '',
+                    pending: Boolean(running?.scope === 'order' && running.keys.has(rowKey)),
+                    offerVerify: false,
+                };
+            });
+            return this._labCardsSection({
+                section: `order-${gi}`,
+                entries: list,
+                results: section,
+                redraw: () => this._drawUpgradeAbilityOrder(),
+                emptyText: 'No orders to show.',
+                order: true,
+            });
+        };
         const blocks = groups.map((group, gi) => {
             const orders = group.orders;
             // Best significant improving order; a noisy top must not hide a significant later one
@@ -7529,17 +7955,16 @@ class LabSimUI {
                       `Verify top ${verifyPicks}</button>` +
                       `${verifyRunning?.scope === 'order' ? ' <span style="color:#8ab4f8; font-size:11px;">Verifying on fresh seeds… Stop cancels.</span>' : ''}</div>`
                     : '';
-            return (
-                title +
-                verdict +
-                verifyButton +
+            // The group's orders as cards when that is the view; the verdict line and Verify top N above stay
+            const tableHtml =
                 `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
                 `<th style="${th} text-align:left;">Order</th>` +
                 `<th style="${th}" title="Change in expected attempts to clear this loadout’s fights; negative is better">ΔExpected attempts</th>` +
                 `<th style="${th}" title="Change in the chance of clearing this loadout’s fights in one go">ΔClear chance</th>` +
                 `<th style="${th}" title="One standard error of the change in expected attempts">Noise</th></tr></thead>` +
-                `<tbody>${rows}</tbody></table></div>`
-            );
+                `<tbody>${rows}</tbody></table></div>`;
+            const cardsHtml = asCards ? orderCards(gi, group, entries, shown) : '';
+            return title + verdict + verifyButton + (asCards ? cardsHtml : tableHtml);
         });
 
         const bests = groups.map((g) => bestOrderOf(g.orders)).filter(Boolean);
@@ -7595,6 +8020,8 @@ class LabSimUI {
             }) +
             `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">Every order of each loadout’s ordinary abilities, ` +
             `simulated and ranked by expected attempts saved. Free to apply: set it in the game.</div>` +
+            // An order-only run has no table above to switch from, so the section brings the switch itself
+            (this._viewRedraws.has('combat') || this._viewRedraws.has('single') ? '' : this._labViewSwitchHtml()) +
             verifyNote +
             body +
             toggle +
@@ -7642,6 +8069,7 @@ class LabSimUI {
             container.innerHTML = checked
                 ? ''
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No results — check that combat skip levels and loadouts are set.</div>';
+            this._viewRedraws.delete(checked ? 'checked-combat' : 'combat');
             if (!checked) this._setStatus('All-fights analysis produced no results.');
             return;
         }
@@ -7662,6 +8090,7 @@ class LabSimUI {
         const goldResults = results.filter((r) => r.costType !== 'token' && !levelResults.includes(r));
         const levelsOnly = levelResults.length > 0 && !goldResults.length;
 
+        const asCards = this._labView() === 'cards';
         const pct = (v) => `${(v * 100).toFixed(1)}%`;
         const deltaPct = (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`;
         const deltaColor = (v) => (v > 0.0001 ? '#4caf50' : v < -0.0001 ? '#f44336' : '#888');
@@ -7690,7 +8119,16 @@ class LabSimUI {
             '; white-space:normal; ' +
             'overflow-wrap:anywhere; line-height:1.4;';
         const bestDelta = Math.min(...goldResults.map((r) => r.attemptsDelta));
-        const sharedStyles = { thStyle, tdStyle, tdNameStyle, fmtAttempts, fmtAttemptsDelta, attemptsDeltaColor };
+        const sharedStyles = {
+            thStyle,
+            tdStyle,
+            tdNameStyle,
+            fmtAttempts,
+            fmtAttemptsDelta,
+            attemptsDeltaColor,
+            asCards,
+            analysisResult,
+        };
 
         // What each column sorts by, and which way round is "good" — clicking
         // Cost wants the cheapest first, clicking Avg ΔWin the biggest gain
@@ -7733,6 +8171,7 @@ class LabSimUI {
         if (!checked && this._restoredUpgradeAt) {
             html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
         }
+        if (!checked) html += this._labViewSwitchHtml();
         html += `
             <div style="margin-bottom:8px; font-size:12px; color:#888;">
                 Baseline: <span style="color:#e0e0e0; font-weight:700;">${fmtAttempts(baseline.expectedAttempts)}</span>
@@ -7745,7 +8184,7 @@ class LabSimUI {
         const verifyLive = !checked && this._isVerifyLive('all', analysisResult);
         if (!checked && !levelsOnly) html += this._allFightsVerifyBarHtml(analysisResult, verifyPicks);
         // A run of nothing but combat levels has no gear to table
-        if (!levelsOnly)
+        if (!levelsOnly && !asCards)
             html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 ${th('upgrade', 'Upgrade', 'Sort by name')}
@@ -7784,41 +8223,47 @@ class LabSimUI {
         };
         sharedStyles.fightBreakdown = fightBreakdown;
 
-        if (!levelsOnly)
+        // Every cell of a gear row, worked out once: the table draws them in cells and the cards print the same text
+        const cellsOf = (r) => {
+            const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+            // A dash rather than a zero where there is no coin price: a combat
+            // level is not free, it is paid for in experience, and a zero here
+            // would read as "costs nothing" instead of "not a coin question"
+            // Negative is real: a swap whose sold piece brings back more than
+            // the new one costs is a credit, not a row with no price
+            const cost =
+                r.cost > 0
+                    ? formatKMB(r.cost)
+                    : r.cost === 0
+                      ? 'free'
+                      : Number.isFinite(r.cost)
+                        ? `+${formatKMB(-r.cost)} back`
+                        : '—';
+            // How many rooms it reaches — a sword upgrade is only about the
+            // loadouts carrying that sword, and a row that does not say so
+            // reads as an upgrade to the whole run
+            const reach = r.appliedFights ?? r.fights.length;
+            const total = r.fights.length;
+            const perGold =
+                r.attemptsSavedPerMillion === null
+                    ? '—'
+                    : r.attemptsSavedPerMillion === Infinity
+                      ? 'pays for itself'
+                      : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
+            // A change smaller than the sampling error of the sims behind it has
+            // not been measured — coloring it green sells an upgrade on noise
+            const measured = r.significant !== false;
+            const noise =
+                r.attemptsDeltaNoise > 0
+                    ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                    : '';
+            return { isBest, cost, reach, total, perGold, measured, noise };
+        };
+
+        if (!levelsOnly && !asCards)
             sorted.forEach((r, i) => {
-                const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+                const { isBest, cost, reach, total, perGold, measured, noise } = cellsOf(r);
                 const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
-                // A dash rather than a zero where there is no coin price: a combat
-                // level is not free, it is paid for in experience, and a zero here
-                // would read as "costs nothing" instead of "not a coin question"
-                // Negative is real: a swap whose sold piece brings back more than
-                // the new one costs is a credit, not a row with no price
-                const cost =
-                    r.cost > 0
-                        ? formatKMB(r.cost)
-                        : r.cost === 0
-                          ? 'free'
-                          : Number.isFinite(r.cost)
-                            ? `+${formatKMB(-r.cost)} back`
-                            : '—';
-                // How many rooms it reaches — a sword upgrade is only about the
-                // loadouts carrying that sword, and a row that does not say so
-                // reads as an upgrade to the whole run
-                const reach = r.appliedFights ?? r.fights.length;
-                const total = r.fights.length;
-                const perGold =
-                    r.attemptsSavedPerMillion === null
-                        ? '—'
-                        : r.attemptsSavedPerMillion === Infinity
-                          ? 'pays for itself'
-                          : `${r.attemptsSavedPerMillion >= 0 ? '' : '−'}${fmtPerMillion(Math.abs(r.attemptsSavedPerMillion))}`;
-                // A change smaller than the sampling error of the sims behind it has
-                // not been measured — coloring it green sells an upgrade on noise
-                const measured = r.significant !== false;
-                const noise =
-                    r.attemptsDeltaNoise > 0
-                        ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
-                        : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
                     checked ? '' : this._verifyRowHtml('all', this._allRowKey(r), 'data-af-verify', i, verifyLive)
@@ -7840,11 +8285,33 @@ class LabSimUI {
             </tr>`;
             });
 
-        if (!levelsOnly) html += '</tbody></table></div>';
+        if (!levelsOnly && !asCards) html += '</tbody></table></div>';
         const levelSorted = checked ? [] : this._sortedLevelRows(levelResults);
+        // The gear rows as cards, in the order the table sorted them
+        const redrawAll = () =>
+            this._renderAllFightsResults(checked ? analysisResult : this._allFightsResult, container, options);
+        if (!levelsOnly && asCards) {
+            html += this._allFightsGearCards({
+                sorted,
+                analysisResult,
+                checked,
+                sort,
+                cellsOf,
+                verifyLive,
+                redraw: redrawAll,
+                SORTS,
+                fmtAttempts,
+                fmtAttemptsDelta,
+                deltaPct,
+                fightBreakdown,
+            });
+        }
+        sharedStyles.redraw = redrawAll;
         if (!checked) html += this._renderAllFightsLevelSection(levelSorted, sharedStyles);
         if (!checked) html += this._renderAllFightsTokenSection(tokenResults, sharedStyles);
         container.innerHTML = html;
+        this._registerViewRedraw(checked ? 'checked-combat' : 'combat', container, redrawAll);
+        this._wireLabCards(container);
         if (checked) this._wireCheckedHeading('combat', container);
         else this._wireRememberedClear(container);
 
@@ -8051,25 +8518,8 @@ class LabSimUI {
             : '';
         const bestDelta = Math.min(...levelRows.map((r) => r.attemptsDelta));
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
-            <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
-            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
-                Levels can't be bought, so these are ranked by hours of grind per expected attempt saved (lower is
-                better), not against the gold costs above. Level time assumes you train that skill at the XP rates
-                your fights earn now, and each row is one step on its own \u2014 they don't stack.${primaryNote}
-            </div>
-            <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
-            <thead><tr>
-                ${th('skill', 'Skill', 'Sort by name')}
-                ${th('time', 'Level Time', 'Hours of combat, at the XP rates your fights earn now, to earn these levels')}
-                ${th('attemptsDelta', '\u0394Attempts', 'Change in expected attempts vs baseline \u2014 negative is better. The \u00B1 is one standard error of the simulation. Includes the weapon\u2019s own skill where the same hours carry it.')}
-                ${th('hoursPer', 'Hours / attempt saved', 'Level Time divided by the attempts saved. Lower is better; a dash where the levels save nothing.')}
-                ${th('rooms', 'Rooms', 'How many fights this reaches. A combat level is every fight.')}
-                ${th('avgWinDelta', 'Avg \u0394Win', 'Average win rate change across the rooms it reaches')}
-                <th data-af-level-sort="score" style="${thStyle} cursor:pointer; user-select:none; color:${ACCENT};" title="${scoreTitle}">Score<br>${combatSimUI.scoreDepthLabel(combatSimUI.DEFAULT_LEVEL_SCORE_SCALE)}${arrow('score')}</th>
-            </tr></thead><tbody>`;
-
-        levelRows.forEach((r, i) => {
+        // Every cell of a level row, worked out once: the table draws them in cells and the cards print the same text
+        const levelCellsOf = (r) => {
             const measured = r.significant !== false;
             const noise =
                 r.attemptsDeltaNoise > 0
@@ -8104,6 +8554,38 @@ class LabSimUI {
                 : '';
             const scoreColor = combatSimUI.scoreValueColor(r.score);
             const isBest = r.attemptsDelta === bestDelta && bestDelta < -0.05;
+            return { measured, noise, reach, total, hoursPer, alongLine, timeTitle, deltaTitle, scoreColor, isBest };
+        };
+
+        const levelIntro = `<div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
+                Levels can't be bought, so these are ranked by hours of grind per expected attempt saved (lower is
+                better), not against the gold costs above. Level time assumes you train that skill at the XP rates
+                your fights earn now, and each row is one step on its own \u2014 they don't stack.${primaryNote}
+            </div>`;
+        if (styles.asCards) {
+            return (
+                `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">` +
+                `${levelIntro}${this._allFightsLevelCards({ levelRows, levelCellsOf, styles, sort, fmtLevelTime, deltaPct, scoreTitle })}</div>`
+            );
+        }
+
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
+            ${levelIntro}
+            <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <thead><tr>
+                ${th('skill', 'Skill', 'Sort by name')}
+                ${th('time', 'Level Time', 'Hours of combat, at the XP rates your fights earn now, to earn these levels')}
+                ${th('attemptsDelta', '\u0394Attempts', 'Change in expected attempts vs baseline \u2014 negative is better. The \u00B1 is one standard error of the simulation. Includes the weapon\u2019s own skill where the same hours carry it.')}
+                ${th('hoursPer', 'Hours / attempt saved', 'Level Time divided by the attempts saved. Lower is better; a dash where the levels save nothing.')}
+                ${th('rooms', 'Rooms', 'How many fights this reaches. A combat level is every fight.')}
+                ${th('avgWinDelta', 'Avg \u0394Win', 'Average win rate change across the rooms it reaches')}
+                <th data-af-level-sort="score" style="${thStyle} cursor:pointer; user-select:none; color:${ACCENT};" title="${scoreTitle}">Score<br>${combatSimUI.scoreDepthLabel(combatSimUI.DEFAULT_LEVEL_SCORE_SCALE)}${arrow('score')}</th>
+            </tr></thead><tbody>`;
+
+        levelRows.forEach((r, i) => {
+            const { measured, noise, reach, total, hoursPer, alongLine, timeTitle, deltaTitle, scoreColor, isBest } =
+                levelCellsOf(r);
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-level-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${alongLine}</td>
@@ -8149,11 +8631,27 @@ class LabSimUI {
         const perTokens = (v) =>
             v === null ? '—' : v >= 1 ? v.toFixed(2) : v >= 0.01 ? v.toFixed(3) : v.toPrecision(2);
 
-        let html = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin:14px 0 4px;">Labyrinth Token Buffs</div>
+        const tokenIntro = `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin:14px 0 4px;">Labyrinth Token Buffs</div>
             <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:4px;">Bought once with labyrinth tokens and paid
                 for in every room, so each is simulated against every fight and aggregated exactly like a combat
                 level. Ranked in tokens rather than coins, and left out of the budget plan above, which is a plan
-                in gold.</div>
+                in gold.</div>`;
+        const fightRowsOf = (r) =>
+            r.fights
+                .map(
+                    (fight) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+                        <span style="color:#aaa;">${fight.monsterName}
+                            <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                        <span style="white-space:nowrap; color:#888;">${(fight.winRate * 100).toFixed(1)}%
+                            <span style="color:${fight.winRateDelta > 0.0001 ? '#4caf50' : fight.winRateDelta < -0.0001 ? '#f44336' : '#888'};">(${deltaPct(fight.winRateDelta || 0)})</span></span>
+                    </div>`
+                )
+                .join('');
+        if (styles.asCards) {
+            return tokenIntro + this._allFightsTokenCards({ tokenResults, styles, perTokens, fightRowsOf, deltaPct });
+        }
+
+        let html = `${tokenIntro}
             <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}">Upgrade</th>
@@ -8180,16 +8678,7 @@ class LabSimUI {
                 <td style="${tdStyle} color:${r.avgWinDelta > 0.0001 ? '#4caf50' : r.avgWinDelta < -0.0001 ? '#f44336' : '#888'};">${deltaPct(r.avgWinDelta)}</td>
             </tr>`;
 
-            const fightRows = r.fights
-                .map(
-                    (fight) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
-                        <span style="color:#aaa;">${fight.monsterName}
-                            <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
-                        <span style="white-space:nowrap; color:#888;">${(fight.winRate * 100).toFixed(1)}%
-                            <span style="color:${fight.winRateDelta > 0.0001 ? '#4caf50' : fight.winRateDelta < -0.0001 ? '#f44336' : '#888'};">(${deltaPct(fight.winRateDelta || 0)})</span></span>
-                    </div>`
-                )
-                .join('');
+            const fightRows = fightRowsOf(r);
             html += `<tr data-allfights-token-detail="${i}" style="display:none;">
                 <td colspan="6" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
                     ${exactFiguresHtml([{ label: 'Tokens', value: r.tokenCost, unit: 'tokens' }])}${fightRows}</td>
@@ -8237,6 +8726,318 @@ class LabSimUI {
             .join('');
     }
 
+    /**
+     * The all-fights gear table as cards, in the order the table sorted its rows. Every figure is the table
+     * cell's own text (`cellsOf`); Rank by writes the sort a header click would; Verify is the table's per-row
+     * Verify, for the live generated table only.
+     * @param {Object} ctx - Pieces of `_renderAllFightsResults`
+     * @returns {string} HTML
+     * @private
+     */
+    _allFightsGearCards({
+        sorted,
+        analysisResult,
+        checked,
+        sort,
+        cellsOf,
+        verifyLive,
+        redraw,
+        SORTS,
+        fmtAttempts,
+        fmtAttemptsDelta,
+        deltaPct,
+        fightBreakdown,
+    }) {
+        const bestDir = Object.fromEntries(Object.entries(SORTS).map(([key, value]) => [key, value.dir]));
+        const running = this._verify.running;
+        const lead = sort?.key;
+        const columns = [
+            {
+                key: 'cost',
+                label: 'Cost',
+                band: 'face',
+                html: (r) => dashToUnknown(cellsOf(r).cost),
+                title: 'What it would cost in coins. Combat levels cost experience, not gold.',
+            },
+            {
+                key: 'perMillion',
+                label: 'Per 1M',
+                band: 'face',
+                html: (r) => dashToUnknown(cellsOf(r).perGold),
+                tone: (r) => (cellsOf(r).measured && r.attemptsSavedPerMillion > 0 ? 'good' : 'muted'),
+                title: 'Attempts saved across a whole run per million coins spent — the value figure. Unknown where there is no coin price; "pays for itself" where selling the replaced piece covers the purchase.',
+            },
+            {
+                key: 'attempts',
+                label: 'Attempts',
+                band: 'face',
+                html: (r) => fmtAttempts(r.expectedAttempts),
+                tone: (r) => (cellsOf(r).isBest ? 'good' : 'neutral'),
+                title: 'Expected combat attempts to clear every fight once (retrying failed rooms)',
+            },
+            {
+                key: 'rooms',
+                label: 'Rooms',
+                band: 'face',
+                html: (r) => `${cellsOf(r).reach} / ${cellsOf(r).total}`,
+                tone: (r) => (cellsOf(r).reach === cellsOf(r).total ? 'muted' : 'neutral'),
+                title: 'How many fights this upgrade actually reaches. A combat level is every fight; a piece of gear only the loadouts that wear what it replaces.',
+            },
+            {
+                key: 'attemptsDelta',
+                label: 'ΔAttempts',
+                band: 'delta',
+                html: (r) => `${fmtAttemptsDelta(r.attemptsDelta)}${cellsOf(r).noise}`,
+                tone: (r) =>
+                    cellsOf(r).measured ? signTone(r.attemptsDelta, { lowerIsBetter: true, epsilon: 0.05 }) : 'muted',
+                title: 'Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation.',
+            },
+            {
+                key: 'avgWinDelta',
+                label: 'Avg ΔWin',
+                band: 'delta',
+                html: (r) => deltaPct(r.avgWinDelta),
+                tone: (r) => signTone(r.avgWinDelta, { epsilon: 0.0001 }),
+                title: 'Average win rate change across the rooms it reaches',
+            },
+        ];
+        const entries = labCardEntries({
+            rows: sorted,
+            columns,
+            headKey: lead,
+            fallbackHead: 'attemptsDelta',
+            nameOf: (r) => r.candidate.description,
+            keyOf: (r) => this._allRowKey(r),
+            extra: (r) => {
+                const rowKey = this._allRowKey(r);
+                const verdict = checked ? null : this._verify.all.get(rowKey) || null;
+                const cells = cellsOf(r);
+                return {
+                    actionsHtml: combatSimUI.upgradeRowActionsHtml(r),
+                    detailHtml: `${goldExactHtml(r.cost, null)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                    // The sampling-error note is about the attempts figures only
+                    within: !cells.measured && (!lead || lead === 'attemptsDelta' || lead === 'perMillion'),
+                    unpriced: !Number.isFinite(r.cost),
+                    offerVerify: !checked,
+                    canVerify: verifyLive,
+                    verifyLabel: 'Attempts',
+                    pending: Boolean(running?.scope === 'all' && running.keys.has(rowKey)),
+                    verdict: verdict ? { ...verdict, stopped: Boolean(verdict.partial) } : null,
+                    verdictHtml: verdict ? verifyChipHtml(verdict, { partial: verdict.partial }) : '',
+                };
+            },
+        });
+        const setSort = (next) => {
+            if (checked) this._checkedSwapSort = next;
+            else this._allFightsSort = next;
+        };
+        return this._labCardsSection({
+            section: checked ? 'afc-gold' : 'af-gold',
+            entries,
+            results: analysisResult,
+            redraw,
+            emptyText: 'No upgrades to show.',
+            rank: {
+                options: [
+                    { key: 'upgrade', label: 'Name' },
+                    { key: 'cost', label: 'Cost' },
+                    { key: 'perMillion', label: 'Per 1M' },
+                    { key: 'attempts', label: 'Attempts' },
+                    { key: 'attemptsDelta', label: 'ΔAttempts' },
+                    { key: 'rooms', label: 'Rooms' },
+                    { key: 'avgWinDelta', label: 'Avg ΔWin' },
+                ],
+                state: sort || null,
+                bestDir,
+                apply: (key) => setSort({ key, dir: SORTS[key].dir }),
+                bestFirst: () => {
+                    if (sort?.key && SORTS[sort.key]) setSort({ key: sort.key, dir: SORTS[sort.key].dir });
+                },
+            },
+        });
+    }
+
+    /**
+     * The Combat levels rows as cards, in the order the level table sorted them.
+     * @param {Object} ctx - Pieces of `_renderAllFightsLevelSection`
+     * @returns {string} HTML
+     * @private
+     */
+    _allFightsLevelCards({ levelRows, levelCellsOf, styles, sort, fmtLevelTime, deltaPct, scoreTitle }) {
+        const { fmtAttemptsDelta, redraw, analysisResult, fightBreakdown } = styles;
+        const bestDir = Object.fromEntries(Object.entries(LEVEL_SORTS).map(([key, value]) => [key, value.dir]));
+        const lead = sort.key;
+        const columns = [
+            {
+                key: 'time',
+                label: 'Level time',
+                band: 'face',
+                html: (r) => fmtLevelTime(r.levelTimeHours),
+                title: (r) => levelCellsOf(r).timeTitle,
+            },
+            {
+                key: 'hoursPer',
+                label: 'Hours / attempt saved',
+                band: 'face',
+                html: (r) => combatSimUI.formatCompactHours(levelCellsOf(r).hoursPer),
+                title: 'Level Time divided by the attempts saved. Lower is better; a dash where the levels save nothing.',
+            },
+            {
+                key: 'score',
+                label: 'Score',
+                band: 'face',
+                html: (r) => combatSimUI.formatScore(r.score),
+                title: scoreTitle,
+            },
+            {
+                key: 'rooms',
+                label: 'Rooms',
+                band: 'face',
+                html: (r) => `${levelCellsOf(r).reach} / ${levelCellsOf(r).total}`,
+                tone: (r) => (levelCellsOf(r).reach === levelCellsOf(r).total ? 'muted' : 'neutral'),
+                title: 'How many fights this reaches. A combat level is every fight.',
+            },
+            {
+                key: 'attemptsDelta',
+                label: 'ΔAttempts',
+                band: 'delta',
+                html: (r) => `${fmtAttemptsDelta(r.attemptsDelta)}${levelCellsOf(r).noise}`,
+                tone: (r) =>
+                    levelCellsOf(r).measured
+                        ? signTone(r.attemptsDelta, { lowerIsBetter: true, epsilon: 0.05 })
+                        : 'muted',
+                title: (r) =>
+                    levelCellsOf(r).deltaTitle ||
+                    'Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation.',
+            },
+            {
+                key: 'avgWinDelta',
+                label: 'Avg ΔWin',
+                band: 'delta',
+                html: (r) => deltaPct(r.avgWinDelta),
+                tone: (r) => signTone(r.avgWinDelta, { epsilon: 0.0001 }),
+                title: 'Average win rate change across the rooms it reaches',
+            },
+        ];
+        const entries = labCardEntries({
+            rows: levelRows,
+            columns,
+            headKey: lead,
+            fallbackHead: 'score',
+            nameOf: (r) => r.candidate.description,
+            keyOf: (r) => `level:${r.candidate.description}`,
+            extra: (r) => ({
+                detailHtml: `${levelCellsOf(r).alongLine}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                within: !levelCellsOf(r).measured && ['attemptsDelta', 'hoursPer', 'score'].includes(lead),
+                offerVerify: false,
+            }),
+        });
+        return this._labCardsSection({
+            section: 'af-levels',
+            entries,
+            results: analysisResult,
+            redraw,
+            emptyText: 'No combat levels to show.',
+            rank: {
+                options: [
+                    { key: 'skill', label: 'Skill name' },
+                    { key: 'time', label: 'Level time' },
+                    { key: 'attemptsDelta', label: 'ΔAttempts' },
+                    { key: 'hoursPer', label: 'Hours / attempt saved' },
+                    { key: 'rooms', label: 'Rooms' },
+                    { key: 'avgWinDelta', label: 'Avg ΔWin' },
+                    { key: 'score', label: 'Score' },
+                ],
+                state: sort,
+                bestDir,
+                apply: (key) => {
+                    this._allFightsLevelSort = { key, dir: LEVEL_SORTS[key].dir };
+                },
+                bestFirst: () => {
+                    if (LEVEL_SORTS[sort.key])
+                        this._allFightsLevelSort = { key: sort.key, dir: LEVEL_SORTS[sort.key].dir };
+                },
+            },
+        });
+    }
+
+    /**
+     * The labyrinth token buffs as cards, in the order the analysis ranked them (the token table has no sort of
+     * its own). Priced in tokens, never coins.
+     * @param {Object} ctx - Pieces of `_renderAllFightsTokenSection`
+     * @returns {string} HTML
+     * @private
+     */
+    _allFightsTokenCards({ tokenResults, styles, perTokens, fightRowsOf, deltaPct }) {
+        const { fmtAttempts, fmtAttemptsDelta, redraw, analysisResult } = styles;
+        const measuredOf = (r) => r.significant !== false;
+        const noiseOf = (r) =>
+            r.attemptsDeltaNoise > 0
+                ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
+                : '';
+        const columns = [
+            {
+                key: 'tokens',
+                label: 'Tokens',
+                band: 'face',
+                html: (r) => (Number.isFinite(r.tokenCost) ? shortFigure(r.tokenCost) : UNKNOWN_TEXT),
+                title: 'Labyrinth tokens for this level, not coins.',
+            },
+            {
+                key: 'per100',
+                label: 'Per 100',
+                band: 'face',
+                html: (r) => dashToUnknown(perTokens(r.attemptsSavedPerHundredTokens ?? null)),
+                tone: (r) => (measuredOf(r) && r.attemptsSavedPerHundredTokens > 0 ? 'good' : 'muted'),
+                title: 'Attempts saved across a whole run per 100 tokens spent — the value figure, in the currency these are actually bought with',
+            },
+            {
+                key: 'attempts',
+                label: 'Attempts',
+                band: 'face',
+                html: (r) => fmtAttempts(r.expectedAttempts),
+                title: 'Expected combat attempts to clear every fight once (retrying failed rooms)',
+            },
+            {
+                key: 'attemptsDelta',
+                label: 'ΔAttempts',
+                band: 'delta',
+                html: (r) => `${fmtAttemptsDelta(r.attemptsDelta)}${noiseOf(r)}`,
+                tone: (r) =>
+                    measuredOf(r) ? signTone(r.attemptsDelta, { lowerIsBetter: true, epsilon: 0.05 }) : 'muted',
+                title: 'Change in expected attempts vs baseline — negative is better. The ± is one standard error of the simulation.',
+            },
+            {
+                key: 'avgWinDelta',
+                label: 'Avg ΔWin',
+                band: 'delta',
+                html: (r) => deltaPct(r.avgWinDelta),
+                tone: (r) => signTone(r.avgWinDelta, { epsilon: 0.0001 }),
+                title: 'Average win rate change across every fight — a token level reaches all of them',
+            },
+        ];
+        const entries = labCardEntries({
+            rows: tokenResults,
+            columns,
+            headKey: 'attemptsDelta',
+            fallbackHead: 'attemptsDelta',
+            nameOf: (r) => r.candidate.description,
+            keyOf: (r) => `token:${r.candidate.description}`,
+            extra: (r) => ({
+                detailHtml: `${exactFiguresHtml([{ label: 'Tokens', value: r.tokenCost, unit: 'tokens' }])}<div>${fightRowsOf(r)}</div>`,
+                within: !measuredOf(r),
+                offerVerify: false,
+            }),
+        });
+        return this._labCardsSection({
+            section: 'af-tokens',
+            entries,
+            results: analysisResult,
+            redraw,
+            emptyText: 'No token buffs to show.',
+        });
+    }
+
     /** @private */
     /**
      * Restore the last Upgrade-tab results after a refresh, when the option is on
@@ -8282,12 +9083,15 @@ class LabSimUI {
             };
             // An order-only run saved no table, only its section
             // A combined all-fights run saved its own table, marked, and draws with the renderer the run used
+            // The object itself is what is remembered, so a fresh analysis (another object) never counts as it
+            this._rememberedLabResults = payload.data?.results?.length ? payload.data : null;
             if (payload.data?.results?.length && payload.data.allFights) {
                 this._renderAllFightsResults(payload.data, container);
             } else if (payload.data?.results?.length) this._renderUpgradeResults(payload.data, container);
             else container.innerHTML = '';
             // A payload from before the section was remembered carries none
             this._upgradeOrderSection = payload.orderSection || null;
+            this._rememberedOrderSection = this._upgradeOrderSection;
             this._drawUpgradeAbilityOrder();
         } catch (error) {
             console.error('[LabSimUI] Restoring upgrade results failed:', error);
@@ -8368,6 +9172,7 @@ class LabSimUI {
                     ? `<div style="margin-top:6px; color:${GAME_COLORS.textDim}; font-size:11px;">${note.trim()}</div>`
                     : '') +
                 '</div>';
+            this._viewRedraws.delete('single');
             this._setStatus(`No upgrade candidates found.${note}`);
             return;
         }
@@ -8430,6 +9235,8 @@ class LabSimUI {
                       }
                     : {}),
                 desc: r.candidate?.description || '',
+                // The column says "Rate"; which rate it is depends on how the row was measured
+                rateLabel: r.metricType === 'clearRate' ? 'Clear rate' : 'Win rate',
                 // Whatever handoff buttons the shared builder emits for this
                 // row — never a hand-picked subset of them, so a button added
                 // to the combat sim's rows turns up here without being asked for
@@ -8476,6 +9283,7 @@ class LabSimUI {
                 // Unpriced sorts last rather than as the cheapest thing on the
                 // table, which is where `r.cost || 0` put a combat level
                 cost: Number.isFinite(r.cost) ? r.cost : Infinity,
+                costKnown: Number.isFinite(r.cost),
                 costStr: goldCostCell(r.cost),
                 winRate,
                 winRateStr: winRate.toFixed(2) + '%',
@@ -8723,14 +9531,221 @@ class LabSimUI {
             );
         };
 
+        // The same three tables as cards. Each walks the table's own sorted rows and prints the table's own cell
+        // text; Rank by writes the sort state a header click would
+        const cardRank = (table, options) => ({
+            options,
+            state: sortState[table],
+            bestDir: SINGLE_FIGHT_BEST_DIR,
+            apply: (key) => Object.assign(sortState[table], singleFightHeaderSort(key)),
+            bestFirst: () => {
+                const best = SINGLE_FIGHT_BEST_DIR[sortState[table].key];
+                if (best) sortState[table].dir = best;
+            },
+        });
+        const levelColumns = roomLevels
+            ? [
+                  {
+                      key: 'roomLevelDelta',
+                      label: 'Levels',
+                      band: 'delta',
+                      html: (row) => row.roomLevelStr,
+                      tone: (row) => (row.roomLevelStr === '\u2014' ? 'muted' : signTone(row.roomLevelDelta)),
+                      title: (row) => row.levelTitle,
+                  },
+                  {
+                      key: 'floorVal',
+                      label: 'Floor',
+                      band: 'delta',
+                      html: (row) => row.floorStr,
+                      tone: (row) => (row.reachesTarget ? 'good' : 'muted'),
+                      title: (row) => row.levelTitle,
+                  },
+              ]
+            : [];
+        const levelOptions = roomLevels
+            ? [
+                  { key: 'roomLevelDelta', label: 'Levels' },
+                  { key: 'floorVal', label: 'Floor' },
+              ]
+            : [];
+        const rowExtra = (row) => ({
+            actionsHtml: row.actions || '',
+            detailHtml: `${row.exactHtml || ''}${row.detailHtml || ''}`,
+        });
+        const renderTokenCards = () =>
+            this._labCardsSection({
+                section: 'sf-token',
+                results: analysisResult,
+                redraw: renderAll,
+                emptyText: 'No token upgrades to show.',
+                rank: cardRank('token', [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'tokenCost', label: 'Tokens' },
+                    { key: 'rateVal', label: 'Rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'tokensPerPct', label: 'Tokens/1%' },
+                ]),
+                entries: labCardEntries({
+                    rows: tokenRows,
+                    headKey: sortState.token.key,
+                    fallbackHead: 'deltaVal',
+                    nameOf: (row) => row.desc,
+                    keyOf: (row) => `token:${row.desc}`,
+                    extra: rowExtra,
+                    columns: [
+                        {
+                            key: 'tokenCost',
+                            label: 'Tokens',
+                            band: 'face',
+                            html: (row) => dashToUnknown(row.tokenCostStr),
+                            title: 'Labyrinth tokens this level costs, not coins.',
+                        },
+                        {
+                            key: 'rateVal',
+                            label: (row) => row.rateLabel,
+                            band: 'face',
+                            html: (row) => row.rateStr,
+                            title: "The fight's rate with this upgrade: its win rate, or its clear rate on a row measured that way.",
+                        },
+                        {
+                            key: 'tokensPerPct',
+                            label: 'Tokens/1%',
+                            band: 'face',
+                            html: (row) => row.tokensPerPctStr,
+                            title: 'Tokens per +1 percentage point of that rate; a dash where it gains nothing.',
+                        },
+                        {
+                            key: 'deltaVal',
+                            label: 'Delta',
+                            band: 'delta',
+                            html: (row) => row.deltaStr,
+                            tone: (row) => signTone(row.deltaVal),
+                            title: 'Change in that rate, in percentage points.',
+                        },
+                        ...levelColumns,
+                    ],
+                }),
+            });
+        const renderCommunityCards = () =>
+            this._labCardsSection({
+                section: 'sf-community',
+                results: analysisResult,
+                redraw: renderAll,
+                emptyText: 'No community buffs to show.',
+                rank: cardRank('community', [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'cowbellCost', label: 'Cowbells' },
+                    { key: 'xpPerRoom', label: 'XP/Attempt' },
+                    { key: 'xpDelta', label: '\u0394XP' },
+                ]),
+                entries: labCardEntries({
+                    rows: communityRows,
+                    headKey: sortState.community.key,
+                    fallbackHead: 'xpDelta',
+                    nameOf: (row) => row.desc,
+                    keyOf: (row) => `community:${row.desc}`,
+                    extra: (row) => ({ detailHtml: row.exactHtml || '' }),
+                    columns: [
+                        {
+                            key: 'cowbellCost',
+                            label: 'Cowbells',
+                            band: 'face',
+                            html: (row) => dashToUnknown(row.cowbellCostStr),
+                            title: 'Donated cowbells per minute the game charges to keep the buff running; not a price to buy a level.',
+                        },
+                        {
+                            key: 'xpPerRoom',
+                            label: 'XP/Attempt',
+                            band: 'face',
+                            html: (row) => row.xpPerRoomStr,
+                            title: 'Experience per attempt with the buff.',
+                        },
+                        {
+                            key: 'xpDelta',
+                            label: '\u0394XP',
+                            band: 'delta',
+                            html: (row) => row.xpDeltaStr,
+                            tone: (row) => signTone(row.xpDelta),
+                            title: 'Change in experience per attempt.',
+                        },
+                        {
+                            key: 'winRate',
+                            label: 'Win rate',
+                            band: 'fact',
+                            html: () => '\u2014',
+                            title: 'A community buff cannot change whether a fight is won, so the win-rate figures are left blank rather than filled with noise.',
+                        },
+                    ],
+                }),
+            });
+        const renderGoldCards = () =>
+            this._labCardsSection({
+                section: 'sf-gold',
+                results: analysisResult,
+                redraw: renderAll,
+                emptyText: 'No gold upgrades to show.',
+                rank: cardRank('gold', [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'cost', label: 'Cost' },
+                    { key: 'winRate', label: 'Win rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'goldPerPct', label: 'Gold/1%' },
+                ]),
+                entries: labCardEntries({
+                    rows: goldRows,
+                    headKey: sortState.gold.key,
+                    fallbackHead: 'deltaVal',
+                    nameOf: (row) => row.desc,
+                    keyOf: (row) => `gold:${row.desc}`,
+                    extra: (row) => ({ ...rowExtra(row), unpriced: !row.costKnown }),
+                    columns: [
+                        {
+                            key: 'cost',
+                            label: 'Cost',
+                            band: 'face',
+                            html: (row) => (row.costKnown ? row.costStr : UNKNOWN_TEXT),
+                            title: 'Net coin cost. "free" costs nothing, "+X back" means the swap hands coins back, and unknown means part of it has no price.',
+                        },
+                        {
+                            key: 'winRate',
+                            label: 'Win rate',
+                            band: 'face',
+                            html: (row) => row.winRateStr,
+                            title: "The fight's win rate with this upgrade.",
+                        },
+                        {
+                            key: 'goldPerPct',
+                            label: 'Gold/1%',
+                            band: 'face',
+                            html: (row) => (row.costKnown ? row.goldPerPctStr : UNKNOWN_TEXT),
+                            title: 'Coins per +1 percentage point of win rate; "pays for itself" where the swap hands coins back, a dash where it gains nothing.',
+                        },
+                        {
+                            key: 'deltaVal',
+                            label: 'Delta',
+                            band: 'delta',
+                            html: (row) => row.deltaStr,
+                            tone: (row) => signTone(row.deltaVal),
+                            title: 'Change in win rate, in percentage points.',
+                        },
+                        ...levelColumns,
+                    ],
+                }),
+            });
+
         const renderAll = () => {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(communityRows, sortState.community.key, sortState.community.dir);
+            const asCards = this._labView() === 'cards';
             let html = '';
             if (this._restoredUpgradeAt) {
                 html += this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta);
             }
+            html += this._labViewSwitchHtml();
             // The verify engine re-measures every fight an upgrade reaches; the single-fight analysis keeps
             // no such record, so there is nothing to offer here
             html +=
@@ -8739,13 +9754,15 @@ class LabSimUI {
                 '; font-size:10px; margin:0 0 6px;">' +
                 'Verify needs the All or Chosen targets scope: this single-fight table cannot be re-measured.</div>';
             if (roomLevels) html += renderRoomLevelSummary();
-            if (tokenResults.length > 0) html += renderTokenTable();
-            if (communityResults.length > 0) html += renderCommunityTable();
-            if (goldResults.length > 0) html += renderGoldTable();
+            if (tokenResults.length > 0) html += asCards ? renderTokenCards() : renderTokenTable();
+            if (communityResults.length > 0) html += asCards ? renderCommunityCards() : renderCommunityTable();
+            if (goldResults.length > 0) html += asCards ? renderGoldCards() : renderGoldTable();
             container.innerHTML = html;
+            this._registerViewRedraw('single', container, renderAll);
             // Re-wired on every render: a sort rebuilds the table, and buttons
             // wired to the elements it threw away do nothing at all
             combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+            this._wireLabCards(container);
 
             this._wireRememberedClear(container);
         };
@@ -9940,6 +10957,7 @@ class LabSimUI {
             container.innerHTML = checked
                 ? ''
                 : '<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No upgrade candidates found.</div>';
+            this._viewRedraws.delete(checked ? 'checked-skilling' : 'skilling');
             if (!checked) this._setStatus('No skilling upgrade candidates found.');
             return;
         }
@@ -10416,25 +11434,329 @@ class LabSimUI {
             return html;
         };
 
+        // The same tables as cards. Each walks the table's own sorted rows and prints the table's own cell text;
+        // Rank by writes the sort state a header click would; the pick box is the table's, with the same state
+        const sectionPrefix = checked ? 'skc' : 'sk';
+        const cardRank = (table, options) => ({
+            options,
+            state: sortState[table],
+            bestDir: SINGLE_FIGHT_BEST_DIR,
+            apply: (key) => Object.assign(sortState[table], singleFightHeaderSort(key)),
+            bestFirst: () => {
+                const best = SINGLE_FIGHT_BEST_DIR[sortState[table].key];
+                if (best) sortState[table].dir = best;
+            },
+        });
+        const levelColumns = roomLevels
+            ? [
+                  {
+                      key: 'roomLevelDelta',
+                      label: 'Levels',
+                      band: 'delta',
+                      html: (row) => row.roomLevelStr,
+                      tone: (row) => (row.roomLevelStr === '\u2014' ? 'muted' : signTone(row.roomLevelDelta)),
+                      title: (row) => row.levelTitle,
+                  },
+                  {
+                      key: 'floorVal',
+                      label: 'Floor',
+                      band: 'delta',
+                      html: (row) => row.floorStr,
+                      tone: (row) => (row.reachesTarget ? 'good' : 'muted'),
+                      title: (row) => row.levelTitle,
+                  },
+              ]
+            : [];
+        const levelOptions = roomLevels
+            ? [
+                  { key: 'roomLevelDelta', label: 'Levels' },
+                  { key: 'floorVal', label: 'Floor' },
+              ]
+            : [];
+        // The pick box rides beside the name, on the card's face: same attribute, same state, same click handler
+        const pickHtml = (row) =>
+            checked
+                ? ''
+                : `<label class="mwi-lab-pick"><input type="checkbox" data-skilling-pick="${row.pickIdx}"` +
+                  `${this._skillingChecked.includes(row.pickIdx) ? ' checked' : ''}> Sim together</label>`;
+        const clearRateColumn = {
+            key: 'clearRate',
+            label: 'Clear rate',
+            band: 'face',
+            html: (row) => row.clearRateStr,
+            title: 'The average clear rate across the rooms in scope with this upgrade.',
+        };
+        const deltaColumn = {
+            key: 'deltaVal',
+            label: 'Delta',
+            band: 'delta',
+            html: (row) => row.deltaStr,
+            tone: (row) => signTone(row.deltaVal),
+            title: 'Change in clear rate, in percentage points. A dash on a row read on experience instead.',
+        };
+        const xpColumn = {
+            key: 'xpDelta',
+            label: 'XP/Room',
+            band: 'delta',
+            html: (row) => row.xpDeltaStr,
+            tone: (row) => signTone(row.xpDelta),
+            title: 'Change in experience per room.',
+        };
+        const skillSection = ({
+            title,
+            table,
+            rows,
+            columns,
+            options,
+            fallbackHead,
+            extra,
+            emptyText,
+            noteHtml = '',
+        }) =>
+            title +
+            this._labCardsSection({
+                section: `${sectionPrefix}-${table}`,
+                results: analysisResult,
+                redraw: renderAll,
+                emptyText,
+                rank: cardRank(table, options),
+                entries: labCardEntries({
+                    rows,
+                    columns,
+                    headKey: sortState[table].key,
+                    fallbackHead,
+                    nameOf: (row) => row.desc,
+                    keyOf: (row) => `${table}:${row.desc}`,
+                    extra: (row) => ({ notesHtml: pickHtml(row), ...extra(row) }),
+                }),
+            }) +
+            noteHtml;
+        const renderTokenCards = () =>
+            skillSection({
+                title: `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Token Upgrades</div>`,
+                table: 'token',
+                rows: tokenRows,
+                fallbackHead: 'deltaVal',
+                emptyText: 'No token upgrades to show.',
+                options: [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'tokenCost', label: 'Tokens' },
+                    { key: 'clearRate', label: 'Clear rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'tokensPerPct', label: 'Tokens/1%' },
+                    { key: 'xpDelta', label: 'XP/Room' },
+                    { key: 'tokensPerXp', label: 'Tokens/XP' },
+                ],
+                extra: (row) => ({ detailHtml: row.exactHtml || '' }),
+                columns: [
+                    {
+                        key: 'tokenCost',
+                        label: 'Tokens',
+                        band: 'face',
+                        html: (row) => dashToUnknown(row.tokenCostStr),
+                        title: 'Labyrinth tokens this level costs, not coins.',
+                    },
+                    clearRateColumn,
+                    {
+                        key: 'tokensPerPct',
+                        label: 'Tokens/1%',
+                        band: 'face',
+                        html: (row) => row.tokensPerPctStr,
+                        title: 'Tokens per +1 percentage point of clear rate; a dash where it gains nothing or the row is read on experience.',
+                    },
+                    {
+                        key: 'tokensPerXp',
+                        label: 'Tokens/XP',
+                        band: 'face',
+                        html: (row) => row.tokensPerXpStr,
+                        title: 'Tokens per +1 experience per room; only on the rows that buy experience.',
+                    },
+                    deltaColumn,
+                    xpColumn,
+                    ...levelColumns,
+                ],
+            });
+        const renderGuildCards = () =>
+            skillSection({
+                title: `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Guild Shrines</div>`,
+                table: 'guild',
+                rows: guildRows,
+                fallbackHead: 'deltaVal',
+                emptyText: 'No guild shrines to show.',
+                options: [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'cost', label: 'Credits' },
+                    { key: 'tokenCost', label: 'Tokens' },
+                    { key: 'clearRate', label: 'Clear rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'goldPerPct', label: 'Gold/1%' },
+                    { key: 'xpDelta', label: 'XP/Room' },
+                ],
+                extra: (row) => ({
+                    detailHtml:
+                        (row.exactHtml || '') +
+                        (row.shrineNote
+                            ? `<div style="color:#ff9800; margin-bottom:4px;">${row.shrineNote}</div>`
+                            : ''),
+                }),
+                columns: [
+                    {
+                        key: 'cost',
+                        label: 'Credits',
+                        band: 'face',
+                        html: (row) => dashToUnknown(row.costStr),
+                        title: 'Guild credits, valued at the cheapest items that convert into them.',
+                    },
+                    {
+                        key: 'tokenCost',
+                        label: 'Tokens',
+                        band: 'face',
+                        html: (row) => row.tokenCostStr,
+                        title: 'Guild tokens, counted not priced: nothing converts into them.',
+                    },
+                    clearRateColumn,
+                    {
+                        key: 'goldPerPct',
+                        label: 'Gold/1%',
+                        band: 'face',
+                        html: (row) => (row.costStr === '\u2014' ? UNKNOWN_TEXT : row.goldPerPctStr),
+                        title: 'Credits per +1 percentage point of clear rate. It covers the credits only, not the tokens.',
+                    },
+                    deltaColumn,
+                    xpColumn,
+                    ...levelColumns,
+                ],
+            });
+        const renderCommunityCards = () =>
+            skillSection({
+                title: `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Community Buffs</div>`,
+                table: 'community',
+                rows: communityRows,
+                fallbackHead: 'deltaVal',
+                emptyText: 'No community buffs to show.',
+                options: [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'cowbellCost', label: 'Cowbells' },
+                    { key: 'clearRate', label: 'Clear rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'xpDelta', label: 'XP/Room' },
+                ],
+                extra: (row) => ({ detailHtml: row.exactHtml || '' }),
+                columns: [
+                    {
+                        key: 'cowbellCost',
+                        label: 'Cowbells',
+                        band: 'face',
+                        html: (row) => dashToUnknown(row.cowbellCostStr),
+                        title: 'Donated cowbells per minute the game charges to keep the buff running; not a price to buy a level.',
+                    },
+                    clearRateColumn,
+                    deltaColumn,
+                    xpColumn,
+                    ...levelColumns,
+                ],
+            });
+        const renderGoldCards = () =>
+            skillSection({
+                title: checked
+                    ? this._checkedHeadingHtml('skilling')
+                    : `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:4px;">Gear Upgrades</div>`,
+                table: 'gold',
+                rows: goldRows,
+                fallbackHead: 'deltaVal',
+                emptyText: 'No gear upgrades to show.',
+                options: [
+                    { key: 'desc', label: 'Name' },
+                    { key: 'cost', label: 'Cost' },
+                    { key: 'clearRate', label: 'Clear rate' },
+                    { key: 'deltaVal', label: 'Delta' },
+                    ...levelOptions,
+                    { key: 'goldPerPct', label: 'Gold/1%' },
+                    { key: 'roomsAffected', label: 'Rooms' },
+                    { key: 'tries', label: 'Tries' },
+                    { key: 'triesDelta', label: '\u0394Tries' },
+                ],
+                extra: (row) => ({
+                    actionsHtml: row.actions || '',
+                    unpriced: !Number.isFinite(row.cost),
+                    detailHtml:
+                        (row.keptNote
+                            ? `<div style="color:#ff9800; margin-bottom:4px;">${escapeHtmlAttribute(row.keptNote)}</div>`
+                            : '') +
+                        (row.exactHtml || '') +
+                        '<div data-skill-breakdown style="margin-bottom:4px; font-size:11px;"></div>' +
+                        (row.detailHtml || ''),
+                }),
+                columns: [
+                    {
+                        key: 'cost',
+                        label: 'Cost',
+                        band: 'face',
+                        html: (row) => (Number.isFinite(row.cost) ? row.costStr : UNKNOWN_TEXT),
+                        title: 'Net coin cost. "free" costs nothing, "+X back" means the swap hands coins back, and unknown means part of it has no price.',
+                    },
+                    clearRateColumn,
+                    {
+                        key: 'goldPerPct',
+                        label: 'Gold/1%',
+                        band: 'face',
+                        html: (row) => (Number.isFinite(row.cost) ? row.goldPerPctStr : UNKNOWN_TEXT),
+                        title: 'Coins per +1 percentage point of clear rate; "pays for itself" where the swap hands coins back, a dash where it gains nothing.',
+                    },
+                    {
+                        key: 'roomsAffected',
+                        label: 'Rooms',
+                        band: 'face',
+                        html: (row) => row.roomsStr,
+                        tone: (row) => (row.roomsAffected < 0 ? 'muted' : 'neutral'),
+                        title: (row) => row.roomsTitle,
+                    },
+                    {
+                        key: 'tries',
+                        label: 'Tries',
+                        band: 'face',
+                        html: (row) => row.triesStr,
+                        title: 'Expected attempts for a full pass over the rooms in scope.',
+                    },
+                    deltaColumn,
+                    {
+                        key: 'triesDelta',
+                        label: '\u0394Tries',
+                        band: 'delta',
+                        html: (row) => row.triesDeltaStr,
+                        tone: (row) => signTone(row.triesDelta, { lowerIsBetter: true }),
+                        title: 'Change in those tries; negative is better.',
+                    },
+                    ...levelColumns,
+                ],
+            });
+
         const renderAll = () => {
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(guildRows, sortState.guild.key, sortState.guild.dir);
             sortRows(communityRows, sortState.community.key, sortState.community.dir);
+            const asCards = this._labView() === 'cards';
             const baselineXp = baseline?.xpPerRoom || 0;
-            let html = `<div style="color:#888; font-size:11px; margin-bottom:8px;">
+            let html = checked ? '' : this._labViewSwitchHtml();
+            html += `<div style="color:#888; font-size:11px; margin-bottom:8px;">
                 Baseline Avg Clear: <span style="color:#e0e0e0; font-weight:600;">${((baseline?.clearRate || 0) * 100).toFixed(1)}%</span>
                 ${baselineXp > 0 ? ` · Avg XP/Room: <span style="color:#e0e0e0; font-weight:600;">${baselineXp.toFixed(1)}</span>` : ''}
             </div>`;
             if (roomLevels) html += renderRoomLevelSummary();
-            if (tokenRows.length > 0) html += renderTokenTable();
-            if (guildRows.length > 0) html += renderGuildTable();
-            if (communityRows.length > 0) html += renderCommunityTable();
-            if (goldRows.length > 0) html += renderGoldTable();
+            if (tokenRows.length > 0) html += asCards ? renderTokenCards() : renderTokenTable();
+            if (guildRows.length > 0) html += asCards ? renderGuildCards() : renderGuildTable();
+            if (communityRows.length > 0) html += asCards ? renderCommunityCards() : renderCommunityTable();
+            if (goldRows.length > 0) html += asCards ? renderGoldCards() : renderGoldTable();
             container.innerHTML = html;
+            this._registerViewRedraw(checked ? 'checked-skilling' : 'skilling', container, renderAll);
             // Re-wired on every render: a sort rebuilds the tables, and buttons
             // wired to the elements it threw away do nothing at all
             combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+            this._wireLabCards(container);
             if (checked) this._wireCheckedHeading('skilling', container);
         };
 
@@ -10747,6 +12069,17 @@ class LabSimUI {
         this._maxLevelByMonster = {};
         this._maxLevelSigByMonster = {};
         this._allFightsResult = null;
+        this._unwatchNarrowWindow();
+        this._openCards = new Set();
+        this._cardShowAll = new Set();
+        this._openGlossaries = new Set();
+        this._cardRegistry = new Map();
+        this._cardSections = new Map();
+        this._viewRedraws = new Map();
+        this._viewRedrawOwed = false;
+        this._orderViewDrawn = null;
+        this._rememberedLabResults = null;
+        this._rememberedOrderSection = null;
         this._upgradePlayerName = null;
         this._houseScanNote = null;
         this._restoredUpgradeAt = null;
