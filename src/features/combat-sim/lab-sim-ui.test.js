@@ -2080,6 +2080,31 @@ describe('the upgrade table reads like the combat sim’s', () => {
         expect(emitted.some((d) => d.startsWith('Royal Nature Robe Top +7'))).toBe(true);
     });
 
+    test('at phone width the actions move to the expanded row: inline set plus a cue beside the name, a copy inside', () => {
+        ui._renderUpgradeResults(analysis(), container);
+
+        // Gold rows already had a detail row; the copy sits in it, ahead of the cost breakdown
+        const goldRow = container.querySelector('tr[data-gold-row="0"]');
+        const goldDetail = container.querySelector('[data-gold-detail="0"]');
+        const inline = goldRow.querySelector('td:first-child .mwi-ract-inline [data-shared-action]');
+        const copy = goldDetail.querySelector('.mwi-ract-detail [data-shared-action]');
+        expect(inline).not.toBeNull();
+        expect(copy.getAttribute('data-shared-action')).toBe(inline.getAttribute('data-shared-action'));
+        expect(goldRow.querySelector('td:first-child .mwi-ract-cue')).not.toBeNull();
+
+        // A token row had no detail row: it gets one that holds only the actions, opened by the row
+        const tokenRow = container.querySelector('tr[data-token-row="0"]');
+        const tokenDetail = container.querySelector('[data-token-detail="0"]');
+        expect(tokenRow.classList.contains('mwi-ract-row')).toBe(true);
+        expect(tokenDetail.classList.contains('mwi-ract-only')).toBe(true);
+        expect(tokenDetail.querySelector('.mwi-ract-detail [data-shared-action]')).not.toBeNull();
+        expect(tokenDetail.style.display).toBe('none');
+        tokenRow.click();
+        expect(tokenDetail.style.display).toBe('table-row');
+        tokenRow.click();
+        expect(tokenDetail.style.display).toBe('none');
+    });
+
     test('and they are given their behaviour once the strings are in the document', () => {
         ui._renderUpgradeResults(analysis(), container);
 
@@ -2577,6 +2602,20 @@ describe('a Skilling gear row unfolds into what it is buying', () => {
 
         container.querySelector('[data-skilling-gold-row="0"]').click();
         expect(detail.style.display).toBe('table-row');
+    });
+
+    test('the actions sit beside the name for a wide window and are repeated in the unfolded row for a phone', () => {
+        ui._renderSkillingUpgradeResults(geared(), container);
+
+        const nameCell = container.querySelector('[data-skilling-gold-row="0"] td:nth-child(2)');
+        const detail = container.querySelector('[data-skilling-gold-detail="0"]');
+        const inline = nameCell.querySelectorAll('.mwi-ract-inline [data-shared-action]');
+        const copy = detail.querySelectorAll('.mwi-ract-detail [data-shared-action]');
+        expect(inline).toHaveLength(1);
+        expect(copy).toHaveLength(1);
+        expect(nameCell.querySelector('.mwi-ract-cue')).not.toBeNull();
+        // The copy leads the detail, ahead of the breakdown slot
+        expect(detail.querySelector('td').firstElementChild.classList.contains('mwi-ract-detail')).toBe(true);
     });
 
     test('and names the rate it moved, against the baseline it moved it from', () => {
@@ -6316,6 +6355,17 @@ describe('the all-fights Combat levels table', () => {
     afterEach(() => {
         host.remove();
         ui.destroy();
+    });
+
+    test('the gear row repeats its actions in the unfolded breakdown, and the name cell keeps the cue', () => {
+        ui._renderAllFightsResults(analysis([gear]), container);
+
+        const nameCell = container.querySelector('tr[data-allfights-row="0"] td:first-child');
+        const detailTd = container.querySelector('[data-allfights-detail="0"] td');
+        expect(nameCell.querySelectorAll('.mwi-ract-inline [data-shared-action]')).toHaveLength(1);
+        expect(nameCell.querySelector('.mwi-ract-cue')).not.toBeNull();
+        expect(detailTd.querySelectorAll('.mwi-ract-detail [data-shared-action]')).toHaveLength(1);
+        expect(detailTd.firstElementChild.classList.contains('mwi-ract-detail')).toBe(true);
     });
 
     const levelRowFor = (name) =>

@@ -49,6 +49,10 @@ export const SIM_UPGRADE_PHONE_STYLE_ID = 'mwi-sim-upgrade-phone-layout';
  * because these let things wrap and scroll. Class-based, so every table that carries `mwi-utable-wrap` gets them.
  */
 export const SIM_UPGRADE_PHONE_CSS = `
+    /* The detail copy of a row's actions, the arrow cue, and a detail row that holds nothing but actions exist
+       only at phone width (the media block below turns them on); a wider window shows the inline buttons as before */
+    .mwi-ract-detail, .mwi-ract-cue { display: none; }
+    tr.mwi-ract-only { display: none !important; }
     @media ${MARKET_MOBILE_QUERY} {
         /* An include chip and the options it owns wrap inside the panel; a label stays beside its control */
         [data-mode-chip], [data-lab-mode-chip] { max-width: 100%; box-sizing: border-box; flex-wrap: wrap; }
@@ -109,11 +113,45 @@ export const SIM_UPGRADE_PHONE_CSS = `
         }
         /* An expanded row spans the whole table: its content stays at the visible width, pinned to the left */
         .mwi-utable-wrap .mwi-utable-detail { position: sticky; left: 0; box-sizing: border-box; width: calc(100vw - 80px); max-width: 100%; }
+        /* Row actions (Save for this, Watch, Market, Enhance) leave the name cell and open with the row: the inline
+           set is hidden, the copy in the expanded row shows, and a small arrow says the row opens. Tags beside the
+           name (fresh book, on task) are not actions and stay */
+        .mwi-utable-wrap .mwi-ract-inline { display: none !important; }
+        .mwi-utable-wrap .mwi-ract-cue { display: inline; color: #8ab4f8; }
+        .mwi-ract-detail {
+            display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px;
+            position: sticky; left: 0; box-sizing: border-box; width: calc(100vw - 80px); max-width: 100%;
+        }
+        .mwi-ract-detail button { margin: 0 !important; padding: 6px 10px !important; font-size: 11px !important; min-height: 34px; }
+        /* A row whose only detail is its actions opens now: it looks clickable, and its detail row shows once opened */
+        tr.mwi-ract-row { cursor: pointer; }
+        tr.mwi-ract-only[style*="table-row"] { display: table-row !important; }
         .mwi-utable-wrap .mwi-utable-detail > div[style*="grid-template-columns"] {
             grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)) !important;
         }
     }
 `;
+
+/**
+ * A row's actions as they sit beside its name: the buttons (hidden at phone width) and a small arrow cue that
+ * shows only there, to say the row opens. Empty for a row with no actions.
+ * @param {string} actions - Markup from `upgradeRowActionsHtml`
+ * @returns {string} HTML
+ */
+export function rowActionsInlineHtml(actions) {
+    return actions
+        ? `<span class="mwi-ract-inline">${actions}</span><span class="mwi-ract-cue" aria-hidden="true">▾</span>`
+        : '';
+}
+
+/**
+ * The same actions as a block for the row's expanded detail; shown at phone width only.
+ * @param {string} actions - Markup from `upgradeRowActionsHtml`
+ * @returns {string} HTML, empty when there are no actions
+ */
+export function rowActionsDetailHtml(actions) {
+    return actions ? `<div class="mwi-ract-detail">${actions}</div>` : '';
+}
 
 /** Install the Upgrade tab's phone rules. Safe to call whenever the Combat Sim panel is built. */
 export function ensureSimUpgradePhoneStyles() {

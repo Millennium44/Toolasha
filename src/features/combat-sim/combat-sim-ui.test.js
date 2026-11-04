@@ -2703,6 +2703,134 @@ describe('the panel', () => {
             expect(rules[0].body).toMatch(/white-space:\s*normal/);
             expect(rules[0].body).toMatch(/max-width:\s*100%/);
         });
+
+        describe('row actions at phone width', () => {
+            const render = (rows) => {
+                ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
+                return ui.panel.querySelector('#mwi-csim-upgrade-results');
+            };
+            // The same row twice: priced gear, a free drink (Watch and Market only), and a row that buys nothing
+            const gear = () => row('Priced ring', { type: 'tier', cost: 5_000_000, profitGain: 50 });
+            const drink = () => row('Free tea', { type: 'drink', cost: 0, profitGain: 40 });
+            const nothing = () => ({
+                ...row('Unbuyable', { type: 'tier', cost: 100, profitGain: 30 }),
+                candidate: { ...row('Unbuyable', { type: 'tier' }).candidate, upgradeHrid: '/abilities/none' },
+            });
+            const actionsOf = (scope) =>
+                [...scope.querySelectorAll('[data-buy-action]')].map((b) => b.getAttribute('data-buy-action'));
+            const rowAt = (container, i) => ({
+                tr: container.querySelector(`tr[data-upgrade-row="${i}"]`),
+                detail: container.querySelector(`tr[data-upgrade-detail="${i}"]`),
+            });
+
+            beforeEach(() => {
+                mocks.watched.length = 0;
+                mocks.bridgePricePanel = null;
+            });
+
+            test('every row has the same actions beside its name and in its expanded row, and none when it buys nothing', () => {
+                ui._upgradeSort = { key: 'upgrade', asc: true };
+                const container = render([gear(), drink(), nothing()]);
+                const byName = (name) =>
+                    [...container.querySelectorAll('tr[data-upgrade-row]')].findIndex((tr) =>
+                        tr.textContent.includes(name)
+                    );
+
+                const g = rowAt(container, byName('Priced ring'));
+                const gInline = actionsOf(g.tr.querySelector('td:first-child .mwi-ract-inline'));
+                expect(gInline).toEqual(['save', 'watch', 'market']);
+                expect(actionsOf(g.detail.querySelector('.mwi-utable-detail > .mwi-ract-detail'))).toEqual(gInline);
+                expect(g.tr.querySelector('td:first-child .mwi-ract-cue')).not.toBeNull();
+
+                // A free drink cannot be saved for: Watch and Market in both places
+                const d = rowAt(container, byName('Free tea'));
+                expect(actionsOf(d.tr.querySelector('.mwi-ract-inline'))).toEqual(['watch', 'market']);
+                expect(actionsOf(d.detail.querySelector('.mwi-ract-detail'))).toEqual(['watch', 'market']);
+
+                // Nothing to buy: no inline set, no cue, no copy; the expanded row is still its usual detail
+                const n = rowAt(container, byName('Unbuyable'));
+                expect(n.tr.querySelector('.mwi-ract-inline, .mwi-ract-cue')).toBeNull();
+                expect(n.detail.querySelector('.mwi-ract-detail')).toBeNull();
+                expect(n.detail.querySelector('.mwi-utable-detail')).not.toBeNull();
+            });
+
+            test('the descriptive tags stay beside the name, outside the hidden set', () => {
+                const container = render([gear()]);
+                const cell = container.querySelector('tr[data-upgrade-row] td:first-child');
+                expect(cell.querySelector('.mwi-ract-inline')).not.toBeNull();
+                // Only buttons are inside the hidden span: whatever else the cell holds is not
+                const inline = cell.querySelector('.mwi-ract-inline');
+                expect(inline.querySelectorAll(':scope > :not(button)')).toHaveLength(0);
+            });
+
+            test('a click on the detail copy does what the inline button does, once, and does not toggle the row', () => {
+                const container = render([gear()]);
+                const { tr, detail } = rowAt(container, 0);
+
+                tr.querySelector('.mwi-ract-inline [data-buy-action="watch"]').click();
+                const viaInline = [...mocks.watched];
+                expect(viaInline).toHaveLength(1);
+                expect(detail.style.display).toBe('none');
+
+                mocks.watched.length = 0;
+                detail.style.display = 'table-row';
+                detail.querySelector('.mwi-ract-detail [data-buy-action="watch"]').click();
+                expect(mocks.watched).toEqual(viaInline);
+                // Open stays open: the click neither toggled the row nor reached it
+                expect(detail.style.display).toBe('table-row');
+            });
+
+            test('an expanded row stays expanded through a redraw and its copy still works', () => {
+                let container = render([gear()]);
+                container.querySelector('tr[data-upgrade-row]').click();
+                expect(rowAt(container, 0).detail.style.display).toBe('table-row');
+
+                container = render([gear()]);
+                const { detail } = rowAt(container, 0);
+                expect(detail.style.display).toBe('table-row');
+                mocks.marketOpened.length = 0;
+                detail.querySelector('.mwi-ract-detail [data-buy-action="market"]').click();
+                expect(mocks.marketOpened).toHaveLength(1);
+                // The inline copy was wired by the same redraw and would have opened the same item
+                expect(detail.style.display).toBe('table-row');
+            });
+
+            test('a remembered result has the same live buttons in both places', () => {
+                ui._restoredUpgradeAt = Date.now() - 3_600_000;
+                ui._restoredUpgradeMeta = {};
+                const container = render([gear()]);
+                const buttons = container.querySelectorAll('[data-buy-action]');
+                expect(buttons).toHaveLength(6);
+                for (const b of buttons) expect(b.disabled).toBe(false);
+                ui._restoredUpgradeAt = null;
+                ui._restoredUpgradeMeta = null;
+            });
+
+            test('an empty table draws no actions and does not throw', () => {
+                const container = render([]);
+                expect(container.querySelector('.mwi-ract-inline, .mwi-ract-detail, .mwi-ract-cue')).toBeNull();
+            });
+
+            test('the stylesheet hides the inline set and shows the copy at phone width only', () => {
+                const [base, ...rest] = SIM_UPGRADE_PHONE_CSS.split('@media');
+                const media = rest.join('@media');
+                // Outside the media block a wide window is untouched: the inline set is never hidden, the copy,
+                // cue and actions-only row are
+                expect(base).not.toContain('.mwi-ract-inline');
+                expect(base).toMatch(/\.mwi-ract-detail, \.mwi-ract-cue \{ display: none; \}/);
+                expect(base).toMatch(/tr\.mwi-ract-only \{ display: none !important; \}/);
+                // Inside it, the inline set goes, and the copy, cue and opened actions-only row come back
+                expect(media).toMatch(/\.mwi-utable-wrap \.mwi-ract-inline \{ display: none !important; \}/);
+                expect(media).toMatch(/\.mwi-utable-wrap \.mwi-ract-cue \{ display: inline;/);
+                expect(media).toMatch(/\.mwi-ract-detail \{\s*display: flex;/);
+                expect(media).toMatch(/tr\.mwi-ract-only\[style\*="table-row"\] \{ display: table-row !important; \}/);
+                // Cards (not inside a table wrapper) are not touched by the hiding rule
+                const cardCell = document.createElement('div');
+                cardCell.innerHTML = '<span class="mwi-ract-inline"></span>';
+                const inlineSet = cardCell.firstElementChild;
+                expect(inlineSet.matches('.mwi-utable-wrap .mwi-ract-inline')).toBe(false);
+            });
+        });
     });
 
     describe('the Buffs section', () => {
