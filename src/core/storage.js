@@ -2586,13 +2586,14 @@ class Storage {
      * `chunked-history`, `trade-ledger-store`, `networth-history` — all flush
      * through here, so a blanket exemption let exactly the writer the latch
      * names put its pre-restore array back on top of the restore. The restore
-     * itself and the sync bookkeeping that records it are the two writers that
-     * genuinely are not pre-restore state, and they say so with
+     * itself, the sync bookkeeping that records it, and a row recorded after the
+     * restore and folded into the stored copy (the trade ledger's new fills) are
+     * the writers that genuinely are not pre-restore state, and they say so with
      * `bypassRestoreLatch`.
      * @param {string} storeName - Object store name
      * @param {Record<string, *>} entries - Map of key → value to write
-     * @param {{bypassRestoreLatch?: boolean}} [options] - `bypassRestoreLatch` for the
-     *   restore itself and its bookkeeping, which are what the latch is protecting
+     * @param {{bypassRestoreLatch?: boolean, folds?: Record<string, Function>}} [options] - `bypassRestoreLatch`
+     *   for a writer that is not pre-restore state (above); `folds`, the keys folded into the stored copy (see `set`)
      * @returns {Promise<number>} Number of entries successfully written
      */
     async putAll(storeName, entries, options = {}) {
@@ -3275,6 +3276,17 @@ class Storage {
      */
     pendingWriteCount() {
         return this.pendingWrites.size + this._inFlightWrites.size;
+    }
+
+    /**
+     * Whether a restore is between `beginRestore()` and `endRestore()`.
+     *
+     * A write committed in this window can still be written over: the restore worked out its copy of a key earlier,
+     * and only a key it held a copy of is folded again as it lands.
+     * @returns {boolean} True while a restore is running
+     */
+    isRestoreInProgress() {
+        return this._restoreInProgress;
     }
 
     /**

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market fills are saved the moment they land
+
+A fill that arrives while a sync pull is waiting for a reload, or while storage is briefly unavailable, no longer goes missing from your trade history. One that arrives during a character switch stays with the character it belongs to.
+
 ### Trade ledger stops asking for reloads
 
 A sync pull no longer brings back trade ledger fills the repair already removed, so the reload prompt stops repeating for those days.

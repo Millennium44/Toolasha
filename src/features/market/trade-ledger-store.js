@@ -30,12 +30,19 @@
  * on the old layout — something to fold into the day records rather than a
  * history to migrate over them. A split that cannot be written (a full disk)
  * leaves the single key in place and the store keeps using it as before.
+ *
+ * ## A fill is written the moment it is found
+ *
+ * A new fill's rows go straight to disk on their own (see `_flushUnsaved`), before anything else this store does
+ * with them, and its baseline waits until they have committed. The one failure this ledger cannot recover from is a
+ * baseline stored ahead of its row, or a listing that ends with its row only in memory: the next snapshot has nothing
+ * left to diff. A row stored without its baseline is only a duplicate, and the repair cuts that once the listing ends.
  */
 
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
-import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge-registry.js';
+import { registerSyncMerge, registerSyncRetention, onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { readScoped } from '../../utils/character-key.js';
 import { timeChunkId, recordKeysFor, registerCharacterScopedPrefix } from '../../utils/chunked-history.js';
 import { detectFills, trimLedger, repairOverRecorded, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
@@ -434,6 +441,14 @@ class TradeLedgerStore {
          */
         this._generation = 0;
         /**
+         * The character id `records` and `states` were loaded for, set where {@link load} marks the ledger loaded and
+         * cleared by {@link handleCharacterSwitch}. The data manager moves its current id one macrotask before it
+         * announces `character_switched`, so for that moment memory still belongs to the departing character while
+         * {@link ledgerCharId} already names the arriving one (see {@link _departing}).
+         * @type {string|null}
+         */
+        this._loadedFor = null;
+        /**
          * Whether the single key is still the record.
          *
          * Set when the split could not be written; reads and writes then go
@@ -453,6 +468,19 @@ class TradeLedgerStore {
          * @type {Map<string, Set<string>>}
          */
         this._writtenDays = new Map();
+        /**
+         * Fills this tab has found and has not yet seen committed: `charId → Map(fillKey → {row, writing, singleKey})`.
+         *
+         * Normally a row is here for the milliseconds its transaction takes. It stays while storage is failing, and
+         * while it does no baseline moves: {@link saveStates} stores nothing for a character with a row here. By
+         * character, because a row found under one character is still that character's after a switch.
+         * @type {Map<string, Map<string, {row: Object, writing: boolean, singleKey: boolean}>>}
+         */
+        this._unsavedFills = new Map();
+        /** The writes of those rows now in flight, so a baseline can wait for them. @type {Set<Promise<void>>} */
+        this._fillWrites = new Set();
+        /** A baseline save stood down for this character: the next chance to save one is taken even with no change. */
+        this._statesOwed = false;
         /**
          * What the over-recorded repair has done this session, per character (`charId → {runs, cut}`), for the
          * sync pull report. Read-only bookkeeping: nothing here changes what the repair does. Kept by character
@@ -485,6 +513,167 @@ class TradeLedgerStore {
          * @type {WeakMap<Object, {charId: string, counts: Map<number, number>, trims: Set<string>}>}
          */
         this._pulledCountsMemo = new WeakMap();
+    }
+
+    /**
+     * Hold new fills until they are seen committed.
+     * @param {string} charId - Whose fills
+     * @param {Array<Object>} fills - Fill records
+     * @private
+     */
+    _noteFills(charId, fills) {
+        let held = this._unsavedFills.get(charId);
+        if (!held) {
+            held = new Map();
+            this._unsavedFills.set(charId, held);
+        }
+        for (const row of fills) held.set(fillKey(row), { row, writing: false, singleKey: this._legacy });
+    }
+
+    /**
+     * Whose ledger memory holds, when that is not the character now current.
+     *
+     * The data manager moves its id and defers `character_switched` by a macrotask, so a market event already
+     * queued for the departing character can arrive in between: the id is the arriving character's, memory is
+     * still the departing one's. Anything keyed by {@link ledgerCharId} there files the departing character's
+     * fills under the arriving one for good. A ledger loaded before login (`default`) is not a departure: the id
+     * is simply catching up, and the keys follow it as they always did.
+     * @returns {string|null} The id memory belongs to, or null when memory is the current character's or unowned
+     * @private
+     */
+    _departing() {
+        const owner = this.isLoaded ? this._loadedFor : null;
+        if (!owner || owner === 'default') return null;
+        return owner === ledgerCharId() ? null : owner;
+    }
+
+    /**
+     * Store a departing character's baselines from the gap before the switch lands (see {@link _departing}).
+     *
+     * {@link saveStates} reads the current id and stands down on the switch, which is right for every other
+     * moment and would drop this one, leaving the baseline behind a row that is already stored (the listing would
+     * be found filled again on the character's return). So the departing character's own key is written directly,
+     * from the memory that still belongs to them, and only once their rows are stored: a baseline never runs ahead of
+     * its row. Folded inside the write, so a baseline another writer stored meanwhile is kept.
+     * @param {string} owner - The departing character
+     * @param {Promise<*>|null} [fillsSaved] - The writes of the fills this baseline accounts for
+     * @returns {Promise<boolean>} Whether a write was issued
+     * @private
+     */
+    async _saveDepartingStates(owner, fillsSaved = null) {
+        const states = this.states;
+        try {
+            if (fillsSaved) await fillsSaved;
+            if (this._unsavedFills.has(owner)) return false;
+            return await storage.set(charKey(STATE_BASE, owner), states, LEDGER_STORE, false, {
+                fold: (now, held) => (now && typeof now === 'object' ? mergeStates(now, held) : held),
+            });
+        } catch (error) {
+            console.error('[TradeLedger] Failed to save the departing character listing states:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Write every held fill, each folded into its stored record as it lands.
+     *
+     * The rows alone, in a transaction opened in this tick, so a page closing a moment later still lands them. Three
+     * things follow from writing only the rows and folding inside the write:
+     *
+     * - No read comes first, so one that fails cannot hold a fill back. That read guarded against a blind overwrite;
+     *   a fold cannot be one, since it sees what is stored and adds to it. Only a failed write leaves a row held.
+     * - It goes past a restore's latch. The latch exists so pre-restore memory does not land over what a restore put
+     *   there, and it stays up for all of that memory (`saveRecords`). A fill found after the restore is not
+     *   pre-restore state and the fold takes nothing away. It cannot wait for the reload the latch asks for: a
+     *   listing that ends in the meantime is gone from the next snapshot, so its row would never be found again.
+     * - Nothing new reaches disk: a row in a day record, as any build reads it.
+     * @param {{force?: boolean}} [options] - `force` also writes rows whose earlier write has not answered, for page
+     *   close
+     * @returns {Promise<Array<void>>} Settles when every write in flight has answered; never rejects
+     * @private
+     */
+    _flushUnsaved({ force = false } = {}) {
+        for (const [charId, held] of this._unsavedFills) {
+            const byKey = new Map();
+            for (const entry of held.values()) {
+                if (entry.writing && !force) continue;
+                const key = entry.singleKey ? charKey(RECORDS_BASE, charId) : recordKey(charId, bucketOf(entry.row));
+                if (byKey.has(key)) byKey.get(key).push(entry);
+                else byKey.set(key, [entry]);
+            }
+            for (const [key, entries] of byKey) {
+                const write = (async () => {
+                    try {
+                        await this._writeFills(charId, key, entries);
+                    } finally {
+                        this._fillWrites.delete(write);
+                    }
+                })();
+                this._fillWrites.add(write);
+            }
+        }
+        return Promise.all([...this._fillWrites]);
+    }
+
+    /**
+     * One record's held rows, written and, once committed, let go.
+     *
+     * A write that lands while a restore is running stays held and is written again afterwards. The restore's copy
+     * of the record was worked out before this row existed, and for a day this device held no copy of when it read
+     * (the first fill of a UTC day) that copy then goes down whole, row or no row.
+     * @param {string} charId - Whose fills
+     * @param {string} key - The record they go in
+     * @param {Array<{row: Object, writing: boolean, singleKey: boolean}>} entries - The held rows
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _writeFills(charId, key, entries) {
+        const duringRestore = storage.isRestoreInProgress?.() === true;
+        for (const entry of entries) entry.writing = true;
+        let landed = false;
+        try {
+            const written = await storage.putAll(
+                LEDGER_STORE,
+                { [key]: entries.map((entry) => entry.row) },
+                {
+                    bypassRestoreLatch: true,
+                    folds: {
+                        [key]: (stored, rows) =>
+                            Array.isArray(stored) && Array.isArray(rows) ? mergeRecords(stored, rows) : rows,
+                    },
+                }
+            );
+            landed = written === 1;
+        } catch (error) {
+            console.error('[TradeLedger] Failed to write new fills:', error);
+        }
+        for (const entry of entries) entry.writing = false;
+        if (!landed) {
+            console.warn(`[TradeLedger] ${entries.length} new fill(s) not saved yet; keeping them and retrying`);
+            return;
+        }
+        if (duringRestore) return;
+        const held = this._unsavedFills.get(charId);
+        for (const entry of entries) {
+            const id = fillKey(entry.row);
+            if (held?.get(id) === entry) held.delete(id);
+        }
+        if (held?.size === 0) this._unsavedFills.delete(charId);
+        if (!entries[0].singleKey) {
+            const days = this._writtenDays.get(charId) || new Set();
+            for (const entry of entries) days.add(bucketOf(entry.row));
+            this._writtenDays.set(charId, days);
+        }
+    }
+
+    /**
+     * Try the held fills again, and the baseline they were holding back.
+     * @private
+     */
+    _retryUnsaved() {
+        if (this._unsavedFills.size === 0) return;
+        const writes = this._flushUnsaved();
+        if (this._statesOwed && this.isLoaded) this.saveStates(writes);
     }
 
     /**
@@ -556,6 +745,11 @@ class TradeLedgerStore {
      * The one thing that makes memory count too much is a row the download holds trimmed on its own day, whose fold
      * replaces memory's original: that listing is not cut here at all (see {@link _listingsTrimmedElsewhere}).
      *
+     * For the same reason a trim on this day is never judged good on the strength of the download's other days: they
+     * may not land, by retention or because the last exchange settled them, and a fill cut to its trim then stays short
+     * for good. Those rows can only stop a cut. A trim memory's rows leave short of its cap, which those rows would
+     * make up, keeps both copies, and the load's repair decides on what did land (see {@link _rowsElsewhere}).
+     *
      * Falls back to the plain union, as before, when no checked caps are held, they are another character's (or
      * were dropped because the ledger was switched off), the ledger is not loaded or still the single key, the rows
      * span more than one day, or there is no download to read the other days from. A result holding exactly this
@@ -594,9 +788,35 @@ class TradeLedgerStore {
         const others = this.records.filter((record) => held.caps.has(record.listingId) && bucketOf(record) !== day);
         const caps = this._capsForFold(rows, others, held, charId, download);
         if (caps.size === 0) return rows;
-        const { records, repairedIds } = repairOverRecorded([...others, ...rows], caps);
+        const elsewhere = this._rowsElsewhere(caps, rows, others, this._readDownload(download, charId), day);
+        const { records, repairedIds } = repairOverRecorded([...others, ...rows], caps, elsewhere);
         if (repairedIds.size === 0) return rows;
         return records.filter((record) => bucketOf(record) === day);
+    }
+
+    /**
+     * The download's rows on other days of each listing with a trimmed row on this day, less those memory holds too.
+     * A row in both is one the count already has, and adding it again could make a trim look justified.
+     * @param {Map<number, number>} caps - The listings this fold may cut
+     * @param {Array<Object>} rows - The folded day's rows
+     * @param {Array<Object>} others - Rows on other days, from memory
+     * @param {{rows: Map<number, Array<Object>>}} pulled - What the download holds
+     * @param {string} day - The folded day
+     * @returns {Map<number, Array<Object>>} Listing id to rows that may or may not land
+     * @private
+     */
+    _rowsElsewhere(caps, rows, others, pulled, day) {
+        const elsewhere = new Map();
+        const trimmedHere = new Set();
+        for (const row of rows) if (row.trimmed && caps.has(row.listingId)) trimmedHere.add(row.listingId);
+        if (trimmedHere.size === 0) return elsewhere;
+        const held = new Set();
+        for (const row of [...others, ...rows]) if (trimmedHere.has(row.listingId)) held.add(fillKey(row));
+        for (const id of trimmedHere) {
+            const there = (pulled.rows.get(id) || []).filter((r) => bucketOf(r) !== day && !held.has(fillKey(r)));
+            if (there.length > 0) elsewhere.set(id, there);
+        }
+        return elsewhere;
     }
 
     /**
@@ -663,11 +883,11 @@ class TradeLedgerStore {
     /**
      * What a fold needs from the rest of a download, read once per download and only when a day has something a held
      * cap applies to: the highest fill count it holds for each listing of one character (its log, its archive months
-     * and its baselines), and that character's trimmed rows.
+     * and its baselines), and that character's day rows.
      * @param {Object<string, *>} download - The whole download of this store
      * @param {string} charId - Whose rows
-     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>}} Listing id to count, and the
-     *   trimmed rows by {@link trimStamp}
+     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>, rows: Map<number, Array<Object>>}}
+     *   Listing id to count, the trimmed rows by {@link trimStamp}, and listing id to its day rows
      * @private
      */
     _readDownload(download, charId) {
@@ -675,6 +895,7 @@ class TradeLedgerStore {
         if (memo && memo.charId === charId) return memo;
         const counts = new Map();
         const trims = new Set();
+        const rows = new Map();
         const raise = (id, filled) => {
             const count = Number(filled);
             if (Number.isFinite(id) && count > 0 && !(counts.get(id) >= count)) counts.set(id, count);
@@ -690,10 +911,15 @@ class TradeLedgerStore {
             } else if ((key === logKey || key.startsWith(archiveMonths)) && Array.isArray(value)) {
                 for (const row of value) raise(Number(row?.id), row?.filledQuantity);
             } else if (key.startsWith(dayRecords) && Array.isArray(value)) {
-                for (const row of value) if (row?.trimmed) trims.add(trimStamp(row));
+                for (const row of value) {
+                    if (!row?.itemHrid) continue;
+                    if (row.trimmed) trims.add(trimStamp(row));
+                    if (rows.has(row.listingId)) rows.get(row.listingId).push(row);
+                    else rows.set(row.listingId, [row]);
+                }
             }
         }
-        const read = { charId, counts, trims };
+        const read = { charId, counts, trims, rows };
         this._pulledCountsMemo.set(download, read);
         return read;
     }
@@ -900,7 +1126,16 @@ class TradeLedgerStore {
             // back over the stored one by the next fill
         }
         if (!current()) return;
+        // Rows still waiting for storage are part of this ledger however the reads above went
+        const unsaved = this._unsavedFills.get(charId);
+        if (unsaved) {
+            this.records = mergeRecords(
+                this.records,
+                [...unsaved.values()].map((entry) => entry.row)
+            );
+        }
         this.isLoaded = true;
+        this._loadedFor = charId;
         // A ledger at its cap evicts, and records its floor for sync, on the
         // load too: day records a pull wrote back before the floor was recorded
         // would otherwise wait for this character's next fill to go
@@ -1053,6 +1288,9 @@ class TradeLedgerStore {
      * @private
      */
     _repairOverRecorded(openListings = null, capsEpoch = this._capsEpoch) {
+        // Keyed by the id read below, over memory that is the departing character's for a moment before a switch
+        // lands (see _departing): a cut there would be filed under the arriving character
+        if (this._departing()) return Promise.resolve(0);
         const charId = ledgerCharId();
         const started = this._generation;
         const current = () => this._generation === started && ledgerCharId() === charId;
@@ -1305,17 +1543,33 @@ class TradeLedgerStore {
             return;
         }
 
-        const { fills, states, changed } = detectFills(this.states, listings, { snapshot, changedIds });
+        // In the gap before `character_switched` (see _departing) memory is the departing character's and the id is
+        // not. A snapshot there is the arriving character's and would sweep the departing one's baselines. A live
+        // event is read only for listings that name the departing character: one that names another, or none, is
+        // not provably theirs, and the arriving character's own listings are found by their snapshot at load.
+        const departing = this._departing();
+        let batch = listings;
+        if (departing) {
+            if (snapshot) return;
+            batch = (Array.isArray(listings) ? listings : []).filter(
+                (listing) => listing && String(listing.characterID) === String(departing)
+            );
+            if (batch.length === 0) return;
+        }
+        // Fills belong to whoever memory belongs to, never to whoever the id says by the time this runs
+        const owner = departing || ledgerCharId();
+
+        const { fills, states, changed } = detectFills(this.states, batch, { snapshot, changedIds });
         this.states = states;
 
-        let filled = null;
+        let dirty = null;
         if (fills.length > 0) {
             const before = this.records;
             const after = trimLedger([...before, ...fills], LEDGER_RECORD_CAP);
 
             // The day records to write: the new fills' days, plus the days of
             // any records the cap just pushed out (those records shrink or go)
-            const dirty = new Set(fills.map(bucketOf));
+            dirty = new Set(fills.map(bucketOf));
             if (after.length < before.length + fills.length) {
                 const kept = new Set(after);
                 for (const record of before) {
@@ -1324,15 +1578,27 @@ class TradeLedgerStore {
             }
 
             this.records = after;
-            filled = this.saveRecords(dirty);
+            this._noteFills(owner, fills);
         }
-        if (changed) {
-            this.saveStates(filled);
+        const writes = this._unsavedFills.size > 0 ? this._flushUnsaved() : null;
+        if (departing) {
+            // The flush above writes the rows under their own character. A save keyed by the current id must not
+            // run from here; the day records' cap bookkeeping waits for that character's next save
+            if (changed) this._saveDepartingStates(departing, writes);
+            return;
+        }
+        if (dirty) this.saveRecords(dirty);
+        if (changed || this._statesOwed) {
+            this.saveStates(writes);
         }
     }
 
     /**
-     * Persist fill records.
+     * Fold a day's records in memory and storage together, and apply the cap.
+     *
+     * New fills do not depend on this: {@link _flushUnsaved} has already written them. What this adds is the rows
+     * only storage knew coming into memory, memory's rows going back to a day another writer replaced, and the cap.
+     * All of that is memory from before any restore, so all of it stays behind the latch.
      *
      * Only the day records named in `buckets` are written — a fill touches its
      * own day, not the whole ledger. Each one is read-merge-written, serialized:
@@ -1357,6 +1623,9 @@ class TradeLedgerStore {
     async saveRecords(buckets) {
         const wanted = buckets ? new Set(buckets) : null;
         const run = async () => {
+            // Memory is the departing character's for a moment before the switch lands (see _departing): a save
+            // keyed by the arriving id would file their records under it. Their fills are already written
+            if (this._departing()) return false;
             // Captured before the first read and used for every key, probe and
             // write alike: a switch landing in the read-merge-write below made
             // the probe one character's and the write another's, folding the
@@ -1530,28 +1799,47 @@ class TradeLedgerStore {
      * only storage knows is the only thing that can turn that listing's next
      * update into a fill.
      *
-     * A baseline that accounts for fills waits for their save, and stands down if that save was refused or stood
-     * down. A baseline stored ahead of its fill is what loses a fill for good: the next load diffs to zero. Unstored,
-     * the next load finds the same fill again.
-     * @param {Promise<boolean>|null} [fillsSaved] - The save of the fills this baseline accounts for
+     * A baseline waits for the rows it accounts for, and nothing is stored while this character has a row unsaved,
+     * whatever the change that asked. `this.states` has moved past that fill, so a save for any reason (a listing
+     * placed) would carry the baseline to disk ahead of its row: the next load then diffs to zero and the fill is gone
+     * for good. Unstored, the next load finds it again. A save held back here is owed, and made once the rows land.
+     * A switch while waiting stands it down: the departing character's baseline stays behind its row, which at worst
+     * records the fill once more on their next load.
+     * @param {Promise<*>|null} [fillsSaved] - The writes of the fills this baseline accounts for
      * @returns {Promise<boolean>} Whether a write was issued
      */
     async saveStates(fillsSaved = null) {
+        const owner = this._generation;
         const run = async () => {
-            if (fillsSaved && (await fillsSaved) === false) return false;
+            if (fillsSaved) await fillsSaved;
+            if (this._generation !== owner) return false;
+            // Memory is the departing character's for a moment before the switch lands: store theirs under theirs
+            const departing = this._departing();
+            if (departing) return this._saveDepartingStates(departing);
             // Same capture-before-the-read as saveRecords: the probe and the
             // write have to name the same character.
             const charId = ledgerCharId();
             const started = this._generation;
+            /** Whether a row this baseline accounts for is still only in memory. */
+            const heldBack = () => {
+                if (!this._unsavedFills.has(charId)) return false;
+                this._statesOwed = true;
+                return true;
+            };
+            if (heldBack()) return false;
             try {
                 const probe = await storage.tryGet(charKey(STATE_BASE, charId), LEDGER_STORE);
                 if (probe === null) {
                     console.warn('[TradeLedger] Listing baselines not saved: storage could not be read first');
+                    this._statesOwed = true;
                     return false;
                 }
                 if (this._generation !== started || ledgerCharId() !== charId) return false;
+                // Again, right against the write: a fill found during the read has moved `this.states`
+                if (heldBack()) return false;
                 const stored = probe.found ? probe.value : {};
                 this.states = mergeStates(stored, this.states);
+                this._statesOwed = false;
                 // Debounced, and the probe above is only as fresh as the moment it ran: the fold runs again inside
                 // the transaction that lands the write, so a baseline a sync pull stored meanwhile is kept.
                 return await storage.set(charKey(STATE_BASE, charId), this.states, LEDGER_STORE, false, {
@@ -1599,6 +1887,8 @@ class TradeLedgerStore {
             }
             this.isInitialized = false;
             this._pullCaps = null;
+            // A row found before the ledger was switched off is still a real fill
+            if (this._unsavedFills.size > 0) this._flushUnsaved();
         } catch (error) {
             console.error('[Trade Ledger] Disable failed part-way:', error);
         } finally {
@@ -1612,6 +1902,7 @@ class TradeLedgerStore {
     async handleCharacterSwitch() {
         this.disable();
         this._generation += 1;
+        this._statesOwed = false;
         this._writtenDays = new Map();
         this._pullCaps = null;
         // A departing character's slow archive read stands down when it returns; the arriving one does not wait for it
@@ -1619,6 +1910,7 @@ class TradeLedgerStore {
         this.records = [];
         this.states = {};
         this.isLoaded = false;
+        this._loadedFor = null;
         this._legacy = false;
         await this.initialize();
     }
@@ -1636,5 +1928,14 @@ tradeLedgerStore.setupSettingListener();
 dataManager.on('character_switched', () => {
     tradeLedgerStore.handleCharacterSwitch();
 });
+
+// The last chance for a row still held: the transaction has to open before the page's connection closes, which a
+// `pagehide` listener of this module's own would be too late for
+storage.onBeforeTeardown?.(() => {
+    tradeLedgerStore._flushUnsaved({ force: true });
+});
+
+// A row written while the pull was running has to be written again now it has landed (see `_writeFills`)
+onSyncPullApplied(() => tradeLedgerStore._retryUnsaved());
 
 export default tradeLedgerStore;

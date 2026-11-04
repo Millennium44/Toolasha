@@ -64,9 +64,13 @@ const storageMock = vi.hoisted(() => {
             if (storageMock.unavailable) return null;
             return Array.from(storeFor(store).keys());
         }),
-        putAll: vi.fn(async (store, entries) => {
+        putAll: vi.fn(async (store, entries, options) => {
             if (storageMock.unavailable) return 0;
-            for (const [key, value] of Object.entries(entries)) storeFor(store).set(key, structuredClone(value));
+            const map = storeFor(store);
+            for (const [key, value] of Object.entries(entries)) {
+                const fold = options?.folds?.[key];
+                map.set(key, structuredClone(fold ? (fold(map.get(key), value) ?? value) : value));
+            }
             return Object.keys(entries).length;
         }),
         isQuotaExceeded: vi.fn(() => false),
@@ -239,6 +243,15 @@ const awaitSaves = async () => {
     await tradeLedgerStore._statesChain;
 };
 
+/** Which day records a write has been asked for since the mocks were cleared, whichever path it took */
+const dayRecordsWritten = () =>
+    [
+        ...storageMock.set.mock.calls.map(([key]) => key),
+        ...storageMock.putAll.mock.calls.flatMap(([, entries]) => Object.keys(entries)),
+    ]
+        .filter((key) => key.startsWith('tradeLedgerRec_'))
+        .sort();
+
 /** A fill of listing 3 by `quantity` at `now`, through the wire path */
 const fillNow = (now, filledQuantity = 4) => {
     vi.setSystemTime(now);
@@ -256,6 +269,7 @@ beforeEach(() => {
     tradeLedgerStore.records = [];
     tradeLedgerStore.states = {};
     tradeLedgerStore.isLoaded = false;
+    tradeLedgerStore._loadedFor = null;
     tradeLedgerStore.isInitialized = false;
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
@@ -264,6 +278,9 @@ beforeEach(() => {
     tradeLedgerStore._writtenDays = new Map();
     tradeLedgerStore._repairStats = new Map();
     tradeLedgerStore._pullCaps = null;
+    tradeLedgerStore._unsavedFills = new Map();
+    tradeLedgerStore._fillWrites = new Set();
+    tradeLedgerStore._statesOwed = false;
     archiveMock.rows = [];
     archiveMock.reads = 0;
     archiveMock.hang = false;
@@ -484,22 +501,18 @@ describe('a fill writes its own day and nothing else', () => {
         await tradeLedgerStore.load();
         tradeLedgerStore.states = baseline3();
         storageMock.set.mockClear();
+        storageMock.putAll.mockClear();
 
         fillNow(DAY3);
         await awaitSaves();
 
-        const written = storageMock.set.mock.calls
-            .map(([key]) => key)
-            .filter((key) => key.startsWith('tradeLedgerRec_'));
-        expect(written).toEqual([REC(DAY3)]);
+        expect(dayRecordsWritten()).toEqual([REC(DAY3)]);
         expect(
             LEDGER()
                 .get(REC(DAY3))
                 .map((r) => r.listingId)
         ).toEqual([3]);
         expect(LEDGER().get(REC(DAY1))).toHaveLength(1);
-        // Not immediate: the debounce is what coalesces a burst of fills
-        expect(storageMock.set.mock.calls.find(([key]) => key === REC(DAY3))[3]).not.toBe(true);
     });
 
     test('the cap keeps the floor day whole on disk, then removes it and records the floor', async () => {
@@ -680,8 +693,6 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
 
         const stored = LEDGER().get(REC(DAY3));
         expect(stored.map((r) => r.listingId)).toEqual([2, 3]);
-        // Memory's copy wins on the clash
-        expect(stored.find((r) => r.listingId === 2).price).toBe(2);
         // A row this tab never loaded is still only on the other day's record; it is not touched
         expect(LEDGER().get(REC(DAY1))).toHaveLength(1);
         expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([2, 3]);
@@ -766,14 +777,12 @@ describe('a fill another writer wrote over comes back on the next fill', () => {
         fillNow(DAY2 + 1000, 4);
         await awaitSaves();
         storageMock.set.mockClear();
+        storageMock.putAll.mockClear();
 
         fillNow(DAY3 + 1000, 6);
         await awaitSaves();
 
-        const written = storageMock.set.mock.calls
-            .map(([key]) => key)
-            .filter((key) => key.startsWith('tradeLedgerRec_'));
-        expect(written).toEqual([REC(DAY3)]);
+        expect(dayRecordsWritten()).toEqual([REC(DAY3)]);
     });
 
     test('the day write folds into what is stored when it lands', async () => {
@@ -2068,12 +2077,16 @@ describe('a fill is not held up by the archive read, and its baseline never land
         tradeLedgerStore.disable();
     });
 
-    test('a baseline waits for the save of its fill: with that save held up and a switch, neither lands', async () => {
+    test('a baseline waits for the write of its fill: held up across a switch, the row lands and it does not', async () => {
         LEDGER().set(STATE_KEY, baseline3());
         memory([], baseline3());
         let release;
-        tradeLedgerStore._recordsChain = new Promise((resolve) => {
-            release = resolve;
+        const real = storageMock.putAll.getMockImplementation();
+        storageMock.putAll.mockImplementationOnce(async (...args) => {
+            await new Promise((resolve) => {
+                release = resolve;
+            });
+            return real(...args);
         });
 
         tradeLedgerStore.processListings([listing(3, 4)], false);
@@ -2086,21 +2099,14 @@ describe('a fill is not held up by the archive read, and its baseline never land
         await settle();
         await awaitSaves();
 
-        // Nothing stored for this character moved, so the next load finds the same fill again
-        expect(storedBaseline(3)).toBe(0);
-        expect(storedRows(3)).toEqual([]);
-        dataManagerMock.characterId = 'market123';
-        dataManagerMock.characterData = {};
-        dataManagerMock.listings = [listing(3, 4)];
-        await tradeLedgerStore.handleCharacterSwitch();
-        await tradeLedgerStore._repairChain;
-        await awaitSaves();
-        expect(quantities(3)).toEqual([4]);
+        // The row went to the character it belongs to; the baseline behind it costs a duplicate at worst
         expect(storedRows(3).map((r) => r.quantity)).toEqual([4]);
+        expect(storedBaseline(3)).toBe(0);
         tradeLedgerStore.disable();
     });
 
-    test('a fill save refused for an unreadable day stores no baseline for it', async () => {
+    test('a failed read of the day does not hold a fill back: the write folds into what is stored', async () => {
+        seedSplit([fill(7, DAY3 + 10)]);
         LEDGER().set(STATE_KEY, baseline3());
         memory([], baseline3());
         vi.setSystemTime(DAY3);
@@ -2114,8 +2120,26 @@ describe('a fill is not held up by the archive read, and its baseline never land
         } finally {
             storageMock.tryGet.mockImplementation(real);
         }
-        expect(storedRows(3)).toEqual([]);
+        expect(storedRows(3).map((r) => r.quantity)).toEqual([4]);
+        // What was stored is still there, and the baseline follows its row
+        expect(storedRows(7)).toHaveLength(1);
+        expect(storedBaseline(3)).toBe(4);
+    });
+
+    test('with the write itself refused, no baseline is stored and nothing else is written', async () => {
+        seedSplit([fill(7, DAY3 + 10)]);
+        LEDGER().set(STATE_KEY, baseline3());
+        memory([], baseline3());
+        vi.setSystemTime(DAY3);
+        storageMock.putAll.mockImplementationOnce(async () => 0);
+
+        tradeLedgerStore.processListings([listing(3, 4)], false);
+        await settle();
+        await awaitSaves();
+
         expect(storedBaseline(3)).toBe(0);
+        expect(storedRows(7)).toHaveLength(1);
+        expect(tradeLedgerStore._unsavedFills.get('market123').size).toBe(1);
     });
 
     test('a change that carries no fill does not wait on anything', async () => {
