@@ -11391,21 +11391,23 @@ class CombatSimUI {
     /**
      * Say what a run would cost, before it is started: the sims for the rows the selected player (or the
      * whole party) has, and the condition search's ceiling when it is ticked.
+     * @param {Object} choices - From {@link _readTriggerChoices}
+     * @param {Function} getParty - Resolves the party once for this refresh (shared with the remembered-result
+     *   refresh, so a build with no editor is loaded once, not twice)
      * @private
      */
-    async _refreshTriggerEstimate() {
+    async _refreshTriggerEstimate(choices, getParty) {
         const gen = (this._triggerEstimateGen = (this._triggerEstimateGen || 0) + 1);
         const ownerId = dataManager.getCurrentCharacterId();
         const el = () => this.panel?.querySelector('#mwi-csim-trigger-estimate');
         try {
             if (!el() || this._triggerOpen !== true || this._isBusy()) return;
-            const choices = this._readTriggerChoices();
             const gameData = buildGameDataPayload();
             if (!gameData || !choices.zoneHrid) {
                 el().textContent = '';
                 return;
             }
-            const party = await this._loadTriggerParty(choices.playerIndex);
+            const party = await getParty();
             if (gen !== this._triggerEstimateGen || !el() || !this._stillSameCharacter(ownerId)) return;
             if (!party.simDTOs?.[party.playerIndex]) {
                 el().textContent = '';
@@ -11437,7 +11439,12 @@ class CombatSimUI {
      */
     async _refreshCachedTriggerResult() {
         const gen = (this._triggerCacheGen = (this._triggerCacheGen || 0) + 1);
-        void this._refreshTriggerEstimate();
+        let partyLoad = null;
+        const getParty = () => {
+            partyLoad ??= this._loadTriggerParty(this._readTriggerChoices().playerIndex);
+            return partyLoad;
+        };
+        void this._refreshTriggerEstimate(this._readTriggerChoices(), getParty);
         try {
             const box = this.panel?.querySelector('#mwi-csim-trigger-box');
             if (!box || this._isBusy()) return;
@@ -11456,7 +11463,7 @@ class CombatSimUI {
                 return;
             }
             const ownerId = dataManager.getCurrentCharacterId();
-            const party = await this._loadTriggerParty(choices.playerIndex);
+            const party = await getParty();
             const runContext = this._triggerRunContext(choices, party);
             const signature = triggerRunSignature({
                 ...choices,
