@@ -39,9 +39,13 @@ export function ensureMarketMobileStyles() {
             [data-mwi-market-fold="closed"]:has(> #mwi-market-filters-toggle) ~ #toolasha-market-filters {
                 display: none !important;
             }
+            /* The game fixes this container at the input's width; the toggle needs the room beside it */
+            [data-mwi-market-fold]:has(> #mwi-market-filters-toggle) {
+                display: flex !important; align-items: center; width: 100% !important;
+            }
+            /* The parent is a flex column: anything but 0 0 auto here stretches the rows' height */
             #toolasha-market-sort, #toolasha-market-filters {
-                box-sizing: border-box; flex: 1 1 100%; width: 100%; max-width: 100%; min-width: 0;
-                grid-column: 1 / -1;
+                box-sizing: border-box; flex: 0 0 auto; width: 100%; max-width: 100%; min-width: 0;
             }
             [${SCROLL_ATTR}] { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
             [${SCROLL_ATTR}] > table { width: max-content; min-width: 100%; }

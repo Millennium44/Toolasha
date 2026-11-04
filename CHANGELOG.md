@@ -16,6 +16,22 @@ At phone width the battle number no longer squeezes out the zone name beside the
 - Per-player and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
 - Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
 
+### Market filters fold away on a phone
+
+Sort, Level, Class and Slot now sit behind a small Filters button beside Item Filter, so the item grid starts much higher. The button shows a dot when a hidden filter is active, so items never go missing without a sign.
+
+### Party damage shows more numbers
+
+The long explanation now folds behind a "How this is measured" line, on desktop and phone. Taken and Healing done keep a one-line warning in view.
+
+### Monster Stat Check is readable on a phone
+
+Its text is about a third larger and its Game, Sim and difference columns stay on screen.
+
+### Brighter profit green for new players
+
+The default profit color is now a brighter green that is easier to read on skill tiles. Existing players keep their current color and can change it in settings.
+
 ### Philo Gamba and Arbitrage sit where they belong
 
 Philo Gamba is a compact button instead of a bar across all of Settings, on desktop and phone. Arbitrage now sits with the other skill page controls instead of after the skill name.
