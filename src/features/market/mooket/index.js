@@ -37,9 +37,16 @@ import marketHistoryAPI from './market-history-api.js';
 import {
     AUTO_REFRESH_MS,
     buildHistorySeries,
+    chartExtents,
+    DEFAULT_GROUP_HOURS,
+    describeCooldown,
+    GROUP_CHOICES,
+    groupedTitle,
+    groupSeries,
     historyLabels,
     HISTORY_RANGES,
-    describeCooldown,
+    normalizeGroupHours,
+    priceTickLabel,
     tooltipFooterLines,
 } from './market-history-data.js';
 import { priceKey } from './market-prices.js';
@@ -149,10 +156,15 @@ export async function splitLegacyWatchlist(savedPrefs) {
 
 /** Series colors, in the order the datasets are built */
 const SERIES = [
-    { key: 'ask', label: 'Ask', color: '#f56c6c', dash: [] },
-    { key: 'bid', label: 'Bid', color: '#67c23a', dash: [5, 5] },
-    { key: 'avg', label: 'Avg', color: '#e6a23c', dash: [2, 3] },
+    { key: 'ask', label: 'Ask', color: '#f87171', width: 1.25 },
+    { key: 'bid', label: 'Bid', color: '#4ade80', width: 1.25 },
+    // Hidden until the legend is clicked; thin and faint so it never competes with the quotes
+    { key: 'avg', label: 'Avg', color: 'rgba(230, 162, 60, 0.55)', width: 1 },
 ];
+
+/** The shaded band between bid and ask */
+const SPREAD_BAND_COLOR = 'rgba(148, 163, 184, 0.16)';
+const VOLUME_BAR_COLOR = 'rgba(64, 158, 255, 0.4)';
 
 /**
  * Fold the marketplace.json snapshot into the price store, stamped with when the
@@ -217,6 +229,10 @@ class MarketHistoryPanel {
             w: 520,
             h: 300,
             days: 7,
+            /** Chart grouping in hours: 1 shows every reading, 3 groups into 3-hour medians */
+            groupHours: DEFAULT_GROUP_HOURS,
+            /** Whether the Avg line is shown (hidden until its legend entry is clicked) */
+            showAvg: false,
             open: false,
             locked: false,
             mode: 'iconPrice',
@@ -689,8 +705,34 @@ class MarketHistoryPanel {
         });
         bar.appendChild(range);
 
+        const group = document.createElement('select');
+        group.classList.add('toolasha-select');
+        group.title =
+            'How to group the chart. “3 hours” draws the median of each 3-hour stretch, which reads better on ' +
+            'busy items; “Hourly” draws every reading. Long ranges that are already coarser are never regrouped.';
+        group.style.cssText = range.style.cssText + ' min-width:0; max-width:92px;';
+        for (const hours of GROUP_CHOICES) {
+            const option = document.createElement('option');
+            option.value = String(hours);
+            option.textContent = hours === 1 ? 'Hourly' : `${hours} hours`;
+            option.selected = hours === normalizeGroupHours(this.prefs.groupHours);
+            group.appendChild(option);
+        }
+        group.addEventListener('change', () => {
+            this.prefs.groupHours = normalizeGroupHours(group.value);
+            this.savePrefs();
+            // Force a redraw of the same item with the new grouping
+            this.shown = null;
+            if (this.current) this.showItem(this.current.itemHrid, this.current.enhancementLevel);
+        });
+        bar.appendChild(group);
+
         this.title = document.createElement('span');
-        this.title.style.cssText = 'flex:1; text-align:right; padding-right:4px; font-weight:600; opacity:0.9;';
+        // min-width:0 + ellipsis: with a second select in the bar, a long item name must shrink, not push the
+        // bar past a 412 px phone's panel
+        this.title.style.cssText =
+            'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; ' +
+            'text-align:right; padding-right:4px; font-weight:600; opacity:0.9;';
         bar.appendChild(this.title);
 
         return bar;
@@ -1227,13 +1269,38 @@ class MarketHistoryPanel {
         // of the quotes), and whether there is any volume to draw at all.
         const source = marketHistoryAPI.currentSource();
 
-        const labels = historyLabels(series, this.prefs.days);
-        const datasets = SERIES.map((spec) => ({
+        // Grouping is for drawing only; `rawSeries` stays the per-reading series
+        const rawSeries = series;
+        const { series: shown, grouped } = groupSeries(rawSeries, this.prefs.groupHours);
+        const extents = chartExtents(shown, source.hasVolume);
+        const hasBars = extents.volumeMax !== undefined;
+        const labels = historyLabels(shown, this.prefs.days);
+
+        // A legend toggle the player made survives a redraw: the datasets are rebuilt, and with them Chart.js's
+        // record of what was hidden. The Avg choice comes from prefs (saved when it was clicked).
+        const hiddenByPlayer = new Set();
+        if (this.chart) {
+            this.chart.data.datasets.forEach((dataset, index) => {
+                if (dataset.toolKey && dataset.toolKey !== 'avg' && !this.chart.isDatasetVisible(index)) {
+                    hiddenByPlayer.add(dataset.toolKey);
+                }
+            });
+        }
+
+        const positive = (value) => (Number.isFinite(value) && value > 0 ? value : null);
+        const datasets = SERIES.map((spec, index) => ({
+            toolKey: spec.key,
             label: spec.key === 'avg' ? source.avgLabel : spec.label,
-            data: series.map((point) => point[spec.key] || null),
+            // A missing price is a gap (null), never a price of 0
+            data: shown.map((point) => positive(point[spec.key])),
             borderColor: spec.color,
-            borderDash: spec.dash,
-            borderWidth: 1.5,
+            borderWidth: spec.width,
+            // The band between bid and ask: Bid fills up to dataset 0 (Ask)
+            ...(spec.key === 'bid' ? { fill: 0, backgroundColor: SPREAD_BAND_COLOR } : {}),
+            hidden: spec.key === 'avg' ? !this.prefs.showAvg : hiddenByPlayer.has(spec.key),
+            // Straight segments when points are medians; steps only when each point is one real reading
+            stepped: grouped ? false : 'before',
+            order: index,
             pointRadius: 0,
             pointHitRadius: 6,
             spanGaps: true,
@@ -1241,30 +1308,40 @@ class MarketHistoryPanel {
         }));
         if (source.hasVolume) {
             datasets.push({
+                toolKey: 'volume',
+                type: 'bar',
                 label: 'Volume',
-                data: series.map((point) => point.volume),
-                borderColor: '#409eff',
-                backgroundColor: 'rgba(64, 158, 255, 0.18)',
-                borderWidth: 1,
-                fill: true,
+                // No reading is a missing bar, not an empty one
+                data: shown.map((point) => (Number.isFinite(point.volume) ? point.volume : null)),
+                backgroundColor: VOLUME_BAR_COLOR,
+                borderWidth: 0,
+                categoryPercentage: 1,
+                barPercentage: 0.9,
+                hidden: hiddenByPlayer.has('volume'),
                 yAxisID: 'volume',
-                pointRadius: 0,
-                pointHitRadius: 6,
-                tension: 0,
+                order: 10,
             });
         }
+
+        // Everything that depends on the data lives on the chart so the tooltip and tick callbacks (built once)
+        // read the current draw, and the update path below refreshes the same fields.
+        const state = { series: shown, grouped, extents, avgLabel: source.avgLabel };
 
         if (this.chart) {
             this.chart.data.labels = labels;
             this.chart.data.datasets = datasets;
-            this.chart.$series = series;
-            // A source switch can turn the volume axis on or off between draws
-            this.chart.options.scales.volume.display = source.hasVolume;
+            Object.assign(this.chart, { $series: shown, $state: state });
+            const scales = this.chart.options.scales;
+            scales.y.min = extents.priceMin;
+            scales.volume.max = extents.volumeMax;
+            scales.x.offset = hasBars;
             this.chart.update('none');
             return;
         }
 
         const axis = { color: '#9aa4c0', font: { size: 10 } };
+        const round = (value) => (Number.isFinite(value) ? formatWithSeparator(Math.round(value)) : '');
+        const stateOf = () => this.chart?.$state;
         this.chart = new Chart(this.canvas, {
             type: 'line',
             data: { labels, datasets },
@@ -1274,30 +1351,81 @@ class MarketHistoryPanel {
                 animation: false,
                 interaction: { mode: 'index', intersect: false },
                 scales: {
-                    x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { ...axis, maxTicksLimit: 8 } },
+                    x: {
+                        // Bars need half a slot at each end or the first and last are cut in two
+                        offset: hasBars,
+                        grid: { color: 'rgba(255,255,255,0.06)' },
+                        ticks: { ...axis, maxTicksLimit: 6, maxRotation: 0, minRotation: 0, autoSkip: true },
+                    },
                     y: {
                         position: 'left',
+                        min: extents.priceMin,
                         grid: { color: 'rgba(255,255,255,0.06)' },
-                        ticks: { ...axis, callback: (value) => formatKMB(value) },
+                        ticks: {
+                            ...axis,
+                            callback: (value, _index, ticks) =>
+                                priceTickLabel(
+                                    value,
+                                    ticks,
+                                    stateOf()?.extents.priceLow ?? null,
+                                    formatKMB,
+                                    formatWithSeparator
+                                ),
+                        },
                     },
                     volume: {
+                        // Read the number from the tooltip; the bars only show shape
+                        display: false,
                         position: 'right',
-                        display: source.hasVolume,
+                        min: 0,
+                        max: extents.volumeMax,
                         grid: { drawOnChartArea: false },
-                        ticks: { ...axis, color: '#409eff', callback: (value) => formatKMB(value) },
                     },
                 },
                 plugins: {
-                    legend: { labels: { color: '#c8cee0', boxWidth: 10, font: { size: 10 } } },
+                    legend: {
+                        labels: { color: '#c8cee0', boxWidth: 10, font: { size: 10 } },
+                        onClick: (event, item, legend) => {
+                            // Normal show/hide for every entry; Avg's choice is also remembered
+                            Chart.defaults.plugins.legend.onClick.call(legend, event, item, legend);
+                            if (legend.chart.data.datasets[item.datasetIndex]?.toolKey === 'avg') {
+                                this.prefs.showAvg = legend.chart.isDatasetVisible(item.datasetIndex);
+                                this.savePrefs();
+                            }
+                        },
+                    },
                     tooltip: {
                         callbacks: {
-                            label: (item) => `${item.dataset.label}: ${formatWithSeparator(Math.round(item.parsed.y))}`,
+                            title: (items) => {
+                                const point = stateOf()?.series?.[items[0]?.dataIndex];
+                                return point?.grouped ? groupedTitle(point) : items[0]?.label;
+                            },
+                            label: (item) => {
+                                const kind = stateOf()?.grouped
+                                    ? item.dataset.toolKey === 'volume'
+                                        ? 'total'
+                                        : 'median'
+                                    : '';
+                                const suffix = kind ? ` (3-hour ${kind})` : '';
+                                return `${item.dataset.label}${suffix}: ${round(item.parsed.y)}`;
+                            },
+                            // Chart.js's index mode leaves hidden datasets out of the tooltip, so Avg is added
+                            // here, from the point itself, while its line is off.
+                            afterBody: (items) => {
+                                const current = stateOf();
+                                const chart = this.chart;
+                                const avgIndex = chart?.data.datasets.findIndex((d) => d.toolKey === 'avg');
+                                if (!current || avgIndex < 0 || chart.isDatasetVisible(avgIndex)) return '';
+                                const avg = positive(current.series[items[0]?.dataIndex]?.avg);
+                                if (avg === null) return '';
+                                return `${current.avgLabel}${current.grouped ? ' (3-hour median)' : ''}: ${round(avg)}`;
+                            },
                             // The split is an estimate from where the traded
                             // price sat in the spread, and says so. A source with
                             // no volume has nothing to split, so it says nothing.
                             footer: (items) =>
                                 tooltipFooterLines(
-                                    this.chart?.$series?.[items[0].dataIndex],
+                                    stateOf()?.series?.[items[0].dataIndex],
                                     {
                                         hasVolume: marketHistoryAPI.currentSource().hasVolume,
                                         showBaseValue: config.getSetting('market_historyBaseValue') !== false,
@@ -1309,7 +1437,7 @@ class MarketHistoryPanel {
                 },
             },
         });
-        this.chart.$series = series;
+        Object.assign(this.chart, { $series: shown, $state: state });
     }
 
     // -------------------------------------------------------------- overlay
