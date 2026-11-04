@@ -14887,17 +14887,25 @@ class CombatSimUI {
 
     /**
      * What a card needs to know about a verify of its row: running now, or ended without a verdict.
-     * Both are bound to the analysis on screen; a row of another analysis has neither.
+     * Both are bound to the analysis on screen; a row of another analysis has neither. A note is also bound to
+     * the metric it was made under, and a stored verdict for the row under the metric on screen outranks it.
      * @param {Object} results - The analysis on screen
      * @param {Object} row - A row of `results.results`
+     * @param {string} [metric] - The verify metric the card is drawn under
+     * @param {Object|null} [verdict] - The row's stored verdict under that metric
      * @returns {{pending: boolean, note: Object|null}}
      * @private
      */
-    _cardVerifyState(results, row) {
+    _cardVerifyState(results, row, metric, verdict = null) {
         const pending = this._cardPending?.results === results && this._cardPending.row === row;
         let note = this._cardNotes?.results === results ? this._cardNotes.byRow.get(row) || null : null;
-        // "Another run is going" is true only while it is; once the run ends the card is an estimate again
-        if (note?.kind === 'busy' && !this._isBusy() && !this._cardPending) note = null;
+        if (note?.kind === 'busy') {
+            // "Another run is going" is true only while it is; once the run ends the card is itself again
+            if (!this._isBusy() && !this._cardPending) note = null;
+        } else if (note && (verdict || note.metric !== metric)) {
+            // A verify that ended without a verdict says nothing about a row that has one, or about another metric
+            note = null;
+        }
         return { pending, note };
     }
 
@@ -14982,7 +14990,7 @@ class CombatSimUI {
             .filter((k) => k !== 'upgrade' && !face.includes(k) && !deltas.includes(k));
         const entries = sorted.map((r) => {
             const verdict = verdicts[verifyKeyOf(r)] || null;
-            const { pending, note } = this._cardVerifyState(results, r);
+            const { pending, note } = this._cardVerifyState(results, r, verifyInfo.metric, verdict);
             const others = (keys) => keys.filter((k) => k !== headKey).map((k) => figureOf(r, k));
             const ceiling = r.costUnpriced?.length
                 ? figure(
@@ -15252,7 +15260,7 @@ class CombatSimUI {
             }
             const r = e.r;
             const verdict = verdictOf(r);
-            const { pending, note } = this._cardVerifyState(results, r);
+            const { pending, note } = this._cardVerifyState(results, r, rank, verdict);
             const metricFigure = (label, key, value, fmt) => {
                 if (!Number.isFinite(value)) return figure(label, '—', 'muted');
                 const significant = r.significantBy?.[key] ?? true;
@@ -15359,7 +15367,14 @@ class CombatSimUI {
             return false;
         }
         if (!this._canVerifyResults(results)) return false;
+        const metric =
+            picked.section === 'order'
+                ? ABILITY_ORDER_RANKS.some((r) => r.key === this._abilityOrderRank)
+                    ? this._abilityOrderRank
+                    : DEFAULT_ABILITY_ORDER_RANK
+                : this._goldVerifyMetric().metric;
         if (this._isBusy() || this._cardPending) {
+            // A message beside the card's state, not a state of its own
             this._setCardNote(results, picked.row, {
                 kind: 'busy',
                 text: 'Another run is going. Verify when it finishes.',
@@ -15367,12 +15382,6 @@ class CombatSimUI {
             this._renderUpgradeResults(results);
             return false;
         }
-        const metric =
-            picked.section === 'order'
-                ? ABILITY_ORDER_RANKS.some((r) => r.key === this._abilityOrderRank)
-                    ? this._abilityOrderRank
-                    : DEFAULT_ABILITY_ORDER_RANK
-                : this._goldVerifyMetric().metric;
         this._cardPending = { results, row: picked.row };
         if (this._cardNotes?.results === results) this._cardNotes.byRow.delete(picked.row);
         this.panel?.querySelectorAll('[data-card-id]').forEach((el) => {
@@ -15416,7 +15425,8 @@ class CombatSimUI {
         } else {
             note = { kind: 'refused', text: 'The verify did not start.' };
         }
-        this._setCardNote(results, row, note);
+        // Made under this metric: another Rank by does not inherit it
+        this._setCardNote(results, row, { ...note, metric });
         this._renderUpgradeResults(results);
     }
 

@@ -172,8 +172,9 @@ function dedupeExplanations(list) {
  * What state a candidate is in, in words and tone. The words are always printed: colour alone does not
  * tell an estimate from a verified result.
  *
- * Priority: running now, then a verify that ended without a verdict (stopped, failed, refused), then a
- * stored verdict, then where the estimate came from (a remembered run, an unpriced row, a plain estimate).
+ * Priority: running now, then a stored verdict (it outranks any note: a later verify that ended without one
+ * says nothing about a row that has one), then a verify that ended without a verdict (stopped, failed, refused),
+ * then where the estimate came from (a remembered run, an unpriced row, a plain estimate).
  * @param {Object} input
  * @param {boolean} [input.baseline] - The row is the current setup, not a candidate
  * @param {boolean} [input.pending] - A verify of this card is running
@@ -193,10 +194,6 @@ export function cardStateOf({
 } = {}) {
     if (baseline) return { kind: 'baseline', label: 'Baseline', tone: 'muted' };
     if (pending) return { kind: 'pending', label: 'Verifying…', tone: 'neutral' };
-    if (note) {
-        const labels = { stopped: 'Verify stopped', failed: 'Verify failed', refused: 'Not verified' };
-        return { kind: `note-${note.kind}`, label: labels[note.kind] || 'Not verified', tone: 'warn' };
-    }
     if (verdict) {
         if (verdict.verdict === 'error') return { kind: 'failed', label: 'Verify failed', tone: 'warn' };
         if (verdict.stopped && verdict.verdict !== 'confirmed' && verdict.verdict !== 'worse') {
@@ -207,6 +204,11 @@ export function cardStateOf({
         if (verdict.verdict === 'confirmed') return { kind: 'confirmed', label: 'Verified', tone: 'good' };
         if (verdict.verdict === 'worse') return { kind: 'worse', label: 'Verified: worse', tone: 'bad' };
         return { kind: 'unconfirmed', label: 'Verified: not confirmed', tone: 'neutral' };
+    }
+    // A busy tap is a message beside the state, never the state
+    if (note && note.kind !== 'busy') {
+        const labels = { stopped: 'Verify stopped', failed: 'Verify failed', refused: 'Not verified' };
+        return { kind: `note-${note.kind}`, label: labels[note.kind] || 'Not verified', tone: 'warn' };
     }
     if (remembered) return { kind: 'remembered', label: 'Remembered estimate', tone: 'muted' };
     if (unpriced) return { kind: 'unpriced', label: 'Estimate, not priced', tone: 'muted' };
