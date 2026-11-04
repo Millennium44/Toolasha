@@ -21,6 +21,17 @@ Combat Sim's shrine level box now stops at the level the game reports for shrine
 ### Full watchlist says so
 
 When the price panel's 99-item list is full, the pin button reads "Full (99)" and Combat Sim's Watch button says the panel is full, instead of doing nothing.
+### Longer combat run history
+
+The Combat Stats run picker, Combined view and Gold Sources combat row now keep your last 50 runs instead of 20.
+
+### Longer task reroll history
+
+Reroll spending now covers your last 2,000 retired tasks instead of 500, so older task payouts keep their reroll cost and Gold Sources reaches further back.
+
+### Goal planner keeps more goals and says when it's full
+
+The goal limit is up from 40 to 100, and a full list now says so under the form instead of doing nothing. Pulling goals from another device no longer cuts the list back to the limit, which could lose the newest goals.
 
 ### Combat Sim tunes triggers in its own section
 
