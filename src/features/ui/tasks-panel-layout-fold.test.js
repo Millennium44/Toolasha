@@ -55,7 +55,7 @@ afterEach(() => {
 function barHtml({ walk = true, claim = true, label = 'Reroll walk' } = {}) {
     return `<div class="TasksPanel_taskBoardInfo__fixture">
         <div class="TasksPanel_taskSlotCount__fixture">48 / 48 Tasks
-            <button class="Button_button__1Fe9z" id="game-upgrade">Upgrade Capacity</button>
+            <button class="Button_button__1Fe9z">Upgrade Capacity</button>
             <button class="Button_button__1Fe9z Button_small__3fqC7" data-mwi-task-sort>Sort Tasks</button>
             <div data-mwi-task-filters style="display:flex"><button>Battle</button></div>
             <button class="Button_button__1Fe9z Button_small__3fqC7" data-mwi-task-highlight>Highlight</button>
@@ -132,22 +132,63 @@ test('the stylesheet gives the phone bar one left edge and finger-sized controls
     expect(rules).toContain('> .mwi-task-protection-btn { margin-left: auto !important; }');
 });
 
-test('the stylesheet folds by default: only count, timer, walk, Claim Reward and Tools stay while closed', () => {
+test('the stylesheet folds by default: only the named bar items stay while closed', () => {
     fixture();
     feature.initialize();
     const rules = css();
-    // Closed: every slot-count child except the claim button and the chip, and every header child
-    // except the slot group, the timer and Tools, is hidden. A node added late is hidden too.
-    expect(rules).toContain(':not(#mwi-claim-proxy-btn):not(#mwi-task-reroll-walk-chip)');
+    // Closed: the slot group's non-buttons other than the chip, Highlight, and every id'd or Toolasha-marked
+    // button except Claim Reward and the merged walk button are hidden; so is every header child except the
+    // slot group, the timer and Tools. A node added late is hidden too.
+    expect(rules).toContain('> [class*="TasksPanel_taskSlotCount"] > :not(button):not(#mwi-task-reroll-walk-chip)');
+    expect(rules).toContain('button[id]:not(#mwi-claim-proxy-btn):not(#mwi-task-train-button)');
+    expect(rules).toContain('button[data-mwi-task-highlight]');
     expect(rules).toContain(':not([class*="TasksPanel_taskTimer"]):not(#toolasha-task-tools-btn)');
+    // Sort Tasks and Upgrade Capacity are never in a hide selector
+    const hide = rules.slice(rules.lastIndexOf('[class*="TasksPanel_taskSlotCount"] > :not(button)'));
+    expect(hide).not.toContain('data-mwi-task-sort');
     // Claim Reward has no display rule of its own, so its own display:none (nothing to claim) still wins
     expect(rules).not.toMatch(/#mwi-claim-proxy-btn\s*\{[^}]*display/);
-    // The walk fills its row on a phone; the 170px stays inline, and the rule only exists under the fold
+    // The walk takes its label's width on a phone; the 170px stays inline, and the rule only exists under the fold
     expect(rules).toMatch(/\.mwi-task-reroll-walk-advance\s*\{[^}]*width: auto !important/);
     expect(rules.match(/width: auto !important/g)).toHaveLength(1);
     expect(rules).toContain(
         '[data-toolasha-tasks-layout-narrow] [class*="TasksPanel_taskBoardInfo"][data-toolasha-task-bar-fold]'
     );
+});
+
+test('the bar is ordered by name, not insert order: count, Upgrade, Sort, walk, merged walk, Tools, timer, Claim', () => {
+    fixture();
+    feature.initialize();
+    const rules = css();
+    const order = (selector) => {
+        const at = rules.indexOf(selector);
+        expect(at).toBeGreaterThan(-1);
+        return Number(/order: (\d+)/.exec(rules.slice(at, at + 160))[1]);
+    };
+    const upgrade = order('taskSlotCount"] > button:not([id]):not([data-mwi-task-sort])');
+    const sort = order('taskSlotCount"] > [data-mwi-task-sort] {');
+    const walk = order('#mwi-task-reroll-walk-chip {');
+    const merged = order('#mwi-task-train-button {');
+    const tools = order('> #toolasha-task-tools-btn {');
+    const timer = order('> [class*="TasksPanel_taskTimer"] {');
+    const claim = order('#mwi-claim-proxy-btn {');
+    const unnamed = order('taskSlotCount"] > * { order');
+    expect([upgrade, sort, walk, merged, tools, timer, claim]).toEqual([1, 2, 3, 4, 5, 6, 8]);
+    expect(unnamed).toBeGreaterThan(claim);
+    expect(rules).toContain('margin-left: auto');
+    // No spacer pseudo-elements pin rows any more: the row breaks come from wrapping alone
+    expect(rules).not.toContain('::before');
+    expect(rules).not.toContain('::after');
+});
+
+test('the walk never truncates: its label wraps instead of ending in an ellipsis, and it does not stretch', () => {
+    fixture();
+    feature.initialize();
+    const rules = css();
+    expect(rules).toMatch(/#mwi-task-reroll-walk-chip\s*\{[^}]*flex: 0 1 auto !important/);
+    expect(rules).toMatch(/\.mwi-task-reroll-walk-advance\s*\{[^}]*white-space: normal !important/);
+    expect(rules).toMatch(/\.mwi-task-reroll-walk-advance\s*\{[^}]*text-overflow: clip !important/);
+    expect(rules).not.toMatch(/flex: 1 1 0/);
 });
 
 test('Tools opens and closes with one tap and the open state survives a redrawn bar', () => {

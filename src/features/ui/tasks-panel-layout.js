@@ -16,31 +16,40 @@ const OPEN = 'data-toolasha-task-bar-tools-open';
 const TOOLS_ID = 'toolasha-task-tools-btn';
 const CLAIM_ID = 'mwi-claim-proxy-btn';
 const WALK_CHIP_ID = 'mwi-task-reroll-walk-chip';
+const MERGED_WALK_ID = 'mwi-task-train-button';
 const TOUCH_MIN_HEIGHT = '32px';
 /** The game's own small toolbar button, as the Merged crafting walk button wears it */
 const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 // The phone bar. Nothing React owns moves: the slot-count group becomes `display: contents`, so its
-// children and the board header's own children are one flex container, sorted with `order`. Rows are
-// pinned by two zero-height spacers (the header's pseudo-elements), so the walk row never depends on
-// what else is shown: row 1 count + timer, row 2 walk + Tools, row 3 Claim Reward, then the tools.
-// Anything not named below (including a node added late) is a tool: hidden while Tools is closed.
+// children and the board header's own children are one flex container, sorted with `order` and left to
+// wrap. Game order, the walk right after Sort Tasks: the count, Upgrade Capacity, Sort Tasks, the reroll
+// walk and its merged walk button, Tools, then the game's Next Task timer at the right; Claim Reward
+// has a row of its own after those. Each of those is named below, so order never depends on insert
+// order. Anything not named (Highlight, the spend badge, the task icons, a node added late) is a tool:
+// hidden while Tools is closed. The game's Upgrade Capacity button carries no id, data attribute or
+// Toolasha class, which is how it is told from ours.
 const BAR = `${ACTIVE} ${INFO}[${FOLD}]`;
+const UPGRADE = `button:not([id]):not([data-mwi-task-sort]):not([data-mwi-task-highlight]):not([class*="mwi-"]):not([class*="toolasha"])`;
+const CLOSED = `${ACTIVE} ${INFO}[${FOLD}]:not([${OPEN}])`;
 const FOLD_CSS = `
-${BAR} { row-gap: 0; align-items: center; }
+${BAR} { align-items: center; }
 ${BAR} > ${SLOTS} { display: contents !important; }
-${BAR}::after { content: ''; order: 0; flex: 0 0 100%; height: 0; }
-${BAR}::before { content: ''; order: 3; flex: 0 0 100%; height: 0; }
-${BAR} > ${TIMER} { order: 0; }
-${BAR} > :not(${SLOTS}):not(${TIMER}), ${BAR} > ${SLOTS} > * { order: 20; margin-top: 6px; }
-${BAR} > #${TOOLS_ID} { order: 2; flex: 0 0 auto; margin-left: auto; margin-right: 0; }
+${BAR} > :not(${SLOTS}):not(${TIMER}), ${BAR} > ${SLOTS} > * { order: 20; }
+${BAR} > ${SLOTS} > ${UPGRADE} { order: 1; }
+${BAR} > ${SLOTS} > [data-mwi-task-sort] { order: 2; }
 ${BAR} #${WALK_CHIP_ID} {
-    order: 1; flex: 1 1 0 !important; min-width: 0 !important; margin-left: 0 !important; margin-top: 6px;
+    order: 3; flex: 0 1 auto !important; min-width: 0 !important; max-width: 100% !important;
+    margin-left: 0 !important;
 }
+${BAR} #${MERGED_WALK_ID} { order: 4; flex: 0 0 auto; }
+${BAR} > #${TOOLS_ID} { order: 5; flex: 0 0 auto; margin: 0; }
+${BAR} > ${TIMER} { order: 6; margin-left: auto; }
+${BAR} #${CLAIM_ID} { order: 8; flex: 1 1 100%; min-width: 0 !important; margin-left: 0 !important; }
+/* The walk takes the width of its label and never cuts it: a label too long for the row wraps */
 ${BAR} #${WALK_CHIP_ID} .mwi-task-reroll-walk-advance {
-    flex: 1 1 0 !important; width: auto !important; min-width: 0 !important;
-}
-${BAR} #${CLAIM_ID} {
-    order: 3; flex: 1 1 100%; min-width: 0 !important; margin-left: 0 !important; margin-top: 6px;
+    flex: 0 1 auto !important; width: auto !important; min-width: 0 !important; max-width: 100% !important;
+    white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+    overflow-wrap: anywhere; text-align: left;
 }
 ${BAR} .toolasha-reroll-spend-badge { white-space: nowrap; }
 /* One left edge, finger-sized controls, and the three header icons together at the right */
@@ -49,8 +58,12 @@ ${BAR} > ${SLOTS} > button { min-height: ${TOUCH_MIN_HEIGHT}; }
 ${BAR} #${WALK_CHIP_ID} [class*="-chip-extras"]:empty { display: none; }
 ${BAR} #${WALK_CHIP_ID} button:not(.mwi-task-reroll-walk-advance) { min-width: ${TOUCH_MIN_HEIGHT} !important; }
 ${BAR} > .mwi-task-protection-btn { margin-left: auto !important; }
-${ACTIVE} ${INFO}[${FOLD}]:not([${OPEN}]) > ${SLOTS} > :not(#${CLAIM_ID}):not(#${WALK_CHIP_ID}),
-${ACTIVE} ${INFO}[${FOLD}]:not([${OPEN}]) > :not(${SLOTS}):not(${TIMER}):not(#${TOOLS_ID}) {
+${CLOSED} > ${SLOTS} > :not(button):not(#${WALK_CHIP_ID}),
+${CLOSED} > ${SLOTS} > button[data-mwi-task-highlight],
+${CLOSED} > ${SLOTS} > button[id]:not(#${CLAIM_ID}):not(#${MERGED_WALK_ID}),
+${CLOSED} > ${SLOTS} > button[class*="mwi-"],
+${CLOSED} > ${SLOTS} > button[class*="toolasha"],
+${CLOSED} > :not(${SLOTS}):not(${TIMER}):not(#${TOOLS_ID}) {
     display: none !important;
 }
 `;
