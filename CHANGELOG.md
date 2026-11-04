@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Reroll walk button stays in one spot
+
+On the Task Board bar, the docked reroll walk button is now first and a fixed width, so the Claim Reward button, the Rerolls count and its own label can no longer move it. A long step name ends in an ellipsis, with the full text on hover.
+
 ### Rank badges sync between devices again
 
 Leaderboard rank badges captured on one device reach your other devices again, and syncing no longer keeps rewriting the gist for them.
