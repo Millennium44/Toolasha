@@ -40,7 +40,12 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
-import { ensureSimPhoneStyles, ensureSimUpgradePhoneStyles } from './sim-phone-layout.js';
+import {
+    ensureSimPhoneStyles,
+    ensureSimUpgradePhoneStyles,
+    rowActionsInlineHtml,
+    rowActionsDetailHtml,
+} from './sim-phone-layout.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
 import {
@@ -12226,6 +12231,7 @@ class CombatSimUI {
             html += `</tr>
             <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
                 <td colspan="${columns.length + 1}" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
+                    ${rowActionsDetailHtml(upgradeRowActionsHtml(r))}
                     ${this._budgetToggleButtons(r)}
                     ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
@@ -12403,7 +12409,8 @@ class CombatSimUI {
                 // Sorted and exported by the description alone: the handoff
                 // buttons are chrome on the cell, not part of what the row says
                 value: (r) => r.candidate.description.toLowerCase(),
-                render: (r) => `${r.candidate.description}${upgradeRowNotesHtml(r)}${upgradeRowActionsHtml(r)}`,
+                render: (r) =>
+                    `${r.candidate.description}${upgradeRowNotesHtml(r)}${rowActionsInlineHtml(upgradeRowActionsHtml(r))}`,
             },
             {
                 key: 'cost',

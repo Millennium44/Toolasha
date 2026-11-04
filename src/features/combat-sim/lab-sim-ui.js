@@ -138,7 +138,12 @@ import {
     setupMarketplaceCleanupObserver,
     watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
-import { ensureSimPhoneStyles, ensureSimUpgradePhoneStyles } from './sim-phone-layout.js';
+import {
+    ensureSimPhoneStyles,
+    ensureSimUpgradePhoneStyles,
+    rowActionsInlineHtml,
+    rowActionsDetailHtml,
+} from './sim-phone-layout.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
@@ -7792,7 +7797,7 @@ class LabSimUI {
                         ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
                         : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${combatSimUI.upgradeRowActionsHtml(r)}${
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
                     checked ? '' : this._verifyRowHtml('all', this._allRowKey(r), 'data-af-verify', i, verifyLive)
                 }</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
@@ -7808,7 +7813,7 @@ class LabSimUI {
                 const fightRows = fightBreakdown(r);
                 html += `<tr data-allfights-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${fightRows}${this._renderAllFightsNotes(r)}</td>
+                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
             });
 
@@ -8529,16 +8534,28 @@ class LabSimUI {
                 ${th('Tokens/1%', 'tokensPerPct', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of tokenRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
-                    <td style="${tdNameStyle}">${row.desc}${row.actions}</td>
+            tokenRows.forEach((row, i) => {
+                // A token row has no detail of its own: one with actions gets a detail row that holds only
+                // them, which opens at phone width, so the buttons leave the name cell without being lost
+                const hasActions = Boolean(row.actions);
+                html += `<tr style="border-bottom:1px solid #1a1a1a;"${
+                    hasActions ? ` class="mwi-ract-row" data-token-row="${i}"` : ''
+                }>
+                    <td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
                     <td style="${tdStyle} color:#ccc;">${row.rateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
                 </tr>`;
-            }
+                if (hasActions) {
+                    html += `<tr class="mwi-ract-only" data-token-detail="${i}" style="display:none;">
+                    <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
+                        ${rowActionsDetailHtml(row.actions)}
+                    </td>
+                </tr>`;
+                }
+            });
             html += '</tbody></table></div>';
             return html;
         };
@@ -8566,7 +8583,7 @@ class LabSimUI {
 
             goldRows.forEach((row, i) => {
                 html += `<tr data-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;" title="Click for the cost breakdown">
-                    <td style="${tdNameStyle}">${row.desc}${row.actions}</td>
+                    <td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.winRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -8575,7 +8592,7 @@ class LabSimUI {
                 </tr>
                 <tr data-gold-detail="${i}" style="display:none;">
                     <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
-                        ${row.detailHtml}
+                        ${rowActionsDetailHtml(row.actions)}${row.detailHtml}
                     </td>
                 </tr>`;
             });
@@ -8728,6 +8745,13 @@ class LabSimUI {
             container.removeEventListener('click', this._upgradeSortHandler);
         }
         this._upgradeSortHandler = (e) => {
+            // A token row opens only to show its actions (phone width); a wider window never shows that row
+            const tokenRow = e.target.closest('tr[data-token-row]');
+            if (tokenRow) {
+                const detail = container.querySelector(`[data-token-detail="${tokenRow.dataset.tokenRow}"]`);
+                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                return;
+            }
             const expandable = e.target.closest('tr[data-gold-row]');
             if (expandable) {
                 const detail = container.querySelector(`[data-gold-detail="${expandable.dataset.goldRow}"]`);
@@ -10290,7 +10314,7 @@ class LabSimUI {
             goldRows.forEach((row, i) => {
                 const note = ` title="${escapeHtmlAttribute(row.keptNote || 'Click for the cost breakdown')}"`;
                 html += `<tr data-skilling-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;"${note}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.actions}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -10302,6 +10326,7 @@ class LabSimUI {
                 </tr>
                 <tr data-skilling-gold-detail="${i}" style="display:none;">
                     <td colspan="${9 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
+                        ${rowActionsDetailHtml(row.actions)}
                         <div data-skill-breakdown style="margin-bottom:4px; font-size:11px;"></div>
                         ${row.detailHtml}
                     </td>
