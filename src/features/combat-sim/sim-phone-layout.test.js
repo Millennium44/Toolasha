@@ -1,0 +1,19 @@
+/** @vitest-environment happy-dom */
+import { describe, it, expect, beforeEach } from 'vitest';
+import { SIM_PHONE_CSS, SIM_PHONE_STYLE_ID, ensureSimPhoneStyles } from './sim-phone-layout.js';
+
+describe('sim phone layout', () => {
+    beforeEach(() => {
+        document.head.innerHTML = '';
+    });
+
+    it('installs one stylesheet however often it is asked', () => {
+        ensureSimPhoneStyles();
+        ensureSimPhoneStyles();
+        expect(document.querySelectorAll(`#${SIM_PHONE_STYLE_ID}`)).toHaveLength(1);
+    });
+
+    it('wraps the lab crate row at phone width only', () => {
+        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-labsim-crate-row \{ flex-wrap: wrap; \}/);
+    });
+});
