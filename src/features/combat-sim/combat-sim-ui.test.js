@@ -5855,6 +5855,20 @@ describe('upgrade row handoff', () => {
         expect(container.querySelector('[data-buy-action="watch"]').textContent).toBe('Watching ✓');
     });
 
+    test('a price panel with no room says so on the button, and the watch still stands', () => {
+        mocks.bridgePricePanel = { seedPriceTarget: () => false, watchlistFullFor: () => true };
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml({
+            cost: 4_200_000,
+            candidate: { description: 'Something', upgradeHrid: '/items/plate', upgradeLevel: 4, type: 'tier' },
+        });
+        wireUpgradeRowActions(container);
+        container.querySelector('[data-buy-action="watch"]').click();
+
+        expect(mocks.watched).toEqual([{ itemHrid: '/items/plate', enhancementLevel: 4 }]);
+        expect(container.querySelector('[data-buy-action="watch"]').textContent).toBe('Watching ✓ · price panel full');
+    });
+
     test('a failed pin never costs the watch that did work', () => {
         mocks.bridgePricePanel = {
             seedPriceTarget: () => {

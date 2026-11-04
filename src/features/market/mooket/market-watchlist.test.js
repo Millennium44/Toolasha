@@ -15,6 +15,7 @@ import {
     isStalePrice,
     DISPLAY_MODES,
     MAX_WATCHED,
+    watchlistIsFull,
     STALE_PRICE_MS,
     describeMove,
     formatMoveSpan,
@@ -246,6 +247,23 @@ describe('normaliseTarget', () => {
 
     test('an unrecognised side is an ask rather than a third kind of target', () => {
         expect(normaliseTarget({ side: 'middle', price: 10 }).side).toBe('ask');
+    });
+});
+
+describe('watchlistIsFull', () => {
+    const list = (n) => Array.from({ length: n }, (_, i) => ({ key: `k${i}` }));
+
+    test('full only for a key that is not already there', () => {
+        expect(watchlistIsFull(list(MAX_WATCHED), 'new')).toBe(true);
+        expect(watchlistIsFull(list(MAX_WATCHED), 'k3')).toBe(false);
+        expect(watchlistIsFull(list(MAX_WATCHED - 1), 'new')).toBe(false);
+        expect(watchlistIsFull([], 'new')).toBe(false);
+        expect(watchlistIsFull(null, 'new')).toBe(false);
+    });
+
+    test('a stored list past the limit is read back whole, never cut', () => {
+        expect(normaliseWatchlist(list(MAX_WATCHED + 30))).toHaveLength(MAX_WATCHED + 30);
+        expect(watchlistIsFull(list(MAX_WATCHED + 30), 'new')).toBe(true);
     });
 });
 

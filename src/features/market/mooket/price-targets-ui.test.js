@@ -328,3 +328,54 @@ describe('what the alert reads', () => {
         expect(watchedPriceTargets()[0].target).toBeNull();
     });
 });
+
+describe('a full watchlist says so where the player pressed', () => {
+    const fullList = (count) => Array.from({ length: count }, (_, i) => ({ key: `/items/item_${i}:0`, ask: 1 }));
+
+    beforeEach(() => {
+        panel.isInitialized = true;
+        panel.renderChips = () => {};
+    });
+
+    test('the pin button flashes that the list is full, adds nothing, and restores itself', () => {
+        panel.watchlist = fullList(99);
+        panel.current = { itemHrid: '/items/cheese', enhancementLevel: 0 };
+        panel.buildOverlay();
+        panel.pinButton.click();
+
+        expect(panel.watchlist).toHaveLength(99);
+        expect(panel.pinButton.textContent).toBe('List full (99)');
+        expect(panel.pinButton.title).toContain('Unpin one');
+        vi.advanceTimersByTime(2600);
+        expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
+        panel.overlay.remove();
+    });
+
+    test('the 99th pin still goes in, and an item already pinned is not a refusal', () => {
+        panel.watchlist = fullList(98);
+        panel.current = { itemHrid: '/items/cheese', enhancementLevel: 0 };
+        panel.buildOverlay();
+        panel.pinButton.click();
+        expect(panel.watchlist).toHaveLength(99);
+        expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
+
+        panel.pinButton.click();
+        expect(panel.watchlist).toHaveLength(99);
+        expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
+        panel.overlay.remove();
+    });
+
+    test('a list past the limit (merged from two devices) is kept whole and refuses more', () => {
+        panel.watchlist = fullList(120);
+        expect(panel.watchlistFullFor('/items/new', 0)).toBe(true);
+        expect(panel.watchlistFullFor('/items/item_5', 0)).toBe(false);
+        expect(panel.seedPriceTarget('/items/new', 0, 1000)).toBe(false);
+        expect(panel.watchlist).toHaveLength(120);
+    });
+
+    test('a panel that never started reports nothing as full', () => {
+        panel.isInitialized = false;
+        panel.watchlist = fullList(99);
+        expect(panel.watchlistFullFor('/items/new', 0)).toBe(false);
+    });
+});

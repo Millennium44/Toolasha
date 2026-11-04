@@ -36,6 +36,18 @@ export const DISPLAY_MODES = ['icon', 'iconChange', 'iconPrice', 'iconBoth', 'na
 export const MAX_WATCHED = 99;
 
 /**
+ * Whether adding this key would be refused for want of room (it is not already on the list).
+ * A merged or synced list can hold more than {@link MAX_WATCHED}; it is never cut, but nothing more is added.
+ * @param {Array<Object>} watchlist - Current entries
+ * @param {string} key - itemHrid:enhancementLevel
+ * @returns {boolean}
+ */
+export function watchlistIsFull(watchlist, key) {
+    const list = watchlist || [];
+    return list.length >= MAX_WATCHED && !list.some((entry) => entry.key === key);
+}
+
+/**
  * Add an item, remembering the price it was pinned at so the chip can show a
  * move from a point you chose rather than from whenever the cache happened to
  * last update.

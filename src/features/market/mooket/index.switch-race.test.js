@@ -90,6 +90,8 @@ vi.mock('./market-history-api.js', () => ({
 }));
 vi.mock('./market-watchlist.js', () => ({
     addWatched: () => [],
+    watchlistIsFull: () => false,
+    MAX_WATCHED: 99,
     removeWatched: () => [],
     moveWatched: () => [],
     nextDisplayMode: () => 'iconPrice',
