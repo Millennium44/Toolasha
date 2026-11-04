@@ -16,6 +16,10 @@ At phone width the battle number no longer squeezes out the zone name beside the
 - Per-player and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
 - Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
 
+### Lighter controls on a touch phone
+
+Market item controls and Settings no longer use oversized buttons and dropdowns on a touch screen. Buttons are now 34 px tall, and Settings text boxes keep the larger text that stops iOS from zooming in.
+
 ### Reset a moved game window
 
 Double-click a game window's drag bar to put that window back in the center and forget its saved position. Turning off the compact action bar or the action bar itself now also restores the header's sizing without a reload.

@@ -17,16 +17,17 @@ export function ensureMarketMobileStyles() {
         @media ${MARKET_MOBILE_QUERY} {
             #mwi-market-pricing-controls { margin-left: 0 !important; flex: 1 1 100%; min-width: 0; }
             .mwi-market-pricing-disclosure {
-                display: block; box-sizing: border-box; min-height: 44px; width: 100%;
-                padding: 8px; color: inherit; background: transparent; border: 1px solid #666;
+                display: block; box-sizing: border-box; min-height: 34px; width: 100%;
+                padding: 4px 8px; color: inherit; background: transparent; border: 1px solid #666;
                 border-radius: 4px; font: 14px/1.3 sans-serif; text-align: left; cursor: pointer;
             }
             #mwi-market-pricing-fields { width: 100%; min-width: 0; gap: 6px; }
             #mwi-market-pricing-controls:not([data-expanded]) #mwi-market-pricing-fields { display: none; }
             #mwi-market-pricing-fields > select, #mwi-market-pricing-fields > button {
                 box-sizing: border-box; flex: 1 1 130px; min-width: 0; max-width: 100%;
-                min-height: 44px; padding: 6px !important; font-size: 16px !important;
+                min-height: 34px; padding: 2px 6px !important; font-size: 13px !important;
             }
+            #mwi-market-pricing-fields > select { min-height: 28px; }
             #mwi-market-filters-toggle {
                 display: inline-flex !important; align-items: center; align-self: center !important;
                 flex: 0 0 auto !important; width: auto !important; height: 22px !important;
@@ -68,13 +69,13 @@ export function ensureMarketMobileStyles() {
                 overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch;
             }
             .mwi-volume-stats-mobile-host .mwi-volume-stats-gear {
-                position: static !important; display: block; min-width: 44px; min-height: 44px;
+                position: static !important; display: block; min-width: 44px; min-height: 34px;
             }
             .mwi-volume-stats-mobile-host .mwi-volume-stats-menu {
                 position: static !important; min-width: 0 !important; max-width: 100%;
             }
             .mwi-volume-stats-mobile-host .mwi-volume-stats-menu label,
-            .mwi-volume-stats-mobile-host .mwi-volume-stats-menu button { min-height: 44px; }
+            .mwi-volume-stats-mobile-host .mwi-volume-stats-menu button { min-height: 34px; }
         }
     `;
     document.head.appendChild(style);

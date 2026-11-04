@@ -58,7 +58,7 @@ describe('settings panel on a touch screen', () => {
     });
 
     it('gives the row, its input cell and every field type a 32px floor', () => {
-        expect(declarationsFor(coarse, '.toolasha-setting')).toMatch(/min-height:\s*40px/);
+        expect(declarationsFor(coarse, '.toolasha-setting')).toMatch(/min-height:\s*34px/);
         expect(declarationsFor(coarse, '.toolasha-setting-input')).toMatch(/min-height:\s*32px/);
         // The inline-styled pricing and tier selects have no class, so they are reached through the cell
         expect(declarationsFor(coarse, '.toolasha-setting-input select')).toMatch(/min-height:\s*32px/);
@@ -96,10 +96,10 @@ describe('settings panel on a touch screen', () => {
         }
     });
 
-    it("keeps the phone block's 36px on a touch phone, since the touch floor comes after it", () => {
+    it("keeps the phone block's 34px on a touch phone, since the touch floor comes after it", () => {
         const last = css.lastIndexOf('@media (pointer: coarse) and (max-width: 480px)');
         expect(last).toBeGreaterThan(css.lastIndexOf('@media (pointer: coarse) {'));
-        expect(css.slice(last)).toMatch(/\.toolasha-setting-input select[\s\S]*min-height:\s*36px/);
+        expect(css.slice(last)).toMatch(/\.toolasha-setting-input select[\s\S]*min-height:\s*34px/);
     });
 
     it('changes nothing for a fine pointer: none of the 32px rules sit outside a media query', () => {
