@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Watchlist, item pins and goals keep your edits across tabs
+
+With the game open in two tabs, an older tab no longer erases pins, watchlist rows or planner goals you added in the other tab, and no longer brings back ones you removed there.
+
 ### What's New shows only what is new
 
 After an update, What's New lists only the changes since the version you were running. A recent release's notes had no titles, which made the panel show the whole recent history instead.
