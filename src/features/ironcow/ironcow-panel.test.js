@@ -1686,6 +1686,25 @@ describe('the queue helper', () => {
             expect(text()).not.toContain(FAILED);
         });
 
+        test('a Max-lost note and a typed bell target do not survive disable() or a fresh load()', async () => {
+            loop.result = withHrids();
+            await open();
+            ironCowFarmPanel.maxLostNote = 'Max no longer applies: gone';
+            ironCowFarmPanel.bellsTyped = '40';
+            ironCowFarmPanel.hoursBeforeMax = 99;
+            ironCowFarmPanel.disable();
+            expect(ironCowFarmPanel.maxLostNote).toBe('');
+            expect(ironCowFarmPanel.bellsTyped).toBe('');
+            expect(ironCowFarmPanel.hoursBeforeMax).toBeNull();
+
+            ironCowFarmPanel.maxLostNote = 'left over';
+            ironCowFarmPanel.bellsTyped = '12';
+            characterId.current = 'charB';
+            await ironCowFarmPanel.load();
+            expect(ironCowFarmPanel.maxLostNote).toBe('');
+            expect(ironCowFarmPanel.bellsTyped).toBe('');
+        });
+
         test('reading the batch changes nothing: a Max with no fruit stays Max until a draw or a press settles it', async () => {
             plan.state = character({ starfruitHeld: 1000, holdingsCredited: true });
             loop.result = withHrids();

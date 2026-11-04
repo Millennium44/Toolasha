@@ -402,6 +402,10 @@ class IronCowFarmPanel {
         this.queueMax = false;
         this.batchBasis = 'hours';
         this.maxCap = null;
+        // Per character, like the batch itself: neither a Max-lost note nor a typed bell target travels to the next one
+        this.maxLostNote = '';
+        this.bellsTyped = '';
+        this.hoursBeforeMax = null;
         this._remove();
     }
 
@@ -465,6 +469,9 @@ class IronCowFarmPanel {
             this.queueMax = false;
             this.batchBasis = 'hours';
             this.maxCap = null;
+            this.maxLostNote = '';
+            this.bellsTyped = '';
+            this.hoursBeforeMax = null;
         }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
