@@ -861,7 +861,8 @@ class TradeLedgerStore {
      * What the log and the archive say each listing finally filled, for the repair. Reads only, off the records
      * chain: this can take as long as the archive does, and a fill's save must not wait for it.
      *
-     * Only `filled` rows with a positive count count (`expired` is ignored, see {@link TRUSTED_LOG_STATUS}). A log
+     * Only `filled` rows with a positive count count (`expired` is ignored, see {@link TRUSTED_LOG_STATUS}), and
+     * never a row an import stamped (`importedAt`): its count came from a file and may be low. A log
      * that cannot be read, or holds no array, names nothing: that is "not loaded", which is not "empty of fills".
      *
      * The archive is read once for a load, by the first run that has anything to check, so the caps the sync pull
@@ -883,9 +884,14 @@ class TradeLedgerStore {
             logRead: false,
             checked: false,
         };
+        // A row an import stamped is a count out of a file, not something this ledger watched the game finish: it
+        // may be lower than what the player really filled, and a cap that is too low cuts real fills. It names
+        // nothing. A real log or archive row of the same listing still does
+        const imported = (row) => row?.importedAt !== undefined && row?.importedAt !== null;
         const note = (row, into) => {
             const id = Number(row?.id);
             const filled = Number(row?.filledQuantity);
+            if (imported(row)) return;
             if (!Number.isFinite(id) || row?.status !== TRUSTED_LOG_STATUS || !(filled > 0)) return;
             if (!(into.get(id) >= filled)) into.set(id, filled);
         };
@@ -896,7 +902,8 @@ class TradeLedgerStore {
         if (probe.found) {
             for (const row of probe.value) {
                 const id = Number(row?.id);
-                if (Number.isFinite(id)) counts.seenInLog.add(id);
+                // An imported row does not count as the log knowing the listing: the archive is then asked
+                if (Number.isFinite(id) && !imported(row)) counts.seenInLog.add(id);
                 note(row, counts.logCounts);
             }
         }
@@ -1040,17 +1047,20 @@ class TradeLedgerStore {
                 this.records = records;
 
                 const mine = (record) => record && repairedIds.has(record.listingId);
-                const belongs = (record, day) => mine(record) && bucketOf(record) === day;
                 for (const day of days) {
                     const key = recordKey(charId, day);
                     const probe = await storage.tryGet(key, LEDGER_STORE);
                     // A day that cannot be read is repaired by the next load; memory is already right
                     if (probe === null || !current()) continue;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
-                    const next = [
-                        ...stored.filter((record) => !mine(record)),
-                        ...records.filter((r) => belongs(r, day)),
-                    ];
+                    // Memory's rows of the day, not only the repaired listings': the immediate write below drops a
+                    // debounced one still queued for this key (a fill found at load or on a reconnect, whose save
+                    // waits behind this cut), and that fill lives only in memory. `records` is already cut, so
+                    // a row removed above is not among them
+                    const next = mergeRecords(
+                        stored.filter((record) => !mine(record)),
+                        records.filter((r) => bucketOf(r) === day)
+                    );
                     // Nothing stored and nothing to put: nothing to do
                     if (next.length === 0 && !probe.found) continue;
                     // Immediate and awaited: a debounced write still pending when the next save reads would let that

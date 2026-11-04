@@ -2265,13 +2265,15 @@ describe('a listing the log has no count for is cut only with two or more rows',
         expect(quantities(5)).toEqual([5]);
     });
 
-    test('two rows over an imported low archive row are cut too: the rule goes by rows, not by where the count came from', async () => {
+    test('two rows over an imported archive row stay: an imported count names nothing to cut to', async () => {
         seedSplit([fill(5, T1), fill(5, T2)]);
         archiveMock.rows = [importedRow(5, 5)];
 
         await loadAndRepair();
 
-        expect(quantities(5)).toEqual([5]);
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(stored(T1).map((r) => r.quantity)).toEqual([5]);
+        expect(stored(T2).map((r) => r.quantity)).toEqual([5]);
     });
 
     test('a pull bringing a second row is cut in the fold, to what the archive says', async () => {
