@@ -51,6 +51,31 @@ const CURRENT_ACTION_SELECTOR = '[class*="Header_currentAction"]';
 const BATTLE_COUNTER_ID = 'mwi-battle-counter';
 const BATTLE_ID_TEXT_RE = /Battle #(\d+)/;
 
+// Phone width: the header row is ~220 px, so the battle number steps aside for
+// the countdown (kept in the DOM, the fallback above still reads it), the zone
+// name keeps its room, and the chip is what truncates — the header never grows.
+// Installed only while the chip is on screen, so a dungeon or labyrinth, where
+// there is no chip, keeps its counter. Same breakpoint as MARKET_MOBILE_QUERY.
+const STYLE_ID = 'mwi-boss-eta-style';
+const PHONE_QUERY = '(max-width: 768px)';
+const PHONE_CSS = `@media ${PHONE_QUERY} {
+    ${ACTION_NAME_SELECTOR}:has(#${ETA_ID}) #${BATTLE_COUNTER_ID} { display: none; }
+    ${ACTION_NAME_SELECTOR}:has(#${ETA_ID}) [class*="Header_displayName"] { flex-shrink: 0; }
+    #${ETA_ID} { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+}`;
+
+function ensurePhoneStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = PHONE_CSS;
+    document.head.appendChild(style);
+}
+
+function removePhoneStyle() {
+    document.getElementById(STYLE_ID)?.remove();
+}
+
 class CombatBossEta {
     constructor() {
         this.initialized = false;
@@ -114,6 +139,7 @@ class CombatBossEta {
     _reset() {
         this._resetTracking();
         document.getElementById(ETA_ID)?.remove();
+        removePhoneStyle();
     }
 
     _checkCombatEnded(data) {
@@ -258,8 +284,10 @@ class CombatBossEta {
         let el = document.getElementById(ETA_ID);
         if (!text) {
             el?.remove();
+            removePhoneStyle();
             return;
         }
+        ensurePhoneStyle();
         if (!el || !el.isConnected) {
             el = document.createElement('span');
             el.id = ETA_ID;

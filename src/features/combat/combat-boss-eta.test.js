@@ -137,6 +137,25 @@ describe('combat boss eta', () => {
         expect(etaText()).toBe('· 8 to boss · ~1m 30s left');
     });
 
+    test('the phone stylesheet is installed with the chip and removed with it', () => {
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        expect(document.getElementById('mwi-boss-eta-style')).toBeNull();
+
+        game.wsHandlers.new_battle({ battleId: 323 });
+        const css = document.getElementById('mwi-boss-eta-style')?.textContent ?? '';
+        expect(css).toContain('(max-width: 768px)');
+        expect(css).toContain(':has(#mwi-boss-eta) #mwi-battle-counter { display: none; }');
+        expect(css).toContain('text-overflow: ellipsis');
+
+        // No second copy on the next tick
+        game.wsHandlers.new_battle({ battleId: 324 });
+        expect(document.querySelectorAll('#mwi-boss-eta-style')).toHaveLength(1);
+
+        combatBossEta.disable();
+        expect(document.getElementById('mwi-boss-eta-style')).toBeNull();
+    });
+
     test('a zone with no boss spawns shows nothing', () => {
         game.actions = [{ actionHrid: '/actions/combat/plain_zone', isDone: false, ordinal: 0, difficultyTier: 0 }];
         game.actionDetails['/actions/combat/plain_zone'] = {
