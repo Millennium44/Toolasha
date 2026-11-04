@@ -72,6 +72,16 @@ describe('the stale capital dialog fits a phone-width screen', () => {
         expect(content.style.maxWidth).toBe('min(95%, calc(100% - 58px))');
     });
 
+    test('minimize sits in the same right-hand group as close, not mid-header', () => {
+        const content = open();
+        const minimize = content.querySelector('.toolasha-minimize-btn');
+        const group = minimize.parentElement;
+        expect(group.querySelectorAll('button')).toHaveLength(2);
+        expect(group.lastElementChild.textContent).toBe('✕');
+        // The header's own children are just the title and that group
+        expect(group.parentElement.children).toHaveLength(2);
+    });
+
     test('each side table scrolls sideways inside its own box', () => {
         const content = open();
         for (const side of ['sell', 'buy']) {

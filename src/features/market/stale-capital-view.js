@@ -323,8 +323,18 @@ class StaleCapitalView {
         `;
         closeBtn.addEventListener('click', () => this.closeModal());
 
+        // Minimize is inserted before the close button; with both in one
+        // right-hand group they sit together instead of space-between flinging
+        // the minimize button into the middle of the header
+        const headerRight = document.createElement('div');
+        headerRight.style.cssText = `
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        `;
+        headerRight.appendChild(closeBtn);
         header.appendChild(title);
-        header.appendChild(closeBtn);
+        header.appendChild(headerRight);
 
         const totalsContainer = document.createElement('div');
         totalsContainer.className = 'mwi-stale-capital-totals';
