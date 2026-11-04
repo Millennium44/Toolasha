@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collection plan says when it hit its step limit
+
+When the points plan stops at its 300-step limit with more available, it now says so instead of "Only +N points found".
+
+### Missing Mats accepts large attempts and copies
+
+Typed attempts or copies above 9,999 are no longer cut down; only figures past a billion are changed, and the boxes are wider.
+
+### Shrine target level follows the game's maximum
+
+Combat Sim's shrine level box now stops at the level the game reports for shrines (20), not 100, the same as Lab Sim.
+
+### Full watchlist says so
+
+When the price panel's 99-item list is full, the pin button reads "Full (99)" and Combat Sim's Watch button says the panel is full, instead of doing nothing.
+
 ### Combat Sim tunes triggers in its own section
 
 The Upgrade tab's Triggers tick-box is now a Tune triggers section, as in Lab Sim: it says what a run will cost, runs without Analyze and shows its result in place. A result clears once its setup changes, and Apply waits for a running sim, flagging an Analyze table measured before the build changed.
