@@ -69,8 +69,15 @@ export const SIM_UPGRADE_PHONE_CSS = `
         }
         #mwi-labsim-skilling-crate-row > select { min-width: 0; width: 100%; }
 
-        /* A results table scrolls sideways inside its own wrapper; the panel stays still */
-        .mwi-utable-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+        /* A results table scrolls both ways inside its own wrapper, so its header can stick to the wrapper's top
+           (overflow-x alone made the wrapper the header's scroll container with nothing to scroll vertically).
+           A short table stays its natural height: max-height only caps it. The vh line is the fallback for a
+           browser without dvh, which drops the second declaration. Nothing contains the scroll: scrolling past the end
+           of the table carries on into the panel */
+        .mwi-utable-wrap {
+            overflow: auto; -webkit-overflow-scrolling: touch; max-width: 100%;
+            max-height: 70vh; max-height: min(70vh, calc(100dvh - 260px));
+        }
         /* A header may take two lines ("Hours/0.01%" over "Profit"); some tables set nowrap inline, so this wins
            with !important. The sort arrow is joined to its label by a no-break space and stays with it.
            Data cells keep their one line. */
@@ -88,6 +95,9 @@ export const SIM_UPGRADE_PHONE_CSS = `
            inline fill is this same color; the old forced panel color made its pinned cell darker). Tables whose
            headers set no fill get it here, so columns sliding under a header never show through */
         .mwi-utable-wrap > table > thead > tr > th { background: ${GAME_COLORS.raisedMore} !important; }
+        /* Every header cell sticks to the top of the wrapper (top is !important because the Lab tables set -10px
+           inline for the panel's own padding); the pinned first cell below also sticks sideways and sits above */
+        .mwi-utable-wrap > table > thead > tr > th { position: sticky; top: 0 !important; z-index: 2 !important; }
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) {
             background: ${GAME_COLORS.background} !important;
         }
