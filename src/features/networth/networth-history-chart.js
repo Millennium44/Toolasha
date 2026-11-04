@@ -1006,7 +1006,9 @@ class NetworthHistoryChart {
                 const breakdownAttr = is24hRange
                     ? ' id="mwi-nw-24h-toggle" style="cursor: pointer;" title="Click for item breakdown"'
                     : '';
-                const breakdownArrow = is24hRange ? ' <span style="font-size: 10px; color: #666;">▼</span>' : '';
+                const breakdownArrow = is24hRange
+                    ? ' <span style="font-size: 10px; color: ' + GAME_COLORS.textDim + ';">▼</span>'
+                    : '';
                 parts.push(
                     `<span${breakdownAttr}>Last ${rangeLabel}: <strong style="color: ${color};">${sign}${networthFormatter(Math.round(rangeChange))} (${sign}${rangePercent.toFixed(1)}%)</strong>${breakdownArrow}</span>`
                 );
@@ -1479,7 +1481,7 @@ class NetworthHistoryChart {
 
         // Snapshot age note
         const ageHours = Math.round((Date.now() - oldSnapshot.t) / 3_600_000);
-        html += `<div style="color: #555; font-size: 10px; margin-top: 6px; text-align: right;">Compared to snapshot from ${ageHours}h ago</div>`;
+        html += `<div style="color: ${GAME_COLORS.textDim}; font-size: 10px; margin-top: 6px; text-align: right;">Compared to snapshot from ${ageHours}h ago</div>`;
 
         container.innerHTML = html;
     }

@@ -318,7 +318,7 @@ class QueueMonitorUI {
             html += `<span style="width:8px; height:8px; border-radius:50%; background:${dotColor}; flex-shrink:0;"></span>`;
             html += `<span style="font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(snap.characterName)}</span>`;
             html += `<span style="color:#aaa; font-size:11px; white-space:nowrap;">${timeDisplay}</span>`;
-            html += `<span style="color:#555; font-size:10px;">${isExpanded ? '▾' : '▸'}</span>`;
+            html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px;">${isExpanded ? '▾' : '▸'}</span>`;
             html += `</div>`;
             html += `<div class="toolasha-qm-age" style="color:${isStale ? '#f39c12' : '#666'}; font-size:10px; margin-left:14px; margin-top:2px;">Updated ${ageLabel}${isStale ? ' · stale' : ''}</div>`;
 
@@ -355,7 +355,7 @@ class QueueMonitorUI {
 
                     html += `<div style="display:flex; justify-content:space-between; gap:8px; padding:1px 0;">`;
                     html += `<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(action.actionName)}</span>`;
-                    html += `<span style="white-space:nowrap; color:#777;">${countStr ? countStr + ' · ' : ''}${actionTimeStr}</span>`;
+                    html += `<span style="white-space:nowrap; color:${GAME_COLORS.textDim};">${countStr ? countStr + ' · ' : ''}${actionTimeStr}</span>`;
                     html += `</div>`;
                 }
                 html += `</div>`;

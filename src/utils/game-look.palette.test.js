@@ -28,7 +28,7 @@ describe('the palette Toolasha panels draw with', () => {
      * panel, border for its edge, textDim for faint text.
      */
     test('no file hard-codes the old navy fills', () => {
-        const old = /#1a1a2e|#2a2a4a/i;
+        const old = /#1a1a2e|#2a2a4a|#1b2030|#101420|#1e1e2e|#495268/i;
         const offenders = sources()
             .map((path) => ({ path, lines: readFileSync(path, 'utf8').split('\n') }))
             .flatMap(({ path, lines }) =>
