@@ -75,14 +75,21 @@ export const SIM_UPGRADE_PHONE_CSS = `
            with !important. The sort arrow is joined to its label by a no-break space and stays with it.
            Data cells keep their one line. */
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th { white-space: normal !important; min-width: 64px; }
-        /* The first column names the row, so it stays put and is wide enough to read. The z-index and the
-           background are !important because a table may set its own inline (the gold table's headers are
+        /* The first column names the row, so it stays put and is wide enough to read. The z-index is
+           !important because a table may set its own inline (the gold table's headers are
            sticky at z-index 2): without that the later header cells paint over the pinned one while scrolling */
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child,
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) {
-            position: sticky; left: 0; z-index: 1 !important; background: ${GAME_COLORS.background} !important;
+            position: sticky; left: 0; z-index: 1 !important;
             box-sizing: border-box; width: 140px; min-width: 140px; max-width: 140px;
             white-space: normal !important; overflow-wrap: anywhere;
+        }
+        /* Header cells are solid in one fill for the whole row, the pinned one included (the gold table's own
+           inline fill is this same color; the old forced panel color made its pinned cell darker). Tables whose
+           headers set no fill get it here, so columns sliding under a header never show through */
+        .mwi-utable-wrap > table > thead > tr > th { background: ${GAME_COLORS.raisedMore} !important; }
+        .mwi-utable-wrap > table:not(.mwi-utable-pick) > tbody > tr > td:first-child:not([colspan]) {
+            background: ${GAME_COLORS.background} !important;
         }
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child { z-index: 3 !important; }
         /* Chips and buttons under a row's name wrap beneath it rather than widening the pinned column */

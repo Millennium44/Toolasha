@@ -19,6 +19,7 @@ vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async (
 import { readScoped } from '../../utils/character-key.js';
 import storage from '../../core/storage.js';
 import { SIM_UPGRADE_PHONE_CSS } from './sim-phone-layout.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const mocks = vi.hoisted(() => ({
     /** What the scroll table reads as the best gold/token; null means the shop prices nothing */
@@ -2571,10 +2572,53 @@ describe('the panel', () => {
             const zIndexes = header.map((r) => r.body.match(/z-index:\s*(\d+)\s*(!important)?/)).filter(Boolean);
             // Higher than the inline 2 of the other header cells, and !important so that inline cannot win
             expect(zIndexes.some((z) => Number(z[1]) > 2 && z[2])).toBe(true);
-            expect(header.some((r) => /background:[^;]*!important/.test(r.body))).toBe(true);
+            // Solid, and not the panel color the old rule forced (that made this cell darker than its neighbors)
+            expect(header.every((r) => !/background:[^;]*rgb\(19, 20, 25\)/.test(r.body))).toBe(true);
             // The body cells of that column are matched by the same rule
             const td = table.querySelector('tbody > tr > td:first-child');
             expect(rulesWith('td:first-child').some((r) => r.selectors.some((x) => td.matches(x)))).toBe(true);
+        });
+
+        // The background a header cell ends up with: the last !important one among the rules that match it,
+        // else its inline one
+        const headerFill = (th) => {
+            const important = [];
+            for (const m of SIM_UPGRADE_PHONE_CSS.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+                const selectors = m[1]
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .split(',')
+                    .map((x) => x.trim());
+                if (!selectors.some((x) => x.includes('th') && th.matches(x))) continue;
+                const fill = m[2].match(/background:\s*([^;]*?)\s*!important/);
+                if (fill) important.push(fill[1]);
+            }
+            return important.at(-1) || th.style.background;
+        };
+
+        test('every header cell of the gold table, the pinned one included, ends up the same solid fill', () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Priced ring', { cost: 100, profitGain: 50 })],
+                food: null,
+            });
+            const table = ui.panel.querySelector('[data-upgrade-row]').closest('table');
+            const cells = [...table.querySelectorAll('thead > tr > th')];
+            expect(cells.length).toBeGreaterThan(2);
+            const fills = new Set(cells.map(headerFill));
+            expect(fills.size).toBe(1);
+            expect([...fills][0]).toBe(GAME_COLORS.raisedMore);
+            // The fill is the one the gold table's headers already carry inline
+            expect(cells[1].getAttribute('style')).toContain(GAME_COLORS.raisedMore);
+        });
+
+        test('a table whose headers set no fill gets a solid one, so columns sliding under do not show through', () => {
+            const table = document.createElement('table');
+            table.innerHTML = '<thead><tr><th>Level</th><th>Hours</th></tr></thead>';
+            const wrap = document.createElement('div');
+            wrap.className = 'mwi-utable-wrap';
+            wrap.appendChild(table);
+            const cells = [...table.querySelectorAll('th')];
+            expect(cells.map(headerFill)).toEqual([GAME_COLORS.raisedMore, GAME_COLORS.raisedMore]);
         });
 
         test('header cells may wrap whatever their inline white-space says, and the arrow sticks to the label', () => {
