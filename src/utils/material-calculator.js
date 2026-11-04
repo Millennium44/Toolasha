@@ -492,6 +492,8 @@ export function calculateEnhancementMaterialRequirements(
     // totals are always a multiple of the per-attempt cost. The epsilon keeps a count that
     // is a whole number plus float noise from buying a spare attempt.
     const wholeAttempts = Math.ceil((repeatCount ?? calc.attempts) - 1e-9);
+    // A line's total is read back out of a data attribute with parseInt; at 1e21 and past, String() writes
+    // "1e+21", which reads as 1. Capped at the largest exact integer, it is always plain digits.
 
     // Process enhancement cost materials
     for (const cost of enhancementCosts) {
@@ -505,7 +507,7 @@ export function calculateEnhancementMaterialRequirements(
             continue;
         }
 
-        const totalQuantity = Math.ceil(cost.count * wholeAttempts) * copyCount;
+        const totalQuantity = Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(cost.count * wholeAttempts) * copyCount);
         const have = unclaimedBoughtCount(cost.itemHrid) + heldInBag(inventory, cost.itemHrid);
         const available = ownerId ? effectiveInventory(cost.itemHrid, 0, { excludeOwner: ownerId, held: have }) : have;
         const missing = Math.max(0, totalQuantity - available);
@@ -539,7 +541,7 @@ export function calculateEnhancementMaterialRequirements(
             repeatCount != null && calc.attempts > 0
                 ? (calc.protectionCount * wholeAttempts) / calc.attempts
                 : calc.protectionCount;
-        const totalProtection = Math.ceil(protectionPerCopy - 1e-9) * copyCount;
+        const totalProtection = Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(protectionPerCopy - 1e-9) * copyCount);
         const protDetails = gameData.itemDetailMap[protectionItemHrid];
 
         if (protDetails) {
