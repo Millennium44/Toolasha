@@ -128,6 +128,14 @@ describe('cardStateOf', () => {
         expect(cardStateOf({ remembered: true, verdict: { verdict: 'confirmed', mean: 1 } }).kind).toBe('confirmed');
         expect(cardStateOf({ remembered: true, pending: true }).kind).toBe('pending');
     });
+
+    test('a verdict outranks a note, and a busy note never becomes the state', () => {
+        const confirmed = { verdict: 'confirmed', mean: 1 };
+        expect(cardStateOf({ note: { kind: 'failed' }, verdict: confirmed }).label).toBe('Verified');
+        expect(cardStateOf({ note: { kind: 'busy' }, verdict: confirmed }).label).toBe('Verified');
+        expect(cardStateOf({ note: { kind: 'busy' } }).label).toBe('Estimate');
+        expect(cardStateOf({ note: { kind: 'busy' }, remembered: true }).label).toBe('Remembered estimate');
+    });
 });
 
 describe('buildUpgradeCards', () => {

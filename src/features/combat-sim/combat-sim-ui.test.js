@@ -14437,8 +14437,11 @@ describe('upgrade results as cards', () => {
             // a second card cannot start a run beside it
             verifyButton('Ring B').dispatchEvent(new Event('click'));
             expect(mocks.verifyCalls).toHaveLength(1);
-            // ...and says why, on that card
-            expect(stateOf(cardNamed('Ring B'))).toBe('Not verified');
+            // ...and says why, on that card, beside its state rather than as one
+            expect(stateOf(cardNamed('Ring B'))).toBe('Estimate');
+            expect(cardNamed('Ring B').querySelector('.mwi-ucard-detail').textContent).toContain(
+                'Another run is going'
+            );
             release();
             await settle();
             expect(stateOf(cardNamed('Ring A'))).toBe('Verified');
@@ -14530,6 +14533,57 @@ describe('upgrade results as cards', () => {
             await settle();
             expect(stateOf(cardNamed('Ring C'))).toBe('Verified');
             expect(detail()).not.toContain('too few seeds');
+        });
+
+        describe('a card whose state words and verdict could disagree', () => {
+            const detail = (name) => cardNamed(name).querySelector('.mwi-ucard-detail').textContent;
+            const stopRingC = async () => {
+                mocks.verifyImpl = () => ({ rows: [], metric: 'profit', unit: '', seeds: 0, stopped: true });
+                verifyButton('Ring C').click();
+                await settle();
+                expect(stateOf(cardNamed('Ring C'))).toBe('Verify stopped');
+            };
+
+            test('a later Verify top 3 that confirms the row beats the note of an earlier stopped verify', async () => {
+                const results = draw();
+                showCards();
+                await stopRingC();
+                const row = results.results.find((r) => r.candidate.description === 'Ring C');
+                mocks.verifyImpl = answer();
+                await ui._verifyRows({ results, rows: [row], metric: 'profit' });
+                await settle();
+                expect(stateOf(cardNamed('Ring C'))).toBe('Verified');
+                expect(detail('Ring C')).not.toContain('Verify stopped before');
+            });
+
+            test('a note belongs to the metric it was made for', async () => {
+                ui._upgradeHiddenColumns = new Set();
+                draw();
+                showCards();
+                await stopRingC();
+                expect(detail('Ring C')).toContain('Verify stopped before');
+                rankBy('gold', 'deltaDps');
+                expect(ui._goldVerifyMetric().metric).toBe('dps');
+                expect(stateOf(cardNamed('Ring C'))).toBe('Estimate');
+                expect(detail('Ring C')).not.toContain('Verify stopped before');
+            });
+
+            test('a busy tap on a verified card leaves it verified and says why beside the verdict', async () => {
+                draw();
+                showCards();
+                mocks.verifyImpl = answer();
+                verifyButton('Ring B').click();
+                await settle();
+                expect(stateOf(cardNamed('Ring B'))).toBe('Verified');
+                ui._upgradeRunning = true;
+                verifyButton('Ring B').dispatchEvent(new Event('click'));
+                expect(stateOf(cardNamed('Ring B'))).toBe('Verified');
+                expect(cardNamed('Ring B').querySelector('[data-verify-chip]').textContent).toContain('confirmed');
+                expect(detail('Ring B')).toContain('Another run is going');
+                ui._upgradeRunning = false;
+                ui._renderUpgradeResults(ui._upgradeResultsData);
+                expect(detail('Ring B')).not.toContain('Another run is going');
+            });
         });
 
         test('a verdict that errored is a failed card, not a verified one', async () => {
