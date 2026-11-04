@@ -2539,11 +2539,100 @@ describe('the panel', () => {
         delete ui._wireCsvButton;
     });
 
+    describe('the Buffs section', () => {
+        const buff = (name, over = {}) => ({
+            ...row(name, { cost: null, type: 'community_buff' }),
+            cost: null,
+            ...over,
+        });
+        const draw = (list) => {
+            ui._renderUpgradeResults({ baseline: BASELINE, results: list, food: null });
+            return ui.panel.querySelector('#mwi-csim-upgrade-results');
+        };
+        const names = (container, attr) => [...container.querySelectorAll(`[${attr}]`)].map((r) => r.textContent);
+
+        test('community buff levels get their own box, apart from a real unpriced item, with no cost or reason column', () => {
+            const container = draw([
+                row('Priced ring', { cost: 100, profitGain: 50 }),
+                row('Unlisted ring', { cost: null }),
+                buff('Community EXP buff Lv20 → off'),
+                buff('Community combat drop buff Lv20 → off'),
+            ]);
+            expect(container.querySelector('[data-collapse-key="buffs"]')).toBeTruthy();
+            expect(names(container, 'data-buff-row').join(' ')).toContain('Community EXP buff');
+            expect(names(container, 'data-buff-row')).toHaveLength(2);
+            const unpriced = names(container, 'data-unpriced-row');
+            expect(unpriced).toHaveLength(1);
+            expect(unpriced[0]).toContain('Unlisted ring');
+            // A buff is not in the main table, and nothing says it is free
+            expect(names(container, 'data-upgrade-row').join(' ')).not.toContain('Community');
+            expect(container.querySelector('[data-collapse-key="buffs"]').closest('div').textContent).not.toMatch(
+                /free|Cost\s*0/i
+            );
+            // The reason column is gone; the real unpriced row keeps its reason under its name
+            expect(container.textContent).not.toContain('Why no price');
+            expect(container.querySelector('[data-unpriced-row] [data-unpriced-reason]').textContent).toContain(
+                'no price could be resolved'
+            );
+            expect(container.querySelector('[data-buff-row] [data-unpriced-reason]')).toBeNull();
+            expect(container.querySelectorAll('[data-buff-sort-key]')).toHaveLength(4);
+        });
+
+        test('only buff rows: no "Measured, but not priced" box; no buff rows: no Buffs box', () => {
+            const onlyBuffs = draw([buff('Community EXP buff Lv4 → Lv5')]);
+            expect(onlyBuffs.textContent).not.toContain('Measured, but not priced');
+            expect(onlyBuffs.querySelector('[data-collapse-key="buffs"]')).toBeTruthy();
+            const none = draw([row('Priced ring', { cost: 100 }), row('Unlisted ring', { cost: null })]);
+            expect(none.querySelector('[data-collapse-key="buffs"]')).toBeNull();
+            expect(none.querySelector('[data-collapse-key="unpriced"]')).toBeTruthy();
+        });
+
+        test('a guild shrine level with no price stays in "Measured, but not priced"', () => {
+            const shrine = { ...row('Guild shrine Lv3', { cost: null, type: 'guild_shrine' }), cost: null };
+            // Its detail needs the guild data this test does not load; the section it lands in is the point
+            vi.spyOn(ui, '_renderUpgradeDetailCells').mockReturnValue('');
+            const container = draw([shrine]);
+            expect(names(container, 'data-unpriced-row')).toHaveLength(1);
+            expect(container.querySelector('[data-collapse-key="buffs"]')).toBeNull();
+        });
+
+        test('sorts by its header, keeps the sort in its own state, and puts rows with no figure last', () => {
+            // A row with no figures has no detail breakdown to draw; the sort is what is under test
+            vi.spyOn(ui, '_renderUpgradeDetailCells').mockReturnValue('');
+            const a = buff('Alpha');
+            const b = buff('Bravo');
+            const c = buff('Charlie', { deltas: { deaths: 0, encounters: 0 } });
+            a.deltas = { dps: 1, xp: 1, profit: 1, deaths: 0, encounters: 0 };
+            b.deltas = { dps: 4, xp: 1, profit: 1, deaths: 0, encounters: 0 };
+            const container = draw([a, b, c]);
+            expect(names(container, 'data-buff-row')[0]).toContain('Bravo');
+            expect(names(container, 'data-buff-row')[2]).toContain('Charlie');
+            container.querySelector('[data-buff-sort-key="upgrade"]').click();
+            expect(ui._buffSort).toEqual({ key: 'upgrade', asc: true });
+            expect(ui._unpricedSort).not.toEqual({ key: 'upgrade', asc: true });
+            const after = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(names(after, 'data-buff-row')[0]).toContain('Alpha');
+            // A sort saved on the removed Why no price column reads as the default
+            ui._unpricedSort = { key: 'why', asc: true };
+            const again = draw([row('Unlisted ring', { cost: null })]);
+            expect(names(again, 'data-unpriced-row')).toHaveLength(1);
+        });
+
+        test('duplicate buff names are both drawn and each expands on its own', () => {
+            const container = draw([buff('Community EXP buff'), buff('Community EXP buff')]);
+            const rowsEl = container.querySelectorAll('[data-buff-row]');
+            expect(rowsEl).toHaveLength(2);
+            rowsEl[1].click();
+            const details = container.querySelectorAll('[data-buff-detail]');
+            expect(details[1].style.display).toBe('table-row');
+        });
+    });
+
     describe('rows that could not be priced', () => {
         test('get their own box instead of sinking below the regressions', () => {
             const rows = [
                 row('Priced ring', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
-                { ...row('Community EXP buff Lv4 → Lv5', { cost: null, type: 'community_buff' }), cost: null },
+                { ...row('Unlisted ring Lv4 → Lv5', { cost: null }), cost: null },
             ];
             ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
 
@@ -2552,10 +2641,10 @@ describe('the panel', () => {
             // The main table holds the priced row only
             const mainRows = [...container.querySelectorAll('[data-upgrade-row]')].map((r) => r.textContent);
             expect(mainRows.join(' ')).toContain('Priced ring');
-            expect(mainRows.join(' ')).not.toContain('Community EXP');
+            expect(mainRows.join(' ')).not.toContain('Unlisted ring');
 
             const unpriced = [...container.querySelectorAll('[data-unpriced-row]')].map((r) => r.textContent);
-            expect(unpriced.join(' ')).toContain('Community EXP');
+            expect(unpriced.join(' ')).toContain('Unlisted ring');
         });
 
         describe('combat scrolls', () => {
@@ -2699,7 +2788,7 @@ describe('the panel', () => {
         });
 
         test('an unpriced row still expands to the metric detail it did measure', () => {
-            const rows = [{ ...row('Community EXP buff', { type: 'community_buff' }), cost: null }];
+            const rows = [{ ...row('Unlisted ring', {}), cost: null }];
             ui._renderUpgradeResults({ baseline: BASELINE, results: rows, food: null });
 
             const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
@@ -14372,7 +14461,7 @@ describe('upgrade results as cards', () => {
         test('say unknown, are labelled as an estimate that is not priced, and offer no Verify', () => {
             const list = [
                 row('Priced ring', { cost: 100, profitGain: 50 }),
-                { ...row('Community EXP buff Lv4 → Lv5', { cost: null, type: 'community_buff' }), cost: null },
+                { ...row('Unlisted ring Lv4 → Lv5', { cost: null }), cost: null },
             ];
             draw({}, list);
             showCards();
@@ -14387,11 +14476,30 @@ describe('upgrade results as cards', () => {
             expect(cardsOf('gold')).toHaveLength(1);
         });
 
+        test('buff cards sit in their own section, say not a purchase, and offer no Verify', () => {
+            const list = [
+                row('Priced ring', { cost: 100, profitGain: 50 }),
+                { ...row('Community EXP buff Lv4 → Lv5', { cost: null, type: 'community_buff' }), cost: null },
+            ];
+            draw({}, list);
+            showCards();
+            expect(cardsOf('unpriced')).toHaveLength(0);
+            const buffs = cardsOf('buffs');
+            expect(buffs).toHaveLength(1);
+            expect(buffs[0].textContent).toContain('Not a purchase');
+            expect(buffs[0].textContent).not.toMatch(/Cost\s*(0|free)/i);
+            expect(buffs[0].querySelector('[data-card-verify]')).toBeNull();
+            const options = [...select('buffs').options].map((o) => o.value);
+            expect(options).not.toContain('why');
+            rankBy('buffs', 'xp');
+            expect(ui._buffSort).toEqual({ key: 'xp', asc: true });
+        });
+
         test('the same rows, in the same order, as the unpriced table for each Rank by', () => {
             const list = [
-                { ...row('Alpha', { cost: null, type: 'community_buff' }), cost: null },
-                { ...row('Bravo', { cost: null, type: 'community_buff' }), cost: null },
-                { ...row('Charlie', { cost: null, type: 'community_buff' }), cost: null },
+                { ...row('Alpha', { cost: null }), cost: null },
+                { ...row('Bravo', { cost: null }), cost: null },
+                { ...row('Charlie', { cost: null }), cost: null },
             ];
             list[0].deltas = { dps: 1, xp: 5, profit: 3, deaths: 0, encounters: 0 };
             list[1].deltas = { dps: 4, xp: 1, profit: 9, deaths: 0, encounters: 0 };
@@ -14861,7 +14969,7 @@ describe('upgrade results as cards', () => {
             });
 
             test('unpriced and scroll cards ranked by profit show the ceiling, not "within noise"', () => {
-                const buff = { ...row('Buff', { cost: null, type: 'community_buff' }), cost: null };
+                const buff = { ...row('Buff', { cost: null }), cost: null };
                 const rate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
                 mocks.scrollRate = rate;
                 const scroll = {
@@ -14888,7 +14996,7 @@ describe('upgrade results as cards', () => {
             });
 
             test('unpriced cards without an unpriced running cost still say "within noise"', () => {
-                const buff = { ...row('Buff', { cost: null, type: 'community_buff' }), cost: null };
+                const buff = { ...row('Buff', { cost: null }), cost: null };
                 buff.noise = NOISY;
                 buff.significantBy = NOT_SIGNIFICANT;
                 ui._unpricedSort = { key: 'profit', asc: true };
@@ -14928,7 +15036,7 @@ describe('upgrade results as cards', () => {
     test('no section fails to draw as cards, and the budget, CSV and Columns stay', () => {
         draw({ stopped: { completed: 2, total: 9 } }, [
             ...rows(),
-            { ...row('Priced elsewhere', { cost: null, type: 'community_buff' }), cost: null },
+            { ...row('Priced elsewhere', { cost: null }), cost: null },
         ]);
         showCards();
         expect(text()).not.toContain('could not be drawn');

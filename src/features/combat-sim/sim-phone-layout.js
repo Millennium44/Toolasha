@@ -79,8 +79,6 @@ export const SIM_UPGRADE_PHONE_CSS = `
             white-space: normal !important; overflow-wrap: anywhere;
         }
         .mwi-utable-wrap > table:not(.mwi-utable-pick) > thead > tr > th:first-child { z-index: 3; }
-        /* Prose reads in a column about this wide; numbers stay on one line */
-        .mwi-utable-prose { white-space: normal !important; min-width: 150px; max-width: 170px; overflow-wrap: anywhere; }
         /* An expanded row spans the whole table: its content stays at the visible width, pinned to the left */
         .mwi-utable-wrap .mwi-utable-detail { position: sticky; left: 0; box-sizing: border-box; width: calc(100vw - 80px); max-width: 100%; }
         .mwi-utable-wrap .mwi-utable-detail > div[style*="grid-template-columns"] {
