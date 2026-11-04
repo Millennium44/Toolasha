@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Trial history marks trials that did not run
 
 Trial history now shows `n/r` for a cycle where the game's own list says a trial was not on the schedule, so it no longer looks like a miss. `—` still means a result was not seen, and cycles saved before this update keep showing `—`.
+
 ### Settings panel is easier to use on a touch screen
 
 On a touch screen the settings switches, color pickers, number boxes and dropdowns are now finger-sized, and tapping a switch's label or its row flips it instead of needing the small box. Desktop is unchanged.
