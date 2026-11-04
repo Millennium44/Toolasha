@@ -14792,6 +14792,96 @@ describe('upgrade results as cards', () => {
             expect(magic.querySelector('[data-card-verify]')).toBeNull();
         });
 
+        describe('"within noise" on levels, unpriced rows and scrolls', () => {
+            const NOISY = { dps: 1, xp: 1, profit: 2, deaths: 1, encounters: 1 };
+            const NOT_SIGNIFICANT = { dps: false, xp: false, profit: false, deaths: true, encounters: true };
+            const within = (card) => card.querySelector('.mwi-ucard-within');
+
+            const combined = (over = {}) => ({
+                metrics: { dps: 100, xpPerHour: 1000, profitPerHour: 1010, deathsPerHour: 0, encountersPerHour: 10 },
+                deltas: { dps: 0, xp: 0, profit: 1, deaths: 0, encounters: 0 },
+                ...over,
+            });
+
+            test("a level card with a combined measurement reads that measurement's own verdict", () => {
+                const noisy = levelRow('Attack 135 → 140', 5, { profit: 1 });
+                noisy.alongside = combined({ noise: NOISY, significantBy: NOT_SIGNIFICANT });
+                const clear = levelRow('Stamina 100 → 105', 6, { profit: 1 });
+                clear.alongside = combined({
+                    noise: NOISY,
+                    significantBy: { ...NOT_SIGNIFICANT, profit: true },
+                });
+                ui._upgradeLevelSort = { key: 'profit', asc: true };
+                draw({}, [noisy, clear]);
+                showCards();
+                expect(within(cardNamed('Attack', 'levels'))).toBeTruthy();
+                expect(within(cardNamed('Stamina', 'levels'))).toBeNull();
+            });
+
+            test('a combined measurement saved without an error makes no claim either way', () => {
+                const legacy = levelRow('Attack 135 → 140', 5, { profit: 1 });
+                legacy.alongside = combined();
+                // The level alone was noisy, but that is not the combined gain on the card
+                legacy.noise = NOISY;
+                legacy.significantBy = NOT_SIGNIFICANT;
+                ui._upgradeLevelSort = { key: 'profit', asc: true };
+                draw({}, [legacy]);
+                showCards();
+                expect(within(cardNamed('Attack', 'levels'))).toBeNull();
+            });
+
+            test('a level card with an unpriced running cost shows the ceiling, not "within noise"', () => {
+                const lvl = levelRow('Attack 135 → 140', 5, { profit: 1 });
+                lvl.noise = NOISY;
+                lvl.significantBy = NOT_SIGNIFICANT;
+                lvl.costUnpriced = ['Wisdom Coffee'];
+                ui._upgradeLevelSort = { key: 'profit', asc: true };
+                draw({}, [lvl]);
+                showCards();
+                const card = cardNamed('Attack', 'levels');
+                expect(within(card)).toBeNull();
+                expect(card.textContent).toContain('Profit gain is a ceiling');
+                expect(card.textContent).toContain('Wisdom Coffee');
+            });
+
+            test('unpriced and scroll cards ranked by profit show the ceiling, not "within noise"', () => {
+                const buff = { ...row('Buff', { cost: null, type: 'community_buff' }), cost: null };
+                const rate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+                mocks.scrollRate = rate;
+                const scroll = {
+                    ...row('Scroll A', { cost: null, type: 'scroll', profitGain: 1_200_000 }),
+                    cost: null,
+                };
+                for (const r of [buff, scroll]) {
+                    r.noise = NOISY;
+                    r.significantBy = NOT_SIGNIFICANT;
+                    r.costUnpriced = ['Wisdom Coffee'];
+                }
+                ui._unpricedSort = { key: 'profit', asc: true };
+                ui._scrollSort = { key: 'profit', asc: true };
+                draw({ scrollTokenRate: rate }, [row('Ring A'), buff, scroll]);
+                showCards();
+                for (const [name, section] of [
+                    ['Buff', 'unpriced'],
+                    ['Scroll A', 'scrolls'],
+                ]) {
+                    const card = cardNamed(name, section);
+                    expect(within(card), section).toBeNull();
+                    expect(card.textContent, section).toContain('Profit gain is a ceiling');
+                }
+            });
+
+            test('unpriced cards without an unpriced running cost still say "within noise"', () => {
+                const buff = { ...row('Buff', { cost: null, type: 'community_buff' }), cost: null };
+                buff.noise = NOISY;
+                buff.significantBy = NOT_SIGNIFICANT;
+                ui._unpricedSort = { key: 'profit', asc: true };
+                draw({}, [row('Ring A'), buff]);
+                showCards();
+                expect(within(cardNamed('Buff', 'unpriced'))).toBeTruthy();
+            });
+        });
+
         test('scroll cards follow the scroll table for every Rank by', () => {
             const rate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
             mocks.scrollRate = rate;
