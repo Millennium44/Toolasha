@@ -176,6 +176,16 @@ export function mergeRecords(base, fresh) {
 }
 
 /**
+ * Which fill a row is a copy of, whatever quantity the copy carries: a trimmed row keeps its original's listing and
+ * time and changes its quantity, so {@link fillKey} tells the two apart.
+ * @param {Object} row - Fill record
+ * @returns {string} `listingId|t`
+ */
+function trimStamp(row) {
+    return `${row.listingId}|${row.t}`;
+}
+
+/**
  * A row as text with its keys sorted, so two rows holding the same fields compare equal whatever order they were
  * written in.
  * @param {Object} row - Fill record
@@ -471,8 +481,8 @@ class TradeLedgerStore {
         /** Bumped by {@link disable}, so a repair run still out when the ledger is switched off holds nothing. */
         this._capsEpoch = 0;
         /**
-         * Listing counts read out of one download, by the download's own object (see {@link _pulledCounts}).
-         * @type {WeakMap<Object, {charId: string, counts: Map<number, number>}>}
+         * What was read out of one download, by the download's own object (see {@link _readDownload}).
+         * @type {WeakMap<Object, {charId: string, counts: Map<number, number>, trims: Set<string>}>}
          */
         this._pulledCountsMemo = new WeakMap();
     }
@@ -540,10 +550,16 @@ class TradeLedgerStore {
      * archive and the baselines hold for the listing. A real new fill in the same download, a row of a listing
      * not known as ended, or a lone row of a listing the log has no count for, is kept.
      *
+     * Each day folds on its own, and only memory is counted for the other days, never the rows the download holds
+     * there: a day in the download may not land (the retention rule takes it out after the folds), and a row left
+     * uncounted can only make a fold keep more than the whole-ledger repair would, which the next load then cuts.
+     * The one thing that makes memory count too much is a row the download holds trimmed on its own day, whose fold
+     * replaces memory's original: that listing is not cut here at all (see {@link _listingsTrimmedElsewhere}).
+     *
      * Falls back to the plain union, as before, when no checked caps are held, they are another character's (or
-     * were dropped because the ledger was switched off), the ledger is not loaded or still the single key, or the
-     * rows span more than one day. A result holding exactly this device's rows (in any order) is this device's
-     * own array, so the pull reads it as unchanged.
+     * were dropped because the ledger was switched off), the ledger is not loaded or still the single key, the rows
+     * span more than one day, or there is no download to read the other days from. A result holding exactly this
+     * device's rows (in any order) is this device's own array, so the pull reads it as unchanged.
      * @param {Array<Object>} local - This device's day record
      * @param {Array<Object>} incoming - The downloaded day record
      * @param {{download?: Object<string, *>}} [context] - The whole download of this store, as it came
@@ -571,6 +587,7 @@ class TradeLedgerStore {
         const charId = ledgerCharId();
         if (!held || held.caps.size === 0 || held.charId !== charId) return rows;
         if (!this.isLoaded || this._legacy || rows.length === 0) return rows;
+        if (!download || typeof download !== 'object' || Array.isArray(download)) return rows;
         if (!rows.some((row) => held.caps.has(row.listingId))) return rows;
         const day = bucketOf(rows[0]);
         if (rows.some((row) => bucketOf(row) !== day)) return rows;
@@ -589,12 +606,13 @@ class TradeLedgerStore {
      * another device's log, archive or baseline saying the listing filled more, along with the fill itself. The
      * repair after the reload would read that and keep the fill, so the fold has to as well. Any status counts: a
      * listing cannot have filled less than any device ever saw it fill. The same goes for this tab's own baseline,
-     * and a listing back on the book has no cap, nor has a lone row of a listing the log gives no count for.
+     * and a listing back on the book has no cap, nor has a lone row of a listing the log gives no count for, nor
+     * one whose count on another day this fold cannot trust (see {@link _listingsTrimmedElsewhere}).
      * @param {Array<Object>} rows - The folded day's rows
      * @param {Array<Object>} others - The same listings' rows on other days, from memory
      * @param {{caps: Map<number, number>, archiveOnly: Set<number>}} held - The held caps
      * @param {string} charId - Whose ledger
-     * @param {Object<string, *>} [download] - The whole download of this store
+     * @param {Object<string, *>} download - The whole download of this store
      * @returns {Map<number, number>} Listing id to the count to cut to, for this day's listings only
      * @private
      */
@@ -603,31 +621,60 @@ class TradeLedgerStore {
         for (const entry of dataManager.getMarketListings() || []) {
             if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) open.add(Number(entry.id));
         }
-        const pulled = this._pulledCounts(download, charId);
+        const pulled = this._readDownload(download, charId);
+        const unsure = this._listingsTrimmedElsewhere(others, pulled.trims);
         const caps = new Map();
         for (const { listingId: id } of rows) {
-            if (caps.has(id) || !held.caps.has(id) || open.has(id)) continue;
+            if (caps.has(id) || !held.caps.has(id) || open.has(id) || unsure.has(id)) continue;
             if (held.archiveOnly.has(id) && !this._hasDoubling(id, [...rows, ...others])) continue;
             const baseline = Number(this.states[String(id)]?.filledQuantity) || 0;
-            caps.set(id, Math.max(held.caps.get(id), baseline, pulled?.get(id) || 0));
+            caps.set(id, Math.max(held.caps.get(id), baseline, pulled.counts.get(id) || 0));
         }
         return caps;
     }
 
     /**
-     * The highest fill count a download holds for each listing of one character: its log, its archive months and
-     * its baselines. A scan of the whole download, made once per download and only when a day has something a
-     * held cap applies to.
-     * @param {Object<string, *>} [download] - The whole download of this store
-     * @param {string} charId - Whose rows
-     * @returns {Map<number, number>|null} Listing id to count; null with no download to read
+     * The listings whose rows on other days will not be what memory holds once this pull has landed: an untrimmed
+     * row in memory that the download holds trimmed. That day's own fold replaces the original with the trimmed
+     * copy (see `repairOverRecorded`), so counting the original here would count units the ledger no longer holds,
+     * and cut this day's real fill for them. Such a listing is left whole by this fold; the next load cuts whatever
+     * was really over. A day the download lacks replaces nothing, so what memory holds there stands.
+     *
+     * A row memory already holds trimmed is not one of these, whatever other trim a device made of it: the count
+     * memory holds for it is the one the repair uses. After the reload that follows a pulled day memory holds the
+     * trimmed copy too, so this does not hold a listing open pull after pull.
+     * @param {Array<Object>} others - The rows on other days, from memory
+     * @param {Set<string>} trims - The download's trimmed rows, by {@link trimStamp}
+     * @returns {Set<number>} Listing ids this fold must not cut
      * @private
      */
-    _pulledCounts(download, charId) {
-        if (!download || typeof download !== 'object') return null;
+    _listingsTrimmedElsewhere(others, trims) {
+        const unsure = new Set();
+        if (trims.size === 0) return unsure;
+        const settled = new Set();
+        for (const row of others) if (row.trimmed) settled.add(trimStamp(row));
+        for (const row of others) {
+            const stamp = trimStamp(row);
+            if (trims.has(stamp) && !settled.has(stamp)) unsure.add(row.listingId);
+        }
+        return unsure;
+    }
+
+    /**
+     * What a fold needs from the rest of a download, read once per download and only when a day has something a held
+     * cap applies to: the highest fill count it holds for each listing of one character (its log, its archive months
+     * and its baselines), and that character's trimmed rows.
+     * @param {Object<string, *>} download - The whole download of this store
+     * @param {string} charId - Whose rows
+     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>}} Listing id to count, and the
+     *   trimmed rows by {@link trimStamp}
+     * @private
+     */
+    _readDownload(download, charId) {
         const memo = this._pulledCountsMemo.get(download);
-        if (memo && memo.charId === charId) return memo.counts;
+        if (memo && memo.charId === charId) return memo;
         const counts = new Map();
+        const trims = new Set();
         const raise = (id, filled) => {
             const count = Number(filled);
             if (Number.isFinite(id) && count > 0 && !(counts.get(id) >= count)) counts.set(id, count);
@@ -635,16 +682,20 @@ class TradeLedgerStore {
         const logKey = charKey(LISTING_LOG_BASE, charId);
         const statesKey = charKey(STATE_BASE, charId);
         const archiveMonths = `${ARCHIVE_PREFIX}_${charId}_`;
+        const dayRecords = `${RECORD_PREFIX}_${charId}_`;
         for (const [key, value] of Object.entries(download)) {
             if (key === statesKey) {
                 if (!value || typeof value !== 'object') continue;
                 for (const [id, entry] of Object.entries(value)) raise(Number(id), entry?.filledQuantity);
             } else if ((key === logKey || key.startsWith(archiveMonths)) && Array.isArray(value)) {
                 for (const row of value) raise(Number(row?.id), row?.filledQuantity);
+            } else if (key.startsWith(dayRecords) && Array.isArray(value)) {
+                for (const row of value) if (row?.trimmed) trims.add(trimStamp(row));
             }
         }
-        this._pulledCountsMemo.set(download, { charId, counts });
-        return counts;
+        const read = { charId, counts, trims };
+        this._pulledCountsMemo.set(download, read);
+        return read;
     }
 
     /**
