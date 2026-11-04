@@ -5,12 +5,12 @@
  * result on reload — so a panel dragged to a comfortable width is back to the
  * default next session.
  *
- * Rather than hardcode which element the divider touches (the game's class names
- * are generated and change between updates), this watches for inline size styles
- * written *while you are dragging* and remembers whatever changed. On the next
- * load it replays those declarations onto the same element. Nothing is guessed:
- * the only styles ever applied are ones the game itself wrote in response to a
- * drag you performed.
+ * Rather than hardcode which panel a divider touches (the game's class names are
+ * generated and change between updates), this watches for inline size styles
+ * written on a divider's sibling panels while you drag that divider, and remembers
+ * them. On the next load it replays those declarations onto the same element.
+ * Nothing is guessed: the only styles ever applied are ones the game itself wrote
+ * in response to a drag you performed.
  */
 
 import config from '../../core/config.js';
@@ -71,6 +71,22 @@ export function isFillEntry(entry) {
         signature.includes('NavigationBar_currentExperience') ||
         isFillStyle(entry?.styles)
     );
+}
+
+/** The game's panel dividers: split.js gutters, the one thing a player drags to resize a panel */
+const GUTTER_SELECTOR = '.gutter';
+
+/**
+ * Whether an element is a panel a divider moves: a sibling of a gutter. Only these are ever
+ * remembered. "Whatever changed size during a drag" also caught XP bars, tab indicators and the
+ * script's own rows, and the last of them to change replaced the player's real panel size.
+ * @param {Element} element - Element to check
+ * @returns {boolean}
+ */
+export function isDividerPanel(element) {
+    const siblings = element?.parentElement?.children;
+    if (!siblings || element.matches?.(GUTTER_SELECTOR)) return false;
+    return Array.from(siblings).some((sibling) => sibling.matches?.(GUTTER_SELECTOR));
 }
 
 /**
@@ -187,6 +203,8 @@ class PanelSizeMemory {
         this.isInitialized = true;
 
         this.onPointerDown = (event) => {
+            // Only a press on a divider can resize a panel
+            if (!event?.target?.closest?.(GUTTER_SELECTOR)) return;
             this.dragging = true;
             this.pending = null;
             this.moved = false;
@@ -287,7 +305,7 @@ class PanelSizeMemory {
             for (const mutation of mutations) {
                 const element = mutation.target;
                 if (!(element instanceof HTMLElement)) continue;
-                if (isProgressBarElement(element)) continue;
+                if (isProgressBarElement(element) || !isDividerPanel(element)) continue;
                 const styles = readSizeStyles(element);
                 if (Object.keys(styles).length === 0 || isFillStyle(styles)) continue;
                 const path = buildElementPath(element, root);
@@ -338,7 +356,7 @@ class PanelSizeMemory {
         const element = resolveElementPath(entry.path, root);
         if (!element) return;
         if (elementSignature(element) !== entry.signature) return;
-        if (isProgressBarElement(element)) return;
+        if (isProgressBarElement(element) || !isDividerPanel(element)) return;
 
         for (const [property, value] of Object.entries(entry.styles)) {
             if (element.style.getPropertyValue(property) === value) continue;

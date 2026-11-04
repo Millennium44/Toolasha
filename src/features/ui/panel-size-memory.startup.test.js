@@ -42,7 +42,8 @@ const instance = panelSizeMemoryModule._instance;
 beforeEach(() => {
     state.release = null;
     vi.clearAllMocks();
-    document.body.innerHTML = '<div id="root"><div class="Panel"></div></div>';
+    // A span so the panel stays the first div under #root; the game's gutter is a div
+    document.body.innerHTML = '<div id="root"><div class="Panel"></div><span class="gutter"></span></div>';
 });
 
 afterEach(() => {
@@ -112,10 +113,14 @@ describe('the inline-style observer only runs during a drag', () => {
         panelSizeMemory.initialize();
         expect(instance.observer).toBeNull();
 
-        document.dispatchEvent(new Event('pointerdown'));
+        document.querySelector('.gutter').dispatchEvent(new Event('pointerdown', { bubbles: true }));
         expect(instance.observer).toBeInstanceOf(MutationObserver);
 
         document.dispatchEvent(new Event('pointerup'));
+        expect(instance.observer).toBeNull();
+
+        // A press anywhere else is not a divider drag, so it attaches nothing at all
+        document.querySelector('.Panel').dispatchEvent(new Event('pointerdown', { bubbles: true }));
         expect(instance.observer).toBeNull();
     });
 });
@@ -123,9 +128,9 @@ describe('the inline-style observer only runs during a drag', () => {
 describe('only a real divider drag is remembered, never a progress bar', () => {
     const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
     const pointer = (type, x = 0, y = 0) => {
-        const event = new Event(type);
+        const event = new Event(type, { bubbles: true });
         Object.assign(event, { clientX: x, clientY: y });
-        document.dispatchEvent(event);
+        (document.querySelector('.gutter') || document).dispatchEvent(event);
     };
 
     test('a click that never moves saves nothing, even when the page restyles meanwhile', async () => {
@@ -141,7 +146,7 @@ describe('only a real divider drag is remembered, never a progress bar', () => {
 
     test('a progress bar filling during a drag is not taken for the dragged size', async () => {
         document.body.innerHTML =
-            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="ProgressBar_innerBar__y"></div></div></div>';
+            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="gutter"></div><div class="ProgressBar_innerBar__y"></div></div></div>';
         panelSizeMemory.initialize();
         state.release(null);
         await Promise.resolve();
@@ -155,7 +160,7 @@ describe('only a real divider drag is remembered, never a progress bar', () => {
 
     test('a skill XP bar ticking during a drag is not taken for the dragged size', async () => {
         document.body.innerHTML =
-            '<div id="root"><div class="NavigationBar_experienceBar__a"><div class="NavigationBar_currentExperience__b"></div></div></div>';
+            '<div id="root"><div class="NavigationBar_experienceBar__a"><div class="gutter"></div><div class="NavigationBar_currentExperience__b"></div></div></div>';
         panelSizeMemory.initialize();
         state.release(null);
         await Promise.resolve();
@@ -205,6 +210,48 @@ describe('only a real divider drag is remembered, never a progress bar', () => {
         expect(instance.saved).toBeNull();
     });
 
+    test('a drag that did not start on a divider remembers nothing', async () => {
+        document.body.innerHTML = '<div id="root"><div class="gutter"></div><div class="Panel"></div></div>';
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        const press = new Event('pointerdown', { bubbles: true });
+        Object.assign(press, { clientX: 10, clientY: 10 });
+        document.querySelector('.Panel').dispatchEvent(press);
+        pointer('pointermove', 60, 10);
+        document.querySelector('.Panel').style.width = '420px';
+        await settle();
+        pointer('pointerup', 60, 10);
+        expect(instance.saved).toBeNull();
+    });
+
+    test('a tab indicator resizing during a divider drag cannot replace the panel size', async () => {
+        document.body.innerHTML =
+            '<div id="root"><div class="gutter"></div><div class="Panel"></div><div><span class="MuiTabs-indicator"></span></div></div>';
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 60, 10);
+        document.querySelector('.Panel').style.width = '420px';
+        document.querySelector('.MuiTabs-indicator').style.width = '80px';
+        await settle();
+        pointer('pointerup', 60, 10);
+        expect(instance.saved?.styles).toEqual({ width: '420px' });
+    });
+
+    test('a saved entry for something that is not a divider panel is not replayed', async () => {
+        document.body.innerHTML = '<div id="root"><div><span class="MuiTabs-indicator"></span></div></div>';
+        panelSizeMemory.initialize();
+        state.release({
+            path: 'div:nth-of-type(1)>span:nth-of-type(1)',
+            signature: 'span|MuiTabs-indicator',
+            styles: { width: '80px' },
+        });
+        await settle();
+        expect(document.querySelector('.MuiTabs-indicator').style.width).toBe('');
+    });
+
     test('a real drag is still remembered', async () => {
         panelSizeMemory.initialize();
         state.release(null);
@@ -219,7 +266,7 @@ describe('only a real divider drag is remembered, never a progress bar', () => {
 
     test('a saved progress-bar entry from before the fix is dropped, not replayed', async () => {
         document.body.innerHTML =
-            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="ProgressBar_innerBar__y"></div></div></div>';
+            '<div id="root"><div class="ProgressBar_progressBar__x"><div class="gutter"></div><div class="ProgressBar_innerBar__y"></div></div></div>';
         panelSizeMemory.initialize();
         state.release({
             path: 'div:nth-of-type(1)>div:nth-of-type(1)',
