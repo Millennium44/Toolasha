@@ -336,6 +336,7 @@ const CARD_SORT_STATE = {
     gold: '_upgradeSort',
     levels: '_upgradeLevelSort',
     unpriced: '_unpricedSort',
+    buffs: '_buffSort',
     scrolls: '_scrollSort',
 };
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
@@ -2928,6 +2929,18 @@ function unpricedReason(r) {
     if (r.candidate?.type === 'community_buff') return 'not a purchase — nobody buys a community buff level';
     if (r.candidate?.type === 'scroll') return 'token price not saved with this run: rerun to price the scroll';
     return 'no price could be resolved';
+}
+
+/**
+ * A row that was never a purchase, told from its own data so a remembered result saved before the Buffs
+ * section existed sorts into it too. Only the community buff levels are such rows: a guild shrine level is
+ * bought with guild credits and tokens, so one whose credits could not be valued is a purchase with an
+ * unknown price and stays in "Measured, but not priced".
+ * @param {Object} r - Result row
+ * @returns {boolean}
+ */
+function isBuffRow(r) {
+    return r?.cost == null && r?.candidate?.type === 'community_buff';
 }
 
 /**
@@ -12753,16 +12766,17 @@ class CombatSimUI {
     /**
      * Everything that was simulated but could not be priced, in its own box.
      *
-     * Three kinds of row land here and they are all real answers: a piece with
-     * no listing anywhere and no craftable path, a guild shrine level whose
-     * credits could not be valued, and a community buff level, which nobody
-     * buys at all. What they share is that the Cost column has nothing to put
-     * in it — so they carry no gold-per figure, cannot be scored, and cannot be
-     * planned against a budget.
+     * Two kinds of row land here and they are both real answers: a piece with
+     * no listing anywhere and no craftable path, and a guild shrine level whose
+     * credits could not be valued. What they share is that the Cost column has
+     * nothing to put in it, so they carry no gold-per figure, cannot be scored,
+     * and cannot be planned against a budget. Why a row has no price is a short
+     * note under its name. (Community buff levels, which nobody buys, have their
+     * own Buffs box.)
      *
      * They used to sit in the main table at cost Infinity, which sorted them
      * underneath the regressions. A reader scanning from the top saw the ranked
-     * upgrades, then the things that made the character worse, and then these —
+     * upgrades, then the things that made the character worse, and then these,
      * indistinguishable from more of the same. Their deltas are measured just
      * as carefully as any other row's; only the price is missing, and that is
      * what this box says.
@@ -12773,15 +12787,60 @@ class CombatSimUI {
      * @private
      */
     _renderUnpricedUpgradeTable(rows, baseline) {
-        if (!this._unpricedSort) this._unpricedSort = { key: 'dps', asc: true };
-        const { key: sortKey, asc: sortAsc } = this._unpricedSort;
+        return this._renderMeasuredOnlyTable(rows, baseline, {
+            section: 'unpriced',
+            title: 'Measured, but not priced',
+            intro:
+                'Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by ' +
+                'value, scored, or bought by the budget planner. The deltas are real.',
+            sortField: '_unpricedSort',
+            attr: 'unpriced',
+            reasonNote: true,
+        });
+    }
+
+    /**
+     * The community buff levels, in their own box. Nobody buys a buff level, so these have no cost at all:
+     * they show what each buff is worth to this build, and take no part in Score, the budget planner or Verify.
+     * @param {Array<Object>} rows - Community buff results
+     * @param {Object} baseline - Baseline metrics
+     * @returns {string} HTML
+     * @private
+     */
+    _renderBuffTable(rows, baseline) {
+        return this._renderMeasuredOnlyTable(rows, baseline, {
+            section: 'buffs',
+            title: 'Buffs',
+            intro:
+                'Nobody buys a community buff level, so these have no cost. They show what each buff is worth to this ' +
+                'build: the deltas are real, but they are not scored or bought by the budget planner.',
+            sortField: '_buffSort',
+            attr: 'buff',
+            reasonNote: false,
+        });
+    }
+
+    /**
+     * The table or cards shared by the sections that hold measured rows with no cost: the same columns and
+     * sorting for both, differing in heading, intro and whether each row says why it has no price.
+     * @param {Array<Object>} rows - Results whose cost is null
+     * @param {Object} baseline - Baseline metrics
+     * @param {Object} spec - `section`, `title`, `intro`, `sortField` (the panel field holding the sort), `attr`
+     *   (the data-attribute stem), `reasonNote` (a short "why no price" line under each name)
+     * @returns {string} HTML
+     * @private
+     */
+    _renderMeasuredOnlyTable(rows, baseline, spec) {
+        const { section, title, intro, sortField, attr, reasonNote } = spec;
+        if (!this[sortField]) this[sortField] = { key: 'dps', asc: true };
+        const { asc: sortAsc } = this[sortField];
+        // The Why no price column is gone; a sort saved on it reads as the default column
+        const sortKey = ['upgrade', 'dps', 'xp', 'profit'].includes(this[sortField].key) ? this[sortField].key : 'dps';
 
         const sortValue = (r) => {
             switch (sortKey) {
                 case 'upgrade':
                     return r.candidate.description.toLowerCase();
-                case 'why':
-                    return (r.costDetail?.unpriced || []).join(',');
                 case 'xp':
                     return -(r.deltas?.xp ?? 0);
                 case 'profit':
@@ -12810,40 +12869,40 @@ class CombatSimUI {
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
-                key: 'unpriced',
-                title: 'Measured, but not priced',
+                key: section,
+                title,
                 summary: `${rows.length} row${rows.length === 1 ? '' : 's'}`,
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             })}
             <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
-                Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by
-                value, scored, or bought by the budget planner. The deltas are real.
+                ${intro}
             </div>`;
         if (this._upgradeView() === 'cards') {
-            return `${html}${this._unpricedCards({ sorted, baseline, sortKey, cell })}</div>`;
+            return `${html}${this._unpricedCards({ sorted, baseline, sortKey, cell, section })}</div>`;
         }
         html += `<div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
-                <th style="${thStyle}" data-unpriced-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
-                <th style="${thStyle}" data-unpriced-sort-key="why">Why no price${arrow('why')}</th>
-                <th style="${thStyle}" data-unpriced-sort-key="dps">ΔDPS${arrow('dps')}</th>
-                <th style="${thStyle}" data-unpriced-sort-key="xp">ΔEXP${arrow('xp')}</th>
-                <th style="${thStyle}" data-unpriced-sort-key="profit">ΔProfit${arrow('profit')}</th>
+                <th style="${thStyle}" data-${attr}-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
+                <th style="${thStyle}" data-${attr}-sort-key="dps">ΔDPS${arrow('dps')}</th>
+                <th style="${thStyle}" data-${attr}-sort-key="xp">ΔEXP${arrow('xp')}</th>
+                <th style="${thStyle}" data-${attr}-sort-key="profit">ΔProfit${arrow('profit')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
             const rowKey = upgradeRowKey(r);
-            const missing = unpricedReason(r);
+            // Said under the name, where the first column is already pinned and wraps, so the reason is never lost
+            const why = reasonNote
+                ? `<div data-unpriced-reason style="color:#888; font-size:10px; font-weight:400; white-space:normal;">${escapeAttribute(unpricedReason(r))}</div>`
+                : '';
 
-            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
-                <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
-                <td class="mwi-utable-prose" style="${tdStyle} color:#888;">${missing}</td>
+            html += `<tr style="cursor:pointer; color:#e0e0e0;" data-${attr}-row="${i}" data-row-key="${rowKey}">
+                <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}${why}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
             </tr>
-            <tr data-unpriced-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
+            <tr data-${attr}-detail="${i}" data-row-key="${rowKey}" style="display:none;">
+                <td colspan="4" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;"><div class="mwi-utable-detail">
                     ${this._renderUpgradeDetailCells(r, baseline)}</div>
                 </td>
             </tr>`;
@@ -13767,7 +13826,7 @@ class CombatSimUI {
         const open = new Set();
         container
             .querySelectorAll(
-                '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-scroll-detail]'
+                '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-buff-detail], [data-scroll-detail]'
             )
             .forEach((detail) => {
                 const key = detail.getAttribute('data-row-key');
@@ -14636,7 +14695,10 @@ class CombatSimUI {
         // and its scrolls stay unpriced rather than mixing old deltas with today's token price.
         const tokenRate = results.scrollTokenRate || null;
         const scrollRows = tokenRate ? purchasable.filter((r) => r.cost == null && r.candidate?.type === 'scroll') : [];
-        const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r));
+        // Buff levels are told from their own data, not a stored field, so a remembered result saved before
+        // this section existed sorts into it too
+        const buffRows = purchasable.filter(isBuffRow);
+        const unpricedRows = purchasable.filter((r) => r.cost == null && !scrollRows.includes(r) && !isBuffRow(r));
 
         let html = foodHtml;
         if (results.foodStopped) {
@@ -14678,6 +14740,7 @@ class CombatSimUI {
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
         if (scrollRows.length) html += this._renderScrollTable(scrollRows, results.baseline, tokenRate);
         if (unpricedRows.length) html += this._renderUnpricedUpgradeTable(unpricedRows, results.baseline);
+        if (buffRows.length) html += this._renderBuffTable(buffRows, results.baseline);
         container.innerHTML = html;
 
         // Reopen what was open. Walked rather than selected by attribute, because
@@ -14687,7 +14750,7 @@ class CombatSimUI {
         if (openDetails.size) {
             container
                 .querySelectorAll(
-                    '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-scroll-detail]'
+                    '[data-upgrade-detail], [data-level-detail], [data-unpriced-detail], [data-buff-detail], [data-scroll-detail]'
                 )
                 .forEach((detail) => {
                     if (openDetails.has(detail.getAttribute('data-row-key'))) detail.style.display = 'table-row';
@@ -14709,6 +14772,7 @@ class CombatSimUI {
         wireRows('data-upgrade-row', 'data-upgrade-detail');
         wireRows('data-level-row', 'data-level-detail');
         wireRows('data-unpriced-row', 'data-unpriced-detail');
+        wireRows('data-buff-row', 'data-buff-detail');
         wireRows('data-scroll-row', 'data-scroll-detail');
 
         // Header click sorts that table (second click flips direction)
@@ -14734,6 +14798,7 @@ class CombatSimUI {
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         wireSort('data-unpriced-sort-key', '_unpricedSort');
+        wireSort('data-buff-sort-key', '_buffSort');
         wireSort('data-scroll-sort-key', '_scrollSort');
         this._wireGoldVerify(container);
 
@@ -15129,15 +15194,16 @@ class CombatSimUI {
     }
 
     /**
-     * The "measured, but not priced" rows as cards: the cost line says it is unknown, never zero.
-     * @param {Object} ctx - Pieces of `_renderUnpricedUpgradeTable`: `sorted`, `baseline`, `sortKey`, `cell`
+     * The "measured, but not priced" rows, and the Buffs rows, as cards: the cost line says it is unknown (or
+     * that the row is not a purchase), never zero.
+     * @param {Object} ctx - Pieces of `_renderMeasuredOnlyTable`: `sorted`, `baseline`, `sortKey`, `cell`, and the
+     *   `section` ('unpriced' or 'buffs')
      * @returns {string} HTML
      * @private
      */
-    _unpricedCards({ sorted, baseline, sortKey, cell }) {
+    _unpricedCards({ sorted, baseline, sortKey, cell, section = 'unpriced' }) {
         const options = [
             { key: 'upgrade', label: 'Name' },
-            { key: 'why', label: 'Why no price' },
             { key: 'dps', label: 'ΔDPS' },
             { key: 'xp', label: 'ΔEXP' },
             { key: 'profit', label: 'ΔProfit' },
@@ -15147,7 +15213,6 @@ class CombatSimUI {
             const reason = unpricedReason(r);
             const gain = (label, k) => figure(label, cell(r, k), signTone(r.deltas?.[k]));
             const figs = {
-                why: figure('Why no price', escapeAttribute(reason), 'warn'),
                 dps: gain('ΔDPS', 'dps'),
                 xp: gain('ΔEXP', 'xp'),
                 profit: gain('ΔProfit', 'profit'),
@@ -15161,7 +15226,11 @@ class CombatSimUI {
                 headline: figs[headKey],
                 within: cardWithinNoise(r, ['dps', 'xp', 'profit'].includes(headKey) ? headKey : null),
                 lines: [
-                    [figure('Cost', `${UNKNOWN_TEXT}: ${escapeAttribute(reason)}`, 'warn')],
+                    [
+                        section === 'buffs'
+                            ? figure('Cost', 'Not a purchase', 'muted')
+                            : figure('Cost', `${UNKNOWN_TEXT}: ${escapeAttribute(reason)}`, 'warn'),
+                    ],
                     [
                         ...['dps', 'xp', 'profit'].filter((k) => k !== headKey).map((k) => figs[k]),
                         ...(ceilingFigure(r) ? [ceilingFigure(r)] : []),
@@ -15173,11 +15242,11 @@ class CombatSimUI {
             };
         });
         return this._cardsSection({
-            section: 'unpriced',
+            section,
             entries,
             sortKey: key,
             rankOptions: options,
-            emptyText: 'Nothing unpriced.',
+            emptyText: section === 'buffs' ? 'No buffs to show.' : 'Nothing unpriced.',
         });
     }
 
@@ -15622,6 +15691,7 @@ class CombatSimUI {
                     sort: this._upgradeSort || null,
                     levelSort: this._upgradeLevelSort || null,
                     unpricedSort: this._unpricedSort || null,
+                    buffSort: this._buffSort || null,
                     scrollSort: this._scrollSort || null,
                     scrollScoreScale: this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE,
                     // Minimized Upgrade-tab sections, by section id; absent means expanded
@@ -15667,6 +15737,7 @@ class CombatSimUI {
             this._upgradeSort = isSortShape(saved.sort) ? saved.sort : undefined;
             this._upgradeLevelSort = isSortShape(saved.levelSort) ? saved.levelSort : undefined;
             this._unpricedSort = isSortShape(saved.unpricedSort) ? saved.unpricedSort : undefined;
+            this._buffSort = isSortShape(saved.buffSort) ? saved.buffSort : undefined;
             this._scrollSort = isSortShape(saved.scrollSort) ? saved.scrollSort : undefined;
             this._scrollScoreScale = isScoreScale(saved.scrollScoreScale) ? saved.scrollScoreScale : undefined;
             // Replaced wholesale like every other field, so a record from an older build means all expanded

@@ -45,7 +45,6 @@ describe('sim phone layout', () => {
             /\.mwi-utable-wrap \{[^}]*overflow-x: auto; -webkit-overflow-scrolling: touch/
         );
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/th:first-child,[\s\S]*position: sticky; left: 0;[^}]*background: rgb/);
-        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\.mwi-utable-prose \{[^}]*white-space: normal !important/);
         expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\.mwi-utable-detail \{[^}]*position: sticky; left: 0/);
     });
 });
