@@ -305,10 +305,10 @@ describe('the markup', () => {
         const coarse = UPGRADE_CARD_CSS.slice(UPGRADE_CARD_CSS.indexOf('@media (pointer: coarse)'));
         expect(coarse).toMatch(/\.mwi-ucard-verify/);
         expect(coarse).toMatch(/\.mwi-ucard-details/);
-        expect(coarse).toMatch(/min-height: 44px/);
-        // The base rules are small; the 44px rule is not applied outside the media query
+        expect(coarse).toMatch(/min-height: 34px/);
+        // The base rules are small; the 34px rule is not applied outside the media query
         const base = UPGRADE_CARD_CSS.slice(0, UPGRADE_CARD_CSS.indexOf('@media (pointer: coarse)'));
-        expect(base).not.toMatch(/44px/);
+        expect(base).not.toMatch(/34px/);
         expect(UPGRADE_CARD_CSS).toMatch(/\.mwi-ucard-foot \{[^}]*flex-wrap: wrap/);
     });
 });

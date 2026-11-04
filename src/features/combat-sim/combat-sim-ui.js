@@ -14933,7 +14933,9 @@ class CombatSimUI {
             const c = col(key);
             const value = c.value(r);
             const tone = key.startsWith('delta') ? signTone(value, { lowerIsBetter: key === 'deltaDph' }) : 'neutral';
-            return figure(columnMenuLabel(c), c.render(r, value), tone, c.title || '');
+            // "All rows" says what a score is relative to, which the column menu needs and a card does not
+            const label = key === 'score' ? c.label : columnMenuLabel(c);
+            return figure(label, c.render(r, value), tone, c.title || '');
         };
         const face = ['cost', 'payback', 'repay', 'score'];
         const deltas = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph'];
