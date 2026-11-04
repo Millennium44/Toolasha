@@ -297,7 +297,8 @@ const { GAME } = Utils.selectors;
 // correctly whether the platform's native popup default is light or dark.
 if (!safeStart) {
     addStyles(
-        '.toolasha-select option { background-color: #1a1a2e; color: #e0e0e0; }',
+        // Fill is GAME_COLORS.inputBackground (utils/game-look.js); this runs before the bundle is loaded
+        '.toolasha-select option { background-color: rgb(19, 20, 25); color: #e0e0e0; }',
         'toolasha-select-option-contrast'
     );
 }
@@ -816,6 +817,14 @@ function registerFeatures() {
             category: 'Market',
             module: Market.expectedValueCalculator,
             async: true,
+            // The `itemTooltip_expectedValue` setting is the tooltip row only. The
+            // calculator also prices openable containers for net worth, inventory
+            // badges, combat stats, the loot log and task values, none of which
+            // check that setting, so gating the module on it left those figures
+            // depending on whether some other panel happened to start it. It
+            // always runs; the tooltip section checks the setting itself. No
+            // liveStop either, so switching the tooltip row off never tears it down.
+            customCheck: () => true,
         },
         {
             key: 'tooltipConsumables',
@@ -2812,6 +2821,16 @@ function registerFeatures() {
             module: UI.philoStoneAlerts,
             async: true,
             customCheck: () => config.getSetting('notifications_philosophersStone'),
+            liveStop: true,
+        },
+        {
+            key: 'partyStatusAlerts',
+            name: 'Party Status Alerts',
+            category: 'Notifications',
+            module: UI.partyStatusAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry
+            customCheck: () => config.getSetting('notifications_partyStatus'),
             liveStop: true,
         },
         {

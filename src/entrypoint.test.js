@@ -29,9 +29,16 @@ import { GAME } from './utils/selectors.js';
 // `window.Toolasha.*` and imports no `src/core` module, so these mocks are
 // invisible to it — they exist only to keep `feature-registry.js` off real
 // config, real IndexedDB-backed data and the real performance monitor.
+/**
+ * The feature switches the real registry's config sees, by registry key. A key
+ * absent here answers on, as before; a test sets one to the value the real
+ * config would give that key from its setting.
+ */
+const featureSwitches = vi.hoisted(() => ({}));
+
 vi.mock('./core/config.js', () => ({
     default: {
-        isFeatureEnabled: () => true,
+        isFeatureEnabled: (key) => (key in featureSwitches ? featureSwitches[key] : true),
         clearSettingsCache: () => {},
         loadSettings: async () => {},
         applyColorSettings: () => {},
@@ -1272,6 +1279,7 @@ describe('the registry entries the entrypoint hands over', () => {
         'enhancementTargetAlerts',
         'philoStoneAlerts',
         'taskSlotAlerts',
+        'partyStatusAlerts',
     ])('the %s alert is live-stopped, so switching it off drops its armed bits instead of freezing them', (key) => {
         const entry = registered.find((e) => e.key === key);
 
@@ -1299,6 +1307,49 @@ describe('the registry entries the entrypoint hands over', () => {
 
         expect(entry, 'guildTrialSim is no longer registered').toBeTruthy();
         expect(entry.liveStop).toBe(true);
+    });
+
+    describe('the expected value calculator and its tooltip setting', () => {
+        const entry = () => registered.find((e) => e.key === 'expectedValueCalculator');
+
+        afterEach(() => {
+            delete featureSwitches.expectedValueCalculator;
+            delete settings.itemTooltip_expectedValue;
+        });
+
+        test('its gate is open with the tooltip setting off, since net worth, badges and task values read it', () => {
+            expect(entry(), 'expectedValueCalculator is no longer registered').toBeTruthy();
+            expect(typeof entry().customCheck, 'expectedValueCalculator has no customCheck').toBe('function');
+            settings.itemTooltip_expectedValue = false;
+            expect(entry().customCheck()).toBe(true);
+            settings.itemTooltip_expectedValue = true;
+            expect(entry().customCheck()).toBe(true);
+        });
+
+        test('it is not live-stopped, so switching the tooltip row off never takes the calculator down', () => {
+            expect(entry().liveStop).toBeFalsy();
+        });
+
+        test('the real registry starts it with the setting off', async () => {
+            // What the real config answers for this key while the setting is off
+            featureSwitches.expectedValueCalculator = false;
+            const initialize = vi.fn(async () => {});
+            realFeatureRegistry.replaceFeatures([
+                {
+                    key: 'expectedValueCalculator',
+                    name: 'Expected Value Calculator',
+                    customCheck: entry().customCheck,
+                    liveStop: entry().liveStop,
+                    concurrent: entry().concurrent,
+                    initialize,
+                },
+            ]);
+
+            const failures = await realFeatureRegistry.initializeFeatures();
+
+            expect(failures).toEqual([]);
+            expect(initialize).toHaveBeenCalledTimes(1);
+        });
     });
 
     test('two concurrent features run through the real registry overlap', async () => {

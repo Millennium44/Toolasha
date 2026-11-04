@@ -23,6 +23,7 @@ const settings = vi.hoisted(() => ({
     goldRate: 0,
     patientTickBuy: false,
     patientTickSell: false,
+    expectedValueRow: true,
     pricingMode: undefined,
     subMaterials: true,
     flat: false,
@@ -51,6 +52,7 @@ vi.mock('../../core/config.js', () => ({
             if (id === 'itemTooltip_alchemyInsteadOfBuying') return settings.insteadOfBuying;
             if (id === 'itemTooltip_alchemyInsteadOfSelling') return settings.insteadOfSelling;
             if (id === 'actionPanel_craftingPlanGoldPerHour') return settings.goldRate;
+            if (id === 'itemTooltip_expectedValue') return settings.expectedValueRow;
             if (id === 'itemTooltip_craftCostSubMaterials') return settings.subMaterials;
             if (id === 'itemTooltip_detailedProfitFlat') return settings.flat;
             if (id === 'actionPanel_craftingPlanBuyIntermediates') return false;
@@ -91,6 +93,7 @@ vi.mock('../../core/data-manager.js', () => {
     const itemDetailMap = {
         '/items/apple': { name: 'Apple' },
         '/items/cheese': { name: 'Cheese' },
+        '/items/small_treasure_chest': { name: 'Small Treasure Chest', isOpenable: true },
         '/items/labyrinth_token': { name: 'Labyrinth Token' },
         // A scroll decomposes into untradeable Labyrinth Tokens, which only a shop conversion prices
         '/items/seal_of_gathering': {
@@ -225,7 +228,15 @@ vi.mock('./alchemy-profit-calculator.js', () => ({
 }));
 vi.mock('./expected-value-calculator.js', () => ({
     default: {
-        calculateExpectedValue: () => null,
+        calculateExpectedValue: (hrid) =>
+            hrid === '/items/small_treasure_chest'
+                ? {
+                      expectedValue: 1000,
+                      isPartial: false,
+                      missingCount: 0,
+                      drops: [{ itemName: 'Coin', dropRate: 1, avgCount: 1, expectedValue: 1000, hasPriceData: true }],
+                  }
+                : null,
         resolveBuySideValue: (hrid) =>
             hrid === '/items/small_artisans_crate' || hrid === '/items/missing_material' ? null : { value: 10 },
     },
@@ -384,6 +395,7 @@ beforeEach(async () => {
     settings.goldRate = 0;
     settings.pricingMode = undefined;
     settings.patientTickBuy = false;
+    settings.expectedValueRow = true;
     alchemyState.profits = {};
     alchemyState.candidates = {};
     alchemyState.decompose = {};
@@ -2264,6 +2276,26 @@ describe('injectPriceDisplay estimated sides', () => {
         expect(line.textContent).toContain('Price: 100 / 90');
         expect(line.textContent).not.toContain('~');
         expect(line.title).toBe('');
+    });
+});
+
+// The setting is the tooltip row alone: the calculator behind it runs regardless (see the registry entry), so
+// the row is the one place this setting is read. A guard — the row was already gated here before the
+// calculator's own start stopped depending on the setting.
+describe('the expected value tooltip row follows its setting', () => {
+    test('an openable container shows the row with the setting on', async () => {
+        const el = itemTooltip('Small Treasure Chest');
+        await tooltipPrices.handleTooltip(el);
+
+        expect(el.querySelector('.market-ev-injected')).not.toBeNull();
+    });
+
+    test('and no row with it off, though the calculator would answer', async () => {
+        settings.expectedValueRow = false;
+        const el = itemTooltip('Small Treasure Chest');
+        await tooltipPrices.handleTooltip(el);
+
+        expect(el.querySelector('.market-ev-injected')).toBeNull();
     });
 });
 

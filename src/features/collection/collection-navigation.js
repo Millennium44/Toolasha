@@ -12,6 +12,7 @@ import tooltipObserver from '../../core/tooltip-observer.js';
 import { navigateToItem } from '../../utils/item-navigation.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 /**
  * Get game object via React fiber tree traversal
@@ -204,7 +205,7 @@ class CollectionNavigation {
         popover.style.cssText = `
             position: fixed;
             z-index: ${config.Z_FLOATING_PANEL};
-            background: #1a1a2e;
+            background: ${GAME_COLORS.background};
             border: 1px solid rgba(255,255,255,0.15);
             border-radius: 4px;
             padding: 8px;

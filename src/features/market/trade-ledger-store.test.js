@@ -327,8 +327,12 @@ describe('fill record identity', () => {
     });
 
     test('both the single key and the day records are registered as merges for a sync pull', () => {
-        expect(mergeForKey('marketListings', RECORDS_KEY)?.merge).toBe(mergeRecords);
-        expect(mergeForKey('marketListings', REC(DAY1))?.merge).toBe(mergeRecords);
+        const mine = [fill(1, DAY1)];
+        const theirs = [fill(2, DAY2 + 1000), fill(3, DAY2 + 2000)];
+        const expected = mergeRecords(mine, theirs);
+        expect(expected).toHaveLength(3);
+        expect(mergeForKey('marketListings', RECORDS_KEY)?.merge(mine, theirs)).toEqual(expected);
+        expect(mergeForKey('marketListings', REC(DAY1))?.merge(mine, theirs)).toEqual(expected);
     });
 });
 

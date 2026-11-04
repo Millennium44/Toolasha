@@ -9,6 +9,33 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Watchlist, item pins and goals keep your edits across tabs
 
 With the game open in two tabs, an older tab no longer erases pins, watchlist rows or planner goals you added in the other tab, and no longer brings back ones you removed there.
+### Rank badges sync between devices again
+
+Leaderboard rank badges captured on one device reach your other devices again, and syncing no longer keeps rewriting the gist for them.
+
+### Sim and tool controls match the game's look
+
+Inputs, dropdowns, buttons and boxes in the Combat Simulator, Lab Sim and other Toolasha panels no longer use an old navy that clashed with the game's near-black panels. Faint help text in the sims is now the game's dim gray, so it is much easier to read.
+
+### Trial history marks trials that did not run
+
+Trial history now shows `n/r` for a cycle where the game's own list says a trial was not on the schedule, so it no longer looks like a miss. `—` still means a result was not seen, and cycles saved before this update keep showing `—`.
+
+### Settings panel is easier to use on a touch screen
+
+On a touch screen the settings switches, color pickers, number boxes and dropdowns are now finger-sized, and tapping a switch's label or its row flips it instead of needing the small box. Desktop is unchanged.
+
+### Expected value setting only controls the tooltip
+
+Turning off "Show expected value for openable containers" now only hides the tooltip row. Net worth, combat stats and task values for crates and chests no longer change partway through a session depending on which panel you opened first.
+
+### Bulk Sell bar says each thing once, and gets a Retry button
+
+The Bulk Sell bar now shows a short headline with a second row only for what the headline lacks, instead of the same sentence twice. A new ↻ button starts the current item over without ever selling for you, and the bar fits phone screens.
+
+### Party alert
+
+A new setting, "Notify when your party starts or stops fighting" (off by default), tells you when your party goes into a fight or comes out of one. It announces real changes only, not a party already fighting when you log in.
 
 ### What's New shows only what is new
 

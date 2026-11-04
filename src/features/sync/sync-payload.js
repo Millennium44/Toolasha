@@ -1376,8 +1376,10 @@ function foldSettingsMap(localValue, incomingValue, localStamps, incomingStamps,
  * room log keeps the player's chosen number of sessions). That is right for
  * local storage and wrong for the gist: a device set to keep 20 would upload
  * 20 and delete the other device's 480 from the gist. A merge that caps by
- * live local config skips the cap when it sees `forUpload`; a merge with a
- * build-wide constant cap folds the same on every device and needs nothing.
+ * live local config skips the cap when it sees `forUpload`, and says so with
+ * `wantsContext`; the registry drops this argument for every other merge. A
+ * merge with a build-wide constant cap folds the same on every device and needs
+ * nothing.
  */
 const UPLOAD_CONTEXT = Object.freeze({ forUpload: true });
 
