@@ -44,7 +44,33 @@ const DRAG_THRESHOLD_PX = 4;
  * @returns {boolean}
  */
 export function isProgressBarElement(element) {
-    return Boolean(element?.closest?.('[class*="ProgressBar_"]'));
+    return Boolean(element?.closest?.('[class*="ProgressBar_"], [class*="NavigationBar_currentExperience"]'));
+}
+
+/**
+ * Whether size styles describe a bar's fill rather than a panel's size. The game's dividers write
+ * `calc(25.6% - 5px)` on the panels they move; a bare percentage width is how a bar shows progress,
+ * so one must never be remembered, whichever bar it came from.
+ * @param {Object} [styles] - property → value, as read by readSizeStyles
+ * @returns {boolean}
+ */
+export function isFillStyle(styles) {
+    return /^[\d.]+%$/.test(styles?.width ?? '');
+}
+
+/**
+ * Whether a saved entry was captured from a bar's fill. Replaying one fights the game's own value:
+ * a skill's XP bar kept showing the saved width, on every character, after any later level-up.
+ * @param {Object|null} entry - { path, signature, styles }
+ * @returns {boolean}
+ */
+export function isFillEntry(entry) {
+    const signature = entry?.signature ?? '';
+    return (
+        signature.includes('ProgressBar_') ||
+        signature.includes('NavigationBar_currentExperience') ||
+        isFillStyle(entry?.styles)
+    );
 }
 
 /**
@@ -232,9 +258,9 @@ class PanelSizeMemory {
         // Torn down while the read was in flight, or a drag already produced a
         // newer size — either way the stored one is stale now.
         if (!this.isInitialized || this.saved || this.dragging) return;
-        // An entry captured from a progress bar (saved before progress bars were excluded) is
-        // not a panel size; replaying it fought the game's own fill. Forget it.
-        if (saved?.signature?.includes('ProgressBar_')) {
+        // An entry captured from a bar (saved before bars were excluded) is not a panel size;
+        // replaying it fought the game's own fill. Forget it.
+        if (isFillEntry(saved)) {
             this.reset();
             return;
         }
@@ -263,7 +289,7 @@ class PanelSizeMemory {
                 if (!(element instanceof HTMLElement)) continue;
                 if (isProgressBarElement(element)) continue;
                 const styles = readSizeStyles(element);
-                if (Object.keys(styles).length === 0) continue;
+                if (Object.keys(styles).length === 0 || isFillStyle(styles)) continue;
                 const path = buildElementPath(element, root);
                 if (!path) continue;
                 this.pending = { path, signature: elementSignature(element), styles };

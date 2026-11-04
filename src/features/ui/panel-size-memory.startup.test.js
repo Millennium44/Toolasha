@@ -153,6 +153,58 @@ describe('only a real divider drag is remembered, never a progress bar', () => {
         expect(instance.saved).toBeNull();
     });
 
+    test('a skill XP bar ticking during a drag is not taken for the dragged size', async () => {
+        document.body.innerHTML =
+            '<div id="root"><div class="NavigationBar_experienceBar__a"><div class="NavigationBar_currentExperience__b"></div></div></div>';
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 40, 10);
+        document.querySelector('.NavigationBar_currentExperience__b').style.width = '96.8814%';
+        await settle();
+        pointer('pointerup', 40, 10);
+        expect(instance.saved).toBeNull();
+    });
+
+    test('any bare percentage width during a drag is a fill, not a panel size', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 40, 10);
+        document.querySelector('.Panel').style.width = '42.5%';
+        await settle();
+        pointer('pointerup', 40, 10);
+        expect(instance.saved).toBeNull();
+    });
+
+    test('the game divider’s calc width is still remembered', async () => {
+        panelSizeMemory.initialize();
+        state.release(null);
+        await Promise.resolve();
+        pointer('pointerdown', 10, 10);
+        pointer('pointermove', 60, 10);
+        document.querySelector('.Panel').style.setProperty('width', 'calc(25.6203% - 5px)');
+        await settle();
+        pointer('pointerup', 60, 10);
+        expect(instance.saved?.styles?.width).toContain('calc');
+    });
+
+    test('a saved XP bar entry, as found on a live save, is dropped and cleared, not replayed', async () => {
+        document.body.innerHTML =
+            '<div id="root"><div class="NavigationBar_experienceBar__a"><div class="NavigationBar_currentExperience__b" style="width: 0%"></div></div></div>';
+        panelSizeMemory.initialize();
+        state.release({
+            path: 'div:nth-of-type(1)>div:nth-of-type(1)',
+            signature: 'div|NavigationBar_currentExperience',
+            styles: { width: '96.8814%' },
+        });
+        await settle();
+        expect(document.querySelector('.NavigationBar_currentExperience__b').style.width).toBe('0%');
+        expect(instance.saved).toBeNull();
+    });
+
     test('a real drag is still remembered', async () => {
         panelSizeMemory.initialize();
         state.release(null);
