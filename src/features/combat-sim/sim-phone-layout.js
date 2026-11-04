@@ -62,6 +62,9 @@ export const SIM_UPGRADE_PHONE_CSS = `
         [data-mode-chip] select, [data-mode-chip] input[type="number"],
         [data-lab-mode-chip] select, [data-lab-mode-chip] input[type="number"] { max-width: 100%; min-width: 0; }
         [data-mode-chip] label, [data-lab-mode-chip] label { white-space: normal; }
+        /* The Combat Sim's Tune triggers section wraps the same way: selects shrink to the panel, a label may wrap */
+        #mwi-csim-trigger-bar select { max-width: 100%; min-width: 0; }
+        #mwi-csim-trigger-bar label { white-space: normal; }
 
         /* Solo zones + party dungeons: the two loadout pickers wrap instead of running off the panel */
         #mwi-csim-soloparty-loadouts { flex-wrap: wrap; max-width: 100%; }
