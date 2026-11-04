@@ -9,6 +9,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Trade ledger stops asking for reloads
 
 A sync pull no longer brings back trade ledger fills the repair already removed, so the reload prompt stops repeating for those days.
+### Reroll walk button stays in one spot
+
+On the Task Board bar, the docked reroll walk button is now first and a fixed width, so the Claim Reward button, the Rerolls count and its own label can no longer move it. A long step name ends in an ellipsis, with the full text on hover.
 
 ### Rank badges sync between devices again
 

@@ -106,6 +106,8 @@ const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 const TOOLBAR_BUTTON_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 /** The Merged crafting walk button's id (src/features/crafting-plan/task-crafting-train.js) */
 const MERGED_WALK_BUTTON_ID = 'mwi-task-train-button';
+/** Wide enough for a label like "▶ Claim: Defeat - Boomy"; longer ones end in an ellipsis */
+const DOCKED_MAIN_WIDTH = '170px';
 
 /**
  * The walk's hover help, kept as text so a device with no hover can read it too: the info control
@@ -2001,7 +2003,7 @@ class TaskRerollWalk {
         style.touchAction = 'auto';
         style.maxWidth = '100%';
         style.minWidth = '0';
-        style.flex = '0 1 auto';
+        style.flex = '0 0 auto';
         widget.element.dataset.toolashaDocked = 'true';
         widget.row.style.flexWrap = 'nowrap';
         widget.row.style.gap = '4px';
@@ -2020,7 +2022,9 @@ class TaskRerollWalk {
         }
         // No ✕ in the toolbar: the gear drawer's "Hide the walk" and the header 🎲 manage it there
         widget.close.remove();
-        // One line, shortened by the label rules; ellipsis is the narrow-pane safety
+        // One line at one width, so a long step label cannot move what follows; the hover title has it in full
+        widget.main.style.width = DOCKED_MAIN_WIDTH;
+        widget.main.style.boxSizing = 'border-box';
         widget.main.style.whiteSpace = 'nowrap';
         widget.main.style.minWidth = '0';
         widget.main.style.maxWidth = '100%';
@@ -2040,10 +2044,11 @@ class TaskRerollWalk {
             drawer.padding = '6px 9px';
             drawer.marginTop = '4px';
         }
-        // Before the Merged crafting walk button, which the task-crafting module keeps after this one
+        // First in the bar, so the Claim Reward button and the Rerolls count coming and going cannot move it
+        // under a player's cursor. The Merged crafting walk button stays right after it.
+        header.prepend(widget.element);
         const merged = header.querySelector(`#${MERGED_WALK_BUTTON_ID}`);
-        if (merged) header.insertBefore(widget.element, merged);
-        else header.appendChild(widget.element);
+        if (merged) widget.element.after(merged);
     }
 
     /**

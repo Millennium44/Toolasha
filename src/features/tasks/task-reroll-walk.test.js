@@ -2302,6 +2302,16 @@ describe('toolbar docking', () => {
         expect(chipEl().nextElementSibling).toBe(merged);
     });
 
+    test('docked it comes first in the bar at one width, so what changes beside it cannot move it', async () => {
+        oneCard();
+        toolbarOf().append('48 / 48 Tasks', document.createElement('button'));
+        await walk.start();
+
+        expect(toolbarOf().firstChild).toBe(chipEl());
+        expect(chipEl().style.flex).toBe('0 0 auto');
+        expect(chipEl().querySelector('.mwi-task-reroll-walk-advance').style.width).toBe('170px');
+    });
+
     test('undocked keeps its own Sort and ✕, and its drawer has no Hide row', async () => {
         settings.values.tasks_rerollWalkBarPosition = 'floating';
         oneCard();
