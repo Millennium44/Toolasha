@@ -234,6 +234,41 @@ describe('a separate pull fold', () => {
     });
 });
 
+describe('what a pull passes on', () => {
+    const context = { download: { everything: true } };
+
+    test('a plain merge gets exactly two arguments', () => {
+        const merge = vi.fn(() => 'merged');
+        registerSyncMerge({ store: 'settings', key: 'twoArgs', merge, label: 'twoArgs' });
+
+        expect(mergeForKey('settings', 'twoArgs').foldPull('local', 'incoming', context)).toBe('merged');
+
+        expect(merge.mock.calls).toEqual([['local', 'incoming']]);
+    });
+
+    test('a localWinsOnPull merge gets exactly two arguments, turned round', () => {
+        const merge = vi.fn(() => 'merged');
+        registerSyncMerge({ store: 'settings', key: 'twoArgsTurned', merge, localWinsOnPull: true, label: 'turned' });
+
+        mergeForKey('settings', 'twoArgsTurned').foldPull('local', 'incoming', context);
+        mergeForKey('settings', 'twoArgsTurned').mergeForPull('local', 'incoming', context);
+
+        expect(merge.mock.calls).toEqual([
+            ['incoming', 'local'],
+            ['incoming', 'local'],
+        ]);
+    });
+
+    test('an own pull fold gets the context', () => {
+        const pull = vi.fn(() => 'pulled');
+        registerSyncMerge({ store: 'settings', key: 'ownPull', merge: () => 'no', pull, label: 'ownPull' });
+
+        expect(mergeForKey('settings', 'ownPull').foldPull('local', 'incoming', context)).toBe('pulled');
+
+        expect(pull.mock.calls).toEqual([['local', 'incoming', context]]);
+    });
+});
+
 describe('who is handed the fold context', () => {
     const CONTEXT = { forUpload: true };
     const argsOf = (...args) => args;

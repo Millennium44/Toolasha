@@ -54,7 +54,9 @@
  */
 
 /**
- * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean}) => *} SyncMerge
+ * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean, download?: Object<string, *>}) => *} SyncMerge
+ * `context.download`, handed only to a registration's own `pull` (see `foldPull`), is every key the download
+ * holds in the record's store, as it came.
  * `context.forUpload` is set when the fold builds an automatic upload rather
  * than a local apply. A merge that caps or prunes by this device's live
  * settings must keep everything then — the gist is every device's copy, and
@@ -71,6 +73,9 @@
  * @property {SyncMerge} mergeForPull - The fold a pull applies: the registration's own `pull` fold when it
  *   has one; else `merge`, or with `localWinsOnPull` the same fold with this device's copy as the side that
  *   wins ties
+ * @property {SyncMerge} foldPull - What a pull calls, with a context: the context reaches the registration's own
+ *   `pull` and nothing else. A plain `merge` takes exactly `(local, incoming)` on a pull, because its third
+ *   parameter means something of its own (the leaderboard cache's is `now`)
  * @property {string} label - For logging and for the apply summary
  * @property {boolean} capsLocally - This device keeps the history shorter by its own setting, so a push
  *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
@@ -180,17 +185,19 @@ export function registerSyncMerge({
     // One function for both fields when a pull folds the way `merge` does: the sync reads that sameness to
     // decide whether this device's side may take the ties (`mergeForPull === merge`)
     const fold = wantsContext === true || capsLocally === true ? merge : (local, incoming) => merge(local, incoming);
+    const mergeForPull =
+        typeof pull === 'function'
+            ? pull
+            : localWinsOnPull
+              ? (local, incoming, context) => fold(incoming, local, context)
+              : fold;
 
     const registration = {
         store,
         match: matcher,
         merge: fold,
-        mergeForPull:
-            typeof pull === 'function'
-                ? pull
-                : localWinsOnPull
-                  ? (local, incoming, context) => fold(incoming, local, context)
-                  : fold,
+        mergeForPull,
+        foldPull: typeof pull === 'function' ? pull : (local, incoming) => mergeForPull(local, incoming),
         label: label || key || base || prefix || store,
         capsLocally: capsLocally === true,
         liveSafe: liveSafe === true,

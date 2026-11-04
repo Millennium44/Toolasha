@@ -39,7 +39,7 @@ import { registerSyncMerge, registerSyncRetention } from '../../utils/sync-merge
 import { readScoped } from '../../utils/character-key.js';
 import { timeChunkId, recordKeysFor, registerCharacterScopedPrefix } from '../../utils/chunked-history.js';
 import { detectFills, trimLedger, repairOverRecorded, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
-import listingArchive from './listing-archive.js';
+import listingArchive, { ARCHIVE_PREFIX } from './listing-archive.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /** Same store the other market trackers live in. */
@@ -173,6 +173,43 @@ export function mergeRecords(base, fresh) {
         [...byKey.values()].sort((a, b) => a.t - b.t),
         LEDGER_RECORD_CAP
     );
+}
+
+/**
+ * Which fill a row is a copy of, whatever quantity the copy carries: a trimmed row keeps its original's listing and
+ * time and changes its quantity, so {@link fillKey} tells the two apart.
+ * @param {Object} row - Fill record
+ * @returns {string} `listingId|t`
+ */
+function trimStamp(row) {
+    return `${row.listingId}|${row.t}`;
+}
+
+/**
+ * A row as text with its keys sorted, so two rows holding the same fields compare equal whatever order they were
+ * written in.
+ * @param {Object} row - Fill record
+ * @returns {string} Canonical text
+ */
+function rowSignature(row) {
+    return JSON.stringify(
+        Object.keys(row || {})
+            .sort()
+            .map((key) => [key, row[key]])
+    );
+}
+
+/**
+ * Whether two day records hold the same rows, whatever order they list them in.
+ * @param {Array<Object>} a - One day record
+ * @param {Array<Object>} b - The other
+ * @returns {boolean} True when each holds exactly the other's rows
+ */
+function sameRows(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    const left = a.map(rowSignature).sort();
+    const right = b.map(rowSignature).sort();
+    return left.every((signature, index) => signature === right[index]);
 }
 
 /**
@@ -337,10 +374,18 @@ registerSyncMerge({
     merge: mergeRecords,
     label: 'Trade ledger fills',
 });
+/*
+ * A pull folds a day record through the store's `_foldPulledDay`, not the plain union: the over-recorded repair
+ * cuts doubled fills on load and leaves no tombstone, so the union with a gist that still holds them brought the
+ * cut rows back on every pull, wrote the day, latched it and asked for a reload that cut them again. Uploads keep
+ * the plain union (`merge`): the gist is every device's copy, and this device's cut is not another device's to
+ * inherit.
+ */
 registerSyncMerge({
     store: LEDGER_STORE,
     prefix: `${RECORD_PREFIX}_`,
     merge: mergeRecords,
+    pull: (local, incoming, context) => tradeLedgerStore._foldPulledDay(local, incoming, context),
     label: 'Trade ledger fills (daily)',
 });
 registerSyncMerge({
@@ -376,6 +421,12 @@ class TradeLedgerStore {
         this._recordsChain = null;
         this._statesChain = null;
         /**
+         * One repair at a time, each reading the log and the archive here and only then joining `_recordsChain`
+         * for its cut. A fill's save must never wait on an archive read: its baseline lands regardless, and a fill
+         * whose baseline is stored and whose row is not is gone for good.
+         */
+        this._repairChain = null;
+        /**
          * Bumped by {@link handleCharacterSwitch}. A load or a save that began
          * under the departing character finds the number moved and stands
          * down rather than adopting that character's rows into the arriving
@@ -410,6 +461,241 @@ class TradeLedgerStore {
          * @type {Map<string, {runs: number, cut: number}>}
          */
         this._repairStats = new Map();
+        /**
+         * What the repair knows about ended listings, for the sync pull fold: `{charId, caps}`, `caps` being
+         * listing id to final filled quantity. A fold is synchronous and the caps come from async reads, so the
+         * pull uses the ones held here.
+         *
+         * Holds only caps checked against the archive: a low log count is not a cap until the archive has been
+         * asked, because a fold that trusted one would drop a real fill the repair, reading the archive, keeps.
+         * So the first repair run of a load reads the archive whatever the ledger holds, and that run is what
+         * creates this. Null until then (the archive unreadable, the log unreadable, the ledger off, a switch),
+         * which makes the fold a plain union: a reload prompt, nothing lost. A later run that read no archive
+         * only raises a cap already here; a listing that ended since waits for a run that read it.
+         *
+         * `archiveOnly` names the caps no trusted log row gives. Those cut only a listing with two or more rows
+         * (see {@link _hasDoubling}).
+         * @type {{charId: string, caps: Map<number, number>, archiveOnly: Set<number>}|null}
+         */
+        this._pullCaps = null;
+        /** Bumped by {@link disable}, so a repair run still out when the ledger is switched off holds nothing. */
+        this._capsEpoch = 0;
+        /**
+         * What was read out of one download, by the download's own object (see {@link _readDownload}).
+         * @type {WeakMap<Object, {charId: string, counts: Map<number, number>, trims: Set<string>}>}
+         */
+        this._pulledCountsMemo = new WeakMap();
+    }
+
+    /**
+     * Remember the caps a repair run derived, for {@link _foldPulledDay}.
+     *
+     * Merged upward: a higher count means less is cut, so a raise is always the safe direction, and a lower count
+     * never replaces a higher one. A listing that turned out to be open has no cap at all.
+     * @param {string} charId - The character the run began under
+     * @param {Map<number, number>} caps - Listing id to final filled quantity of an ended listing
+     * @param {Set<number>} logged - The listings of `caps` a trusted log row gives
+     * @param {boolean} checked - Whether this run read the archive
+     * @param {Set<number>} openIds - Listings open as of this run
+     * @private
+     */
+    _noteCaps(charId, caps, logged, checked, openIds) {
+        const mine = this._pullCaps && this._pullCaps.charId === charId ? this._pullCaps : null;
+        if (!mine && !checked) return;
+        const held = mine ? mine.caps : new Map();
+        const archiveOnly = mine ? mine.archiveOnly : new Set();
+        for (const [id, cap] of caps) {
+            if (!checked && !held.has(id)) continue;
+            if (!(held.get(id) >= cap)) held.set(id, cap);
+            if (logged.has(id)) archiveOnly.delete(id);
+            else archiveOnly.add(id);
+        }
+        for (const id of openIds) {
+            held.delete(id);
+            archiveOnly.delete(id);
+        }
+        this._pullCaps = { charId, caps: held, archiveOnly };
+    }
+
+    /**
+     * Whether a listing with no trusted log row may be cut at all: only with two or more rows.
+     *
+     * A doubling always has two rows, so one row alone was not doubled. An archive count below it is a low count
+     * (an old retired row, an imported file), and the row is the fill.
+     * @param {number} id - Listing id
+     * @param {Array<Object>} records - The rows to count
+     * @returns {boolean} True with two or more rows of that listing
+     * @private
+     */
+    _hasDoubling(id, records) {
+        let rows = 0;
+        for (const record of records) {
+            if (record && record.listingId === id) {
+                rows += 1;
+                if (rows >= 2) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The fold a sync pull applies to one day record: the union with the downloaded copy, less the rows the
+     * over-recorded repair would cut again.
+     *
+     * The repair leaves no tombstone, so a gist that still holds the doubled rows hands them back; folded
+     * plainly, that read as news on every pull. The union is run through the same repair here, on the evidence
+     * the repair itself would use once this pull has landed (see {@link _capsForFold}) and the rest of the ledger
+     * from memory as the other days' share of each listing, so a listing whose fills span two days is cut exactly
+     * as the whole-ledger repair would cut this day: earliest fills first, never below the count the log, the
+     * archive and the baselines hold for the listing. A real new fill in the same download, a row of a listing
+     * not known as ended, or a lone row of a listing the log has no count for, is kept.
+     *
+     * Each day folds on its own, and only memory is counted for the other days, never the rows the download holds
+     * there: a day in the download may not land (the retention rule takes it out after the folds), and a row left
+     * uncounted can only make a fold keep more than the whole-ledger repair would, which the next load then cuts.
+     * The one thing that makes memory count too much is a row the download holds trimmed on its own day, whose fold
+     * replaces memory's original: that listing is not cut here at all (see {@link _listingsTrimmedElsewhere}).
+     *
+     * Falls back to the plain union, as before, when no checked caps are held, they are another character's (or
+     * were dropped because the ledger was switched off), the ledger is not loaded or still the single key, the rows
+     * span more than one day, or there is no download to read the other days from. A result holding exactly this
+     * device's rows (in any order) is this device's own array, so the pull reads it as unchanged.
+     * @param {Array<Object>} local - This device's day record
+     * @param {Array<Object>} incoming - The downloaded day record
+     * @param {{download?: Object<string, *>}} [context] - The whole download of this store, as it came
+     * @returns {Array<Object>} The folded day record
+     */
+    _foldPulledDay(local, incoming, context) {
+        let result = mergeRecords(local, incoming);
+        try {
+            result = this._cutPulledDay(result, context?.download);
+        } catch (error) {
+            console.error('[TradeLedger] Could not apply the repair to a pulled day; keeping the union:', error);
+        }
+        return Array.isArray(local) && sameRows(result, local) ? local : result;
+    }
+
+    /**
+     * One folded day's rows with the repair applied (see {@link _foldPulledDay}).
+     * @param {Array<Object>} rows - The union of the two copies of one day
+     * @param {Object<string, *>} [download] - The whole download of this store
+     * @returns {Array<Object>} `rows` itself when nothing is cut, else the day's rows after the cut
+     * @private
+     */
+    _cutPulledDay(rows, download) {
+        const held = this._pullCaps;
+        const charId = ledgerCharId();
+        if (!held || held.caps.size === 0 || held.charId !== charId) return rows;
+        if (!this.isLoaded || this._legacy || rows.length === 0) return rows;
+        if (!download || typeof download !== 'object' || Array.isArray(download)) return rows;
+        if (!rows.some((row) => held.caps.has(row.listingId))) return rows;
+        const day = bucketOf(rows[0]);
+        if (rows.some((row) => bucketOf(row) !== day)) return rows;
+        const others = this.records.filter((record) => held.caps.has(record.listingId) && bucketOf(record) !== day);
+        const caps = this._capsForFold(rows, others, held, charId, download);
+        if (caps.size === 0) return rows;
+        const { records, repairedIds } = repairOverRecorded([...others, ...rows], caps);
+        if (repairedIds.size === 0) return rows;
+        return records.filter((record) => bucketOf(record) === day);
+    }
+
+    /**
+     * The caps one fold may cut with: the held ones, as the repair would read them once this pull has landed.
+     *
+     * The held caps are as old as the last repair run. The same download can carry the proof that one is stale,
+     * another device's log, archive or baseline saying the listing filled more, along with the fill itself. The
+     * repair after the reload would read that and keep the fill, so the fold has to as well. Any status counts: a
+     * listing cannot have filled less than any device ever saw it fill. The same goes for this tab's own baseline,
+     * and a listing back on the book has no cap, nor has a lone row of a listing the log gives no count for, nor
+     * one whose count on another day this fold cannot trust (see {@link _listingsTrimmedElsewhere}).
+     * @param {Array<Object>} rows - The folded day's rows
+     * @param {Array<Object>} others - The same listings' rows on other days, from memory
+     * @param {{caps: Map<number, number>, archiveOnly: Set<number>}} held - The held caps
+     * @param {string} charId - Whose ledger
+     * @param {Object<string, *>} download - The whole download of this store
+     * @returns {Map<number, number>} Listing id to the count to cut to, for this day's listings only
+     * @private
+     */
+    _capsForFold(rows, others, held, charId, download) {
+        const open = new Set();
+        for (const entry of dataManager.getMarketListings() || []) {
+            if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) open.add(Number(entry.id));
+        }
+        const pulled = this._readDownload(download, charId);
+        const unsure = this._listingsTrimmedElsewhere(others, pulled.trims);
+        const caps = new Map();
+        for (const { listingId: id } of rows) {
+            if (caps.has(id) || !held.caps.has(id) || open.has(id) || unsure.has(id)) continue;
+            if (held.archiveOnly.has(id) && !this._hasDoubling(id, [...rows, ...others])) continue;
+            const baseline = Number(this.states[String(id)]?.filledQuantity) || 0;
+            caps.set(id, Math.max(held.caps.get(id), baseline, pulled.counts.get(id) || 0));
+        }
+        return caps;
+    }
+
+    /**
+     * The listings whose rows on other days will not be what memory holds once this pull has landed: an untrimmed
+     * row in memory that the download holds trimmed. That day's own fold replaces the original with the trimmed
+     * copy (see `repairOverRecorded`), so counting the original here would count units the ledger no longer holds,
+     * and cut this day's real fill for them. Such a listing is left whole by this fold; the next load cuts whatever
+     * was really over. A day the download lacks replaces nothing, so what memory holds there stands.
+     *
+     * A row memory already holds trimmed is not one of these, whatever other trim a device made of it: the count
+     * memory holds for it is the one the repair uses. After the reload that follows a pulled day memory holds the
+     * trimmed copy too, so this does not hold a listing open pull after pull.
+     * @param {Array<Object>} others - The rows on other days, from memory
+     * @param {Set<string>} trims - The download's trimmed rows, by {@link trimStamp}
+     * @returns {Set<number>} Listing ids this fold must not cut
+     * @private
+     */
+    _listingsTrimmedElsewhere(others, trims) {
+        const unsure = new Set();
+        if (trims.size === 0) return unsure;
+        const settled = new Set();
+        for (const row of others) if (row.trimmed) settled.add(trimStamp(row));
+        for (const row of others) {
+            const stamp = trimStamp(row);
+            if (trims.has(stamp) && !settled.has(stamp)) unsure.add(row.listingId);
+        }
+        return unsure;
+    }
+
+    /**
+     * What a fold needs from the rest of a download, read once per download and only when a day has something a held
+     * cap applies to: the highest fill count it holds for each listing of one character (its log, its archive months
+     * and its baselines), and that character's trimmed rows.
+     * @param {Object<string, *>} download - The whole download of this store
+     * @param {string} charId - Whose rows
+     * @returns {{charId: string, counts: Map<number, number>, trims: Set<string>}} Listing id to count, and the
+     *   trimmed rows by {@link trimStamp}
+     * @private
+     */
+    _readDownload(download, charId) {
+        const memo = this._pulledCountsMemo.get(download);
+        if (memo && memo.charId === charId) return memo;
+        const counts = new Map();
+        const trims = new Set();
+        const raise = (id, filled) => {
+            const count = Number(filled);
+            if (Number.isFinite(id) && count > 0 && !(counts.get(id) >= count)) counts.set(id, count);
+        };
+        const logKey = charKey(LISTING_LOG_BASE, charId);
+        const statesKey = charKey(STATE_BASE, charId);
+        const archiveMonths = `${ARCHIVE_PREFIX}_${charId}_`;
+        const dayRecords = `${RECORD_PREFIX}_${charId}_`;
+        for (const [key, value] of Object.entries(download)) {
+            if (key === statesKey) {
+                if (!value || typeof value !== 'object') continue;
+                for (const [id, entry] of Object.entries(value)) raise(Number(id), entry?.filledQuantity);
+            } else if ((key === logKey || key.startsWith(archiveMonths)) && Array.isArray(value)) {
+                for (const row of value) raise(Number(row?.id), row?.filledQuantity);
+            } else if (key.startsWith(dayRecords) && Array.isArray(value)) {
+                for (const row of value) if (row?.trimmed) trims.add(trimStamp(row));
+            }
+        }
+        const read = { charId, counts, trims };
+        this._pulledCountsMemo.set(download, read);
+        return read;
     }
 
     /**
@@ -557,6 +843,7 @@ class TradeLedgerStore {
         const started = this._generation;
         /** Whether this load still speaks for the character it began under. */
         const current = () => this._generation === started && ledgerCharId() === charId;
+        const capsEpoch = this._capsEpoch;
         try {
             const markerProbe = await storage.tryGet(charKey(SPLIT_MARKER_BASE, charId), LEDGER_STORE);
             if (!current()) return;
@@ -618,26 +905,84 @@ class TradeLedgerStore {
         // load too: day records a pull wrote back before the floor was recorded
         // would otherwise wait for this character's next fill to go
         if (!this._legacy && this.records.length >= LEDGER_RECORD_CAP) this.saveRecords(new Set());
-        this._repairOverRecorded();
+        this._repairOverRecorded(null, capsEpoch);
     }
 
     /**
-     * The final fill count of every listing the repair may cut back, by listing id.
+     * What the log and the archive say each listing finally filled, for the repair. Reads only, off the records
+     * chain: this can take as long as the archive does, and a fill's save must not wait for it.
      *
-     * A listing is named only when its log (or archive) row says `filled` with a positive count, it is not
-     * among the open listings, and the count is raised to the highest `filledQuantity` this tab's baselines
-     * ever saw for it, so a stale low log count can never cut a fill the baseline already counted. `expired`
-     * rows are ignored (see {@link TRUSTED_LOG_STATUS}). A log that cannot be read, or holds no array, names
-     * nothing: that is "not loaded", which is not "empty of fills". The archive is read only when some
-     * listing with several recorded fills is over its log count or absent from the log (an archive month
-     * costs a read; a ledger with nothing doubled never needs one).
+     * Only `filled` rows with a positive count count (`expired` is ignored, see {@link TRUSTED_LOG_STATUS}), and
+     * never a row an import stamped (`importedAt`): its count came from a file and may be low. A log
+     * that cannot be read, or holds no array, names nothing: that is "not loaded", which is not "empty of fills".
+     *
+     * The archive is read once for a load, by the first run that has anything to check, so the caps the sync pull
+     * fold holds are checked before any pull (see `_pullCaps`). After that it is read only when {@link _archiveNeeded}
+     * says so. A read costs every month of the character's archive.
      * @param {string} charId - Whose listings
      * @param {Set<number>} openIds - Listings still open (or not known to have ended)
-     * @returns {Promise<Map<number, number>|null>} Listing id to final filled quantity; null when the archive
-     *   was needed and could not be read, which defers the whole repair
+     * @param {boolean} [askArchive] - Read the archive whatever the rows say
+     * @returns {Promise<{logCounts: Map<number, number>, archiveCounts: Map<number, number>, seenInLog: Set<number>,
+     *   logRead: boolean, checked: boolean}|null>} `checked` is whether this read the archive; null when the
+     *   archive was needed and could not be read, which defers the whole repair
      * @private
      */
-    async _endedFills(charId, openIds) {
+    async _readFinalCounts(charId, openIds, askArchive = false) {
+        const counts = {
+            logCounts: new Map(),
+            archiveCounts: new Map(),
+            seenInLog: new Set(),
+            logRead: false,
+            checked: false,
+        };
+        // A row an import stamped is a count out of a file, not something this ledger watched the game finish: it
+        // may be lower than what the player really filled, and a cap that is too low cuts real fills. It names
+        // nothing. A real log or archive row of the same listing still does
+        const imported = (row) => row?.importedAt !== undefined && row?.importedAt !== null;
+        const note = (row, into) => {
+            const id = Number(row?.id);
+            const filled = Number(row?.filledQuantity);
+            if (imported(row)) return;
+            if (!Number.isFinite(id) || row?.status !== TRUSTED_LOG_STATUS || !(filled > 0)) return;
+            if (!(into.get(id) >= filled)) into.set(id, filled);
+        };
+        const probe = await storage.tryGet(charKey(LISTING_LOG_BASE, charId), LEDGER_STORE);
+        // Unreadable, or not an array: not loaded. Absent: a log with nothing in it, the archive may still know
+        if (probe === null || (probe.found && !Array.isArray(probe.value))) return counts;
+        counts.logRead = true;
+        if (probe.found) {
+            for (const row of probe.value) {
+                const id = Number(row?.id);
+                // An imported row does not count as the log knowing the listing: the archive is then asked
+                if (Number.isFinite(id) && !imported(row)) counts.seenInLog.add(id);
+                note(row, counts.logCounts);
+            }
+        }
+        if (askArchive || this._archiveNeeded(charId, counts, openIds)) {
+            // A read that never settles counts as unreadable: the next repair is waiting behind this one
+            const archived = await withTimeout(listingArchive.read(charId), MIGRATION_TIMEOUT_MS, null);
+            // `read` answers null when the archive could not be read and an array (possibly empty) when it
+            // could: an unreadable archive may hold a higher count than the log, so the repair waits
+            if (!Array.isArray(archived)) return null;
+            for (const row of archived) note(row, counts.archiveCounts);
+            counts.checked = true;
+        }
+        return counts;
+    }
+
+    /**
+     * Whether the archive has to be asked before this log can be acted on: on a load's first look, or when a row
+     * would be cut. Any total over its log count, since the repair would trim it. A single fill missing from the
+     * log has no cap to be trimmed to, so it does not cost a read of its own.
+     * @param {string} charId - Whose listings
+     * @param {{logCounts: Map<number, number>, seenInLog: Set<number>}} counts - What the log said
+     * @param {Set<number>} openIds - Listings still open (or not known to have ended)
+     * @returns {boolean} True when the archive must be read first
+     * @private
+     */
+    _archiveNeeded(charId, { logCounts, seenInLog }, openIds) {
+        const firstLook = this._pullCaps?.charId !== charId;
+        if (firstLook && (logCounts.size > 0 || this.records.length > 0)) return true;
         const totals = new Map(); // listing id to {total, rows}
         for (const record of this.records) {
             const entry = totals.get(record.listingId) || { total: 0, rows: 0 };
@@ -645,39 +990,28 @@ class TradeLedgerStore {
             entry.rows += 1;
             totals.set(record.listingId, entry);
         }
-        const caps = new Map();
-        const seenInLog = new Set();
-        const note = (row, trackSeen) => {
-            const id = Number(row?.id);
-            if (!Number.isFinite(id)) return;
-            if (trackSeen) seenInLog.add(id);
-            const filled = Number(row?.filledQuantity);
-            if (row?.status !== TRUSTED_LOG_STATUS || !(filled > 0)) return;
-            if (!(caps.get(id) >= filled)) caps.set(id, filled);
-        };
-        const probe = await storage.tryGet(charKey(LISTING_LOG_BASE, charId), LEDGER_STORE);
-        // Unreadable, or not an array: not loaded. Absent: a log with nothing in it, the archive may still know
-        if (probe === null || (probe.found && !Array.isArray(probe.value))) return caps;
-        if (probe.found) probe.value.forEach((row) => note(row, true));
-
-        let needArchive = false;
         for (const [id, { total, rows }] of totals) {
             if (openIds.has(id)) continue;
-            // Any row count over its log count, since the repair would trim it. A single fill missing from the
-            // log has no cap to be trimmed to unless something else asks, so it does not cost an archive read
-            if (total > (caps.get(id) ?? Infinity) || (rows >= 2 && !seenInLog.has(id))) {
-                needArchive = true;
-                break;
-            }
+            if (total > (logCounts.get(id) ?? Infinity) || (rows >= 2 && !seenInLog.has(id))) return true;
         }
-        if (needArchive) {
-            const archived = await listingArchive.read(charId);
-            // `read` answers null when the archive could not be read and an array (possibly empty) when it
-            // could: an unreadable archive may hold a higher count than the log, so the repair waits
-            if (!Array.isArray(archived)) return null;
-            archived.forEach((row) => note(row, false));
-        }
+        return false;
+    }
 
+    /**
+     * The final fill count of every listing known as ended, by listing id, as of now.
+     *
+     * Taken when the cut runs, not when the counts were read: the count is raised to the highest `filledQuantity`
+     * this tab's baselines ever saw for the listing, so a stale low count can never cut a fill the baseline already
+     * counted, and a fill landing during an archive read has moved the baseline by then. A listing not known as
+     * ended is left out.
+     * @param {{logCounts: Map<number, number>, archiveCounts: Map<number, number>}} counts - What was read
+     * @param {Set<number>} openIds - Listings still open (or not known to have ended)
+     * @returns {{caps: Map<number, number>, logged: Set<number>}} The caps, and which of them a log row gives
+     * @private
+     */
+    _endedFills({ logCounts, archiveCounts }, openIds) {
+        const caps = new Map(logCounts);
+        for (const [id, filled] of archiveCounts) if (!(caps.get(id) >= filled)) caps.set(id, filled);
         for (const id of [...caps.keys()]) {
             if (openIds.has(id)) {
                 caps.delete(id);
@@ -686,7 +1020,7 @@ class TradeLedgerStore {
             const baseline = Number(this.states[String(id)]?.filledQuantity);
             if (baseline > caps.get(id)) caps.set(id, baseline);
         }
-        return caps;
+        return { caps, logged: new Set(logCounts.keys()) };
     }
 
     /**
@@ -697,39 +1031,57 @@ class TradeLedgerStore {
      * does not know as ended, and a listing already at or under its count is left byte for byte as it was.
      * Nothing is stored beyond the day records themselves, so there is no tombstone to sync: the cut is a pure
      * function of the rows and the log, and a pull that brings an old device's rows back is cut again by the
-     * next load. The rewrite replaces the repaired listings' rows inside the write's own transaction (so the
+     * next load, or by the pull's own fold when it lands ({@link _foldPulledDay}). A day left with nothing is
+     * kept as an empty record so that fold runs on it. The rewrite replaces the repaired listings' rows inside the write's own transaction (so the
      * removed rows do not come back through the union that the other writes use) and leaves every other row
      * of the day alone.
      *
-     * Serialized with the record saves. Standing down on a character switch, and on a store that is still the
-     * single key, which this repair does not handle (the next load that has split it will).
+     * A listing no trusted log row gives a count for is cut only with two or more rows (see {@link _hasDoubling}).
+     *
+     * The reads run first, on their own chain; only the cut joins the record saves, so a fill's save never waits on
+     * the archive (a fill stored behind a slow read could be lost to a baseline landing first). A row that went over
+     * its count after the reads sends the run back to the archive before anything is trimmed.
+     * Standing down on a character switch, and on a store that is still the single key, which this repair does not
+     * handle (the next load that has split it will).
      * Skipped whole, with nothing cut, until the character's open listings are known: an empty list that
      * means "not loaded" is not an empty book.
      * @param {Array<Object>|null} [openListings] - The character's listings, when the caller has them (the
      *   `character_initialized` payload); otherwise the data manager's, once character data has arrived
+     * @param {number} [capsEpoch] - `_capsEpoch` when the work this run belongs to began: a run the ledger was
+     *   switched off behind cuts as asked but holds no caps for the pull fold
      * @returns {Promise<number>} How many listings were cut
      * @private
      */
-    _repairOverRecorded(openListings = null) {
-        const run = async () => {
-            const charId = ledgerCharId();
-            const started = this._generation;
-            const current = () => this._generation === started && ledgerCharId() === charId;
+    _repairOverRecorded(openListings = null, capsEpoch = this._capsEpoch) {
+        const charId = ledgerCharId();
+        const started = this._generation;
+        const current = () => this._generation === started && ledgerCharId() === charId;
+        const openNow = () => {
+            const listings = Array.isArray(openListings)
+                ? openListings
+                : dataManager.characterData
+                  ? dataManager.getMarketListings()
+                  : null;
+            if (!listings) return null;
+            const openIds = new Set();
+            for (const entry of listings) {
+                if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) openIds.add(Number(entry.id));
+            }
+            return openIds;
+        };
+        /** The cut, on the records chain. Answers null when the archive has to be read first. */
+        const cut = async (counts) => {
             try {
-                if (this._legacy || !this.isLoaded) return 0;
-                const listings = Array.isArray(openListings)
-                    ? openListings
-                    : dataManager.characterData
-                      ? dataManager.getMarketListings()
-                      : null;
-                if (!listings) return 0;
-                const openIds = new Set();
-                for (const entry of listings) {
-                    if (entry && !ENDED_WIRE_STATUSES.has(entry.status)) openIds.add(Number(entry.id));
+                if (!current() || this._legacy || !this.isLoaded) return 0;
+                const openIds = openNow();
+                if (!openIds) return 0;
+                if (counts.logRead && !counts.checked && this._archiveNeeded(charId, counts, openIds)) return null;
+                const { caps: known, logged } = this._endedFills(counts, openIds);
+                if (this._capsEpoch === capsEpoch) this._noteCaps(charId, known, logged, counts.checked, openIds);
+                const caps = new Map();
+                for (const [id, cap] of known) {
+                    if (logged.has(id) || this._hasDoubling(id, this.records)) caps.set(id, cap);
                 }
-                const caps = await this._endedFills(charId, openIds);
-                // Stood down (a switch landed) or deferred (the archive could not be read): the repair did not run
-                if (!current() || caps === null) return 0;
                 if (caps.size === 0) {
                     this._noteRepair(charId, 0);
                     return 0;
@@ -746,35 +1098,37 @@ class TradeLedgerStore {
                 this.records = records;
 
                 const mine = (record) => record && repairedIds.has(record.listingId);
-                const belongs = (record, day) => mine(record) && bucketOf(record) === day;
                 for (const day of days) {
                     const key = recordKey(charId, day);
                     const probe = await storage.tryGet(key, LEDGER_STORE);
                     // A day that cannot be read is repaired by the next load; memory is already right
                     if (probe === null || !current()) continue;
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
-                    const next = [
-                        ...stored.filter((record) => !mine(record)),
-                        ...records.filter((r) => belongs(r, day)),
-                    ];
+                    // Memory's rows of the day, not only the repaired listings': the immediate write below drops a
+                    // debounced one still queued for this key (a fill found at load or on a reconnect, whose save
+                    // waits behind this cut), and that fill lives only in memory. `records` is already cut, so
+                    // a row removed above is not among them
+                    const next = mergeRecords(
+                        stored.filter((record) => !mine(record)),
+                        records.filter((r) => bucketOf(r) === day)
+                    );
                     // Nothing stored and nothing to put: nothing to do
                     if (next.length === 0 && !probe.found) continue;
                     // Immediate and awaited: a debounced write still pending when the next save reads would let that
-                    // save fold the removed rows straight back in. Emptiness is judged inside the write's own
-                    // transaction, on what is stored when it lands: the key is deleted (the storage layer's fold
-                    // delete) only if nothing is left there, so a fill another tab stored after the read above
-                    // survives, and a day record that is gone is read as no fills, as before
+                    // save fold the removed rows straight back in. The fold runs inside the write's own transaction,
+                    // on what is stored when it lands, so a fill another tab stored after the read above survives.
+                    // A day left with nothing stays as an empty record rather than being deleted: a key that is
+                    // gone is one a pull writes back whole from a gist that still holds the cut rows (no fold runs
+                    // for a key this device lacks), where an empty record is folded like any other day and, with
+                    // nothing new in it, left alone. Every reader treats it as a day with no fills
                     await storage.set(key, next, LEDGER_STORE, true, {
-                        fold: (now, held) => {
-                            const merged =
-                                Array.isArray(now) && Array.isArray(held)
-                                    ? mergeRecords(
-                                          now.filter((record) => !mine(record)),
-                                          held
-                                      )
-                                    : held;
-                            return merged.length === 0 && storage.FOLD_DELETE ? storage.FOLD_DELETE : merged;
-                        },
+                        fold: (now, held) =>
+                            Array.isArray(now) && Array.isArray(held)
+                                ? mergeRecords(
+                                      now.filter((record) => !mine(record)),
+                                      held
+                                  )
+                                : held,
                     });
                 }
                 return repairedIds.size;
@@ -783,8 +1137,32 @@ class TradeLedgerStore {
                 return 0;
             }
         };
-        this._recordsChain = (this._recordsChain || Promise.resolve()).then(run, run);
-        return this._recordsChain;
+        const queueCut = (counts) => {
+            const work = () => cut(counts);
+            this._recordsChain = (this._recordsChain || Promise.resolve()).then(work, work);
+            return this._recordsChain;
+        };
+        const run = async () => {
+            try {
+                if (!current() || this._legacy || !this.isLoaded) return 0;
+                const openIds = openNow();
+                if (!openIds) return 0;
+                const counts = await this._readFinalCounts(charId, openIds);
+                // Stood down (a switch landed) or deferred (the archive could not be read): the repair did not run
+                if (!current() || counts === null) return 0;
+                const result = await queueCut(counts);
+                if (result !== null) return result;
+                // A fill landed since the reads and took a listing over its count: ask the archive, then cut
+                const checked = await this._readFinalCounts(charId, openIds, true);
+                if (!current() || checked === null) return 0;
+                return (await queueCut(checked)) ?? 0;
+            } catch (error) {
+                console.error('[TradeLedger] Failed to repair over-recorded fills:', error);
+                return 0;
+            }
+        };
+        this._repairChain = (this._repairChain || Promise.resolve()).then(run, run);
+        return this._repairChain;
     }
 
     /**
@@ -930,6 +1308,7 @@ class TradeLedgerStore {
         const { fills, states, changed } = detectFills(this.states, listings, { snapshot, changedIds });
         this.states = states;
 
+        let filled = null;
         if (fills.length > 0) {
             const before = this.records;
             const after = trimLedger([...before, ...fills], LEDGER_RECORD_CAP);
@@ -945,10 +1324,10 @@ class TradeLedgerStore {
             }
 
             this.records = after;
-            this.saveRecords(dirty);
+            filled = this.saveRecords(dirty);
         }
         if (changed) {
-            this.saveStates();
+            this.saveStates(filled);
         }
     }
 
@@ -1150,10 +1529,16 @@ class TradeLedgerStore {
      * winning: a baseline this tab has moved past is the fresher one, and one
      * only storage knows is the only thing that can turn that listing's next
      * update into a fill.
+     *
+     * A baseline that accounts for fills waits for their save, and stands down if that save was refused or stood
+     * down. A baseline stored ahead of its fill is what loses a fill for good: the next load diffs to zero. Unstored,
+     * the next load finds the same fill again.
+     * @param {Promise<boolean>|null} [fillsSaved] - The save of the fills this baseline accounts for
      * @returns {Promise<boolean>} Whether a write was issued
      */
-    async saveStates() {
+    async saveStates(fillsSaved = null) {
         const run = async () => {
+            if (fillsSaved && (await fillsSaved) === false) return false;
             // Same capture-before-the-read as saveRecords: the probe and the
             // write have to name the same character.
             const charId = ledgerCharId();
@@ -1202,6 +1587,7 @@ class TradeLedgerStore {
      */
     disable() {
         noteTeardown(this);
+        this._capsEpoch += 1;
         try {
             if (this.initHandler) {
                 dataManager.off('character_initialized', this.initHandler);
@@ -1212,6 +1598,7 @@ class TradeLedgerStore {
                 this.updateHandler = null;
             }
             this.isInitialized = false;
+            this._pullCaps = null;
         } catch (error) {
             console.error('[Trade Ledger] Disable failed part-way:', error);
         } finally {
@@ -1226,6 +1613,9 @@ class TradeLedgerStore {
         this.disable();
         this._generation += 1;
         this._writtenDays = new Map();
+        this._pullCaps = null;
+        // A departing character's slow archive read stands down when it returns; the arriving one does not wait for it
+        this._repairChain = null;
         this.records = [];
         this.states = {};
         this.isLoaded = false;
