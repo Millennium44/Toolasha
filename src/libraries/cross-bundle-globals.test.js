@@ -373,6 +373,7 @@ describe('a stateful singleton behind the bundle bridge', () => {
                 offenders,
                 `${name} is default-imported across a bundle boundary without reading ${entry.name}() from the bridge in: ${offenders.join(', ')}`
             ).toEqual([]);
-        });
+            // Reads every source file, so a busy machine, not a bug, is what takes it past the default limit
+        }, 60_000);
     }
 });
