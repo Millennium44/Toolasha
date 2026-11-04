@@ -50,7 +50,9 @@ import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace, insertTabInOrder } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createFloatingWidget } from '../../utils/floating-widget.js';
-import { formatKMB } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
+import { styleGameButton } from '../../utils/game-look.js';
+import { hasCoarsePointer } from '../../utils/mobile.js';
 import {
     MAGNITUDE_SUFFIXES,
     gameDigitsSource,
@@ -145,6 +147,20 @@ const STATUS_WIDTH = '340px';
  * slot beside it precisely so it is never the thing an extra click lands on.
  */
 const MAIN_LABELS = ['▶ Bulk Sell', '✔ Confirm', '▶ Next'];
+/**
+ * How long Retry waits after closing a stale modal or menu before it starts the step over, so the
+ * close has landed before the item is opened again and a double press is absorbed by the wait
+ */
+const RETRY_DELAY_MS = 600;
+/** Screen width at or under which the strip gives its status line a row of its own */
+const NARROW_SCREEN_PX = 480;
+/** The smallest tap target on a touch screen, as the reroll walk sizes its buttons */
+const TOUCH_MIN_SIZE = '32px';
+/**
+ * Skip reasons where the step itself was refused on its merits: starting it over would only be
+ * refused again, so Retry is not offered for them
+ */
+const NOT_RETRYABLE_NOTES = ['locked', 'favorite', 'no longer in inventory'];
 /** The source that is not a tab: whatever the Watchlist is currently tracking */
 const WATCHLIST_SOURCE = 'watchlist';
 
@@ -334,6 +350,18 @@ function shownEnhancementLevel(root) {
 const AFTER_CLOSE_WATCH_MS = 1500;
 const ABOVE_BAND_WARNING = 'bid above the tradable range: the game may refuse it';
 
+/**
+ * A fragment of the status line as a sentence: first letter up, a full stop on the end.
+ * @param {string} text - A fragment such as a reason or a refusal
+ * @returns {string} The sentence, or '' for an empty fragment
+ */
+function sentence(text) {
+    const trimmed = String(text ?? '').trim();
+    if (!trimmed) return '';
+    const upper = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    return /[.!?…]$/.test(upper) ? upper : `${upper}.`;
+}
+
 class BulkSellAssistant {
     constructor() {
         this.isInitialized = false;
@@ -345,10 +373,14 @@ class BulkSellAssistant {
         this.current = null;
         this.decision = null;
         this.statusNote = '';
+        /** What the idle and done states add under their headline (the held-back summary); '' for none */
+        this.statusDetail = '';
         this.bookHandler = null;
         this.modalUnregister = null;
         this.bookTimeout = null;
         this.advanceTimeout = null;
+        /** The wait between Retry closing a stale modal and starting the step over */
+        this.retryTimeout = null;
         this.modalPoll = null;
         this.selectedTabId = 'all';
         this.panelPosition = null;
@@ -677,6 +709,8 @@ class BulkSellAssistant {
     }
 
     _removePanel() {
+        this._stopFitStatus?.();
+        this._stopFitStatus = null;
         if (this.chip) {
             this.chip.remove();
             this.chip = null;
@@ -693,6 +727,10 @@ class BulkSellAssistant {
      * picker and the Stop button.
      */
     _buildPanel() {
+        // A rebuild without a removal (the old strip was taken off the page by something else) must not
+        // leave the old strip's resize listener behind
+        this._stopFitStatus?.();
+        this._stopFitStatus = null;
         const widget = createFloatingWidget({
             id: CHIP_ID,
             top: '70px',
@@ -757,6 +795,27 @@ class BulkSellAssistant {
             this._skip('skipped');
         });
 
+        // Retry sits with Skip: it starts the current item over (close what is open, open it again with the
+        // amount filled in) for when a modal never came, the game refused the sale, or a step never landed.
+        // It only prepares; the sale is still the player's own confirm, so it can never sell by itself.
+        // Hidden with `visibility` like Skip, so its slot never moves the buttons around it.
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = `${CHIP_ID}-retry`;
+        retryBtn.textContent = '↻';
+        retryBtn.setAttribute('aria-label', 'Retry this item');
+        retryBtn.title = 'Retry this item';
+        styleGameButton(retryBtn, 'icon');
+        Object.assign(retryBtn.style, {
+            visibility: 'hidden',
+            fontWeight: '700',
+            fontSize: '13px',
+            padding: '3px 6px',
+            height: '',
+        });
+        retryBtn.addEventListener('mousedown', (event) => event.stopPropagation());
+        retryBtn.addEventListener('click', () => this._onRetryClick());
+
         const stopBtn = document.createElement('button');
         stopBtn.className = `${CHIP_ID}-stop`;
         // Spelled out rather than an ✕, now that there is a close button beside
@@ -798,6 +857,7 @@ class BulkSellAssistant {
         moreBtn.type = 'button';
         moreBtn.className = `${CHIP_ID}-more`;
         moreBtn.textContent = '▾';
+        moreBtn.setAttribute('aria-label', 'Show or hide the status details');
         moreBtn.style.cssText =
             'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#cfd8ea; font-size:11px; ' +
             'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
@@ -817,10 +877,37 @@ class BulkSellAssistant {
             'font-size:11px; line-height:1.35; color:#cfd8ea; padding-top:2px;';
 
         widget.extras.append(moreBtn, tabSel);
+        widget.row.insertBefore(retryBtn, widget.main);
         widget.row.insertBefore(skipBtn, widget.main);
         widget.row.insertBefore(stopBtn, widget.gear);
         chip.insertBefore(detailBox, widget.settings);
         widget.settings.classList.add(`${CHIP_ID}-rules`);
+
+        // On a touch screen the strip's buttons are ~17px tall, too small to hit: a finger-sized floor,
+        // with the same width floor on the icon-only ones, whose glyph alone is narrower than a fingertip
+        if (hasCoarsePointer()) {
+            for (const button of [widget.main, skipBtn, retryBtn, stopBtn, moreBtn, widget.gear, widget.close]) {
+                button.style.minHeight = TOUCH_MIN_SIZE;
+            }
+            for (const button of [retryBtn, moreBtn, widget.gear, widget.close]) {
+                button.style.minWidth = TOUCH_MIN_SIZE;
+            }
+        }
+
+        // On a phone the buttons alone fill the strip and the status line, which gives up its width to
+        // them, was left a sliver. Narrow, it takes a row of its own and wraps, so the headline is read whole.
+        const statusDesktopCss = widget.status.style.cssText;
+        const fitStatus = () => {
+            const narrow = window.innerWidth <= NARROW_SCREEN_PX;
+            if (narrow === (widget.status.dataset.narrow === 'true')) return;
+            widget.status.dataset.narrow = String(narrow);
+            widget.status.style.cssText = narrow
+                ? 'flex:1 1 100%; min-width:0; white-space:normal; overflow-wrap:anywhere;'
+                : statusDesktopCss;
+        };
+        fitStatus();
+        window.addEventListener('resize', fitStatus);
+        this._stopFitStatus = () => window.removeEventListener('resize', fitStatus);
 
         document.body.appendChild(chip);
         this.chip = chip;
@@ -973,6 +1060,136 @@ class BulkSellAssistant {
         this._render();
     }
 
+    /**
+     * Whether Retry is offered for the current step, and whether a press would do anything now.
+     *
+     * Offered while there is a step to start over; enabled only when nothing is in flight. A confirm that
+     * was pressed and has not been refused is a sale on its way (the vendor arming wait likewise): starting
+     * the step over then could offer the same stack twice, so Retry waits. A refusal clears the sent mark,
+     * which is what lets Retry back in after the game turns a sale down.
+     *
+     * @returns {{offered: boolean, enabled: boolean, title: string}}
+     */
+    _retryState() {
+        const none = { offered: false, enabled: false, title: '' };
+        if (!this.current || this.index >= this.queue.length) return none;
+        const ready =
+            'Retry this item: close what is open and open it again with the amount filled in. ' +
+            'It only gets the step ready; you still confirm the sale yourself.';
+        if (this.state === 'preparing') {
+            // Skipping on to the next item is already under way: there is no step here to start over
+            if (this.advanceTimeout) return none;
+            if (this.retryTimeout) return { offered: true, enabled: false, title: 'Retrying…' };
+            return { offered: true, enabled: true, title: ready };
+        }
+        if (this.state === 'awaiting_confirm') {
+            if (this._confirmSent() || this._vendorArming) {
+                return {
+                    offered: true,
+                    enabled: false,
+                    title: 'The confirm was sent and the game has not answered yet, so retrying could sell twice. Retry comes back if the game refuses the sale.',
+                };
+            }
+            return { offered: true, enabled: true, title: ready };
+        }
+        if (this.state === 'awaiting_next') {
+            // A sale just made, a remainder to sell, or the bag still being watched for a late sale: this
+            // step is not one to start over
+            if (this._sellAgain > 0 || this._afterCloseWatch) return none;
+            if (this.statusNote) {
+                return NOT_RETRYABLE_NOTES.includes(this.statusNote)
+                    ? none
+                    : { offered: true, enabled: true, title: ready };
+            }
+            // Dealt with: a sale leaves nothing of the stack to start over; a window closed without selling does
+            return this._liveCount() > 0 ? { offered: true, enabled: true, title: ready } : none;
+        }
+        return none;
+    }
+
+    /**
+     * Split what the strip says into its headline and the detail the headline lacks. The headline is the
+     * short first row (progress and the action); the detail adds only what it does not already say, so
+     * the same words never appear twice.
+     *
+     * @returns {{headline: string, detail: string, urgent: boolean}} `urgent` is a refusal or warning the
+     *   player has to see, so its detail is shown whether or not the row is folded out
+     */
+    _statusParts() {
+        const name = this.current?.name || '';
+        // Stacks, not items: the queue holds one entry per inventory stack, and "6/52" counts those. The word
+        // is left off the row to keep it short; the Done line says "stacks" and a held-back count says items.
+        const progress = this.queue.length ? `${Math.min(this.index + 1, this.queue.length)}/${this.queue.length}` : '';
+        const lead = progress ? `${progress} · ` : '';
+        const join = (...parts) => parts.filter(Boolean).join(' ');
+
+        if (this.state === 'idle' || this.state === 'done') {
+            return {
+                headline: this.statusNote || 'Sell every tradable item, one confirm each',
+                detail: sentence(this.statusDetail),
+                urgent: false,
+            };
+        }
+        if (this.state === 'preparing') {
+            if (this.retryTimeout) return { headline: `${lead}Retrying ${name}…`, detail: '', urgent: false };
+            if (this.advanceTimeout) {
+                // The step before has been skipped and the next is about to open
+                const why = this.statusNote && this.statusNote !== 'skipped' ? ` (${this.statusNote})` : '';
+                return { headline: `${lead}Moving on…`, detail: sentence(`Skipped ${name}${why}`), urgent: false };
+            }
+            return { headline: `${lead}Checking ${name}…`, detail: '', urgent: false };
+        }
+        if (this.state === 'awaiting_confirm') {
+            const d = this.decision;
+            const verb = d?.vendor ? 'Vendor-sell' : d?.insta ? 'Insta-sell' : 'List';
+            const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
+            const action = `${verb} ${formatWithSeparator(this.current.count)}× ${name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)}`;
+            // A warning the refusal already carries is not said twice
+            const warning = d?.warning && !this.confirmNote.includes(d.warning) ? d.warning : '';
+            const hint = this._confirmSent()
+                ? 'Confirm sent — waiting for the game.'
+                : d?.vendor
+                  ? 'Click Sell For in the item menu, or press Confirm here.'
+                  : 'Confirm in the modal, or press Confirm here.';
+            const urgent = Boolean(this.confirmNote || warning);
+            return {
+                // The mark ahead of the progress, so the first row says something needs a look even when the
+                // detail under it is folded away
+                headline: `${urgent ? '⚠ ' : ''}${lead}${action}`,
+                detail: join(
+                    this.confirmNote ? sentence(`can’t confirm: ${this.confirmNote}`) : '',
+                    sentence(warning),
+                    sentence(d?.reason),
+                    // A refusal is what the player has to act on; the hint to confirm would contradict it
+                    this.confirmNote ? '' : hint
+                ),
+                urgent,
+            };
+        }
+        if (this.state === 'awaiting_next') {
+            if (this._sellAgain > 0) {
+                return {
+                    headline: `${lead}${name}: ${formatWithSeparator(this._sellAgain)} left after the sale`,
+                    detail: 'Press Sell again for the rest, or Skip to leave it.',
+                    urgent: false,
+                };
+            }
+            if (this._afterCloseWatch) {
+                return {
+                    headline: `${lead}${name}: checking the bag…`,
+                    detail: 'Waiting for the game to report any sale before moving on.',
+                    urgent: false,
+                };
+            }
+            const retry = this._retryState().offered ? ' Or ↻ to open this one again.' : '';
+            const headline = this.statusNote
+                ? `${lead}Skipped ${name}${this.statusNote === 'skipped' ? '' : ` (${this.statusNote})`}`
+                : `${lead}${name} dealt with`;
+            return { headline, detail: `Press Next for the next item.${retry}`, urgent: false };
+        }
+        return { headline: '', detail: '', urgent: false };
+    }
+
     _render() {
         if (!this.chip) return;
         const status = this.chip.querySelector(`.${CHIP_ID}-status`);
@@ -980,37 +1197,30 @@ class BulkSellAssistant {
         const mainBtn = this.chip.querySelector(`.${CHIP_ID}-main`);
         const stopBtn = this.chip.querySelector(`.${CHIP_ID}-stop`);
         const skipBtn = this.chip.querySelector(`.${CHIP_ID}-skip`);
+        const retryBtn = this.chip.querySelector(`.${CHIP_ID}-retry`);
         const detailBox = this.chip.querySelector(`.${CHIP_ID}-detail`);
         const moreBtn = this.chip.querySelector(`.${CHIP_ID}-more`);
-        // "Stacks", not "items": the queue holds one entry per inventory stack
-        // (one per item+enhancement-level grouping), and that is the thing this
-        // run is working through — a held-back or enhanced-skipped count is an
-        // item quantity, but progress through the queue is a stack count, and
-        // saying "items" here reads as the same unit when it is not.
-        const progress = this.queue.length
-            ? `${Math.min(this.index + 1, this.queue.length)}/${this.queue.length} stacks`
-            : '';
         const setMain = (label) => {
             if (this.panelWidget?.setMainLabel) this.panelWidget.setMainLabel(label);
             else mainBtn.textContent = label;
         };
-        // One line in the row, the whole of it underneath when it is folded
-        // out, and the whole of it on hover either way.
-        const say = (line) => {
-            status.textContent = line;
-            status.title = line;
-            if (detailBox) {
-                detailBox.textContent = line;
-                detailBox.style.display = this.statusExpanded ? '' : 'none';
-            }
-            if (moreBtn) {
-                moreBtn.textContent = this.statusExpanded ? '▴' : '▾';
-                moreBtn.title = this.statusExpanded
-                    ? 'Fold the full status text away and keep just the one line'
-                    : 'Show the whole status line, which the strip cuts off at one line';
-                moreBtn.setAttribute('aria-expanded', String(this.statusExpanded));
-            }
-        };
+        // The headline in the row; what it lacks underneath when there is any, folded out by the toggle (or
+        // held open while it carries a refusal); the whole of it on hover either way. No detail, no second
+        // row — and the toggle keeps its slot but is not offered.
+        const { headline, detail, urgent } = this._statusParts();
+        const open = Boolean(detail) && (this.statusExpanded || urgent);
+        status.textContent = headline;
+        status.title = detail ? `${headline}\n${detail}` : headline;
+        if (detailBox) {
+            detailBox.textContent = detail;
+            detailBox.style.display = open ? '' : 'none';
+        }
+        if (moreBtn) {
+            moreBtn.style.visibility = detail && !urgent ? 'visible' : 'hidden';
+            moreBtn.textContent = open ? '▴' : '▾';
+            moreBtn.title = open ? 'Fold the details away' : 'Show the details under the headline';
+            moreBtn.setAttribute('aria-expanded', String(open));
+        }
         // A control that comes and goes keeps its slot in the row, so nothing
         // beside it slides sideways when it does
         const show = (element, visible) => {
@@ -1024,9 +1234,17 @@ class BulkSellAssistant {
             mainBtn.style.cursor = enabled ? 'pointer' : 'default';
             mainBtn.title = title;
         };
+        // Retry: offered while a step can be started over, dimmed while a press could not be honored
+        const retry = this._retryState();
+        if (retryBtn) {
+            show(retryBtn, retry.offered);
+            retryBtn.disabled = !retry.enabled;
+            retryBtn.style.opacity = retry.enabled ? '1' : '0.4';
+            retryBtn.style.cursor = retry.enabled ? 'pointer' : 'default';
+            if (retry.title) retryBtn.title = retry.title;
+        }
 
         if (this.state === 'idle' || this.state === 'done') {
-            say(this.statusNote || 'Sell every tradable inventory item, one confirm per item');
             tabSel.style.display = this._hasTabs ? '' : 'none';
             show(tabSel, this._hasTabs);
             show(skipBtn, false);
@@ -1042,7 +1260,6 @@ class BulkSellAssistant {
         show(tabSel, false);
         show(stopBtn, true);
         if (this.state === 'preparing') {
-            say(`${progress} · checking ${this.current?.name || ''}${this.statusNote ? ` (${this.statusNote})` : ''}…`);
             // Nothing to confirm yet — the primary slot holds Confirm's place
             // but stays dim until a decision is offered.
             setMain('✔ Confirm');
@@ -1051,22 +1268,6 @@ class BulkSellAssistant {
             skipBtn.title = 'Skip this item';
         } else if (this.state === 'awaiting_confirm') {
             const d = this.decision;
-            const verb = d?.vendor ? 'Vendor-sell' : d?.insta ? 'Insta-sell' : 'List';
-            const confirmHint = this.confirmNote
-                ? `can’t confirm: ${this.confirmNote}`
-                : this._confirmSent()
-                  ? 'confirm sent — waiting for the game'
-                  : d?.vendor
-                    ? 'click Sell For in the item menu, or press Confirm here'
-                    : 'confirm in the modal, or press Confirm here';
-            const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
-            // Ahead of the price and the reason, which run past where the strip cuts the line off
-            const warn = d?.warning && !this.confirmNote.includes(d.warning) ? `⚠ ${d.warning} · ` : '';
-            const detail = `${warn}${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason})`;
-            // A refusal leads. It used to be appended after the price and the
-            // reason, which is past where the strip truncates — so a Confirm
-            // that had refused for a stated reason looked like a dead button.
-            say(this.confirmNote ? `${confirmHint} — ${detail}` : `${detail} — ${confirmHint}`);
             setMain('✔ Confirm');
             // Always armed while unsent; `_confirmTarget` refuses on press
             // unless the open surface (sell modal, or the item menu for a
@@ -1089,20 +1290,16 @@ class BulkSellAssistant {
             show(skipBtn, true);
             skipBtn.title = 'Close the modal and skip this item';
         } else if (this.state === 'awaiting_next' && this._sellAgain > 0) {
-            say(`${progress} · ${this.current?.name || ''}: ${this._sellAgain} left after the sale; sell again`);
             setMain('▶ Sell again');
             setMainEnabled(true, 'Open this item again for what is left. Its own click, one game action.');
             show(skipBtn, true);
             skipBtn.title = 'Leave the remainder and move on to the next item';
         } else if (this.state === 'awaiting_next' && this._afterCloseWatch) {
             // The bag is still being watched for a late sale: Next now would skip its remainder
-            say(`${progress} · ${this.current?.name || ''}: checking the bag for a sale the game has not reported yet`);
             setMain('⏳ Checking…');
             setMainEnabled(false, 'Waiting a moment for the inventory to report any sale before moving on');
             show(skipBtn, false);
         } else if (this.state === 'awaiting_next') {
-            const outcome = this.statusNote ? `skipped (${this.statusNote})` : 'dealt with';
-            say(`${progress} · ${this.current?.name || ''} ${outcome} — press Next for the next item`);
             setMain('▶ Next');
             setMainEnabled(true, 'Open the next item. Its own click, so one click never does two game actions.');
             show(skipBtn, false);
@@ -1643,6 +1840,8 @@ class BulkSellAssistant {
         const wait = { watch, cancelled: false, live: () => !wait.cancelled };
         this._vendorWait = wait;
         this._vendorArming = true;
+        // Retry holds off while the arming wait runs, so the strip is redrawn to say so
+        this._render();
         return wait;
     }
 
@@ -1652,6 +1851,7 @@ class BulkSellAssistant {
         if (this._vendorWait !== wait) return;
         this._vendorWait = null;
         this._vendorArming = false;
+        this._render();
     }
 
     _cancelVendorWait() {
@@ -1923,6 +2123,36 @@ class BulkSellAssistant {
         }
     }
 
+    /**
+     * Retry: start the current step over from its beginning. Close whatever the step left open, then —
+     * after a short wait for that to land — open the item again, fill the amount, and bring the modal back.
+     *
+     * It never sells. The step's confirm is the same press as ever, so one Retry is at most the one
+     * navigation `_prepareCurrent` makes (the one game action of this click), and it is refused outright
+     * while a confirm is on its way (see `_retryState`). The wait is a timer rather than an await, and
+     * Stop, Skip, a character switch and the setting going off all clear it through `_clearTransient`;
+     * it also re-checks that it is still this step's before it acts.
+     */
+    _onRetryClick() {
+        if (!this._retryState().enabled) return;
+        const key = this._stepKey();
+        this._clearTransient();
+        this._dismissOpenSurfaces(true);
+        // This click's one game action is the navigation the restarted step makes, so a failure along the
+        // way waits for the player's Next instead of opening another item's book
+        this._navigatedSinceClick = true;
+        this.decision = null;
+        this.state = 'preparing';
+        const opSeq = this._opSeq;
+        this.retryTimeout = setTimeout(() => {
+            this.retryTimeout = null;
+            // Stopped, skipped, switched away from: this restart belongs to a step that is over
+            if (opSeq !== this._opSeq || this.state !== 'preparing' || this._stepKey() !== key) return;
+            this._prepareCurrent();
+        }, RETRY_DELAY_MS);
+        this._render();
+    }
+
     async _start() {
         // A run belongs to the character who pressed Start. Two awaits below —
         // the inventory tab config and the loadout store's readiness — can span
@@ -1944,6 +2174,7 @@ class BulkSellAssistant {
             tabName = 'Watchlist';
             if (!watchedHrids.size) {
                 this.statusNote = 'Nothing on the watchlist';
+                this.statusDetail = '';
                 this.state = 'idle';
                 this._render();
                 return;
@@ -1955,6 +2186,7 @@ class BulkSellAssistant {
                 const found = findTab(tabConfig, this.selectedTabId);
                 if (!found) {
                     this.statusNote = 'Selected tab no longer exists';
+                    this.statusDetail = '';
                     this.state = 'idle';
                     this._render();
                     this._populateTabSelect();
@@ -1968,6 +2200,7 @@ class BulkSellAssistant {
             } catch (error) {
                 console.error('[BulkSellAssistant] Failed to load inventory tab config:', error);
                 this.statusNote = 'Could not load tab config';
+                this.statusDetail = '';
                 this.state = 'idle';
                 this._render();
                 return;
@@ -2096,10 +2329,8 @@ class BulkSellAssistant {
             );
 
         if (!this.queue.length) {
-            const why = this._skipNote();
-            this.statusNote = tabName
-                ? `No tradable items in "${tabName}"${why}`
-                : `No tradable items in inventory${why}`;
+            this.statusNote = tabName ? `No tradable items in "${tabName}"` : 'No tradable items in inventory';
+            this.statusDetail = this._skipNote({ bare: true });
             this.state = 'idle';
             this._render();
             return;
@@ -2171,7 +2402,8 @@ class BulkSellAssistant {
             this.state = 'done';
             // The skip summary set at Start is cleared by the first step, so the run's end is where
             // it is said: otherwise locked, held and enhanced stacks look silently missing
-            this.statusNote = `Done — ${this.queue.length} stacks processed${this._skipNote()}`;
+            this.statusNote = `Done — ${this.queue.length} stacks processed`;
+            this.statusDetail = this._skipNote({ bare: true });
             this._render();
             return;
         }
@@ -2254,6 +2486,8 @@ class BulkSellAssistant {
 
     _onOrderBook(data) {
         if (this.state !== 'preparing' || !this.current) return;
+        // A book arriving while Retry waits to start the step over belongs to the attempt being discarded
+        if (this.retryTimeout) return;
         if (data.marketItemOrderBooks?.itemHrid !== this.current.itemHrid) return;
         clearTimeout(this.bookTimeout);
         this.bookTimeout = null;
@@ -2534,6 +2768,8 @@ class BulkSellAssistant {
     _onModal(modal) {
         if (this.state !== 'preparing' && this.state !== 'awaiting_confirm') return;
         if (!this.current) return;
+        // A modal appearing while Retry waits is the one being closed, not the restarted step's
+        if (this.retryTimeout) return;
         const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
         const text = header?.textContent || '';
         if (!text.includes('Sell Now') && !text.includes('Sell Listing')) return;
@@ -2669,14 +2905,15 @@ class BulkSellAssistant {
         }, 200);
     }
 
-    _skip(note, closeModal = true) {
-        this._clearTransient();
-        // Close any modal the run opened so it can't linger over the next item
+    /**
+     * Close what a step left open: its modal (so it can't linger over the next item) and, on the vendor
+     * path, its item action menu, dismissed the way the game does it, via Escape. Used by Skip and Retry.
+     * @param {boolean} [closeModal] - Whether to close the modal too
+     */
+    _dismissOpenSurfaces(closeModal = true) {
         if (closeModal) {
             document.querySelector('[class*="Modal_modalContainer"] [class*="Modal_closeButton"]')?.click();
         }
-        // Dismiss an open item action menu (vendor path) the same way the
-        // game does — via Escape
         if (document.querySelector('[class*="Item_actionMenu"]')) {
             document.dispatchEvent(
                 new KeyboardEvent('keydown', {
@@ -2689,6 +2926,11 @@ class BulkSellAssistant {
                 })
             );
         }
+    }
+
+    _skip(note, closeModal = true) {
+        this._clearTransient();
+        this._dismissOpenSurfaces(closeModal);
         this.statusNote = note || '';
         // A skip the game caused (no book, no orders, no sell button) lands
         // after this click already opened an order book. Opening the next one
@@ -2702,8 +2944,9 @@ class BulkSellAssistant {
         }
         this.index++;
         this.state = 'preparing';
-        this._render();
+        // Set before the redraw: the strip tells "moving on" apart from "checking" by this timer
         this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 600);
+        this._render();
     }
 
     _stop(note) {
@@ -2732,11 +2975,16 @@ class BulkSellAssistant {
             clearTimeout(this.advanceTimeout);
             this.advanceTimeout = null;
         }
+        if (this.retryTimeout) {
+            clearTimeout(this.retryTimeout);
+            this.retryTimeout = null;
+        }
         if (this.modalPoll) {
             clearInterval(this.modalPoll);
             this.modalPoll = null;
         }
         this.statusNote = '';
+        this.statusDetail = '';
         this.confirmNote = '';
         this._confirmedStep = null;
         // The order book belongs to the step it was fetched for
