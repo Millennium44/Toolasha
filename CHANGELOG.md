@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Back Up Everything is safer
+
+A backup now includes changes made seconds earlier, no longer risks discarding a stuck save or overwriting a restore in progress, and says Failed instead of Saved when there is no database connection. Pins, goals and Philo settings also stay with their own character if you switch while they are loading.
+
 ### Faint text is readable everywhere
 
 Gray help text, labels and footers across the panels now use the game's lighter gray, and the last navy fields match the game's inputs. The Treasure popup also no longer cuts a figure when narrow, so its smallest width is a little wider.

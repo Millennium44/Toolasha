@@ -335,6 +335,37 @@ export async function listBackupStores() {
 }
 
 /**
+ * Refuse to call a backup made when the database connection is gone: `listStores` answers an empty list
+ * then, and a file with no stores would read as a successful backup.
+ * @param {Array<string>} storeNames - What `listBackupStores` answered
+ * @throws {Error} When there is no connection
+ */
+function assertConnected(storeNames) {
+    if (storeNames.length === 0 && storage.db === null) throw new Error('storage is not connected');
+}
+
+/**
+ * Land every save still waiting in memory or in storage's debounce queue, so `getAll` reads it.
+ *
+ * `flushPersistedRecords` returns early when no record handoff is pending, so a plain `storage.set`
+ * inside its 3 s debounce was never flushed and a backup taken then omitted it. A failed flush must not
+ * stop the backup: the file then lacks only what could not be written, as before.
+ * @returns {Promise<void>}
+ */
+async function landPendingWrites() {
+    // A restore holds the debounce timers so its own writes land last; flushing now would write
+    // the pre-restore value over what the restore just put there
+    if (storage.isRestoreInProgress?.()) return;
+    try {
+        // A press of Back Up must not spend the three failed flushes after which a value is dropped
+        await flushPersistedRecords({ countFailures: false });
+        await storage.flushAll?.({ countFailures: false });
+    } catch (error) {
+        console.error('[FullBackup] Flushing pending saves before the backup failed:', error);
+    }
+}
+
+/**
  * Export the whole database as JSON text, one store at a time.
  *
  * The object form held every store's values live at once and then handed the
@@ -348,8 +379,9 @@ export async function listBackupStores() {
  */
 export async function exportEverythingJSON() {
     // A record holding its newest changes in memory for a delayed write lands them first
-    await flushPersistedRecords();
+    await landPendingWrites();
     const storeNames = await listBackupStores();
+    assertConnected(storeNames);
 
     const parts = [
         `{"formatVersion":${FORMAT_VERSION},`,
@@ -378,8 +410,9 @@ export async function exportEverythingJSON() {
  *   Backup payload
  */
 export async function exportEverything() {
-    await flushPersistedRecords();
+    await landPendingWrites();
     const storeNames = await listBackupStores();
+    assertConnected(storeNames);
     const stores = {};
 
     for (const storeName of storeNames) {

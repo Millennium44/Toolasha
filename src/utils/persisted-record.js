@@ -130,9 +130,11 @@ function hookAtomicLifecycle() {
  * the cleared rows back. So: wait for the running saves to hand off, land
  * them, then wait for the queued ones.
  *
+ * @param {{countFailures?: boolean}} [options] - `countFailures: false` keeps the flush from spending
+ *   storage's give-up budget on a value that cannot be written (a backup's flush)
  * @returns {Promise<void>}
  */
-export async function flushPersistedRecords() {
+export async function flushPersistedRecords({ countFailures = true } = {}) {
     // An atomic record's delayed save has not asked storage for anything yet
     for (const record of atomicRecords) record._releaseDeferred();
     // A departing write waiting out a back-off (a character switch whose write failed) is in no record's
@@ -141,7 +143,7 @@ export async function flushPersistedRecords() {
     await Promise.allSettled(departing);
     if (pendingHandoffs.size === 0) return;
     await Promise.allSettled(Array.from(runningHandoffs.values()));
-    await storage.flushAll?.();
+    await storage.flushAll?.({ countFailures });
     await Promise.allSettled(Array.from(pendingHandoffs.values()));
 }
 

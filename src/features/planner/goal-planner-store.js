@@ -190,10 +190,13 @@ function cleanGoals(list) {
 export async function loadGoals() {
     try {
         claimGoals();
+        const owner = currentOwner();
         const previous = goalsRecord.get();
         goalsRecord.set([]);
         const readable = await goalsRecord.load();
-        if (!readable) goalsRecord.set(previous);
+        // A switch inside the read overtook it (load() answers false then): `previous` is the departed
+        // character's list, and putting it back would let the new character's load fold it into their key
+        if (!readable && currentOwner() === owner) goalsRecord.set(previous);
         return cleanGoals(goalsRecord.get());
     } catch (error) {
         console.error('[GoalPlanner] Loading goals failed:', error);

@@ -51,8 +51,19 @@ const storageMock = vi.hoisted(() => {
         stores,
         storeFor,
         unavailable: false,
+        /** key -> gate: the next read of that key answers when released, with what it saw when it started */
+        holds: new Map(),
+        hold(key, readable = true) {
+            let release;
+            const gate = new Promise((resolve) => {
+                release = resolve;
+            });
+            storageMock.holds.set(key, { gate, readable });
+            return release;
+        },
         reset() {
             stores.clear();
+            storageMock.holds.clear();
             storageMock.unavailable = false;
         },
         get: vi.fn(async (key, store = 'settings', fallback = null) => {
@@ -62,9 +73,17 @@ const storageMock = vi.hoisted(() => {
         tryGet: vi.fn(async (key, store = 'settings') => {
             if (storageMock.unavailable) return null;
             const map = storeFor(store);
-            return map.has(key) && map.get(key) != null
-                ? { found: true, value: structuredClone(map.get(key)) }
-                : { found: false, value: null };
+            const answer =
+                map.has(key) && map.get(key) != null
+                    ? { found: true, value: structuredClone(map.get(key)) }
+                    : { found: false, value: null };
+            const held = storageMock.holds.get(key);
+            if (held) {
+                storageMock.holds.delete(key);
+                await held.gate;
+                return held.readable ? answer : null;
+            }
+            return answer;
         }),
         set: vi.fn(async (key, value, store = 'settings') => {
             if (storageMock.unavailable) return false;
@@ -912,6 +931,69 @@ describe('the stored settings', () => {
             [OTHER_HRID]: 50,
         });
         expect(stored().itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
+    });
+});
+
+describe('a character switch or a newer load inside a settings read', () => {
+    const KEY = (id) => `philoCalculatorSettings_${id}`;
+    const settings = (name) => ({ filterText: name, itemCostOverrides: { [WIDGET_HRID]: name === 'A' ? 1 : 2 } });
+
+    beforeEach(() => {
+        storageMock.reset();
+        mocks.characterId = 'char1';
+    });
+
+    test("the departed character's settings are not put back for the arriving one", async () => {
+        storageMock.storeFor('settings').set(KEY('char1'), settings('A'));
+        storageMock.storeFor('settings').set(KEY('char2'), { filterText: 'B' });
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+
+        const releaseA = storageMock.hold(KEY('char1'), false);
+        const loadingA = fresh.loadSettings();
+        await Promise.resolve();
+        mocks.characterId = 'char2';
+        const releaseB = storageMock.hold(KEY('char2'));
+        const loadingB = fresh.loadSettings();
+        await Promise.resolve();
+        releaseA();
+        await loadingA;
+        releaseB();
+        await loadingB;
+
+        expect(fresh.filterText).toBe('B');
+        expect(fresh.itemCostOverrides).toEqual({});
+    });
+
+    test('an older read answering after a newer one finished does not put its values back', async () => {
+        storageMock.storeFor('settings').set(KEY('char1'), settings('A'));
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+
+        const releaseOld = storageMock.hold(KEY('char1'));
+        const loadingOld = fresh.loadSettings();
+        await Promise.resolve();
+        storageMock.storeFor('settings').set(KEY('char1'), { filterText: 'newer' });
+        await fresh.loadSettings();
+        expect(fresh.filterText).toBe('newer');
+        releaseOld();
+        await loadingOld;
+
+        expect(fresh.filterText).toBe('newer');
+    });
+
+    test('a read that cannot be made for the same character keeps what was held', async () => {
+        storageMock.storeFor('settings').set(KEY('char1'), settings('A'));
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+
+        const release = storageMock.hold(KEY('char1'), false);
+        const loading = fresh.loadSettings();
+        await Promise.resolve();
+        release();
+        await loading;
+
+        expect(fresh.filterText).toBe('A');
     });
 });
 
