@@ -18,7 +18,8 @@ const SHORT_FROM = 1000;
  * @returns {string} e.g. "715.0M"
  */
 export function shortFigure(value) {
-    return formatKMB(value);
+    // Under 1,000 the short form is the number itself; formatKMB would round 0.4 to "0"
+    return Math.abs(value) < SHORT_FROM ? formatWithSeparator(value) : formatKMB(value);
 }
 
 /**

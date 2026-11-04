@@ -8,6 +8,10 @@ describe('lab exact figures', () => {
         expect(shortFigure(5_190_259_500)).toBe('5.2B');
         expect(shortFigure(139_763_077)).toBe('139.8M');
         expect(shortFigure(950)).toBe('950');
+        // A small value keeps its decimals: the short form never rounds 0.4 to 0
+        expect(shortFigure(0.4)).toBe('0.4');
+        expect(shortFigure(-0.4)).toBe('-0.4');
+        expect(shortFigure(1500)).toBe('1.5K');
     });
 
     test('only a large, known figure gets an exact line', () => {
