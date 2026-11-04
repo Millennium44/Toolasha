@@ -5068,6 +5068,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         });
                         row.alongside.metrics = bothMetrics;
                         row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
+                        // The combined measurement has its own sampling error: the row's `noise` and `significantBy`
+                        // judge the level alone, and a card showing the combined gain needs the combined verdict
+                        row.alongside.noise = rateDeltaNoisePct(baselineResult, bothResult, playerHrid);
+                        row.alongside.significantBy = significantDeltas(row.alongside.deltas, row.alongside.noise, {
+                            baseline: baselineMetrics,
+                            upgraded: bothMetrics,
+                        });
+                        if (row.costUnpriced?.length || newlyUnpricedCosts(baselineMetrics, bothMetrics).length) {
+                            row.alongside.significantBy.profit = false;
+                        }
                     }
                 }
             }

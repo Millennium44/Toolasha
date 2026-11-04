@@ -6513,6 +6513,10 @@ describe('the grind time for combat levels', () => {
             // Melee earns as much over the same 20M: 10M + 20M reaches level 30, not the live 10.9M + 20M
             expect(row.alongside).toEqual(expect.objectContaining({ skillKey: 'meleeLevel', upgradeLevel: 30 }));
             expect(row.alongside.xpGained).toBeCloseTo(20_000_000, 0);
+            // The combined run carries its own error and verdict, for a card that shows the combined gain
+            expect(row.alongside.metrics).toBeTruthy();
+            expect(row.alongside.noise).toEqual(expect.any(Object));
+            expect(row.alongside.significantBy).toEqual(expect.any(Object));
         });
 
         test("the live character's own row starts from their live XP", async () => {

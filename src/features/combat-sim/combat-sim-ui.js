@@ -1174,6 +1174,36 @@ export function upgradeNoiseFor(result, metricKey = 'dps') {
 }
 
 /**
+ * Whether a card says its headline gain is within noise. A profit gain on a row with an unpriced running cost is a
+ * ceiling, not a measurement being judged against sampling error (the advisor forces its profit verdict to
+ * "not significant"), so "sim for longer" cannot help there and the ceiling wording is shown instead.
+ * @param {Object} row - The row the noise is read from
+ * @param {string|null} metric - 'dps', 'xp' or 'profit'; anything else has no noise to judge
+ * @param {Object} [unpricedOf] - The row carrying `costUnpriced`, when it is not `row`
+ * @returns {boolean}
+ */
+export function cardWithinNoise(row, metric, unpricedOf = row) {
+    if (!metric) return false;
+    if (metric === 'profit' && unpricedOf?.costUnpriced?.length) return false;
+    return upgradeNoiseFor(row, metric).significant === false;
+}
+
+/**
+ * The card figure saying a profit gain is only a ceiling because a running cost has no price.
+ * @param {Object} row - A result row
+ * @returns {Object|null} A card figure, or null when nothing is unpriced
+ */
+function ceilingFigure(row) {
+    if (!row?.costUnpriced?.length) return null;
+    return figure(
+        'Profit gain is a ceiling',
+        `no price for ${escapeAttribute(row.costUnpriced.join(', '))}`,
+        'warn',
+        'Counted as free in the profit, so this gain is only a ceiling.'
+    );
+}
+
+/**
  * How a stopped analysis describes itself: "stopped early — 3 of 12 candidates".
  * @param {{completed: number, total: number|null}} stopped - `results.stopped`, stamped when Stop cut the run short
  * @returns {string}
@@ -14992,24 +15022,14 @@ class CombatSimUI {
             const verdict = verdicts[verifyKeyOf(r)] || null;
             const { pending, note } = this._cardVerifyState(results, r, verifyInfo.metric, verdict);
             const others = (keys) => keys.filter((k) => k !== headKey).map((k) => figureOf(r, k));
-            const ceiling = r.costUnpriced?.length
-                ? figure(
-                      'Profit gain is a ceiling',
-                      `no price for ${escapeAttribute(r.costUnpriced.join(', '))}`,
-                      'warn',
-                      'Counted as free in the profit, so this gain is only a ceiling.'
-                  )
-                : null;
+            const ceiling = ceilingFigure(r);
             return {
                 row: r,
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figureOf(r, headKey),
-                within:
-                    metric && !(metric === 'profit' && r.costUnpriced?.length)
-                        ? upgradeNoiseFor(r, metric).significant === false
-                        : false,
+                within: cardWithinNoise(r, metric),
                 lines: [others(face), [...others(deltas), ...(ceiling ? [ceiling] : [])]],
                 facts: others(rest),
                 detailHtml:
@@ -15073,6 +15093,7 @@ class CombatSimUI {
                 hpXp: hours('Hours/0.01% EXP', 'xp', 'EXP/hr'),
                 hpProfit: hours('Hours/0.01% Profit', 'profit', 'Profit/hr'),
                 score: figure('Score', formatScore(r.score), 'neutral', scoreTitle),
+                ceiling: ceilingFigure(r),
             };
             const others = (keys) => keys.filter((k) => k !== key).map((k) => figs[k]);
             const metric = METRIC_OF[key];
@@ -15081,10 +15102,12 @@ class CombatSimUI {
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
                 headline: figs[key === 'upgrade' ? 'score' : key],
-                within: metric ? upgradeNoiseFor(e, metric).significant === false : false,
+                // The combined measurement carries its own error (see `alongside` in the advisor); a record from
+                // before that has none, and then the card makes no claim either way
+                within: cardWithinNoise(e, metric, r),
                 lines: [
                     others(['time', 'score']),
-                    others(['dps', 'xp', 'profit']),
+                    others(['dps', 'xp', 'profit', ...(ceilingFigure(r) ? ['ceiling'] : [])]),
                     others(['hpDps', 'hpXp', 'hpProfit']),
                     titles.alongText ? [figure('Along the way', escapeAttribute(titles.alongText), 'muted')] : [],
                 ],
@@ -15132,12 +15155,13 @@ class CombatSimUI {
                 name: r.candidate.description,
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figs[headKey],
-                within: ['dps', 'xp', 'profit'].includes(headKey)
-                    ? upgradeNoiseFor(r, headKey).significant === false
-                    : false,
+                within: cardWithinNoise(r, ['dps', 'xp', 'profit'].includes(headKey) ? headKey : null),
                 lines: [
                     [figure('Cost', `${UNKNOWN_TEXT}: ${escapeAttribute(reason)}`, 'warn')],
-                    ['dps', 'xp', 'profit'].filter((k) => k !== headKey).map((k) => figs[k]),
+                    [
+                        ...['dps', 'xp', 'profit'].filter((k) => k !== headKey).map((k) => figs[k]),
+                        ...(ceilingFigure(r) ? [ceilingFigure(r)] : []),
+                    ],
                 ],
                 detailHtml: this._renderUpgradeDetailCells(r, baseline, { compact: true }),
                 unpriced: true,
@@ -15219,8 +15243,11 @@ class CombatSimUI {
                 name: r.candidate.description,
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figs[headKey],
-                within: metric ? upgradeNoiseFor(r, metric).significant === false : false,
-                lines: [others(['net', 'gain', 'score']), others(['dps', 'xp', 'profit'])],
+                within: cardWithinNoise(r, metric),
+                lines: [
+                    others(['net', 'gain', 'score']),
+                    [...others(['dps', 'xp', 'profit']), ...(ceilingFigure(r) ? [ceilingFigure(r)] : [])],
+                ],
                 facts: others(['gDps', 'gXp', 'gProfit']),
                 detailHtml:
                     `<div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>` +
