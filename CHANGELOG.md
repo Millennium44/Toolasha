@@ -19,6 +19,7 @@ At phone width the battle number no longer squeezes out the zone name beside the
 ### Lighter controls on a touch phone
 
 Market item controls and Settings no longer use oversized buttons and dropdowns on a touch screen. Buttons are now 34 px tall, and Settings text boxes keep the larger text that stops iOS from zooming in.
+
 ### Upgrade results as cards on a phone
 
 Combat Sim upgrade results now show as ranked cards at phone width, with the same figures as the table, tap-to-open details, and Verify on the upgrades the table can verify. A Cards or Table switch keeps the full table a tap away, and desktop can use cards too.
