@@ -929,6 +929,7 @@ class MarketHistoryPanel {
             chip.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
                 this.watchlist = removeWatched(this.watchlist, entry.key);
+                this.resetPinButton();
                 this.renderChips();
                 this.savePrefs();
             });
@@ -987,6 +988,7 @@ class MarketHistoryPanel {
                 remove.addEventListener('click', (e) => {
                     e.stopPropagation();
                     this.watchlist = removeWatched(this.watchlist, entry.key);
+                    this.resetPinButton();
                     this.renderChips();
                     this.savePrefs();
                 });
@@ -1161,15 +1163,31 @@ class MarketHistoryPanel {
     flashPinFull() {
         const button = this.pinButton;
         if (!button) return;
-        button.textContent = `List full (${MAX_WATCHED})`;
+        button.textContent = `Full (${MAX_WATCHED})`;
         button.title = `The price panel holds ${MAX_WATCHED} items. Unpin one to make room.`;
+        // The button sits to the right of the item icon with an automatic width: a short, one-line label,
+        // held inside the screen on a narrow phone
+        const left = parseFloat(button.style.left) || 0;
+        const room = Math.max(40, window.innerWidth + window.scrollX - left - 8);
+        Object.assign(button.style, {
+            fontSize: '12px',
+            whiteSpace: 'nowrap',
+            maxWidth: `${room}px`,
+            overflow: 'hidden',
+        });
         clearTimeout(this.pinFlashTimer);
-        this.pinFlashTimer = setTimeout(() => {
-            this.pinFlashTimer = null;
-            if (this.pinButton !== button) return;
-            button.textContent = '📌';
-            button.title = 'Pin this item to the price panel';
-        }, 2500);
+        this.pinFlashTimer = setTimeout(() => this.resetPinButton(), 2500);
+    }
+
+    /** Put the pin button back to its plain label, dropping any "full" flash that is showing */
+    resetPinButton() {
+        clearTimeout(this.pinFlashTimer);
+        this.pinFlashTimer = null;
+        const button = this.pinButton;
+        if (!button) return;
+        button.textContent = '📌';
+        button.title = 'Pin this item to the price panel';
+        Object.assign(button.style, { fontSize: '16px', whiteSpace: '', maxWidth: '', overflow: '' });
     }
 
     /** @param {number|null} change - Percentage move */
@@ -1190,6 +1208,7 @@ class MarketHistoryPanel {
 
     async showItem(itemHrid, enhancementLevel) {
         this.current = { itemHrid, enhancementLevel };
+        this.resetPinButton();
         // Remembered so the panel reopens on what it was last showing rather
         // than blank; a lazy write, since showItem fires on every item click
         if (this.prefs.lastItem?.itemHrid !== itemHrid || this.prefs.lastItem?.enhancementLevel !== enhancementLevel) {
@@ -1492,6 +1511,7 @@ class MarketHistoryPanel {
                 this.flashPinFull();
                 return;
             }
+            this.resetPinButton();
             this.watchlist = addWatched(this.watchlist, key, price);
             this.renderChips();
             this.savePrefs();

@@ -12,7 +12,7 @@
  * seeded target never overwrites one somebody chose.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const store = vi.hoisted(() => ({ prices: {} }));
 
@@ -344,7 +344,7 @@ describe('a full watchlist says so where the player pressed', () => {
         panel.pinButton.click();
 
         expect(panel.watchlist).toHaveLength(99);
-        expect(panel.pinButton.textContent).toBe('List full (99)');
+        expect(panel.pinButton.textContent).toBe('Full (99)');
         expect(panel.pinButton.title).toContain('Unpin one');
         vi.advanceTimersByTime(2600);
         expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
@@ -377,5 +377,54 @@ describe('a full watchlist says so where the player pressed', () => {
         panel.isInitialized = false;
         panel.watchlist = fullList(99);
         expect(panel.watchlistFullFor('/items/new', 0)).toBe(false);
+    });
+});
+
+describe('the full flash does not outlive its moment', () => {
+    const fullList = (count) => Array.from({ length: count }, (_, i) => ({ key: `/items/item_${i}:0`, ask: 1 }));
+
+    beforeEach(() => {
+        panel.isInitialized = true;
+        panel.renderChips = () => {};
+        panel.watchlist = fullList(99);
+        panel.current = { itemHrid: '/items/cheese', enhancementLevel: 0 };
+        panel.buildOverlay();
+        panel.pinButton.click();
+    });
+
+    afterEach(() => {
+        panel.overlay.remove();
+    });
+
+    test('is a short one-line label held inside the screen', () => {
+        expect(panel.pinButton.textContent).toBe('Full (99)');
+        expect(panel.pinButton.style.whiteSpace).toBe('nowrap');
+        expect(panel.pinButton.style.maxWidth).not.toBe('');
+        panel.resetPinButton();
+        expect(panel.pinButton.style.maxWidth).toBe('');
+        expect(panel.pinButton.style.fontSize).toBe('16px');
+    });
+
+    test('goes when the market item changes', () => {
+        const proto = Object.getPrototypeOf(panel);
+        panel.chart = null;
+        // showItem is stubbed in this file; the real one sets the item first
+        const real = proto.showItem;
+        const reset = vi.spyOn(panel, 'resetPinButton');
+        try {
+            real.call(panel, '/items/milk', 0).catch(() => {});
+        } catch {
+            // the chart is not built here; only the reset before it matters
+        }
+        expect(reset).toHaveBeenCalled();
+        expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
+    });
+
+    test('goes when an unpin makes room, and on a pin that then succeeds', () => {
+        panel.watchlist = fullList(98);
+        panel.pinButton.click();
+        expect(panel.watchlist).toHaveLength(99);
+        expect(panel.pinButton.textContent).toBe('\u{1F4CC}');
+        expect(panel.pinFlashTimer).toBeNull();
     });
 });
