@@ -269,6 +269,7 @@ beforeEach(() => {
     tradeLedgerStore.records = [];
     tradeLedgerStore.states = {};
     tradeLedgerStore.isLoaded = false;
+    tradeLedgerStore._loadedFor = null;
     tradeLedgerStore.isInitialized = false;
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;

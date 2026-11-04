@@ -150,6 +150,8 @@ beforeEach(async () => {
     store.records = [];
     store.states = {};
     store.isLoaded = false;
+    store._loadedFor = null;
+    dm.characterId = 'c1';
     store._legacy = false;
     store._pullCaps = null;
     store._writtenDays = new Map();
@@ -695,5 +697,212 @@ describe('a fill while storage is in trouble', () => {
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(diskBaseline(100)).toBe(3);
+    });
+});
+
+/*
+ * The data manager moves its current id one macrotask before `character_switched` reaches the store, so an event
+ * queued for the departing character can arrive while the id is already the arriving one's. Memory is still the
+ * departing character's then. The worst outcome is a real fill that is never saved, vanishes, or lands on another
+ * character; a duplicate row is mild.
+ */
+const { buildPlacedListing } = await import('../../__fixtures__/wire/market.js');
+const c2Rows = () => [...disk.keys()].filter((key) => key.startsWith(recordKey('c2', '')));
+/** A listing as the game sends it, carrying the character it belongs to */
+const owned = (characterID, id, filled, status = '/market_listing_status/active') =>
+    buildPlacedListing({
+        id,
+        characterID,
+        itemHrid: hrid,
+        filledQuantity: filled,
+        orderQuantity: 10,
+        price: 10,
+        isSell: true,
+        status,
+        createdTimestamp: new Date().toISOString(),
+    });
+/** The data manager's id has moved to `next`; the event arrives before `character_switched` does */
+async function eventInTheGap(next, emitEvent) {
+    dm.characterId = next;
+    dm.characterData = null;
+    emitEvent();
+    await sleep(0);
+    disk.set(`tradeLedgerRecordsSplit_${next}`, { at: 1, records: 0 });
+    dm.characterData = {};
+    dm.listings = [];
+    await store.handleCharacterSwitch();
+    await sleep(80);
+    await storage.flushAll();
+}
+async function backToC1(listings) {
+    dm.characterId = 'c1';
+    dm.listings = listings;
+    await store.handleCharacterSwitch();
+    await sleep(80);
+    await storage.flushAll();
+}
+
+describe('a market event in the gap before character_switched', () => {
+    test('the departing open listing fill is stored under them, once, and not under the arriving one', async () => {
+        await openBook();
+        await eventInTheGap('c2', () => {
+            const moved = owned('c1', 100, 3);
+            event([moved, owned('c1', 300, 1)], [moved]);
+        });
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(c2Rows()).toEqual([]);
+        expect(diskBaseline(100)).toBe(3);
+        await backToC1([wire(100, 3), wire(300, 1)]);
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('the departing listing that ended in the gap is kept: nothing could find it again', async () => {
+        await openBook();
+        await eventInTheGap('c2', () => {
+            const ended = owned('c1', 100, 10, FILLED);
+            event([owned('c1', 300, 1)], [ended]);
+        });
+
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(10);
+        expect(c2Rows()).toEqual([]);
+        await backToC1([wire(300, 1)]);
+        expect(qty(store.getRecords(), 100)).toBe(10);
+    });
+
+    test('numeric ids as the game sends them: the listing names its character by number', async () => {
+        const mine = 900001;
+        dm.characterId = mine;
+        disk.set(`tradeLedgerRecordsSplit_${mine}`, { at: 1, records: 0 });
+        disk.set(`tradeLedgerState_${mine}`, { 100: baseline(0) });
+        dm.listings = [wire(100, 0)];
+        await store.initialize();
+        await sleep(80);
+        await storage.flushAll();
+        await eventInTheGap('900002', () => {
+            const ended = owned(mine, 100, 4, FILLED);
+            event([], [ended]);
+        });
+        expect(qty(disk.get(recordKey(mine, bucketOf({ t: Date.now() }))), 100)).toBe(4);
+        expect(c2Rows()).toEqual([]);
+        expect([...disk.keys()].filter((key) => key.includes('900002_'))).toEqual([]);
+    });
+
+    test('the arriving listing with no baseline yet is not counted from zero on anyone', async () => {
+        await openBook();
+        await eventInTheGap('c2', () => {
+            const placed = owned('c2', 900, 40);
+            event([placed], [placed]);
+        });
+
+        expect(c2Rows()).toEqual([]);
+        expect(qty(disk.get(dayKey(today)), 900)).toBe(0);
+        expect(qty(store.getRecords(), 900)).toBe(0);
+    });
+
+    test('a listing that names no character in the gap is not provably theirs: dropped, found again on return', async () => {
+        await openBook();
+        await eventInTheGap('c2', () => {
+            const moved = wire(100, 3);
+            event([moved], [moved]);
+        });
+
+        expect(c2Rows()).toEqual([]);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(0);
+        // Still an open listing with its old baseline: their next load finds the fill
+        await backToC1([wire(100, 3), wire(300, 1)]);
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('a snapshot in the gap is the arriving one and does not sweep the departing baselines', async () => {
+        await openBook();
+        dm.characterId = 'c2';
+        store.processListings([owned('c2', 900, 0)], true);
+        await sleep(80);
+        await storage.flushAll();
+        expect(diskBaseline(100)).toBe(0);
+        expect(diskBaseline(300)).toBe(1);
+        expect(store.states[100]).toBeTruthy();
+        expect(c2Rows()).toEqual([]);
+    });
+
+    test('a baseline save queued before the gap runs in it: it is stored under its own character', async () => {
+        await openBook();
+        dm.characterId = 'c2';
+        store.states = { ...store.states, 101: baseline(0) };
+        await store.saveStates();
+        await storage.flushAll();
+        expect(disk.get(STATE_KEY)?.[101]).toBeTruthy();
+        expect(disk.has('tradeLedgerState_c2')).toBe(false);
+    });
+
+    test('a records save queued before the gap stands down rather than filing their rows under the arriving one', async () => {
+        await openBook();
+        dm.characterId = 'c2';
+        await store.saveRecords();
+        await storage.flushAll();
+        expect(c2Rows()).toEqual([]);
+    });
+});
+
+describe('the departing-character guard never refuses a fill for good', () => {
+    test('a ledger loaded before the id existed follows the id when it appears, as it always did', async () => {
+        dm.characterId = null;
+        disk.set('tradeLedgerRecordsSplit_default', { at: 1, records: 0 });
+        disk.set('tradeLedgerState_default', { 100: baseline(0) });
+        dm.listings = [];
+        await store.initialize();
+        await sleep(80);
+        expect(store.isLoaded).toBe(true);
+        dm.characterId = 'c1';
+        disk.set('tradeLedgerRecordsSplit_c1', { at: 1, records: 0 });
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+    });
+
+    test('storage failing through the whole load still leaves the ledger recording', async () => {
+        seed({ states: { 100: baseline(0) } });
+        db.broken = true;
+        await store.initialize();
+        await sleep(80);
+        db.broken = false;
+        expect(store.isLoaded).toBe(true);
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+    });
+
+    test('a reconnect for the same character (character_initialized, no switch) records what it finds', async () => {
+        await openBook();
+        dm.listings = [wire(100, 3), wire(300, 1)];
+        dm.emit('character_initialized', { myMarketListings: dm.listings });
+        await sleep(80);
+        await storage.flushAll();
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
+        expect(qty(store.getRecords(), 100)).toBe(3);
+    });
+
+    test('a switch landing during the first load: the arriving character records from their own load', async () => {
+        seed({ states: { 100: baseline(0) } });
+        disk.set('tradeLedgerRecordsSplit_c2', { at: 1, records: 0 });
+        disk.set('tradeLedgerState_c2', { 700: baseline(0) });
+        const started = store.initialize();
+        dm.characterId = 'c2';
+        dm.characterData = {};
+        dm.listings = [];
+        await store.handleCharacterSwitch();
+        await started;
+        await sleep(80);
+        expect(store.isLoaded).toBe(true);
+        const moved = { ...wire(700, 5), characterID: 'c2' };
+        dm.listings = [moved];
+        event(dm.listings, [moved]);
+        await sleep(80);
+        await storage.flushAll();
+        expect(qty(disk.get(recordKey('c2', bucketOf({ t: Date.now() }))), 700)).toBe(5);
+        expect(qty(disk.get(dayKey(today)), 700)).toBe(0);
     });
 });

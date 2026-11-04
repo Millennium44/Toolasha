@@ -431,6 +431,14 @@ class TradeLedgerStore {
          */
         this._generation = 0;
         /**
+         * The character id `records` and `states` were loaded for, set where {@link load} marks the ledger loaded and
+         * cleared by {@link handleCharacterSwitch}. The data manager moves its current id one macrotask before it
+         * announces `character_switched`, so for that moment memory still belongs to the departing character while
+         * {@link ledgerCharId} already names the arriving one (see {@link _departing}).
+         * @type {string|null}
+         */
+        this._loadedFor = null;
+        /**
          * Whether the single key is still the record.
          *
          * Set when the split could not be written; reads and writes then go
@@ -510,6 +518,50 @@ class TradeLedgerStore {
             this._unsavedFills.set(charId, held);
         }
         for (const row of fills) held.set(fillKey(row), { row, writing: false, singleKey: this._legacy });
+    }
+
+    /**
+     * Whose ledger memory holds, when that is not the character now current.
+     *
+     * The data manager moves its id and defers `character_switched` by a macrotask, so a market event already
+     * queued for the departing character can arrive in between: the id is the arriving character's, memory is
+     * still the departing one's. Anything keyed by {@link ledgerCharId} there files the departing character's
+     * fills under the arriving one for good. A ledger loaded before login (`default`) is not a departure: the id
+     * is simply catching up, and the keys follow it as they always did.
+     * @returns {string|null} The id memory belongs to, or null when memory is the current character's or unowned
+     * @private
+     */
+    _departing() {
+        const owner = this.isLoaded ? this._loadedFor : null;
+        if (!owner || owner === 'default') return null;
+        return owner === ledgerCharId() ? null : owner;
+    }
+
+    /**
+     * Store a departing character's baselines from the gap before the switch lands (see {@link _departing}).
+     *
+     * {@link saveStates} reads the current id and stands down on the switch, which is right for every other
+     * moment and would drop this one, leaving the baseline behind a row that is already stored (the listing would
+     * be found filled again on the character's return). So the departing character's own key is written directly,
+     * from the memory that still belongs to them, and only once their rows are stored: a baseline never runs ahead of
+     * its row. Folded inside the write, so a baseline another writer stored meanwhile is kept.
+     * @param {string} owner - The departing character
+     * @param {Promise<*>|null} [fillsSaved] - The writes of the fills this baseline accounts for
+     * @returns {Promise<boolean>} Whether a write was issued
+     * @private
+     */
+    async _saveDepartingStates(owner, fillsSaved = null) {
+        const states = this.states;
+        try {
+            if (fillsSaved) await fillsSaved;
+            if (this._unsavedFills.has(owner)) return false;
+            return await storage.set(charKey(STATE_BASE, owner), states, LEDGER_STORE, false, {
+                fold: (now, held) => (now && typeof now === 'object' ? mergeStates(now, held) : held),
+            });
+        } catch (error) {
+            console.error('[TradeLedger] Failed to save the departing character listing states:', error);
+            return false;
+        }
     }
 
     /**
@@ -995,6 +1047,7 @@ class TradeLedgerStore {
             );
         }
         this.isLoaded = true;
+        this._loadedFor = charId;
         // A ledger at its cap evicts, and records its floor for sync, on the
         // load too: day records a pull wrote back before the floor was recorded
         // would otherwise wait for this character's next fill to go
@@ -1147,6 +1200,9 @@ class TradeLedgerStore {
      * @private
      */
     _repairOverRecorded(openListings = null, capsEpoch = this._capsEpoch) {
+        // Keyed by the id read below, over memory that is the departing character's for a moment before a switch
+        // lands (see _departing): a cut there would be filed under the arriving character
+        if (this._departing()) return Promise.resolve(0);
         const charId = ledgerCharId();
         const started = this._generation;
         const current = () => this._generation === started && ledgerCharId() === charId;
@@ -1399,7 +1455,23 @@ class TradeLedgerStore {
             return;
         }
 
-        const { fills, states, changed } = detectFills(this.states, listings, { snapshot, changedIds });
+        // In the gap before `character_switched` (see _departing) memory is the departing character's and the id is
+        // not. A snapshot there is the arriving character's and would sweep the departing one's baselines. A live
+        // event is read only for listings that name the departing character: one that names another, or none, is
+        // not provably theirs, and the arriving character's own listings are found by their snapshot at load.
+        const departing = this._departing();
+        let batch = listings;
+        if (departing) {
+            if (snapshot) return;
+            batch = (Array.isArray(listings) ? listings : []).filter(
+                (listing) => listing && String(listing.characterID) === String(departing)
+            );
+            if (batch.length === 0) return;
+        }
+        // Fills belong to whoever memory belongs to, never to whoever the id says by the time this runs
+        const owner = departing || ledgerCharId();
+
+        const { fills, states, changed } = detectFills(this.states, batch, { snapshot, changedIds });
         this.states = states;
 
         let dirty = null;
@@ -1418,9 +1490,15 @@ class TradeLedgerStore {
             }
 
             this.records = after;
-            this._noteFills(ledgerCharId(), fills);
+            this._noteFills(owner, fills);
         }
         const writes = this._unsavedFills.size > 0 ? this._flushUnsaved() : null;
+        if (departing) {
+            // The flush above writes the rows under their own character. A save keyed by the current id must not
+            // run from here; the day records' cap bookkeeping waits for that character's next save
+            if (changed) this._saveDepartingStates(departing, writes);
+            return;
+        }
         if (dirty) this.saveRecords(dirty);
         if (changed || this._statesOwed) {
             this.saveStates(writes);
@@ -1457,6 +1535,9 @@ class TradeLedgerStore {
     async saveRecords(buckets) {
         const wanted = buckets ? new Set(buckets) : null;
         const run = async () => {
+            // Memory is the departing character's for a moment before the switch lands (see _departing): a save
+            // keyed by the arriving id would file their records under it. Their fills are already written
+            if (this._departing()) return false;
             // Captured before the first read and used for every key, probe and
             // write alike: a switch landing in the read-merge-write below made
             // the probe one character's and the write another's, folding the
@@ -1644,6 +1725,9 @@ class TradeLedgerStore {
         const run = async () => {
             if (fillsSaved) await fillsSaved;
             if (this._generation !== owner) return false;
+            // Memory is the departing character's for a moment before the switch lands: store theirs under theirs
+            const departing = this._departing();
+            if (departing) return this._saveDepartingStates(departing);
             // Same capture-before-the-read as saveRecords: the probe and the
             // write have to name the same character.
             const charId = ledgerCharId();
@@ -1738,6 +1822,7 @@ class TradeLedgerStore {
         this.records = [];
         this.states = {};
         this.isLoaded = false;
+        this._loadedFor = null;
         this._legacy = false;
         await this.initialize();
     }
