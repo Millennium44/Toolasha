@@ -45,7 +45,7 @@ beforeEach(async () => {
     onClassCallback = undefined;
     document.body.innerHTML = '';
 
-    ({ default: draggableModals } = await import('./draggable-modals.js'));
+    ({ draggableModals } = await import('./draggable-modals.js'));
     await draggableModals.initialize();
 
     modalBox = document.createElement('div');
@@ -99,5 +99,73 @@ describe('pointer capture, so a release outside the browser window still ends th
         release();
 
         expect(release_).toHaveBeenCalled();
+    });
+});
+
+describe('double-click on the drag bar resets that modal', () => {
+    const dbl = (el) => el.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const doubleClickBar = () => {
+        press(120, 120);
+        release();
+        press(120, 120);
+        release();
+        dbl(bar());
+    };
+    const getStorage = async () => (await import('../../core/storage.js')).default;
+    const lastSaved = async () => {
+        const calls = (await getStorage()).set.mock.calls;
+        return calls[calls.length - 1]?.[1];
+    };
+
+    test('removes this modal from the saved map, keeps the others, and clears the transform', async () => {
+        draggableModals.offsets = { 'Buy Now': { dx: 40, dy: 30 }, Other: { dx: 5, dy: 6 } };
+        press(120, 120);
+        move(200, 180);
+        release();
+        expect(modalBox.style.transform).toContain('translate(');
+
+        doubleClickBar();
+
+        expect(modalBox.style.transform).toBe('');
+        expect(draggableModals.offsets['Buy Now']).toBeUndefined();
+        expect(await lastSaved()).toEqual({ Other: { dx: 5, dy: 6 } });
+    });
+
+    test('a press that was dragged does not reset', () => {
+        press(120, 120);
+        move(200, 180);
+        release();
+        dbl(bar());
+        expect(draggableModals.offsets['Buy Now']).toBeDefined();
+        expect(modalBox.style.transform).toContain('translate(');
+    });
+
+    test('a double-click on a button or text inside the modal does nothing', () => {
+        const button = document.createElement('button');
+        contentEl.appendChild(button);
+        draggableModals.offsets = { 'Buy Now': { dx: 40, dy: 30 } };
+        dbl(button);
+        dbl(contentEl.querySelector('h2'));
+        expect(draggableModals.offsets['Buy Now']).toBeDefined();
+    });
+
+    test('after disable() neither a reset nor a drag writes the emptied map', async () => {
+        const storage = await getStorage();
+        draggableModals.disable();
+        storage.set.mockClear();
+        press(120, 120);
+        move(200, 180);
+        release();
+        dbl(bar());
+        expect(storage.set).not.toHaveBeenCalled();
+    });
+
+    test('a failed write does not throw', async () => {
+        const storage = await getStorage();
+        storage.set.mockRejectedValueOnce(new Error('quota'));
+        draggableModals.offsets = { 'Buy Now': { dx: 40, dy: 30 } };
+        expect(() => doubleClickBar()).not.toThrow();
+        await Promise.resolve();
+        expect(draggableModals.offsets['Buy Now']).toBeUndefined();
     });
 });

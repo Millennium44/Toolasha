@@ -141,7 +141,7 @@ class DraggableModals {
         // contentEl is a plain wrapper so prepending places the bar at the top visually.
         const bar = document.createElement('div');
         bar.className = 'mwi-drag-bar';
-        bar.title = 'Drag to move';
+        bar.title = 'Drag to move, double-click to reset';
         bar.style.cssText = [
             'width: 100%',
             'padding: 4px 0',
@@ -167,7 +167,7 @@ class DraggableModals {
                 this._applyTransform(modalBox, clamped.dx, clamped.dy);
                 if (clamped.dx !== dx || clamped.dy !== dy) {
                     this.offsets[title] = clamped;
-                    storage.set(STORAGE_KEY, this.offsets, STORE_NAME);
+                    this._save();
                 }
             });
         }
@@ -178,10 +178,12 @@ class DraggableModals {
         let startDx = 0;
         let startDy = 0;
         let naturalRect = null;
+        let pressMoved = false;
 
         const onPointerDown = (e) => {
             if (e.button !== 0) return;
             dragging = true;
+            pressMoved = false;
             startMouseX = e.clientX;
             startMouseY = e.clientY;
 
@@ -208,6 +210,7 @@ class DraggableModals {
 
         const onPointerMove = (e) => {
             if (!dragging) return;
+            if (Math.abs(e.clientX - startMouseX) >= 4 || Math.abs(e.clientY - startMouseY) >= 4) pressMoved = true;
             const rawDx = startDx + (e.clientX - startMouseX);
             const rawDy = startDy + (e.clientY - startMouseY);
             const { dx, dy } = this._clampOffset(naturalRect, rawDx, rawDy);
@@ -224,16 +227,47 @@ class DraggableModals {
             document.removeEventListener('pointercancel', onPointerUp);
             releaseCapture(bar, e);
 
+            // After disable() the map is empty, and saving it would overwrite every
+            // remembered position with this one entry
+            if (!this.initialized) return;
             const t = new DOMMatrix(window.getComputedStyle(modalBox).transform);
             const dx = isNaN(t.m41) ? 0 : t.m41;
             const dy = isNaN(t.m42) ? 0 : t.m42;
             this.offsets[title] = { dx, dy };
-            storage.set(STORAGE_KEY, this.offsets, STORE_NAME);
+            this._save();
+        };
+
+        // Double-click on the drag bar only (never the modal's own inputs, buttons or text) puts this
+        // modal type back where the game centers it. Each press of the double-click already ran the
+        // drag handlers above, so the entry they saved is removed here, after them. A double-click whose
+        // second press was dragged is a drag, not a reset.
+        const onDoubleClick = () => {
+            if (pressMoved || !this.initialized) return;
+            modalBox.style.transform = '';
+            if (title in this.offsets) {
+                delete this.offsets[title];
+                this._save();
+            }
         };
 
         // A finger works like a cursor, and the bar's gesture is a drag, not a scroll
         bar.style.touchAction = 'none';
         bar.addEventListener('pointerdown', onPointerDown);
+        bar.addEventListener('dblclick', onDoubleClick);
+    }
+
+    /**
+     * Write the whole remembered map. The map in memory is the source of truth, so a failed write
+     * only means this session's change is not kept; the next successful save writes it all again.
+     */
+    _save() {
+        try {
+            Promise.resolve(storage.set(STORAGE_KEY, this.offsets, STORE_NAME)).catch((error) => {
+                console.warn('[Draggable Modals] Could not save modal positions:', error);
+            });
+        } catch (error) {
+            console.warn('[Draggable Modals] Could not save modal positions:', error);
+        }
     }
 
     disable() {

@@ -3976,7 +3976,7 @@ export const settingsGroups = {
                 label: 'Draggable modals',
                 type: 'checkbox',
                 default: true,
-                help: 'Makes game popup modals draggable. Position is remembered per modal type across sessions.',
+                help: 'Makes game popup modals draggable. Position is remembered per modal type across sessions. Double-click the dotted bar at the top of a modal to put that modal type back in the center.',
             },
             formatting_useKMBFormat: {
                 id: 'formatting_useKMBFormat',
