@@ -816,6 +816,14 @@ function registerFeatures() {
             category: 'Market',
             module: Market.expectedValueCalculator,
             async: true,
+            // The `itemTooltip_expectedValue` setting is the tooltip row only. The
+            // calculator also prices openable containers for net worth, inventory
+            // badges, combat stats, the loot log and task values, none of which
+            // check that setting, so gating the module on it left those figures
+            // depending on whether some other panel happened to start it. It
+            // always runs; the tooltip section checks the setting itself. No
+            // liveStop either, so switching the tooltip row off never tears it down.
+            customCheck: () => true,
         },
         {
             key: 'tooltipConsumables',

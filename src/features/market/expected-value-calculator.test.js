@@ -1228,6 +1228,28 @@ describe('cache invalidation on pricing changes', () => {
         expect(mocks.marketListeners.length).toBeGreaterThan(0);
     });
 
+    // Guard, not a regression test: the calculator never read this setting, so it passes on the older code
+    // too. It pins the contract that the setting is the tooltip row alone (tooltip-prices.js checks it) and
+    // that switching it never reaches the calculator, which net worth, badges, combat stats, the loot log
+    // and task values read whatever the tooltip setting says.
+    test('the tooltip setting is not one the calculator listens to, so toggling it leaves it up with its cache', async () => {
+        await expectedValueCalculator.initialize();
+        expect(expectedValueCalculator.isInitialized).toBe(true);
+        const before = expectedValueCalculator.getCachedValue(CHEST_HRID);
+        expect(before).not.toBeNull();
+
+        expect(mocks.settingChangeCallbacks.get('itemTooltip_expectedValue')?.size ?? 0).toBe(0);
+        for (const value of [false, true, false]) {
+            mocks.settings.itemTooltip_expectedValue = value;
+            mocks.settingChangeCallbacks.get('itemTooltip_expectedValue')?.forEach((cb) => cb());
+        }
+
+        expect(expectedValueCalculator.isInitialized).toBe(true);
+        expect(expectedValueCalculator.getCachedValue(CHEST_HRID)).toBe(before);
+        expect(expectedValueCalculator.calculateExpectedValue(CHEST_HRID)).not.toBeNull();
+        delete mocks.settings.itemTooltip_expectedValue;
+    });
+
     test('cleanup unregisters every setting listener and the market listener', () => {
         expectedValueCalculator.cleanup();
 

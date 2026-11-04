@@ -11,6 +11,8 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     settings: {},
+    /** What the expected value calculator stand-in answers: `initialized`, and a figure per container hrid */
+    ev: { initialized: false, values: {} },
     initData: null,
     itemDetails: {},
     itemPrices: {}, // itemHrid -> {ask, bid}
@@ -125,7 +127,13 @@ vi.mock('../guild/guild-token-value.js', () => ({
     },
 }));
 vi.mock('../market/expected-value-calculator.js', () => ({
-    default: { isInitialized: false, calculateExpectedValue: () => null },
+    default: {
+        get isInitialized() {
+            return mocks.ev.initialized;
+        },
+        calculateExpectedValue: (hrid) =>
+            hrid in mocks.ev.values ? { expectedValue: mocks.ev.values[hrid], isPartial: false } : null,
+    },
 }));
 vi.mock('./networth-cache.js', () => ({
     default: { get: () => null, set: () => {}, isPartial: () => false, checkAndInvalidate: () => {} },
@@ -203,6 +211,7 @@ const { _resetMarketValues } = await import('../../utils/market-values.js');
 
 beforeEach(() => {
     mocks.settings = {};
+    mocks.ev = { initialized: false, values: {} };
     mocks.initData = { houseRoomDetailMap: {} };
     mocks.itemDetails = {};
     mocks.itemPrices = {};
@@ -453,6 +462,31 @@ describe('calculateItemValue', () => {
         mocks.itemDetails['/items/crate'] = { isOpenable: true };
         const value = await calculateItemValue({ itemHrid: '/items/crate', enhancementLevel: 0, count: 1 });
         expect(value).toBe(0); // expectedValueCalculator mocked as uninitialized
+    });
+
+    // A guard: net worth never read the tooltip setting, only whether the calculator is up. It pins that the
+    // figure is the same either way now that the registry starts the calculator whatever the setting says.
+    test.each([true, false])(
+        'an unpriced container is worth the same with the expected value tooltip setting %s',
+        async (tooltipRow) => {
+            mocks.settings.itemTooltip_expectedValue = tooltipRow;
+            mocks.itemDetails['/items/crate'] = { isOpenable: true };
+            mocks.ev = { initialized: true, values: { '/items/crate': 4000 } };
+
+            const value = await calculateItemValue({ itemHrid: '/items/crate', enhancementLevel: 0, count: 3 });
+
+            expect(value).toBe(12000);
+        }
+    );
+
+    test('a container read before the calculator is up stays unpriced, never a made-up figure', async () => {
+        mocks.settings.itemTooltip_expectedValue = false;
+        mocks.itemDetails['/items/crate'] = { isOpenable: true };
+        mocks.ev = { initialized: false, values: { '/items/crate': 4000 } };
+
+        const value = await calculateItemValue({ itemHrid: '/items/crate', enhancementLevel: 0, count: 3 });
+
+        expect(value).toBe(0);
     });
 
     test('an item with no market data and no craftable recipe falls back to shop cost', async () => {
