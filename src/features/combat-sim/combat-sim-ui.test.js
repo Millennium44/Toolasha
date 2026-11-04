@@ -11913,6 +11913,63 @@ describe('the Triggers option', () => {
         mocks.triggerEstimate = null;
     });
 
+    describe('the open state of the section', () => {
+        const settle = async () => {
+            for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const stored = async () => {
+            const { readScoped } = await import('../../utils/character-key.js');
+            return readScoped('combatSimTriggerChoices', 'settings', null);
+        };
+
+        test('a header click writes only the open flag, not the six choices from this tab’s memory', async () => {
+            const { writeScoped } = await import('../../utils/character-key.js');
+            await writeScoped('combatSimTriggerChoices', { precision: 'precise', scope: 'party', minGain: 2 });
+            ui.buildPanel();
+            await settle();
+            // another tab changed the stored choices after this one read them
+            await writeScoped('combatSimTriggerChoices', { precision: 'quick', scope: 'me', minGain: 1 });
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            await settle();
+            expect(await stored()).toEqual({ precision: 'quick', scope: 'me', minGain: 1, open: true });
+        });
+
+        test('saving a choice never writes open, so a failed first read cannot write a closed section back', async () => {
+            ui.buildPanel();
+            await settle();
+            const precision = ui.panel.querySelector('#mwi-csim-trigger-precision');
+            precision.value = 'quick';
+            precision.dispatchEvent(new Event('change', { bubbles: true }));
+            await settle();
+            expect(await stored()).not.toHaveProperty('open');
+        });
+
+        test('a pulled open state is taken after the first read, even once the header has been clicked', async () => {
+            const { writeScoped } = await import('../../utils/character-key.js');
+            ui.buildPanel();
+            await settle();
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            await settle();
+            expect(ui._triggerOpen).toBe(true);
+            await writeScoped('combatSimTriggerChoices', { open: false });
+            await ui._restoreTriggerChoices();
+            expect(ui._triggerOpen).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-trigger-body').style.display).toBe('none');
+            await writeScoped('combatSimTriggerChoices', { open: true });
+            await ui._restoreTriggerChoices();
+            expect(ui._triggerOpen).toBe(true);
+        });
+
+        test('a click made before the first read finished is not undone by it', async () => {
+            const { writeScoped } = await import('../../utils/character-key.js');
+            await writeScoped('combatSimTriggerChoices', { open: false });
+            ui.buildPanel();
+            ui.panel.querySelector('#mwi-csim-trigger-header').click();
+            await settle();
+            expect(ui._triggerOpen).toBe(true);
+        });
+    });
+
     test('Tune is a button of its own: it runs the optimizer without Analyze, whatever Include says', async () => {
         ui.buildPanel();
         selectZone();

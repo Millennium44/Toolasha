@@ -3273,8 +3273,8 @@ class CombatSimUI {
         this._upgradeRunning = false;
         // The Tune triggers section: open or closed, and what its last result said (shown on the closed header)
         this._triggerOpen = false;
-        this._triggerOpenKnown = false;
         this._triggerTouched = false;
+        this._triggerRestored = false;
         this._triggerRunning = false;
         this._triggerSummary = '';
         this._detachDrag = null;
@@ -4064,10 +4064,10 @@ class CombatSimUI {
         this.panel.querySelectorAll('[data-upgrade-mode]').forEach((box) => this._wireModeBox(box));
         this.panel.querySelector('#mwi-csim-trigger-header')?.addEventListener('click', () => {
             this._triggerOpen = !this._triggerOpen;
-            this._triggerOpenKnown = true;
-            this._triggerTouched = true;
+            if (!this._triggerRestored) this._triggerTouched = true;
             this._applyTriggerSectionState();
-            this._saveTriggerChoices();
+            // Only the open flag is written: the six choices are not rewritten from what this tab remembers
+            void this._saveTriggerOpen();
             if (this._triggerOpen) this._refreshCachedTriggerResult();
         });
         this.panel.querySelector('#mwi-csim-trigger-run')?.addEventListener('click', () => this._onTuneTriggers());
@@ -10082,8 +10082,8 @@ class CombatSimUI {
         this._shownTriggerResult = null;
         this._shownTriggerRun = null;
         this._triggerOpen = false;
-        this._triggerOpenKnown = false;
         this._triggerTouched = false;
+        this._triggerRestored = false;
         this._triggerRunning = false;
         this._triggerSummary = '';
         this._goldVerifyRows = null;
@@ -10732,15 +10732,31 @@ class CombatSimUI {
                     ...(Number.isFinite(minGain) ? { minGain } : {}),
                     ...(objective !== undefined ? { objective } : {}),
                     ...(conditions !== undefined ? { conditions } : {}),
-                    // Whether the Tune triggers section is open; an older build keeps it untouched in the record
-                    // (written only once the stored value was read or the player toggled it, so an early save
-                    // of another choice cannot close a section the record says is open)
-                    ...(this._triggerOpenKnown ? { open: this._triggerOpen === true } : {}),
                 }),
                 'settings'
             );
         } catch (error) {
             console.error('[CombatSimUI] Failed to save trigger choices:', error);
+        }
+    }
+
+    /**
+     * Persist whether the Tune triggers section is open, and nothing else: folded into the newest stored
+     * record, so another tab's or a pull's choices are left as they are.
+     * @private
+     */
+    async _saveTriggerOpen() {
+        try {
+            const open = this._triggerOpen === true;
+            const scopedKey = characterKey(TRIGGER_CHOICES_KEY);
+            await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
+            await storage.update(
+                scopedKey,
+                (saved) => ({ ...(saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}), open }),
+                'settings'
+            );
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the Tune triggers open state:', error);
         }
     }
 
@@ -10752,10 +10768,13 @@ class CombatSimUI {
         try {
             const saved = await readScoped(TRIGGER_CHOICES_KEY, 'settings', null);
             if (!this.panel) return;
-            this._triggerOpenKnown = true;
             // No record, or one from before the section existed (no `open`): it starts closed. A header
-            // click made before this read finished is the player's latest word and stays
+            // click made before this first read finished is the player's latest word and stays; after that a
+            // pulled value is taken. A failed read looks like no record, so nothing here ever writes `open`:
+            // only the header does
             if (!this._triggerTouched) this._triggerOpen = saved?.open === true;
+            this._triggerTouched = false;
+            this._triggerRestored = true;
             this._applyTriggerSectionState();
             if (!saved || typeof saved !== 'object') return;
             const apply = (id, value, valid) => {
