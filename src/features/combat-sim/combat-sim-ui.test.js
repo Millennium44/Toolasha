@@ -14044,6 +14044,84 @@ describe('verifying close calls on fresh seeds', () => {
             expect(block().querySelector('#mwi-csim-trigger-verify-btn')).toBeNull();
         });
 
+        test('a verify whose result left the screen still gives the latch back', async () => {
+            await runTriggers();
+            mocks.triggerVerifyImpl = () => {
+                // the result on screen was replaced (a failed Tune, a clear) while the verify ran
+                ui._shownTriggerResult = null;
+                return { rows: [{ key: 'triggers', verdict: 'confirmed', mean: 1, se: 1, seeds: 8 }], unit: 'points' };
+            };
+            block().querySelector('#mwi-csim-trigger-verify-btn').click();
+            await settle();
+            expect(ui._upgradeRunning).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-trigger-run').disabled).toBe(false);
+        });
+
+        test('a Tune that fails loading the players clears the old result first and leaves nothing stuck', async () => {
+            await runTriggers();
+            expect(block().querySelector('#mwi-csim-trigger-verify-btn')).not.toBeNull();
+            vi.spyOn(ui, '_loadTriggerParty').mockRejectedValueOnce(new Error('profiles unavailable'));
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            await ui._onTuneTriggers();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-box').innerHTML).toBe('');
+            expect(ui.panel.querySelector('#mwi-csim-trigger-verify-btn')).toBeNull();
+            expect(ui._shownTriggerResult).toBeNull();
+            expect(ui._upgradeRunning).toBe(false);
+            expect(ui._triggerRunning).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toBe(
+                'Trigger tuning failed: profiles unavailable'
+            );
+            // and the panel still runs things
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 1 };
+            const runs = mocks.triggerRuns.length;
+            await ui._onTuneTriggers();
+            expect(mocks.triggerRuns.length).toBe(runs + 1);
+        });
+
+        test('code after the latch that throws still releases it', async () => {
+            ui.panel.querySelector('#mwi-csim-upgrade-progress').remove();
+            vi.spyOn(console, 'error').mockImplementation(() => {});
+            vi.spyOn(ui, '_setTriggerSummary').mockImplementation(() => {
+                throw new Error('boom');
+            });
+            selectZone();
+            await ui._onTuneTriggers();
+            expect(ui._upgradeRunning).toBe(false);
+            expect(ui._triggerRunning).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-trigger-run').disabled).toBe(false);
+        });
+
+        test('a Tune that ends pays a view change held back during it and drops the cards busy note', async () => {
+            await runTriggers();
+            ui._viewRedrawOwed = true;
+            const redraw = vi.spyOn(ui, '_redrawForViewChange').mockImplementation(() => {});
+            ui._cardNotes = { results: {}, byRow: new Map([['row', { kind: 'busy', text: 'Another run is going.' }]]) };
+            await ui._onTuneTriggers();
+            expect(redraw).toHaveBeenCalled();
+            expect(ui._cardNotes.byRow.size).toBe(0);
+        });
+
+        test('a Tune that ends refreshes the cost line', async () => {
+            let calls = 0;
+            mocks.triggerEstimate = () => {
+                calls++;
+                return {
+                    tunables: [{}],
+                    wholeParty: false,
+                    condition: { slots: 0, counts: [], sims: 0 },
+                    thresholdSims: 700,
+                    total: 700,
+                };
+            };
+            await runTriggers();
+            for (let i = 0; i < 8; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(ui.panel.querySelector('#mwi-csim-trigger-estimate').textContent).toBe(
+                'About 700 fight sims (1 trigger row).'
+            );
+            expect(calls).toBeGreaterThan(1);
+            mocks.triggerEstimate = null;
+        });
+
         test('a new analysis during the verify discards its outcome', async () => {
             await runTriggers();
             const shown = ui._shownTriggerResult;

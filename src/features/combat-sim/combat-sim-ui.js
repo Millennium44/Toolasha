@@ -3272,6 +3272,7 @@ class CombatSimUI {
         this._triggerOpen = false;
         this._triggerOpenKnown = false;
         this._triggerTouched = false;
+        this._triggerRunning = false;
         this._triggerSummary = '';
         this._detachDrag = null;
         // What the Bestiary plan's grouped save last saw stored, so it writes only the key that changed
@@ -10073,6 +10074,7 @@ class CombatSimUI {
         this._triggerOpen = false;
         this._triggerOpenKnown = false;
         this._triggerTouched = false;
+        this._triggerRunning = false;
         this._triggerSummary = '';
         this._goldVerifyRows = null;
         this._orderVerifyRows = null;
@@ -11244,7 +11246,7 @@ class CombatSimUI {
             stopBtn.style.display = 'none';
             if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
             // A view change during the run was held back; a run that drew its own results is already in the view
-            if (this._viewRedrawOwed && this._stillSameCharacter(ownerId)) this._redrawForViewChange();
+            if (this._stillSameCharacter(ownerId) && latchGen === this._analysisGen) this._afterRun();
         }
 
         // Close calls get a second look on fresh seeds when the player asked for it. Never after Stop, a failure
@@ -11529,6 +11531,12 @@ class CombatSimUI {
             return;
         }
 
+        const progressEl = panel.querySelector('#mwi-csim-upgrade-progress');
+        const runBtn = panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = panel.querySelector('#mwi-csim-upgrade-stop');
+        const triggerBox = panel.querySelector('#mwi-csim-trigger-box');
+        const tuneBtn = panel.querySelector('#mwi-csim-trigger-run');
+
         this._upgradeRunning = true;
         this._triggerRunning = true;
         this._analysisGen = (this._analysisGen || 0) + 1;
@@ -11539,63 +11547,48 @@ class CombatSimUI {
             this._upgradeRunning = false;
             this._triggerRunning = false;
         };
-        const tuneBtn = panel.querySelector('#mwi-csim-trigger-run');
-        if (tuneBtn) tuneBtn.disabled = true;
-        this._shownTriggerResult = null;
-        let party;
+        let started = false;
+        // Everything after the latch is inside the try, so the finally always gives it back
         try {
-            party = await this._loadTriggerParty(choices.playerIndex);
-        } catch (error) {
-            release();
-            if (tuneBtn) tuneBtn.disabled = false;
-            console.error('[CombatSimUI] Failed to load players for trigger tuning:', error);
-            if (isCurrent()) this._setStatus('Trigger tuning failed: ' + error.message);
-            return;
-        }
-        if (!isCurrent()) {
-            release();
-            if (tuneBtn) tuneBtn.disabled = false;
-            return;
-        }
-        const playerIndex = party.playerIndex;
-        if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
-            release();
-            if (tuneBtn) tuneBtn.disabled = false;
-            this._setStatus('No player data available. Configure a simulation first.');
-            return;
-        }
-        // The editor's DTOs are live: editing the Configure loadout mid-run would change the build
-        // under later candidate sims. Run on private copies, keep the live objects for Apply, and
-        // fingerprint each build so Apply can tell it was edited in place.
-        const liveDTOs = party.liveDTOs;
-        const runContext = this._triggerRunContext(choices, party);
-        const communityBuffs = getCommunityBuffs();
-        const runSignature = triggerRunSignature({
-            ...choices,
-            playerIndex,
-            dtoSignatures: runContext.signatures,
-            communityBuffs,
-            pricing: triggerPricingStamp(),
-        });
-        const playerDTOs = structuredClone(party.simDTOs);
+            if (tuneBtn) tuneBtn.disabled = true;
+            // The previous result goes first: its Verify and Copy must not stay live while this run loads
+            this._shownTriggerResult = null;
+            if (triggerBox) {
+                triggerBox.innerHTML = '';
+                delete triggerBox.dataset.cached;
+            }
+            this._setTriggerSummary(undefined);
 
-        const progressEl = panel.querySelector('#mwi-csim-upgrade-progress');
-        const runBtn = panel.querySelector('#mwi-csim-upgrade-run');
-        const stopBtn = panel.querySelector('#mwi-csim-upgrade-stop');
-        const triggerBox = panel.querySelector('#mwi-csim-trigger-box');
-        progressEl.style.display = 'block';
-        const fillEl = panel.querySelector('#mwi-csim-upgrade-progress-fill');
-        if (fillEl) fillEl.style.width = '0%';
-        // Only the section's own result is replaced: the Analyze results table is left as it is
-        triggerBox.innerHTML = '';
-        delete triggerBox.dataset.cached;
-        this._setTriggerSummary(undefined);
-        runBtn.style.display = 'none';
-        stopBtn.style.display = 'inline-block';
-        this._upgradeAborted = false;
-        const eta = createEtaTracker();
+            const party = await this._loadTriggerParty(choices.playerIndex);
+            if (!isCurrent()) return;
+            const playerIndex = party.playerIndex;
+            if (!party.simDTOs?.length || !party.simDTOs[playerIndex]) {
+                this._setStatus('No player data available. Configure a simulation first.');
+                return;
+            }
+            // The editor's DTOs are live: editing the Configure loadout mid-run would change the build
+            // under later candidate sims. Run on private copies, keep the live objects for Apply, and
+            // fingerprint each build so Apply can tell it was edited in place.
+            const liveDTOs = party.liveDTOs;
+            const runContext = this._triggerRunContext(choices, party);
+            const communityBuffs = getCommunityBuffs();
+            const runSignature = triggerRunSignature({
+                ...choices,
+                playerIndex,
+                dtoSignatures: runContext.signatures,
+                communityBuffs,
+                pricing: triggerPricingStamp(),
+            });
+            const playerDTOs = structuredClone(party.simDTOs);
 
-        try {
+            if (progressEl) progressEl.style.display = 'block';
+            const fillEl = panel.querySelector('#mwi-csim-upgrade-progress-fill');
+            if (fillEl) fillEl.style.width = '0%';
+            if (runBtn) runBtn.style.display = 'none';
+            if (stopBtn) stopBtn.style.display = 'inline-block';
+            this._upgradeAborted = false;
+            const eta = createEtaTracker();
+
             const playerNames = {};
             for (const info of this._editor?.getPlayerInfo?.() || []) playerNames[info.hrid] = info.name;
             const runEstimate = estimateTriggerRun({
@@ -11610,6 +11603,7 @@ class CombatSimUI {
                 playerNames,
             });
             this._setStatus(`Tuning triggers: ${describeTriggerEstimate(runEstimate)} Stop cancels at any point.`);
+            started = true;
             const result = await runTriggerOptimization(
                 {
                     gameData,
@@ -11647,7 +11641,7 @@ class CombatSimUI {
                 verify: { canVerify: canVerifyTriggerResult(result) },
             });
             this._enhanceCollapsibles(triggerBox);
-            this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext);
+            this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext, choices);
             this._setTriggerSummary(result);
             if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
             if (!isCurrent()) return;
@@ -11663,18 +11657,44 @@ class CombatSimUI {
         } catch (error) {
             console.error('[CombatSimUI] Trigger tuning failed:', error);
             if (isCurrent()) {
-                // Not a Stop: make sure sims already queued do not keep running behind the re-enabled button
-                this._upgradeAborted = true;
-                cancelActiveSimulations();
+                if (started) {
+                    // Not a Stop: make sure sims already queued do not keep running behind the re-enabled button
+                    this._upgradeAborted = true;
+                    cancelActiveSimulations();
+                }
                 this._setStatus('Trigger tuning failed: ' + error.message);
             }
         } finally {
             release();
-            progressEl.style.display = 'none';
-            runBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
+            if (progressEl) progressEl.style.display = 'none';
+            if (runBtn) runBtn.style.display = 'inline-block';
+            if (stopBtn) stopBtn.style.display = 'none';
             if (tuneBtn) tuneBtn.disabled = false;
+            if (isCurrent() && latchGen === this._analysisGen) this._afterRun();
         }
+    }
+
+    /**
+     * What every run owes the panel when it ends: a view change held back during it, the "Another run is
+     * going" notes on cards (true only while it was), and a fresh look at the Tune triggers section's cost line
+     * and remembered result, which a run can leave blank or out of date.
+     * @private
+     */
+    _afterRun() {
+        if (!this.panel || this._isBusy()) return;
+        let notesCleared = false;
+        const byRow = this._cardNotes?.byRow;
+        if (byRow) {
+            for (const [row, note] of byRow) {
+                if (note?.kind === 'busy') {
+                    byRow.delete(row);
+                    notesCleared = true;
+                }
+            }
+        }
+        if (this._viewRedrawOwed) this._redrawForViewChange();
+        else if (notesCleared && this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+        void this._refreshCachedTriggerResult();
     }
 
     /**
@@ -11687,7 +11707,7 @@ class CombatSimUI {
      *   build fingerprint changed
      * @private
      */
-    _wireTriggerResultButtons(result, gameData, playerDTOs, runContext = null) {
+    _wireTriggerResultButtons(result, gameData, playerDTOs, runContext = null, choices = null) {
         this._shownTriggerResult = result || null;
         this._wireTriggerVerify(result);
         const applyBtn = this.panel.querySelector('#mwi-csim-trigger-apply');
@@ -14231,7 +14251,7 @@ class CombatSimUI {
             outcome = { rows: [], metric, unit: '', seeds: 0, hoursPerSeed: 0, stopped: false, error: error.message };
         } finally {
             // Only the run that set the flags clears them: after a character switch the rebuilt panel owns them
-            if (current()) {
+            if (this._stillSameCharacter(ownerId) && gen === this._analysisGen) {
                 this._upgradeRunning = false;
                 this._setVerifyBusy(false);
                 // A card's "Verifying" ends with the run, before the redraw below draws the verdict
@@ -14441,7 +14461,9 @@ class CombatSimUI {
             console.error('[CombatSimUI] Trigger verify failed:', error);
             outcome = { rows: [], metric: '', unit: 'points', stopped: false, error: error.message };
         } finally {
-            if (current()) {
+            // The latch is given back whenever this verify still owns it (same character, no newer run), even if
+            // the result it measured is no longer the one on screen: otherwise nothing could ever run again
+            if (this._stillSameCharacter(ownerId) && gen === this._analysisGen) {
                 this._upgradeRunning = false;
                 this._setVerifyBusy(false);
             }
