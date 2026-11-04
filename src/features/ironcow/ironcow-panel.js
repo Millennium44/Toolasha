@@ -48,6 +48,7 @@ import {
     cowbellPricing,
     hoursForBells,
     loopWarnings,
+    maxBatch,
     offlineWindow,
 } from './starfruit-loop.js';
 import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
@@ -278,6 +279,8 @@ class IronCowFarmPanel {
         this.batchHours = ASSUMED_OFFLINE_HOURS;
         /** Which unit the duration box is being typed in: 'h' or 'd' */
         this.batchUnit = 'h';
+        /** True while the helper is sized by the Max button (all held fruit) rather than by a duration */
+        this.queueMax = false;
         this.queueRefs = null;
         this.busy = false;
         this.loaded = null;
@@ -368,6 +371,7 @@ class IronCowFarmPanel {
         this._lifeGen++;
         this._loadGen++;
         this.loaded = null;
+        this.queueMax = false;
         this._remove();
     }
 
@@ -423,6 +427,7 @@ class IronCowFarmPanel {
         if (unedited('batch')) {
             if (window?.hours > 0) this.batchHours = window.hours;
             this.batchUnit = 'h';
+            this.queueMax = false;
         }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
@@ -1092,6 +1097,9 @@ class IronCowFarmPanel {
             return holder;
         }
 
+        // In Max the duration is an output (how long the held fruit keeps the queue busy), so the boxes follow it
+        if (batch.max) this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+
         // Shown in the unit the select is on: batchHours is always hours, and the select remembers 'd'
         const shownDuration = this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours;
         const hoursBox = numberBox(round1(shownDuration), (raw) => this._setBatchHours(Number(raw), 'hours'));
@@ -1125,7 +1133,23 @@ class IronCowFarmPanel {
         for (const preset of QUEUE_PRESETS) {
             durationRow.appendChild(button(preset.label, () => this._setBatchHours(preset.hours, 'preset')));
         }
+        // Max: every Star Fruit held, no foraging. Disabled (with the reason in view, since a title
+        // does not show on a touch screen) when there is nothing for it to use.
+        const maxInfo = maxBatch(loop, state);
+        const maxButton = button('Max', () => this._setMax());
+        maxButton.title = maxInfo.batch
+            ? `Decompose all ${formatWithSeparator(maxInfo.batch.max.fruitHeld)} ${maxInfo.batch.max.fruitName} you ` +
+              'hold, coinify the essence, and forage nothing.'
+            : maxInfo.reason;
+        maxButton.disabled = !maxInfo.batch;
+        if (!maxInfo.batch) maxButton.style.opacity = '0.5';
+        durationRow.appendChild(maxButton);
         holder.appendChild(durationRow);
+        if (!maxInfo.batch) {
+            holder.appendChild(
+                span(`Max: ${maxInfo.reason}`, { display: 'block', color: COLORS.textDim, fontSize: '11px' })
+            );
+        }
 
         const bellsBox = numberBox(hasBellPrice ? Math.round(bellsForHours(loop, this.batchHours) || 0) : '', (raw) =>
             this._setBatchBells(Number(raw))
@@ -1184,6 +1208,13 @@ class IronCowFarmPanel {
      * @private
      */
     _batchFor(hours, state = this._queueState) {
+        if (this.queueMax) {
+            const { batch: maxed } = maxBatch(this.loop, state);
+            if (maxed) return maxed;
+            // The fruit Max was sized to is gone (or the loop changed): fall back to the duration path
+            // rather than keep a Max that no longer describes anything
+            this.queueMax = false;
+        }
         const batch = balanceBatch(this.loop, hours);
         if (!batch) return null;
         return applyHoldings(batch, this.loop, state);
@@ -1208,7 +1239,9 @@ class IronCowFarmPanel {
                 'Decompose',
                 formatWithSeparator(batch.decomposeActions),
                 COLORS.good,
-                `Sized to the ${formatWithSeparator(Math.floor(batch.fruit))} ${fruit} the forage leg yields.`
+                batch.max
+                    ? `Uses ${formatWithSeparator(Math.floor(batch.fruit))} of the ${fruit} you hold.`
+                    : `Sized to the ${formatWithSeparator(Math.floor(batch.fruit))} ${fruit} the forage leg yields.`
             ),
             line(
                 'Coinify',
@@ -1244,6 +1277,19 @@ class IronCowFarmPanel {
      */
     _creditLines(batch) {
         const lines = [];
+        if (batch.max) {
+            const { fruitName, fruitHeld, leftoverFruit, essenceHeld } = batch.max;
+            const left =
+                leftoverFruit > 0 ? `, ${formatWithSeparator(leftoverFruit)} left over (under one decompose)` : '';
+            const essence = essenceHeld > 0 ? ` plus ${formatWithSeparator(essenceHeld)} essence held` : '';
+            lines.push(
+                span(`Max: all ${formatWithSeparator(fruitHeld)} ${fruitName}${essence}, no foraging${left}.`, {
+                    display: 'block',
+                    color: COLORS.textDim,
+                    fontSize: '11px',
+                })
+            );
+        }
         for (const credit of batch.credits || []) {
             lines.push(
                 span(
@@ -1268,6 +1314,7 @@ class IronCowFarmPanel {
     _setBatchHours(hours, source) {
         if (!Number.isFinite(hours) || hours <= 0) return;
         this._edits.batch++;
+        this.queueMax = false;
         const inDays = source === 'hours' && this.batchUnit === 'd';
         this.batchHours = Math.min(MAX_QUEUE_HOURS, inDays ? hours * HOURS_PER_DAY : hours);
 
@@ -1299,10 +1346,60 @@ class IronCowFarmPanel {
     }
 
     /**
+     * Size the helper to every Star Fruit held, from the inventory as it is right now (the card was
+     * drawn against an older reading), and bring the duration and bell boxes with it.
+     * @private
+     */
+    _setMax() {
+        const state = this._safeState();
+        const { batch, reason } = maxBatch(this.loop, state);
+        if (!batch) {
+            this.queueMax = false;
+            this._render();
+            this._status(`Max: ${reason}`);
+            return;
+        }
+        this._edits.batch++;
+        this._queueState = state;
+        this.queueMax = true;
+        this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+        this._syncFields(batch);
+    }
+
+    /**
+     * Put the duration and bell boxes at the batch's own figures and redraw the counts.
+     * @param {Object} batch - From `_batchFor` or `maxBatch`
+     * @private
+     */
+    _syncFields(batch) {
+        const refs = this.queueRefs;
+        if (!refs) return;
+        refs.hoursBox.value = String(
+            round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours)
+        );
+        if (refs.hasBellPrice) refs.bellsBox.value = String(Math.round(batch.bells || 0));
+        this._drawBatch(batch);
+    }
+
+    /**
      * Hand the current batch to the guided walk.
      * @private
      */
     _walkQueue() {
+        if (this.queueMax) {
+            // The card was drawn some time ago; walk what is held now, and show the player the same figures
+            const state = this._safeState();
+            const { batch: fresh, reason } = maxBatch(this.loop, state);
+            if (!fresh) {
+                this.queueMax = false;
+                this._render();
+                this._status(`Max no longer applies: ${reason}`);
+                return;
+            }
+            this._queueState = state;
+            this.batchHours = Math.min(MAX_QUEUE_HOURS, fresh.hours);
+            this._syncFields(fresh);
+        }
         const batch = this._batchFor(this.batchHours);
         if (!startQueueWalk(this.loop, batch)) {
             this._status('Nothing to walk — cost the loop first.');

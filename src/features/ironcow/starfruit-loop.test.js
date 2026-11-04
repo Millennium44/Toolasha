@@ -124,6 +124,7 @@ const {
     offlineWindow,
     balanceBatch,
     applyHoldings,
+    maxBatch,
     bellsForHours,
     hoursForBells,
     LOW_GOLD_BUFFER,
@@ -725,5 +726,57 @@ describe('a bulk decompose is shared out over the fruit it swallows', () => {
             expect(Number.isFinite(loop.hoursPerFruit)).toBe(true);
             expect(Number.isFinite(loop.goldPerHour)).toBe(true);
         }
+    });
+});
+
+describe('Max: all the held fruit, no foraging', () => {
+    const held = (starfruitHeld, essenceHeld = 0) => ({ starfruitHeld, essenceHeld, holdingsCredited: true });
+
+    test('forages nothing, decomposes every fruit and coinifies what that makes plus the essence held', async () => {
+        const loop = await calculateStarfruitLoop();
+        const { batch } = maxBatch(loop, held(1000, 25));
+
+        expect(batch.forageActions).toBe(0);
+        expect(batch.decomposeActions).toBe(1000);
+        // 1,000 fruit x 3 essence + 25 held = 3,025 essence, ten to an action
+        expect(batch.coinifyActions).toBe(302);
+        expect(batch.hours).toBeCloseTo(1000 / 180 + 302 / 180, 6);
+        expect(batch.max.leftoverFruit).toBe(0);
+    });
+
+    test('never asks for more fruit than is held: a bulk-2 decompose leaves the odd fruit over', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), decomposeBulk: 2 };
+        const { batch } = maxBatch(loop, held(1001));
+
+        expect(batch.decomposeActions).toBe(500);
+        expect(batch.decomposeActions * 2).toBeLessThanOrEqual(1001);
+        expect(batch.max.leftoverFruit).toBe(1);
+    });
+
+    test('coinify never takes more essence than decompose is expected to make plus what is held', async () => {
+        const loop = await calculateStarfruitLoop();
+        for (const fruit of [1, 3, 7, 99, 1234]) {
+            for (const essence of [0, 1, 9, 10, 11]) {
+                const { batch } = maxBatch(loop, held(fruit, essence));
+                expect(batch.coinifyActions * loop.coinifyBulk).toBeLessThanOrEqual(fruit * 3 + essence);
+            }
+        }
+    });
+
+    test('no fruit, less than one decompose, an unreadable inventory and an uncosted loop all say why', async () => {
+        const loop = await calculateStarfruitLoop();
+        expect(maxBatch(loop, held(0, 500))).toEqual({ batch: null, reason: 'You hold no Star Fruit to use.' });
+        const bulk = { ...loop, decomposeBulk: 2 };
+        expect(maxBatch(bulk, held(1)).batch).toBeNull();
+        expect(maxBatch(bulk, held(1)).reason).toContain('less than one decompose');
+        expect(maxBatch(loop, null).batch).toBeNull();
+        expect(maxBatch(loop, { starfruitHeld: 50, holdingsCredited: false }).batch).toBeNull();
+        expect(maxBatch(null, held(5)).batch).toBeNull();
+        expect(maxBatch({ missing: ['x'] }, held(5)).batch).toBeNull();
+    });
+
+    test('bells are null, not zero, without a cowbell price', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), bellPrice: null };
+        expect(maxBatch(loop, held(100)).batch.bells).toBeNull();
     });
 });

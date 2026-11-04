@@ -248,6 +248,7 @@ afterEach(() => {
     ironCowFarmPanel.busy = false;
     ironCowFarmPanel.batchHours = 16;
     ironCowFarmPanel.batchUnit = 'h';
+    ironCowFarmPanel.queueMax = false;
 });
 
 describe('drawing', () => {
@@ -1082,6 +1083,131 @@ describe('the queue helper', () => {
 
         expect(walk.started).toHaveLength(1);
         expect(walk.started[0]).toMatchObject({ forageActions: 1600, decomposeActions: 1600, coinifyActions: 480 });
+    });
+
+    describe('Max', () => {
+        const withHrids = () =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+            });
+        const buttonNamed = (label) =>
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((element) =>
+                element.textContent.startsWith(label)
+            );
+
+        test('uses all the fruit held with no foraging and fills the hours and bells boxes', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 25, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            buttonNamed('Max').click();
+
+            const hoursNow = 1000 / 180 + 302 / 180;
+            expect(boxes()[0].value).toBe(String(Math.round(hoursNow * 10) / 10));
+            expect(Number(boxes()[1].value)).toBe(Math.round(((302 * 15_000 * 0.7 - 1000 * 375) / 950_000) * 1) || 0);
+            expect(text()).toContain('Max: all 1,000 Star Fruit');
+            expect(text()).not.toContain(FAILED);
+            buttonNamed('Walk it').click();
+            expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 1000, coinifyActions: 302 });
+        });
+
+        test('reads the inventory as it is when pressed, not as the card was drawn', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            plan.state = character({ starfruitHeld: 400, essenceHeld: 0, holdingsCredited: true });
+            buttonNamed('Max').click();
+            expect(text()).toContain('all 400 Star Fruit');
+
+            // and again at Walk: fruit spent in between must not be walked
+            plan.state = character({ starfruitHeld: 250, essenceHeld: 0, holdingsCredited: true });
+            buttonNamed('Walk it').click();
+            expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 250 });
+        });
+
+        test('with no fruit the button is disabled and the reason is in view', async () => {
+            plan.state = character({ starfruitHeld: 0, essenceHeld: 500, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            expect(buttonNamed('Max').disabled).toBe(true);
+            expect(text()).toContain('You hold no Star Fruit to use.');
+        });
+
+        test('fruit gone by the time of the press says so and keeps the duration path', async () => {
+            plan.state = character({ starfruitHeld: 100, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            plan.state = character({ starfruitHeld: 0, holdingsCredited: true });
+            buttonNamed('Max').click();
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+            expect(text()).toContain('You hold no Star Fruit to use.');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('fruit gone before Walk stops the walk rather than walking stale counts', async () => {
+            plan.state = character({ starfruitHeld: 100, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            plan.state = character({ starfruitHeld: 0, holdingsCredited: true });
+            buttonNamed('Walk it').click();
+            expect(walk.started).toHaveLength(0);
+        });
+
+        test('editing the duration or the bells leaves Max', async () => {
+            plan.state = character({ starfruitHeld: 1000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+            expect(ironCowFarmPanel.queueMax).toBe(true);
+
+            buttonNamed('1 week').click();
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+            buttonNamed('Max').click();
+            boxes()[1].value = '5';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+        });
+
+        test('a pile bigger than one action can hold becomes several presses', async () => {
+            plan.state = character({ starfruitHeld: 250_000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            // 250,000 decomposes = 3 presses; 75,000 coinifies = 1
+            expect(buttonNamed('Walk it').textContent).toContain('4 presses');
+        });
+
+        test('without a cowbell price the bell box stays blank and Max still works', async () => {
+            plan.state = character({ starfruitHeld: 600, holdingsCredited: true });
+            loop.result = { ...withHrids(), bellPrice: null, bellPricing: { price: null }, bells: null };
+            loop.pricing = { price: null };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(boxes()[1].value).toBe('');
+            expect(text()).toContain('Max: all 600');
+        });
     });
 
     test('an uncosted loop offers no counts to type in', async () => {
