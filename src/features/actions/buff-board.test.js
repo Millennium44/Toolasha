@@ -219,6 +219,27 @@ describe('the board renders at all', () => {
     });
 });
 
+describe("a row's source line", () => {
+    const sourceLine = (key) => [...card(key).querySelector('[data-buff-row]').children].map((el) => el.textContent);
+
+    test('is dropped when it only repeats the card title, kept when it adds the name', () => {
+        buffBoardPanel.show();
+        // Equipment card, "Equipment" source: name and size only
+        expect(sourceLine('equipment')).toHaveLength(2);
+        expect(card('equipment').querySelector('[data-buff-row]').textContent).not.toMatch(/Equipment.*Equipment/s);
+        // House card, "House Efficiency" source: still named
+        expect(sourceLine('house')).toContain('House Efficiency');
+    });
+
+    test('sits tight under its own row, with rows set apart from one another', () => {
+        buffBoardPanel.show();
+        const row = card('house').querySelector('[data-buff-row]');
+        expect(row.style.rowGap).toBe('1px');
+        expect(row.style.borderTop).not.toBe('');
+        expect(row.style.padding).toBe('5px 0px');
+    });
+});
+
 describe('an empty source is left out', () => {
     test('a source with no buffs for this action type gets no card', () => {
         delete game.characterData.guildActionTypeBuffsMap;

@@ -364,16 +364,22 @@ export function showActionType(actionTypeHrid) {
 /**
  * One buff, as three columns: what it boosts, by how much, and what granted it.
  * @param {Object} buff - A buff entry
+ * @param {string} [sectionLabel] - The card's title; a source line that only repeats it is left out
  * @returns {HTMLElement}
  */
-function buffRow(buff) {
+function buffRow(buff, sectionLabel = '') {
     const line = document.createElement('div');
     line.dataset.buffRow = String(buff?.typeHrid || '');
+    // The source line hugs its own row (small row gap), and each row is set apart from the next by a rule
+    // and padding, so the grey line cannot read as the label of the row below it
     Object.assign(line.style, {
         display: 'grid',
         gridTemplateColumns: '1fr auto',
-        gap: '8px',
+        columnGap: '8px',
+        rowGap: '1px',
         alignItems: 'baseline',
+        padding: '5px 0',
+        borderTop: '1px solid rgba(255, 255, 255, 0.07)',
     });
 
     const name = document.createElement('span');
@@ -385,11 +391,16 @@ function buffRow(buff) {
     size.style.color = ACCENT;
     size.style.whiteSpace = 'nowrap';
 
-    const from = document.createElement('div');
-    from.textContent = buffSourceName(buff?.uniqueHrid);
-    Object.assign(from.style, { color: MUTED, fontSize: '11px', gridColumn: '1 / -1', marginTop: '-2px' });
+    line.append(name, size);
 
-    line.append(name, size, from);
+    const sourceName = buffSourceName(buff?.uniqueHrid);
+    // Under a card titled with the same source ("Equipment" over "Equipment") the line says nothing new
+    if (sourceName.trim().toLowerCase() !== String(sectionLabel).trim().toLowerCase()) {
+        const from = document.createElement('div');
+        from.textContent = sourceName;
+        Object.assign(from.style, { color: MUTED, fontSize: '11px', gridColumn: '1 / -1' });
+        line.append(from);
+    }
     return line;
 }
 
@@ -415,7 +426,7 @@ export const buffBoardPanel = createPanel({
         for (const source of sources) {
             const card = panelCard(body, source.label);
             card.dataset.buffSource = source.key;
-            for (const buff of source.buffs) card.appendChild(buffRow(buff));
+            for (const buff of source.buffs) card.appendChild(buffRow(buff, source.label));
         }
 
         if (shown === COMBAT_ACTION_TYPE && !sources.some((source) => source.key === 'consumable')) {
