@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings panel is easier to use on a touch screen
+
+On a touch screen the settings switches, color pickers, number boxes and dropdowns are now finger-sized, and tapping a switch's label or its row flips it instead of needing the small box. Desktop is unchanged.
+
 ### Expected value setting only controls the tooltip
 
 Turning off "Show expected value for openable containers" now only hides the tooltip row. Net worth, combat stats and task values for crates and chests no longer change partway through a session depending on which panel you opened first.
