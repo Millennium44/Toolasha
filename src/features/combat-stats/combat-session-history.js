@@ -52,11 +52,18 @@ const STORE_NAME = 'combatStats';
 /**
  * How many runs to keep.
  *
- * Each carries a loot map and a consumable list, so this is kilobytes rather
- * than bytes per entry. Twenty is more sessions than anybody scrolls back
- * through and small enough not to be a thing that grows forever.
+ * Each carries a loot map and a consumable list. Measured from the collector's
+ * snapshot shape: a solo run is about 6 KB of JSON and a five-player run with sixty
+ * loot slots and eight consumables each about 64 KB, so fifty runs is at worst a
+ * little over 3 MB uncompressed in the store (about 0.3 MB gzipped in the sync
+ * payload, which gzips before it chunks). Twenty was a guess made before the
+ * gold-sources row and the loot panel's Combined view both read this list; older
+ * runs fell off the back while the panel still offered "Combined".
+ *
+ * An older build folds a longer list down to its newest twenty the next time it
+ * reads or writes it, which is what it always kept.
  */
-export const MAX_SESSIONS = 20;
+export const MAX_SESSIONS = 50;
 
 /**
  * The identity a stored session is merged on: the key `withSession` stamps,

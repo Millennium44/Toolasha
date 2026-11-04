@@ -41,7 +41,7 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
         data?.players?.length && data?.combatStartTime
             ? `${data.players.map((p) => p.name).join(',')}|${data.combatStartTime}`
             : null,
-    MAX_SESSIONS: 20,
+    MAX_SESSIONS: 50,
 }));
 vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: {

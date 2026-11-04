@@ -135,6 +135,7 @@ vi.mock('./goal-planner-context.js', () => ({
 }));
 
 const { goalPlannerPanel } = await import('./goal-planner-ui.js');
+const { MAX_GOALS } = await import('./goal-planner-store.js');
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 const text = () => document.getElementById('toolasha-goal-planner-panel')?.textContent ?? '';
@@ -1574,5 +1575,77 @@ describe('pricing again after the market-history cool-down', () => {
         expect(plannerContext.builds).toBe(2);
         expect(text()).toContain('Pricing failed');
         vi.restoreAllMocks();
+    });
+});
+
+describe('a full goal list', () => {
+    const seedGoals = (count) => {
+        store.data.goalPlannerGoals_char1 = Array.from({ length: count }, (_, index) => ({
+            id: `g${index}`,
+            type: 'gold',
+            amount: 1_000_000 + index,
+            createdAt: index,
+        }));
+    };
+    const openForm = async () => {
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        goalPlannerPanel.formType = 'gold';
+        goalPlannerPanel._render();
+    };
+
+    test('the press that finds no room says so under the form, keeps the form open and replans nothing', async () => {
+        seedGoals(MAX_GOALS);
+        await openForm();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+        expect(text()).toContain(`The goal list is full (${MAX_GOALS} goals). Remove one to add another.`);
+        expect(goalPlannerPanel.formType).toBe('gold');
+        expect(goalPlannerPanel.goals).toHaveLength(MAX_GOALS);
+        expect(plannerContext.builds).toBe(0);
+        expect(store.data.goalPlannerGoals_char1).toHaveLength(MAX_GOALS);
+    });
+
+    test('the press that takes the last place adds, closes the form and shows no warning', async () => {
+        seedGoals(MAX_GOALS - 1);
+        await openForm();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+        expect(text()).not.toContain('goal list is full');
+        expect(goalPlannerPanel.formType).toBeNull();
+        expect(goalPlannerPanel.goals).toHaveLength(MAX_GOALS);
+    });
+
+    test('removing a goal, or switching form, takes the warning away', async () => {
+        seedGoals(MAX_GOALS);
+        await openForm();
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+        expect(text()).toContain('goal list is full');
+
+        await goalPlannerPanel.removeGoal('g0');
+        expect(text()).not.toContain('goal list is full');
+
+        // Full again, then the form chip is pressed: the old warning must not outlive the form
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+        goalPlannerPanel.formType = 'gold';
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 8_000_000_000 });
+        expect(text()).toContain('goal list is full');
+        const chip = [...document.querySelectorAll('#toolasha-goal-planner-panel button')].find(
+            (button) => button.textContent === 'Gold target'
+        );
+        chip.click();
+        expect(goalPlannerPanel.formType).toBeNull();
+        expect(text()).not.toContain('goal list is full');
+    });
+
+    test('a repeat of a goal already on a full list is not reported as full', async () => {
+        seedGoals(MAX_GOALS);
+        await openForm();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 1_000_000 });
+
+        expect(text()).not.toContain('goal list is full');
     });
 });

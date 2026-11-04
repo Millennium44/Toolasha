@@ -24,7 +24,7 @@ const { default: storage } = await import('./storage.js');
 const { createCuratedRecord, mergeById } = await import('../utils/persisted-record.js');
 const { mergePins } = await import('../utils/item-picker-pins.js');
 const { mergeWatchlists, entryKey, WATCHLIST_KEY } = await import('../utils/watchlist.js');
-const { addGoal, removeGoal, loadGoals, _resetGoalsRecord, GOALS_KEY } =
+const { addGoal, removeGoal, loadGoals, _resetGoalsRecord, GOALS_KEY, MAX_GOALS } =
     await import('../features/planner/goal-planner-store.js');
 
 /**
@@ -575,25 +575,26 @@ describe('a threeWay record whose save has not landed yet', () => {
         });
 
         test('over the cap: the fold keeps every goal, a new one is refused, and none drops out', async () => {
-            const full = Array.from({ length: 40 }, (_, i) => goal(`g${i}`, i + 1));
-            seed({ [GOALS_A]: full.slice(0, 39) });
+            // Amounts start above the two the test adds (100 and 200), so they never clash with a stored goal
+            const full = Array.from({ length: MAX_GOALS }, (_, i) => goal(`g${i}`, i + 1000));
+            seed({ [GOALS_A]: full.slice(0, MAX_GOALS - 1) });
             press(() => addGoal(goal('mine', 100)));
             await vi.advanceTimersByTimeAsync(10);
-            // Another tab took the fortieth place while this one's was waiting
+            // Another tab took the last place while this one's was waiting
             data.set(GOALS_A, full);
             await settle();
-            expect(data.get(GOALS_A)).toHaveLength(41);
+            expect(data.get(GOALS_A)).toHaveLength(MAX_GOALS + 1);
 
             press(() => addGoal(goal('late', 200)));
             await settle();
-            expect(data.get(GOALS_A)).toHaveLength(41);
+            expect(data.get(GOALS_A)).toHaveLength(MAX_GOALS + 1);
             expect(goalAmounts()).not.toContain(200);
 
             press(() => removeGoal('g0'));
             await settle();
-            expect(data.get(GOALS_A)).toHaveLength(40);
+            expect(data.get(GOALS_A)).toHaveLength(MAX_GOALS);
             expect(goalAmounts()).toContain(100);
-            expect(goalAmounts()).toContain(40);
+            expect(goalAmounts()).toContain(1000 + MAX_GOALS - 1);
         });
     });
 

@@ -67,7 +67,15 @@ import {
 import { shortDuration } from '../../utils/overlay-format.js';
 import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
 import { prepareRouteInput, routeCacheKey, runRouteSearch, ROUTE_OBJECTIVES } from './leveling-route.js';
-import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
+import {
+    loadGoals,
+    tryAddGoal,
+    MAX_GOALS,
+    removeGoal,
+    loadSnapshot,
+    saveSnapshot,
+    saveCombatGear,
+} from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
 import { GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
@@ -371,6 +379,8 @@ class GoalPlannerPanel {
         this.pendingReplan = false;
         this.pendingReprice = false;
         this.formType = null;
+        /** Why the last press of Add did nothing (the list is full), shown under the form it was pressed in */
+        this.addNotice = null;
         this.loaded = null;
         this.generation = 0;
         /**
@@ -469,6 +479,7 @@ class GoalPlannerPanel {
         this.pendingReprice = false;
         this.loaded = null;
         this.formType = null;
+        this.addNotice = null;
         this.goals = [];
         this.context = null;
         this.plans = [];
@@ -713,9 +724,17 @@ class GoalPlannerPanel {
      */
     async addGoal(raw) {
         const current = this._currentOperation();
-        const goals = await addGoal(raw);
+        const { goals, outcome } = await tryAddGoal(raw);
         if (!current()) return;
         this.goals = goals;
+        if (outcome === 'full') {
+            // Nothing was added, so nothing to replan: say so under the form that was pressed, and leave
+            // the form open (closing it would read as the goal having been taken)
+            this.addNotice = `The goal list is full (${MAX_GOALS} goals). Remove one to add another.`;
+            this._render();
+            return;
+        }
+        this.addNotice = null;
         this.formType = null;
         this._render();
         await this.replan();
@@ -743,6 +762,8 @@ class GoalPlannerPanel {
         const goals = await removeGoal(goalId);
         if (!current()) return;
         this.goals = goals;
+        // A place has opened up, so "the list is full" no longer holds
+        this.addNotice = null;
         this.plans = this.plans.filter((plan) => plan.goalId !== goalId);
         // Dropping the state is what stops a running search: it checks it is still the goal's own
         this.routes.delete(goalId);
@@ -1011,6 +1032,7 @@ class GoalPlannerPanel {
         for (const [type, label] of Object.entries(GOAL_TYPES)) {
             const chip = button(label, () => {
                 this.formType = this.formType === type ? null : type;
+                this.addNotice = null;
                 this._render();
             });
             if (this.formType === type) {
@@ -1026,6 +1048,9 @@ class GoalPlannerPanel {
             } catch (error) {
                 console.error('[GoalPlanner] Drawing the goal form failed:', error);
                 section.appendChild(span('The form could not be drawn.', { display: 'block', color: COLORS.bad }));
+            }
+            if (this.addNotice) {
+                section.appendChild(span(this.addNotice, { display: 'block', color: COLORS.bad, marginTop: '4px' }));
             }
         }
 

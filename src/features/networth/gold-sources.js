@@ -109,7 +109,7 @@ import { MARKET_TAX } from '../../utils/profit-constants.js';
  * passed in rather than imported so this module stays free of storage, and
  * mirrored here so a caller that forgets still reports an honest limit.
  */
-export const DEFAULT_SESSION_CAP = 20;
+export const DEFAULT_SESSION_CAP = 50;
 
 /** Gathering action types, whose loot log entries are gathered output */
 export const GATHERING_ACTION_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -180,7 +180,7 @@ export const SOURCE_META = {
             'Coins and cowbells spent rerolling tasks, booked on the day each task left the board — the tracker ' +
             'learns a task’s final reroll count only then, so a reroll paid late one night can land on the next ' +
             'day. Cowbells count at the value net worth gives them, and not at all when net worth leaves them ' +
-            'out. Only tasks that left the board while the tracker was listening; the last five hundred are kept.',
+            'out. Only tasks that left the board while the tracker was listening; the last two thousand are kept.',
     },
     chests: {
         label: 'Chests opened',
