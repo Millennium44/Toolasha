@@ -319,7 +319,14 @@ export function estimateTriggerRun({
           })
         : { slots: 0, counts: [], sims: 0 };
     const thresholdSims = tunables.length > 0 ? estimateTriggerSims(tunables.length, precisionKey) : 0;
-    return { tunables, wholeParty, condition, thresholdSims, total: Math.max(1, thresholdSims + condition.sims) };
+    return {
+        tunables,
+        wholeParty,
+        searchConditions: searchConditions === true,
+        condition,
+        thresholdSims,
+        total: Math.max(1, thresholdSims + condition.sims),
+    };
 }
 
 /**

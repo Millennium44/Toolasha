@@ -694,6 +694,23 @@ describe('describeTriggerEstimate', () => {
         );
     });
 
+    test('whole party says party, not player', () => {
+        expect(describeTriggerEstimate({ ...estimate(0, 0), wholeParty: true })).toBe(
+            'No tunable trigger rows for this party.'
+        );
+    });
+
+    test('a ticked condition search with nothing to search says no slot, with or without rows', () => {
+        expect(describeTriggerEstimate({ ...estimate(2, 500), searchConditions: true })).toBe(
+            'About 500 fight sims (2 trigger rows). Condition search: no slot to search.'
+        );
+        expect(describeTriggerEstimate({ ...estimate(0, 0), searchConditions: true })).toBe(
+            'No tunable trigger rows for this player. Condition search: no slot to search.'
+        );
+        // not ticked: nothing is said about it
+        expect(describeTriggerEstimate(estimate(2, 500))).toBe('About 500 fight sims (2 trigger rows).');
+    });
+
     test('no estimate says nothing', () => {
         expect(describeTriggerEstimate(null)).toBe('');
     });

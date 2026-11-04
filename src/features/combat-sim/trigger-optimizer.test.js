@@ -303,6 +303,7 @@ describe('runTriggerOptimization', () => {
             // one Fireball row per tuned player
             expect(estimate.tunables).toHaveLength(scope === 'party' ? 2 : 1);
             expect(estimate.wholeParty).toBe(scope === 'party');
+            expect(estimate.searchConditions).toBe(false);
             expect(estimate.thresholdSims).toBeGreaterThan(0);
         }
     });
