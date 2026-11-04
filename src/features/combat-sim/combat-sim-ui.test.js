@@ -12447,13 +12447,16 @@ describe('verifying close calls on fresh seeds', () => {
             draw([orderRow('B → A')]);
             expect(section().querySelector('#mwi-csim-order-verify').disabled).toBe(false);
 
-            ui._restoredUpgradeAt = Date.now();
             draw([orderRow('B → A')]);
+            ui._restoredUpgradeAt = Date.now();
+            ui._rememberedResults = ui._upgradeResultsData;
+            ui._renderUpgradeResults(ui._upgradeResultsData);
             const restored = section().querySelector('#mwi-csim-order-verify');
             expect(restored.disabled).toBe(true);
             expect(restored.title).toBe('Re-run the analysis to verify');
 
             ui._restoredUpgradeAt = null;
+            ui._rememberedResults = null;
             draw([orderRow('B → A')], { context: undefined });
             expect(section().querySelector('#mwi-csim-order-verify').disabled).toBe(true);
         });
@@ -12886,7 +12889,9 @@ describe('verifying close calls on fresh seeds', () => {
 
         test('a remembered run cannot be verified from the table either', () => {
             ui._restoredUpgradeAt = Date.now();
-            ui._renderUpgradeResults({ baseline: BASELINE, results: [closeGold('R1')], food: null, context: CONTEXT });
+            const remembered = { baseline: BASELINE, results: [closeGold('R1')], food: null, context: CONTEXT };
+            ui._rememberedResults = remembered;
+            ui._renderUpgradeResults(remembered);
             expect(ui.panel.querySelector('#mwi-csim-gold-verify').disabled).toBe(true);
             expect(goldTable().querySelector('[data-verify-row]').disabled).toBe(true);
         });
@@ -13022,6 +13027,7 @@ describe('verifying close calls on fresh seeds', () => {
             mocks.autoVerify = true;
             draw([closeOrder('A → B')]);
             ui._restoredUpgradeAt = Date.now();
+            ui._rememberedResults = ui._upgradeResultsData;
             await ui._autoVerifyCloseCalls(mocks.characterId, ui._upgradeResultsData);
             expect(mocks.verifyCalls).toHaveLength(0);
         });
@@ -14442,9 +14448,17 @@ describe('upgrade results as cards', () => {
             expect(stateOf(cardNamed('Ring B'))).toBe('Estimate');
         });
 
-        test('a remembered run refuses, in words on the card', () => {
+        /** Draw a set and make it the restored one, as `_restoreUpgradeResults` does */
+        const drawRemembered = () => {
+            const results = draw();
             ui._restoredUpgradeAt = Date.now();
-            draw();
+            ui._rememberedResults = results;
+            ui._renderUpgradeResults(results);
+            return results;
+        };
+
+        test('a remembered run refuses, in words on the card', () => {
+            drawRemembered();
             showCards();
             const card = cardsOf()[0];
             expect(stateOf(card)).toBe('Remembered estimate');
@@ -14452,6 +14466,31 @@ describe('upgrade results as cards', () => {
             expect(card.querySelector('[data-card-why]').textContent).toBe('Re-run the analysis to verify.');
             card.querySelector('[data-card-verify]').dispatchEvent(new Event('click'));
             expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('Clear on the banner hides it but the remembered results stay unverifiable', async () => {
+            const results = drawRemembered();
+            showCards();
+            container().querySelector('[data-clear-remembered-upgrade]').click();
+            await settle();
+            expect(container().querySelector('[data-clear-remembered-upgrade]')).toBeNull();
+            ui._renderUpgradeResults(results);
+            const card = cardsOf()[0];
+            expect(stateOf(card)).toBe('Remembered estimate');
+            expect(card.querySelector('[data-card-verify]').disabled).toBe(true);
+            expect(container().querySelector('#mwi-csim-gold-verify').disabled).toBe(true);
+            card.querySelector('[data-card-verify]').dispatchEvent(new Event('click'));
+            container().querySelector('#mwi-csim-gold-verify').click();
+            await settle();
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('a fresh analysis is never treated as the remembered one', () => {
+            drawRemembered();
+            draw();
+            showCards();
+            expect(stateOf(cardsOf()[0])).toBe('Estimate');
+            expect(verifyButton('Ring A').disabled).toBe(false);
         });
 
         test('stopped before a seed finished, failed, and refused each say so on the card', async () => {

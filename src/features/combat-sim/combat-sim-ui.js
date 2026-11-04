@@ -10037,6 +10037,7 @@ class CombatSimUI {
         // The runs it counts were the departing panel's
         this._upgradeRunStarted = false;
         this._restoredUpgradeAt = null;
+        this._rememberedResults = null;
         this._restoredUpgradeMeta = null;
         // The confirming run is keyed to the plan it confirmed (see
         // `_budgetPlanKey`); a departing character's basket has nothing to say
@@ -11096,6 +11097,7 @@ class CombatSimUI {
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
+            this._rememberedResults = null;
             this._restoredUpgradeMeta = null;
             if (this._upgradeAborted) {
                 if (completed) {
@@ -13777,6 +13779,7 @@ class CombatSimUI {
                 if (replace && this._upgradeResultsData && container) {
                     this._upgradeResultsData = null;
                     this._restoredUpgradeAt = null;
+                    this._rememberedResults = null;
                     this._restoredUpgradeMeta = null;
                     container.innerHTML = '';
                 }
@@ -13785,6 +13788,7 @@ class CombatSimUI {
             if (this._upgradeResultsData && !replace) return;
             if (!container) return;
             this._restoredUpgradeAt = payload.savedAt || null;
+            this._rememberedResults = payload.data;
             this._restoredUpgradeMeta = {
                 characterName: payload.characterName || null,
                 zoneName: payload.zoneName || null,
@@ -13853,7 +13857,20 @@ class CombatSimUI {
      * @private
      */
     _canVerifyResults(results) {
-        return Boolean(results?.context?.gameData) && !this._restoredUpgradeAt;
+        return Boolean(results?.context?.gameData) && !this._isRememberedResults(results);
+    }
+
+    /**
+     * Whether these results are the remembered set restored from storage. Tied to the object, not to the
+     * banner: the banner's Clear forgets the saved copy and hides itself, but the table on screen is still
+     * the restored one, with nothing live to re-measure it from. A fresh Analyze builds a new object, so it
+     * is never remembered. Held in memory only; nothing about it is saved.
+     * @param {Object|null} results - The analysis result
+     * @returns {boolean}
+     * @private
+     */
+    _isRememberedResults(results) {
+        return Boolean(results) && results === this._rememberedResults;
     }
 
     /**
@@ -14905,7 +14922,7 @@ class CombatSimUI {
             top: isOrder ? ABILITY_ORDER_TOP : undefined,
             showAll: isOrder ? Boolean(this._abilityOrderShowAll) : this._cardShowAll.has(section),
             open: this._openCards,
-            remembered: Boolean(this._restoredUpgradeAt),
+            remembered: this._isRememberedResults(results),
         });
         for (const card of model.cards) this._cardRegistry.set(card.id, { section, row: card.row, results });
         const sortState = CARD_SORT_STATE[section] ? this[CARD_SORT_STATE[section]] : null;
