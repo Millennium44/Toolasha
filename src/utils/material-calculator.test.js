@@ -502,6 +502,20 @@ describe('calculateEnhancementMaterialRequirements', () => {
         expect(nail.required).toBe(20); // 2 * 10 attempts
     });
 
+    test('a huge bill stays plain digits: one line total is never past the largest exact integer', () => {
+        // 2 per attempt x 1e9 attempts x 1e9 copies = 2e18, and a larger cost passes 1e21
+        state.gameData.itemDetailMap['/items/sword'].enhancementCosts.push({ itemHrid: '/items/nail', count: 5e6 });
+        const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, 1e9, null, 1e9);
+        for (const line of result) {
+            expect(line.required).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+            expect(String(line.missing)).toMatch(/^\d+$/);
+            expect(parseInt(String(line.missing), 10)).toBe(line.missing);
+        }
+        // An ordinary bill is untouched by the cap
+        const small = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, 123456, null, 20000);
+        expect(small.find((m) => m.itemHrid === '/items/nail').required).toBe(2 * 123456 * 20000);
+    });
+
     test('respects an explicit repeatCount override instead of the calculated attempts', () => {
         const result = calculateEnhancementMaterialRequirements('/items/sword', 0, 5, null, 0, 3);
         const nail = result.find((m) => m.itemHrid === '/items/nail');

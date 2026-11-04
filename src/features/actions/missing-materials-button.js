@@ -111,8 +111,9 @@ let storedEnhancementContext = null;
 const enhancementAdjustments = new WeakMap();
 const CONTROLS_ID = 'mwi-missing-mats-controls';
 /**
- * Not a limit on what a player may ask for, a guard against a pasted or garbled figure: past a billion
- * attempts or copies the bill (times the cost per attempt) leaves the range numbers stay exact in.
+ * Not a limit on what a player may ask for, a guard against a pasted or garbled figure. The bill is
+ * cost x attempts x copies, so two figures at the guard can pass 1e18 and far exceed exact integers; the
+ * calculator therefore caps each line's total at Number.MAX_SAFE_INTEGER, which keeps it plain digits.
  */
 const ADJUST_GUARD = 1e9;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
