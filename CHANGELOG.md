@@ -24,6 +24,10 @@ Market item controls and Settings no longer use oversized buttons and dropdowns 
 
 Combat Sim upgrade results now show as ranked cards at phone width, with the same figures as the table, tap-to-open details, and Verify on the upgrades the table can verify. A Cards or Table switch keeps the full table a tap away, and desktop can use cards too. Community buffs get their own Buffs section. On a phone, Combat Sim and Lab Sim tables scroll sideways with names pinned, and option rows stay inside the panel.
 
+### Phone Task Board bar follows the game's order
+
+The task count, Upgrade Capacity, Sort Tasks and Next Task sit as the game draws them, with the reroll walk right after Sort Tasks and the rest of ours behind Tools.
+
 ### Reset a moved game window
 
 Double-click a game window's drag bar to put that window back in the center and forget its saved position. Turning off the compact action bar or the action bar itself now also restores the header's sizing without a reload.
