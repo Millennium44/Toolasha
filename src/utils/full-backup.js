@@ -410,7 +410,7 @@ export async function exportEverything() {
  *   and latches everything it wrote.
  * @param {Record<string, Record<string, Function>>} [options.folds] - Per store, keys whose write reads the
  *   stored copy in its own transaction and writes `fold(stored, value)` (see `storage.set`'s `fold`): a sync
- *   pull's folds, redone against a save that landed after the pull read its base
+ *   pull's folds, redone against a save that landed after the pull read its base, a base it read as absent included
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<{store: string, expected: number, written: number}>, complete: boolean}>}
  *   What landed, what was meant to, and whether every store wrote its full count

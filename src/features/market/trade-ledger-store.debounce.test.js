@@ -1017,6 +1017,28 @@ describe('a fill with the baseline record latched', () => {
         expect(qty(store.getRecords(), 100)).toBe(7);
     });
 
+    test('a restore older than memory, then the listing ends: the repair cuts the duplicate to the log', async () => {
+        await openBook();
+        fillEvent(3);
+        await sleep(80);
+        await storage.flushAll();
+
+        disk.set(dayKey(today), [row(100, today, 1)]);
+        disk.set(STATE_KEY, { 100: baseline(1), 300: baseline(1) });
+        latchBoth();
+        fillEvent(5);
+        await sleep(80);
+        await storage.flushAll();
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(7);
+
+        disk.set('marketListingTimestamps_c1', [{ id: 100, status: 'filled', filledQuantity: 5 }]);
+        dm.listings = [wire(300, 1)];
+        await closeAndOpenNewPage();
+        expect(qty(store.getRecords(), 100)).toBe(5);
+        expect(qty(disk.get(dayKey(today)), 100)).toBe(5);
+    });
+
     test('a restore matching memory: the move is exactly the row beside it, and the sum stays right', async () => {
         await openBook();
         fillEvent(3);

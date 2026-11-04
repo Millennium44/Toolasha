@@ -779,7 +779,10 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     held.push({ store: storeName, key, label: registration.label });
                     continue;
                 }
-                if (!probed.found || probed.value == null) continue;
+                if (!probed.found || probed.value == null) {
+                    (refolds[storeName] ||= {})[key] = refoldIfAppeared(registration, context);
+                    continue;
+                }
                 const id = baselineId(storeName, key);
                 // A key a full-backup restore wrote is folded whatever the last
                 // exchange was: the restored copy can lack entries the gist holds
@@ -874,6 +877,21 @@ function refoldAgainstStored(probedText, fold, incoming) {
         if (stableStringify(stored) === probedText()) return value;
         return fold ? fold(stored) : stored;
     };
+}
+
+/**
+ * The fold a pull's write of a key it read as absent redoes inside its own transaction.
+ *
+ * The gap {@link refoldAgainstStored} closes is just as open for a key nothing held at the read, and the loss is
+ * worse: the first fill of a day, written by another tab in the gap, went under the whole download while its baseline
+ * stayed moved, so that fill was gone for good. A key still absent is the plain write it always was.
+ * @param {{foldPull: Function}} registration - The key's registered merge
+ * @param {{download: Object}} context - What came down, for a pull fold that reads it
+ * @returns {(stored: *, value: *) => *} A storage fold: `(stored, value)`, `value` being what the pull would write
+ */
+function refoldIfAppeared(registration, context) {
+    return (stored, value) =>
+        stored === undefined || stored === null ? value : registration.foldPull(stored, value, context);
 }
 
 /**

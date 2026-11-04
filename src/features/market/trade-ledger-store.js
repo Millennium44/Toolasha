@@ -661,8 +661,8 @@ class TradeLedgerStore {
      * One record's held rows, written and, once committed, let go.
      *
      * A write that lands while a restore is running stays held and is written again afterwards. The restore's copy
-     * of the record was worked out before this row existed, and for a day this device held no copy of when it read
-     * (the first fill of a UTC day) that copy then goes down whole, row or no row.
+     * of the record was worked out before this row existed. A sync pull folds it against what is stored as it lands,
+     * but a backup restore's goes down whole, row or no row.
      *
      * With the character's baseline record latched, {@link saveStates} is refused until the reload, and the next load
      * would find this fill again from the old baseline. So its entry moves here, past the latch like the row and in
