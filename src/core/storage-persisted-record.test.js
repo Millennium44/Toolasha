@@ -6,8 +6,25 @@
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const character = vi.hoisted(() => ({ id: 'A' }));
+vi.mock('./data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => character.id,
+        getCurrentCharacterGameMode: () => 'standard',
+        getCurrentCharacterName: () => 'Main',
+        on: () => {},
+    },
+}));
+vi.mock('../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'A',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
 const { default: storage } = await import('./storage.js');
-const { createCuratedRecord } = await import('../utils/persisted-record.js');
+const { createCuratedRecord, mergeById } = await import('../utils/persisted-record.js');
+const { mergePins } = await import('../utils/item-picker-pins.js');
+const { addGoal, removeGoal, loadGoals, _resetGoalsRecord, GOALS_KEY } =
+    await import('../features/planner/goal-planner-store.js');
 
 /**
  * A fake IDBDatabase over one object store. Values are copied on the way in and out, as IndexedDB
@@ -174,12 +191,12 @@ describe('a threeWay record through the real debounced fold', () => {
         await a.load();
         data.set(KEY, { milk: true, butter: true });
 
-        // The probe's transaction runs; the write's is refused
+        // The write's transaction is refused
         const transaction = storage.db.transaction;
         let opened = 0;
         storage.db.transaction = function (...args) {
             opened += 1;
-            if (opened === 2) throw new Error('refused');
+            if (opened === 1) throw new Error('refused');
             return transaction.apply(this, args);
         };
         a.get().eggs = true;
@@ -215,5 +232,584 @@ describe('a threeWay record through the real debounced fold', () => {
         a.get().jam = true;
         expect(await landed(a.save())).toBe(true);
         expect(data.get(KEY)).toEqual({ milk: true, eggs: true, jam: true });
+    });
+});
+
+describe('a threeWay record whose save has not landed yet', () => {
+    const PINS_A = 'pins_A';
+    const PINS_B = 'pins_B';
+    const GOALS_A = `${GOALS_KEY}_A`;
+    const pinsTab = () =>
+        createCuratedRecord({
+            base: 'pins',
+            empty: () => ({}),
+            merge: mergePins,
+            threeWay: { idOf: (hrid) => hrid },
+            label: 'Test',
+        });
+    /** As the item pins read theirs: a reset, a load, and the list adopted */
+    const readPins = async (record) => {
+        record.reset();
+        await record.load();
+        return record.get().act || [];
+    };
+    /** As the item pins write theirs: a fresh copy handed over, nobody waiting for the debounce */
+    const writePins = (record, list) => {
+        record.set({ act: [...list] });
+        return record.save();
+    };
+    const pinned = (key) => data.get(key)?.act;
+    const goal = (id, amount) => ({ id, type: 'gold', amount, createdAt: amount });
+    const goalAmounts = () => data.get(GOALS_A).map((entry) => entry.amount);
+    /** A player's press: it starts, and the debounce it waits on does not hold up the next press */
+    const press = async (action) => {
+        const pressed = action();
+        await vi.advanceTimersByTimeAsync(5);
+        return pressed;
+    };
+    const settle = async () => {
+        // A landing could wake a save behind it, which has a debounce of its own
+        for (let i = 0; i < 4; i += 1) await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+    };
+    /** Refuse the next transaction anything opens */
+    const refuseNextTransaction = () => {
+        const transaction = storage.db.transaction;
+        storage.db.transaction = function () {
+            storage.db.transaction = transaction;
+            throw new Error('refused');
+        };
+    };
+
+    let data;
+    const seed = (values) => {
+        const fake = createFakeDb(values);
+        storage.db = fake.db;
+        data = fake.data;
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        character.id = 'A';
+        _resetGoalsRecord();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage.db = null;
+    });
+
+    describe('across a character switch', () => {
+        test('two pins, then a switch to a character with the second pinned: each list keeps its own', async () => {
+            seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a', 'y']);
+            await vi.advanceTimersByTimeAsync(1000);
+            writePins(record, ['a', 'y', 'z']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            // What the switch does: it flushes storage, moves the character, and the owner reads again
+            await storage.flushAll();
+            character.id = 'B';
+            expect(await readPins(record)).toEqual(['z']);
+            await settle();
+
+            expect(pinned(PINS_A)).toEqual(['a', 'y', 'z']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+
+        test('a save queued when the arriving character loads lands on its own key, against its own copy', async () => {
+            seed({ [PINS_A]: { act: ['a', 'r'] }, [PINS_B]: { act: ['a', 'r', 'z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a', 'y']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            // No flush at all: the arriving character reads while the departing save waits
+            character.id = 'B';
+            expect(await readPins(record)).toEqual(['a', 'r', 'z']);
+            await settle();
+
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+            expect(pinned(PINS_B)).toEqual(['a', 'r', 'z']);
+
+            // And the arriving character's own edit reads against the arriving character's copy
+            writePins(record, ['a', 'r', 'z', 'q']);
+            await settle();
+            expect(pinned(PINS_B)).toEqual(['a', 'r', 'z', 'q']);
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+        });
+
+        test('a pin pressed after the character moved, before the next read, stays with its own list', async () => {
+            seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            character.id = 'B';
+            writePins(record, ['a', 'y']);
+            await settle();
+
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+
+        test('a write that failed before the switch lands later on its own key', async () => {
+            seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            refuseNextTransaction();
+            const failed = writePins(record, ['a', 'y']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+            expect(await failed).toBe(false);
+            expect(pinned(PINS_A)).toEqual(['a']);
+
+            character.id = 'B';
+            expect(await readPins(record)).toEqual(['z']);
+            await storage.flushAll();
+
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+
+        test('a save asked after the reset, on the same key, does not drop the one still waiting there', async () => {
+            seed({ [PINS_A]: { act: ['a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a', 'y']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            // The watchlist resets in the switch's cleanup; a write in that gap holds only the emptied list
+            record.reset();
+            writePins(record, ['q']);
+            await settle();
+
+            expect(pinned(PINS_A).sort()).toEqual(['a', 'q', 'y']);
+        });
+
+        test('coming back to the character whose save still waits shows it, and loses nothing', async () => {
+            seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a', 'y']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            character.id = 'B';
+            await readPins(record);
+            character.id = 'A';
+            expect(await readPins(record)).toEqual(['a', 'y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+    });
+
+    describe('in the same tab, through the goal planner', () => {
+        const stored = () => [goal('s', 1)];
+
+        test('add, add, then add again after the first landed: all three stand', async () => {
+            seed({ [GOALS_A]: stored() });
+            press(() => addGoal(goal('x', 10)));
+            await vi.advanceTimersByTimeAsync(1000);
+            press(() => addGoal(goal('y', 20)));
+            await vi.advanceTimersByTimeAsync(2500);
+            const view = press(() => addGoal(goal('z', 30)));
+            await settle();
+
+            expect(goalAmounts()).toEqual([1, 10, 20, 30]);
+            expect((await view).map((entry) => entry.amount)).toEqual([1, 10, 20, 30]);
+        });
+
+        test('add, add: the second press sees the first, and both land', async () => {
+            seed({ [GOALS_A]: stored() });
+            press(() => addGoal(goal('x', 10)));
+            await vi.advanceTimersByTimeAsync(1000);
+            const view = press(() => addGoal(goal('y', 20)));
+            await settle();
+
+            expect((await view).map((entry) => entry.amount)).toEqual([1, 10, 20]);
+            expect(goalAmounts()).toEqual([1, 10, 20]);
+        });
+
+        test('add, add, then remove something else after the first landed: both adds stand', async () => {
+            seed({ [GOALS_A]: [...stored(), goal('r', 2)] });
+            press(() => addGoal(goal('x', 10)));
+            await vi.advanceTimersByTimeAsync(1000);
+            press(() => addGoal(goal('y', 20)));
+            await vi.advanceTimersByTimeAsync(2500);
+            press(() => removeGoal('r'));
+            await settle();
+
+            expect(goalAmounts()).toEqual([1, 10, 20]);
+        });
+
+        test('add, then remove it before it landed: it is gone, and stays gone', async () => {
+            seed({ [GOALS_A]: stored() });
+            press(() => addGoal(goal('x', 10)));
+            await vi.advanceTimersByTimeAsync(1000);
+            press(() => removeGoal('x'));
+            await settle();
+            expect(goalAmounts()).toEqual([1]);
+
+            expect((await loadGoals()).map((entry) => entry.amount)).toEqual([1]);
+        });
+
+        test('add, remove it after it landed: gone too', async () => {
+            seed({ [GOALS_A]: stored() });
+            press(() => addGoal(goal('x', 10)));
+            await settle();
+            expect(goalAmounts()).toEqual([1, 10]);
+            press(() => removeGoal('x'));
+            await settle();
+            expect(goalAmounts()).toEqual([1]);
+        });
+
+        test('a second press of Add spaced past the first read is still a double press', async () => {
+            seed({ [GOALS_A]: [] });
+            const form = { type: 'gold', amount: 10 };
+            press(() => addGoal(form));
+            await vi.advanceTimersByTimeAsync(1000);
+            press(() => addGoal(form));
+            await settle();
+
+            expect(goalAmounts()).toEqual([10]);
+        });
+
+        test('over the cap: the fold keeps every goal, a new one is refused, and none drops out', async () => {
+            const full = Array.from({ length: 40 }, (_, i) => goal(`g${i}`, i + 1));
+            seed({ [GOALS_A]: full.slice(0, 39) });
+            press(() => addGoal(goal('mine', 100)));
+            await vi.advanceTimersByTimeAsync(10);
+            // Another tab took the fortieth place while this one's was waiting
+            data.set(GOALS_A, full);
+            await settle();
+            expect(data.get(GOALS_A)).toHaveLength(41);
+
+            press(() => addGoal(goal('late', 200)));
+            await settle();
+            expect(data.get(GOALS_A)).toHaveLength(41);
+            expect(goalAmounts()).not.toContain(200);
+
+            press(() => removeGoal('g0'));
+            await settle();
+            expect(data.get(GOALS_A)).toHaveLength(40);
+            expect(goalAmounts()).toContain(100);
+            expect(goalAmounts()).toContain(40);
+        });
+    });
+
+    describe('a load in between, with another tab writing', () => {
+        test('a bare load keeps the waiting edit in the view, and it lands', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            await record.load();
+            expect(record.get().act).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+
+        test('a load that starts from nothing, as the goal list does, is the same', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            record.set({});
+            await record.load();
+            expect(record.get().act).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+
+        test('what another tab commits before the load survives the waiting edit landing', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            data.set(PINS_A, { act: ['s', 't'] });
+            expect(await readPins(record)).toEqual(['s', 'x', 't']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 't', 'x']);
+        });
+
+        test('what another tab commits after the load survives too, and so does what it removes', async () => {
+            seed({ [PINS_A]: { act: ['s', 'r'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'r', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            await readPins(record);
+            data.set(PINS_A, { act: ['s', 't'] });
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 't', 'x']);
+        });
+
+        test('a waiting removal stays removed through a load, in the view and in storage', async () => {
+            seed({ [PINS_A]: { act: ['s', 'r'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            data.set(PINS_A, { act: ['s', 'r', 't'] });
+            expect((await readPins(record)).sort()).toEqual(['s', 't']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 't']);
+        });
+
+        test('an edit carried through a load and landed can then be undone with no further load', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+            await record.load();
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s']);
+        });
+
+        test('a load the waiting save lands during still shows the edit, which can then be undone', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            const loading = record.load();
+            const flushing = storage.flushAll();
+            await Promise.all([loading, flushing]);
+            expect(record.get().act).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s']);
+        });
+
+        test('a load that could not read leaves the waiting save to land', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            refuseNextTransaction();
+            expect(await record.load()).toBe(false);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+
+        test('a save before any load, then the load: nothing stored or held is lost', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            writePins(record, ['x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            await record.load();
+            expect(record.get().act.sort()).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 'x']);
+        });
+
+        test('nothing stored yet: the waiting edit is in the view and lands', async () => {
+            seed({});
+            const record = createCuratedRecord({
+                base: 'list',
+                scoped: false,
+                empty: () => [],
+                merge: mergeById((row) => row.id),
+                threeWay: { idOf: (row) => row.id },
+                label: 'Test',
+            });
+            await record.load();
+            record.set([{ id: 1 }, { id: 2 }, { id: 3 }]);
+            record.save();
+            await vi.advanceTimersByTimeAsync(10);
+
+            await record.load();
+            expect(record.get()).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+            await settle();
+            expect(data.get('list')).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+        });
+
+        test('the view a load hands back is the owner own: editing it does not reach the waiting write', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            await record.load();
+            record.get().act.push('unsaved');
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+    });
+
+    describe('what a landing, a failure and a coalesced save leave behind', () => {
+        test('a save is in the storage queue as it is asked, so one flush at page close lands the last pin', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(1000);
+            writePins(record, ['s', 'x', 'y']);
+
+            expect(storage.pendingWrites.get('settings:pins_A').value.act).toEqual(['s', 'x', 'y']);
+            await storage.flushAll();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+        });
+
+        test('coalesced saves all answer true, and the copy afterwards is the newest view', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            const first = writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(1000);
+            const second = writePins(record, ['s', 'x', 'y']);
+            await settle();
+            expect(await first).toBe(true);
+            expect(await second).toBe(true);
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+
+            // Both now read as this tab's own: taking them off sticks
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s']);
+        });
+
+        test('a failed write moves nothing: its edit lands from the next save, beside the other tab', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            refuseNextTransaction();
+            const failed = writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+            expect(await failed).toBe(false);
+
+            data.set(PINS_A, { act: ['s', 't'] });
+            writePins(record, ['s', 'x', 'y']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 't', 'x', 'y']);
+        });
+
+        test('a failed write is carried through a load', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            refuseNextTransaction();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+
+            expect(await readPins(record)).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+
+        test('a failed write that lands from its requeue costs at worst a removal coming back', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            refuseNextTransaction();
+            writePins(record, ['s', 'x', 'k']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+            await storage.flushAll();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'k']);
+
+            // Nobody told the record that landed, so x reads as another tab's and comes back
+            writePins(record, ['s', 'k', 'y']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['k', 's', 'x', 'y']);
+        });
+
+        test('after a landing the other tab item stays out of the copy, so its later removal stands', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+            data.set(PINS_A, { act: ['s', 't'] });
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['s', 't', 'x']);
+
+            data.set(PINS_A, { act: ['s', 'x'] });
+            writePins(record, ['s', 'x', 'y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+        });
+
+        test('a clear replaces the save waiting, and a load then has nothing to carry', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+            record.clear();
+            await settle();
+            expect(data.get(PINS_A)).toEqual({});
+
+            expect(await readPins(record)).toEqual([]);
+            await settle();
+            expect(data.get(PINS_A)).toEqual({});
+        });
+
+        test('a save asked during a flush lands after it, and still moves the copy', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await record.load();
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            const flushing = storage.flushAll();
+            writePins(record, ['s', 'x', 'y']);
+            await flushing;
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s']);
+        });
+
+        test('a fold that throws at landing keeps the stored copy and answers false', async () => {
+            seed({ list: ['a'] });
+            const idOf = (element) => {
+                if (element === 'bad') throw new Error('no identity');
+                return element;
+            };
+            const record = createCuratedRecord({
+                base: 'list',
+                scoped: false,
+                empty: () => [],
+                merge: mergeById(idOf),
+                threeWay: { idOf },
+                label: 'Test',
+            });
+            await record.load();
+            record.set(['a', 'c']);
+            const saving = record.save();
+            await vi.advanceTimersByTimeAsync(10);
+            data.set('list', ['a', 'b', 'bad']);
+            await settle();
+            expect(await saving).toBe(false);
+            expect(data.get('list')).toEqual(['a', 'b', 'bad']);
+        });
     });
 });

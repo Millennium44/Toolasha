@@ -48,9 +48,10 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         },
-        set: async (key, value, store = 'settings') => {
+        set: async (key, value, store = 'settings', _immediate = false, options = {}) => {
             if (storageMock.unavailable) return false;
-            storeFor(store).set(key, structuredClone(value));
+            const folded = options?.fold ? options.fold(storeFor(store).get(key), value) : undefined;
+            storeFor(store).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         },
         setJSON: async (key, value, store = 'settings') => {

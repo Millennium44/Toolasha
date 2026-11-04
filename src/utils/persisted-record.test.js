@@ -650,6 +650,23 @@ describe('mergeThreeWay', () => {
         // Left alone here while the other tab removed it: the removal stands
         expect(mergeThreeWay(base, [], [{ id: 1, qty: 5 }], { idOf })).toEqual([]);
     });
+
+    test('a watchlist row re-homed in the other tab outlives its removal here, as in the other direction', () => {
+        const idOf = (row) => row.hrid;
+        const row = (hrid, source) => ({ hrid, name: hrid, source });
+        const base = [row('/items/milk', 'zones:a'), row('/items/egg', 'zones:a'), row('/items/tea', null)];
+        const stored = [row('/items/milk', 'zones:b'), row('/items/egg', 'zones:a'), row('/items/tea', null)];
+        // Milk and egg taken off here. Milk moved to another set there, so it stays; nothing changed egg
+        expect(mergeThreeWay(base, stored, [row('/items/tea', null)], { idOf })).toEqual([
+            row('/items/tea', null),
+            row('/items/milk', 'zones:b'),
+        ]);
+        // The mirror: re-homed here, removed there
+        expect(mergeThreeWay(base, [row('/items/tea', null)], stored, { idOf })).toEqual([
+            row('/items/milk', 'zones:b'),
+            row('/items/tea', null),
+        ]);
+    });
 });
 
 describe('curated record with threeWay, as two tabs', () => {
@@ -784,28 +801,6 @@ describe('curated record with threeWay, as two tabs', () => {
         expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true, tea: true });
     });
 
-    test('a direct record never deletes what another tab committed between the probe and the write', async () => {
-        settingsStore().set(FAV, { milk: true });
-        const a = tab();
-        await a.load();
-
-        const tryGet = storageMock.tryGet.getMockImplementation();
-        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
-            const probed = await tryGet(key, store);
-            otherTabWrites({ milk: true, butter: true });
-            return probed;
-        });
-        a.get().eggs = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
-        // The view is what this tab holds, not what is stored
-        expect(a.get()).toEqual({ milk: true, eggs: true });
-
-        a.get().jam = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
-    });
-
     test('a direct record whose caller kept the reference it got from get() loses no edit', async () => {
         settingsStore().set(FAV, { milk: true });
         const a = tab();
@@ -933,28 +928,9 @@ describe('curated record with threeWay, as two tabs', () => {
         expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
     });
 
-    test('an owner of a record that folds in one transaction keeps what the other tab added', async () => {
-        settingsStore().set(FAV, { milk: true });
-        const a = await owner(tab({ atomic: true, immediate: true }));
-        otherTabWrites({ milk: true, butter: true });
-
-        a.state.eggs = true;
-        await a.save();
-        a.state.jam = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
-    });
-
-    test('a record with a prepare step, which has no fold at landing, keeps what the other tab added', async () => {
-        settingsStore().set(FAV, { milk: true });
-        const a = await owner(tab({ prepare: async () => true }));
-        otherTabWrites({ milk: true, butter: true });
-
-        a.state.eggs = true;
-        await a.save();
-        a.state.jam = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true, jam: true });
+    test('a record that cannot fold inside the write is refused when it is made', () => {
+        expect(() => tab({ atomic: true })).toThrow(/threeWay/);
+        expect(() => tab({ prepare: async () => true })).toThrow(/threeWay/);
     });
 
     test('a fold that cannot run refuses the write rather than landing the held value whole', async () => {
@@ -1016,28 +992,6 @@ describe('curated record with threeWay, as two tabs', () => {
         a.get().tea = true;
         await a.save();
         expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, jam: true, tea: true });
-    });
-
-    test('the same holds for a record that folds and writes in one transaction', async () => {
-        settingsStore().set(FAV, { milk: true });
-        const a = tab({ atomic: true, immediate: true });
-        const b = tab({ atomic: true, immediate: true });
-        await a.load();
-        await b.load();
-
-        b.get().butter = true;
-        await b.save();
-        a.get().eggs = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, butter: true, eggs: true });
-        expect(a.get()).toEqual({ milk: true, eggs: true });
-
-        await b.load({ authoritative: true });
-        delete b.get().butter;
-        await b.save();
-        a.get().jam = true;
-        await a.save();
-        expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true, jam: true });
     });
 
     test('a clear states its value outright and the baseline follows it', async () => {

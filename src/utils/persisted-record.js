@@ -260,9 +260,10 @@ function snapshotOf(value) {
  * another tab's addition survives, and so does its removal. A removal this tab made stays removed even
  * if the stored copy still has the item. Where both changed the same thing, the held value wins. Objects
  * merge key by key. Arrays merge by element identity when `idOf` is given (an element only one side
- * changed follows that side; the held order is kept and the other tab's additions follow it); without
- * `idOf` an array both tabs changed is taken whole from the held side, which can drop the other tab's
- * edit to it.
+ * changed follows that side; the held order is kept and the other tab's additions follow it; one side's
+ * edit outlives the other's removal of that element, in either direction, because a row brought back
+ * costs one click and a row lost is gone); without `idOf` an array both tabs changed is taken whole from
+ * the held side, which can drop the other tab's edit to it.
  *
  * @param {*} base - What this tab's own view held the last time it read or saved
  * @param {*} stored - What is stored now
@@ -334,8 +335,9 @@ function mergeKeyedArrays(base, stored, held, options) {
         const id = element == null ? null : options.idOf(element);
         if (id === null || id === undefined) {
             if (options.keepUnidentified !== false && !held.some((own) => valuesEqual(own, element))) out.push(element);
-        } else if (!heldById.has(id) && !baseById.has(id)) {
-            // Added by the other tab; one this tab removed is in base and stays removed
+        } else if (!heldById.has(id) && (!baseById.has(id) || !valuesEqual(element, baseById.get(id)))) {
+            // Added by the other tab, or changed there since. One this tab removed that nobody changed is in
+            // base as it is here, and stays removed
             out.push(element);
         }
     }
@@ -371,9 +373,6 @@ function mergeKeyedArrays(base, stored, held, options) {
  * @param {(stored: *, memory: *) => *} [options.mergeAfterReset] - The fold for an atomic write a
  *   `reset()` overtook: it lands the departing record under the departing key, so it must not
  *   touch state the arriving record owns. Defaults to `merge`
- * @param {() => boolean} [options.holdsView] - Whether memory is, for now, the owner's own view of the
- *   record: a save's fold then goes to storage and memory stays exactly as the owner left it. Folding it
- *   into memory would leave the owner's next change compared against a value it never held
  * @returns {Object} The record handle — see methods below
  */
 export function createPersistedRecord({
@@ -389,7 +388,6 @@ export function createPersistedRecord({
     atomic = false,
     mergeAfterReset = null,
     onPulled = null,
-    holdsView = null,
 }) {
     if (typeof empty !== 'function') throw new Error(`[${label}] createPersistedRecord needs an empty() factory`);
     if (typeof merge !== 'function') throw new Error(`[${label}] createPersistedRecord needs a merge(stored, memory)`);
@@ -572,7 +570,7 @@ export function createPersistedRecord({
                     if (!found || current == null) return held;
                     const live = askedIn === generation;
                     const folded = (live ? merge : mergeAfterReset || merge)(current, held);
-                    if (live && memory === held && !holdsView?.()) {
+                    if (live && memory === held) {
                         memory = folded;
                         memoryVersion += 1;
                     }
@@ -794,8 +792,6 @@ export function createPersistedRecord({
                 // One key for the probe and the write both, resolved before the
                 // read rather than again after it
                 const writeKey = scoped ? characterKey(base) : base;
-                /** The fold of what is stored under the owner's view, when memory is to stay that view */
-                let foldedForView = null;
                 try {
                     if (overwrite && askedIn !== generation) return false;
                     if (!overwrite && isAtomic()) {
@@ -827,13 +823,8 @@ export function createPersistedRecord({
                             if (started !== generation) return false;
                         }
                         if (probed.found) {
-                            const folded = merge(probed.value, memory);
-                            if (holdsView?.()) {
-                                foldedForView = folded;
-                            } else {
-                                memory = folded;
-                                memoryVersion += 1;
-                            }
+                            memory = merge(probed.value, memory);
+                            memoryVersion += 1;
                         }
                     }
                     // Resolved before the call: `set` queues the value synchronously
@@ -843,22 +834,15 @@ export function createPersistedRecord({
                     // a debounced write can be held for a sync restore's whole window (storage holds timers that
                     // fire mid-restore, then flushes them at its end). Folding again inside the transaction that
                     // lands the write keeps what the restore wrote; an overwrite (clear) states its value outright.
-                    // Under a held view the landing fold starts again from the view rather than from the probe's
-                    // fold, or it would count what the probe took in as this tab's. The probe's fold is still what
-                    // is handed over: storage writes it as given if the landing fold cannot run.
-                    const view = memory;
                     return await storage.set(
                         writeKey,
-                        foldedForView ?? view,
+                        memory,
                         store,
                         immediate,
                         // A merge that needs an awaited `prepare` cannot run inside a transaction
                         overwrite || prepare
                             ? {}
-                            : {
-                                  fold: (stored, held) =>
-                                      stored === undefined ? held : merge(stored, foldedForView ? view : held),
-                              }
+                            : { fold: (stored, held) => (stored === undefined ? held : merge(stored, held)) }
                     );
                 } catch (error) {
                     console.error(`[${label}] Saving ${base} failed:`, error);
@@ -973,88 +957,224 @@ export function createPersistedRecord({
  * written whole puts back what the other tab removed and drops what it added.
  *
  * `threeWay` is the way to serve two tabs without tombstones or a change to
- * the stored shape. The record remembers what this tab's own view held when it
- * last loaded or saved; a save then folds against that baseline ({@link
- * mergeThreeWay}) instead of writing memory whole: what this tab changed
- * since is written, what it left alone follows whatever is stored now. So a
- * stale tab neither drops what the other tab added nor brings back what the
- * other tab removed, and its own removal stays removed. Where both tabs
- * changed the same thing this tab's value wins. Before the first readable
- * load, and when the baseline could not be kept, a save behaves as it did
- * without `threeWay`.
- *
- * The baseline follows the view and never the store, because a deletion is
- * read off it: an item in the baseline and not in the view is one this tab
- * removed. So once loaded, a fold goes to storage only, and `get()` keeps what
- * the owner last `set` or mutated. An owner that keeps its own state and an
- * owner that reads `get()` are then the same case, and what another tab added
- * reaches this tab's view at its next load. An owner must adopt `get()` after
- * a load: that is the one moment the baseline moves to something it did not
- * hand in.
+ * the stored shape: see {@link createThreeWayRecord}.
  *
  * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
  *   to {@link mergeMaps} and is only consulted before the first readable load
  *   unless `keepMerging` is set
  * @param {boolean} [options.keepMerging=false] - Merge on every save, not only before the first load
- * @param {boolean|{idOf?: (element: *) => *, keepUnidentified?: boolean}} [options.threeWay=false] - Fold saves against the last
- *   known stored value; `idOf` names an array element's identity (see {@link mergeThreeWay})
+ * @param {boolean|{idOf?: (element: *) => *, keepUnidentified?: boolean}} [options.threeWay=false] - Fold saves against
+ *   the copy they were made from; `idOf` names an array element's identity (see {@link mergeThreeWay})
  * @returns {Object} The record handle
  */
 export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, threeWay = false, ...options }) {
+    if (threeWay && !keepMerging) return createThreeWayRecord({ merge, threeWay, ...options });
     let trustMemory = false;
-    const useThreeWay = Boolean(threeWay) && !keepMerging;
-    const threeWayOptions = typeof threeWay === 'object' && threeWay ? threeWay : {};
-    /** What this tab's view held when it last loaded or landed a save, when it could be copied */
-    let baseline = null;
-    /** Bumped by every load and reset, so a save that began before one does not adopt its snapshot */
-    let epoch = 0;
     const record = createPersistedRecord({
         ...options,
-        holdsView: useThreeWay ? () => trustMemory : null,
-        merge: (stored, memory) => {
-            if (!trustMemory) {
-                // A load (or a save before any): the stored value is what this record now knows of storage
-                if (useThreeWay) baseline = snapshotOf(stored);
-                return merge(stored, memory);
-            }
-            if (keepMerging) return merge(stored, memory);
-            return useThreeWay && baseline ? mergeThreeWay(baseline.value, stored, memory, threeWayOptions) : memory;
-        },
+        merge: (stored, memory) => (trustMemory && !keepMerging ? memory : merge(stored, memory)),
     });
-    const { load, reset, save } = record;
+    const { load, reset } = record;
     record.load = async (options) => {
         trustMemory = false;
-        epoch += 1;
         const readable = await load(options);
         trustMemory = readable;
         return readable;
     };
     record.reset = () => {
         trustMemory = false;
-        baseline = null;
+        reset();
+    };
+    return record;
+}
+
+/**
+ * A curated record whose saves fold against the copy they were made from.
+ *
+ * What this tab changed is written; what it left alone follows whatever is stored now ({@link
+ * mergeThreeWay}). So a stale tab neither drops what the other tab added nor brings back what the other
+ * tab removed, and its own removal stays removed.
+ *
+ * Every load starts a `line`: the key it read and what that read gave. Every save is an `ask` on the
+ * current line, carrying a copy of the view, and it folds against that line when it lands. Nothing after
+ * the ask can change what it means: a load starts a new line and leaves this one alone, a reset drops the
+ * record's hold on it, and it lands on the key its view was read from, so a save asked as one character
+ * never folds against, or into, another's list. A line's `base` moves only when one of its own asks is
+ * known to have landed, and to what that ask's view held: never to what the write put down, which can
+ * hold what another tab added and this view has not got, so that its absence would read as a removal made
+ * here.
+ *
+ * An ask goes straight to `storage.set` rather than through the save chain, which would hold it behind the
+ * one before for that one's whole debounce, out of reach of a flush. Storage's queue coalesces them: the
+ * newest ask of a key replaces the one waiting, whose edits its view already carries or has undone.
+ *
+ * A load cannot see an ask that has not landed, and the owner adopts what the load gives, so the load folds
+ * that ask over what it read and restates it on the new line. The view keeps this tab's own edits and
+ * there is still one write waiting.
+ *
+ * Before the first readable load, and during one, there is no line to trust: an ask folds through `merge`,
+ * which keeps everything on both sides. A write that fails moves nothing and its ask stays unlanded, so the
+ * next save or load still carries it. A failed write that storage later lands from its requeue tells nobody,
+ * so `base` stays behind until the next landing or load: an item added in that write and then removed
+ * comes back. It is never a lost edit.
+ *
+ * Once loaded, memory stays exactly what the owner last `set` or mutated: what another tab added reaches
+ * this tab's view at its next load. An owner must adopt `get()` after a load.
+ *
+ * @param {Object} options - As {@link createCuratedRecord}, without `atomic` or `prepare`: the fold runs
+ *   inside storage's own write
+ * @returns {Object} The record handle
+ */
+function createThreeWayRecord({ merge, threeWay, ...options }) {
+    const { base, store = 'settings', scoped = true, immediate = false, label = 'PersistedRecord' } = options;
+    if (options.atomic || options.prepare) {
+        throw new Error(`[${label}] a threeWay record folds inside storage's own write: no atomic, no prepare`);
+    }
+    const mergeOptions = typeof threeWay === 'object' ? threeWay : {};
+    const keyNow = () => (scoped ? characterKey(base) : base);
+
+    let trustMemory = false;
+    /** The newest readable load's `{key, base, landed}`: what it read, and which ask last moved that on */
+    let line = null;
+    /** Bumped by every load and reset, so one that was overtaken does not speak for the record */
+    let epoch = 0;
+    let lastSeq = 0;
+    /** The key the newest load reads */
+    let readKey = null;
+    /** The ask unlanded when that load began, as it stood then: it may land before the load gets to use it */
+    let carried = null;
+    /** Each key's newest ask that has not landed. Outlives a reset: it is still on its way to that key */
+    const unlanded = new Map();
+    let lastLanding = Promise.resolve(true);
+
+    /**
+     * What an ask puts down over a stored value. `under` is an older ask of another line, which its view
+     * was not read over, so its edits are folded in first rather than replaced.
+     * @param {{value: *, line: ?{base: *}, under: ?Object}} ask
+     * @param {*} stored - undefined when nothing is stored
+     * @returns {*} The value to write
+     */
+    const foldAsk = (ask, stored) => {
+        const beneath = ask.under ? foldAsk(ask.under, stored) : stored;
+        if (beneath === undefined) return ask.value;
+        return ask.line ? mergeThreeWay(ask.line.base, beneath, ask.value, mergeOptions) : merge(beneath, ask.value);
+    };
+
+    /**
+     * Hand an ask to storage. Synchronous up to `storage.set`, which queues it at once when the database is
+     * open, so every flush from here on reaches it.
+     * @param {{key: string, value: *, line: ?Object, under: ?Object}} fields - What is asked
+     * @returns {Promise<boolean>} Whether a write that carries it landed
+     */
+    const land = (fields) => {
+        const seq = ++lastSeq;
+        const ask = { ...fields, seq, folded: false, refused: false };
+        unlanded.set(ask.key, ask);
+        const fold = (stored) => {
+            ask.refused = false;
+            try {
+                const next = foldAsk(ask, stored);
+                ask.folded = true;
+                return next;
+            } catch (error) {
+                // The stored copy goes back as it was: writing the view whole could erase the other tab's edits
+                console.error(`[${label}] Folding ${base} failed; leaving the stored copy:`, error);
+                ask.refused = true;
+                return stored;
+            }
+        };
+        const landing = (async () => {
+            let written = false;
+            try {
+                written = await storage.set(ask.key, ask.value, store, immediate, { fold });
+                // Answered for a write that was not this one: a flush in flight when this was queued shares its
+                // callers with the slot, and a plain write can replace it. Still on its way, so ask again
+                if (written && !ask.folded && !ask.refused && unlanded.get(ask.key) === ask) {
+                    written = await storage.set(ask.key, ask.value, store, immediate, { fold });
+                }
+            } catch (error) {
+                console.error(`[${label}] Saving ${base} failed:`, error);
+            }
+            if (!written || ask.refused) return false;
+            // An ask a newer one replaced in the queue never ran: what landed is the newer one's business
+            if (ask.folded) {
+                if (unlanded.get(ask.key) === ask) unlanded.delete(ask.key);
+                if (ask.line && seq > ask.line.landed) {
+                    ask.line.base = ask.value;
+                    ask.line.landed = seq;
+                }
+            }
+            return true;
+        })();
+        lastLanding = landing;
+        return landing;
+    };
+
+    const record = createPersistedRecord({
+        ...options,
+        // Only a load reaches this: saves fold through their asks, and a clear states its value outright
+        merge: (stored, memory) => {
+            const read = snapshotOf(stored);
+            const folded = merge(stored, memory);
+            line = read ? { key: readKey, base: read.value, landed: 0 } : null;
+            const newest = unlanded.get(readKey);
+            const ask = !newest || newest.seq === carried?.seq ? carried : newest;
+            const rebased = ask ? snapshotOf(foldAsk(ask, folded)) : null;
+            if (!rebased) return folded;
+            land({ key: readKey, value: rebased.value, line, under: null });
+            return structuredClone(rebased.value);
+        },
+    });
+
+    const { load, reset, save, flushed } = record;
+    record.load = async (loadOptions) => {
+        trustMemory = false;
+        epoch += 1;
+        const asked = epoch;
+        readKey = keyNow();
+        const before = unlanded.get(readKey);
+        carried = before ? { ...before, line: before.line && { base: before.line.base } } : null;
+        const readable = await load(loadOptions);
+        if (asked === epoch) trustMemory = readable;
+        return readable;
+    };
+    record.reset = () => {
+        trustMemory = false;
+        line = null;
+        carried = null;
         epoch += 1;
         reset();
     };
-    if (useThreeWay) {
-        // The baseline moves only when a write is known to have landed, and to what this tab's view held when
-        // it asked: never to what the write put down, which can hold what another tab added and this view
-        // has not got, so that its absence would read as a removal made here. A write that failed leaves
-        // the edits unwritten and still "changed". Saves coalesced onto one write settle in the order they
-        // were asked, so the newest ask is the one left standing. A write that failed and that storage later
-        // lands from its requeue (a flush) moves nothing: its save already answered false. The next save of
-        // this record supersedes the requeued value and moves the baseline; until then the worst case is
-        // that another tab's later removal of an item this tab just added is undone, never a lost edit.
-        record.save = (options) => {
-            const asked = trustMemory ? snapshotOf(record.get()) : null;
-            const askedIn = epoch;
-            const pending = save(options);
-            if (!asked) return pending;
-            return pending.then((written) => {
-                if (written && askedIn === epoch) baseline = asked;
-                return written;
-            });
-        };
-    }
+    /** A clear: its value is stated outright, over whatever was waiting */
+    const overwrite = async (saveOptions) => {
+        const copy = snapshotOf(record.get());
+        const cleared = line;
+        unlanded.delete(cleared ? cleared.key : keyNow());
+        const seq = ++lastSeq;
+        const written = await save(saveOptions);
+        if (written && copy && cleared && seq > cleared.landed) {
+            cleared.base = copy.value;
+            cleared.landed = seq;
+        }
+        return written;
+    };
+    record.save = (saveOptions = {}) => {
+        if (saveOptions.overwrite) return overwrite(saveOptions);
+        const copy = snapshotOf(record.get());
+        const viewLine = trustMemory && copy ? line : null;
+        const key = viewLine ? viewLine.key : keyNow();
+        const waiting = unlanded.get(key);
+        return land({
+            key,
+            value: copy ? copy.value : record.get(),
+            line: viewLine,
+            under: waiting && waiting.line !== viewLine ? waiting : null,
+        });
+    };
+    record.flushed = async () => {
+        const [, landed] = await Promise.all([flushed(), lastLanding]);
+        return landed;
+    };
     return record;
 }
 

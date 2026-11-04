@@ -43,9 +43,10 @@ const mockStorage = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(store.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, storeName = 'settings') => {
+        set: vi.fn(async (key, value, storeName = 'settings', _immediate = false, options = {}) => {
             if (mockStorage.unavailable) return false;
-            storeFor(storeName).set(key, structuredClone(value));
+            const folded = options?.fold ? options.fold(storeFor(storeName).get(key), value) : undefined;
+            storeFor(storeName).set(key, structuredClone(folded === undefined ? value : folded));
             return true;
         }),
         delete: vi.fn(async (key, storeName = 'settings') => {
