@@ -66,7 +66,7 @@ class Config {
 
         // Extended color palette (configurable)
         // Dark background colors (for UI elements on dark backgrounds)
-        this.COLOR_PROFIT = '#047857'; // Emerald green for positive values
+        this.COLOR_PROFIT = '#10b981'; // Emerald green for positive values
         this.COLOR_LOSS = '#f87171'; // Red for negative values
         this.COLOR_WARNING = '#ffa500'; // Orange for warnings
         this.COLOR_INFO = '#60a5fa'; // Blue for informational
@@ -1445,7 +1445,7 @@ class Config {
      */
     applyColorSettings() {
         // Apply extended color palette from settings
-        this.COLOR_PROFIT = this.getSettingValue('color_profit', '#047857');
+        this.COLOR_PROFIT = this.getSettingValue('color_profit', '#10b981');
         this.COLOR_LOSS = this.getSettingValue('color_loss', '#f87171');
         this.COLOR_WARNING = this.getSettingValue('color_warning', '#ffa500');
         this.COLOR_INFO = this.getSettingValue('color_info', '#60a5fa');

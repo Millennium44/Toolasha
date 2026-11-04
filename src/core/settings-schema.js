@@ -4895,7 +4895,7 @@ export const settingsGroups = {
                 id: 'color_profit',
                 label: 'Profit/Positive Values',
                 type: 'color',
-                default: '#047857',
+                default: '#10b981',
                 help: 'Color used for profit, gains, and positive values',
             },
             color_loss: {

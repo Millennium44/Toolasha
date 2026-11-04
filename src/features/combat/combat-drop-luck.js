@@ -619,7 +619,7 @@ class CombatDropLuck {
 
             const { text, tone } = describeLuck(result.percentile);
             const color = {
-                lucky: config.getSetting('color_profit') || '#047857',
+                lucky: config.getSetting('color_profit') || '#10b981',
                 unlucky: config.getSetting('color_loss') || '#f87171',
                 normal: config.getSetting('color_text_primary') || config.COLOR_TEXT_PRIMARY,
             }[tone];

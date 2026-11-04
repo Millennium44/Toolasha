@@ -452,6 +452,16 @@ describe('Config — color constants', () => {
         });
     }
 
+    test('the profit color constant matches the setting schema default', async () => {
+        const { settingsGroups } = await import('./settings-schema.js');
+        const entry = Object.values(settingsGroups)
+            .flatMap((group) => Object.values(group.settings || {}))
+            .find((setting) => setting.id === 'color_profit');
+
+        expect(entry.default).toBe('#10b981');
+        expect(config.COLOR_PROFIT).toBe(entry.default);
+    });
+
     test('SCRIPT_COLOR_PRIMARY and SCRIPT_COLOR_SECONDARY are not defined', () => {
         expect(config.SCRIPT_COLOR_PRIMARY).toBeUndefined();
         expect(config.SCRIPT_COLOR_SECONDARY).toBeUndefined();
