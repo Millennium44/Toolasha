@@ -17,7 +17,16 @@ describe('sim phone layout', () => {
         expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-labsim-crate-row \{ flex-wrap: wrap; \}/);
     });
 
+    it('spans both sim panels across the viewport at phone width, over any saved geometry', () => {
+        const rule = SIM_PHONE_CSS.match(/#mwi-combat-sim-panel,\s*#mwi-lab-sim-panel \{([^}]*)\}/)?.[1] || '';
+        expect(rule).toContain('left: 0 !important');
+        expect(rule).toContain('width: 100vw !important');
+        expect(rule).toContain('max-width: 100vw !important');
+    });
+
     it('gives the combat zone select a line of its own at phone width', () => {
-        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*#mwi-csim-zone \{ flex: 1 1 calc\(100% - 60px\)/);
+        expect(SIM_PHONE_CSS).toMatch(
+            /@media \(max-width: 768px\)[\s\S]*#mwi-csim-zone \{ flex: 1 1 calc\(100% - 60px\)/
+        );
     });
 });

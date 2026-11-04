@@ -14,6 +14,16 @@ export const SIM_PHONE_STYLE_ID = 'mwi-sim-phone-layout';
 /** The stylesheet text. Exported so tests can read the rules without a layout engine. */
 export const SIM_PHONE_CSS = `
     @media ${MARKET_MOBILE_QUERY} {
+        /* Full viewport width whatever geometry was saved; nothing is written back to storage */
+        #mwi-combat-sim-panel,
+        #mwi-lab-sim-panel {
+            left: 0 !important;
+            right: auto !important;
+            width: 100vw !important;
+            min-width: 0 !important;
+            max-width: 100vw !important;
+            box-sizing: border-box;
+        }
         #mwi-labsim-crate-row { flex-wrap: wrap; }
         /* Zone takes a line of its own (label + select); Tier, Hours and Simulate wrap onto the next */
         #mwi-csim-zone { flex: 1 1 calc(100% - 60px) !important; }
