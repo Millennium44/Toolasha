@@ -90,7 +90,7 @@ export function triggerChipOptionsHtml() {
                 title="Also try different trigger conditions, not just different numbers: the buffs this zone's monsters cast on themselves or on you, your own buffs, and HP/MP readings, alone and ANDed in pairs. Runs after the threshold tuning for the selected player's abilities and food/drinks (per the choice above), takes many more sims, and its results are for you to enter by hand.">
                 <input type="checkbox" id="mwi-csim-trigger-conditions" style="margin:0; cursor:pointer;">Search new conditions (slow)
             </label>
-            <span id="mwi-csim-trigger-conditions-cost" style="color:#666; font-size:11px;"></span>
+            <span id="mwi-csim-trigger-conditions-cost" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
         </span>`;
 }
 
@@ -515,12 +515,12 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
     const unchanged = result.unchanged || [];
     if (unchanged.length > 0) {
         body +=
-            `<div style="font-size:11px; color:#666; margin-top:6px;">Kept as is: ` +
+            `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:6px;">Kept as is: ` +
             `${esc([...new Set(unchanged.map((t) => t.itemName))].join(', '))}.</div>`;
     }
     if (unused.length > 0) {
         body +=
-            `<div style="font-size:11px; color:#666; margin-top:4px;" title="Their triggers were never checked in ` +
+            `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:4px;" title="Their triggers were never checked in ` +
             `the baseline runs: the ability or food never came off cooldown at a moment it was looked at, so no ` +
             `threshold could have changed anything.">Not used in this fight: ` +
             `${esc([...new Set(unused.map((t) => t.itemName))].join(', '))}.</div>`;
@@ -529,7 +529,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
     body += conditionResultsHtml(result.conditions, gameData);
 
     body +=
-        `<div style="font-size:11px; color:#666; margin-top:6px;">` +
+        `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:6px;">` +
         `${esc(objectiveFooterText(result.objective))} ` +
         `A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
         `${esc(result.simCount)} sims${

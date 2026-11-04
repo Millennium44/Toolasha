@@ -68,7 +68,7 @@ export function labTriggerOptionsHtml(choices, selectStyle) {
  */
 export function labTriggerLoadoutsHtml(groups, skipped, note = '') {
     if (!groups.length) {
-        return `<span style="color:#666; font-size:11px;">${esc(note || 'No labyrinth fights with room levels yet.')}</span>`;
+        return `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">${esc(note || 'No labyrinth fights with room levels yet.')}</span>`;
     }
     return groups
         .map((group) => {
@@ -78,7 +78,7 @@ export function labTriggerLoadoutsHtml(groups, skipped, note = '') {
                 return (
                     `<span style="color:#aaa; font-size:12px;" data-lab-trigger-configure="${esc(group.key)}" ` +
                     `title="The Configure tab's fight in the setup edited there, saved or not. Change the scope on the Upgrade tab to tune loadouts instead.">` +
-                    `${esc(group.name)}: ${esc(fight.monsterName)} <span style="color:#666;">L${esc(fight.roomLevel)}</span></span>`
+                    `${esc(group.name)}: ${esc(fight.monsterName)} <span style="color:${GAME_COLORS.textDim};">L${esc(fight.roomLevel)}</span></span>`
                 );
             }
             return (
@@ -86,7 +86,7 @@ export function labTriggerLoadoutsHtml(groups, skipped, note = '') {
                 `title="${esc(monsters)}">` +
                 `<input type="checkbox" data-lab-trigger-group="${esc(group.key)}" style="margin:0; cursor:pointer;"` +
                 `${skipped.has(group.key) ? '' : ' checked'}>` +
-                `${esc(group.name)} <span style="color:#666;">(${group.fights.length} fight${group.fights.length === 1 ? '' : 's'})</span></label>`
+                `${esc(group.name)} <span style="color:${GAME_COLORS.textDim};">(${group.fights.length} fight${group.fights.length === 1 ? '' : 's'})</span></label>`
             );
         })
         .join('');
@@ -421,7 +421,7 @@ function groupHtml(group, gameData, index = 0, verify = null) {
     const unused = [...new Set((result.unused || []).map((t) => t.itemName))];
     if (unused.length > 0) {
         body +=
-            `<div style="font-size:11px; color:#666; margin-top:4px;">Never came into play in these fights: ` +
+            `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:4px;">Never came into play in these fights: ` +
             `${esc(unused.join(', '))}.</div>`;
     }
     return (
@@ -470,7 +470,7 @@ export function renderLabTriggerResultsHtml(run, gameData, verify = null) {
         ? groups.map((g, i) => groupHtml(g, gameData, i, verify)).join('')
         : '<div style="color:#888; font-size:12px;">No loadout was tuned.</div>';
     const footer =
-        `<div style="font-size:11px; color:#666; margin-top:8px;">` +
+        `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:8px;">` +
         `Score is the expected number of attempts to clear the loadout's fights (sum of 1 / win rate). ` +
         `A change is kept only when it clears a 95% test on seeds that did not pick it and saves at least ` +
         `${esc(run?.minGain)} attempts. ${esc(run?.simCount)} fight sims. ` +

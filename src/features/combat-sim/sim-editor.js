@@ -552,7 +552,9 @@ export class SimEditor {
             if (this._scenarioToken !== scenario) return;
             if (!players.length) {
                 editorArea.innerHTML =
-                    '<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
+                    '<div style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-size:12px; text-align:center; padding:20px 0;">No character data available.</div>';
                 return;
             }
 
@@ -1169,7 +1171,7 @@ export class SimEditor {
             source === 'battle'
                 ? 'The game only names the party when a battle starts, so someone joining or leaving while you are idle shows up at your next fight.'
                 : 'The game states the party once, at page load. It is re-read when your next battle starts.';
-        return `<div style="color:#666; font-size:11px; margin:-4px 0 8px;" title="${why}">
+        return `<div style="color:${GAME_COLORS.textDim}; font-size:11px; margin:-4px 0 8px;" title="${why}">
             Party as of ${from}.
         </div>`;
     }
@@ -1219,11 +1221,11 @@ export class SimEditor {
 
         const ages = loaded.map((entry) => {
             const ageMs = profileAgeMs(entry.capturedAt, now);
-            const color = isProfileStale(ageMs) ? '#c9a227' : '#777';
+            const color = isProfileStale(ageMs) ? '#c9a227' : GAME_COLORS.textDim;
             const label = `<span style="color:${color};">${escapeHtml(entry.name)} ${formatProfileAge(ageMs)}</span>`;
             return label + this._gearSourceLabel(entry, now);
         });
-        let html = `<div style="color:#666; font-size:11px; margin:-4px 0 8px;"
+        let html = `<div style="color:${GAME_COLORS.textDim}; font-size:11px; margin:-4px 0 8px;"
             title="Party members are loaded from their cached profiles, captured whenever their profile is opened in game. Older than a day is highlighted.">
             Party profiles: ${ages.join(' · ')}
         </div>`;
@@ -1249,7 +1251,9 @@ export class SimEditor {
             const age = formatProfileAge(profileAgeMs(entry.loadoutCapturedAt, now));
             return ` <span style="color:${ACCENT};">(party loadout, ${age})</span>`;
         }
-        return entry.gearSource === 'profile' ? ' <span style="color:#777;">(worn gear)</span>' : '';
+        return entry.gearSource === 'profile'
+            ? ' <span style="color:' + GAME_COLORS.textDim + ';">(worn gear)</span>'
+            : '';
     }
 
     /**
@@ -1770,7 +1774,7 @@ export class SimEditor {
             html += editorRowOpen(equipRow++);
             html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-            html += `<span style="color:#666; font-size:11px;">+</span>`;
+            html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">+</span>`;
             html += `<input type="number" min="0" max="20" value="${equip.enhancementLevel}"
                 data-enhance-slot="${slotType}"
                 style="width:3.5em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
@@ -1816,7 +1820,7 @@ export class SimEditor {
             html += editorRowOpen(i);
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-            html += `<span style="color:#666; font-size:11px;">Lv</span>`;
+            html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">Lv</span>`;
             html += `<input type="number" min="1" max="200" value="${ability.level}"
                 data-ability-idx="${i}"
                 style="width:4em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
@@ -1856,7 +1860,8 @@ export class SimEditor {
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
             html += editorRowOpen(i);
-            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' + GAME_COLORS.textDim + '; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
                 nameColor +
@@ -1879,7 +1884,8 @@ export class SimEditor {
             const name = item ? itemDetailMap[item.hrid]?.name || item.hrid.split('/').pop() : 'Empty';
             const nameColor = item ? '#e0e0e0' : '#555';
             html += editorRowOpen(i);
-            html += '<span style="color:#666; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
+            html +=
+                '<span style="color:' + GAME_COLORS.textDim + '; width:16px; flex-shrink:0;">' + (i + 1) + '</span>';
             html +=
                 '<span style="color:' +
                 nameColor +
@@ -2037,7 +2043,9 @@ export class SimEditor {
 
                 const isCurrent = item.hrid === currentHrid;
                 const lvlTag =
-                    '<span style="color:#666; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ' +
+                    '<span style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ' +
                     item.itemLevel +
                     '</span>';
                 if (item.conflict) {
@@ -2069,7 +2077,9 @@ export class SimEditor {
             }
             if (filtered.length > 80) {
                 html +=
-                    '<div style="color:#666; text-align:center; padding:6px;">...' +
+                    '<div style="color:' +
+                    GAME_COLORS.textDim +
+                    '; text-align:center; padding:6px;">...' +
                     (filtered.length - 80) +
                     ' more</div>';
             }
@@ -2204,7 +2214,7 @@ export class SimEditor {
                 const isCurrent = item.hrid === currentHrid;
                 const color = isCurrent ? ACCENT : '#ccc';
                 const indicator = isCurrent ? ` <span style="color:${ACCENT};">\u25cf</span>` : '';
-                const lvlTag = `<span style="color:#666; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ${item.reqLevel}</span>`;
+                const lvlTag = `<span style="color:${GAME_COLORS.textDim}; font-size:10px; margin-left:auto; flex-shrink:0;">Lv ${item.reqLevel}</span>`;
 
                 html +=
                     `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ${GAME_COLORS.raised}; color:${color};"` +
@@ -2215,7 +2225,7 @@ export class SimEditor {
                     '</div>';
             }
             if (filtered.length > 100) {
-                html += `<div style="color:#666; text-align:center; padding:6px;">...${filtered.length - 100} more</div>`;
+                html += `<div style="color:${GAME_COLORS.textDim}; text-align:center; padding:6px;">...${filtered.length - 100} more</div>`;
             }
             listEl.innerHTML = html;
 
@@ -2908,7 +2918,7 @@ export class SimEditor {
                           'right now. Typing higher sims a level the guild would have to build first.'
                         : `Your guild has not built ${label} yet, so there is no level to buy. Typing one sims ` +
                           'a shrine the guild would have to build first.';
-                html += `<span style="color:#666;" title="${escapeHtml(capTitle)}">/ ${cap}</span>`;
+                html += `<span style="color:${GAME_COLORS.textDim};" title="${escapeHtml(capTitle)}">/ ${cap}</span>`;
             }
             html += '</div>';
         }
@@ -2979,7 +2989,7 @@ export class SimEditor {
             html += `<span style="color:#888;">${label}</span>`;
             html += '</label>';
         }
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;
+        html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;
 
         html += '</div></div>';
         return html;
@@ -3051,7 +3061,7 @@ export class SimEditor {
                     : dto.achievementBuffsManual
                       ? 'Not in shared profiles — set manually.'
                       : 'From your completed achievements. Untick to sim without one.';
-        html += `<div style="color:#666; font-size:10px; margin-top:4px;">${caption}</div>`;
+        html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">${caption}</div>`;
 
         html += '</div></div>';
         return html;

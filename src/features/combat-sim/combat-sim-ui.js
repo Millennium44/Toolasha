@@ -1125,7 +1125,7 @@ function ladderSentence(ladder, total = null) {
 export function costSourceTagHtml(source) {
     const entry = COST_SOURCES[source];
     if (!entry) return '';
-    return `<span title="${entry.title}" style="color:#666; font-size:9px; margin-left:3px;">${entry.label}</span>`;
+    return `<span title="${entry.title}" style="color:${GAME_COLORS.textDim}; font-size:9px; margin-left:3px;">${entry.label}</span>`;
 }
 
 /**
@@ -3430,7 +3430,7 @@ class CombatSimUI {
         const editorArea = document.createElement('div');
         editorArea.id = 'mwi-csim-editor';
         editorArea.style.cssText = 'flex:1; overflow-y:auto; padding:10px 14px;';
-        editorArea.innerHTML = `<div style="color:#555; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>`;
+        editorArea.innerHTML = `<div style="color:${GAME_COLORS.textDim}; font-size:12px; text-align:center; padding:20px 0;">Loading loadout...</div>`;
 
         this._editor = new SimEditor({
             editorEl: editorArea,
@@ -3680,7 +3680,9 @@ class CombatSimUI {
             ACCENT_BTN_BORDER +
             ';';
         combatTargets.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Combat Lv</b> target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>Combat Lv</b> target levels (blank or ≤ current level skips the skill; used instead of the +Levels boost while open):</span>' +
             [
                 ['staminaLevel', 'Stamina'],
                 ['intelligenceLevel', 'Int'],
@@ -3772,7 +3774,9 @@ class CombatSimUI {
         const status = document.createElement('div');
         status.id = 'mwi-csim-status';
         status.style.cssText =
-            'padding:6px 14px; color:#555; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
+            'padding:6px 14px; color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
         status.textContent = 'Select a zone and click Simulate.';
 
         this.panel.appendChild(header);
@@ -5256,7 +5260,7 @@ class CombatSimUI {
                             const outlook = row._bestiary;
                             if (!outlook) {
                                 display = '—';
-                                style += ' text-align:right; color:#666;';
+                                style += ' text-align:right; color:' + GAME_COLORS.textDim + ';';
                             } else {
                                 const first = Number.isFinite(outlook.firstPointHours)
                                     ? outlook.firstPointHours < 1
@@ -5306,7 +5310,7 @@ class CombatSimUI {
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
                             if (!row._dungeon) {
                                 display = '—';
-                                style += ' color:#666;';
+                                style += ' color:' + GAME_COLORS.textDim + ';';
                             } else {
                                 display = val.toFixed(1);
                                 style += col.key === 'failsPerDay' && val > 0 ? ' color:#f44336;' : ' color:#e0e0e0;';
@@ -5315,7 +5319,7 @@ class CombatSimUI {
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
                             if (!row._dungeon || val === null || val === undefined) {
                                 display = '—';
-                                style += ' color:#666;';
+                                style += ' color:' + GAME_COLORS.textDim + ';';
                             } else {
                                 display = timeReadable(val);
                                 style += ' color:#e0e0e0;';
@@ -5661,7 +5665,7 @@ class CombatSimUI {
                 <label style="color:#888; display:flex; align-items:center; gap:4px;"><span id="mwi-csim-bestiary-plan-label">${modeLabel}</span>
                     <input id="mwi-csim-bestiary-plan-value" type="number" min="${modeMin}" max="100000" step="any" value="${modeValue}" style="${inputStyle}">
                 </label>
-                <span id="mwi-csim-bestiary-plan-total-note" style="color:#666; font-size:10px; display:${mode === 'total' ? '' : 'none'};"></span>
+                <span id="mwi-csim-bestiary-plan-total-note" style="color:${GAME_COLORS.textDim}; font-size:10px; display:${mode === 'total' ? '' : 'none'};"></span>
                 <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
@@ -8298,7 +8302,7 @@ class CombatSimUI {
                 html += `<div style="${sectionStyle}">`;
                 html += `<div style="${headingStyle}">Drops</div>`;
                 // Column headers
-                html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+                html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
                 html += `<span style="flex:1;">Item</span>`;
                 html += `<span style="${colNum}">/hr</span>`;
                 html += `<span style="${colNum}">/day</span>`;
@@ -8388,7 +8392,7 @@ class CombatSimUI {
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">Consumable Costs</div>`;
             // Column headers
-            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colNum}">/day</span>`;
@@ -8457,7 +8461,7 @@ class CombatSimUI {
 
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">Key Costs</div>`;
-            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colNum}">/day</span>`;
@@ -8529,7 +8533,7 @@ class CombatSimUI {
         const netColGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
         const netColNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
         // Column headers
-        html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:#666;">`;
+        html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
         html += `<span style="flex:1;"></span>`;
         html += `<span style="${netColNum}"></span>`;
         html += `<span style="${netColNum}"></span>`;
@@ -8569,7 +8573,7 @@ class CombatSimUI {
                     padding:4px 8px; background:#1a1a1a; cursor:pointer; font-size:12px;
                 ">`;
                 html += `<span style="color:#aaa;">Wipe #${wi + 1} — Wave ${wave} @ ${timeSec}s</span>`;
-                html += `<span style="color:#666; font-size:10px;">▶</span>`;
+                html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px;">▶</span>`;
                 html += `</div>`;
                 html += `<div id="${eventId}-body" style="display:none; padding:6px 8px; font-size:11px; font-family:monospace; background:#111; max-height:300px; overflow-y:auto;">`;
 
@@ -8589,7 +8593,7 @@ class CombatSimUI {
                 const baseTime = groups.length > 0 ? groups[0].time : 0;
                 for (const group of groups) {
                     const rel = ((group.time - baseTime) / 1e9).toFixed(2);
-                    html += `<div style="margin-top:6px; color:#666; border-top:1px solid #222; padding-top:4px;">[+${rel}s] Wave ${group.wave ?? '?'}</div>`;
+                    html += `<div style="margin-top:6px; color:${GAME_COLORS.textDim}; border-top:1px solid #222; padding-top:4px;">[+${rel}s] Wave ${group.wave ?? '?'}</div>`;
                     const damagedPlayers = new Set(group.logs.map((l) => l.target));
                     for (const log of group.logs) {
                         const abilityLabel =
@@ -8610,7 +8614,7 @@ class CombatSimUI {
                         html += ` cast <span style="color:#c4b5fd;">${abilityLabel}</span>`;
                         html += ` → <span style="color:#93c5fd;">${log.target}</span>`;
                         html += ` <span style="color:#ff6b6b;">${log.damage}${critMark}</span>`;
-                        html += ` <span style="color:#666;">HP ${log.beforeHp}→${log.afterHp}</span>`;
+                        html += ` <span style="color:${GAME_COLORS.textDim};">HP ${log.beforeHp}→${log.afterHp}</span>`;
                         html += `</div>`;
                     }
                     // Players HP summary at end of each time group
@@ -8935,7 +8939,7 @@ class CombatSimUI {
         // The two halves of Profit/day, so the tile is auditable without
         // scrolling to the tables that produced them
         const subLine =
-            `<div style="margin-top:5px; font-size:10px; color:#666;">` +
+            `<div style="margin-top:5px; font-size:10px; color:${GAME_COLORS.textDim};">` +
             `Revenue ${formatKMB(Math.round(revenuePerHr * 24))}/day &nbsp;·&nbsp; ` +
             `Costs ${formatKMB(Math.round(expensesPerHr * 24))}/day` +
             (xpPerHrBySkill.length > 0
@@ -9037,13 +9041,13 @@ class CombatSimUI {
         let html = `<div style="margin-bottom:12px;">`;
         html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px; cursor:pointer; user-select:none;" data-toggle="sustain-section">`;
         html += `<span data-arrow="sustain-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Healing &amp; Mana`;
-        html += `<span style="color:#666; font-weight:400; font-size:10px; margin-left:6px;">${headline}</span>`;
+        html += `<span style="color:${GAME_COLORS.textDim}; font-weight:400; font-size:10px; margin-left:6px;">${headline}</span>`;
         html += '</div>';
         html += `<div id="mwi-csim-sustain-section" style="display:none;">`;
 
         for (const section of sections) {
             html += `<div style="color:#888; font-size:10px; margin:6px 0 2px;">${section.label}</div>`;
-            html += `<div style="display:flex; align-items:center; padding:0 0 2px; font-size:10px; gap:6px; color:#666;">`;
+            html += `<div style="display:flex; align-items:center; padding:0 0 2px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Source</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colNum}">Total</span>`;
@@ -9408,7 +9412,7 @@ class CombatSimUI {
 
         // Table
         html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
-        html += '<tr style="border-bottom:1px solid #333; color:#666;">';
+        html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
         html += '<th style="text-align:left; padding:2px 4px;">Scenario</th>';
         html += '<th style="text-align:right; padding:2px 4px;">EPH</th>';
         html += '<th style="text-align:right; padding:2px 4px;">DPS</th>';
@@ -9455,7 +9459,9 @@ class CombatSimUI {
         }
         html += '<td></td>';
         html +=
-            '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" data-delete-history="' +
+            '<td style="text-align:center; padding:2px; cursor:pointer; color:' +
+            GAME_COLORS.textDim +
+            ';" data-delete-history="' +
             baseIdx +
             '" title="Delete result">✕</td>';
         html += '</tr>';
@@ -9515,11 +9521,15 @@ class CombatSimUI {
                     '</td>';
             }
             html +=
-                '<td style="text-align:center; padding:2px; cursor:pointer; color:#666;" data-remove-comparison="' +
+                '<td style="text-align:center; padding:2px; cursor:pointer; color:' +
+                GAME_COLORS.textDim +
+                ';" data-remove-comparison="' +
                 idx +
                 '" title="Remove from comparison">×</td>';
             html +=
-                '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" data-delete-history="' +
+                '<td style="text-align:center; padding:2px; cursor:pointer; color:' +
+                GAME_COLORS.textDim +
+                ';" data-delete-history="' +
                 idx +
                 '" title="Delete result">✕</td>';
             html += '</tr>';
@@ -10108,12 +10118,16 @@ class CombatSimUI {
 
         if (!abilities.length) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No abilities equipped — configure a simulation first.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Ability Lv</b> target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>Ability Lv</b> target levels (blank or ≤ current level skips the ability; used instead of the +Levels boost while open):</span>' +
             abilities
                 .map((ability) => {
                     const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
@@ -10289,12 +10303,16 @@ class CombatSimUI {
 
         if (rooms.length === 0) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No combat-relevant house rooms found in game data.</span>';
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No combat-relevant house rooms found in game data.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ current level skips the room; used instead of the Lv value while open):</span>' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>House</b> target levels (blank or ≤ current level skips the room; used instead of the Lv value while open):</span>' +
             rooms
                 .map(
                     (room) => `
@@ -10362,13 +10380,17 @@ class CombatSimUI {
 
         if (shrines.length === 0) {
             grid.innerHTML =
-                '<span style="color:#666; font-size:11px;">No combat guild shrine reached the client — join a ' +
+                '<span style="color:' +
+                GAME_COLORS.textDim +
+                '; font-size:11px;">No combat guild shrine reached the client — join a ' +
                 'guild, or open the shrine screen once, so the levels are known.</span>';
             return;
         }
 
         grid.innerHTML =
-            '<span style="color:#666; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
+            '<span style="color:' +
+            GAME_COLORS.textDim +
+            '; font-size:11px; flex-basis:100%;"><b>Guild Shrine</b> target levels (blank ' +
             'or ≤ current level evaluates one level up; <b>0 skips the shrine</b>; used instead of the Lv ' +
             'value while open):</span>' +
             shrines
@@ -11458,12 +11480,12 @@ class CombatSimUI {
         } else {
             const lines = rec.slots.map((slot) => {
                 if (!slot.hrid) {
-                    return `${slot.fromName} → <span style="color:#4caf50;">empty</span> <span style="color:#666;">(not needed here)</span>`;
+                    return `${slot.fromName} → <span style="color:#4caf50;">empty</span> <span style="color:${GAME_COLORS.textDim};">(not needed here)</span>`;
                 }
                 if (!slot.changed) {
-                    return `${slot.fromName} <span style="color:#666;">(kept, ${restoreLabel(slot)})</span>`;
+                    return `${slot.fromName} <span style="color:${GAME_COLORS.textDim};">(kept, ${restoreLabel(slot)})</span>`;
                 }
-                return `${slot.fromName} → <span style="color:#e0e0e0;">${slot.name}</span> <span style="color:#666;">(${restoreLabel(slot)})</span>`;
+                return `${slot.fromName} → <span style="color:#e0e0e0;">${slot.name}</span> <span style="color:${GAME_COLORS.textDim};">(${restoreLabel(slot)})</span>`;
             });
             picksText = lines.join('<br>');
         }
@@ -11503,7 +11525,7 @@ class CombatSimUI {
             ? ''
             : `<div style="color:#aaa; font-size:11px; margin-top:4px;">
                 ${Number.isFinite(rec.costPerHour) ? `${formatKMB(rec.costPerHour)}/hr in consumables` : 'Cost unknown in consumables'} ${savingsText ? '— ' + savingsText : ''}
-                <span style="color:#666;">
+                <span style="color:${GAME_COLORS.textDim};">
                     · ${rec.deathsPerHour.toFixed(2)} deaths/hr · ${pct(rec.oomFraction)} out of mana
                 </span>
             </div>`;
@@ -11517,12 +11539,12 @@ class CombatSimUI {
             summary: food.keepCurrent ? 'Keep your current food' : 'Cheaper food found',
             style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
         });
-        return `<div style="margin:0 0 10px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
+        return `<div style="margin:0 0 10px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${foodHead}
             <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
             ${statsLine}
-            <div style="color:#666; font-size:10px; margin-top:4px;">${currentLine}</div>
-            <div style="color:#666; font-size:10px; margin-top:2px;">
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">${currentLine}</div>
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">
                 ${food.simCount} sims searched. Starting from your equipped foods, each slot steps down a tier at a
                 time within its own food type until survival breaks (or climbs until it holds). Buff foods stay
                 equipped.
@@ -11577,8 +11599,8 @@ class CombatSimUI {
             const profitGold = key === 'profit' ? profitNoiseGold(r, baseline) : null;
             const bar =
                 profitGold != null
-                    ? `<span style="color:#666;"> ±${formatKMB(profitGold * 24)}/day</span>`
-                    : `<span style="color:#666;"> ±${noisePct.toFixed(2)}%</span>`;
+                    ? `<span style="color:${GAME_COLORS.textDim};"> ±${formatKMB(profitGold * 24)}/day</span>`
+                    : `<span style="color:${GAME_COLORS.textDim};"> ±${noisePct.toFixed(2)}%</span>`;
             return significant
                 ? bar
                 : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
@@ -11611,7 +11633,7 @@ class CombatSimUI {
                     <div style="color:${deathDeltaColor(dphDelta)};">${fmtDeltaSmall(dphDelta)} (${r.deltas.deaths >= 0 ? '+' : ''}${r.deltas.deaths.toFixed(2)}%)${errorBar('deaths')}</div>
                 </div>
             </div>
-            <div style="margin-top:6px; color:#666; font-size:10px;">
+            <div style="margin-top:6px; color:${GAME_COLORS.textDim}; font-size:10px;">
                 Baseline: DPS ${formatKMB(baseline.dps)} | EXP ${formatKMB(baseline.xpPerHour)} | Profit/day ${formatKMB(baseline.profitPerHour * 24)} | EPH ${baseline.encountersPerHour.toFixed(1)} | DPH ${baseline.deathsPerHour.toFixed(1)}
             </div>
             ${this._renderUpgradeCostBasis(r)}
@@ -11925,7 +11947,7 @@ class CombatSimUI {
             return '';
         }
 
-        return `<div style="margin-top:4px; color:#666; font-size:10px;">
+        return `<div style="margin-top:4px; color:${GAME_COLORS.textDim}; font-size:10px;">
             Score ${formatScore(r.score)}: ${parts.join(' &nbsp;·&nbsp; ')}
         </div>`;
     }
@@ -11988,7 +12010,7 @@ class CombatSimUI {
         const canVerify = this._canVerifyResults(this._upgradeResultsData);
         const verifyBtn = `style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit;"`;
         const verifyBar =
-            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
+            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:${GAME_COLORS.textDim};">` +
             `<button id="mwi-csim-gold-verify" ${VERIFY_BTN_ATTR}${canVerify && sorted.length ? '' : ' disabled'} ` +
             `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} rows by the table's order against your current setup on fresh seeds` : 'Re-run the analysis to verify'}">` +
             `Verify top ${VERIFY_DEFAULTS.top}</button>` +
@@ -12104,7 +12126,7 @@ class CombatSimUI {
                 <div>
                     <div style="color:#888; font-weight:600; margin-bottom:4px;">Counts toward Score</div>
                     ${scoreList}
-                    <div style="color:#666; margin-top:6px; max-width:190px; line-height:1.35;">
+                    <div style="color:${GAME_COLORS.textDim}; margin-top:6px; max-width:190px; line-height:1.35;">
                         Repay and ROI are the same ratio inverted — scoring both counts it twice.
                     </div>
                     <div style="color:#888; font-weight:600; margin:8px 0 4px;">Score</div>
@@ -12503,14 +12525,14 @@ class CombatSimUI {
             ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
             : '';
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'levels',
                 title: 'Combat levels',
                 summary: `${rows.length} skill${rows.length === 1 ? '' : 's'}`,
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             })}
-            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
                 Levels can't be bought, so these are ranked by improvement per hour of grind (Hours/0.01%, lower is
                 better), not against the gold costs above. Level time assumes you train that skill at your current
                 rates, and each row is one step on its own — they don't stack.${primaryNote}
@@ -12556,17 +12578,17 @@ class CombatSimUI {
             if (r.alongside) {
                 const a = r.alongside;
                 if (a.upgradeLevel > a.currentLevel) {
-                    alongLine = `<div style="color:#777; font-size:10px;">+ ${a.label} ${a.currentLevel} → ${a.upgradeLevel} along the way</div>`;
+                    alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">+ ${a.label} ${a.currentLevel} → ${a.upgradeLevel} along the way</div>`;
                     const solo = (delta, pct) => fmtCell(delta, pct);
                     alongTitle =
                         ` Δ columns are for both together; ${r.candidate.description} alone: DPS ${solo(r.metrics.dps - baseline.dps, r.deltas.dps)}, ` +
                         `EXP/hr ${solo(r.metrics.xpPerHour - baseline.xpPerHour, r.deltas.xp)}, ` +
                         `Profit/hr ${solo(r.metrics.profitPerHour - baseline.profitPerHour, r.deltas.profit)}.`;
                 } else {
-                    alongLine = `<div style="color:#555; font-size:10px;">${a.label} gains no level along the way</div>`;
+                    alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">${a.label} gains no level along the way</div>`;
                 }
             } else if (r.isMainSkill) {
-                alongLine = `<div style="color:#555; font-size:10px;">your weapon's own skill</div>`;
+                alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">your weapon's own skill</div>`;
             }
             const deltaTitle = alongTitle ? `title="${alongTitle.trim()}"` : '';
 
@@ -12649,14 +12671,14 @@ class CombatSimUI {
             return `<span style="color:${color};">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>`;
         };
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'unpriced',
                 title: 'Measured, but not priced',
                 summary: `${rows.length} row${rows.length === 1 ? '' : 's'}`,
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             })}
-            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
                 Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by
                 value, scored, or bought by the budget planner. The deltas are real.
             </div>
@@ -12812,14 +12834,14 @@ class CombatSimUI {
             'Ranks well on stats for its token cost, but costs more than the profit it adds: worth it for a ' +
             'DPS or EXP push, not for gold.';
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'scrolls',
                 title: 'Scrolls, priced by their tokens',
                 summary: `${rows.length} scroll${rows.length === 1 ? '' : 's'}`,
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             })}
-            <div style="color:#666; font-size:10px; margin-bottom:6px;">
+            <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
                 A scroll costs 30 Labyrinth Tokens for a 30-minute buff, kept up all run (2 per hour). Its price is what
                 those tokens would otherwise buy: the shop's best conversion, ${formatKMB(Math.floor(rate.value))}
                 gold/token after sale tax, as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
@@ -13001,7 +13023,7 @@ class CombatSimUI {
                                 : ''
                         } ·
                         <span style="color:${budgetGainColor(plan.gainTotal + orderPlan.gain)}; font-weight:600;">${plan.metric.format(plan.gainTotal + orderPlan.gain)}</span>
-                        <span style="color:#666;"> if gains in different slots add up</span>
+                        <span style="color:${GAME_COLORS.textDim};"> if gains in different slots add up</span>
                     </div>${provisional}${partialNote}${constraintsHtml}${this._renderBudgetConfirm(plan, baseline)}`;
             }
             // Rows left out because nothing prices a running cost: named, with the reason, never planned around
@@ -13024,16 +13046,16 @@ class CombatSimUI {
             summary: this._upgradeBudgetText ? `${this._upgradeBudgetText} budget` : 'no budget set',
             style: `color:${ACCENT}; font-weight:700; font-size:11px; margin-bottom:4px;`,
         });
-        return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:${GAME_COLORS.raised};
+        return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:${GAME_COLORS.box};
             border:1px solid #222; border-radius:4px;">
             ${budgetHead}
             <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; flex-wrap:wrap;">
                 <input id="mwi-csim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
                     value="${this._upgradeBudgetText || ''}" style="${inputStyle}">
-                <span style="color:#666;">for</span>
+                <span style="color:${GAME_COLORS.textDim};">for</span>
                 <select class="toolasha-select" id="mwi-csim-budget-metric" style="${selectStyle}">${options}</select>
                 <button id="mwi-csim-budget-plan" style="${btnStyle}">Plan</button>
-                <span style="color:#555;" title="Two pieces for one equipment slot cannot both be worn, and two
+                <span style="color:${GAME_COLORS.textDim};" title="Two pieces for one equipment slot cannot both be worn, and two
                     targets for one ability are the same purchase twice — so the plan takes the better of each.
                     Different abilities are different purchases and can all be in the same plan.">best set that
                     fits — one per slot, one per ability</span>
@@ -13063,7 +13085,8 @@ class CombatSimUI {
         if (!orderRows?.length) return none;
         const metric = plan.metric;
         const isScore = metric.key === 'score';
-        const muted = (text) => `<div style="color:#777; font-size:10px; margin-top:3px;">${text}</div>`;
+        const muted = (text) =>
+            `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:3px;">${text}</div>`;
         const gainOf = (r) =>
             isScore
                 ? balancedScore(abilityOrderMetrics(r.metrics), abilityOrderMetrics(baseline))
@@ -13464,7 +13487,7 @@ class CombatSimUI {
                     <span style="color:${budgetGainColor(plan.gainTotal)}; font-weight:600;">${plan.metric.format(plan.gainTotal)}</span>
                     · together
                     ${togetherHtml}
-                    <span style="color:#666;" title="Every pick worn at once, simulated in one run against the same
+                    <span style="color:${GAME_COLORS.textDim};" title="Every pick worn at once, simulated in one run against the same
                         seed and settings the plan itself was measured with.">— all picks worn at once, one
                         run</span>
                 </div>`
@@ -14132,7 +14155,7 @@ class CombatSimUI {
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             });
         const card = (inner) =>
-            `<div id="mwi-csim-order-section" style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; ` +
+            `<div id="mwi-csim-order-section" style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.box}; ` +
             `border:1px solid ${GAME_COLORS.border}; border-radius:6px;">${inner}</div>`;
         const note = (text, color = '#aaa') =>
             `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
@@ -14239,7 +14262,7 @@ class CombatSimUI {
         const canVerify = this._canVerifyResults(results);
         const rankLabel = ABILITY_ORDER_RANKS.find((x) => x.key === rank).label;
         const verifyBar =
-            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
+            `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:${GAME_COLORS.textDim};">` +
             `<button id="mwi-csim-order-verify" ${VERIFY_BTN_ATTR}${canVerify && verifyPick.length ? '' : ' disabled'} ` +
             `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} orders by ${rankLabel}, plus the best order that clears the noise when it is not among them, against your current order on fresh seeds` : 'Re-run the analysis to verify'}">` +
             `Verify top picks</button>` +
@@ -14320,7 +14343,7 @@ class CombatSimUI {
                 : '';
         return card(
             head(summary) +
-                `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of your ordinary abilities, simulated. ` +
+                `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">Every order of your ordinary abilities, simulated. ` +
                 `Free to apply: set it in the game. Rank by ` +
                 `<select class="toolasha-select" id="mwi-csim-order-rank" style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; ` +
                 `border-radius:3px; padding:1px 4px; font-size:11px; font-family:inherit;">${options}</select>` +

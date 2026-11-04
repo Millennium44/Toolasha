@@ -481,7 +481,7 @@ export class PartyFinderTab {
                 'You',
                 `<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
                     <select class="toolasha-select" data-pf="self" style="${INPUT_STYLE}"></select>
-                    <span style="color:#666; font-size:11px;">Every figure below is this player's own.</span>
+                    <span style="color:${GAME_COLORS.textDim}; font-size:11px;">Every figure below is this player's own.</span>
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
                     <label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center;" title="Also sim you wearing each aura you own, alone and in every party">
@@ -490,10 +490,12 @@ export class PartyFinderTab {
                     <button data-pf="self-aura-edit" style="${SMALL_BTN_STYLE} display:none;"></button>
                 </div>
                 <div data-pf="self-aura-editor"></div>
-                <div style="color:#666; font-size:11px; margin-top:4px;">With auras on, each aura of yours is tried alone and in every party, so the sims multiply. "vs solo" always compares against you as worn, alone (the baseline row); the solo rows with an aura show whether it helps you alone.</div>`
+                <div style="color:${GAME_COLORS.textDim}; font-size:11px; margin-top:4px;">With auras on, each aura of yours is tried alone and in every party, so the sims multiply. "vs solo" always compares against you as worn, alone (the baseline row); the solo rows with an aura show whether it helps you alone.</div>`
             ),
             section(
-                'Teammates <span data-pf="roster-count" style="color:#666; font-weight:400;"></span>',
+                'Teammates <span data-pf="roster-count" style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-weight:400;"></span>',
                 `<div data-pf="roster" style="display:flex; flex-direction:column; gap:3px;"></div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
                     <label style="color:#888; font-size:11px;">From the editor</label>
@@ -510,7 +512,9 @@ export class PartyFinderTab {
                 <div data-pf="roster-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
             ),
             section(
-                'Saved builds <span data-pf="build-count" style="color:#666; font-weight:400;"></span>',
+                'Saved builds <span data-pf="build-count" style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-weight:400;"></span>',
                 `<div data-pf="templates" style="margin-bottom:6px;"></div>
                 <div data-pf="builds" style="display:flex; flex-direction:column; gap:3px;"></div>
                 <div style="margin-top:6px;">
@@ -736,7 +740,7 @@ export class PartyFinderTab {
         list.textContent = '';
         if (!entries.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'color:#666; font-size:11px;';
+            empty.style.cssText = 'color:' + GAME_COLORS.textDim + '; font-size:11px;';
             empty.textContent =
                 'No teammates yet. Load someone in the Configure tab (import, a shared profile, your party), ' +
                 'then save them here — or copy your own build and edit it.';
@@ -982,7 +986,7 @@ export class PartyFinderTab {
         list.textContent = '';
         if (!builds.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'color:#666; font-size:11px;';
+            empty.style.cssText = 'color:' + GAME_COLORS.textDim + '; font-size:11px;';
             empty.textContent =
                 'No saved builds. "Save build…" keeps your current build, or any player in the editor, under a name.';
             list.appendChild(empty);
@@ -1166,7 +1170,7 @@ export class PartyFinderTab {
         const current = entry.dto?.abilities?.[0]?.hrid;
         if (current && gameData?.abilityDetailMap?.[current]) {
             const wears = document.createElement('div');
-            wears.style.color = '#666';
+            wears.style.color = GAME_COLORS.textDim;
             wears.textContent = `As built: ${gameData.abilityDetailMap[current].name || current} ${entry.dto.abilities[0].level || ''}`;
             box.appendChild(wears);
         }
@@ -1213,12 +1217,12 @@ export class PartyFinderTab {
         add.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap:wrap;';
         if (!auras.length) {
             const none = document.createElement('span');
-            none.style.color = '#666';
+            none.style.color = GAME_COLORS.textDim;
             none.textContent = 'No auras in the game data yet.';
             add.appendChild(none);
         } else if (entry.auras.length >= MAX_AURA_OPTIONS) {
             const full = document.createElement('span');
-            full.style.color = '#666';
+            full.style.color = GAME_COLORS.textDim;
             full.textContent = `At most ${MAX_AURA_OPTIONS} aura options.`;
             add.appendChild(full);
         } else {
@@ -1751,7 +1755,7 @@ export class PartyFinderTab {
         chips.textContent = '';
         if (!this._zones.length) {
             const none = document.createElement('span');
-            none.style.cssText = 'color:#666; font-size:11px;';
+            none.style.cssText = 'color:' + GAME_COLORS.textDim + '; font-size:11px;';
             none.textContent = 'No zones picked.';
             chips.appendChild(none);
         }
@@ -2296,7 +2300,7 @@ export class PartyFinderTab {
         if (summary) summary.textContent = this._summary;
         if (!this._rows.size) {
             container.innerHTML = this._running
-                ? '<div style="color:#666; font-size:12px;">Waiting for the first results…</div>'
+                ? '<div style="color:' + GAME_COLORS.textDim + '; font-size:12px;">Waiting for the first results…</div>'
                 : '';
             return;
         }
@@ -2343,7 +2347,7 @@ export class PartyFinderTab {
                 ? ` <span style="color:#888; font-size:9px;" title="${esc(replaced.join('; '))}">(swaps special)</span>`
                 : '';
             const hoursTag = shown
-                ? ` <span style="color:#555; font-size:9px;" title="${shown === row.full ? 'Re-run at full hours' : 'Quick pass'}">${shown.hours}h</span>`
+                ? ` <span style="color:${GAME_COLORS.textDim}; font-size:9px;" title="${shown === row.full ? 'Re-run at full hours' : 'Quick pass'}">${shown.hours}h</span>`
                 : '';
             html += `<tr data-pf-row="${esc(row.id)}" style="border-bottom:1px solid #1a1a1a;">${td(zoneLabel)}${td(party + sharedChip + replacedChip + hoursTag)}`;
             if (!shown) {
@@ -2370,7 +2374,7 @@ export class PartyFinderTab {
                     scoreCell +
                     td(shown.deathsPerHour.toFixed(3)) +
                     (row.isBaseline
-                        ? td('baseline', 'color:#666;') + td('', '')
+                        ? td('baseline', 'color:' + GAME_COLORS.textDim + ';') + td('', '')
                         : signed(delta.xpPct, `${delta.xpPct?.toFixed(1)}%`) +
                           signed(
                               delta.profitDelta,
@@ -2388,7 +2392,7 @@ export class PartyFinderTab {
         html += '</tbody></table>';
         html += `<div style="margin-top:6px; display:flex; gap:6px; align-items:center;">
             <button data-pf="csv" style="${SMALL_BTN_STYLE}">Export CSV</button>
-            <span style="color:#555; font-size:10px;">Rows marked with hours were simmed that long; "vs solo" compares like with like.</span></div>`;
+            <span style="color:${GAME_COLORS.textDim}; font-size:10px;">Rows marked with hours were simmed that long; "vs solo" compares like with like.</span></div>`;
         container.innerHTML = html;
     }
 

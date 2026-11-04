@@ -23,8 +23,9 @@ describe('the palette Toolasha panels draw with', () => {
      * Before the game restyle its panels were a navy; they are now a plain near-black with a quieter
      * divider. Controls and boxes that kept the old hard-coded navy read as a grey-and-blue mix against the
      * new fill, so the two old navies are not written out any more. Use GAME_COLORS (utils/game-look.js):
-     * inputBackground and inputBorder for a field, raised and raisedMore for a box, track or tag that has to
-     * sit off the panel, border for its edge.
+     * inputBackground and inputBorder for a field, box for a section box (the panel's own fill, so only its
+     * border marks it), raised and raisedMore for a track, tag, button or stripe that has to sit off the
+     * panel, border for its edge, textDim for faint text.
      */
     test('no file hard-codes the old navy fills', () => {
         const old = /#1a1a2e|#2a2a4a/i;
@@ -46,5 +47,14 @@ describe('the palette Toolasha panels draw with', () => {
     test('the raised steps are the game midnight variables with measured fallbacks', () => {
         expect(GAME_COLORS.raised).toBe('var(--color-midnight-800, #191a24)');
         expect(GAME_COLORS.raisedMore).toBe('var(--color-midnight-700, #20212f)');
+    });
+
+    test('a section box has the panel fill, not a step lighter', () => {
+        expect(GAME_COLORS.box).toBe(GAME_COLORS.background);
+        expect(GAME_COLORS.box).not.toBe(GAME_COLORS.raised);
+    });
+
+    test('faint text is the game neutral-400, not a grey that falls below readable on the panel', () => {
+        expect(GAME_COLORS.textDim).toBe('var(--color-neutral-400, #a1a1a1)');
     });
 });

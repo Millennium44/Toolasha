@@ -365,7 +365,7 @@ export function renderLabComparisonPanel(runs, baselineId) {
     html += '</div>';
 
     html += '<table style="width:100%; font-size:11px; border-collapse:collapse;">';
-    html += '<tr style="border-bottom:1px solid #333; color:#666;">';
+    html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
     html += '<th style="text-align:left; padding:2px 4px;">Run</th>';
     for (const metric of LAB_COMPARISON_METRICS) {
         html += `<th style="text-align:right; padding:2px 4px;" title="${escapeHtml(metric.title)}">${metric.label}</th>`;
@@ -395,7 +395,9 @@ export function renderLabComparisonPanel(runs, baselineId) {
             formatWithSeparator(entry.metrics?.attempts || 0) +
             '</td>';
         html +=
-            '<td style="text-align:center; padding:2px; cursor:pointer; color:#555;" ' +
+            '<td style="text-align:center; padding:2px; cursor:pointer; color:' +
+            GAME_COLORS.textDim +
+            ';" ' +
             `data-labsim-cmp-delete="${escapeHtml(entry.id)}" title="Forget this run">✕</td>`;
         html += '</tr>';
     }

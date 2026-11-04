@@ -13,13 +13,16 @@ export const GAME_COLORS = {
     frameGlow: '0 4px 12px rgba(0, 0, 0, 0.4)',
     border: 'var(--color-divider, #323450)',
     text: 'var(--color-text-dark-mode, #e7e7e7)',
-    textDim: 'rgba(231, 231, 231, 0.6)',
+    // The game's own dim text (neutral-400); lighter than the old faint greys, which fell below 4.5:1 on the panel
+    textDim: 'var(--color-neutral-400, #a1a1a1)',
     good: '#4ade80',
     bad: '#f87171',
     // The game's Input_input: the same fill as the panel it sits in, set off by a 1px #454771 border
     inputBackground: 'rgb(19, 20, 25)',
     inputBorder: '#454771',
-    // Steps up from the panel for a box, card, tag, track or stripe that has to sit off it (midnight-800, -700)
+    // A section box inside a panel: the panel's own fill, so only its border marks it
+    box: 'rgb(19, 20, 25)',
+    // Steps up from the panel for a tag, track, button or stripe that has to sit off it (midnight-800, -700)
     raised: 'var(--color-midnight-800, #191a24)',
     raisedMore: 'var(--color-midnight-700, #20212f)',
 };
