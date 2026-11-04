@@ -16,6 +16,10 @@ At phone width the battle number no longer squeezes out the zone name beside the
 - Per-player and XPH Calc are compact buttons, and the sim tabs match the tabs beside them.
 - Arbitrage folds away with the other skill page controls, and Stale Capital's minimize button sits beside the close button.
 
+### Minimized market chart stays minimized
+
+Opening an item while the Market History chart was minimized made it grow past the bottom of the screen. It now stays folded, shows the new item's name, and draws that item when you expand it.
+
 ### Market filters fold away on a phone
 
 Sort, Level, Class and Slot now sit behind a small Filters button beside Item Filter, so the item grid starts much higher. The button shows a dot when a hidden filter is active, so items never go missing without a sign.

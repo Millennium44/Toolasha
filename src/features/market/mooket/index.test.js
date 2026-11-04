@@ -485,6 +485,45 @@ describe('ingestMarketSnapshot', () => {
     });
 });
 
+describe('an item picked while the chart is minimized', () => {
+    const realShowItem = Object.getPrototypeOf(panel).showItem;
+    let saved;
+
+    beforeEach(() => {
+        saved = {
+            minimizeCtl: panel.minimizeCtl,
+            title: panel.title,
+            shown: panel.shown,
+            open: panel.prefs.open,
+            status: panel.showHistoryStatus,
+            savePrefs: panel.savePrefs,
+        };
+        panel.minimizeCtl = { collapsed: true };
+        panel.title = { textContent: '' };
+        panel.shown = null;
+        panel.prefs.open = true;
+        panel.showHistoryStatus = vi.fn();
+        panel.savePrefs = vi.fn();
+    });
+
+    afterEach(() => {
+        panel.minimizeCtl = saved.minimizeCtl;
+        panel.title = saved.title;
+        panel.shown = saved.shown;
+        panel.prefs.open = saved.open;
+        panel.showHistoryStatus = saved.status;
+        panel.savePrefs = saved.savePrefs;
+    });
+
+    test('does not draw, so the canvas cannot grow in a panel with no height, and stays drawable later', async () => {
+        await realShowItem.call(panel, '/items/holy_milk', 0);
+        expect(panel.showHistoryStatus).not.toHaveBeenCalled();
+        expect(panel.shown).toBeNull();
+        expect(panel.current).toEqual({ itemHrid: '/items/holy_milk', enhancementLevel: 0 });
+        expect(panel.title.textContent).not.toBe('');
+    });
+});
+
 describe('autoRefresh of an open chart', () => {
     const TEN_MINUTES = 10 * 60 * 1000;
 

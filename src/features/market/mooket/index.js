@@ -64,12 +64,14 @@ import {
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
+import { addStyles, removeStyles } from '../../../utils/dom.js';
 import { registerCommand, unregisterCommand } from '../../../utils/command-registry.js';
 import { captureOwner, stillOurs, noteTeardown } from '../../../utils/init-ownership.js';
 import { markToolashaSurface } from '../../../utils/surface-marker.js';
 import { styleGameButton, GAME_COLORS } from '../../../utils/game-look.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
+const FOLD_STYLE_ID = 'mwi-market-history-fold-style';
 const TAB_ID = 'mwi-market-history-tab';
 /** Where the panel is and how it draws — one panel, so one global answer */
 const PREFS_KEY = 'mooketPanelPrefs';
@@ -396,6 +398,7 @@ class MarketHistoryPanel {
             this.overlay = null;
             this.tabButton?.remove();
             this.tabButton = null;
+            removeStyles(FOLD_STYLE_ID);
             marketHistoryAPI.disconnect();
             marketPriceStore.cleanup();
             this.cleanupRegistry.cleanupAll();
@@ -512,6 +515,14 @@ class MarketHistoryPanel {
         this.aftermathEl.style.cssText = `padding:1px 6px 3px; font-size:11px; color:${GAME_COLORS.textDim}; display:none; cursor:help;`;
         panel.appendChild(this.aftermathEl);
 
+        // Whatever path draws while folded (a fetch that was in flight when the panel folded turns the
+        // canvas back on), everything under the toolbar stays hidden: a responsive chart in a panel with
+        // no fixed height grows without limit.
+        addStyles(
+            `#${PANEL_ID}[data-minimized="true"] > :not(:first-child) { display: none !important; }`,
+            FOLD_STYLE_ID
+        );
+
         this.makeDraggable(panel);
         markToolashaSurface(panel, 'panel');
         document.body.appendChild(panel);
@@ -524,6 +535,14 @@ class MarketHistoryPanel {
             panelKey: PANEL_ID,
             beforeEl: this.closeButton,
             accent: '#e7e7e7',
+            // Force a draw on the way back up: an item picked while folded was skipped by showItem, and
+            // a draw that was already in flight may have changed which of the bodies should show
+            onToggle: (collapsed) => {
+                if (!collapsed && this.current) {
+                    this.shown = null;
+                    this.showItem(this.current.itemHrid, this.current.enhancementLevel);
+                }
+            },
         });
 
         this.applyOpenState();
@@ -697,7 +716,8 @@ class MarketHistoryPanel {
         if (!this.panel) return;
         const open = this.prefs.open;
         this.panel.style.display = open ? 'flex' : 'none';
-        this.panel.style.height = `${this.prefs.h}px`;
+        // A folded panel stays header height; the minimize control restores the height on expand
+        if (!this.minimizeCtl?.collapsed) this.panel.style.height = `${this.prefs.h}px`;
         // A width saved on a desktop is wider than a phone: the max-width caps it, and the left edge
         // is pulled in so the capped panel still ends on screen
         if (open) {
@@ -1106,6 +1126,13 @@ class MarketHistoryPanel {
         }
         const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}`;
         if (!this.prefs.open || this.shown === key) return;
+        // Drawing while folded shows the canvas in a panel with no fixed height, and a responsive chart
+        // then grows without limit. Keep the title true and let expanding draw it.
+        if (this.minimizeCtl?.collapsed) {
+            const foldedLevel = Number(enhancementLevel) || 0;
+            this.title.textContent = `${this.itemName(itemHrid)}${foldedLevel > 0 ? ` +${foldedLevel}` : ''}`;
+            return;
+        }
         this.shown = key;
 
         const level = Number(enhancementLevel) || 0;
