@@ -594,6 +594,66 @@ export function weeklyTrialSetFrom(data) {
 }
 
 /**
+ * The trial keys a kind's parties name, for the kind.
+ * @param {Object|null} entry - `parseCurrentTrialsData(...)[kind]`
+ * @param {string} kind - `skilling` or `combat`
+ * @returns {string[]} Sorted, once each
+ */
+function namedTrialKeys(entry, kind) {
+    return [
+        ...new Set(
+            Object.keys(entry?.trials || {})
+                .map((hrid) => trialFromHrid(hrid))
+                .filter((trial) => trial && trial.kind === kind)
+                .map((trial) => trial.key)
+        ),
+    ].sort();
+}
+
+/**
+ * Which of the game's draws a message states can be told to belong to the cycle its parties are in, and
+ * what the next message should be held against.
+ *
+ * The draw carries no stamp and outlives its cycle, so a draw read beside a running hour is no proof of
+ * that hour's trials: one left over from the cycle before can cover the parties named so far by chance
+ * and omit a trial that really ran, and a list filed from it would read that trial as "did not run". It
+ * is taken for this cycle's only when this session has the evidence:
+ *
+ * - the baseline is the draw this session read beside the same kind's last finished parties (it covered
+ *   them), that is, the cycle before the running one's draw;
+ * - the running hour's parties name a trial that baseline does not, so the baseline is not this hour's;
+ * - the draw now stated covers every party named.
+ *
+ * Anything short of that, a login mid-hour (no baseline), the same trials two cycles running (nothing
+ * outside the baseline), a draw missing a party the hour has, is no evidence, and the kind has no draw.
+ *
+ * @param {Object|null} read - `parseCurrentTrialsData` of the message
+ * @param {{skilling: string[], combat: string[]}|null} draw - From {@link weeklyTrialSetFrom}
+ * @param {{skilling?: string[], combat?: string[]}|null} baseline - The previous message's baseline
+ * @returns {{fresh: {skilling?: string[], combat?: string[]}, baseline: {skilling?: string[], combat?: string[]}}}
+ *   The draws proven this cycle's (per kind, absent when unproven), and the baseline to hold for the next message
+ */
+export function weeklyTrialsAfter(read, draw, baseline) {
+    const fresh = {};
+    const next = {};
+    for (const kind of ['skilling', 'combat']) {
+        if (Array.isArray(baseline?.[kind]) && baseline[kind].length) next[kind] = baseline[kind];
+        const entry = read?.[kind];
+        const named = namedTrialKeys(entry, kind);
+        const drawn = Array.isArray(draw?.[kind]) ? draw[kind] : [];
+        if (!entry || !named.length || !drawn.length || !named.every((key) => drawn.includes(key))) continue;
+        if (!entry.inProgress) {
+            // A kind that is over: the draw beside its parties is the cycle that just ended
+            next[kind] = drawn;
+            continue;
+        }
+        const before = next[kind];
+        if (before && !named.every((key) => before.includes(key))) fresh[kind] = drawn;
+    }
+    return { fresh, baseline: next };
+}
+
+/**
  * The lists of trials the guild payload says are running, per kind, placed on this client's clock.
  *
  * A kind is read only when its `parties` name at least one known trial — an empty
@@ -601,13 +661,14 @@ export function weeklyTrialSetFrom(data) {
  * its own: combat's hour starts an hour after skilling's, so one kind's list says
  * nothing of the other's, and a kind with no list here is unknown.
  *
- * A list is placed at its hour's start while that kind is `in_progress`, and then also
- * holds the trials the game's own draw (`held.weeklyTrials`, see {@link weeklyTrialSetFrom})
- * names for that kind: `parties` fills in as the hour goes, and a trial it has not named yet
- * must not read as one that did not run. The draw adds to a list and never makes one. A kind
- * that is over is placed at its parties' newest stamp instead ({@link finishedListAt}, needs
- * the clock offset), from its parties alone: a finished payload outlives its cycle, and so
- * does the draw.
+ * A list is placed at its hour's start while that kind is `in_progress`, and is the trials the
+ * game's own draw names for that kind (`held.weeklyTrials`, only a draw {@link weeklyTrialsAfter}
+ * proved this cycle's) with the parties' own: `parties` may fill in as the hour goes, and a trial
+ * it has not named yet must not read as one that did not run. A running kind with no proven draw,
+ * or one that omits a party, writes nothing and reads as unknown: its cell stays "—" until the
+ * kind is over. A kind that is over is placed at its parties' newest stamp instead
+ * ({@link finishedListAt}, needs the clock offset), from its parties alone: a finished payload
+ * outlives its cycle, and so does the draw.
  *
  * @param {Object|null} held - `currentTrials`: the parsed payload with `at`, when this client had it
  * @param {Object} [options] - Context
@@ -631,6 +692,9 @@ export function scheduledFromPayload(held, { offset = null, cycleStart = null } 
             const start = trialHourStartedAt(entry, offset);
             at = Number.isFinite(start) ? start : held.at;
             drawn = Array.isArray(held?.weeklyTrials?.[kind]) ? held.weeklyTrials[kind] : [];
+            // A running hour is listed only beside a draw proven to be this cycle's that covers its parties:
+            // parties alone may not have filled in, and a draw of unknown age may be last cycle's
+            if (!drawn.length || !named.every((key) => drawn.includes(key))) continue;
         } else if (Number.isFinite(offset)) {
             const stamps = Object.values(entry.trials)
                 .flatMap((party) => [party?.highestTierReachedAtMs, party?.tierStartedAtMs])

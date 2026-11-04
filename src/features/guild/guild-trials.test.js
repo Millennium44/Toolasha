@@ -9393,6 +9393,50 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
     const message = (guild = { id: 'g1', name: 'SuperMoo' }) => ({
         guild: { ...guild, currentTrialsData: CURRENT_TRIALS_DATA_SKILLING },
     });
+    // The game's draw as it sits beside `guild` on a message
+    const drawOf = (...trials) => ({
+        guildWeeklyTrialSet: { skillHrids: trials.map((trial) => `/guild_skilling/${trial}`), combatHrids: [] },
+    });
+    const THIS_DRAW = drawOf('alchemy', 'brewing', 'cooking', 'milking');
+    // The running hour with only two parties named so far
+    const twoParties = JSON.stringify({
+        skilling: {
+            status: 'in_progress',
+            parties: Object.fromEntries(
+                ['alchemy', 'brewing'].map((trial) => [
+                    `/guild_skilling/${trial}`,
+                    JSON.parse(CURRENT_TRIALS_DATA_SKILLING).skilling.parties[`/guild_skilling/${trial}`],
+                ])
+            ),
+        },
+        combat: { status: '', parties: null },
+    });
+    const partial = (extra = {}) => ({
+        guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: twoParties },
+        ...extra,
+    });
+    // The cycle before, heard to its end: its finished parties, beside the draw that was then stated
+    const lastCycleParty = {
+        highestTier: 8,
+        budgetRemainingMs: 0,
+        tierStartedAtMs: stamp - 7 * 86_400_000,
+        done: true,
+    };
+    const lastCycle = (...trials) => ({
+        guild: {
+            id: 'g1',
+            name: 'SuperMoo',
+            currentTrialsData: JSON.stringify({
+                skilling: {
+                    status: 'completed',
+                    parties: Object.fromEntries(trials.map((trial) => [`/guild_skilling/${trial}`, lastCycleParty])),
+                },
+                combat: { status: '', parties: null },
+            }),
+        },
+        ...drawOf(...trials, 'crafting'),
+    });
+    const filedList = () => guildTrials._recordServerTiers(weekRecord(), Date.now()).scheduled;
     const weekRecord = (extra = {}) => ({
         weekStart: trialWeekStart(stamp + SKEW + TRIP),
         tiles: {},
@@ -9413,21 +9457,67 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
         vi.useRealTimers();
     });
 
-    test('a running hour’s four trials are filed for skilling, and combat, which has none yet, is left unknown', () => {
+    test('a running hour heard cold, with no draw or an unproven one, files no list', () => {
+        // Loaded mid-hour: nothing in this session says whether the draw is this cycle's or the last one's
         guildTrials._noteCurrentTrials(message());
-        const record = guildTrials._recordServerTiers(weekRecord(), Date.now());
+        expect(filedList()).toBeUndefined();
+        guildTrials._noteCurrentTrials({ ...message(), ...THIS_DRAW });
+        expect(filedList()).toBeUndefined();
+    });
 
-        expect(record.scheduled.skilling.trials).toEqual(['alchemy', 'brewing', 'cooking', 'milking']);
-        expect(record.scheduled).not.toHaveProperty('combat');
+    test('a running hour after the last cycle’s end is filed with every drawn trial, combat left unknown', () => {
+        guildTrials._noteCurrentTrials(lastCycle('woodcutting', 'foraging'));
+        guildTrials._noteCurrentTrials(partial(THIS_DRAW));
+        const scheduled = filedList();
+
+        expect(scheduled.skilling.trials).toEqual(['alchemy', 'brewing', 'cooking', 'milking']);
+        expect(scheduled).not.toHaveProperty('combat');
     });
 
     test('hearing the same payload again leaves the list as it was, so it is not rewritten', () => {
-        guildTrials._noteCurrentTrials(message());
+        guildTrials._noteCurrentTrials(lastCycle('woodcutting', 'foraging'));
+        guildTrials._noteCurrentTrials(partial(THIS_DRAW));
         const once = guildTrials._recordServerTiers(weekRecord(), Date.now());
         vi.setSystemTime(Date.now() + 20_000);
-        guildTrials._noteCurrentTrials(message());
+        guildTrials._noteCurrentTrials(partial(THIS_DRAW));
         const twice = guildTrials._recordServerTiers(once, Date.now());
         expect(twice.scheduled).toBe(once.scheduled);
+        // …and a later message with more parties named is still this cycle's, as the baseline is held
+        guildTrials._noteCurrentTrials({ ...message(), ...THIS_DRAW });
+        expect(guildTrials._recordServerTiers(once, Date.now()).scheduled.skilling.trials).toEqual([
+            'alchemy',
+            'brewing',
+            'cooking',
+            'milking',
+        ]);
+    });
+
+    test('a running hour with no draw on its messages files no list, whatever came before', () => {
+        guildTrials._noteCurrentTrials(lastCycle('woodcutting', 'foraging'));
+        guildTrials._noteCurrentTrials(partial());
+        expect(filedList()).toBeUndefined();
+    });
+
+    test('a stale draw that covers the parties by chance files no list: it could omit a trial that ran', () => {
+        // The server still states last cycle's draw, which holds Alchemy and Brewing, the two parties named so far
+        guildTrials._noteCurrentTrials(lastCycle('alchemy', 'brewing'));
+        guildTrials._noteCurrentTrials(partial(drawOf('alchemy', 'brewing', 'crafting')));
+        expect(filedList()).toBeUndefined();
+    });
+
+    test('a stale draw that does not cover the parties files no list', () => {
+        guildTrials._noteCurrentTrials(lastCycle('woodcutting', 'foraging'));
+        guildTrials._noteCurrentTrials(partial(drawOf('woodcutting', 'foraging', 'crafting', 'tailoring')));
+        expect(filedList()).toBeUndefined();
+    });
+
+    test('what this session heard of another guild’s last cycle is no baseline for this one', () => {
+        guildTrials._noteCurrentTrials({
+            ...lastCycle('woodcutting', 'foraging'),
+            guild: { ...lastCycle('woodcutting', 'foraging').guild, id: 'g2', name: 'Elsewhere' },
+        });
+        guildTrials._noteCurrentTrials(partial(THIS_DRAW));
+        expect(filedList()).toBeUndefined();
     });
 
     test('a payload sent for another guild is never filed under this one', () => {
@@ -9446,21 +9536,14 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
         expect(guildTrials._recordServerTiers(record, Date.now())).not.toHaveProperty('scheduled');
     });
 
-    test('the game’s draw for the cycle joins the running hour’s list, and combat, with no party yet, stays unknown', () => {
+    test('the game’s draw joins the running hour’s list: a trial it names with no party yet is not "did not run"', () => {
         // The wire fixture's draw: Alchemy, Brewing, Foraging and Woodcutting, Jellyfish and Swarm
         const { guildWeeklyTrialSet } = buildGuildUpdated();
-        guildTrials._noteCurrentTrials({ ...message(), guildWeeklyTrialSet });
-        const record = guildTrials._recordServerTiers(weekRecord(), Date.now());
+        guildTrials._noteCurrentTrials(lastCycle('cooking', 'milking'));
+        guildTrials._noteCurrentTrials({ ...partial(), guildWeeklyTrialSet });
 
-        expect(record.scheduled.skilling.trials).toEqual([
-            'alchemy',
-            'brewing',
-            'cooking',
-            'foraging',
-            'milking',
-            'woodcutting',
-        ]);
-        expect(record.scheduled).not.toHaveProperty('combat');
+        expect(filedList().skilling.trials).toEqual(['alchemy', 'brewing', 'foraging', 'woodcutting']);
+        expect(filedList()).not.toHaveProperty('combat');
     });
 
     test('a draw on a message that names another guild is never filed under this one', () => {
@@ -9506,17 +9589,28 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
             ],
         });
 
+        const heard = () => ({
+            guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: payload },
+            ...drawOf('alchemy', 'brewing', 'foraging', 'woodcutting'),
+        });
+
         beforeEach(() => {
             vi.setSystemTime(NEXT_WEEK + 60_000 + TRIP);
-            guildTrials._noteCurrentTrials({ guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: payload } });
+            guildTrials._noteCurrentTrials(lastCycle('cooking', 'milking'));
+            guildTrials._noteCurrentTrials(heard());
         });
 
         test('files the list into the week it began in, and hearing the same payload again writes nothing', () => {
             const first = guildTrials._fileIntoPayloadWeek(straddle(null), Date.now());
-            expect(first.history[0].scheduled.skilling.trials).toEqual(['alchemy', 'brewing']);
+            expect(first.history[0].scheduled.skilling.trials).toEqual([
+                'alchemy',
+                'brewing',
+                'foraging',
+                'woodcutting',
+            ]);
 
             vi.setSystemTime(Date.now() + 20_000);
-            guildTrials._noteCurrentTrials({ guild: { id: 'g1', name: 'SuperMoo', currentTrialsData: payload } });
+            guildTrials._noteCurrentTrials(heard());
             expect(guildTrials._fileIntoPayloadWeek(first, Date.now())).toBe(first);
         });
 

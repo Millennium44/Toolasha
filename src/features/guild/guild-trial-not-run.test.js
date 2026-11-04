@@ -39,6 +39,7 @@ import {
     mergeCycleTrials,
     mergeScheduled,
     splitScheduled,
+    trialHistoryCell,
     trialHistoryCells,
     trialHistoryDetail,
     trialHistoryTiers,
@@ -55,6 +56,7 @@ import {
     scheduledFromPayload,
     trialHourStartedAt,
     weeklyTrialSetFrom,
+    weeklyTrialsAfter,
 } from './guild-trials-store.js';
 import { pastCycles, summariseArchivedCycle, FOREIGN_CYCLE_REASON } from './guild-trial-history.js';
 import { TRIAL_BUDGET_MS, parseCurrentTrialsData, trialWeekStart } from './guild-trials-math.js';
@@ -99,6 +101,9 @@ const entry = (week, tiles, extra = {}) => ({
     ...extra,
 });
 
+/** The draw behind the live mid-hour payload fixture's four parties, as a proven draw is held on the snapshot */
+const LIVE_DRAW = { skilling: ['alchemy', 'brewing', 'cooking', 'milking'] };
+
 const nov2 = {
     skilling: { trials: NOV2_SKILLING, at: weeksAgo(1) + 2 * DAY },
     combat: { trials: NOV2_COMBAT, at: weeksAgo(1) + 2 * DAY + HOUR },
@@ -130,7 +135,7 @@ describe('scheduledFromPayload — the game’s list, read off the real payload'
     test('skilling known and combat not yet: only skilling is written', () => {
         // Mid skilling hour: combat is `{status: '', parties: null}`
         const read = parseCurrentTrialsData(CURRENT_TRIALS_DATA_SKILLING);
-        const lists = scheduledFromPayload({ ...read, at: 1790716000000 }, { offset: 5_300 });
+        const lists = scheduledFromPayload({ ...read, at: 1790716000000, weeklyTrials: LIVE_DRAW }, { offset: 5_300 });
         expect(Object.keys(lists)).toEqual(['skilling']);
         expect(lists.skilling.trials).toEqual(['alchemy', 'brewing', 'cooking', 'milking']);
     });
@@ -138,8 +143,8 @@ describe('scheduledFromPayload — the game’s list, read off the real payload'
     test('a running kind is placed at its hour’s start, the same at every pass', () => {
         const read = parseCurrentTrialsData(CURRENT_TRIALS_DATA_SKILLING);
         const offset = 5_300;
-        const first = scheduledFromPayload({ ...read, at: 1790716000000 }, { offset });
-        const later = scheduledFromPayload({ ...read, at: 1790716900000 }, { offset });
+        const first = scheduledFromPayload({ ...read, at: 1790716000000, weeklyTrials: LIVE_DRAW }, { offset });
+        const later = scheduledFromPayload({ ...read, at: 1790716900000, weeklyTrials: LIVE_DRAW }, { offset });
         expect(first.skilling.at).toBe(trialHourStartedAt(read.skilling, offset));
         expect(later.skilling.at).toBe(first.skilling.at);
     });
@@ -172,7 +177,10 @@ describe('scheduledFromPayload — the game’s list, read off the real payload'
                 },
             })
         );
-        expect(scheduledFromPayload({ ...read, at: 5e12 }, { offset: 0 }).skilling.trials).toEqual(['alchemy']);
+        const weeklyTrials = { skilling: ['alchemy'] };
+        expect(scheduledFromPayload({ ...read, at: 5e12, weeklyTrials }, { offset: 0 }).skilling.trials).toEqual([
+            'alchemy',
+        ]);
     });
 
     test('a finished payload that outlived its cycle is placed before the running cycle and dropped', () => {
@@ -758,18 +766,32 @@ describe('a finished kind’s list counts only inside the cycle that is running'
     });
 });
 
-describe('the game’s draw for the cycle joins a running list and never makes one', () => {
+describe('a running hour is listed only beside a draw proven to be this cycle’s', () => {
     const draw = weeklyTrialSetFrom(buildGuildUpdated());
     const running = (skilling, combat = { status: '', parties: null }) =>
         parseCurrentTrialsData(JSON.stringify({ skilling, combat }));
-    const party = (started) => ({
+    const party = (started, done = false) => ({
         highestTier: 1,
         budgetRemainingMs: HOUR - 60_000,
         tierStartedAtMs: started,
         highestTierReachedAtMs: started,
-        done: false,
+        done,
     });
     const T = 1793700000000;
+    const hearing = (parties) => running({ status: 'in_progress', parties });
+    const alchemyOnly = hearing({ '/guild_skilling/alchemy': party(T) });
+    const alchemyBrewing = hearing({ '/guild_skilling/alchemy': party(T), '/guild_skilling/brewing': party(T) });
+    // The cycle before: its finished parties, and the draw that was beside them
+    const lastCycle = running({
+        status: 'completed',
+        parties: {
+            '/guild_skilling/cooking': party(T - WEEK, true),
+            '/guild_skilling/milking': party(T - WEEK, true),
+        },
+    });
+    const LAST_DRAW = { skilling: ['cooking', 'crafting', 'milking', 'tailoring'], combat: [] };
+    const afterLastCycle = () => weeklyTrialsAfter(lastCycle, LAST_DRAW, null).baseline;
+    const filed = (read, fresh) => scheduledFromPayload({ ...read, at: T, weeklyTrials: fresh }, { offset: 0 });
 
     test('reads the wire shape: hrids to trial keys, per kind', () => {
         expect(draw).toEqual({ skilling: NOV2_SKILLING, combat: NOV2_COMBAT });
@@ -786,27 +808,95 @@ describe('the game’s draw for the cycle joins a running list and never makes o
         ).toEqual({ skilling: [], combat: [] });
     });
 
-    test('a running hour whose parties name two of the four drawn trials is filed with all four', () => {
-        const read = running({
-            status: 'in_progress',
-            parties: { '/guild_skilling/alchemy': party(T), '/guild_skilling/woodcutting': party(T) },
+    test('no draw on the message: a running hour with one party named writes nothing', () => {
+        const { fresh } = weeklyTrialsAfter(alchemyOnly, null, afterLastCycle());
+        expect(fresh).toEqual({});
+        expect(filed(alchemyOnly, fresh)).toEqual({});
+    });
+
+    test('a draw heard with no earlier cycle in the session is not taken, whatever it covers', () => {
+        // A login mid-hour: nothing says this draw is not the last cycle's
+        const { fresh } = weeklyTrialsAfter(alchemyOnly, draw, null);
+        expect(fresh).toEqual({});
+        expect(filed(alchemyOnly, fresh)).toEqual({});
+    });
+
+    test('a stale draw that covers the parties by chance is not taken: it omits a trial that ran', () => {
+        // The server still states last cycle's draw, and the hour now running has named only Cooking.
+        // Nothing tells that draw from this cycle's, which may hold Brewing as well, so a list filed
+        // from it would read Brewing as not run
+        const cookingOnly = hearing({ '/guild_skilling/cooking': party(T) });
+        const { fresh } = weeklyTrialsAfter(cookingOnly, LAST_DRAW, afterLastCycle());
+        expect(fresh).toEqual({});
+        expect(filed(cookingOnly, fresh)).toEqual({});
+    });
+
+    test('a stale draw that does not cover the parties is not taken', () => {
+        const { fresh } = weeklyTrialsAfter(alchemyBrewing, LAST_DRAW, afterLastCycle());
+        expect(fresh).toEqual({});
+        expect(filed(alchemyBrewing, fresh)).toEqual({});
+        // A caller handing over a draw that omits a party gets nothing either
+        expect(filed(alchemyBrewing, { skilling: ['alchemy'] })).toEqual({});
+    });
+
+    test('the same trials two cycles running are no evidence: this draw is not told from the last one', () => {
+        const last = running({
+            status: 'completed',
+            parties: {
+                '/guild_skilling/alchemy': party(T - WEEK, true),
+                '/guild_skilling/brewing': party(T - WEEK, true),
+            },
         });
-        const lists = scheduledFromPayload({ ...read, at: T, weeklyTrials: draw }, { offset: 0 });
-        expect(lists.skilling.trials).toEqual(NOV2_SKILLING);
-        // Without the draw the same payload would have marked Brewing and Foraging as not run
-        expect(scheduledFromPayload({ ...read, at: T }, { offset: 0 }).skilling.trials).toEqual([
-            'alchemy',
-            'woodcutting',
-        ]);
+        const { baseline } = weeklyTrialsAfter(last, draw, null);
+        expect(weeklyTrialsAfter(alchemyBrewing, draw, baseline).fresh).toEqual({});
+    });
+
+    test('a draw that replaced the last cycle’s and covers the parties is filed whole', () => {
+        const { fresh } = weeklyTrialsAfter(alchemyOnly, draw, afterLastCycle());
+        expect(fresh).toEqual({ skilling: NOV2_SKILLING });
+        expect(filed(alchemyOnly, fresh).skilling.trials).toEqual(NOV2_SKILLING);
+    });
+
+    test('a trial outside a proven draw reads "n/r"; a drawn one with no party yet reads "—"', () => {
+        const w1 = weeksAgo(1);
+        const w2 = weeksAgo(2);
+        const { fresh } = weeklyTrialsAfter(alchemyOnly, draw, afterLastCycle());
+        const lists = { skilling: { trials: filed(alchemyOnly, fresh).skilling.trials, at: w1 + 2 * DAY } };
+        const record = {
+            weekStart: thisWeek,
+            tiles: {},
+            history: [
+                entry(w2, {
+                    'skilling::cooking': skillingTile('Cooking', 9),
+                    'skilling::brewing': skillingTile('Brewing', 9),
+                }),
+                entry(w1, { 'skilling::alchemy': skillingTile('Alchemy', 20) }, { scheduled: lists }),
+            ],
+        };
+        const { rows } = trialResultsHistory(trialResultsOf(record), { now, cycleTrials: cycleTrialsOf(record) });
+        const newestCell = (id) => rows.find((r) => r.id === id).weeks[0];
+        expect(newestCell('skilling:cooking').notRun).toBe(true);
+        expect(newestCell('skilling:brewing').notRun).toBeUndefined();
+        expect(trialHistoryCell(newestCell('skilling:brewing'))).toBe('—');
     });
 
     test('the draw alone files nothing: a kind with no party named is still unknown', () => {
-        const read = running({ status: 'in_progress', parties: {} });
-        expect(scheduledFromPayload({ ...read, at: T, weeklyTrials: draw }, { offset: 0 })).toEqual({});
+        const read = hearing({});
+        const { fresh } = weeklyTrialsAfter(read, draw, afterLastCycle());
+        expect(filed(read, fresh)).toEqual({});
         // …and combat, not yet started, takes nothing from a draw that names its trials
-        const skillingOnly = running({ status: 'in_progress', parties: { '/guild_skilling/alchemy': party(T) } });
-        const lists = scheduledFromPayload({ ...skillingOnly, at: T, weeklyTrials: draw }, { offset: 0 });
-        expect(Object.keys(lists)).toEqual(['skilling']);
+        const proven = weeklyTrialsAfter(alchemyOnly, draw, afterLastCycle()).fresh;
+        expect(Object.keys(filed(alchemyOnly, proven))).toEqual(['skilling']);
+    });
+
+    test('the baseline is the draw beside a finished kind’s parties, and only when it covers them', () => {
+        expect(weeklyTrialsAfter(lastCycle, LAST_DRAW, null).baseline).toEqual({ skilling: LAST_DRAW.skilling });
+        // A draw that omits a finished party is not that cycle's: the baseline stays what it was
+        const earlier = { skilling: ['woodcutting'] };
+        expect(weeklyTrialsAfter(lastCycle, draw, earlier).baseline).toEqual(earlier);
+        // A message with no draw leaves it alone, and a running hour never moves it
+        expect(weeklyTrialsAfter(lastCycle, null, earlier).baseline).toEqual(earlier);
+        expect(weeklyTrialsAfter(alchemyOnly, draw, earlier).baseline).toEqual(earlier);
     });
 
     test('a finished kind is read from its parties alone: the draw outlives its cycle', () => {

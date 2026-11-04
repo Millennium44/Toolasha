@@ -209,6 +209,7 @@ import {
     saveWorkBases,
     scheduledFromPayload,
     weeklyTrialSetFrom,
+    weeklyTrialsAfter,
     scrubWaveObservations,
     tileKey,
     tilePersonalStats,
@@ -3757,8 +3758,16 @@ class GuildTrials {
             }
 
             // The game's own draw for the cycle, from the message that carries these trials: it joins the
-            // saved list of a running hour so a party not yet named never reads as a trial that did not run
-            const weeklyTrials = weeklyTrialSetFrom(data);
+            // saved list of a running hour so a party not yet named never reads as a trial that did not run.
+            // Kept only where this session can tell it is the running cycle's (see weeklyTrialsAfter): the
+            // draw has no stamp, and a leftover one would list a trial that ran as one that did not. What
+            // it is told apart from rides on the snapshot, so it goes wherever the snapshot does
+            const sameGuild = this.currentTrials && snapshotMatchesGuild(this.currentTrials, snapshotGuildOf(data));
+            const { fresh: weeklyTrials, baseline: drawBaseline } = weeklyTrialsAfter(
+                read,
+                weeklyTrialSetFrom(data),
+                sameGuild ? this.currentTrials.drawBaseline : null
+            );
             const now = Date.now();
             // A login payload sent long ago (read back by a late start) is
             // dated when it was sent, and neither it nor its stamps bound the
@@ -3767,11 +3776,18 @@ class GuildTrials {
             const offset = Number.isFinite(this.serverClockOffsetMs) ? this.serverClockOffsetMs : 0;
             const age = source === 'init' && Number.isFinite(serverNow) ? now - serverNow - offset : null;
             if (age !== null && age > INIT_PAYLOAD_FRESH_MS) {
-                this.currentTrials = { ...read, at: now - age, source, ...snapshotGuildOf(data), weeklyTrials };
+                this.currentTrials = {
+                    ...read,
+                    at: now - age,
+                    source,
+                    ...snapshotGuildOf(data),
+                    weeklyTrials,
+                    drawBaseline,
+                };
                 this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
                 return;
             }
-            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data), weeklyTrials };
+            this.currentTrials = { ...read, at: now, source, ...snapshotGuildOf(data), weeklyTrials, drawBaseline };
             this.serverTierClears = foldServerTierClears(this.serverTierClears, read);
             this.serverClockOffsetMs = serverClockOffset(read, now, this.serverClockOffsetMs);
             // A server clock reading is later than every stamp beside it, so it
