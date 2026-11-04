@@ -211,7 +211,10 @@ export function sliceForkChangelog(changelog, options = {}) {
     }
 
     // Everything above the first entry — the section heading, plus any preamble
-    // someone writes under it — always ships.
+    // someone writes under it — always ships. That includes flat `- ` bullets
+    // and the markers between them when they sit above every `###` title: they
+    // are not counted as entries, but they ship whole, markers intact, so the
+    // run-time filter can still cut on them.
     const head = lines.slice(0, starts[0]).join('\n').replace(/\s+$/, '');
     const entries = starts.map((from, i) =>
         lines

@@ -788,6 +788,23 @@ describe('the popup’s item rows', () => {
         expect(row.children.length).toBe(labels.children.length);
     });
 
+    test('the icon is not flush against the quantity: its column is wider than the icon, plus the row gap', () => {
+        const popup = build([item(), item({ itemHrid: '/items/cowbell' })]);
+        const labels = popup.querySelector('[data-role="opening-labels"]');
+        const row = labels.nextElementSibling;
+        const icon = row.children[0];
+        const iconWidth = parseFloat(icon.getAttribute('width') ?? icon.style.width);
+        const iconColumn = parseFloat(row.style.gridTemplateColumns);
+        const rowGap = parseFloat(row.style.gap);
+
+        expect(iconWidth).toBeGreaterThan(0);
+        expect(iconColumn - iconWidth + rowGap).toBeGreaterThanOrEqual(4);
+        // The Qty heading sits over the same grid, so it stays over the figures
+        expect(labels.style.gridTemplateColumns).toBe(row.style.gridTemplateColumns);
+        expect(labels.style.gap).toBe(row.style.gap);
+        expect(labels.children[1].textContent).toBe('Qty');
+    });
+
     test('with nothing to list there are still no stray rows and the stats button is there', () => {
         const popup = build([]);
 
