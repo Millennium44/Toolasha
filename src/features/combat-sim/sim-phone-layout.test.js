@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SIM_PHONE_CSS, SIM_PHONE_STYLE_ID, ensureSimPhoneStyles } from './sim-phone-layout.js';
+import { SIM_PHONE_CSS, SIM_PHONE_STYLE_ID, SIM_UPGRADE_PHONE_CSS, ensureSimPhoneStyles } from './sim-phone-layout.js';
 
 describe('sim phone layout', () => {
     beforeEach(() => {
@@ -30,5 +30,16 @@ describe('sim phone layout', () => {
         expect(SIM_PHONE_CSS).toMatch(
             /@media \(max-width: 768px\)[\s\S]*#mwi-csim-zone \{ flex: 1 1 calc\(100% - 60px\)/
         );
+    });
+
+    it('lets the include chips wrap and the results tables scroll sideways at phone width only', () => {
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/^\s*@media \(max-width: 768px\) \{/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\[data-mode-chip\] \[data-mode-options\] \{[^}]*flex-wrap: wrap/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(
+            /\.mwi-utable-wrap \{[^}]*overflow-x: auto; -webkit-overflow-scrolling: touch/
+        );
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/th:first-child,[\s\S]*position: sticky; left: 0;[^}]*background: rgb/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\.mwi-utable-prose \{[^}]*white-space: normal !important/);
+        expect(SIM_UPGRADE_PHONE_CSS).toMatch(/\.mwi-utable-detail \{[^}]*position: sticky; left: 0/);
     });
 });

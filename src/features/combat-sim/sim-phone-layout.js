@@ -8,6 +8,7 @@
 
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 export const SIM_PHONE_STYLE_ID = 'mwi-sim-phone-layout';
 
@@ -39,4 +40,44 @@ export const SIM_PHONE_CSS = `
 /** Install the stylesheet. Safe to call whenever a sim panel is built. */
 export function ensureSimPhoneStyles() {
     addStyles(SIM_PHONE_CSS, SIM_PHONE_STYLE_ID);
+}
+
+export const SIM_UPGRADE_PHONE_STYLE_ID = 'mwi-sim-upgrade-phone-layout';
+
+/**
+ * Phone rules for the Upgrade tab's option rows and results tables. Separate from {@link SIM_PHONE_CSS}
+ * because these let things wrap and scroll. Class-based, so every table that carries `mwi-utable-wrap` gets them.
+ */
+export const SIM_UPGRADE_PHONE_CSS = `
+    @media ${MARKET_MOBILE_QUERY} {
+        /* An include chip and the options it owns wrap inside the panel; a label stays beside its control */
+        [data-mode-chip] { max-width: 100%; box-sizing: border-box; flex-wrap: wrap; }
+        [data-mode-chip] [data-mode-options] { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+        [data-mode-chip] [data-mode-options] > span:first-child { display: none; }
+        [data-mode-chip] select, [data-mode-chip] input[type="number"] { max-width: 100%; min-width: 0; }
+        [data-mode-chip] label { white-space: normal; }
+
+        /* A results table scrolls sideways inside its own wrapper; the panel stays still */
+        .mwi-utable-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+        /* The first column names the row, so it stays put and is wide enough to read */
+        .mwi-utable-wrap > table > thead > tr > th:first-child,
+        .mwi-utable-wrap > table > tbody > tr > td:first-child:not([colspan]) {
+            position: sticky; left: 0; z-index: 1; background: ${GAME_COLORS.background};
+            box-sizing: border-box; width: 140px; min-width: 140px; max-width: 140px;
+            white-space: normal !important; overflow-wrap: anywhere;
+        }
+        .mwi-utable-wrap > table > thead > tr > th:first-child { z-index: 3; }
+        /* Prose reads in a column about this wide; numbers stay on one line */
+        .mwi-utable-prose { white-space: normal !important; min-width: 150px; max-width: 170px; overflow-wrap: anywhere; }
+        /* An expanded row spans the whole table: its content stays at the visible width, pinned to the left */
+        .mwi-utable-wrap .mwi-utable-detail { position: sticky; left: 0; box-sizing: border-box; width: calc(100vw - 80px); max-width: 100%; }
+        .mwi-utable-wrap .mwi-utable-detail > div[style*="grid-template-columns"] {
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)) !important;
+        }
+    }
+`;
+
+/** Install the Upgrade tab's phone rules. Safe to call whenever the Combat Sim panel is built. */
+export function ensureSimUpgradePhoneStyles() {
+    addStyles(SIM_UPGRADE_PHONE_CSS, SIM_UPGRADE_PHONE_STYLE_ID);
 }
