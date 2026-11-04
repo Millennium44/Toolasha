@@ -138,7 +138,7 @@ import {
     setupMarketplaceCleanupObserver,
     watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
-import { ensureSimPhoneStyles } from './sim-phone-layout.js';
+import { ensureSimPhoneStyles, ensureSimUpgradePhoneStyles } from './sim-phone-layout.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
@@ -964,6 +964,7 @@ class LabSimUI {
         document.addEventListener('mwi-labsim-open', this._openRequestHandler);
 
         ensureSimPhoneStyles();
+        ensureSimUpgradePhoneStyles();
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
         this.panel.style.cssText = `
