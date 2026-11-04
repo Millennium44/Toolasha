@@ -45,7 +45,8 @@
  */
 
 /**
- * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean}) => *} SyncMerge
+ * @typedef {(local: *, incoming: *, context?: {forUpload?: boolean, download?: Object<string, *>}) => *} SyncMerge
+ * `context.download`, on a pull's fold only, is every key the download holds in the record's store, as it came.
  * `context.forUpload` is set when the fold builds an automatic upload rather
  * than a local apply. A merge that caps or prunes by this device's live
  * settings must keep everything then — the gist is every device's copy, and

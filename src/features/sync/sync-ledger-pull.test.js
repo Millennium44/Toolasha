@@ -65,7 +65,11 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'market123',
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
-vi.mock('../market/listing-archive.js', () => ({ default: { read: async () => [] } }));
+const archive = vi.hoisted(() => ({ rows: [] }));
+vi.mock('../market/listing-archive.js', () => ({
+    ARCHIVE_PREFIX: 'marketListingArchiveRec',
+    default: { read: async () => archive.rows },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         characterData: {},
@@ -82,7 +86,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 const { default: tradeLedgerStore, recordKey, bucketOf } = await import('../market/trade-ledger-store.js');
-const { applyPayload, resetLeftOutLogForTests } = await import('./sync-payload.js');
+const { applyPayload, addsToRemote, resetLeftOutLogForTests } = await import('./sync-payload.js');
 
 const STORE = 'marketListings';
 const LOG_KEY = 'marketListingTimestamps_market123';
@@ -137,6 +141,7 @@ beforeEach(() => {
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._pullCaps = null;
+    archive.rows = [];
 });
 
 describe('a pull of ledger days the repair has cut', () => {
@@ -197,6 +202,116 @@ describe('a pull of ledger days the repair has cut', () => {
 
         expect(importedPayloads[0].stores[STORE]).toEqual({});
         expect(result.merged).toEqual([]);
+    });
+});
+
+describe('a pull that holds a real fill the caps did not know of', () => {
+    const quantities = (rows, id) => rows.filter((row) => row.listingId === id).map((row) => row.quantity);
+
+    test('a stale log count the archive contradicts: the fill is written, though the local total matched the log', async () => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        archive.rows = [logRow(5, 10)];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+
+        await applyPayload(payloadOf({ [key]: [...structuredClone(rows), fill(5, T(10, 2000))] }));
+
+        expect(quantities(importedPayloads[0].stores[STORE][key], 5)).toEqual([5, 5]);
+    });
+
+    test.each([
+        ['ahead of', (day, log) => ({ [LOG_KEY]: log, ...day })],
+        ['behind', (day, log) => ({ ...day, [LOG_KEY]: log })],
+    ])('two devices: the log %s the day says more, in one download, and the fill is written', async (_name, build) => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+        const day = { [key]: [...structuredClone(rows), fill(5, T(10, 2000))] };
+
+        await applyPayload(payloadOf(build(day, [logRow(5, 10)])));
+
+        expect(quantities(importedPayloads[0].stores[STORE][key], 5)).toEqual([5, 5]);
+    });
+
+    test('a retired row in the log of the download still counts, though the log fold prunes it first', async () => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+        const old = { ...logRow(5, 10), timestamp: T(10) - 200 * 86400e3 };
+        const recent = { ...logRow(99, 1), timestamp: T(10) };
+
+        await applyPayload(
+            payloadOf({ [LOG_KEY]: [old, recent], [key]: [...structuredClone(rows), fill(5, T(10, 2000))] })
+        );
+
+        expect(quantities(importedPayloads[0].stores[STORE][key], 5)).toEqual([5, 5]);
+    });
+
+    test('the same fold redone at write time keeps what the download proved', async () => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+
+        await applyPayload(
+            payloadOf({ [LOG_KEY]: [logRow(5, 10)], [key]: [...structuredClone(rows), fill(5, T(10, 2000))] })
+        );
+        const redo = importedOptions[0].folds[STORE][key];
+        const landed = redo([...structuredClone(rows), fill(9, T(10, 3000))], 'the fold as first computed');
+
+        expect(quantities(landed, 5)).toEqual([5, 5]);
+        expect(quantities(landed, 9)).toEqual([5]);
+    });
+
+    test('the in-step comparison sees the same fill: a log that already landed here does not hide it', async () => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+        // An earlier pull landed the higher log; the caps in memory have not heard
+        const mine = { [key]: structuredClone(rows), [LOG_KEY]: [logRow(5, 10)] };
+        const gist = { [key]: [...structuredClone(rows), fill(5, T(10, 2000))], [LOG_KEY]: [logRow(5, 10)] };
+
+        expect(addsToRemote(payloadOf(gist), payloadOf(mine), { forUpload: false })).toBe(true);
+    });
+
+    test('nothing proves the row real: the comparison calls it no news', async () => {
+        const rows = [fill(5, T(10)), fill(6, T(10, 1))];
+        await repairedLedger(rows, [logRow(5, 5)]);
+        const key = keyOf(T(10));
+        const mine = { [key]: structuredClone(rows), [LOG_KEY]: [logRow(5, 5)] };
+        const gist = { [key]: [...structuredClone(rows), fill(5, T(10, 2000))], [LOG_KEY]: [logRow(5, 5)] };
+
+        expect(addsToRemote(payloadOf(gist), payloadOf(mine), { forUpload: false })).toBe(false);
+    });
+});
+
+describe('over reloads', () => {
+    test('seven old days, clean on disk, stay quiet on the pull after every reload', async () => {
+        const rows = [];
+        for (let day = 10; day <= 16; day += 1) {
+            rows.push(fill(100 + day, T(day)), fill(100 + day, T(day, 1)), fill(100 + day, T(day, 2)));
+        }
+        const gist = {};
+        for (const row of rows) (gist[keyOf(row.t)] ||= []).push(structuredClone(row));
+        // Some listings are past the log's 90 days and live only in the archive; one recorded fill each
+        const inLog = [];
+        const inArchive = [];
+        for (let day = 10; day <= 16; day += 1) (day < 14 ? inArchive : inLog).push(logRow(100 + day, 5));
+        archive.rows = inArchive;
+        await repairedLedger(rows, inLog);
+
+        for (let reload = 0; reload < 3; reload += 1) {
+            importedPayloads.length = 0;
+            tradeLedgerStore.records = [];
+            tradeLedgerStore.isLoaded = false;
+            tradeLedgerStore._pullCaps = null;
+            await tradeLedgerStore.load();
+            await tradeLedgerStore._recordsChain;
+
+            const result = await applyPayload(payloadOf(structuredClone(gist)));
+
+            expect(importedPayloads[0].stores[STORE]).toEqual({});
+            expect(result.merged).toEqual([]);
+        }
     });
 });
 

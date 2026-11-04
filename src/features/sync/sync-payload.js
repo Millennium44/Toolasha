@@ -744,6 +744,9 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
         if (!entries || typeof entries !== 'object') continue;
 
+        // What came down, whole and before any fold below replaces a value: a pull fold may need to read what
+        // the rest of the download says, and a fold in this loop may prune what it reads
+        const context = { download: { ...entries } };
         // Keys captured up front: an unreadable base deletes its own key below
         const registered = [];
         for (const key of Object.keys(entries)) {
@@ -806,7 +809,9 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     registration.mergeForPull === registration.merge;
                 const incoming = entries[key];
                 const fold = (local) =>
-                    localWins ? registration.merge(incoming, local) : registration.mergeForPull(local, incoming);
+                    localWins
+                        ? registration.merge(incoming, local)
+                        : registration.mergeForPull(local, incoming, context);
                 // Row counts for the pull report, taken before the fold so a merge that edits its inputs cannot
                 // change them. Numbers only: the report never holds a value.
                 const localRows = countRows(probed.value);
@@ -2294,7 +2299,7 @@ function* addsToRemoteSteps(localText, remoteText, { forUpload = true } = {}) {
                     // local apply — the way a pull here would fold it
                     folded = forUpload
                         ? registration.merge(theirs[key], value, UPLOAD_CONTEXT)
-                        : registration.mergeForPull(theirs[key], value);
+                        : registration.mergeForPull(theirs[key], value, { download: entries });
                 } catch {
                     folded = value;
                 }

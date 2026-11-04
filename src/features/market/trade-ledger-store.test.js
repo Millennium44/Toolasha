@@ -118,11 +118,13 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'market123',
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
-const archiveMock = vi.hoisted(() => ({ rows: [], reads: 0 }));
+const archiveMock = vi.hoisted(() => ({ rows: [], reads: 0, hang: false }));
 vi.mock('./listing-archive.js', () => ({
+    ARCHIVE_PREFIX: 'marketListingArchiveRec',
     default: {
         read: async () => {
             archiveMock.reads += 1;
+            if (archiveMock.hang) return new Promise(() => {});
             return archiveMock.rows;
         },
     },
@@ -1232,16 +1234,47 @@ describe('fills recorded past what a finished listing filled are cut back', () =
         expect(quantities(5)).toEqual([5, 5]);
     });
 
-    test('the archive is read only when a listing with several fills is over its log count or missing', async () => {
+    test('the archive is read once for a load, then only when a listing is over its log count or missing', async () => {
         seedSplit([fill(5, T1), fill(5, T2), fill(6, T1)]);
         LEDGER().set(LOG_KEY, [logRow(5, 10), logRow(6, 5)]);
         await loadAndRepair();
-        expect(archiveMock.reads).toBe(0);
+        // The one read that checks the caps the sync pull fold holds
+        expect(archiveMock.reads).toBe(1);
+
+        // Startup runs the repair again after the snapshot and on character_initialized: no more reads
+        await tradeLedgerStore._repairOverRecorded();
+        await tradeLedgerStore._repairOverRecorded([]);
+        expect(archiveMock.reads).toBe(1);
 
         LEDGER().set(LOG_KEY, [logRow(5, 5), logRow(6, 5)]);
         await tradeLedgerStore._repairOverRecorded();
-        expect(archiveMock.reads).toBe(1);
+        expect(archiveMock.reads).toBe(2);
         expect(quantities(5)).toEqual([5]);
+    });
+
+    test('a ledger with nothing to check never reads the archive', async () => {
+        seedSplit([]);
+        await loadAndRepair();
+        expect(archiveMock.reads).toBe(0);
+        expect(tradeLedgerStore._pullCaps).toBeNull();
+    });
+
+    test('an archive read that never settles counts as unreadable, so later writes do not wait for ever', async () => {
+        seedSplit([fill(5, T1), fill(5, T2)]);
+        LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+        archiveMock.hang = true;
+        vi.useFakeTimers();
+        try {
+            dataManagerMock.characterData ||= {};
+            await tradeLedgerStore.load();
+            await vi.advanceTimersByTimeAsync(MIGRATION_TIMEOUT_MS + 1);
+            await tradeLedgerStore._recordsChain;
+        } finally {
+            vi.useRealTimers();
+            archiveMock.hang = false;
+        }
+        expect(quantities(5)).toEqual([5, 5]);
+        expect(tradeLedgerStore._pullCaps).toBeNull();
     });
 
     test('two real partial fills in one millisecond are both kept', async () => {
@@ -1643,5 +1676,210 @@ describe('a sync pull that only brings back rows the repair cuts reads as unchan
 
         expect(result).not.toBe(local);
         expect(result.map((r) => r.listingId)).toEqual([8, 9]);
+    });
+
+    describe('the fold cuts only with what the repair would have read', () => {
+        const sumOf = (rows, id) => listingsOf(rows, id).reduce((sum, r) => sum + r.quantity, 0);
+        const foldWith = (t, incoming, download) => {
+            const local = stored(t);
+            return { local, result: registration(t).mergeForPull(local, incoming, { download }) };
+        };
+        /** A new page on the same storage */
+        const reopen = async () => {
+            tradeLedgerStore.records = [];
+            tradeLedgerStore.states = {};
+            tradeLedgerStore.isLoaded = false;
+            tradeLedgerStore._pullCaps = null;
+            await loadAndRepair();
+        };
+
+        test('a real second fill over a stale log count is kept: local total equal to the log still asks the archive', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            archiveMock.rows = [logRow(5, 10)];
+            await loadAndRepair();
+            expect(archiveMock.reads).toBeGreaterThan(0);
+            expect(tradeLedgerStore._pullCaps.caps.get(5)).toBe(10);
+
+            const { local, result } = pull(T1, [fill(5, T1), fill(6, T1 + 1), fill(5, T1 + 2000)]);
+
+            expect(result).not.toBe(local);
+            expect(listingsOf(result, 5).map((r) => r.quantity)).toEqual([5, 5]);
+            expect(sumOf(result, 6)).toBe(5);
+        });
+
+        test('nothing higher anywhere: the same rows are cut, as the repair would cut them', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+
+            const { local, result } = pull(T1, [fill(5, T1), fill(6, T1 + 1), fill(5, T1 + 2000)]);
+
+            expect(result).toBe(local);
+        });
+
+        test('a listing past the log, known only to the archive, is capped with one recorded fill', async () => {
+            seedSplit([fill(5, T1)]);
+            archiveMock.rows = [logRow(5, 5)];
+            await loadAndRepair();
+
+            const { local, result } = pull(T1, [fill(5, T1), fill(5, T1 + 1), fill(5, T1 + 2)]);
+
+            expect(result).toBe(local);
+        });
+
+        test('the loop stays stopped over reloads: a clean day reads the archive once per load and stays unchanged', async () => {
+            seedSplit([fill(5, T1), fill(5, T2), fill(5, T3), fill(6, T3 + 3)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+            const gist = [fill(5, T3), fill(6, T3 + 3)];
+            for (let load = 1; load <= 3; load += 1) {
+                await reopen();
+                expect(archiveMock.reads).toBe(load);
+                const { local, result } = pull(T3, gist);
+                expect(result).toBe(local);
+            }
+        });
+
+        test('an unreadable archive holds no caps: the pull is a plain union until a read succeeds', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            archiveMock.rows = null;
+            await loadAndRepair();
+            expect(tradeLedgerStore._pullCaps).toBeNull();
+            const incoming = [fill(5, T1), fill(6, T1 + 1), fill(5, T1 + 2000)];
+            expect(sumOf(pull(T1, incoming).result, 5)).toBe(10);
+
+            archiveMock.rows = [];
+            await tradeLedgerStore._repairOverRecorded();
+
+            expect(sumOf(pull(T1, incoming).result, 5)).toBe(5);
+        });
+
+        test('an unreadable log holds no caps and does not count as the read', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            const real = storageMock.tryGet.getMockImplementation();
+            storageMock.tryGet.mockImplementation(async (key, store) => (key === LOG_KEY ? null : real(key, store)));
+            try {
+                await loadAndRepair();
+            } finally {
+                storageMock.tryGet.mockImplementation(real);
+            }
+            expect(archiveMock.reads).toBe(0);
+            expect(tradeLedgerStore._pullCaps).toBeNull();
+            expect(sumOf(pull(T1, [fill(5, T1), fill(5, T1 + 2000)]).result, 5)).toBe(10);
+        });
+
+        test('a listing the log learned after the read has no cap until a run reads the archive again', async () => {
+            seedSplit([fill(5, T1), fill(9, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+            LEDGER().set(LOG_KEY, [logRow(5, 5), logRow(9, 5)]);
+            await tradeLedgerStore._repairOverRecorded();
+            expect(archiveMock.reads).toBe(1);
+            expect(tradeLedgerStore._pullCaps.caps.has(9)).toBe(false);
+
+            const { result } = pull(T1, [fill(5, T1), fill(9, T1 + 1), fill(9, T1 + 2000)]);
+
+            expect(sumOf(result, 9)).toBe(10);
+        });
+
+        test('caps only rise: a later higher count raises a held cap and a later lower one does not lower it', async () => {
+            seedSplit([fill(5, T1), fill(5, T2)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 10)]);
+            await loadAndRepair();
+
+            LEDGER().set(LOG_KEY, [logRow(5, 20)]);
+            await tradeLedgerStore._repairOverRecorded();
+            expect(tradeLedgerStore._pullCaps.caps.get(5)).toBe(20);
+
+            LEDGER().set(LOG_KEY, [logRow(5, 15)]);
+            await tradeLedgerStore._repairOverRecorded();
+            expect(tradeLedgerStore._pullCaps.caps.get(5)).toBe(20);
+        });
+
+        test('a listing found open has no cap, whether a later run or the fold itself finds it', async () => {
+            seedSplit([fill(5, T1), fill(8, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5), logRow(8, 5)]);
+            await loadAndRepair();
+            expect(tradeLedgerStore._pullCaps.caps.get(5)).toBe(5);
+
+            await tradeLedgerStore._repairOverRecorded([{ id: 5, status: '/market_listing_status/active' }]);
+            expect(tradeLedgerStore._pullCaps.caps.has(5)).toBe(false);
+
+            dataManagerMock.listings = [{ id: 8, status: '/market_listing_status/active' }];
+            const { result } = pull(T1, [fill(5, T1), fill(5, T1 + 2), fill(8, T1 + 1), fill(8, T1 + 3)]);
+            expect(sumOf(result, 5)).toBe(10);
+            expect(sumOf(result, 8)).toBe(10);
+        });
+
+        test('this tab having counted more than the cap keeps the rows', async () => {
+            seedSplit([fill(5, T1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+            tradeLedgerStore.states = { 5: { filledQuantity: 10 } };
+
+            expect(sumOf(pull(T1, [fill(5, T1), fill(5, T1 + 2)]).result, 5)).toBe(10);
+        });
+
+        test.each([
+            ['log', LOG_KEY, [logRow(5, 10)]],
+            ['log, at a status the repair does not trust', LOG_KEY, [logRow(5, 10, 'expired')]],
+            ['archive month', 'marketListingArchiveRec_market123_2026-08', [logRow(5, 10)]],
+            ['baselines', 'tradeLedgerState_market123', { 5: { filledQuantity: 10 } }],
+        ])('another device, its %s in the same download saying more: the fill is kept', async (_name, key, value) => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+            const incoming = [fill(5, T1), fill(6, T1 + 1), fill(5, T1 + 2000)];
+
+            const { local, result } = foldWith(T1, incoming, { [REC(T1)]: incoming, [key]: value });
+
+            expect(result).not.toBe(local);
+            expect(sumOf(result, 5)).toBe(10);
+        });
+
+        test("the download's count for someone else's listing or another character's key is not evidence", async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+            const incoming = [fill(5, T1), fill(6, T1 + 1), fill(5, T1 + 2000)];
+
+            const { local, result } = foldWith(T1, incoming, {
+                [LOG_KEY]: [logRow(7, 10)],
+                marketListingTimestamps_other456: [logRow(5, 10)],
+                'marketListingArchiveRec_other456_2026-08': [logRow(5, 10)],
+                marketListingArchiveRecTomb_market123: [logRow(5, 10)],
+            });
+
+            expect(result).toBe(local);
+        });
+
+        test('a raised cap still cuts what is past it, and a real fill of another listing stays', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            await loadAndRepair();
+            const incoming = [fill(5, T1), fill(5, T1 + 2), fill(5, T1 + 3), fill(7, T1 + 4), fill(6, T1 + 1)];
+
+            const { result } = foldWith(T1, incoming, { [LOG_KEY]: [logRow(5, 10)] });
+
+            expect(sumOf(result, 5)).toBe(10);
+            expect(sumOf(result, 7)).toBe(5);
+            expect(sumOf(result, 6)).toBe(5);
+        });
+
+        test('a repair still out when the ledger is switched off holds nothing for the fold', async () => {
+            seedSplit([fill(5, T1), fill(6, T1 + 1)]);
+            LEDGER().set(LOG_KEY, [logRow(5, 5)]);
+            tradeLedgerStore.records = [fill(5, T1), fill(6, T1 + 1)];
+            tradeLedgerStore.isLoaded = true;
+            dataManagerMock.characterData = {};
+
+            const pending = tradeLedgerStore._repairOverRecorded();
+            tradeLedgerStore.disable();
+            await pending;
+
+            expect(tradeLedgerStore._pullCaps).toBeNull();
+        });
     });
 });
