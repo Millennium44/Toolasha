@@ -3690,7 +3690,48 @@ describe('the lab Gold/1% table when a swap costs nothing, or pays', () => {
 
         expect(goldRow('Sundering Crossbow')[4]).toBe('pays for itself');
         expect(goldRow('Free upgrade that helps')[4]).toBe('pays for itself');
-        expect(goldRow('Cheap real upgrade')[4]).toBe('1,000,000');
+        expect(goldRow('Cheap real upgrade')[4]).toBe('1.0M');
+    });
+
+    describe('and a large figure is printed short, with the whole number in the expanded row', () => {
+        const detailOf = (name) => {
+            const tr = [...container.querySelectorAll('tr[data-gold-row]')].find((row) =>
+                row.querySelector('td').textContent.includes(name)
+            );
+            return container.querySelector(`[data-gold-detail="${tr.dataset.goldRow}"]`);
+        };
+
+        test('Cost and Gold/1% are short in the cells and exact in the detail', () => {
+            ui._renderUpgradeResults(priced(), container);
+
+            expect(goldRow('Cheap real upgrade')[1]).toBe('2.0M');
+            const exact = detailOf('Cheap real upgrade').querySelector('[data-exact-figures]').textContent;
+            expect(exact).toContain('Cost 2,000,000 coins');
+            expect(exact).toContain('Gold/1% 1,000,000 coins');
+        });
+
+        test('a credit gives the sum handed back; free, unpriced and pays-for-itself rows give no exact figure', () => {
+            ui._renderUpgradeResults(priced(), container);
+
+            expect(detailOf('Sundering Crossbow').querySelector('[data-exact-figures]').textContent).toBe(
+                'Exact: Handed back 17,700,000 coins'
+            );
+            expect(detailOf('Free upgrade that helps').querySelector('[data-exact-figures]')).toBeNull();
+            expect(detailOf('Attack Lv90').querySelector('[data-exact-figures]')).toBeNull();
+            expect(goldRow('Attack Lv90')[1]).toBe('—');
+        });
+
+        test('sorting by Cost still orders by the raw coins, not by the short text', () => {
+            ui._renderUpgradeResults(priced(), container);
+            // First click on a new column is descending: the dearest first, the unpriced row (Infinity) before it
+            container.querySelector('th[data-sort-key="cost"]').click();
+            expect(goldOrder().last).toContain('Sundering Crossbow');
+            container.querySelector('th[data-sort-key="cost"]').click();
+            expect(goldOrder().indexOf('Sundering Crossbow')).toBeLessThan(goldOrder().indexOf('Feeble refund swap'));
+            expect(goldOrder().indexOf('Cheap real upgrade')).toBeGreaterThan(
+                goldOrder().indexOf('Free upgrade that helps')
+            );
+        });
     });
 });
 
@@ -3781,6 +3822,33 @@ describe('the budget plan when a pick pays for itself', () => {
         expect(plan.textContent).toContain('Cursed Bow +7');
         expect(plan.textContent).toContain('+17.7M back');
         expect(plan.textContent).not.toContain('-17.7M');
+    });
+
+    test('the all-fights row opens to the exact sum, and the token section is short with exact tokens', () => {
+        const data = analysis();
+        data.results[0].cost = 5_190_259_500;
+        data.results[0].attemptsSavedPerMillion = 0.3;
+        data.results.push({
+            ...data.results[0],
+            candidate: { type: 'token', description: 'Big token level' },
+            costType: 'token',
+            cost: null,
+            tokenCost: 12_500,
+            attemptsSavedPerHundredTokens: 0.01,
+        });
+        ui._renderAllFightsResults(data, container);
+
+        const row = container.querySelector('tr[data-allfights-row="0"]');
+        expect(row.textContent).toContain('5.2B');
+        expect(row.textContent).not.toContain('5,190,259,500');
+        expect(container.querySelector('[data-allfights-detail="0"] [data-exact-figures]').textContent).toBe(
+            'Exact: Cost 5,190,259,500 coins'
+        );
+        const token = container.querySelector('tr[data-allfights-token-row="0"]');
+        expect(token.textContent).toContain('12.5K');
+        expect(container.querySelector('[data-allfights-token-detail="0"]').textContent).toContain(
+            'Tokens 12,500 tokens'
+        );
     });
 });
 
@@ -7409,5 +7477,134 @@ describe('the Lab Sim tab sections', () => {
         const before = ui._swapOptions.upgradesOpen.combat;
         ui.panel.querySelector('#mwi-labsim-upgrades-header-combat').click();
         expect(ui._swapOptions.upgradesOpen.combat).toBe(!before);
+    });
+});
+
+describe('large token, credit and cowbell figures in the lab tables', () => {
+    let container;
+
+    beforeEach(async () => {
+        ui.buildPanel();
+        await settle();
+        container = document.createElement('div');
+        document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+        container.remove();
+        ui.destroy();
+    });
+
+    const singleFight = () => ({
+        baseline: { winRate: 0.5 },
+        results: [
+            {
+                candidate: { type: 'token', description: 'Big token level' },
+                costType: 'token',
+                tokenCost: 12_500,
+                winRate: 0.55,
+                winRateDelta: 0.05,
+                metricType: 'winRate',
+            },
+            {
+                candidate: { type: 'token', description: 'Small token level' },
+                costType: 'token',
+                tokenCost: 40,
+                winRate: 0.51,
+                winRateDelta: 0.01,
+                metricType: 'winRate',
+            },
+            {
+                candidate: { type: 'community_buff', buffKey: 'experience', description: 'Experience Lv4 → Lv5' },
+                costType: 'community',
+                cowbellCost: 2_400_000,
+                xpPerRoom: 5000,
+                xpPerRoomDelta: 125,
+            },
+        ],
+    });
+
+    test('single fight: a token row opens to its exact tokens, a small one stays plain', () => {
+        ui._renderUpgradeResults(singleFight(), container);
+
+        const rows = [...container.querySelectorAll('tr[data-token-row]')];
+        const big = rows.find((tr) => tr.textContent.includes('Big token level'));
+        expect(big.textContent).toContain('12.5K');
+        expect(big.textContent).not.toContain('12,500');
+        const detail = container.querySelector(`[data-token-detail="${big.dataset.tokenRow}"]`);
+        expect(detail.classList.contains('mwi-ract-only')).toBe(false);
+        expect(detail.textContent).toContain('Tokens 12,500 tokens');
+        big.click();
+        expect(detail.style.display).toBe('table-row');
+        // A small one has nothing more to show: its detail (if the row has actions) is only the buttons
+        const small = rows.find((tr) => tr.textContent.includes('Small token level'));
+        if (small) {
+            expect(small.textContent).toContain('40');
+            const smallDetail = container.querySelector(`[data-token-detail="${small.dataset.tokenRow}"]`);
+            expect(smallDetail.querySelector('[data-exact-figures]')).toBeNull();
+        }
+    });
+
+    test('single fight: the community row prints short cowbells and opens to the exact figure', () => {
+        ui._renderUpgradeResults(singleFight(), container);
+
+        const row = container.querySelector('tr[data-community-row]');
+        expect(row.textContent).toContain('2.4M/min');
+        const detail = container.querySelector('[data-community-detail]');
+        expect(detail.textContent).toContain('Cowbells 2,400,000 per minute');
+        row.click();
+        expect(detail.style.display).toBe('table-row');
+    });
+
+    test('skilling: guild credits and gold rows are short with the exact figures in an opened row', () => {
+        ui._renderSkillingUpgradeResults(
+            {
+                baseline: { clearRate: 0.6, xpPerRoom: 100 },
+                results: [
+                    {
+                        candidate: { type: 'guild_shrine', description: 'Shrine Lv9' },
+                        costType: 'guild',
+                        cost: 715_000_000,
+                        tokenCost: 3_000,
+                        clearRate: 0.65,
+                        clearRateDelta: 0.05,
+                    },
+                    {
+                        candidate: { type: 'skilling_gear', description: 'Pricey tool', skillKey: '/skills/cooking' },
+                        costType: 'gold',
+                        cost: 5_190_259_500,
+                        clearRate: 0.65,
+                        clearRateDelta: 0.05,
+                    },
+                    {
+                        candidate: { type: 'skilling_gear', description: 'Unpriced tool', skillKey: '/skills/cooking' },
+                        costType: 'gold',
+                        cost: null,
+                        clearRate: 0.65,
+                        clearRateDelta: 0.05,
+                    },
+                ],
+            },
+            container
+        );
+
+        const guild = container.querySelector('tr[data-skilling-exact-row^="guild"]');
+        expect(guild.textContent).toContain('715.0M');
+        expect(guild.textContent).not.toContain('715,000,000');
+        const guildDetail = container.querySelector('[data-skilling-exact-detail^="guild"]');
+        expect(guildDetail.textContent).toContain('Credits 715,000,000 credits');
+        expect(guildDetail.textContent).toContain('Tokens 3,000 guild tokens');
+
+        const gold = [...container.querySelectorAll('tr[data-skilling-gold-row]')];
+        const priced = gold.find((tr) => tr.textContent.includes('Pricey tool'));
+        expect(priced.textContent).toContain('5.2B');
+        const pricedDetail = container.querySelector(`[data-skilling-gold-detail="${priced.dataset.skillingGoldRow}"]`);
+        expect(pricedDetail.querySelector('[data-exact-figures]').textContent).toContain('Cost 5,190,259,500 coins');
+        const unpriced = gold.find((tr) => tr.textContent.includes('Unpriced tool'));
+        expect(unpriced.textContent).toContain('—');
+        const unpricedDetail = container.querySelector(
+            `[data-skilling-gold-detail="${unpriced.dataset.skillingGoldRow}"]`
+        );
+        expect(unpricedDetail.querySelector('[data-exact-figures]')).toBeNull();
     });
 });

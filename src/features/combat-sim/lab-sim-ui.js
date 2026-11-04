@@ -10,6 +10,7 @@ import storage from '../../core/storage.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
+import { shortFigure, exactFiguresHtml, wireExactRows } from './lab-exact-figures.js';
 import { LAB_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import {
     buildGameDataPayload,
@@ -425,9 +426,25 @@ function skillingKeptReason(candidate) {
  * @returns {string} Cell text
  */
 function goldCostCell(cost) {
-    if (cost > 0) return formatWithSeparator(cost);
+    if (cost > 0) return shortFigure(cost);
     if (cost === 0) return 'free';
     return Number.isFinite(cost) ? `+${formatKMB(-cost)} back` : '—';
+}
+
+/**
+ * The exact Cost and Gold/1% of a gold row, for its expanded detail. A credit reads as the sum handed back,
+ * and a row with no price or no gain has no exact figure to give (unknown stays unknown).
+ * @param {number|null|undefined} cost - Net coin cost; negative is a credit
+ * @param {number} goldPerPct - From `goldPerPercent`
+ * @returns {string} HTML, empty when nothing is large
+ */
+function goldExactHtml(cost, goldPerPct) {
+    return exactFiguresHtml([
+        cost < 0
+            ? { label: 'Handed back', value: -cost, unit: 'coins' }
+            : { label: 'Cost', value: cost, unit: 'coins' },
+        { label: 'Gold/1%', value: goldPerPct > 0 ? goldPerPct : null, unit: 'coins' },
+    ]);
 }
 
 /**
@@ -440,7 +457,7 @@ function goldCostCell(cost) {
 function goldPerPctCell(cost, deltaPct) {
     const value = goldPerPercent(cost, deltaPct);
     if (!Number.isFinite(value)) return '—';
-    return value <= 0 ? 'pays for itself' : formatWithSeparator(value);
+    return value <= 0 ? 'pays for itself' : shortFigure(value);
 }
 
 /**
@@ -5916,6 +5933,7 @@ class LabSimUI {
         });
         if (!plan || !goalEl || !this.panel?.contains(goalEl) || this._skillingAnalysis !== context) return;
         goalEl.innerHTML = renderPlanHtml(plan, { goalText, showLevels });
+        wireExactRows(goalEl);
         this._setStatus(
             plan.aborted
                 ? `Plan stopped early (${plan.steps.length} steps taken).`
@@ -5964,6 +5982,7 @@ class LabSimUI {
         });
         if (!combo || !goalEl || !this.panel?.contains(goalEl) || this._skillingAnalysis !== context) return;
         goalEl.innerHTML = renderCombinationHtml(combo, { showLevels });
+        wireExactRows(goalEl);
         this._setStatus(`${combo.kept.length} upgrades simmed together.`);
     }
 
@@ -7817,7 +7836,7 @@ class LabSimUI {
                 const fightRows = fightBreakdown(r);
                 html += `<tr data-allfights-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${fightRows}${this._renderAllFightsNotes(r)}</td>
+                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${goldExactHtml(r.cost, null)}${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
             });
 
@@ -8153,7 +8172,7 @@ class LabSimUI {
                     : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-token-row="${i}">
                 <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
-                <td style="${tdStyle} color:#aaa;">${formatWithSeparator(r.tokenCost || 0)}</td>
+                <td style="${tdStyle} color:#aaa;">${shortFigure(r.tokenCost || 0)}</td>
                 <td style="${tdStyle} color:${measured && r.attemptsSavedPerHundredTokens > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perTokens(r.attemptsSavedPerHundredTokens ?? null)}</td>
                 <td style="${tdStyle}">${fmtAttempts(r.expectedAttempts)}</td>
                 <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'};"
@@ -8173,7 +8192,7 @@ class LabSimUI {
                 .join('');
             html += `<tr data-allfights-token-detail="${i}" style="display:none;">
                 <td colspan="6" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${fightRows}</td>
+                    ${exactFiguresHtml([{ label: 'Tokens', value: r.tokenCost, unit: 'tokens' }])}${fightRows}</td>
             </tr>`;
         });
 
@@ -8394,7 +8413,7 @@ class LabSimUI {
 
             const tokenCost = r.tokenCost || 0;
             const tokensPerPct = deltaVal > 0 ? Math.round(tokenCost / deltaVal) : Infinity;
-            const tokensPerPctStr = deltaVal > 0 ? formatWithSeparator(tokensPerPct) : '\u2014';
+            const tokensPerPctStr = deltaVal > 0 ? shortFigure(tokensPerPct) : '\u2014';
 
             const levels = roomLevels ? roomLevelCells(r, roomLevels) : null;
 
@@ -8416,6 +8435,12 @@ class LabSimUI {
                 // to the combat sim's rows turns up here without being asked for
                 actions: combatSimUI.upgradeRowActionsHtml(r),
                 tokenCost,
+                // Short in the cell; the whole number is in the expanded row
+                tokenCostStr: tokenCost ? shortFigure(tokenCost) : '—',
+                exactHtml: exactFiguresHtml([
+                    { label: 'Tokens', value: tokenCost, unit: 'tokens' },
+                    { label: 'Tokens/1%', value: tokensPerPct, unit: 'tokens' },
+                ]),
                 rateVal,
                 rateStr,
                 deltaVal,
@@ -8460,6 +8485,8 @@ class LabSimUI {
                 goldPerPct,
                 goldPerPctStr: goldPerPctCell(r.cost, delta),
                 detailHtml: this._renderUpgradeCostDetail(r, analysisResult?.baseline),
+                // The cells print the short form; sorting above reads `cost` and `goldPerPct`, never these
+                exactHtml: goldExactHtml(r.cost, goldPerPct),
             };
         });
 
@@ -8472,7 +8499,8 @@ class LabSimUI {
             return {
                 desc: r.candidate?.description || '',
                 cowbellCost: r.cowbellCost ?? Infinity,
-                cowbellCostStr: r.cowbellCost == null ? '\u2014' : formatWithSeparator(r.cowbellCost) + '/min',
+                cowbellCostStr: r.cowbellCost == null ? '\u2014' : shortFigure(r.cowbellCost) + '/min',
+                exactHtml: exactFiguresHtml([{ label: 'Cowbells', value: r.cowbellCost, unit: 'per minute' }]),
                 xpPerRoom: r.xpPerRoom || 0,
                 xpPerRoomStr: (r.xpPerRoom || 0).toFixed(1),
                 xpDelta,
@@ -8539,23 +8567,26 @@ class LabSimUI {
             </tr></thead><tbody>`;
 
             tokenRows.forEach((row, i) => {
-                // A token row has no detail of its own: one with actions gets a detail row that holds only
-                // them, which opens at phone width, so the buttons leave the name cell without being lost
+                // A token row has no detail of its own: one with actions or a large figure gets a detail row
+                // that holds only those, so the buttons leave the name cell and the whole number is one tap away
                 const hasActions = Boolean(row.actions);
-                html += `<tr style="border-bottom:1px solid #1a1a1a;"${
-                    hasActions ? ` class="mwi-ract-row" data-token-row="${i}"` : ''
+                const hasDetail = hasActions || Boolean(row.exactHtml);
+                html += `<tr style="border-bottom:1px solid #1a1a1a;${hasDetail ? ' cursor:pointer;' : ''}"${
+                    hasDetail ? ` class="mwi-ract-row" data-token-row="${i}"` : ''
                 }>
                     <td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}</td>
-                    <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.rateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
                 </tr>`;
-                if (hasActions) {
-                    html += `<tr class="mwi-ract-only" data-token-detail="${i}" style="display:none;">
+                if (hasDetail) {
+                    // Not `mwi-ract-only`: that class keeps a row closed at wide widths, and the exact figures
+                    // are wanted at every width
+                    html += `<tr${row.exactHtml ? '' : ' class="mwi-ract-only"'} data-token-detail="${i}" style="display:none;">
                     <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
-                        ${rowActionsDetailHtml(row.actions)}
+                        ${rowActionsDetailHtml(row.actions)}${row.exactHtml}
                     </td>
                 </tr>`;
                 }
@@ -8596,7 +8627,7 @@ class LabSimUI {
                 </tr>
                 <tr data-gold-detail="${i}" style="display:none;">
                     <td colspan="${roomLevels ? 7 : 5}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
-                        ${rowActionsDetailHtml(row.actions)}${row.detailHtml}
+                        ${rowActionsDetailHtml(row.actions)}${row.exactHtml}${row.detailHtml}
                     </td>
                 </tr>`;
             });
@@ -8624,8 +8655,10 @@ class LabSimUI {
                 ${th('ΔXP', 'xpDelta', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of communityRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+            communityRows.forEach((row, i) => {
+                html += `<tr style="border-bottom:1px solid #1a1a1a;${row.exactHtml ? ' cursor:pointer;' : ''}"${
+                    row.exactHtml ? ` data-community-row="${i}"` : ''
+                }>
                     <td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#666;">\u2014</td>
@@ -8633,7 +8666,12 @@ class LabSimUI {
                     <td style="${tdStyle} color:#ccc;">${row.xpPerRoomStr}</td>
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                 </tr>`;
-            }
+                if (row.exactHtml) {
+                    html += `<tr data-community-detail="${i}" style="display:none;">
+                    <td colspan="6" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">${row.exactHtml}</td>
+                </tr>`;
+                }
+            });
             html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
@@ -8753,6 +8791,14 @@ class LabSimUI {
             const tokenRow = e.target.closest('tr[data-token-row]');
             if (tokenRow) {
                 const detail = container.querySelector(`[data-token-detail="${tokenRow.dataset.tokenRow}"]`);
+                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
+                return;
+            }
+            const communityRow = e.target.closest('tr[data-community-row]');
+            if (communityRow) {
+                const detail = container.querySelector(
+                    `[data-community-detail="${communityRow.dataset.communityRow}"]`
+                );
                 if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                 return;
             }
@@ -9961,13 +10007,19 @@ class LabSimUI {
                 deltaStr: isXpRow ? '\u2014' : (deltaVal >= 0 ? '+' : '') + deltaVal.toFixed(2) + '%',
                 deltaColor: isXpRow ? '#888' : deltaColor,
                 tokensPerPct,
-                tokensPerPctStr: !isXpRow && deltaVal > 0 ? formatWithSeparator(tokensPerPct) : '\u2014',
+                tokenCostStr: tokenCost ? shortFigure(tokenCost) : '\u2014',
+                exactHtml: exactFiguresHtml([
+                    { label: 'Tokens', value: tokenCost, unit: 'tokens' },
+                    { label: 'Tokens/1%', value: !isXpRow && deltaVal > 0 ? tokensPerPct : null, unit: 'tokens' },
+                    { label: 'Tokens/XP', value: isXpRow ? tokensPerXp : null, unit: 'tokens' },
+                ]),
+                tokensPerPctStr: !isXpRow && deltaVal > 0 ? shortFigure(tokensPerPct) : '\u2014',
                 xpDelta,
                 xpDeltaStr: isXpRow ? (xpDelta >= 0 ? '+' : '') + xpDelta.toFixed(1) : '\u2014',
                 xpDeltaColor: isXpRow && xpDelta > 0 ? '#4caf50' : '#888',
                 tokensPerXp,
                 tokensPerXpStr:
-                    isXpRow && Number.isFinite(tokensPerXp) ? formatWithSeparator(Math.round(tokensPerXp)) : '\u2014',
+                    isXpRow && Number.isFinite(tokensPerXp) ? shortFigure(Math.round(tokensPerXp)) : '\u2014',
             };
         });
 
@@ -10031,6 +10083,7 @@ class LabSimUI {
                 // Cost column with no way to ask what is behind it is exactly
                 // where a dash reads as free and a kept-gear price reads as wrong
                 detailHtml: this._renderClearRateCostDetail(r, baseline),
+                exactHtml: goldExactHtml(r.cost, goldPerPct),
             };
         });
 
@@ -10049,9 +10102,14 @@ class LabSimUI {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
                 cost,
-                costStr: r.cost == null ? '\u2014' : formatWithSeparator(cost),
+                costStr: r.cost == null ? '\u2014' : shortFigure(cost),
                 tokenCost: r.tokenCost || 0,
-                tokenCostStr: formatWithSeparator(r.tokenCost || 0),
+                tokenCostStr: shortFigure(r.tokenCost || 0),
+                exactHtml: exactFiguresHtml([
+                    { label: 'Credits', value: r.cost == null ? null : cost, unit: 'credits' },
+                    { label: 'Tokens', value: r.tokenCost || 0, unit: 'guild tokens' },
+                    { label: 'Gold/1%', value: goldPerPct > 0 ? goldPerPct : null, unit: 'credits' },
+                ]),
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
                 deltaVal,
@@ -10084,7 +10142,8 @@ class LabSimUI {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
                 cowbellCost: r.cowbellCost ?? Infinity,
-                cowbellCostStr: r.cowbellCost == null ? '—' : formatWithSeparator(r.cowbellCost) + '/min',
+                cowbellCostStr: r.cowbellCost == null ? '—' : shortFigure(r.cowbellCost) + '/min',
+                exactHtml: exactFiguresHtml([{ label: 'Cowbells', value: r.cowbellCost, unit: 'per minute' }]),
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
                 deltaVal,
@@ -10114,6 +10173,16 @@ class LabSimUI {
 
         const arrow = (dir) => (dir === 'asc' ? ' \u25B2' : ' \u25BC');
 
+        // A row with a large figure opens to show the whole number (the gold rows already open, for their
+        // breakdown). Rows with nothing large stay plain.
+        const exactRowAttrs = (table, i, row) =>
+            ` style="border-bottom:1px solid #1a1a1a;${row.exactHtml ? ' cursor:pointer;' : ''}"` +
+            (row.exactHtml ? ` data-skilling-exact-row="${table}-${i}"` : '');
+        const exactDetailRow = (table, i, row, colspan) =>
+            row.exactHtml
+                ? `<tr data-skilling-exact-detail="${table}-${i}" style="display:none;">` +
+                  `<td colspan="${colspan}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">${row.exactHtml}</td></tr>`
+                : '';
         const pickTh = '<th style="width:1%; border-bottom:1px solid #333;"></th>';
         const pickCellHtml = (row) =>
             checked
@@ -10191,18 +10260,18 @@ class LabSimUI {
                 ${th('Tokens/XP', 'tokensPerXp', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of tokenRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+            tokenRows.forEach((row, i) => {
+                html += `<tr${exactRowAttrs('token', i, row)}>
                     ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
-                    <td style="${tdStyle} color:#ccc;">${row.tokenCost || '\u2014'}</td>
+                    <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.tokensPerPctStr}</td>
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
                     <td style="${tdStyle} color:#888;">${row.tokensPerXpStr}</td>
-                </tr>`;
-            }
+                </tr>${exactDetailRow('token', i, row, 9 + (roomLevels ? 2 : 0))}`;
+            });
             html += '</tbody></table></div>';
             return html;
         };
@@ -10228,9 +10297,9 @@ class LabSimUI {
                 ${th('XP/Room', 'xpDelta', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of guildRows) {
+            guildRows.forEach((row, i) => {
                 const note = row.shrineNote ? ` title="${row.shrineNote}"` : '';
-                html += `<tr style="border-bottom:1px solid #1a1a1a;"${note}>
+                html += `<tr${exactRowAttrs('guild', i, row)}${note}>
                     ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
@@ -10239,8 +10308,8 @@ class LabSimUI {
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:#888;">${row.goldPerPctStr}</td>
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
-                </tr>`;
-            }
+                </tr>${exactDetailRow('guild', i, row, 9 + (roomLevels ? 2 : 0))}`;
+            });
             html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 Credits are valued at the cheapest items that convert into them. Guild tokens are counted, not
@@ -10272,16 +10341,16 @@ class LabSimUI {
                 ${th('XP/Room', 'xpDelta', 'right')}
             </tr></thead><tbody>`;
 
-            for (const row of communityRows) {
-                html += `<tr style="border-bottom:1px solid #1a1a1a;">
+            communityRows.forEach((row, i) => {
+                html += `<tr${exactRowAttrs('community', i, row)}>
                     ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
                     ${roomLevelCellsHtml(row)}
                     <td style="${tdStyle} color:${row.xpDeltaColor}; font-weight:600;">${row.xpDeltaStr}</td>
-                </tr>`;
-            }
+                </tr>${exactDetailRow('community', i, row, 7 + (roomLevels ? 2 : 0))}`;
+            });
             html += '</tbody></table></div>';
             html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:12px;">
                 A community buff's level is what the whole server's donated minutes add up to, so there is no price
@@ -10331,6 +10400,7 @@ class LabSimUI {
                 <tr data-skilling-gold-detail="${i}" style="display:none;">
                     <td colspan="${9 + (roomLevels ? 2 : 0)}" style="padding:6px 10px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
                         ${rowActionsDetailHtml(row.actions)}
+                        ${row.exactHtml}
                         <div data-skill-breakdown style="margin-bottom:4px; font-size:11px;"></div>
                         ${row.detailHtml}
                     </td>
@@ -10419,6 +10489,14 @@ class LabSimUI {
             const pick = e.target.closest('input[data-skilling-pick]');
             if (pick) {
                 this._toggleSkillingPick(Number(pick.dataset.skillingPick), pick.checked);
+                return;
+            }
+            const exactRow = e.target.closest('tr[data-skilling-exact-row]');
+            if (exactRow) {
+                const detail = container.querySelector(
+                    `[data-skilling-exact-detail="${exactRow.dataset.skillingExactRow}"]`
+                );
+                if (detail) detail.style.display = detail.style.display === 'none' ? 'table-row' : 'none';
                 return;
             }
             // A row's own handoff buttons come first — a click on "Buy" is not a
