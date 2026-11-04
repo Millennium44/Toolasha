@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim tunes triggers in its own section
+
+The Upgrade tab's Triggers tick-box is now a Tune triggers section, as in Lab Sim: it says what a run will cost, runs without Analyze and shows its result in place. A result clears once its setup changes, and Apply waits for a running sim, flagging an Analyze table measured before the build changed.
+
 ### Phone header shows the zone during combat
 
 At phone width the battle number no longer squeezes out the zone name beside the boss countdown, and the header stays on screen instead of pushing your avatar off the edge. The battle number is still on the Combat page's Battle tab.
