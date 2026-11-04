@@ -13946,3 +13946,759 @@ describe('the Party tab follows its setting', () => {
         ui.buildPanel();
     });
 });
+
+describe('upgrade results as cards', () => {
+    const { candidateAssignmentKey } = actualAdvisor;
+    const CONTEXT = { gameData: { abilityDetailMap: {} }, playerDTOs: [{ abilities: [] }], playerIndex: 0 };
+    const PHONE_QUERY = '(max-width: 768px)';
+    const settle = async () => {
+        for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    /** A controllable window: `narrow` is the phone breakpoint, `fireBreakpoint` is the browser telling listeners */
+    const media = { narrow: false, listeners: new Set(), added: 0, removed: 0 };
+    let realMatchMedia;
+    const fireBreakpoint = (narrow) => {
+        media.narrow = narrow;
+        for (const listener of [...media.listeners]) listener({ matches: narrow });
+    };
+
+    const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+    const cardsOf = (section = 'gold') => [
+        ...container().querySelectorAll(`[data-upgrade-cards="${section}"] .mwi-ucard`),
+    ];
+    const keyOf = (card) =>
+        card
+            .getAttribute('data-card-id')
+            .replace(/^[a-z]+:/, '')
+            .replace(/#\d+$/, '');
+    const cardKeys = (section = 'gold') => cardsOf(section).map(keyOf);
+    const tableKeys = (attr) =>
+        [...container().querySelectorAll(`tr[${attr}]`)].map((tr) => tr.getAttribute('data-row-key'));
+    const headlineOf = (card) => card.querySelector('.mwi-ucard-gain .mwi-ucard-fv').textContent;
+    const stateOf = (card) => card.querySelector('[data-card-state-label]').textContent;
+    const select = (section) => container().querySelector(`[data-card-rank="${section}"]`);
+    const showCards = () => container().querySelector('[data-card-view="cards"]').click();
+    const showTable = () => container().querySelector('[data-card-view="table"]').click();
+    const rankBy = (section, key) => {
+        const el = select(section);
+        el.value = key;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const rows = () => [
+        row('Ring A', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 }),
+        row('Ring B', { slot: '/equipment_types/neck', cost: 5000, profitGain: 500, dps: 130 }),
+        row('Ring C', { slot: '/equipment_types/back', cost: 20, profitGain: 5, dps: 101 }),
+        row('Ring D', { slot: '/equipment_types/head', cost: 900, profitGain: 80, dps: 110 }),
+    ];
+    const draw = (extra = {}, list = rows()) => {
+        ui._renderUpgradeResults({ baseline: BASELINE, results: list, food: null, context: CONTEXT, ...extra });
+        return ui._upgradeResultsData;
+    };
+    const answer =
+        (verdicts = {}) =>
+        (params) => ({
+            rows: params.rows.map((r) => {
+                const verdict = verdicts[r.candidate.description] || 'confirmed';
+                return {
+                    key: candidateAssignmentKey(r.candidate),
+                    description: r.candidate.description,
+                    mean: verdict === 'error' ? null : verdict === 'worse' ? -300 : 640,
+                    se: verdict === 'error' ? null : 120,
+                    seeds: 8,
+                    verdict,
+                    error: verdict === 'error' ? 'boom' : undefined,
+                };
+            }),
+            metric: params.metric,
+            unit: 'gold/hr',
+            seeds: 8,
+            hoursPerSeed: 1,
+            stopped: false,
+        });
+    const cardNamed = (name, section = 'gold') =>
+        cardsOf(section).find((c) => c.querySelector('.mwi-ucard-name').textContent.startsWith(name));
+    const verifyButton = (name, section = 'gold') => cardNamed(name, section).querySelector('[data-card-verify]');
+
+    beforeEach(() => {
+        realMatchMedia = window.matchMedia;
+        media.narrow = false;
+        media.listeners = new Set();
+        media.added = 0;
+        media.removed = 0;
+        window.matchMedia = (query) => ({
+            get matches() {
+                return query === PHONE_QUERY && media.narrow;
+            },
+            addEventListener: (type, fn) => {
+                media.added++;
+                media.listeners.add(fn);
+            },
+            removeEventListener: (type, fn) => {
+                media.removed++;
+                media.listeners.delete(fn);
+            },
+        });
+        mocks.verifyCalls = [];
+        mocks.verifyImpl = null;
+        mocks.characterId = 'char1';
+        ui.buildPanel();
+        ui.show({ remember: false });
+        ui._viewChoices = { wide: null, narrow: null };
+        ui._abilityOrderShowAll = false;
+        ui._abilityOrderRank = undefined;
+        ui._restoredUpgradeAt = null;
+        ui._upgradeBudget = 0;
+        ui._collapsedSections = {};
+        ui._scrollSort = null;
+    });
+    afterEach(() => {
+        ui.destroy();
+        window.matchMedia = realMatchMedia;
+        mocks.characterId = 'char1';
+        mocks.scrollRate = null;
+        vi.restoreAllMocks();
+    });
+
+    describe('the Cards | Table switch', () => {
+        test('a wide window defaults to the table and a phone to cards, until the player picks', () => {
+            draw();
+            expect(container().querySelector('table')).toBeTruthy();
+            expect(container().querySelector('[data-upgrade-cards]')).toBeNull();
+            expect(ui._viewChoices).toEqual({ wide: null, narrow: null });
+
+            fireBreakpoint(true);
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+            expect(container().querySelector('table')).toBeNull();
+            // Nothing was picked by crossing the breakpoint
+            expect(ui._viewChoices).toEqual({ wide: null, narrow: null });
+            // The table side is called Full table on a phone
+            expect(container().querySelector('[data-card-view="table"]').textContent).toBe('Full table');
+
+            fireBreakpoint(false);
+            expect(container().querySelector('table')).toBeTruthy();
+            expect(container().querySelector('[data-card-view="table"]').textContent).toBe('Table');
+        });
+
+        test('a pick is remembered for its own form factor and never changes the other', async () => {
+            draw();
+            showCards();
+            expect(ui._viewChoices).toEqual({ wide: 'cards', narrow: null });
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+            // A redraw keeps the choice
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+            await settle();
+            expect(mocks.store.get('settings:combatSimUpgradeColumns').resultsView).toEqual({
+                wide: 'cards',
+                narrow: null,
+            });
+
+            // The phone is untouched: it still opens on cards by default, and Full table is a pick of its own
+            fireBreakpoint(true);
+            showTable();
+            expect(ui._viewChoices).toEqual({ wide: 'cards', narrow: 'table' });
+            expect(container().querySelector('table')).toBeTruthy();
+            fireBreakpoint(false);
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+        });
+
+        test('a record saved before the cards existed means both defaults', async () => {
+            mocks.store.set('settings:combatSimUpgradeColumns', { hidden: [], scored: ['dps'] });
+            ui._viewChoices = { wide: 'cards', narrow: 'cards' };
+            await ui._loadUpgradeColumnPrefs();
+            expect(ui._viewChoices).toEqual({ wide: null, narrow: null });
+        });
+
+        test('the breakpoint is watched while the panel is up: once, no more per redraw, none when closed or destroyed', () => {
+            expect(media.added).toBe(1);
+            draw();
+            draw();
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(media.added).toBe(1);
+            expect(media.listeners.size).toBe(1);
+            // Closing the panel takes it off; the window can change while it is shut
+            ui.hide({ remember: false });
+            expect(media.removed).toBe(1);
+            expect(media.listeners.size).toBe(0);
+            media.narrow = true;
+            ui.show({ remember: false });
+            // ...and reopening catches the drawn results up with the window
+            expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
+            expect(media.listeners.size).toBe(1);
+            ui.destroy();
+            expect(media.listeners.size).toBe(0);
+            // destroy() runs again in afterEach
+            ui.buildPanel();
+        });
+
+        test('there is nothing to switch when no result came back', () => {
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [], food: null });
+            expect(container().querySelector('[data-card-view]')).toBeNull();
+            expect(container().querySelector('[data-upgrade-cards]')).toBeNull();
+        });
+    });
+
+    describe('the same candidates, numbers and order as the table', () => {
+        test('for every Rank by, card N is table row N and the headline is the table cell', () => {
+            ui._upgradeHiddenColumns = new Set();
+            ui._cardShowAll.add('gold');
+            draw();
+            showCards();
+            const options = [...select('gold').options].map((o) => o.value);
+            expect(options).toEqual(
+                expect.arrayContaining(['score', 'cost', 'payback', 'deltaDps', 'deltaProfit', 'upgrade'])
+            );
+            for (const key of options) {
+                showCards();
+                rankBy('gold', key);
+                const fromCards = cardKeys();
+                const headlines = cardsOf().map(headlineOf);
+                showTable();
+                expect(tableKeys('data-upgrade-row'), key).toEqual(fromCards);
+                // The headline is what the table's own cell for that column says
+                const heads = [...container().querySelectorAll('th[data-sort-key]')];
+                const index = heads.findIndex((th) => th.getAttribute('data-sort-key') === key);
+                const tableCells = [...container().querySelectorAll('tr[data-upgrade-row]')].map(
+                    (tr) => tr.children[index].textContent
+                );
+                const squash = (t) => t.replace(/\s+/g, ' ').trim();
+                // Ranked by name there is no figure to lead with, so the Score leads
+                if (key === 'upgrade') {
+                    expect(headlines.length).toBe(4);
+                    continue;
+                }
+                expect(headlines.map(squash), key).toEqual(tableCells.map(squash));
+            }
+        });
+
+        test('Rank by re-sorts and re-heads with no run, and the table sort is the same state', () => {
+            draw();
+            showCards();
+            const runs = mocks.upgradeRuns;
+            rankBy('gold', 'cost');
+            expect(ui._upgradeSort).toEqual({ key: 'cost', asc: true });
+            const names = cardsOf().map((c) => c.querySelector('.mwi-ucard-name').textContent);
+            expect(names).toEqual(['Ring C', 'Ring A', 'Ring D', 'Ring B']);
+            expect(mocks.upgradeRuns).toBe(runs);
+            expect(cardsOf()[0].querySelector('.mwi-ucard-gain .mwi-ucard-fl').textContent).toBe('Cost');
+        });
+
+        test('a table left sorted worst-first is shown that way and can be turned round', () => {
+            draw();
+            ui._upgradeSort = { key: 'cost', asc: false };
+            draw();
+            showCards();
+            const names = cardsOf().map((c) => c.querySelector('.mwi-ucard-name').textContent);
+            expect(names).toEqual(['Ring B', 'Ring D', 'Ring A', 'Ring C']);
+            const note = container().querySelector('[data-card-best-first="gold"]');
+            expect(note).toBeTruthy();
+            note.click();
+            expect(ui._upgradeSort).toEqual({ key: 'cost', asc: true });
+            expect(container().querySelector('[data-card-best-first]')).toBeNull();
+        });
+
+        test('top five and Show all, kept across a redraw', () => {
+            const many = Array.from({ length: 8 }, (_, i) =>
+                row(`Item ${i + 1}`, { slot: `/equipment_types/s${i}`, cost: 100 + i, profitGain: 10 + i })
+            );
+            draw({}, many);
+            showCards();
+            expect(cardsOf()).toHaveLength(5);
+            expect(container().querySelector('[data-card-showall="gold"]').textContent).toBe('Show all 8');
+            expect(container().querySelector('.mwi-ucards-count').textContent).toBe('Top 5 of 8');
+            container().querySelector('[data-card-showall="gold"]').click();
+            expect(cardsOf()).toHaveLength(8);
+            expect(container().querySelector('[data-card-showall="gold"]').textContent).toBe('Show top 5');
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(cardsOf()).toHaveLength(8);
+            // The ranks run on from the top five
+            expect(cardsOf().map((c) => c.querySelector('.mwi-ucard-rank').textContent)).toEqual(
+                Array.from({ length: 8 }, (_, i) => `#${i + 1}`)
+            );
+        });
+
+        test('one candidate and a duplicate name are each a card', () => {
+            draw({}, [row('Only ring', { cost: 10 })]);
+            showCards();
+            expect(cardsOf()).toHaveLength(1);
+            expect(container().querySelector('[data-card-showall]')).toBeNull();
+            draw({}, [row('Same', { cost: 10 }), row('Same', { cost: 10 })]);
+            expect(cardsOf()).toHaveLength(2);
+            expect(new Set(cardsOf().map((c) => c.getAttribute('data-card-id'))).size).toBe(2);
+        });
+    });
+
+    describe('Details', () => {
+        test('is a real button; opening it reveals the cost basis and survives a re-sort by candidate', () => {
+            const list = rows();
+            list[1].costSource = 'market';
+            draw({}, list);
+            showCards();
+            const card = () => cardNamed('Ring B');
+            const button = () => card().querySelector('[data-card-details]');
+            expect(button().tagName).toBe('BUTTON');
+            expect(button().getAttribute('aria-expanded')).toBe('false');
+            const region = () => ui.panel.ownerDocument.getElementById(button().getAttribute('aria-controls'));
+            expect(region().hidden).toBe(true);
+            button().click();
+            expect(button().getAttribute('aria-expanded')).toBe('true');
+            expect(region().hidden).toBe(false);
+            expect(region().textContent).toContain('Cost basis');
+
+            rankBy('gold', 'cost');
+            expect(card().querySelector('.mwi-ucard-name').textContent).toBe('Ring B');
+            expect(button().getAttribute('aria-expanded')).toBe('true');
+            expect(region().hidden).toBe(false);
+            // The others stayed shut
+            expect(cardsOf().filter((c) => c.getAttribute('data-open') === 'true')).toHaveLength(1);
+            button().click();
+            expect(region().hidden).toBe(true);
+        });
+
+        test('no card carries a hover-only title, and the sentences the table kept in titles are in the Details', () => {
+            const list = rows();
+            list[0].cost = -4_000_000;
+            list[2].costUnpriced = ['Holy Cheese'];
+            list[3].candidate.type = 'ability_swap';
+            list[3].costDetail = { books: { books: 40, bookName: 'Berserk' } };
+            draw({}, list);
+            showCards();
+            const titled = [...container().querySelectorAll('[data-upgrade-cards] [title]')];
+            expect(titled.map((el) => el.outerHTML.slice(0, 100))).toEqual([]);
+            const text = container().querySelector('[data-upgrade-cards="gold"]').textContent;
+            // upgradeCostCell's title, the unpriced ceiling, the fresh-book chip, and the Cost column's header title
+            expect(text).toContain('Pays for itself');
+            expect(text).toContain('Counted as free in the profit');
+            expect(text).toContain('Cost assumes 40 Berserks');
+            expect(text).toContain('What the upgrade nets out at');
+        });
+
+        test('a gain inside the noise says so on the card and explains it in the Details', () => {
+            const list = [row('Near break-even', { cost: 100, profitGain: 5 })];
+            list[0].deltas = { ...list[0].deltas, profit: 0.2 };
+            list[0].noise = { dps: 1, xp: 1, profit: 2, deaths: 1, encounters: 1 };
+            list[0].significantBy = { dps: true, xp: true, profit: false, deaths: true, encounters: true };
+            ui._upgradeHiddenColumns = new Set();
+            ui._upgradeSort = { key: 'deltaProfit', asc: true };
+            draw({}, list);
+            showCards();
+            const card = cardsOf()[0];
+            expect(card.querySelector('.mwi-ucard-within')?.textContent).toBe('within noise');
+            expect(card.querySelector('.mwi-ucard-detail').textContent).toContain('sampling error');
+        });
+
+        test('a regression is red', () => {
+            const list = rows();
+            list[0].metrics.dps = 90;
+            list[0].deltas = { ...list[0].deltas, dps: -10 };
+            ui._upgradeHiddenColumns = new Set();
+            ui._upgradeSort = { key: 'deltaDps', asc: true };
+            draw({}, list);
+            showCards();
+            expect(cardNamed('Ring A').querySelector('.mwi-ucard-gain').className).toContain('mwi-ucard-t-bad');
+        });
+
+        test('an adverse secondary metric stays on the card whatever the objective', () => {
+            const list = rows();
+            list[1].metrics.deathsPerHour = 2;
+            draw({}, list);
+            showCards();
+            const dph = [...cardNamed('Ring B').querySelectorAll('.mwi-ucard-fig')].find((f) =>
+                f.textContent.includes('ΔDPH')
+            );
+            expect(dph.className).toContain('mwi-ucard-t-bad');
+        });
+    });
+
+    describe('rows with no price', () => {
+        test('say unknown, are labelled as an estimate that is not priced, and offer no Verify', () => {
+            const list = [
+                row('Priced ring', { cost: 100, profitGain: 50 }),
+                { ...row('Community EXP buff Lv4 → Lv5', { cost: null, type: 'community_buff' }), cost: null },
+            ];
+            draw({}, list);
+            showCards();
+            const unpriced = cardsOf('unpriced');
+            expect(unpriced).toHaveLength(1);
+            const face = unpriced[0].textContent;
+            expect(face).toContain('Cost unknown');
+            expect(face).not.toMatch(/Cost\s*(0|free)/i);
+            expect(stateOf(unpriced[0])).toBe('Estimate, not priced');
+            expect(unpriced[0].querySelector('[data-card-verify]')).toBeNull();
+            // and the priced section keeps the priced row only
+            expect(cardsOf('gold')).toHaveLength(1);
+        });
+
+        test('the same rows, in the same order, as the unpriced table for each Rank by', () => {
+            const list = [
+                { ...row('Alpha', { cost: null, type: 'community_buff' }), cost: null },
+                { ...row('Bravo', { cost: null, type: 'community_buff' }), cost: null },
+                { ...row('Charlie', { cost: null, type: 'community_buff' }), cost: null },
+            ];
+            list[0].deltas = { dps: 1, xp: 5, profit: 3, deaths: 0, encounters: 0 };
+            list[1].deltas = { dps: 4, xp: 1, profit: 9, deaths: 0, encounters: 0 };
+            list[2].deltas = { dps: 2, xp: 9, profit: 1, deaths: 0, encounters: 0 };
+            ui._cardShowAll.add('unpriced');
+            draw({}, list);
+            showCards();
+            const options = [...select('unpriced').options].map((o) => o.value);
+            expect(options.length).toBeGreaterThan(3);
+            for (const key of options) {
+                showCards();
+                rankBy('unpriced', key);
+                const fromCards = cardKeys('unpriced');
+                showTable();
+                expect(tableKeys('data-unpriced-row'), key).toEqual(fromCards);
+            }
+        });
+    });
+
+    describe('Verify', () => {
+        test("runs the pipeline once, for the card tapped, by the table's metric", async () => {
+            draw();
+            showCards();
+            mocks.verifyImpl = answer();
+            const button = verifyButton('Ring B');
+            // A double tap, including one that gets past a disabled button
+            button.dispatchEvent(new Event('click'));
+            button.dispatchEvent(new Event('click'));
+            await settle();
+
+            expect(mocks.verifyCalls).toHaveLength(1);
+            expect(mocks.verifyCalls[0].rows.map((r) => r.candidate.description)).toEqual(['Ring B']);
+            // The sort column is Score, which is not one of the four, so the table verifies by profit
+            expect(mocks.verifyCalls[0].metric).toBe('profit');
+            expect(mocks.verifyCalls[0].context).toBe(CONTEXT);
+            const card = cardNamed('Ring B');
+            expect(stateOf(card)).toBe('Verified');
+            expect(card.querySelector('[data-verify-chip]').textContent).toContain('confirmed');
+            expect(card.querySelector('[data-card-verify]').textContent).toBe('Verify again');
+            // The others are still estimates
+            expect(stateOf(cardNamed('Ring A'))).toBe('Estimate');
+        });
+
+        test('is pending while it runs, through a redraw, and the button is not live', async () => {
+            draw();
+            showCards();
+            let release;
+            mocks.verifyImpl = (params) =>
+                new Promise((resolve) => {
+                    release = () => resolve(answer()(params));
+                });
+            verifyButton('Ring A').click();
+            await settle();
+            expect(stateOf(cardNamed('Ring A'))).toBe('Verifying…');
+            expect(ui._isBusy()).toBe(true);
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(stateOf(cardNamed('Ring A'))).toBe('Verifying…');
+            expect(verifyButton('Ring A').disabled).toBe(true);
+            // a second card cannot start a run beside it
+            verifyButton('Ring B').dispatchEvent(new Event('click'));
+            expect(mocks.verifyCalls).toHaveLength(1);
+            // ...and says why, on that card
+            expect(stateOf(cardNamed('Ring B'))).toBe('Not verified');
+            release();
+            await settle();
+            expect(stateOf(cardNamed('Ring A'))).toBe('Verified');
+            expect(ui._isBusy()).toBe(false);
+            // The refusal was true only while the other run was going
+            ui._renderUpgradeResults(ui._upgradeResultsData);
+            expect(stateOf(cardNamed('Ring B'))).toBe('Estimate');
+        });
+
+        test('a remembered run refuses, in words on the card', () => {
+            ui._restoredUpgradeAt = Date.now();
+            draw();
+            showCards();
+            const card = cardsOf()[0];
+            expect(stateOf(card)).toBe('Remembered estimate');
+            expect(card.querySelector('[data-card-verify]').disabled).toBe(true);
+            expect(card.querySelector('[data-card-why]').textContent).toBe('Re-run the analysis to verify.');
+            card.querySelector('[data-card-verify]').dispatchEvent(new Event('click'));
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+
+        test('stopped before a seed finished, failed, and refused each say so on the card', async () => {
+            draw();
+            showCards();
+            const detail = () => cardNamed('Ring C').querySelector('.mwi-ucard-detail').textContent;
+
+            mocks.verifyImpl = () => ({ rows: [], metric: 'profit', unit: '', seeds: 0, stopped: true });
+            verifyButton('Ring C').click();
+            await settle();
+            expect(stateOf(cardNamed('Ring C'))).toBe('Verify stopped');
+            expect(detail()).toContain('Verify stopped before any seed finished.');
+            expect(verifyButton('Ring C').disabled).toBe(false);
+
+            mocks.verifyImpl = () => ({
+                rows: [],
+                metric: 'profit',
+                unit: '',
+                seeds: 0,
+                stopped: false,
+                error: 'boom',
+            });
+            verifyButton('Ring C').click();
+            await settle();
+            expect(stateOf(cardNamed('Ring C'))).toBe('Verify failed');
+            expect(detail()).toContain('Verify failed: boom');
+
+            mocks.verifyImpl = () => ({ rows: [], refused: 'seeds' });
+            verifyButton('Ring C').click();
+            await settle();
+            expect(stateOf(cardNamed('Ring C'))).toBe('Not verified');
+            expect(detail()).toContain('too few seeds');
+
+            // a good run afterwards clears the note
+            mocks.verifyImpl = answer();
+            verifyButton('Ring C').click();
+            await settle();
+            expect(stateOf(cardNamed('Ring C'))).toBe('Verified');
+            expect(detail()).not.toContain('too few seeds');
+        });
+
+        test('a verdict that errored is a failed card, not a verified one', async () => {
+            draw();
+            showCards();
+            mocks.verifyImpl = answer({ 'Ring A': 'error' });
+            verifyButton('Ring A').click();
+            await settle();
+            const card = cardNamed('Ring A');
+            expect(stateOf(card)).toBe('Verify failed');
+            expect(card.querySelector('[data-verify-chip]').textContent).toBe('error');
+        });
+
+        test('stays bound to the analysis that started it', async () => {
+            const first = draw();
+            showCards();
+            let release;
+            mocks.verifyImpl = (params) =>
+                new Promise((resolve) => {
+                    release = () => resolve(answer()(params));
+                });
+            verifyButton('Ring A').click();
+            await settle();
+            // A new analysis lands while the verify runs
+            const second = draw({}, rows());
+            expect(second).not.toBe(first);
+            release();
+            await settle();
+            expect(second.verifyVerdicts).toBeUndefined();
+            expect(first.verifyVerdicts).toBeUndefined();
+            for (const card of cardsOf()) expect(stateOf(card)).toBe('Estimate');
+            expect(container().textContent).not.toContain('did not start');
+        });
+
+        test("a character switch mid-verify leaves nothing on the next character's cards", async () => {
+            draw();
+            showCards();
+            mocks.verifyImpl = async (params) => {
+                mocks.characterId = 'char2';
+                return answer()(params);
+            };
+            verifyButton('Ring A').click();
+            await settle();
+            // Nothing was stored for the old character's analysis, and nothing is left running
+            expect(ui._upgradeResultsData.verifyVerdicts).toBeUndefined();
+            expect(ui._cardPending).toBeNull();
+        });
+
+        test('a card whose row left the results does nothing', () => {
+            const results = draw();
+            showCards();
+            const id = cardNamed('Ring B').getAttribute('data-card-id');
+            results.results = results.results.filter((r) => r.candidate.description !== 'Ring B');
+            expect(ui._verifyFromCard(id)).toBe(false);
+            expect(mocks.verifyCalls).toHaveLength(0);
+        });
+    });
+
+    describe('the Ability order section', () => {
+        const orderRow = (name, { profit = 0, dpsPct = 0, se = 1, sig = true } = {}) => ({
+            candidate: {
+                description: `Order: ${name}`,
+                type: 'ability_order',
+                slot: 'ability_1',
+                abilityOrder: true,
+                order: name.split(' → '),
+                cost: 0,
+                noPurchase: true,
+            },
+            cost: 0,
+            metrics: {
+                dps: 100 * (1 + dpsPct / 100),
+                xpPerHour: 1000,
+                profitPerHour: 1000 + profit,
+                deathsPerHour: 0,
+                encountersPerHour: 10,
+            },
+            deltas: { dps: dpsPct, xp: 0, profit: profit / 10, deaths: 0, encounters: 0 },
+            noise: { dps: se, xp: se, profit: se, encounters: se, deaths: se },
+            significantBy: { dps: sig, xp: sig, profit: sig, encounters: sig, deaths: sig },
+            score: 25,
+            goldPer: { dps: 0, xp: 0, profit: 0, deaths: 0, encounters: 0 },
+            economics: {},
+        });
+        const names = () => cardsOf('order').map((c) => c.querySelector('.mwi-ucard-name').textContent);
+        const tableNames = () =>
+            [
+                ...container().querySelectorAll(
+                    '#mwi-csim-order-section [data-order-row], #mwi-csim-order-section [data-order-current]'
+                ),
+            ].map((tr) => tr.children[0].textContent);
+        const stem = (n) =>
+            n
+                .replace(/current|within noise/g, '')
+                .trim()
+                .slice(0, 5);
+
+        test('cards follow the table: same order, the current order as an unranked baseline, ranks on the rest', () => {
+            draw({}, [
+                row('Cheap ring', { cost: 10 }),
+                orderRow('A → B', { profit: 100, dpsPct: 9 }),
+                orderRow('C → D', { profit: 900, dpsPct: 1 }),
+                orderRow('E → F', { profit: 500, dpsPct: 3, sig: false, se: 900 }),
+            ]);
+            showCards();
+            const cards = cardsOf('order');
+            const baseline = cards.find((c) => c.hasAttribute('data-card-baseline'));
+            expect(baseline.querySelector('.mwi-ucard-rank').textContent).toBe('·');
+            expect(stateOf(baseline)).toBe('Baseline');
+            expect(baseline.querySelector('[data-card-verify]')).toBeNull();
+            const ranked = cards.filter((c) => !c.hasAttribute('data-card-baseline'));
+            expect(ranked.map((c) => c.querySelector('.mwi-ucard-rank').textContent)).toEqual(['#1', '#2', '#3']);
+            const fromCards = names();
+            showTable();
+            expect(tableNames().map(stem)).toEqual(fromCards.map(stem));
+        });
+
+        test('the existing Rank by re-sorts the cards and re-heads them, and the noisy ones are labelled', () => {
+            draw({}, [
+                orderRow('A → B', { profit: 100, dpsPct: 9 }),
+                orderRow('C → D', { profit: 900, dpsPct: 1 }),
+                orderRow('E → F', { profit: 500, dpsPct: 3, sig: false, se: 900 }),
+            ]);
+            showCards();
+            expect(names()[0]).toContain('C → D');
+            expect(cardsOf('order')[0].querySelector('.mwi-ucard-gain .mwi-ucard-fl').textContent).toBe('Profit/hr');
+            const el = container().querySelector('#mwi-csim-order-rank');
+            el.value = 'dps';
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            expect(names()[0]).toContain('A → B');
+            expect(cardsOf('order')[0].querySelector('.mwi-ucard-gain .mwi-ucard-fl').textContent).toBe('DPS');
+            const noisy = cardsOf('order').find((c) => c.textContent.includes('E → F'));
+            expect(noisy.querySelector('.mwi-ucard-within')).toBeTruthy();
+        });
+
+        test("Show all keeps the table's rule of five", () => {
+            const orders = Array.from({ length: 7 }, (_, i) => orderRow(`X${i} → Y${i}`, { profit: 100 * (i + 1) }));
+            draw({}, orders);
+            showCards();
+            // five ranked orders and the baseline
+            expect(cardsOf('order')).toHaveLength(6);
+            container().querySelector('#mwi-csim-order-showall').click();
+            expect(cardsOf('order')).toHaveLength(8);
+        });
+
+        test("Verify on an order card verifies that order by the section's Rank by", async () => {
+            ui._abilityOrderRank = 'dps';
+            draw({}, [orderRow('A → B', { dpsPct: 5 }), orderRow('C → D', { dpsPct: 4 })]);
+            showCards();
+            mocks.verifyImpl = answer();
+            verifyButton('C → D', 'order').click();
+            await settle();
+            expect(mocks.verifyCalls).toHaveLength(1);
+            expect(mocks.verifyCalls[0].metric).toBe('dps');
+            expect(mocks.verifyCalls[0].rows.map((r) => r.candidate.description)).toEqual(['Order: C → D']);
+            expect(stateOf(cardNamed('C → D', 'order'))).toBe('Verified');
+        });
+    });
+
+    describe('combat levels and scrolls', () => {
+        const levelRow = (description, days, { dps = 0, xp = 0, profit = 0 } = {}) => ({
+            candidate: { description, type: 'combat_level', slot: 'attack', upgradeLevel: 5 },
+            cost: 0,
+            levelTimeHours: days === null ? Infinity : days * 24,
+            metrics: {
+                dps: BASELINE.dps * (1 + dps / 100),
+                xpPerHour: BASELINE.xpPerHour * (1 + xp / 100),
+                profitPerHour: BASELINE.profitPerHour * (1 + profit / 100),
+                deathsPerHour: 0,
+                encountersPerHour: 10,
+            },
+            deltas: { dps, xp, profit, deaths: 0, encounters: 0 },
+            goldPer: { dps: 0, xp: 0, profit: 0, deaths: Infinity, encounters: Infinity },
+            economics: {},
+        });
+
+        test("level cards keep the table's order for every Rank by, and show hours as the table does", () => {
+            const list = () => [
+                levelRow('Attack 135 → 140', 29.3, { dps: 2.58 }),
+                levelRow('Stamina 100 → 105', 12.0, { dps: 0.43 }),
+                levelRow('Intelligence 115 → 120', 3.1, { profit: 0.13 }),
+                levelRow('Magic 129 → 134', null, { dps: 2.39 }),
+            ];
+            ui._cardShowAll.add('levels');
+            draw({}, list());
+            showCards();
+            const options = [...select('levels').options].map((o) => o.value);
+            expect(options).toEqual(
+                expect.arrayContaining(['time', 'dps', 'hpDps', 'xp', 'hpXp', 'profit', 'hpProfit', 'score'])
+            );
+            for (const key of options) {
+                showCards();
+                rankBy('levels', key);
+                const fromCards = cardKeys('levels');
+                showTable();
+                expect(tableKeys('data-level-row'), key).toEqual(fromCards);
+            }
+            showCards();
+            // no XP accrues: a dash and an explanation, not zero hours
+            const magic = cardNamed('Magic', 'levels');
+            expect(magic.textContent).toContain('Level time —');
+            expect(magic.querySelector('.mwi-ucard-detail').textContent).toContain('No XP accrues in this skill');
+            expect(magic.querySelector('[data-card-verify]')).toBeNull();
+        });
+
+        test('scroll cards follow the scroll table for every Rank by', () => {
+            const rate = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
+            mocks.scrollRate = rate;
+            const scroll = (description, profitGain) => ({
+                ...row(description, { cost: null, type: 'scroll', profitGain }),
+                cost: null,
+            });
+            const list = [scroll('Scroll A', 1_200_000), scroll('Scroll B', 100)];
+            list[0].deltas = { dps: 4, xp: 1, profit: 3, deaths: 0, encounters: 0 };
+            list[1].deltas = { dps: 1, xp: 4, profit: 0.001, deaths: 0, encounters: 0 };
+            ui._cardShowAll.add('scrolls');
+            draw({ scrollTokenRate: rate }, list);
+            showCards();
+            const options = [...select('scrolls').options].map((o) => o.value);
+            expect(options.length).toBeGreaterThan(5);
+            for (const key of options) {
+                showCards();
+                rankBy('scrolls', key);
+                const fromCards = cardKeys('scrolls');
+                showTable();
+                expect(tableKeys('data-scroll-row'), key).toEqual(fromCards);
+            }
+            showCards();
+            expect(container().querySelector('[data-scroll-basis]').textContent).toContain('30 tokens');
+        });
+    });
+
+    test('no section fails to draw as cards, and the budget, CSV and Columns stay', () => {
+        draw({ stopped: { completed: 2, total: 9 } }, [
+            ...rows(),
+            { ...row('Priced elsewhere', { cost: null, type: 'community_buff' }), cost: null },
+        ]);
+        showCards();
+        expect(text()).not.toContain('could not be drawn');
+        expect(container().querySelector('#mwi-csim-upgrade-budget')).toBeTruthy();
+        expect(container().querySelector('[data-csv-export]')).toBeTruthy();
+        expect(container().querySelector('#mwi-csim-upgrade-cols-btn')).toBeTruthy();
+        expect(container().querySelector('#mwi-csim-gold-verify')).toBeTruthy();
+        expect(container().querySelector('[data-upgrade-stopped]')).toBeTruthy();
+    });
+});

@@ -41,6 +41,23 @@ import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.j
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { ensureSimPhoneStyles } from './sim-phone-layout.js';
+import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
+import { addStyles } from '../../utils/dom.js';
+import {
+    UPGRADE_CARD_CSS,
+    UPGRADE_CARD_STYLE_ID,
+    UNKNOWN_TEXT,
+    buildUpgradeCards,
+    upgradeCardsHtml,
+    viewSwitchHtml,
+    wireUpgradeCards,
+    wireViewSwitch,
+    normalizeViewChoices,
+    resolveCardView,
+    withViewChoice,
+    signTone,
+    figure,
+} from './upgrade-cards.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
@@ -314,6 +331,13 @@ export function balancedScoreNoise(row, baseline) {
 }
 /** Orders shown before "Show all" */
 const ABILITY_ORDER_TOP = 5;
+/** The panel field holding each Upgrade section's sort, which a card's Rank by writes (the table's header click writes the same) */
+const CARD_SORT_STATE = {
+    gold: '_upgradeSort',
+    levels: '_upgradeLevelSort',
+    unpriced: '_unpricedSort',
+    scrolls: '_scrollSort',
+};
 /** Storage key for the Triggers chip's party mode, precision and min gain choices */
 const TRIGGER_CHOICES_KEY = 'combatSimTriggerChoices';
 /**
@@ -2813,6 +2837,70 @@ function levelRowHoursPer(r, metricKey) {
 }
 
 /**
+ * One Combat levels delta cell: the change and its percent, or a dash when there is none.
+ * @param {number} delta - Change in the metric
+ * @param {number} pct - Change in percent
+ * @returns {string}
+ */
+function levelDeltaCell(delta, pct) {
+    if (Math.abs(delta) < 1e-9) return '—';
+    const sign = delta >= 0 ? '+' : '';
+    return `${sign}${formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
+}
+
+/**
+ * The tooltip of an Hours/0.01% column.
+ * @param {string} metric - 'DPS', 'EXP/hr' or 'Profit/hr'
+ * @returns {string}
+ */
+function levelHoursTitle(metric) {
+    return `Hours of combat, at your current training rates, per 0.01% ${metric} improvement. Lower is better.`;
+}
+
+/**
+ * What a Combat levels row says about its grind time and the primary skill that trains alongside.
+ * @param {Object} r - combat_level result row
+ * @param {Object} baseline - Baseline metrics
+ * @returns {{timeTitle: string, alongText: string, alongLine: string, alongTitle: string}}
+ */
+function levelRowTitles(r, baseline) {
+    const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
+    const timeTitle = Number.isFinite(r.levelTimeHours)
+        ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
+        : `No XP accrues in this skill at this zone${charmNote}`;
+    let alongText = '';
+    let alongTitle = '';
+    if (r.alongside) {
+        const a = r.alongside;
+        if (a.upgradeLevel > a.currentLevel) {
+            alongText = `+ ${a.label} ${a.currentLevel} → ${a.upgradeLevel} along the way`;
+            alongTitle =
+                ` Δ columns are for both together; ${r.candidate.description} alone: DPS ${levelDeltaCell(r.metrics.dps - baseline.dps, r.deltas.dps)}, ` +
+                `EXP/hr ${levelDeltaCell(r.metrics.xpPerHour - baseline.xpPerHour, r.deltas.xp)}, ` +
+                `Profit/hr ${levelDeltaCell(r.metrics.profitPerHour - baseline.profitPerHour, r.deltas.profit)}.`;
+        } else {
+            alongText = `${a.label} gains no level along the way`;
+        }
+    } else if (r.isMainSkill) {
+        alongText = "your weapon's own skill";
+    }
+    const alongLine = alongText ? `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">${alongText}</div>` : '';
+    return { timeTitle, alongText, alongLine, alongTitle };
+}
+
+/**
+ * Why an unpriced row has no price, in words.
+ * @param {Object} r - Result row with no cost
+ * @returns {string}
+ */
+function unpricedReason(r) {
+    if (r.costDetail?.unpriced?.length) return `no listing for ${r.costDetail.unpriced.join(', ')}`;
+    if (r.candidate?.type === 'community_buff') return 'not a purchase — nobody buys a community buff level';
+    if (r.candidate?.type === 'scroll') return 'token price not saved with this run: rerun to price the scroll';
+    return 'no price could be resolved';
+}
+
+/**
  * The Score metrics the Combat levels table can place on: the gold table's own
  * Gold/0.01% metrics, read off Hours/0.01% instead. Deaths, encounters and the
  * repay/ROI pair have no level equivalent, so a level row never earns for them.
@@ -3223,6 +3311,17 @@ class CombatSimUI {
         // Party tab (`party-finder-ui.js`): built while `combatSim_partyFinder` is on
         this._partyFinder = null;
         this._unsubscribePartyFinderSetting = null;
+        // Upgrade results as cards (`upgrade-cards.js`): the player's pick per form factor, what is open, which
+        // sections show everything, and the verifies a card started. All in memory except the pick.
+        this._viewChoices = normalizeViewChoices(null);
+        this._openCards = new Set();
+        this._cardShowAll = new Set();
+        this._cardRegistry = new Map();
+        this._cardPending = null;
+        this._cardNotes = null;
+        this._narrowQuery = null;
+        this._narrowListener = null;
+        this._viewDrawn = null;
     }
 
     /**
@@ -3232,6 +3331,7 @@ class CombatSimUI {
         if (this.panel) return;
 
         ensureSimPhoneStyles();
+        addStyles(UPGRADE_CARD_CSS, UPGRADE_CARD_STYLE_ID);
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
         this.panel.style.cssText = `
@@ -9811,6 +9911,11 @@ class CombatSimUI {
 
         this.panel.style.display = 'flex';
         bringPanelToFront(this.panel);
+        // The breakpoint is only watched while the panel is up; a window resized while it was closed is caught up here
+        this._watchNarrowWindow();
+        if (this._upgradeResultsData && this._upgradeView() !== this._viewDrawn) {
+            this._renderUpgradeResults(this._upgradeResultsData);
+        }
         this.populateZones();
         if (!this._editor.isInitialized()) {
             this._editor.initEditor();
@@ -9828,6 +9933,7 @@ class CombatSimUI {
         if (!this.panel) return;
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         this.panel.style.display = 'none';
+        this._unwatchNarrowWindow();
     }
 
     /**
@@ -9888,6 +9994,13 @@ class CombatSimUI {
         this._shownTriggerResult = null;
         this._goldVerifyRows = null;
         this._orderVerifyRows = null;
+        this._unwatchNarrowWindow();
+        this._openCards = new Set();
+        this._cardShowAll = new Set();
+        this._cardRegistry = new Map();
+        this._cardPending = null;
+        this._cardNotes = null;
+        this._viewDrawn = null;
         this.isRunning = false;
         this._runStartToken++;
         this._runStarting = false;
@@ -11560,10 +11673,11 @@ class CombatSimUI {
      * and combat-level rows, so both tables share it.
      * @param {Object} r - Result row
      * @param {Object} baseline - Baseline metrics
+     * @param {{compact?: boolean}} [options] - `compact` lets the five figures wrap, for a card on a narrow screen
      * @returns {string} HTML for the detail cell contents
      * @private
      */
-    _renderUpgradeDetailCells(r, baseline) {
+    _renderUpgradeDetailCells(r, baseline, { compact = false } = {}) {
         const dpsValueDelta = r.metrics.dps - baseline.dps;
         const xpValueDelta = r.metrics.xpPerHour - baseline.xpPerHour;
         // Shown per DAY: an upgrade's hourly profit delta is often a few
@@ -11608,7 +11722,8 @@ class CombatSimUI {
                 : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
         };
 
-        return `<div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:8px; font-size:11px;">
+        const columnsCss = compact ? 'repeat(auto-fit, minmax(110px, 1fr))' : '1fr 1fr 1fr 1fr 1fr';
+        return `<div style="display:grid; grid-template-columns:${columnsCss}; gap:8px; font-size:11px;">
                 <div>
                     <div style="color:#888;">DPS</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.dps)}</div>
@@ -11965,7 +12080,8 @@ class CombatSimUI {
         if (!this._upgradeSort) this._upgradeSort = { key: 'score', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeSort;
 
-        const columns = this._upgradeColumns(baseline, rows).filter((c) => c.visible);
+        const allColumns = this._upgradeColumns(baseline, rows);
+        const columns = allColumns.filter((c) => c.visible);
         const column = columns.find((c) => c.key === sortKey) || columns[0];
         // Higher-is-better columns are negated so one ascending sort serves all
         const sortValue = (r) => (column.lowerIsBetter === false ? -column.value(r) : column.value(r));
@@ -12017,7 +12133,11 @@ class CombatSimUI {
             `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} rows by the table's order against your current setup on fresh seeds` : 'Re-run the analysis to verify'}">` +
             `Verify top ${VERIFY_DEFAULTS.top}</button>` +
             `<span>${canVerify ? `by ${verifyInfo.label}${verifyInfo.fallback ? ' (the sorted column is not one of profit, EXP, DPS or EPH)' : ''}` : 're-run the analysis to verify'}</span></div>`;
-        let html = `<div>${goldHead}${this._renderUpgradeColumnMenu()}${verifyBar}
+        const head = `<div>${goldHead}${this._renderUpgradeColumnMenu()}${verifyBar}`;
+        if (this._upgradeView() === 'cards') {
+            return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts })}</div>`;
+        }
+        let html = `${head}
         <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead><tr>`;
         for (const c of columns) {
@@ -12538,17 +12658,20 @@ class CombatSimUI {
                 Levels can't be bought, so these are ranked by improvement per hour of grind (Hours/0.01%, lower is
                 better), not against the gold costs above. Level time assumes you train that skill at your current
                 rates, and each row is one step on its own — they don't stack.${primaryNote}
-            </div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            </div>`;
+        if (this._upgradeView() === 'cards') {
+            return `${html}${this._levelCards({ sorted, baseline, sortKey, effective, hoursPer, fmtLevelTime, scoreTitle })}</div>`;
+        }
+        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
                 <th style="${thStyle}" data-level-sort-key="dps">ΔDPS${arrow('dps')}</th>
-                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpDps" title="Hours of combat, at your current training rates, per 0.01% DPS improvement. Lower is better.">Hours/0.01% DPS${arrow('hpDps')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpDps" title="${levelHoursTitle('DPS')}">Hours/0.01% DPS${arrow('hpDps')}</th>
                 <th style="${thStyle}" data-level-sort-key="xp">ΔEXP/hr${arrow('xp')}</th>
-                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpXp" title="Hours of combat, at your current training rates, per 0.01% EXP/hr improvement. Lower is better.">Hours/0.01% EXP${arrow('hpXp')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpXp" title="${levelHoursTitle('EXP/hr')}">Hours/0.01% EXP${arrow('hpXp')}</th>
                 <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
-                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpProfit" title="Hours of combat, at your current training rates, per 0.01% Profit/hr improvement. Lower is better.">Hours/0.01% Profit${arrow('hpProfit')}</th>
+                <th style="${thStyle} color:${ACCENT};" data-level-sort-key="hpProfit" title="${levelHoursTitle('Profit/hr')}">Hours/0.01% Profit${arrow('hpProfit')}</th>
                 <th style="${thStyle} color:${ACCENT};" data-level-sort-key="score" title="${scoreTitle}">Score<br>${scoreDepthLabel(scaleKey)}${arrow('score')}</th>
             </tr></thead><tbody>`;
 
@@ -12558,40 +12681,15 @@ class CombatSimUI {
             const xpDelta = e.metrics.xpPerHour - baseline.xpPerHour;
             const profitDelta = e.metrics.profitPerHour - baseline.profitPerHour;
             const rowColor = e.deltas.dps > 0 || e.deltas.profit > 0 ? '#e0e0e0' : '#888';
-            const fmtCell = (delta, pct) => {
-                if (Math.abs(delta) < 1e-9) return '—';
-                const sign = delta >= 0 ? '+' : '';
-                return `${sign}${formatKMB(delta)} (${sign}${pct.toFixed(2)}%)`;
-            };
+            const fmtCell = levelDeltaCell;
             const deltaStyle = (delta, best) => {
                 if (delta === best && Number.isFinite(best) && best > 0) return 'color:#4caf50; font-weight:700;';
                 if (delta > 0) return 'color:#8bc34a;';
                 if (delta < 0) return 'color:#f44336;';
                 return 'color:#888;';
             };
-            const charmNote = r.levelingCharmName ? ` (wearing ${r.levelingCharmName})` : '';
-            const timeTitle = Number.isFinite(r.levelTimeHours)
-                ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
-                : `No XP accrues in this skill at this zone${charmNote}`;
-
             // Where the primary skill lands along the way, under the skill name
-            let alongLine = '';
-            let alongTitle = '';
-            if (r.alongside) {
-                const a = r.alongside;
-                if (a.upgradeLevel > a.currentLevel) {
-                    alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">+ ${a.label} ${a.currentLevel} → ${a.upgradeLevel} along the way</div>`;
-                    const solo = (delta, pct) => fmtCell(delta, pct);
-                    alongTitle =
-                        ` Δ columns are for both together; ${r.candidate.description} alone: DPS ${solo(r.metrics.dps - baseline.dps, r.deltas.dps)}, ` +
-                        `EXP/hr ${solo(r.metrics.xpPerHour - baseline.xpPerHour, r.deltas.xp)}, ` +
-                        `Profit/hr ${solo(r.metrics.profitPerHour - baseline.profitPerHour, r.deltas.profit)}.`;
-                } else {
-                    alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">${a.label} gains no level along the way</div>`;
-                }
-            } else if (r.isMainSkill) {
-                alongLine = `<div style="color:${GAME_COLORS.textDim}; font-size:10px;">your weapon's own skill</div>`;
-            }
+            const { timeTitle, alongLine, alongTitle } = levelRowTitles(r, baseline);
             const deltaTitle = alongTitle ? `title="${alongTitle.trim()}"` : '';
 
             html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}" data-row-key="${upgradeRowKey(r)}">
@@ -12683,8 +12781,11 @@ class CombatSimUI {
             <div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-bottom:6px;">
                 Simulated the same way as everything above; only the gold is missing, so these cannot be ranked by
                 value, scored, or bought by the budget planner. The deltas are real.
-            </div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            </div>`;
+        if (this._upgradeView() === 'cards') {
+            return `${html}${this._unpricedCards({ sorted, baseline, sortKey, cell })}</div>`;
+        }
+        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-unpriced-sort-key="upgrade">Upgrade${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-unpriced-sort-key="why">Why no price${arrow('why')}</th>
@@ -12695,13 +12796,7 @@ class CombatSimUI {
 
         sorted.forEach((r, i) => {
             const rowKey = upgradeRowKey(r);
-            const missing = r.costDetail?.unpriced?.length
-                ? `no listing for ${r.costDetail.unpriced.join(', ')}`
-                : r.candidate?.type === 'community_buff'
-                  ? 'not a purchase — nobody buys a community buff level'
-                  : r.candidate?.type === 'scroll'
-                    ? 'token price not saved with this run: rerun to price the scroll'
-                    : 'no price could be resolved';
+            const missing = unpricedReason(r);
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
                 <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
@@ -12849,8 +12944,21 @@ class CombatSimUI {
                 gold/token after sale tax, as ${rate.itemName}. Net is the profit it adds per hour minus that cost; a loss means
                 buying ${rate.itemName} with the tokens beats the scroll. ΔProfit is a % of Profit/hr.
             </div>
-            <div style="color:#aaa; font-size:11px; margin-bottom:6px;" data-scroll-basis>Each scroll costs ${pricedByRow.get(sorted[0]).basis}.</div>
-            <table style="width:100%; border-collapse:collapse; font-size:11px;">
+            <div style="color:#aaa; font-size:11px; margin-bottom:6px;" data-scroll-basis>Each scroll costs ${pricedByRow.get(sorted[0]).basis}.</div>`;
+        if (this._upgradeView() === 'cards') {
+            return `${html}${this._scrollCards({
+                sorted,
+                baseline,
+                sortKey,
+                pricedByRow,
+                cell,
+                goldPerCell,
+                goldPerTitle,
+                scoreTitle,
+                lossScoreTitle,
+            })}</div>`;
+        }
+        html += `<table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-scroll-sort-key="upgrade">Scroll${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-scroll-sort-key="dps">ΔDPS${arrow('dps')}</th>
@@ -13859,6 +13967,8 @@ class CombatSimUI {
             if (current()) {
                 this._upgradeRunning = false;
                 this._setVerifyBusy(false);
+                // A card's "Verifying" ends with the run, before the redraw below draws the verdict
+                this._cardPending = null;
             }
         }
         if (!current()) return null;
@@ -14337,6 +14447,27 @@ class CombatSimUI {
         const options = ABILITY_ORDER_RANKS.map(
             (x) => `<option value="${x.key}"${x.key === rank ? ' selected' : ''}>${x.label}</option>`
         ).join('');
+        // Cards or the table: the same entries, drawn two ways. The Rank by select above and the Show all button
+        // below are the same in both
+        const body =
+            this._upgradeView() === 'cards'
+                ? this._orderCards({
+                      entries,
+                      rank,
+                      rankLabel,
+                      baseline,
+                      nameOf,
+                      verdictOf,
+                      currentName,
+                      fmtGain,
+                      fmtNoise,
+                      money,
+                      pct,
+                  })
+                : `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
+                  `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
+                  `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
+                  `<tbody>${rowsHtml}</tbody></table>`;
         const toggle =
             total > ABILITY_ORDER_TOP
                 ? `<button id="mwi-csim-order-showall" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +
@@ -14359,10 +14490,7 @@ class CombatSimUI {
                       )
                     : '') +
                 verifyBar +
-                `<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr>` +
-                `<th style="${th} text-align:left;">Order</th><th style="${th}">ΔProfit/hr</th><th style="${th}">ΔEXP/hr</th>` +
-                `<th style="${th}">ΔDPS</th><th style="${th}">ΔEPH</th><th style="${th}">ΔDeaths/hr</th><th style="${th}">Noise</th></tr></thead>` +
-                `<tbody>${rowsHtml}</tbody></table>` +
+                body +
                 toggle
         );
     }
@@ -14418,11 +14546,17 @@ class CombatSimUI {
         // A redraw of the same analysis (a sort, an opened row, a replan) passes the same object and keeps it
         if (results !== this._upgradeResultsData) {
             this._budgetConfirm = null;
+            // A verify note belongs to the analysis it was made for
+            this._cardNotes = null;
         }
         this._upgradeResultsData = results;
         // The analysis scores with the defaults; re-rank here so a saved score
         // selection applies to results that were computed before it was loaded
         this._rescoreUpgrades();
+        // Cards register themselves as they are drawn (see `_cardsSection`), for exactly this analysis
+        this._cardRegistry = new Map();
+        const view = this._upgradeView();
+        this._viewDrawn = view;
         const levelRows = results.results.filter((r) => r.candidate?.type === 'combat_level');
         // Orders are free, so every cost-based figure is meaningless for them: they get their own section and
         // stay out of the table and the budget planner's pool
@@ -14475,6 +14609,7 @@ class CombatSimUI {
                     stopped: results.stopped || null,
                 }) + html;
         }
+        html += viewSwitchHtml(view, this._isNarrow());
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows, results.stopped);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         // The gold table carries the ⚙ Columns popover; with no gold table the
@@ -14562,6 +14697,7 @@ class CombatSimUI {
         this._wireBudgetConfirm(container);
         wireUpgradeRowActions(container);
         this._wireAbilityOrder(container);
+        this._wireCards(container);
         this._enhanceCollapsibles(container);
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
@@ -14650,6 +14786,605 @@ class CombatSimUI {
         // have taken their height back — restoring earlier would clamp against a
         // shorter table and land you somewhere above where you were
         scroller.scrollTop = priorScroll;
+    }
+
+    /**
+     * Whether the window is at the phone breakpoint (the one the sim panels' phone layout uses).
+     * @returns {boolean}
+     * @private
+     */
+    _isNarrow() {
+        try {
+            const query = this._narrowQuery || window.matchMedia?.(MARKET_MOBILE_QUERY);
+            return Boolean(query?.matches);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Redraw the results when the window crosses the breakpoint and that changes the view. One listener,
+     * taken off again in `destroy()`.
+     * @private
+     */
+    _watchNarrowWindow() {
+        if (this._narrowQuery || typeof window.matchMedia !== 'function') return;
+        const query = window.matchMedia(MARKET_MOBILE_QUERY);
+        if (!query || typeof query.addEventListener !== 'function') return;
+        this._narrowQuery = query;
+        this._narrowListener = () => {
+            if (!this.panel || !this._upgradeResultsData || this._upgradeView() === this._viewDrawn) return;
+            this._renderUpgradeResults(this._upgradeResultsData);
+        };
+        query.addEventListener('change', this._narrowListener);
+    }
+
+    /** @private */
+    _unwatchNarrowWindow() {
+        this._narrowQuery?.removeEventListener?.('change', this._narrowListener);
+        this._narrowQuery = null;
+        this._narrowListener = null;
+    }
+
+    /**
+     * The view the Upgrade results are drawn in: the player's pick for this form factor, else Cards on a
+     * phone and Table on a wide window.
+     * @returns {'cards'|'table'}
+     * @private
+     */
+    _upgradeView() {
+        return resolveCardView(this._viewChoices, this._isNarrow());
+    }
+
+    /**
+     * The player picked Cards or Table. Remembered for this form factor only.
+     * @param {string} view - 'cards' or 'table'
+     * @private
+     */
+    _pickUpgradeView(view) {
+        this._viewChoices = withViewChoice(this._viewChoices, this._isNarrow(), view);
+        this._persistUpgradeColumnPrefs();
+        if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+    }
+
+    /**
+     * What a card needs to know about a verify of its row: running now, or ended without a verdict.
+     * Both are bound to the analysis on screen; a row of another analysis has neither.
+     * @param {Object} results - The analysis on screen
+     * @param {Object} row - A row of `results.results`
+     * @returns {{pending: boolean, note: Object|null}}
+     * @private
+     */
+    _cardVerifyState(results, row) {
+        const pending = this._cardPending?.results === results && this._cardPending.row === row;
+        let note = this._cardNotes?.results === results ? this._cardNotes.byRow.get(row) || null : null;
+        // "Another run is going" is true only while it is; once the run ends the card is an estimate again
+        if (note?.kind === 'busy' && !this._isBusy() && !this._cardPending) note = null;
+        return { pending, note };
+    }
+
+    /**
+     * Draw one section's rows as cards, in the order the table drew them, and remember which row each card
+     * is so its Verify acts on exactly that row.
+     * @param {Object} spec
+     * @param {string} spec.section - gold, levels, unpriced, scrolls or order
+     * @param {Array<Object>} spec.entries - Card entries, in the table's order
+     * @param {Array<{key: string, label: string}>} [spec.rankOptions] - The section's sort keys, for Rank by
+     * @param {string} [spec.sortKey] - The sort key in force
+     * @param {string} [spec.emptyText] - Said when there are no rows
+     * @returns {string} HTML
+     * @private
+     */
+    _cardsSection({ section, entries, rankOptions = null, sortKey = null, emptyText }) {
+        const results = this._upgradeResultsData;
+        const isOrder = section === 'order';
+        const model = buildUpgradeCards({
+            section,
+            entries,
+            top: isOrder ? ABILITY_ORDER_TOP : undefined,
+            showAll: isOrder ? Boolean(this._abilityOrderShowAll) : this._cardShowAll.has(section),
+            open: this._openCards,
+            remembered: Boolean(this._restoredUpgradeAt),
+        });
+        for (const card of model.cards) this._cardRegistry.set(card.id, { section, row: card.row, results });
+        const sortState = CARD_SORT_STATE[section] ? this[CARD_SORT_STATE[section]] : null;
+        return upgradeCardsHtml(model, {
+            rankBy: rankOptions ? { options: rankOptions, selected: sortKey } : null,
+            worstFirst: Boolean(sortState && sortState.asc === false),
+            emptyText,
+            // The Ability order section keeps its own Show all button, which the saved prefs remember
+            toggle: !isOrder,
+        });
+    }
+
+    /**
+     * The gold table's rows as cards. Every figure is the table column's own rendering of it; the headline is
+     * the column the table is ordered by.
+     * @param {Object} ctx
+     * @param {Array<Object>} ctx.sorted - Rows in the table's order
+     * @param {Object} ctx.baseline - Baseline metrics
+     * @param {Array<Object>} ctx.allColumns - Every column, hidden or not (from `_upgradeColumns`)
+     * @param {Object} ctx.column - The column the table is ordered by
+     * @param {{metric: string, label: string}} ctx.verifyInfo - What Verify measures
+     * @param {Object} ctx.verdicts - Stored verdicts under that metric, by verify key
+     * @returns {string} HTML
+     * @private
+     */
+    _goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts }) {
+        const results = this._upgradeResultsData;
+        const canVerify = this._canVerifyResults(results);
+        const col = (key) => allColumns.find((c) => c.key === key);
+        const METRIC_OF = {
+            deltaDps: 'dps',
+            dps: 'dps',
+            deltaXp: 'xp',
+            xp: 'xp',
+            deltaProfit: 'profit',
+            profit: 'profit',
+            deltaEph: 'encounters',
+            encounters: 'encounters',
+            deltaDph: 'deaths',
+            deaths: 'deaths',
+        };
+        // Ranked by name there is no figure to lead with: the Score, which is what the table opens on, leads
+        const headKey = column.key === 'upgrade' ? 'score' : column.key;
+        const metric = METRIC_OF[headKey] || null;
+        const figureOf = (r, key) => {
+            const c = col(key);
+            const value = c.value(r);
+            const tone = key.startsWith('delta') ? signTone(value, { lowerIsBetter: key === 'deltaDph' }) : 'neutral';
+            return figure(columnMenuLabel(c), c.render(r, value), tone, c.title || '');
+        };
+        const face = ['cost', 'payback', 'repay', 'score'];
+        const deltas = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph'];
+        const rest = allColumns
+            .map((c) => c.key)
+            .filter((k) => k !== 'upgrade' && !face.includes(k) && !deltas.includes(k));
+        const entries = sorted.map((r) => {
+            const verdict = verdicts[verifyKeyOf(r)] || null;
+            const { pending, note } = this._cardVerifyState(results, r);
+            const others = (keys) => keys.filter((k) => k !== headKey).map((k) => figureOf(r, k));
+            const ceiling = r.costUnpriced?.length
+                ? figure(
+                      'Profit gain is a ceiling',
+                      `no price for ${escapeAttribute(r.costUnpriced.join(', '))}`,
+                      'warn',
+                      'Counted as free in the profit, so this gain is only a ceiling.'
+                  )
+                : null;
+            return {
+                row: r,
+                key: upgradeRowKey(r),
+                name: r.candidate.description,
+                notesHtml: upgradeRowNotesHtml(r),
+                headline: figureOf(r, headKey),
+                within:
+                    metric && !(metric === 'profit' && r.costUnpriced?.length)
+                        ? upgradeNoiseFor(r, metric).significant === false
+                        : false,
+                lines: [others(face), [...others(deltas), ...(ceiling ? [ceiling] : [])]],
+                facts: others(rest),
+                detailHtml:
+                    this._budgetToggleButtons(r) + this._renderUpgradeDetailCells(r, baseline, { compact: true }),
+                actionsHtml: upgradeRowActionsHtml(r),
+                verdict,
+                verdictHtml: verdict ? verifyChipHtml(verdict) : '',
+                note,
+                pending,
+                offerVerify: true,
+                canVerify,
+                verifyLabel: verifyInfo.label,
+            };
+        });
+        return this._cardsSection({
+            section: 'gold',
+            entries,
+            sortKey: column.key,
+            rankOptions: allColumns
+                .filter((c) => c.visible)
+                .map((c) => ({ key: c.key, label: c.key === 'upgrade' ? 'Name' : columnMenuLabel(c) })),
+            emptyText: 'No upgrades to show.',
+        });
+    }
+
+    /**
+     * The Combat levels rows as cards.
+     * @param {Object} ctx - Pieces of `_renderUpgradeLevelTable`: `sorted`, `baseline`, `sortKey`, `effective`,
+     *   `hoursPer`, `fmtLevelTime`, `scoreTitle`
+     * @returns {string} HTML
+     * @private
+     */
+    _levelCards({ sorted, baseline, sortKey, effective, hoursPer, fmtLevelTime, scoreTitle }) {
+        const options = [
+            { key: 'upgrade', label: 'Skill name' },
+            { key: 'time', label: 'Level time' },
+            { key: 'dps', label: 'ΔDPS' },
+            { key: 'hpDps', label: 'Hours/0.01% DPS' },
+            { key: 'xp', label: 'ΔEXP/hr' },
+            { key: 'hpXp', label: 'Hours/0.01% EXP' },
+            { key: 'profit', label: 'ΔProfit/hr' },
+            { key: 'hpProfit', label: 'Hours/0.01% Profit' },
+            { key: 'score', label: 'Score' },
+        ];
+        // The table sorts an unrecognised key as Hours/0.01% DPS
+        const key = options.some((o) => o.key === sortKey) ? sortKey : 'hpDps';
+        const METRIC_OF = { dps: 'dps', hpDps: 'dps', xp: 'xp', hpXp: 'xp', profit: 'profit', hpProfit: 'profit' };
+        const entries = sorted.map((r) => {
+            const e = effective(r);
+            const titles = levelRowTitles(r, baseline);
+            const gain = (label, delta, pct) =>
+                figure(label, levelDeltaCell(delta, pct), signTone(delta), titles.alongTitle);
+            const hours = (label, metricKey, metricName) =>
+                figure(label, formatCompactHours(hoursPer(r, metricKey)), 'neutral', levelHoursTitle(metricName));
+            const figs = {
+                time: figure('Level time', fmtLevelTime(r.levelTimeHours), 'neutral', titles.timeTitle),
+                dps: gain('ΔDPS', e.metrics.dps - baseline.dps, e.deltas.dps),
+                xp: gain('ΔEXP/hr', e.metrics.xpPerHour - baseline.xpPerHour, e.deltas.xp),
+                profit: gain('ΔProfit/hr', e.metrics.profitPerHour - baseline.profitPerHour, e.deltas.profit),
+                hpDps: hours('Hours/0.01% DPS', 'dps', 'DPS'),
+                hpXp: hours('Hours/0.01% EXP', 'xp', 'EXP/hr'),
+                hpProfit: hours('Hours/0.01% Profit', 'profit', 'Profit/hr'),
+                score: figure('Score', formatScore(r.score), 'neutral', scoreTitle),
+            };
+            const others = (keys) => keys.filter((k) => k !== key).map((k) => figs[k]);
+            const metric = METRIC_OF[key];
+            return {
+                row: r,
+                key: upgradeRowKey(r),
+                name: r.candidate.description,
+                headline: figs[key === 'upgrade' ? 'score' : key],
+                within: metric ? upgradeNoiseFor(e, metric).significant === false : false,
+                lines: [
+                    others(['time', 'score']),
+                    others(['dps', 'xp', 'profit']),
+                    others(['hpDps', 'hpXp', 'hpProfit']),
+                    titles.alongText ? [figure('Along the way', escapeAttribute(titles.alongText), 'muted')] : [],
+                ],
+                detailHtml: this._renderUpgradeDetailCells(r, baseline, { compact: true }),
+                offerVerify: false,
+            };
+        });
+        return this._cardsSection({
+            section: 'levels',
+            entries,
+            sortKey: key,
+            rankOptions: options,
+            emptyText: 'No combat levels to show.',
+        });
+    }
+
+    /**
+     * The "measured, but not priced" rows as cards: the cost line says it is unknown, never zero.
+     * @param {Object} ctx - Pieces of `_renderUnpricedUpgradeTable`: `sorted`, `baseline`, `sortKey`, `cell`
+     * @returns {string} HTML
+     * @private
+     */
+    _unpricedCards({ sorted, baseline, sortKey, cell }) {
+        const options = [
+            { key: 'upgrade', label: 'Name' },
+            { key: 'why', label: 'Why no price' },
+            { key: 'dps', label: 'ΔDPS' },
+            { key: 'xp', label: 'ΔEXP' },
+            { key: 'profit', label: 'ΔProfit' },
+        ];
+        const key = options.some((o) => o.key === sortKey) ? sortKey : 'dps';
+        const entries = sorted.map((r) => {
+            const reason = unpricedReason(r);
+            const gain = (label, k) => figure(label, cell(r, k), signTone(r.deltas?.[k]));
+            const figs = {
+                why: figure('Why no price', escapeAttribute(reason), 'warn'),
+                dps: gain('ΔDPS', 'dps'),
+                xp: gain('ΔEXP', 'xp'),
+                profit: gain('ΔProfit', 'profit'),
+            };
+            const headKey = key === 'upgrade' ? 'dps' : key;
+            return {
+                row: r,
+                key: upgradeRowKey(r),
+                name: r.candidate.description,
+                notesHtml: upgradeRowNotesHtml(r),
+                headline: figs[headKey],
+                within: ['dps', 'xp', 'profit'].includes(headKey)
+                    ? upgradeNoiseFor(r, headKey).significant === false
+                    : false,
+                lines: [
+                    [figure('Cost', `${UNKNOWN_TEXT}: ${escapeAttribute(reason)}`, 'warn')],
+                    ['dps', 'xp', 'profit'].filter((k) => k !== headKey).map((k) => figs[k]),
+                ],
+                detailHtml: this._renderUpgradeDetailCells(r, baseline, { compact: true }),
+                unpriced: true,
+                offerVerify: false,
+            };
+        });
+        return this._cardsSection({
+            section: 'unpriced',
+            entries,
+            sortKey: key,
+            rankOptions: options,
+            emptyText: 'Nothing unpriced.',
+        });
+    }
+
+    /**
+     * The scroll rows as cards.
+     * @param {Object} ctx - Pieces of `_renderScrollTable`: `sorted`, `baseline`, `sortKey`, `pricedByRow`, `cell`,
+     *   `goldPerCell`, `goldPerTitle`, `scoreTitle`, `lossScoreTitle`
+     * @returns {string} HTML
+     * @private
+     */
+    _scrollCards({
+        sorted,
+        baseline,
+        sortKey,
+        pricedByRow,
+        cell,
+        goldPerCell,
+        goldPerTitle,
+        scoreTitle,
+        lossScoreTitle,
+    }) {
+        const options = [
+            { key: 'upgrade', label: 'Scroll name' },
+            { key: 'dps', label: 'ΔDPS' },
+            { key: 'gDps', label: 'Gold/hr per 0.01% DPS' },
+            { key: 'xp', label: 'ΔEXP' },
+            { key: 'gXp', label: 'Gold/hr per 0.01% EXP' },
+            { key: 'profit', label: 'ΔProfit' },
+            { key: 'gProfit', label: 'Gold/hr per 0.01% Profit' },
+            { key: 'gain', label: 'Gain / hr' },
+            { key: 'net', label: 'Net / hr' },
+            { key: 'score', label: 'Score' },
+        ];
+        const key = options.some((o) => o.key === sortKey) ? sortKey : 'score';
+        const entries = sorted.map((r) => {
+            const p = pricedByRow.get(r);
+            const gain = (label, k) => figure(label, cell(r, k), signTone(r.deltas?.[k]));
+            const figs = {
+                dps: gain('ΔDPS', 'dps'),
+                xp: gain('ΔEXP', 'xp'),
+                profit: gain('ΔProfit', 'profit'),
+                gDps: figure('Gold/hr per 0.01% DPS', goldPerCell(r, 'dps'), 'neutral', goldPerTitle('DPS')),
+                gXp: figure('Gold/hr per 0.01% EXP', goldPerCell(r, 'xp'), 'neutral', goldPerTitle('EXP/hr')),
+                gProfit: figure(
+                    'Gold/hr per 0.01% Profit',
+                    goldPerCell(r, 'profit'),
+                    'neutral',
+                    goldPerTitle('Profit/hr')
+                ),
+                gain: figure('Gain / hr', p.gainHourText),
+                net: figure('Net / hr', p.netHourText, p.breakEven ? 'muted' : p.worthIt ? 'good' : 'bad', p.verdict),
+                score: figure(
+                    'Score',
+                    formatScore(r.score),
+                    p.worthIt ? 'neutral' : 'warn',
+                    p.worthIt ? scoreTitle : lossScoreTitle
+                ),
+            };
+            const headKey = key === 'upgrade' ? 'score' : key;
+            const others = (keys) => keys.filter((k) => k !== headKey).map((k) => figs[k]);
+            const metric = { dps: 'dps', gDps: 'dps', xp: 'xp', gXp: 'xp', profit: 'profit', gProfit: 'profit' }[
+                headKey
+            ];
+            return {
+                row: r,
+                key: upgradeRowKey(r),
+                name: r.candidate.description,
+                notesHtml: upgradeRowNotesHtml(r),
+                headline: figs[headKey],
+                within: metric ? upgradeNoiseFor(r, metric).significant === false : false,
+                lines: [others(['net', 'gain', 'score']), others(['dps', 'xp', 'profit'])],
+                facts: others(['gDps', 'gXp', 'gProfit']),
+                detailHtml:
+                    `<div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>` +
+                    this._renderUpgradeDetailCells(r, baseline, { compact: true }),
+                offerVerify: false,
+            };
+        });
+        return this._cardsSection({
+            section: 'scrolls',
+            entries,
+            sortKey: key,
+            rankOptions: options,
+            emptyText: 'No scrolls to show.',
+        });
+    }
+
+    /**
+     * The Ability order rows as cards, the current order as an unranked baseline card. `entries` is the table's
+     * own list (ranked gains and the current order, best gain first); Show all keeps the table's rule.
+     * @param {Object} ctx - Pieces of `_renderAbilityOrderSection`
+     * @returns {string} HTML
+     * @private
+     */
+    _orderCards({ entries, rank, rankLabel, baseline, nameOf, verdictOf, currentName, fmtGain, fmtNoise, money, pct }) {
+        const results = this._upgradeResultsData;
+        const canVerify = this._canVerifyResults(results);
+        const HEADLINE_METRIC = { profit: 'profit', xp: 'xp', dps: 'dps', eph: 'encounters' };
+        const list = entries.map((e) => {
+            if (e.current) {
+                return {
+                    row: null,
+                    key: 'order-current',
+                    name: currentName,
+                    baseline: true,
+                    lines: [[figure('', 'Your current order: every order here is compared with it.', 'muted')]],
+                };
+            }
+            const r = e.r;
+            const verdict = verdictOf(r);
+            const { pending, note } = this._cardVerifyState(results, r);
+            const metricFigure = (label, key, value, fmt) => {
+                if (!Number.isFinite(value)) return figure(label, '—', 'muted');
+                const significant = r.significantBy?.[key] ?? true;
+                const tone = significant ? signTone(value, { lowerIsBetter: key === 'deaths' }) : 'muted';
+                return figure(label, fmt(value), tone);
+            };
+            const profitAbs = (r.metrics?.profitPerHour ?? NaN) - (baseline.profitPerHour ?? NaN);
+            const figs = {
+                profit: metricFigure('ΔProfit/hr', 'profit', profitAbs, money),
+                xp: metricFigure('ΔEXP/hr', 'xp', r.deltas?.xp, pct),
+                dps: metricFigure('ΔDPS', 'dps', r.deltas?.dps, pct),
+                encounters: metricFigure('ΔEPH', 'encounters', r.deltas?.encounters, pct),
+                deaths: metricFigure('ΔDeaths/hr', 'deaths', r.deltas?.deaths, pct),
+            };
+            const head = HEADLINE_METRIC[rank];
+            return {
+                row: r,
+                key: upgradeRowKey(r),
+                name: nameOf(r),
+                headline: figure(rankLabel, fmtGain(e.gain), signTone(e.gain), ''),
+                within: e.within,
+                lines: [
+                    Object.keys(figs)
+                        .filter((k) => k !== head)
+                        .map((k) => figs[k]),
+                    [
+                        figure(
+                            'Noise',
+                            Number.isFinite(e.noise) ? fmtNoise(e.noise) : UNKNOWN_TEXT,
+                            'muted',
+                            'One standard error of the ranked gain.'
+                        ),
+                    ],
+                ],
+                verdict,
+                verdictHtml: verdict ? verifyChipHtml(verdict) : '',
+                note,
+                pending,
+                offerVerify: true,
+                canVerify,
+                verifyLabel: rankLabel,
+            };
+        });
+        return this._cardsSection({
+            section: 'order',
+            entries: list,
+            emptyText: 'No orders to show.',
+        });
+    }
+
+    /**
+     * Wire the cards and the Cards | Table switch under a freshly drawn container.
+     * @param {HTMLElement} container - Upgrade results container
+     * @private
+     */
+    _wireCards(container) {
+        wireViewSwitch(container, (view) => this._pickUpgradeView(view));
+        const redraw = () => {
+            if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
+        };
+        wireUpgradeCards(container, {
+            onToggle: (id, open) => {
+                if (open) this._openCards.add(id);
+                else this._openCards.delete(id);
+            },
+            onVerify: (id) => this._verifyFromCard(id),
+            onShowAll: (section) => {
+                if (this._cardShowAll.has(section)) this._cardShowAll.delete(section);
+                else this._cardShowAll.add(section);
+                redraw();
+            },
+            onRank: (section, key) => {
+                const stateKey = CARD_SORT_STATE[section];
+                if (!stateKey) return;
+                this._setUpgradeColumnMenuOpen(false);
+                this[stateKey] = { key, asc: true };
+                this._persistUpgradeColumnPrefs();
+                redraw();
+            },
+            onBestFirst: (section) => {
+                const stateKey = CARD_SORT_STATE[section];
+                if (!stateKey || !this[stateKey]) return;
+                this[stateKey] = { ...this[stateKey], asc: true };
+                this._persistUpgradeColumnPrefs();
+                redraw();
+            },
+        });
+    }
+
+    /**
+     * A card's Verify: the existing verify pipeline for exactly that row and the metric the table verifies by.
+     * Refused (false) when the card is no longer a row of the analysis on screen, when the results cannot be
+     * re-measured, or when another run is going; a second tap while one is running is such a refusal.
+     * @param {string} id - The card's id
+     * @returns {boolean} Whether a verify started
+     * @private
+     */
+    _verifyFromCard(id) {
+        const picked = this._cardRegistry.get(id);
+        const results = this._upgradeResultsData;
+        if (!picked?.row || !results || picked.results !== results || !results.results.includes(picked.row)) {
+            return false;
+        }
+        if (!this._canVerifyResults(results)) return false;
+        if (this._isBusy() || this._cardPending) {
+            this._setCardNote(results, picked.row, {
+                kind: 'busy',
+                text: 'Another run is going. Verify when it finishes.',
+            });
+            this._renderUpgradeResults(results);
+            return false;
+        }
+        const metric =
+            picked.section === 'order'
+                ? ABILITY_ORDER_RANKS.some((r) => r.key === this._abilityOrderRank)
+                    ? this._abilityOrderRank
+                    : DEFAULT_ABILITY_ORDER_RANK
+                : this._goldVerifyMetric().metric;
+        this._cardPending = { results, row: picked.row };
+        if (this._cardNotes?.results === results) this._cardNotes.byRow.delete(picked.row);
+        this.panel?.querySelectorAll('[data-card-id]').forEach((el) => {
+            if (el.getAttribute('data-card-id') !== id) return;
+            el.setAttribute('data-card-state', 'pending');
+            const label = el.querySelector('[data-card-state-label]');
+            if (label) label.textContent = 'Verifying…';
+        });
+        this._runCardVerify(results, picked.row, metric);
+        return true;
+    }
+
+    /**
+     * Run the verify a card asked for and say how it ended when the pipeline stored no verdict (a stored
+     * verdict is drawn by the pipeline's own redraw). Everything after the await is checked against the
+     * character and the analysis the verify started for.
+     * @private
+     */
+    async _runCardVerify(results, row, metric) {
+        const ownerId = dataManager.getCurrentCharacterId();
+        let outcome = null;
+        try {
+            outcome = await this._verifyRows({ results, rows: [row], metric });
+        } catch (error) {
+            console.error('[CombatSimUI] Card verify failed:', error);
+        } finally {
+            if (this._cardPending?.results === results && this._cardPending.row === row) this._cardPending = null;
+        }
+        if (!this.panel || !this._stillSameCharacter(ownerId) || results !== this._upgradeResultsData) return;
+        if (outcome && !outcome.refused && outcome.rows?.length) return;
+        let note;
+        if (outcome?.refused) {
+            note = {
+                kind: 'refused',
+                text: VERIFY_REFUSED_TEXT[outcome.refused] || `Cannot verify (${outcome.refused}).`,
+            };
+        } else if (outcome?.stopped) {
+            note = { kind: 'stopped', text: 'Verify stopped before any seed finished.' };
+        } else if (outcome) {
+            note = { kind: 'failed', text: `Verify failed${outcome.error ? `: ${outcome.error}` : '.'}` };
+        } else {
+            note = { kind: 'refused', text: 'The verify did not start.' };
+        }
+        this._setCardNote(results, row, note);
+        this._renderUpgradeResults(results);
+    }
+
+    /**
+     * Remember how a card's verify ended without a verdict, for the analysis on screen only.
+     * @private
+     */
+    _setCardNote(results, row, note) {
+        if (this._cardNotes?.results !== results) this._cardNotes = { results, byRow: new Map() };
+        this._cardNotes.byRow.set(row, note);
     }
 
     /**
@@ -14806,6 +15541,8 @@ class CombatSimUI {
                     collapsed: { ...(this._collapsedSections || {}) },
                     abilityOrderRank: this._abilityOrderRank || DEFAULT_ABILITY_ORDER_RANK,
                     abilityOrderShowAll: Boolean(this._abilityOrderShowAll),
+                    // Cards or Table, per form factor: a pick on a phone never changes a desktop sharing this record
+                    resultsView: this._viewChoices,
                 },
                 'settings'
             );
@@ -14855,6 +15592,8 @@ class CombatSimUI {
                 ? saved.abilityOrderRank
                 : DEFAULT_ABILITY_ORDER_RANK;
             this._abilityOrderShowAll = saved.abilityOrderShowAll === true;
+            // A record from before the cards existed holds no pick: both form factors fall back to their default
+            this._viewChoices = normalizeViewChoices(saved.resultsView);
             // A table or trigger result drawn before this read finished was drawn all expanded
             this._enhanceCollapsibles(this.panel?.querySelector('#mwi-csim-upgrade-content'));
             // Rank-by and show-all change what the section draws, so it is drawn again with them
