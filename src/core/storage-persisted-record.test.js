@@ -23,6 +23,7 @@ vi.mock('../utils/adoption-consent.js', () => ({
 const { default: storage } = await import('./storage.js');
 const { createCuratedRecord, mergeById } = await import('../utils/persisted-record.js');
 const { mergePins } = await import('../utils/item-picker-pins.js');
+const { mergeWatchlists, entryKey, WATCHLIST_KEY } = await import('../utils/watchlist.js');
 const { addGoal, removeGoal, loadGoals, _resetGoalsRecord, GOALS_KEY } =
     await import('../features/planner/goal-planner-store.js');
 
@@ -30,10 +31,13 @@ const { addGoal, removeGoal, loadGoals, _resetGoalsRecord, GOALS_KEY } =
  * A fake IDBDatabase over one object store. Values are copied on the way in and out, as IndexedDB
  * does, so a record's live memory is never what "storage" holds.
  * @param {Record<string, *>} initial - Seed values by key
- * @returns {{db: object, data: Map<string, *>}} The fake and its backing data
+ * @returns {{db: object, data: Map<string, *>, holds: {start: ?Promise, answer: ?Promise}}} The fake, its backing
+ *   data, and what it is waiting on: `start` stops a transaction before it reads or writes anything, `answer` lets
+ *   it reach the data and stops it reporting (a write that commits but whose report comes too late)
  */
 function createFakeDb(initial) {
     const data = new Map(Object.entries(initial).map(([key, value]) => [key, structuredClone(value)]));
+    const holds = { start: null, answer: null };
     const db = {
         objectStoreNames: ['settings'],
         transaction() {
@@ -65,11 +69,17 @@ function createFakeDb(initial) {
                     return request;
                 },
             };
-            queueMicrotask(() => {
+            const answer = async () => {
+                if (holds.answer) await holds.answer;
+                txn.oncomplete?.();
+            };
+            const run = () => {
                 // A request may queue another (a fold's put follows its get), so drain until empty
                 while (queue.length > 0) queue.shift()();
-                queueMicrotask(() => txn.oncomplete?.());
-            });
+                queueMicrotask(answer);
+            };
+            if (holds.start) holds.start.then(run);
+            else queueMicrotask(run);
             return {
                 ...txn,
                 objectStore: () => store,
@@ -85,7 +95,7 @@ function createFakeDb(initial) {
             };
         },
     };
-    return { db, data };
+    return { db, data, holds };
 }
 
 const KEY = 'fav';
@@ -281,17 +291,63 @@ describe('a threeWay record whose save has not landed yet', () => {
     };
 
     let data;
+    let holds;
     const seed = (values) => {
         const fake = createFakeDb(values);
         storage.db = fake.db;
         data = fake.data;
+        holds = fake.holds;
     };
+    /**
+     * The next read of the record is made now and delivered when released, so that what it says is
+     * older than what happens in between. Storage is real for everything else.
+     * @param {string} key - What it reads
+     * @param {boolean} [readable=true] - False for a read that could not be made
+     * @returns {() => void} Delivers it
+     */
+    const holdNextRead = (key, readable = true) => {
+        const found = data.has(key);
+        const snapshot = found ? { found, value: structuredClone(data.get(key)) } : { found, value: null };
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        const spy = vi.spyOn(storage, 'tryGet').mockImplementationOnce(async () => {
+            spy.mockRestore();
+            await gate;
+            return readable ? snapshot : null;
+        });
+        return release;
+    };
+    /**
+     * Hold every transaction opened from now on at one of the fake's two points.
+     * @param {'start'|'answer'} point
+     * @returns {() => void} Lets them go
+     */
+    const hold = (point) => {
+        let release;
+        holds[point] = new Promise((resolve) => {
+            release = () => {
+                holds[point] = null;
+                resolve();
+            };
+        });
+        return release;
+    };
+    /** The debounce runs out, and the write it starts is refused */
+    const writeIsRefused = async () => {
+        refuseNextTransaction();
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+    };
+
+    const writeTimeoutMs = storage.writeTimeoutMs;
 
     beforeEach(() => {
         vi.useFakeTimers();
         storage.saveDebounceTimers.clear();
         storage.pendingWrites.clear();
         storage._writeGeneration.clear();
+        storage._flushFailures.clear();
         character.id = 'A';
         _resetGoalsRecord();
     });
@@ -301,6 +357,8 @@ describe('a threeWay record whose save has not landed yet', () => {
         storage.saveDebounceTimers.clear();
         storage.pendingWrites.clear();
         storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+        storage.writeTimeoutMs = writeTimeoutMs;
         storage.db = null;
     });
 
@@ -724,19 +782,25 @@ describe('a threeWay record whose save has not landed yet', () => {
         });
 
         test('a failed write that lands from its requeue costs at worst a removal coming back', async () => {
-            seed({ [PINS_A]: { act: ['s'] } });
+            seed({ [PINS_A]: { act: ['s', 'r'] } });
             const record = pinsTab();
             await record.load();
             refuseNextTransaction();
             writePins(record, ['s', 'x', 'k']);
             await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
             await storage.flushAll();
-            expect(pinned(PINS_A)).toEqual(['s', 'x', 'k']);
+            expect(pinned(PINS_A)).toEqual(['s', 'r', 'x', 'k']);
 
-            // Nobody told the record that landed, so x reads as another tab's and comes back
+            // The mild direction: x, taken off now, stays stored until the next load
             writePins(record, ['s', 'k', 'y']);
             await settle();
-            expect(pinned(PINS_A).sort()).toEqual(['k', 's', 'x', 'y']);
+            expect(pinned(PINS_A).sort()).toEqual(['k', 'r', 's', 'x', 'y']);
+
+            // The severe direction: r, put back, is not read as something another tab took off
+            writePins(record, ['s', 'k', 'y', 'r']);
+            await settle();
+            expect(pinned(PINS_A)).toContain('r');
+            expect(await readPins(record)).toContain('r');
         });
 
         test('after a landing the other tab item stays out of the copy, so its later removal stands', async () => {
@@ -810,6 +874,426 @@ describe('a threeWay record whose save has not landed yet', () => {
             await settle();
             expect(await saving).toBe(false);
             expect(data.get('list')).toEqual(['a', 'b', 'bad']);
+
+            // That wrote nothing, so the copy is as good as it was: a removal still takes
+            data.set('list', ['a', 'b']);
+            record.set(['c']);
+            expect(await landed(record.save())).toBe(true);
+            expect(data.get('list')).toEqual(['c', 'b']);
+        });
+    });
+
+    describe('a list whose write failed folds as a union until its next load', () => {
+        const refused = async (record, list) => {
+            const failed = writePins(record, list);
+            await writeIsRefused();
+            expect(await failed).toBe(false);
+        };
+
+        test('unpin, the write fails, a flush lands it, pin again: the pin survives a reload', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a']);
+            await storage.flushAll();
+
+            writePins(record, ['a', 'Y']);
+            await settle();
+            expect(pinned(PINS_A)).toContain('Y');
+            expect((await readPins(record)).sort()).toEqual(['Y', 'a']);
+        });
+
+        test('pin landed, the unpin fails, a flush, pin again: the pin survives a reload', async () => {
+            seed({ [PINS_A]: { act: ['a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a', 'X']);
+            await settle();
+            await refused(record, ['a']);
+            await storage.flushAll();
+
+            writePins(record, ['a', 'X']);
+            await settle();
+            expect(pinned(PINS_A)).toContain('X');
+            expect((await readPins(record)).sort()).toEqual(['X', 'a']);
+        });
+
+        test('a write that wedges before it starts and commits late, reported failed: the pin survives', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            storage.writeTimeoutMs = 50;
+            const record = pinsTab();
+            await readPins(record);
+            const release = hold('start');
+            const failed = writePins(record, ['a']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 100);
+            expect(await failed).toBe(false);
+            release();
+            await vi.advanceTimersByTimeAsync(1);
+
+            writePins(record, ['a', 'Y']);
+            await settle();
+            expect(pinned(PINS_A)).toContain('Y');
+            expect((await readPins(record)).sort()).toEqual(['Y', 'a']);
+        });
+
+        test('a removal that committed but reported failed, then pinned again: the pin survives', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            storage.writeTimeoutMs = 50;
+            const record = pinsTab();
+            await readPins(record);
+            const release = hold('answer');
+            const failed = writePins(record, ['a']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 100);
+            expect(await failed).toBe(false);
+            // The fold ran before anyone knew, so this removal did reach the disk
+            expect(pinned(PINS_A)).toEqual(['a']);
+            release();
+            await vi.advanceTimersByTimeAsync(1);
+
+            writePins(record, ['a', 'Y']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'a']);
+            expect((await readPins(record)).sort()).toEqual(['Y', 'a']);
+        });
+
+        test('watchlist: remove the +5 row, it fails, a flush, add it back: both rows stay', async () => {
+            const row = (hrid, level) => ({
+                hrid,
+                name: hrid,
+                source: null,
+                ...(level ? { enhancementLevel: level } : {}),
+            });
+            const tome = '/items/enchanted_tome';
+            const emptyList = () => ({ entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' });
+            const key = `${WATCHLIST_KEY}_A`;
+            seed({ [key]: { ...emptyList(), entries: [row(tome, 0), row(tome, 5)], zones: { '/actions/x': true } } });
+            const record = createCuratedRecord({
+                base: WATCHLIST_KEY,
+                empty: emptyList,
+                merge: (stored, memory) => ({ ...emptyList(), ...mergeWatchlists(stored, memory) }),
+                threeWay: { idOf: entryKey },
+                label: 'Test',
+            });
+            await record.load();
+            const state = structuredClone(record.get());
+            const persist = () => {
+                record.set({ ...state });
+                return record.save();
+            };
+
+            state.entries = state.entries.filter((entry) => !entry.enhancementLevel);
+            const failed = persist();
+            await writeIsRefused();
+            expect(await failed).toBe(false);
+            await storage.flushAll();
+
+            state.entries = [...state.entries, row(tome, 5)];
+            persist();
+            await settle();
+            expect(data.get(key).entries.map(entryKey).sort()).toEqual(
+                [row(tome, 0), row(tome, 5)].map(entryKey).sort()
+            );
+            expect(data.get(key).zones).toEqual({ '/actions/x': true });
+        });
+
+        test('the failed removal, restated at a re-init, does not delete the second tab pin', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a']);
+            await storage.flushAll();
+
+            const other = pinsTab();
+            await readPins(other);
+            writePins(other, ['a', 'Y']);
+            await settle();
+            expect(pinned(PINS_A)).toContain('Y');
+
+            expect((await readPins(record)).sort()).toEqual(['Y', 'a']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'a']);
+        });
+
+        test('the same removal, restated on switching back, does not delete the second tab pin', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a']);
+            await storage.flushAll();
+            character.id = 'B';
+            expect(await readPins(record)).toEqual(['z']);
+
+            character.id = 'A';
+            const other = pinsTab();
+            await readPins(other);
+            writePins(other, ['a', 'Y']);
+            await settle();
+
+            expect((await readPins(record)).sort()).toEqual(['Y', 'a']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'a']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+
+        test('a save after a reset, over the failed one, does not delete the second tab pin', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a']);
+            await storage.flushAll();
+
+            const other = pinsTab();
+            await readPins(other);
+            writePins(other, ['a', 'Y']);
+            await settle();
+
+            record.reset();
+            writePins(record, ['q']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'a', 'q']);
+        });
+
+        test('a failed clear that lands from its requeue, then an item added back: it stays', async () => {
+            seed({ list: ['a', 'Y'] });
+            const record = createCuratedRecord({
+                base: 'list',
+                scoped: false,
+                empty: () => [],
+                merge: mergeById((hrid) => hrid),
+                threeWay: { idOf: (hrid) => hrid },
+                label: 'Test',
+            });
+            await record.load();
+            const failed = record.clear();
+            await vi.advanceTimersByTimeAsync(5);
+            await writeIsRefused();
+            expect(await failed).toBe(false);
+            await storage.flushAll();
+            expect(data.get('list')).toEqual([]);
+
+            record.set(['Y']);
+            record.save();
+            await settle();
+            expect(data.get('list')).toEqual(['Y']);
+        });
+
+        test('a goal whose removal failed comes back at the next press, and adding it again makes one', async () => {
+            seed({ [GOALS_A]: [goal('s', 1), goal('r', 2)] });
+            press(() => removeGoal('r'));
+            await vi.advanceTimersByTimeAsync(10);
+            await writeIsRefused();
+            await storage.flushAll();
+            expect(goalAmounts()).toEqual([1, 2]);
+
+            press(() => addGoal({ type: 'gold', amount: 2 }));
+            await settle();
+            expect(goalAmounts()).toEqual([1, 2]);
+
+            // That press read the list again, so the next removal takes
+            press(() => removeGoal('r'));
+            await settle();
+            expect(goalAmounts()).toEqual([1]);
+        });
+
+        test('a removal made after the failure and the recovery waits for the load, and then one takes', async () => {
+            seed({ [PINS_A]: { act: ['a', 'Y', 'Z'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a', 'Z']);
+            await storage.flushAll();
+
+            // Storage works again, and the write lands, but this list cannot yet say what it may take out
+            expect(await landed(writePins(record, ['a']))).toBe(true);
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'Z', 'a']);
+
+            expect((await readPins(record)).sort()).toEqual(['Y', 'Z', 'a']);
+            writePins(record, ['a', 'Y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['a', 'Y']);
+        });
+
+        test('a load reads behind the requeue: nothing is lost, and the list it starts is trusted', async () => {
+            seed({ [PINS_A]: { act: ['a', 'Y'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a', 'X']);
+
+            expect(pinned(PINS_A)).toEqual(['a', 'Y']);
+            expect((await readPins(record)).sort()).toEqual(['X', 'Y', 'a']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['X', 'Y', 'a']);
+
+            writePins(record, ['a']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['a']);
+        });
+
+        test('the requeue lands after the read was made: nothing is lost, and what the read missed stays', async () => {
+            seed({ [PINS_A]: { act: ['a', 'Y'] } });
+            const record = pinsTab();
+            await readPins(record);
+            await refused(record, ['a', 'X']);
+
+            const release = holdNextRead(PINS_A);
+            const loading = readPins(record);
+            await vi.advanceTimersByTimeAsync(1);
+            await storage.flushAll();
+            expect(pinned(PINS_A).sort()).toEqual(['X', 'Y', 'a']);
+            release();
+            expect((await loading).sort()).toEqual(['X', 'Y', 'a']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['X', 'Y', 'a']);
+        });
+
+        test('a write that fails while the load is reading is held to the same rule', async () => {
+            seed({ [PINS_A]: { act: ['Y', 'a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['a']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            const release = holdNextRead(PINS_A);
+            const loading = readPins(record);
+            await writeIsRefused();
+            release();
+            expect((await loading).sort()).toEqual(['Y', 'a']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['Y', 'a']);
+        });
+
+        test('three failed flushes drop the write: the load still has the pin, and it lands', async () => {
+            seed({ [PINS_A]: { act: ['a'] } });
+            const record = pinsTab();
+            await readPins(record);
+            const transaction = storage.db.transaction;
+            storage.db.transaction = () => {
+                throw new Error('refused');
+            };
+            writePins(record, ['a', 'X']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+            for (let i = 0; i < 4; i += 1) await storage.flushAll();
+            storage.db.transaction = transaction;
+            expect(storage.pendingWrites.size).toBe(0);
+            expect(pinned(PINS_A)).toEqual(['a']);
+
+            expect(await readPins(record)).toEqual(['a', 'X']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['a', 'X']);
+        });
+    });
+
+    describe('what a load in flight holds on to', () => {
+        test('a save that lands while the load reads an older copy is in the view, against its old base', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            const release = holdNextRead(PINS_A);
+            const loading = readPins(record);
+            await vi.advanceTimersByTimeAsync(1);
+            await storage.flushAll();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+            release();
+
+            expect(await loading).toEqual(['s', 'x']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+        });
+
+        test('a save asked while the load reads is the one it carries', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await readPins(record);
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(10);
+
+            const release = holdNextRead(PINS_A);
+            const loading = record.load();
+            writePins(record, ['s', 'x', 'y']);
+            // As the goal list does when a load begins
+            record.set({});
+            release();
+            await loading;
+
+            expect(record.get().act).toEqual(['s', 'x', 'y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+        });
+
+        test('the save it carries folds against the base as the load began, past one landing meanwhile', async () => {
+            seed({ [PINS_A]: { act: ['s'] } });
+            const record = pinsTab();
+            await readPins(record);
+            const go = hold('start');
+            writePins(record, ['s', 'x']);
+            await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 10);
+            writePins(record, ['s', 'x', 'y']);
+
+            // The older of the two lands inside the load, and moves the base past what the load read
+            const release = holdNextRead(PINS_A);
+            const loading = readPins(record);
+            go();
+            await vi.advanceTimersByTimeAsync(1);
+            expect(pinned(PINS_A)).toEqual(['s', 'x']);
+            release();
+
+            expect(await loading).toEqual(['s', 'x', 'y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s', 'x', 'y']);
+        });
+
+        test('the character moves while the load reads: its line stays on the key it read', async () => {
+            seed({ [PINS_A]: { act: ['a'] }, [PINS_B]: { act: ['z'] } });
+            const record = pinsTab();
+            await readPins(record);
+
+            const release = holdNextRead(PINS_A);
+            const loading = record.load();
+            character.id = 'B';
+            release();
+            await loading;
+
+            writePins(record, ['a', 'y']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['a', 'y']);
+            expect(pinned(PINS_B)).toEqual(['z']);
+        });
+
+        test('a load a reset and a newer load overtook leaves the newer one in charge: a removal takes', async () => {
+            seed({ [PINS_A]: { act: ['s', 'r'] } });
+            const record = pinsTab();
+            await readPins(record);
+
+            const release = holdNextRead(PINS_A);
+            const overtaken = readPins(record);
+            await readPins(record);
+            release();
+            await overtaken;
+
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A)).toEqual(['s']);
+        });
+
+        test('a readable load overtaken by an unreadable one does not make the list trusted', async () => {
+            seed({ [PINS_A]: { act: ['s', 'r'] } });
+            const record = pinsTab();
+            await readPins(record);
+
+            const first = holdNextRead(PINS_A);
+            const overtaken = record.load();
+            const second = holdNextRead(PINS_A, false);
+            const newest = record.load();
+            second();
+            expect(await newest).toBe(false);
+            first();
+            await overtaken;
+
+            writePins(record, ['s']);
+            await settle();
+            expect(pinned(PINS_A).sort()).toEqual(['r', 's']);
         });
     });
 });

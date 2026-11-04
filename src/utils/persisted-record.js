@@ -1014,9 +1014,13 @@ export function createCuratedRecord({ merge = mergeMaps(), keepMerging = false, 
  *
  * Before the first readable load, and during one, there is no line to trust: an ask folds through `merge`,
  * which keeps everything on both sides. A write that fails moves nothing and its ask stays unlanded, so the
- * next save or load still carries it. A failed write that storage later lands from its requeue tells nobody,
- * so `base` stays behind until the next landing or load: an item added in that write and then removed
- * comes back. It is never a lost edit.
+ * next save or load still carries it. Storage then lands it from its requeue, or commits it late after
+ * reporting failure, and tells nobody, so from that failure `base` may be behind what is stored, and a
+ * re-added item would read as one another tab removed. So a failure marks its line untrusted, and every ask
+ * of that line, the failed one included, folds through `merge` when it lands. Nothing is deleted; a removal
+ * made on that line waits and comes back at the next load, which is what ends it: a new line's `base` is what
+ * that load read, its view holds all of that (a failed ask folds over it as a union), so only a removal made
+ * after it can take anything out. With no load a line stays untrusted for the rest of the page.
  *
  * Once loaded, memory stays exactly what the owner last `set` or mutated: what another tab added reaches
  * this tab's view at its next load. An owner must adopt `get()` after a load.
@@ -1034,7 +1038,10 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
     const keyNow = () => (scoped ? characterKey(base) : base);
 
     let trustMemory = false;
-    /** The newest readable load's `{key, base, landed}`: what it read, and which ask last moved that on */
+    /**
+     * The newest readable load's `{key, base, landed, untrusted}`: what it read, which ask last moved that on,
+     * and whether a write of this line has failed, so that `base` can no longer be relied on
+     */
     let line = null;
     /** Bumped by every load and reset, so one that was overtaken does not speak for the record */
     let epoch = 0;
@@ -1049,15 +1056,18 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
 
     /**
      * What an ask puts down over a stored value. `under` is an older ask of another line, which its view
-     * was not read over, so its edits are folded in first rather than replaced.
-     * @param {{value: *, line: ?{base: *}, under: ?Object}} ask
+     * was not read over, so its edits are folded in first rather than replaced. Untrusted is read here, as
+     * the fold runs, so a failed ask's requeue is held to it as well.
+     * @param {{value: *, line: ?{base: *, untrusted: boolean}, under: ?Object}} ask
      * @param {*} stored - undefined when nothing is stored
      * @returns {*} The value to write
      */
     const foldAsk = (ask, stored) => {
         const beneath = ask.under ? foldAsk(ask.under, stored) : stored;
         if (beneath === undefined) return ask.value;
-        return ask.line ? mergeThreeWay(ask.line.base, beneath, ask.value, mergeOptions) : merge(beneath, ask.value);
+        return ask.line && !ask.line.untrusted
+            ? mergeThreeWay(ask.line.base, beneath, ask.value, mergeOptions)
+            : merge(beneath, ask.value);
     };
 
     /**
@@ -1095,6 +1105,8 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
             } catch (error) {
                 console.error(`[${label}] Saving ${base} failed:`, error);
             }
+            if (!written && ask.line) ask.line.untrusted = true;
+            // A refused fold wrote the stored copy back as it was, so `base` is no further behind than it was
             if (!written || ask.refused) return false;
             // An ask a newer one replaced in the queue never ran: what landed is the newer one's business
             if (ask.folded) {
@@ -1116,7 +1128,7 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
         merge: (stored, memory) => {
             const read = snapshotOf(stored);
             const folded = merge(stored, memory);
-            line = read ? { key: readKey, base: read.value, landed: 0 } : null;
+            line = read ? { key: readKey, base: read.value, landed: 0, untrusted: false } : null;
             const newest = unlanded.get(readKey);
             const ask = !newest || newest.seq === carried?.seq ? carried : newest;
             const rebased = ask ? snapshotOf(foldAsk(ask, folded)) : null;
@@ -1133,7 +1145,19 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
         const asked = epoch;
         readKey = keyNow();
         const before = unlanded.get(readKey);
-        carried = before ? { ...before, line: before.line && { base: before.line.base } } : null;
+        const from = before?.line;
+        // Its base as it stood, but whether it failed as it stands: that can come while this load is reading
+        carried = before
+            ? {
+                  ...before,
+                  line: from && {
+                      base: from.base,
+                      get untrusted() {
+                          return from.untrusted;
+                      },
+                  },
+              }
+            : null;
         const readable = await load(loadOptions);
         if (asked === epoch) trustMemory = readable;
         return readable;
@@ -1152,6 +1176,8 @@ function createThreeWayRecord({ merge, threeWay, ...options }) {
         unlanded.delete(cleared ? cleared.key : keyNow());
         const seq = ++lastSeq;
         const written = await save(saveOptions);
+        // Storage requeues a failed clear like any other write
+        if (!written && cleared) cleared.untrusted = true;
         if (written && copy && cleared && seq > cleared.landed) {
             cleared.base = copy.value;
             cleared.landed = seq;

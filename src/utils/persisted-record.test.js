@@ -728,7 +728,7 @@ describe('curated record with threeWay, as two tabs', () => {
         expect(settingsStore().get(FAV)).toEqual({ milk: true, eggs: true });
     });
 
-    test('a write that fails leaves the edit unwritten, and the retry still honors the other tab', async () => {
+    test('a write that fails leaves the edit unwritten, and the retry folds as a union until a load', async () => {
         settingsStore().set(FAV, { milk: true, cheese: true });
         const a = tab();
         const b = tab();
@@ -745,11 +745,18 @@ describe('curated record with threeWay, as two tabs', () => {
         delete b.get().cheese;
         await b.save();
 
+        // Nothing is deleted: a's removal waits, and b's own comes back
         expect(await a.save()).toBe(true);
-        expect(settingsStore().get(FAV)).toEqual({ butter: true });
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, cheese: true, butter: true });
+
+        // A load ends it: what a takes off now is taken off
+        await a.load();
+        delete a.get().milk;
+        expect(await a.save()).toBe(true);
+        expect(settingsStore().get(FAV)).toEqual({ cheese: true, butter: true });
     });
 
-    test('a write that is refused after the probe does not advance the baseline', async () => {
+    test('a write that is refused after the probe does not advance the baseline, and untrusts it', async () => {
         settingsStore().set(FAV, { milk: true, cheese: true });
         const a = tab();
         await a.load();
@@ -757,10 +764,10 @@ describe('curated record with threeWay, as two tabs', () => {
         storageMock.set.mockImplementationOnce(async () => false);
         expect(await a.save()).toBe(false);
 
-        // Another tab removes cheese; a, whose milk removal never landed, saves again
+        // Another tab removes cheese; a, whose milk removal never landed, saves again and deletes nothing
         settingsStore().set(FAV, { milk: true });
         expect(await a.save()).toBe(true);
-        expect(settingsStore().get(FAV)).toEqual({});
+        expect(settingsStore().get(FAV)).toEqual({ milk: true, cheese: true });
     });
 
     /**
