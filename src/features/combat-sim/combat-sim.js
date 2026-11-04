@@ -10,6 +10,7 @@ import { cancelSimulation } from './combat-sim-runner.js';
 import { cancelAllZonesSimulation } from './all-zones-runner.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { watchLoadoutModals } from './loadout-sim-button.js';
+import { createSimTabButton, removeSimTabStyleIfUnused } from './sim-tab-button.js';
 
 const BUTTON_CLASS = 'toolasha-combat-sim-btn';
 
@@ -79,13 +80,7 @@ class CombatSim {
             return;
         }
 
-        const button = document.createElement('div');
-        button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-1q2h7u5 ' + BUTTON_CLASS;
-        button.textContent = 'Combat Sim';
-        button.style.cssText =
-            'cursor: pointer; background: linear-gradient(135deg, #3a7bd5, #5f3dc4); color: #fff; border-radius: 4px; padding: 4px 10px; font-size: 12px; white-space: nowrap;';
-
-        button.addEventListener('click', () => {
+        const button = createSimTabButton('Combat Sim', BUTTON_CLASS, () => {
             combatSimUI.toggle();
         });
 
@@ -109,6 +104,7 @@ class CombatSim {
 
             // Remove all injected buttons
             document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
+            removeSimTabStyleIfUnused();
 
             this.isInitialized = false;
         } catch (error) {

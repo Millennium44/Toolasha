@@ -9,6 +9,7 @@ import labSimUI from './lab-sim-ui.js';
 import { cancelSimulation } from './combat-sim-runner.js';
 import { isMobileMode } from '../../utils/mobile.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
+import { createSimTabButton, removeSimTabStyleIfUnused } from './sim-tab-button.js';
 
 const BUTTON_CLASS = 'toolasha-lab-sim-btn';
 
@@ -59,13 +60,7 @@ class LabSim {
         const innerContainer = tabsContainer.querySelector('[class*="TabsComponent_tabsContainer"] > div > div > div');
         if (!innerContainer) return;
 
-        const button = document.createElement('div');
-        button.className = 'MuiButtonBase-root MuiTab-root MuiTab-textColorPrimary css-1q2h7u5 ' + BUTTON_CLASS;
-        button.textContent = 'Lab Sim';
-        button.style.cssText =
-            'cursor: pointer; background: linear-gradient(135deg, #3a7bd5, #5f3dc4); color: #fff; border-radius: 4px; padding: 4px 10px; font-size: 12px; white-space: nowrap;';
-
-        button.addEventListener('click', () => {
+        const button = createSimTabButton('Lab Sim', BUTTON_CLASS, () => {
             labSimUI.toggle();
         });
 
@@ -100,6 +95,7 @@ class LabSim {
             labSimUI.destroy();
 
             document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
+            removeSimTabStyleIfUnused();
 
             this.isInitialized = false;
         } catch (error) {
