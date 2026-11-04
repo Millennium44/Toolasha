@@ -681,13 +681,13 @@ describe('who asks for the context', () => {
         expect(own.every((options) => options.wantsContext !== true)).toBe(true);
     });
 
-    test("a registration's own pull has no third parameter it could misread as a context", () => {
+    test("only the ledger's own pull takes a third parameter, and it reads that as the context", () => {
         const pulls = registered().filter((options) => typeof options.pull === 'function');
 
         expect(pulls.length).toBeGreaterThan(5);
-        expect(pulls.filter((options) => paramsOf(options.pull).length > 2).map((options) => options.label)).toEqual(
-            []
-        );
+        expect(pulls.filter((options) => paramsOf(options.pull).length > 2).map((options) => options.label)).toEqual([
+            'Trade ledger fills (daily)',
+        ]);
     });
 });
 

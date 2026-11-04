@@ -1532,7 +1532,10 @@ describe('a sync pull that only brings back rows the repair cuts reads as unchan
 
     test('the registration folds a pull through the store and an upload through the plain union', () => {
         expect(registration(T1).mergeForPull).not.toBe(registration(T1).merge);
-        expect(registration(T1).merge).toBe(mergeRecords);
+        const one = [fill(1, T1)];
+        const other = [fill(2, T1)];
+        expect(registration(T1).merge(one, other)).toEqual(mergeRecords(one, other));
+        expect(registration(T1).merge(one, other)).toHaveLength(2);
     });
 
     test("doubled rows the gist still holds: the pulled day is this device's own copy, not a change", async () => {
