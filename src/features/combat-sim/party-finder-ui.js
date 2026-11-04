@@ -103,7 +103,11 @@ const ZONE_MAX_TIER = 5;
 const RENDER_THROTTLE_MS = 1000;
 
 const INPUT_STYLE =
-    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;';
+    'background:' +
+    GAME_COLORS.inputBackground +
+    '; color:#e0e0e0; border:1px solid ' +
+    GAME_COLORS.inputBorder +
+    '; border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;';
 const BTN_STYLE = `background:${BUTTON_LOOK.primary.rest}; color:${GAME_COLORS.text}; border:none; border-radius:var(--radius-sm, 0.25rem); padding:3px 10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;`;
 const SMALL_BTN_STYLE = `background:transparent; color:#aaa; border:1px solid #444; border-radius:3px; padding:1px 6px; font-size:11px; cursor:pointer; font-family:inherit;`;
 
@@ -554,7 +558,7 @@ export class PartyFinderTab {
                 </div>
                 <div data-pf="confirm" style="display:none; margin-top:6px; padding:6px; border:1px solid rgba(255,152,0,0.5); border-radius:4px; font-size:12px; color:#ffb74d;"></div>
                 <div data-pf="progress" style="display:none; margin-top:6px;">
-                    <div style="background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                    <div style="background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                         <div data-pf="progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); transition:width 0.2s ease;"></div>
                         <span data-pf="progress-text" style="position:absolute; inset:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;"></span>
                     </div>
@@ -1755,7 +1759,11 @@ export class PartyFinderTab {
             const chip = document.createElement('span');
             chip.dataset.pfZone = zoneTierKey(zone);
             chip.style.cssText =
-                'display:inline-flex; gap:4px; align-items:center; background:#1a1a2e; border:1px solid #333; border-radius:10px; padding:1px 8px; font-size:11px;';
+                'display:inline-flex; gap:4px; align-items:center; background:' +
+                GAME_COLORS.raised +
+                '; border:1px solid ' +
+                GAME_COLORS.border +
+                '; border-radius:10px; padding:1px 8px; font-size:11px;';
             const label = document.createElement('span');
             label.textContent = `${zone.isDungeon ? '[D] ' : ''}${zone.name} T${zone.difficultyTier}`;
             const remove = document.createElement('button');

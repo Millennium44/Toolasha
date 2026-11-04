@@ -1225,13 +1225,13 @@ export function upgradeRowNotesHtml(result) {
                   'you do not own costs.';
         }
         notes.push(
-            `<span title="${title}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">${label}</span>`
+            `<span title="${title}" style="${ROW_NOTE_STYLE} background:${GAME_COLORS.raisedMore}; color:#8ab4f8;">${label}</span>`
         );
     }
 
     if (candidate.caveat) {
         notes.push(
-            `<span title="${candidate.caveat}" style="${ROW_NOTE_STYLE} background:#1a2030; color:#8ab4f8;">on task</span>`
+            `<span title="${candidate.caveat}" style="${ROW_NOTE_STYLE} background:${GAME_COLORS.raisedMore}; color:#8ab4f8;">on task</span>`
         );
     }
 
@@ -2880,7 +2880,11 @@ function sortRowsBy(rows, keyOf, asc) {
 
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
-    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:3px 5px; font-size:12px;';
+    'background:' +
+    GAME_COLORS.inputBackground +
+    '; color:#e0e0e0; border:1px solid ' +
+    GAME_COLORS.inputBorder +
+    '; border-radius:3px; padding:3px 5px; font-size:12px;';
 const CHIP_BUTTON_STYLE =
     'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
     'font-size:11px; cursor:pointer; font-family:inherit;';
@@ -2895,7 +2899,7 @@ const CHIP_BUTTON_STYLE =
 const MODE_OPTIONS = {
     equipment: `
         <span data-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
@@ -2903,7 +2907,7 @@ const MODE_OPTIONS = {
         </span>`,
     ability_level: `
         <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
@@ -2915,7 +2919,7 @@ const MODE_OPTIONS = {
         </span>`,
     ability_swap: `
         <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for your archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
@@ -2923,7 +2927,7 @@ const MODE_OPTIONS = {
         </span>`,
     combat_level: `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label style="color:#888; font-size:12px;">Charm</label>
             <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select>
             <input id="mwi-csim-charm-enh" type="number" min="0" max="20" placeholder="+" style="
@@ -2933,7 +2937,7 @@ const MODE_OPTIONS = {
         </span>`,
     house: `
         <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
@@ -2943,7 +2947,7 @@ const MODE_OPTIONS = {
     triggers: triggerChipOptionsHtml(),
     guild_shrine: `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="100" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
@@ -2956,7 +2960,7 @@ const MODE_OPTIONS = {
         </span>`,
     community_buff: `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-community-target-level" type="number" min="1" max="20" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
@@ -3085,7 +3089,7 @@ const UPGRADE_MODES = [
 function modeChipHtml(mode) {
     return `
             <span data-mode-chip="${mode.key}" style="display:inline-flex; align-items:center; gap:6px;
-                padding:3px 8px; border:1px solid #2a2a4a; border-radius:6px;">
+                padding:3px 8px; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
                 <label title="${mode.title}" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                     <input type="checkbox" data-upgrade-mode="${mode.key}" style="margin:0; cursor:pointer;"${
                         mode.defaultOn ? ' checked' : ''
@@ -3319,9 +3323,17 @@ class CombatSimUI {
         `;
 
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; flex:1; min-width:0;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px; flex:1; min-width:0;';
         const inputStyle =
-            'width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
+            'width:60px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
 
         controls.innerHTML = `
             <label style="color:#888; font-size:12px;">Zone</label>
@@ -3374,16 +3386,16 @@ class CombatSimUI {
                 <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:11px;"
                     title="Gear the selected player wears through the ordinary (solo) zones of this sweep. Defaults to the Loadout dropdown's current selection.">
                     Solo zones loadout
-                    <select class="toolasha-select" id="mwi-csim-soloparty-solo-loadout" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
+                    <select class="toolasha-select" id="mwi-csim-soloparty-solo-loadout" style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
                 </label>
                 <label style="display:flex; align-items:center; gap:4px; color:#888; font-size:11px;"
                     title="Gear the selected player wears through the party dungeons of this sweep — often different from their solo gear. Every other loaded party member keeps their own imported gear. Defaults to the Loadout dropdown's current selection.">
                     Dungeons loadout
-                    <select class="toolasha-select" id="mwi-csim-soloparty-dungeon-loadout" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
+                    <select class="toolasha-select" id="mwi-csim-soloparty-dungeon-loadout" style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:2px 6px; font-size:11px;"></select>
                 </label>
             </span>
             <label id="mwi-csim-allzones-hours-label" style="color:#888; font-size:12px; display:none;">Hours</label>
-            <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
+            <input id="mwi-csim-allzones-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_allZonesDefaultHours', 10)}" style="display:none; width:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <label id="mwi-csim-earlyexit-label" style="${labelStyle} display:none;" title="Stop simming higher tiers for a zone if both XP/hr and profit/hr declined vs the previous tier">
                 <input type="checkbox" id="mwi-csim-earlyexit" style="${checkboxStyle}" checked>
                 Skip Worse Tiers
@@ -3394,7 +3406,7 @@ class CombatSimUI {
             </label>
             <label style="${labelStyle}" title="Whether this run pays taskDamage from trinkets and task badges. Off: never, so a mixed zone carries no bonus it has not earned. On task: only against the monsters in the zone your own combat tasks actually name, and only until the run has killed as many of each as that task still needs. Every fight: force every fight to count, which overstates a mixed zone but is what you want comparing task gear head to head. Shares the Task damage setting.">
                 Task damage
-                <select id="mwi-csim-taskdamage" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer;">
+                <select id="mwi-csim-taskdamage" style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:2px 4px; font-size:11px; cursor:pointer;">
                     <option value="off">Off</option>
                     <option value="perMonster">On task</option>
                     <option value="everyFight">Every fight</option>
@@ -3470,12 +3482,12 @@ class CombatSimUI {
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="
                     flex:1;
-                    background:#1a1a2e;
+                    background:${GAME_COLORS.raised};
                     border-radius:4px;
                     height:18px;
                     overflow:hidden;
                     position:relative;
-                    border:1px solid #333;">
+                    border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-csim-progress-fill" style="
                         height:100%;
                         width:0%;
@@ -3515,7 +3527,11 @@ class CombatSimUI {
         resultsPricingRow.style.cssText = 'flex-shrink:0; padding:6px 14px 0;';
         this._pricingQuickSettings = createPricingQuickSettings({
             selectCssText:
-                'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; ' +
+                'background:' +
+                GAME_COLORS.inputBackground +
+                '; color:#e0e0e0; border:1px solid ' +
+                GAME_COLORS.inputBorder +
+                '; border-radius:4px; padding:2px 4px; ' +
                 'font-size:11px; max-width:96px;',
             onChange: () => this._scheduleReprice(),
         });
@@ -3549,13 +3565,13 @@ class CombatSimUI {
             <label style="color:#888; font-size:12px;">Item</label>
             <input id="mwi-csim-seek-input" type="text" placeholder="Search item..." style="
                 flex:1; min-width:0;
-                background:#1a1a2e; color:#e0e0e0;
-                border:1px solid #444; border-radius:4px;
+                background:${GAME_COLORS.inputBackground}; color:#e0e0e0;
+                border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px;
                 padding:3px 6px; font-size:12px; font-family:inherit;">
             <label style="color:#888; font-size:12px;">Hours</label>
             <input id="mwi-csim-seek-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_seekDefaultHours', 10)}" style="
-                width:60px; background:#1a1a2e; color:#e0e0e0;
-                border:1px solid #444; border-radius:4px;
+                width:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0;
+                border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px;
                 padding:3px 6px; font-size:12px; text-align:center;">
             <button id="mwi-csim-seek-run" style="
                 ${GAME_BTN_CSS}
@@ -3590,7 +3606,7 @@ class CombatSimUI {
         seekProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
         seekProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                <div style="flex:1; background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-csim-seek-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-csim-seek-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0%</span>
                 </div>
@@ -3627,14 +3643,18 @@ class CombatSimUI {
         // Upgrade-row selects size to their content instead of inheriting the
         // Configure row's flex:1/min-width:0, which let them shrink to slivers
         const upgradeSelectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:3px 6px; font-size:12px;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
             <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
             ${UPGRADE_MODES.map(modeChipHtml).join('')}
             <label style="color:#888; font-size:12px;" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab.">Hours</label>
-            <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
+            <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
             <button id="mwi-csim-upgrade-run" style="
                 ${GAME_BTN_CSS}
                 padding: 5px 14px;
@@ -3675,7 +3695,7 @@ class CombatSimUI {
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${label}</label>
                     <input type="number" min="1" max="200" data-combat-target="${key}" style="
-                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -3696,7 +3716,7 @@ class CombatSimUI {
         upgradeProgress.style.cssText = 'display:none; padding:6px 14px; flex-shrink:0;';
         upgradeProgress.innerHTML = `
             <div style="display:flex; align-items:center; gap:8px;">
-                <div style="flex:1; background:#1a1a2e; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid #333;">
+                <div style="flex:1; background:${GAME_COLORS.raised}; border-radius:4px; height:18px; overflow:hidden; position:relative; border:1px solid ${GAME_COLORS.border};">
                     <div id="mwi-csim-upgrade-progress-fill" style="height:100%; width:0%; background:linear-gradient(90deg, ${PROGRESS_FILL_START}, ${ACCENT}); border-radius:3px; transition:width 0.2s ease;"></div>
                     <span id="mwi-csim-upgrade-progress-text" style="position:absolute; top:0; left:0; right:0; text-align:center; font-size:11px; line-height:18px; color:#e0e0e0; font-weight:600;">0 / 0</span>
                 </div>
@@ -4676,7 +4696,11 @@ class CombatSimUI {
         const button = document.createElement('button');
         button.textContent = 'Export CSV';
         button.style.cssText =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; ' +
             'padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;';
         this._wireCsvButton(button, stem, build);
 
@@ -5617,7 +5641,11 @@ class CombatSimUI {
         const tolerance =
             this._bestiaryPlanTolerance >= 0 ? this._bestiaryPlanTolerance : BESTIARY_PLAN_DEFAULT_TOLERANCE;
         const inputStyle =
-            'width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
+            'width:56px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; ' +
             'padding:2px 4px; font-size:11px; text-align:center;';
         const modeLabel = mode === 'points' ? 'Points wanted' : mode === 'total' ? 'Total wanted' : 'Hours';
         const modeValue = mode === 'points' ? points : mode === 'total' ? total : hours;
@@ -5625,7 +5653,7 @@ class CombatSimUI {
         box.innerHTML = `
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
                 <span style="color:#ffb74d; font-weight:600;" title="Which zones, in which order, earn the most Bestiary points in the time given: fight wherever the next point lands soonest, then move on. Uses the kills per hour this run simulated and your current defeated counts.">Bestiary plan</span>
-                <select class="toolasha-select" id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where. Total points: how long until your Bestiary total reaches a number." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
+                <select class="toolasha-select" id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where. Total points: how long until your Bestiary total reaches a number." style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
                     <option value="hours"${mode === 'hours' ? ' selected' : ''}>Hours</option>
                     <option value="points"${mode === 'points' ? ' selected' : ''}>Points</option>
                     <option value="total"${mode === 'total' ? ' selected' : ''}>Total points</option>
@@ -5638,7 +5666,7 @@ class CombatSimUI {
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="${GAME_BTN_CSS} padding:2px 8px; font-size:11px;" ${GAME_BTN_HOVER}>Plan</button>
-                <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
+                <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
                 ${
                     // A run-scope option for an ordinary sweep: it adds every
                     // dungeon to the next run. A Dungeons run is nothing but
@@ -6051,7 +6079,7 @@ class CombatSimUI {
             }</div>
             ${shortfall}
             <div style="margin-top:6px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
-                <button id="mwi-csim-bestiary-plan-notify" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;"></button>
+                <button id="mwi-csim-bestiary-plan-notify" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;"></button>
                 <span id="mwi-csim-bestiary-plan-notify-note" style="color:#888; font-size:10px;"></span>
             </div>
         `;
@@ -6341,7 +6369,9 @@ class CombatSimUI {
         for (const item of matches) {
             const el = document.createElement('div');
             el.style.cssText =
-                'padding:3px 0; font-size:12px; color:#ccc; cursor:pointer; border-bottom:1px solid #1a1a2e;';
+                'padding:3px 0; font-size:12px; color:#ccc; cursor:pointer; border-bottom:1px solid ' +
+                GAME_COLORS.raised +
+                ';';
             el.textContent = item.name;
             el.addEventListener('mousedown', () => {
                 this._seekSelectedItem = item;
@@ -6648,7 +6678,7 @@ class CombatSimUI {
                         return `<td style="${cellStyle} color:${color};">${display}</td>`;
                     })
                     .join('');
-                return `<tr style="border-bottom:1px solid #1a1a2e;">${cells}</tr>`;
+                return `<tr style="border-bottom:1px solid ${GAME_COLORS.raised};">${cells}</tr>`;
             })
             .join('');
 
@@ -8818,7 +8848,9 @@ class CombatSimUI {
         } = data;
 
         const tileStyle =
-            'flex:1 1 100px; min-width:100px; padding:5px 8px; border:1px solid #2a2a4a; border-radius:5px; ' +
+            'flex:1 1 100px; min-width:100px; padding:5px 8px; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:5px; ' +
             'background:rgba(74, 158, 255, 0.06);';
         const tileLabel = 'display:block; color:#888; font-size:10px; white-space:nowrap;';
         const tileValue = 'display:block; font-size:15px; font-weight:700; line-height:1.3;';
@@ -9341,7 +9373,11 @@ class CombatSimUI {
             // min-width:0 so the select can shrink below its widest option: a
             // select's intrinsic width is its longest label, and one long saved
             // run pushed the whole row (buttons included) past the panel edge
-            '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1 1 0; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
+            '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1 1 0; min-width:0; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
         for (let i = 0; i < history.length; i++) {
             const sel = i === baseIdx ? ' selected' : '';
             const { short, title } = this._historyEntryLabel(history[i]);
@@ -9350,14 +9386,22 @@ class CombatSimUI {
         }
         html += '</select>';
         html +=
-            '<button id="mwi-csim-history-csv" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ' +
+            '<button id="mwi-csim-history-csv" style="background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; ' +
             'border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; ' +
             'flex-shrink:0;">Export CSV</button>';
         // Deleting saved runs one ✕ at a time is the only way out of a full
         // history, and a run left behind keeps skewing every delta below
         html +=
             '<button id="mwi-csim-history-clear" title="Delete every saved run, baseline and comparison" ' +
-            'style="background:#1a1a2e; color:#ff9a9a; border:1px solid #333; ' +
+            'style="background:' +
+            GAME_COLORS.raised +
+            '; color:#ff9a9a; border:1px solid ' +
+            GAME_COLORS.border +
+            '; ' +
             'border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; ' +
             'flex-shrink:0;">Clear all</button>';
         html += '</div>';
@@ -9492,7 +9536,11 @@ class CombatSimUI {
         if (available.length > 0) {
             html += '<div style="margin-top:6px;">';
             html +=
-                '<select class="toolasha-select" id="mwi-csim-add-comparison" style="width:100%; background:#1a1a2e; color:#aaa; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
+                '<select class="toolasha-select" id="mwi-csim-add-comparison" style="width:100%; background:' +
+                GAME_COLORS.inputBackground +
+                '; color:#aaa; border:1px solid ' +
+                GAME_COLORS.inputBorder +
+                '; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
             html += '<option value="">+ Add sim to comparison...</option>';
             for (const i of available) {
                 const { short, title } = this._historyEntryLabel(history[i]);
@@ -10074,7 +10122,7 @@ class CombatSimUI {
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
                     <input type="number" min="1" max="200" data-ability-target="${ability.hrid}" value="${target}" style="
-                        width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`;
                 })
@@ -10149,7 +10197,7 @@ class CombatSimUI {
         // it reads as "these controls belong to this checkbox"
         this.panel.querySelectorAll('[data-mode-chip]').forEach((chip) => {
             const on = modes.has(chip.getAttribute('data-mode-chip'));
-            chip.style.borderColor = on ? ACCENT_BTN_BORDER : '#2a2a4a';
+            chip.style.borderColor = on ? ACCENT_BTN_BORDER : GAME_COLORS.border;
             chip.style.background = on ? ACCENT_BG : 'transparent';
             const label = chip.querySelector('label');
             if (label) label.style.color = on ? '#e0e0e0' : '#888';
@@ -10255,7 +10303,7 @@ class CombatSimUI {
                     <input type="number" min="1" max="8" data-house-target="${room.hrid}"
                         value="${room.level >= 8 ? '' : Math.min(8, Math.max(uniform, room.level + 1))}"
                         ${room.level >= 8 ? 'disabled title="Already at max level"' : ''} style="
-                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:44px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -10335,7 +10383,7 @@ class CombatSimUI {
                                 : Math.min(shrine.maxLevel, Math.max(uniform, shrine.level + 1))
                         }"
                         ${shrine.level >= shrine.maxLevel ? 'disabled title="Already at max level"' : ''} style="
-                        width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                        width:44px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
                 )
@@ -11469,7 +11517,7 @@ class CombatSimUI {
             summary: food.keepCurrent ? 'Keep your current food' : 'Cheaper food found',
             style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
         });
-        return `<div style="margin:0 0 10px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+        return `<div style="margin:0 0 10px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${foodHead}
             <div style="color:#e0e0e0; font-size:12px; line-height:1.5;">${picksText}</div>
             ${statsLine}
@@ -11904,8 +11952,10 @@ class CombatSimUI {
         // with the top of the scroll area rather than floating below it.
         const thBase =
             'padding:3px 4px; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; ' +
-            'user-select:none; position:sticky; top:0; z-index:2; background:#12121f; line-height:1.15;';
-        const tdBase = 'padding:3px 4px; border-bottom:1px solid #1a1a2e;';
+            'user-select:none; position:sticky; top:0; z-index:2; background:' +
+            GAME_COLORS.raisedMore +
+            '; line-height:1.15;';
+        const tdBase = 'padding:3px 4px; border-bottom:1px solid ' + GAME_COLORS.raised + ';';
         // Numbers right-align and never wrap; only the Upgrade name may reflow,
         // which is what keeps sixteen columns inside a panel this wide
         const align = (c) => (c.numeric ? 'text-align:right; white-space:nowrap;' : 'text-align:left;');
@@ -11936,7 +11986,7 @@ class CombatSimUI {
         const verdicts = this._verifyEntries(this._upgradeResultsData, verifyInfo.metric);
         this._goldVerifyRows = sorted;
         const canVerify = this._canVerifyResults(this._upgradeResultsData);
-        const verifyBtn = `style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit;"`;
+        const verifyBtn = `style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:0 5px; font-size:10px; cursor:pointer; font-family:inherit;"`;
         const verifyBar =
             `<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:10px; color:#777;">` +
             `<button id="mwi-csim-gold-verify" ${VERIFY_BTN_ATTR}${canVerify && sorted.length ? '' : ' disabled'} ` +
@@ -11981,7 +12031,7 @@ class CombatSimUI {
                 `${verdict ? 'again' : 'verify'}</button></td>`;
             html += `</tr>
             <tr data-upgrade-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="${columns.length + 1}" style="padding:6px 12px; background:#0d0d1a; border-bottom:1px solid #222;">
+                <td colspan="${columns.length + 1}" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222;">
                     ${this._budgetToggleButtons(r)}
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
@@ -12034,14 +12084,18 @@ class CombatSimUI {
         const levelOptions = scoreScaleOptions(this._upgradeLevelScoreScale || DEFAULT_LEVEL_SCORE_SCALE);
         const scrollOptions = scoreScaleOptions(this._scrollScoreScale || DEFAULT_SCROLL_SCORE_SCALE);
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:1px 4px; ' +
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; padding:1px 4px; ' +
             'font-size:11px; font-family:inherit;';
 
         return `<div style="position:relative; margin-bottom:6px;">
-            <button id="mwi-csim-upgrade-cols-btn" style="background:#1a1a2e; color:#ccc; border:1px solid #333;
+            <button id="mwi-csim-upgrade-cols-btn" style="background:${GAME_COLORS.raised}; color:#ccc; border:1px solid ${GAME_COLORS.border};
                 border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer;">⚙ Columns</button>
             <div id="mwi-csim-upgrade-cols-menu" style="display:${display}; position:absolute; top:100%; left:0; z-index:5;
-                background:#12121f; border:1px solid #333; border-radius:4px; padding:8px 10px; margin-top:2px;
+                background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:4px; padding:8px 10px; margin-top:2px;
                 font-size:11px; gap:18px; box-shadow:0 4px 12px rgba(0,0,0,0.6);">
                 <div>
                     <div style="color:#888; font-weight:600; margin-bottom:4px;">Show</div>
@@ -12422,7 +12476,7 @@ class CombatSimUI {
 
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; cursor:pointer; user-select:none; white-space:nowrap;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
         const fmtLevelTime = (h) => {
             if (!Number.isFinite(h)) return '—';
@@ -12449,7 +12503,7 @@ class CombatSimUI {
             ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
             : '';
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'levels',
                 title: 'Combat levels',
@@ -12528,7 +12582,7 @@ class CombatSimUI {
                 <td style="${tdStyle}${levelScoreColor(r) ? ` color:${levelScoreColor(r)};` : ''}" data-level-score>${formatScore(r.score)}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
-                <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                <td colspan="${detailColspan}" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
@@ -12582,7 +12636,7 @@ class CombatSimUI {
         const thStyle =
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
             'cursor:pointer; user-select:none; white-space:nowrap;';
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
 
         // Greyed rather than colored when the delta is inside the run's own
@@ -12595,7 +12649,7 @@ class CombatSimUI {
             return `<span style="color:${color};">${value > 0 ? '+' : ''}${value.toFixed(2)}%</span>`;
         };
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'unpriced',
                 title: 'Measured, but not priced',
@@ -12626,14 +12680,14 @@ class CombatSimUI {
                     : 'no price could be resolved';
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-unpriced-row="${i}" data-row-key="${rowKey}">
-                <td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
+                <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
                 <td style="${tdStyle} color:#888;">${missing}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
             </tr>
             <tr data-unpriced-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="5" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                <td colspan="5" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
             </tr>`;
@@ -12732,8 +12786,8 @@ class CombatSimUI {
             'padding:4px 6px; text-align:left; border-bottom:1px solid #333; color:#888; font-weight:600; ' +
             'cursor:pointer; user-select:none; vertical-align:bottom;';
         // Headers and names wrap so the table fits the panel; the figures stay on one line
-        const tdStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap;';
-        const nameStyle = 'padding:4px 6px; border-bottom:1px solid #1a1a2e; min-width:120px;';
+        const tdStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; white-space:nowrap;';
+        const nameStyle = 'padding:4px 6px; border-bottom:1px solid ' + GAME_COLORS.raised + '; min-width:120px;';
         const arrow = (k) => (sortKey === k ? (sortAsc ? ' ▴' : ' ▾') : '');
         // Greyed when the delta is inside the run's own error, as in the unpriced table
         const cell = (r, key) => {
@@ -12758,7 +12812,7 @@ class CombatSimUI {
             'Ranks well on stats for its token cost, but costs more than the profit it adds: worth it for a ' +
             'DPS or EXP push, not for gold.';
 
-        let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
+        let html = `<div style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; border:1px solid ${GAME_COLORS.border}; border-radius:6px;">
             ${collapseHeaderHtml({
                 key: 'scrolls',
                 title: 'Scrolls, priced by their tokens',
@@ -12806,7 +12860,7 @@ class CombatSimUI {
                 }>${formatScore(r.score)}</td>
             </tr>
             <tr data-scroll-detail="${i}" data-row-key="${rowKey}" style="display:none;">
-                <td colspan="10" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">
+                <td colspan="10" style="padding:6px 12px; background:${GAME_COLORS.background}; border-bottom:1px solid #222;">
                     <div style="color:#aaa; margin-bottom:4px;">${p.verdict}. Costs ${p.basis}; adds ${p.gainText}, net ${p.netText}.</div>
                     ${this._renderUpgradeDetailCells(r, baseline)}
                 </td>
@@ -12837,13 +12891,25 @@ class CombatSimUI {
         const metricKey = this._upgradePlanMetric || UPGRADE_PLAN_METRICS[0].key;
         const money = (value) => formatKMB(Math.round(value));
         const inputStyle =
-            'width:90px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'width:90px; background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; ' +
             'padding:2px 6px; font-size:11px; font-family:inherit;';
         const btnStyle =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; ' +
             'padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;';
         const selectStyle =
-            'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.inputBackground +
+            '; color:#e0e0e0; border:1px solid ' +
+            GAME_COLORS.inputBorder +
+            '; border-radius:3px; ' +
             'padding:2px 4px; font-size:11px; font-family:inherit;';
 
         let body = '';
@@ -12958,7 +13024,7 @@ class CombatSimUI {
             summary: this._upgradeBudgetText ? `${this._upgradeBudgetText} budget` : 'no budget set',
             style: `color:${ACCENT}; font-weight:700; font-size:11px; margin-bottom:4px;`,
         });
-        return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:#0d0d1a;
+        return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:${GAME_COLORS.raised};
             border:1px solid #222; border-radius:4px;">
             ${budgetHead}
             <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; flex-wrap:wrap;">
@@ -13181,7 +13247,11 @@ class CombatSimUI {
         const id = candidateKey(result);
         const { pins, excludes } = this._budgetConstraints();
         const style =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; padding:0 5px; ' +
             'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
         const attrs = (act) =>
             `data-budget-act="${act}" data-budget-id="${escapeAttribute(id)}" ` +
@@ -13225,7 +13295,11 @@ class CombatSimUI {
                 : '';
         }
         const style =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:0 5px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; padding:0 5px; ' +
             'font-size:10px; cursor:pointer; font-family:inherit; margin-left:4px;';
         const line = (kind, id, label, act, undo) =>
             `<div style="color:#aaa; font-size:10px; padding:1px 0;" data-budget-constraint="${kind}">${kind}: ` +
@@ -13326,7 +13400,11 @@ class CombatSimUI {
         }
         const state = this._budgetConfirm;
         const btnStyle =
-            'background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; ' +
+            'background:' +
+            GAME_COLORS.raised +
+            '; color:#8ab4f8; border:1px solid ' +
+            GAME_COLORS.border +
+            '; border-radius:3px; ' +
             'padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;';
         const wrap = (inner) =>
             `<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #222;">${inner}</div>`;
@@ -14054,8 +14132,8 @@ class CombatSimUI {
                 style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;`,
             });
         const card = (inner) =>
-            `<div id="mwi-csim-order-section" style="margin-top:14px; padding:8px 10px; background:#0d0d1a; ` +
-            `border:1px solid #2a2a4a; border-radius:6px;">${inner}</div>`;
+            `<div id="mwi-csim-order-section" style="margin-top:14px; padding:8px 10px; background:${GAME_COLORS.raised}; ` +
+            `border:1px solid ${GAME_COLORS.border}; border-radius:6px;">${inner}</div>`;
         const note = (text, color = '#aaa') =>
             `<div style="color:${color}; font-size:11px; margin:4px 0;">${text}</div>`;
 
@@ -14187,7 +14265,10 @@ class CombatSimUI {
                   return entries.filter((e) => e.current || ++kept <= ABILITY_ORDER_TOP);
               })();
 
-        const td = 'padding:3px 6px; border-bottom:1px solid #1a1a2e; white-space:nowrap; text-align:right;';
+        const td =
+            'padding:3px 6px; border-bottom:1px solid ' +
+            GAME_COLORS.raised +
+            '; white-space:nowrap; text-align:right;';
         const th = 'padding:3px 6px; text-align:right; border-bottom:1px solid #333; color:#888; font-weight:600;';
         const cell = (e, value, fmt, key) => {
             if (!Number.isFinite(value)) return `<td style="${td} color:#666;">—</td>`;
@@ -14233,7 +14314,7 @@ class CombatSimUI {
         ).join('');
         const toggle =
             total > ABILITY_ORDER_TOP
-                ? `<button id="mwi-csim-order-showall" style="background:#1a1a2e; color:#8ab4f8; border:1px solid #333; ` +
+                ? `<button id="mwi-csim-order-showall" style="background:${GAME_COLORS.raised}; color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; ` +
                   `border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit; margin-top:6px;">` +
                   `${this._abilityOrderShowAll ? `Show top ${ABILITY_ORDER_TOP}` : `Show all ${total}`}</button>`
                 : '';
@@ -14241,7 +14322,7 @@ class CombatSimUI {
             head(summary) +
                 `<div style="color:#666; font-size:10px; margin-bottom:6px;">Every order of your ordinary abilities, simulated. ` +
                 `Free to apply: set it in the game. Rank by ` +
-                `<select class="toolasha-select" id="mwi-csim-order-rank" style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; ` +
+                `<select class="toolasha-select" id="mwi-csim-order-rank" style="background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; ` +
                 `border-radius:3px; padding:1px 4px; font-size:11px; font-family:inherit;">${options}</select>` +
                 `<span style="margin-left:6px;">± is one standard error of the ranked gain.</span></div>` +
                 (verdict ? note(verdict, '#9ab') : '') +

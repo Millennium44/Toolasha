@@ -297,7 +297,8 @@ const { GAME } = Utils.selectors;
 // correctly whether the platform's native popup default is light or dark.
 if (!safeStart) {
     addStyles(
-        '.toolasha-select option { background-color: #1a1a2e; color: #e0e0e0; }',
+        // Fill is GAME_COLORS.inputBackground (utils/game-look.js); this runs before the bundle is loaded
+        '.toolasha-select option { background-color: rgb(19, 20, 25); color: #e0e0e0; }',
         'toolasha-select-option-contrast'
     );
 }

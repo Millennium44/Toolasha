@@ -16,6 +16,12 @@ export const GAME_COLORS = {
     textDim: 'rgba(231, 231, 231, 0.6)',
     good: '#4ade80',
     bad: '#f87171',
+    // The game's Input_input: the same fill as the panel it sits in, set off by a 1px #454771 border
+    inputBackground: 'rgb(19, 20, 25)',
+    inputBorder: '#454771',
+    // Steps up from the panel for a box, card, tag, track or stripe that has to sit off it (midnight-800, -700)
+    raised: 'var(--color-midnight-800, #191a24)',
+    raisedMore: 'var(--color-midnight-700, #20212f)',
 };
 
 /** The frame of a panel, popup or dialog, to spread into its style */

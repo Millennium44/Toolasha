@@ -17,13 +17,18 @@ import {
 } from './trigger-tuning.js';
 import { describeTriggerRows } from './lab-condition-search.js';
 import { collapseHeaderHtml } from './collapsible-sections.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const ACCENT = '#4a9eff';
 const BTN_STYLE =
     'background:rgba(74, 158, 255, 0.2); border:1px solid rgba(74, 158, 255, 0.4); color:#4a9eff; ' +
     'padding:3px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;';
 const SELECT_STYLE =
-    'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:11px;';
+    'background:' +
+    GAME_COLORS.inputBackground +
+    '; color:#e0e0e0; border:1px solid ' +
+    GAME_COLORS.inputBorder +
+    '; border-radius:3px; padding:2px 4px; font-size:11px;';
 
 /**
  * Escape text for HTML.
@@ -56,7 +61,7 @@ export function triggerChipOptionsHtml() {
     ).join('');
     return `
         <span data-mode-options="triggers" style="display:none; align-items:center; gap:4px;">
-            <span style="color:#2a2a4a;">|</span>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-csim-trigger-scope" style="${SELECT_STYLE}"
                 title="Just me tunes only the selected player's triggers and judges them on that player's results. Whole party tunes every member's triggers and judges the party total.">
                 <option value="me" selected>Just me</option>
@@ -403,7 +408,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
         style: `color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;`,
     });
     const wrap = (inner) =>
-        `<div id="mwi-csim-trigger-results" style="border:1px solid #2a2a4a; border-radius:6px; padding:8px 10px; margin:8px 0;">${head}${inner}</div>`;
+        `<div id="mwi-csim-trigger-results" style="border:1px solid ${GAME_COLORS.border}; border-radius:6px; padding:8px 10px; margin:8px 0;">${head}${inner}</div>`;
 
     if (!result) return wrap('<div style="color:#888; font-size:12px;">Stopped before the baseline finished.</div>');
     if (result.noTunables) {
@@ -484,7 +489,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
         const c = result.combined;
         const good = c.deltaScore > 0 && result.reliable !== false;
         body +=
-            `<div style="font-size:12px; margin-top:8px; padding-top:6px; border-top:1px solid #2a2a4a;">` +
+            `<div style="font-size:12px; margin-top:8px; padding-top:6px; border-top:1px solid ${GAME_COLORS.border};">` +
             `<b>All changes together</b> (fresh seeds, ${c.seeds} runs): ` +
             `<span style="color:${good ? '#4caf50' : '#ff9800'};">Δscore ${esc(fmtScore(c.deltaScore))} ± ${esc(fmtSe(c.se))}</span>` +
             ` <span style="color:#888;">· ${deltaCells(c, profitKnown)}</span></div>`;

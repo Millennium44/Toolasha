@@ -7,6 +7,7 @@ import { PRECISIONS, DEFAULT_PRECISION, describeRow } from './trigger-tuning.js'
 import { esc } from './trigger-optimizer-view.js';
 import { LAB_TRIGGER_SCOPE, describeTriggerRows } from './lab-condition-search.js';
 import { canVerifyTriggerResult } from './verify-runner.js';
+import { GAME_COLORS } from '../../utils/game-look.js';
 
 const ACCENT = '#4a9eff';
 
@@ -333,8 +334,8 @@ function triggerVerifyHtml(group, index, verify) {
     }
     if (state?.running) return note('Verifying on fresh seeds… Stop cancels.');
     const button =
-        `<button data-lab-trigger-verify="${index}" ${verify.busy ? 'disabled' : ''} style="background:#1a1a2e; ` +
-        `color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; ` +
+        `<button data-lab-trigger-verify="${index}" ${verify.busy ? 'disabled' : ''} style="background:${GAME_COLORS.raised}; ` +
+        `color:#8ab4f8; border:1px solid ${GAME_COLORS.border}; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; ` +
         `font-family:inherit; margin-top:4px;">${state ? 'Verify again' : 'Verify'}</button>`;
     if (!state) return `<div>${button}</div>`;
     if (state.refused) return `<div>${button}</div>` + note(`Nothing to verify (${esc(state.refused)}).`);
@@ -476,7 +477,7 @@ export function renderLabTriggerResultsHtml(run, gameData, verify = null) {
         `<b style="color:#ff9800;">Simulated only: set these values in the game by hand.</b> ` +
         `Toolasha never changes a trigger in the game.</div>`;
     return (
-        `<div style="border:1px solid #2a2a4a; border-radius:6px; padding:8px 10px;">` +
+        `<div style="border:1px solid ${GAME_COLORS.border}; border-radius:6px; padding:8px 10px;">` +
         `<div style="color:${ACCENT}; font-weight:700; font-size:13px;">Trigger tuning</div>${body}${footer}</div>`
     );
 }
