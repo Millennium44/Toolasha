@@ -154,6 +154,11 @@ export function costPerDay(forecasts) {
  * Rounded **up**: nine and a half drinks is ten drinks, and a refill that leaves
  * you half an item short leaves you stopped.
  *
+ * An entry may carry `activeSeconds`, the time left on an activation already running
+ * (skilling teas only; combat, idle and labyrinth entries never set it). That time
+ * counts toward the target exactly as it counts in `secondsLeft`, so the shortfall,
+ * the purchase quantity and the displayed time left cannot disagree.
+ *
  * @param {Forecast} entry - Normalised consumable
  * @param {number} seconds - How long it should last
  * @returns {{count: number|null, cost: number|null, rateUnknown?: boolean}} Null count when the rate is unknown
@@ -163,7 +168,9 @@ export function refillFor(entry, seconds) {
     // Something not being consumed needs nothing, however long the target
     if (!(entry?.perDay > 0) || !(seconds > 0)) return { count: 0, cost: 0 };
 
-    const wanted = Math.ceil((entry.perDay * seconds) / 86400);
+    // Time the running activation already covers is not bought again; a target it covers needs nothing
+    const covered = Number.isFinite(entry.activeSeconds) && entry.activeSeconds > 0 ? entry.activeSeconds : 0;
+    const wanted = Math.max(0, Math.ceil((entry.perDay * (seconds - covered)) / 86400));
     const count = Math.max(0, wanted - Math.floor(entry.held));
 
     return { count, cost: entry.price === null ? null : count * entry.price };

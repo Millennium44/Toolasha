@@ -176,6 +176,15 @@ export function skillingConsumables(actionTypeHrid, { prices = getItemPrices } =
     result.concentration = concentration.value;
     result.concentrationSource = concentration.source;
 
+    // A tea in more than one slot is one entry. Its running time is the longest activation
+    // among the slots: they run side by side, so adding them would claim time nobody has.
+    const runningFor = new Map();
+    for (const slot of slots) {
+        if (!slot?.itemHrid || !slot.isActive) continue;
+        const seconds = Math.max(0, Number(slot.duration) || 0) / NS_PER_SECOND;
+        runningFor.set(slot.itemHrid, Math.max(runningFor.get(slot.itemHrid) || 0, seconds));
+    }
+
     const seen = new Set();
     for (const slot of slots) {
         // Empty slots arrive as null
@@ -200,7 +209,7 @@ export function skillingConsumables(actionTypeHrid, { prices = getItemPrices } =
         );
 
         // The running activation counts toward time left, as `calculateDrinkRemainingSeconds` has it
-        const activeSeconds = slot.isActive ? Math.max(0, Number(slot.duration) || 0) / NS_PER_SECOND : 0;
+        const activeSeconds = runningFor.get(slot.itemHrid) || 0;
         entry.activeSeconds = activeSeconds;
         if (entry.rateKnown && Number.isFinite(entry.secondsLeft)) entry.secondsLeft += activeSeconds;
 
