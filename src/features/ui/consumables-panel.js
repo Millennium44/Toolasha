@@ -3342,6 +3342,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         const lasts = this._cell(`${formatLargeNumber(runsHeld)} run${runsHeld === 1 ? '' : 's'}`);
         lasts.style.color = runsHeld >= runs ? ROW_COLORS.good : ROW_COLORS.bad;
 
+        // The same two-line form as an item row, so the name and Lasts stay on a narrow panel
+        if (this._narrow) return this._stackedRow({ held: heldCell, icon, name, perDay: perRunCell, cost, buy, lasts });
+
         row.append(heldCell, icon, name, perRunCell, cost, buy, lasts);
         return row;
     }

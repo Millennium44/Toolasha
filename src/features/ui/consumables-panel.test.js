@@ -1355,6 +1355,30 @@ describe('the labyrinth buy all', () => {
         expect(shopping.calls[0].items.every((i) => typeof i.name === 'string' && i.name)).toBe(true);
     });
 
+    test('a narrow panel stacks the lab rows in two lines with the name and Lasts, not a seven-column grid', async () => {
+        consumablesPanel.show();
+        await settled();
+        Object.defineProperty(consumablesPanel.bodyEl, 'clientWidth', { configurable: true, get: () => 358 });
+        consumablesPanel._render();
+        try {
+            const rows = [...consumablesPanel.bodyEl.querySelectorAll('div')].filter(
+                (el) => el.children.length === 2 && el.textContent.includes('basic_torch')
+            );
+            expect(rows.length).toBeGreaterThan(0);
+            const [top, bottom] = rows[rows.length - 1].children;
+            expect(top.textContent).toContain('basic_torch');
+            expect(top.textContent).toMatch(/runs?/);
+            expect(bottom.textContent).toContain('/run');
+            expect(
+                [...consumablesPanel.bodyEl.querySelectorAll('div')].some((el) =>
+                    el.style.gridTemplateColumns.includes('76px')
+                )
+            ).toBe(false);
+        } finally {
+            consumablesPanel._narrow = false;
+        }
+    });
+
     test('a fully stocked lab shows no buy-all line', async () => {
         game.inventory = [
             { itemHrid: '/items/basic_torch', count: 500, itemLocationHrid: '/item_locations/inventory' },
