@@ -215,8 +215,9 @@ describe('moveRow', () => {
 describe('the picker groups', () => {
     const SHIPPED = {
         Wealth: ['netWorth', 'coins', 'inventoryValue', 'marketListings', 'watchlist', 'equipmentWatch'],
-        Skilling: ['skillLevel', 'timeToLevel', 'experiencePerHour', 'queueTimeLeft', 'consumables', 'taskTokens'],
-        Combat: ['combatStatus', 'combatLevel', 'dps', 'deathsPerHour', 'totalProfit', 'treasure', 'combatText'],
+        'Combat and skilling': ['experiencePerHour', 'totalProfit', 'consumables', 'timeToLevel', 'combatStatus'],
+        Skilling: ['skillLevel', 'queueTimeLeft', 'taskTokens'],
+        Combat: ['combatLevel', 'dps', 'deathsPerHour', 'treasure', 'combatText'],
         'Account and goals': ['accountView', 'buildScore', 'noticeLog', 'sessionBriefing', 'goalNextStep'],
         Guild: ['guildTrialsPace', 'guildRoster', 'guildTrialLedger'],
         Readouts: ['replayCheck', 'predictionCalibration', 'stunPersistence', 'waveGap', 'tickPeriod'],
@@ -240,6 +241,7 @@ describe('the picker groups', () => {
         expect(groupFor({ key: 'someExternalTile', group: 'Guild' })).toBe('Guild');
         expect(groupFor({ key: 'someExternalTile', group: 'Not a group' })).toBe('Other');
         expect(ROW_GROUPS[ROW_GROUPS.length - 1]).toBe('Other');
+        expect(ROW_GROUPS[0]).toBe('Combat and skilling');
     });
 });
 
