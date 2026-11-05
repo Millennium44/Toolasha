@@ -3306,14 +3306,18 @@ class OverlayPanel {
                 this.fitResizeObserver = new ResizeObserver((entries) => {
                     for (const entry of entries) {
                         const target = entry.target;
-                        // Width only: a height change is the content, and fitting changes heights
-                        if (Math.abs((entry.contentRect?.width || 0) - (target._fitWidth ?? -1)) < 1) continue;
+                        // Width only: a height change is the content, and fitting changes heights.
+                        // Border box against `offsetWidth` (what `_fitWidth` records): the content box
+                        // is the padding narrower, so comparing it never matched and every height
+                        // change marked the tile dirty
+                        const width = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect?.width ?? 0;
+                        if (Math.abs(width - (target._fitWidth ?? -1)) < 1) continue;
                         this.fitDirty.add(target);
                     }
                     if (this.fitDirty.size) this._scheduleFit();
                 });
             }
-            this.fitResizeObserver.observe(tile);
+            this.fitResizeObserver.observe(tile, { box: 'border-box' });
         }
         if (typeof MutationObserver === 'function') {
             if (!this.fitMutationObserver) {
@@ -3393,7 +3397,7 @@ class OverlayPanel {
         }
 
         let pending = batch.filter((tile) => this._overflows(tile._content));
-        for (const tile of batch) tile._fitWidth = tile.clientWidth;
+        for (const tile of batch) tile._fitWidth = tile.offsetWidth;
 
         const basePx = this._baseFontPx();
         const stepsFor = (tile) => {

@@ -203,6 +203,39 @@ describe('fitting the text of a tile', () => {
         expect(fontSize()).toBe('77%');
     });
 
+    test('the resize observer marks a tile dirty for a width change only, not for its padding', () => {
+        const callbacks = [];
+        vi.stubGlobal(
+            'ResizeObserver',
+            class {
+                constructor(callback) {
+                    callbacks.push(callback);
+                }
+                observe() {}
+                unobserve() {}
+                disconnect() {}
+            }
+        );
+        try {
+            overlayPanel.hide();
+            overlayPanel.show();
+            // Border box 200 (offsetWidth), content box 192 inside its 4 px side padding
+            vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(200);
+            fit();
+            overlayPanel.fitDirty.clear();
+            // The panel and dock observers are made too; each ignores entries that are not its own
+            const notify = (entries) => callbacks.forEach((callback) => callback(entries));
+
+            notify([{ target: tile(), contentRect: { width: 192 }, borderBoxSize: [{ inlineSize: 200 }] }]);
+            expect(overlayPanel.fitDirty.size).toBe(0);
+
+            notify([{ target: tile(), contentRect: { width: 252 }, borderBoxSize: [{ inlineSize: 260 }] }]);
+            expect(overlayPanel.fitDirty.has(tile())).toBe(true);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     test('a tile that is not on screen is not measured', () => {
         renders.natural = 128;
         offsetWidthSpy.mockReturnValue(0);
