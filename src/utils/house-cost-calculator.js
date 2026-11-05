@@ -33,6 +33,7 @@
 import dataManager from '../core/data-manager.js';
 import marketAPI from '../api/marketplace.js';
 import { getItemPrice } from './market-data.js';
+import { maxHouseRoomLevel } from './game-maximums.js';
 
 /** Whether {@link initialize} has already made sure market data is loaded */
 let marketReady = false;
@@ -235,8 +236,9 @@ export async function calculateCumulativeCost(houseRoomHrid, currentLevel, targe
         throw new Error('Target level must be greater than current level');
     }
 
-    if (targetLevel > 8) {
-        throw new Error('Maximum house level is 8');
+    const roomCap = maxHouseRoomLevel();
+    if (targetLevel > roomCap) {
+        throw new Error(`Maximum house level is ${roomCap}`);
     }
 
     let totalCoins = 0;

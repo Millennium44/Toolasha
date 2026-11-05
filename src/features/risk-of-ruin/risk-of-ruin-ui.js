@@ -43,7 +43,7 @@ import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { suggestProtectionSubstituteProxyPrice } from '../../utils/protection-substitute-lookup.js';
 import { setCustomPriceOverride, getCustomPriceOverridesAsync } from '../settings/custom-price-overrides.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
-import { maxEnhancementLevel } from '../../utils/game-maximums.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL } from '../../utils/game-maximums.js';
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
@@ -562,9 +562,9 @@ class RiskOfRuinUI {
                 <label style="${labelStyle}">Item to enhance</label>
                 <input id="mwi-ror-item" list="mwi-ror-enhance-items" style="${inputStyle}" placeholder="Start typing an item name...">
                 <label style="${labelStyle}">Target level</label>
-                <input id="mwi-ror-target" type="number" min="1" max="${maxEnhancementLevel()}" step="1" value="10" style="${inputStyle}">
+                <input id="mwi-ror-target" type="number" min="1" max="${ENHANCEMENT_SOLVER_MAX_LEVEL}" step="1" value="10" style="${inputStyle}">
                 <label style="${labelStyle}">Start level</label>
-                <input id="mwi-ror-start-level" type="number" min="0" max="${maxEnhancementLevel() - 1}" step="1" value="0" style="${inputStyle}">
+                <input id="mwi-ror-start-level" type="number" min="0" max="${ENHANCEMENT_SOLVER_MAX_LEVEL - 1}" step="1" value="0" style="${inputStyle}">
                 <label style="${labelStyle}">Protect from level (0 = never)</label>
                 <input id="mwi-ror-protect-from" type="number" min="0" max="19" step="1" value="0" style="${inputStyle}">
             `;

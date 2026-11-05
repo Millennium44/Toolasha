@@ -404,7 +404,7 @@ class HouseCostDisplay {
         const currentLevel = houseCostCalculator.getCurrentRoomLevel(houseRoomHrid);
 
         // Don't show if already max level
-        if (currentLevel >= 8) {
+        if (currentLevel >= maxHouseRoomLevel()) {
             this._cumulativeState = null;
             this._costContext = null;
             return;
@@ -785,7 +785,7 @@ class HouseCostDisplay {
         `;
 
         // Add options
-        for (let level = currentLevel + 1; level <= 8; level++) {
+        for (let level = currentLevel + 1; level <= maxHouseRoomLevel(); level++) {
             const option = document.createElement('option');
             option.value = level;
             option.textContent = level;
@@ -795,7 +795,9 @@ class HouseCostDisplay {
         // Default to next level (currentLevel + 1), retaining the player's
         // selection when an inventory or price update redraws this section.
         const defaultLevel =
-            targetLevelOverride > currentLevel && targetLevelOverride <= 8 ? targetLevelOverride : currentLevel + 1;
+            targetLevelOverride > currentLevel && targetLevelOverride <= maxHouseRoomLevel()
+                ? targetLevelOverride
+                : currentLevel + 1;
         dropdown.value = String(defaultLevel);
 
         headerRow.appendChild(label);
@@ -1356,7 +1358,7 @@ class HouseCostDisplay {
         }
 
         const newLevel = houseCostCalculator.getCurrentRoomLevel(houseRoomHrid);
-        if (newLevel >= 8) {
+        if (newLevel >= maxHouseRoomLevel()) {
             costContainer.innerHTML = '';
             this._cumulativeState = null;
             this._costContext = null;

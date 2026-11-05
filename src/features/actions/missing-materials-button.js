@@ -65,7 +65,7 @@ import {
     reservedElsewhere,
     shortfallNote,
 } from '../../utils/inventory-reservations.js';
-import { maxEnhancementLevel } from '../../utils/game-maximums.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL } from '../../utils/game-maximums.js';
 
 /**
  * The owner this feature claims stock under, while its tabs are open.
@@ -541,7 +541,7 @@ function getTargetLevelFromUI(panel) {
     const input = findEnhancingInput(panel, 'target');
     if (input && input.value) {
         const value = parseInt(input.value, 10);
-        if (!isNaN(value)) return Math.max(1, Math.min(maxEnhancementLevel(), value));
+        if (!isNaN(value) && value <= ENHANCEMENT_SOLVER_MAX_LEVEL) return Math.max(1, value);
     }
 
     return null;

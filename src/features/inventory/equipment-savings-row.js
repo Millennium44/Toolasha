@@ -123,7 +123,7 @@ import {
     targetKey,
     migrateSavingsTargets,
 } from '../../utils/equipment-savings.js';
-import { maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
 
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
 const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
@@ -1230,7 +1230,7 @@ const SWEPT_RUN_LIMIT = 400;
  * @returns {number|null} Coins, or null when the run cannot be modelled
  */
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
-    if (!(targetLevel > startLevel) || targetLevel > maxEnhancementLevel()) return null;
+    if (!(targetLevel > startLevel) || targetLevel > ENHANCEMENT_SOLVER_MAX_LEVEL) return null;
 
     // The character's own gear, skill and teas — always. This path only fires when the
     // finished piece has no ask at any price, so there is nobody else whose bench could

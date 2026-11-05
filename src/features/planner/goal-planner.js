@@ -81,7 +81,12 @@
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { canStartAction } from '../../utils/efficiency.js';
-import { gameMaximumsLoaded, maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
+import {
+    ENHANCEMENT_SOLVER_MAX_LEVEL,
+    gameMaximumsLoaded,
+    maxHouseRoomLevel,
+    maxLevel,
+} from '../../utils/game-maximums.js';
 
 /** The goal kinds this version plans, and what to call them */
 export const GOAL_TYPES = {
@@ -313,7 +318,12 @@ export function normalizeGoal(raw, { keepUnloaded = false } = {}) {
             return {
                 ...base,
                 itemHrid: raw.itemHrid,
-                enhancementLevel: clampInt(raw.enhancementLevel, 0, cap(maxEnhancementLevel), 0),
+                enhancementLevel: clampInt(
+                    raw.enhancementLevel,
+                    0,
+                    cap(() => ENHANCEMENT_SOLVER_MAX_LEVEL),
+                    0
+                ),
             };
         }
         case 'skill': {

@@ -18,6 +18,13 @@ export const FALLBACK_MAX_LEVEL = 200;
 /** Highest enhancement level, when the enhancement multiplier table is missing */
 export const FALLBACK_MAX_ENHANCEMENT_LEVEL = 20;
 
+/**
+ * The highest enhancement target the cost solver can model, whatever the game's cap becomes. Readers that
+ * feed the solver clamp to or refuse above this, so a raised cap shows a level that is not computed rather
+ * than a wrong number or a throw. Mirrors SOLVER_MAX_LEVEL in enhancement-calculator.js.
+ */
+export const ENHANCEMENT_SOLVER_MAX_LEVEL = 20;
+
 /** Highest guild building level, when the building detail map is missing */
 export const FALLBACK_MAX_GUILD_BUILDING_LEVEL = 20;
 

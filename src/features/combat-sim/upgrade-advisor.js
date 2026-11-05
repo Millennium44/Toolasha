@@ -233,11 +233,11 @@ export function getStyleExcludedSkills(playerDTO, gameData) {
  * Get the next ability level target (next multiple of 10) above the current level.
  * Used as fallback when no explicit target level is provided.
  * @param {number} currentLevel - Current ability level
- * @returns {number|null} Next target level, or null if at max (200)
+ * @returns {number|null} Next target level, or null if at the level cap
  */
 function getNextAbilityBreakpoint(currentLevel) {
     const next = Math.ceil((currentLevel + 1) / 10) * 10;
-    return next <= 200 ? next : null;
+    return next <= maxLevel() ? next : null;
 }
 
 /**
