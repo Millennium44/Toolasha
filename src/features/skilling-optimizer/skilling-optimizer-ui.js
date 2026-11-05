@@ -779,7 +779,7 @@ class SkillingSimulatorUI {
             display: ${currentHrid ? 'block' : 'none'};
         `;
         enhInput.addEventListener('change', () => {
-            const level = Math.max(0, Math.min(20, parseInt(enhInput.value, 10) || 0));
+            const level = Math.max(0, Math.min(maxEnhancementLevel(), parseInt(enhInput.value, 10) || 0));
             enhInput.value = String(level);
             const existing = this.equipment.get(locationHrid);
             if (existing) existing.enhancementLevel = level;

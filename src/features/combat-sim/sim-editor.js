@@ -3254,7 +3254,7 @@ export class SimEditor {
         editorArea.querySelectorAll('[data-house-hrid]').forEach((input) => {
             input.addEventListener('change', () => {
                 const hrid = input.dataset.houseHrid;
-                const val = Math.max(0, Math.min(8, parseInt(input.value) || 0));
+                const val = Math.max(0, Math.min(maxHouseRoomLevel(), parseInt(input.value) || 0));
                 input.value = val;
                 if (val === 0) {
                     delete dto.houseRooms[hrid];

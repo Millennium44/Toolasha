@@ -122,7 +122,7 @@ import {
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { sharedProfileSummary } from '../../utils/shared-profile-status.js';
-import { maxLevel, maxEnhancementLevel } from '../../utils/game-maximums.js';
+import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -10743,9 +10743,9 @@ class CombatSimUI {
                     (room) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
-                    <input type="number" min="1" max="8" data-house-target="${room.hrid}"
-                        value="${room.level >= 8 ? '' : Math.min(8, Math.max(uniform, room.level + 1))}"
-                        ${room.level >= 8 ? 'disabled title="Already at max level"' : ''} style="
+                    <input type="number" min="1" max="${maxHouseRoomLevel()}" data-house-target="${room.hrid}"
+                        value="${room.level >= maxHouseRoomLevel() ? '' : Math.min(maxHouseRoomLevel(), Math.max(uniform, room.level + 1))}"
+                        ${room.level >= maxHouseRoomLevel() ? 'disabled title="Already at max level"' : ''} style="
                         width:44px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
@@ -10765,7 +10765,7 @@ class CombatSimUI {
         grid.querySelectorAll('[data-house-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.houseTarget] = Math.min(8, value);
+                targets[input.dataset.houseTarget] = Math.min(maxHouseRoomLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
