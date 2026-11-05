@@ -2,7 +2,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import dataManager from '../core/data-manager.js';
 import loadoutSnapshot from '../features/combat/loadout-snapshot.js';
-import { resolveActionContext, resolveLoadoutContext } from './action-context.js';
+import { resolveActionContext, resolveLoadoutContext, resolveRunningContext } from './action-context.js';
 
 vi.mock('../core/data-manager.js', () => ({
     default: {
@@ -180,5 +180,52 @@ describe("resolveLoadoutContext (a queued action's own loadout)", () => {
     test('an unknown saved id or a missing id falls back to the per-skill resolution', () => {
         expect(resolveLoadoutContext(TYPE, 99999).equipment).toBe(SNAPSHOT_EQ);
         expect(resolveLoadoutContext(TYPE, undefined).equipment).toBe(SNAPSHOT_EQ);
+    });
+});
+
+describe('resolveRunningContext (the running action never takes the skill default)', () => {
+    const SAVED = {
+        id: 30284,
+        equipment: [
+            { itemHrid: '/items/saved_pan', itemLocationHrid: '/item_locations/main_hand', enhancementLevel: 0 },
+        ],
+        drinks: [{ itemHrid: '/items/snapshot_tea' }],
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        dataManager.getEquipment.mockReturnValue(CURRENT_EQ);
+        dataManager.getActionDrinkSlots.mockReturnValue(CURRENT_DRINKS);
+        dataManager.getInventory.mockReturnValue([
+            { itemHrid: '/items/current_tea', count: 5 },
+            { itemHrid: '/items/snapshot_tea', count: 3 },
+        ]);
+        loadoutSnapshot.getSnapshotForSkill.mockReturnValue(SNAPSHOT_EQ);
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(SNAPSHOT_DRINKS);
+        loadoutSnapshot.getSnapshotById.mockImplementation((id) => (id === 30284 ? SAVED : null));
+        loadoutSnapshot.resolveEquipment.mockImplementation((snap) => snap.equipment);
+    });
+
+    test('no numeric id is null, so the caller keeps its own resolution', () => {
+        expect(resolveRunningContext(TYPE, undefined)).toBeNull();
+        expect(resolveRunningContext(TYPE, null)).toBeNull();
+    });
+
+    test('id 0 is the live gear and slots, not the skill default', () => {
+        const result = resolveRunningContext(TYPE, 0);
+        expect(result.equipment).toBe(CURRENT_EQ);
+        expect(result.drinks).toEqual(CURRENT_DRINKS);
+    });
+
+    test('a saved id is that loadout', () => {
+        const result = resolveRunningContext(TYPE, 30284);
+        expect(result.equipment.get('/item_locations/main_hand').itemHrid).toBe('/items/saved_pan');
+        expect(result.drinks).toEqual(SAVED.drinks);
+    });
+
+    test('a deleted id reads the live gear and slots, not another loadout via the skill default', () => {
+        const result = resolveRunningContext(TYPE, 99999);
+        expect(result.equipment).toBe(CURRENT_EQ);
+        expect(result.drinks).toEqual(CURRENT_DRINKS);
     });
 });
