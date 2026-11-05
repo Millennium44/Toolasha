@@ -114,6 +114,7 @@ async function calculate(actionHrid, type, upgradeLevel, actionContext, loadoutK
     return {
         profitPerHour: data.profitPerHour,
         hasMissingPrices: Boolean(data.hasMissingPrices),
+        excludeSellTax: Boolean(data.excludeSellTax),
         upgradeLevel,
         loadoutKey,
         pricingMode: data.pricingMode || config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
@@ -210,8 +211,9 @@ export function runningSkillingProfit() {
  */
 export function skillingProfitVersion(reading) {
     if (reading.state === 'ready') {
-        const { profitPerHour, hasMissingPrices, pricingMode, upgradeLevel, loadoutKey } = reading.estimate;
-        return `skill|${reading.actionName}|+${upgradeLevel || 0}|${loadoutKey || ''}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${pricingMode}`;
+        const { profitPerHour, hasMissingPrices, excludeSellTax, pricingMode, upgradeLevel, loadoutKey } =
+            reading.estimate;
+        return `skill|${reading.actionName}|+${upgradeLevel || 0}|${loadoutKey || ''}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${excludeSellTax ? 1 : 0}|${pricingMode}`;
     }
     return `skill|${reading.actionName}|${reading.state}${reading.failed ? '!' : ''}`;
 }

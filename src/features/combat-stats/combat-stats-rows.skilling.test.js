@@ -217,6 +217,29 @@ describe('Total Profit', () => {
         expect(tile.title).toContain('no market price');
     });
 
+    test('an estimate leaving out the sell tax carries the warning, and its version moves with it', async () => {
+        const answer = {
+            profitPerHour: 400_000,
+            revenuePerHour: 450_000,
+            hasMissingPrices: false,
+            pricingMode: 'hybrid',
+        };
+        game.gather = vi.fn(async () => ({ ...answer, excludeSellTax: true }));
+        run(FORAGING, '/action_types/foraging', 'Star Fruit');
+        draw('totalProfit');
+        await settle();
+
+        const tile = draw('totalProfit');
+        expect(tile.textContent).toContain('est. ⚠');
+        expect(tile.title).toContain('Sell tax excluded');
+
+        const { runningSkillingProfit, skillingProfitVersion } = await import('./skilling-profit-estimate.js');
+        const reading = runningSkillingProfit();
+        const flagged = skillingProfitVersion(reading);
+        const plain = skillingProfitVersion({ ...reading, estimate: { ...reading.estimate, excludeSellTax: false } });
+        expect(flagged).not.toBe(plain);
+    });
+
     test('a loss reads as a loss', async () => {
         game.gather = vi.fn(async () => ({ profitPerHour: -52_000, hasMissingPrices: false, pricingMode: 'hybrid' }));
         run(FORAGING, '/action_types/foraging', 'Star Fruit');
