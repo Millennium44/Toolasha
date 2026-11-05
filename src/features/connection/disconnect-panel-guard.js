@@ -31,12 +31,17 @@ export const GRACE_MS = 3000;
 
 /**
  * `visibility`, not `display`: layout is kept, so no panel is re-measured or re-clamped into a new
- * position while it is out of sight.
+ * position while it is out of sight. Descendants are named too: a child that sets its own
+ * `visibility: visible` (a widget's selected label, some Bulk Sell controls) overrides an inherited
+ * `hidden`, even an `!important` one, and would draw on its own over the game's message.
  */
 const CSS = `
 body.${BODY_CLASS} [${SURFACE_ATTRIBUTE}],
+body.${BODY_CLASS} [${SURFACE_ATTRIBUTE}] *,
 body.${BODY_CLASS} .toolasha-scroll-planner-bar,
-body.${BODY_CLASS} .toolasha-scroll-planner-modal {
+body.${BODY_CLASS} .toolasha-scroll-planner-bar *,
+body.${BODY_CLASS} .toolasha-scroll-planner-modal,
+body.${BODY_CLASS} .toolasha-scroll-planner-modal * {
     visibility: hidden !important;
     pointer-events: none !important;
 }

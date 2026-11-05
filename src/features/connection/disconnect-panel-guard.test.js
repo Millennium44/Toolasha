@@ -74,6 +74,14 @@ describe('disconnect panel guard', () => {
         expect(panel.style.display).toBe('');
     });
 
+    test('the rule reaches descendants, so a child set to visibility: visible hides with its panel', () => {
+        guard.initialize();
+        const css = document.getElementById('toolasha-disconnect-panel-guard').textContent;
+        expect(css).toMatch(/\[data-toolasha-surface\] \*/);
+        expect(css).toMatch(/\.toolasha-scroll-planner-bar \*/);
+        expect(css).toMatch(/\.toolasha-scroll-planner-modal \*/);
+    });
+
     test('reconnect: a socket opening restores everything', () => {
         guard.initialize();
         open('a');
