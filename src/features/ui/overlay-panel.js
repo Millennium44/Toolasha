@@ -256,6 +256,11 @@ const DEFAULT_TILE_HEIGHT = 30;
  * carries the last shape it was given, and whatever the panel puts in it next
  * is laid out by somebody else's rules.
  */
+/** Fractions of its own size a tile's text steps down through when a line does not fit */
+const FIT_STEPS = [0.9, 0.8, 0.75];
+/** A tile's text is never fitted below this many rendered pixels */
+const FIT_MIN_PX = 10;
+
 const CONTENT_STYLE = { width: '100%', height: 'auto', minHeight: '0', overflow: 'hidden' };
 
 /** Marks the container the docked panel was put into, so the sheet can find it */
@@ -485,6 +490,12 @@ class OverlayPanel {
         this.onWindowResize = null;
         /** Watches the panel's own box, which changes without a window resize */
         this.panelObserver = null;
+        /** Tiles whose text has to be measured again, and the observers and frame that say so */
+        this.fitDirty = new Set();
+        this.fitResizeObserver = null;
+        this.fitMutationObserver = null;
+        this.fitPending = false;
+        this.fitBasePx = 0;
         /** How many columns the grid currently has, so a resize can tell a change from a nudge */
         this.columns = 0;
         /** The scroller width the tiles were last drawn for */
@@ -3125,6 +3136,8 @@ class OverlayPanel {
         const wanted = new Set(full.map((row) => row.key));
         for (const [key, tile] of this.tiles) {
             if (!wanted.has(key)) {
+                this.fitResizeObserver?.unobserve(tile);
+                this.fitDirty.delete(tile);
                 tile.remove();
                 this.tiles.delete(key);
             }
@@ -3172,6 +3185,136 @@ class OverlayPanel {
 
         if (!drawn) {
             this.canvasEl.appendChild(this._canvasNote('Nothing to report yet — tiles appear as data arrives.'));
+        }
+
+        // The panel's text scale changes every tile's pixel size without touching
+        // any tile's own percentage
+        const basePx = this._baseFontPx();
+        if (basePx !== this.fitBasePx) {
+            this.fitBasePx = basePx;
+            for (const tile of this.tiles.values()) this.fitDirty.add(tile);
+        }
+        if (this.fitDirty.size) this._scheduleFit();
+    }
+
+    /**
+     * Watch a tile for the two things that change whether its text fits and that
+     * no draw announces: its content changing (a row that rebuilt itself — an
+     * unchanged draw touches nothing, so it is not seen) and its width changing
+     * (a resize, a column count, a span). Both only mark the tile dirty.
+     * @param {HTMLElement} tile - The tile
+     */
+    _watchTileFit(tile) {
+        if (typeof ResizeObserver === 'function') {
+            if (!this.fitResizeObserver) {
+                this.fitResizeObserver = new ResizeObserver((entries) => {
+                    for (const entry of entries) {
+                        const target = entry.target;
+                        // Width only: a height change is the content, and fitting changes heights
+                        if (Math.abs((entry.contentRect?.width || 0) - (target._fitWidth ?? -1)) < 1) continue;
+                        this.fitDirty.add(target);
+                    }
+                    if (this.fitDirty.size) this._scheduleFit();
+                });
+            }
+            this.fitResizeObserver.observe(tile);
+        }
+        if (typeof MutationObserver === 'function') {
+            if (!this.fitMutationObserver) {
+                this.fitMutationObserver = new MutationObserver((records) => {
+                    for (const record of records) {
+                        const tile = (record.target.closest ? record.target : record.target.parentElement)?.closest(
+                            '[data-overlay-row]'
+                        );
+                        if (tile) this.fitDirty.add(tile);
+                    }
+                    if (this.fitDirty.size) this._scheduleFit();
+                });
+            }
+            this.fitMutationObserver.observe(tile._content, { childList: true, subtree: true, characterData: true });
+        }
+    }
+
+    /**
+     * Ask for the dirty tiles to be fitted, once, after the browser has laid out.
+     * Coalesced to a frame, and never a redraw: fitting writes a tile's font size
+     * and nothing a row's `version()` or the draw signature looks at.
+     */
+    _scheduleFit() {
+        if (this.fitPending) return;
+        this.fitPending = true;
+        const run = () => {
+            this.fitPending = false;
+            this._fitTiles();
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
+    }
+
+    /**
+     * Whether any line in a tile's content is wider than the box it is drawn in.
+     * Reads only. `scrollWidth` beats `clientWidth` exactly when an ellipsis is
+     * showing or a line is clipped.
+     * @param {HTMLElement} content - The tile's content box
+     * @returns {boolean} True when something is cut off
+     */
+    _overflows(content) {
+        for (const element of content.querySelectorAll('div, span')) {
+            if (element.scrollWidth > element.clientWidth + 1) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Shrink the text of each tile that has changed until it shows in full.
+     *
+     * Per tile, from the player's own size (text scale × tile zoom) in steps down
+     * to a floor of 75% and never below 10 rendered pixels; stops at the first
+     * step that fits, and keeps the floor (and its ellipsis) when none does. The
+     * result is derived from the tile's content and width, so it is never stored.
+     * Only tiles in `fitDirty` are touched — new content, a new width or a new
+     * size — and each pass is all writes then all reads, so the cost is a layout
+     * per step for the whole batch, not per tile.
+     */
+    _fitTiles() {
+        const batch = [];
+        for (const tile of this.fitDirty) {
+            if (tile._content && tile.isConnected && tile.style.display !== 'none' && tile.offsetWidth > 0) {
+                batch.push(tile);
+                this.fitDirty.delete(tile);
+            } else {
+                // Not on screen: forget it, and forget the width, so that showing it
+                // again looks like a change to the resize observer and fits it then
+                tile._fitWidth = -1;
+                this.fitDirty.delete(tile);
+            }
+        }
+        if (!batch.length) return;
+
+        // Start from the full size; a tile already there needs no write
+        for (const tile of batch) {
+            if (tile._content.style.fontSize) tile._content.style.fontSize = '';
+        }
+
+        let pending = batch.filter((tile) => this._overflows(tile._content));
+        for (const tile of batch) tile._fitWidth = tile.clientWidth;
+
+        const basePx = this._baseFontPx();
+        const stepsFor = (tile) => {
+            const px = (basePx * (tile._rowZoom ?? DEFAULT_ZOOM)) / 100;
+            const floor = Math.max(FIT_STEPS[FIT_STEPS.length - 1], FIT_MIN_PX / px);
+            return [...new Set(FIT_STEPS.map((step) => Math.max(step, floor)))].filter((step) => step < 1);
+        };
+
+        for (let index = 0; pending.length; index += 1) {
+            const stepping = [];
+            for (const tile of pending) {
+                const step = stepsFor(tile)[index];
+                if (step === undefined) continue;
+                tile._content.style.fontSize = `${Math.round(step * 100)}%`;
+                stepping.push(tile);
+            }
+            pending = stepping.filter((tile) => this._overflows(tile._content));
         }
     }
 
@@ -3222,6 +3365,7 @@ class OverlayPanel {
         // eleven properties a second, for a layout that changes when somebody
         // drags a tile. Reading `style.x` back is a cheap inline-style read; it
         // does not touch layout.
+        tile._rowZoom = row.zoom;
         const want = {
             display: '',
             // The whole of a tile's geometry. Width comes from the columns it
@@ -3237,7 +3381,11 @@ class OverlayPanel {
             touchAction: this.isEditable ? 'none' : '',
         };
         for (const [property, value] of Object.entries(want)) {
-            if (tile.style[property] !== value) tile.style[property] = value;
+            if (tile.style[property] !== value) {
+                tile.style[property] = value;
+                // Text that changed size may no longer fit the width it had
+                if (property === 'fontSize') this.fitDirty.add(tile);
+            }
         }
 
         // The borders are their own case: `border` is a shorthand that resets the
@@ -3501,6 +3649,7 @@ class OverlayPanel {
         Object.assign(content.style, CONTENT_STYLE);
         tile.appendChild(content);
         tile._content = content;
+        this._watchTileFit(tile);
 
         // The right edge rather than the corner, because there is nothing left
         // to drag downwards: height is content now, and the only thing a tile
@@ -3950,6 +4099,12 @@ class OverlayPanel {
         }
         this._spanTeardowns?.clear();
         this.tiles.clear();
+        this.fitResizeObserver?.disconnect();
+        this.fitResizeObserver = null;
+        this.fitMutationObserver?.disconnect();
+        this.fitMutationObserver = null;
+        this.fitDirty.clear();
+        this.fitBasePx = 0;
 
         if (this.onPickerDismiss) {
             document.removeEventListener('pointerdown', this.onPickerDismiss, true);
