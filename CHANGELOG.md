@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Nature healer party template
+
+The Party Finder templates gain a Nature healer build beside the Nature template, which is now named Nature DPS.
+
 ### Task Board bar order on desktop
 
 The desktop Task Board bar now matches the phone: the task count, Upgrade Capacity and Sort Tasks in the game's order, with the reroll walk right after them.
