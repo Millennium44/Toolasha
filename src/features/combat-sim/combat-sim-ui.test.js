@@ -337,6 +337,7 @@ vi.mock('../../core/data-manager.js', () => ({
         // party member's) must never fall through to this for a room it lacks
         getHouseRoomLevel: (hrid) => mocks.houseRoomLevels?.[hrid] || 0,
         getCharacterMonsters: () => mocks.monsters,
+        getCharacterMonstersAt: () => mocks.monstersAt ?? null,
         getActionDetails: (hrid) => mocks.actionDetails?.[hrid] ?? null,
         // Kept so a test can fire an event the panel listens for
         on: (event, handler) => {
@@ -10506,7 +10507,8 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             expect(zone.creditsPerHour[MARK]).toBeCloseTo(6, 9);
             expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
             expect(zone.isDungeon).toBe(true);
-            expect(zone.paceLabel).toBe('your 3 runs');
+            expect(zone.paceLabel).toBe('your 3 runs, no wipes counted');
+            expect(zone.paceWarn).toBe(true);
             expect(zone.note).toContain('measured (3 runs, few runs)');
             expect(zone.note).toContain('spawn tables');
             expect(zone.note).toContain('assumes every attempt clears');
@@ -10515,7 +10517,119 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         test('wipes with no clean clear, with runs: the same, even with a few completions', () => {
             const zone = bestiaryPlanZoneForRow(coveRow({ completions: 3 }), [run()], who);
             expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
-            expect(zone.paceLabel).toBe('your 1 run');
+            expect(zone.paceLabel).toBe('your 1 run, no wipes counted');
+        });
+
+        test('1 clear and 20 wipes a day in the sim, one 20-minute clear of yours: 72 clears, and marked', () => {
+            const zone = bestiaryPlanZoneForRow(
+                coveRow({ completions: 1, failed: 20, simHours: 24 }),
+                [run({ duration: 1_200_000 })],
+                who
+            );
+            expect(zone.encountersPerHour * 24).toBeCloseTo(72, 9);
+            expect(zone.paceLabel).toBe('your 1 run, no wipes counted');
+            expect(zone.paceWarn).toBe(true);
+        });
+
+        test('enough runs against a sim that rarely wipes earn the plain label', () => {
+            const runs = Array.from({ length: 5 }, () => run());
+            const zone = bestiaryPlanZoneForRow(
+                coveRow({ completions: 24, failed: 1, cleanClearSeconds: 900 }),
+                runs,
+                who
+            );
+            expect(zone.paceLabel).toBe('your 5 runs');
+            expect(zone.paceWarn).toBe(false);
+            expect(zone.note).toContain('assumes every attempt clears');
+        });
+
+        test('enough runs against a sim that mostly wipes stay marked', () => {
+            const runs = Array.from({ length: 30 }, () => run());
+            const zone = bestiaryPlanZoneForRow(
+                coveRow({ completions: 3, failed: 9, cleanClearSeconds: 900 }),
+                runs,
+                who
+            );
+            expect(zone.paceLabel).toBe('your 30 runs, no wipes counted');
+            expect(zone.paceWarn).toBe(true);
+        });
+
+        describe('recorded failed attempts', () => {
+            const day = (n) => `2026-10-${String(n).padStart(2, '0')}T00:00:00Z`;
+            const clear = (n) => run({ timestamp: day(n) });
+            const fail = (n, over = {}) => run({ timestamp: day(n), result: 'fail', wavesCompleted: 9, ...over });
+
+            test('charge the clear rate, are named on the row, and leave the clear time alone', () => {
+                const zone = bestiaryPlanZoneForRow(coveRow(), [fail(1), clear(2), clear(3), clear(4)], who);
+                // Three clears in four attempts of a 30-minute clear: 1.5 an hour, not 2
+                expect(zone.encountersPerHour).toBeCloseTo(1.5, 9);
+                expect(zone.creditsPerHour[JACK]).toBeCloseTo(1.5, 9);
+                expect(zone.paceLabel).toBe('your 3 runs, 1 wipe counted');
+                expect(zone.paceWarn).toBe(true);
+                expect(zone.note).toContain('1 recorded failed attempt at this tier and party');
+                expect(zone.note).toContain('75% of attempts');
+                expect(zone.note).not.toContain('assumes every attempt clears');
+            });
+
+            test('with enough runs the label is plain, however much the sim wipes', () => {
+                const runs = [fail(1), fail(1), ...[2, 3, 4, 5, 6, 7].map(clear)];
+                const zone = bestiaryPlanZoneForRow(coveRow(), runs, who);
+                expect(zone.paceLabel).toBe('your 6 runs, 2 wipes counted');
+                expect(zone.paceWarn).toBe(false);
+                expect(zone.encountersPerHour).toBeCloseTo(1.5, 9);
+            });
+
+            test('only failures at this tier and party count, and a cancel or a T? failure does not', () => {
+                const zone = bestiaryPlanZoneForRow(
+                    coveRow(),
+                    [
+                        clear(2),
+                        fail(1, { tier: 2 }),
+                        fail(1, { tier: null }),
+                        fail(1, { team: ['Me'] }),
+                        fail(1, { recordedBy: 'char2' }),
+                        run({ timestamp: day(1), result: 'cancel' }),
+                    ],
+                    who
+                );
+                expect(zone.encountersPerHour).toBeCloseTo(2, 9);
+                expect(zone.paceLabel).toBe('your 1 run, no wipes counted');
+            });
+
+            test('an attempt never sets the pace or counts as a run', () => {
+                const zone = bestiaryPlanZoneForRow(coveRow(), [fail(1, { duration: 60_000 })], who);
+                expect(zone.paceLabel).toBe('sim, failed runs');
+            });
+
+            test('a clean sim’s measured pace is charged the same', () => {
+                const clean = coveRow({ completions: 24, failed: 0, cleanClearSeconds: 3600 });
+                const zone = bestiaryPlanZoneForRow(clean, [fail(1), clear(2), clear(3), clear(4)], who);
+                expect(zone.creditsPerHour[MARK]).toBeCloseTo(3.75, 9);
+                expect(zone.encountersPerHour).toBeCloseTo(1.5, 9);
+                expect(zone.paceLabel).toBe('your 3 runs, 1 wipe counted');
+            });
+
+            test('the panel asks the history for attempts, and they reach the row', async () => {
+                mocks.dungeonRuns = [fail(1, { team: ['Me'] }), clear(2), run({ timestamp: day(3), team: ['Me'] })].map(
+                    (entry) => ({ ...entry, team: ['Me'] })
+                );
+                await ui._displayAllZonesResults([coveT1()], 24, gameData);
+                expect(ui._bestiaryPlanZones[0].paceLabel).toBe('your 2 runs, 1 wipe counted');
+            });
+        });
+
+        test('a short sim that never finished is not called failed', () => {
+            const row = coveRow({ failed: 0 });
+            const none = bestiaryPlanZoneForRow(row, [], who);
+            expect(none.note).toContain('never finished a run in the simulated time');
+            expect(none.note).not.toContain('failed runs');
+            expect(none.paceLabel).toBe('sim, unfinished');
+            expect(none.paceWarn).toBe(true);
+
+            const runs = Array.from({ length: 5 }, () => run());
+            const measured = bestiaryPlanZoneForRow(row, runs, who);
+            expect(measured.note).toContain('because the sim never finished a run');
+            expect(measured.paceLabel).toBe('your 5 runs');
         });
 
         test('five runs is no longer called few', () => {
@@ -10528,7 +10642,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             expect(zone.encountersPerHour).toBeCloseTo(2, 9);
             expect(zone.creditsPerHour[MARK]).toBeCloseTo(6, 9);
             expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
-            expect(zone.paceLabel).toBe('your 1 run');
+            expect(zone.paceLabel).toBe('your 1 run, no wipes counted');
             expect(zone.note).toContain('because the sim wipes here');
         });
 
@@ -10558,8 +10672,14 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                     },
                 },
             };
-            const provenWho = (tierData) => ({ ...who, monsters: [{ monsterHrid: JACK, count: 9, tierData }] });
-            const unknown = [run({ tier: null }), run({ tier: null })];
+            const READ_AT = Date.parse('2026-11-01T00:00:00Z');
+            const provenWho = (tierData, monstersAt = READ_AT) => ({
+                ...who,
+                monstersAt,
+                monsters: [{ monsterHrid: JACK, count: 9, tierData }],
+            });
+            const old = { tier: null, timestamp: '2026-10-01T00:00:00Z' };
+            const unknown = [run(old), run(old)];
 
             beforeEach(() => {
                 mocks.actionDetails = { [COVE]: finalBoss };
@@ -10568,7 +10688,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             test('at the proven tier they count, the row says how, and nothing is written to the runs', () => {
                 const zone = bestiaryPlanZoneForRow(coveRow(), unknown, provenWho('{"1":9}'));
                 expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
-                expect(zone.paceLabel).toBe('your 2 runs, tier from Bestiary');
+                expect(zone.paceLabel).toBe('your 2 runs, tier from Bestiary, no wipes counted');
                 expect(zone.note).toContain('2 runs with no recorded tier counted as T1');
                 expect(unknown[0].tier).toBeNull();
             });
@@ -10600,17 +10720,82 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                 expect(contradicted.note).toContain('2 runs of unknown tier not used');
             });
 
+            test('a recorded run at another tier by another party keeps them out too', () => {
+                const zone = bestiaryPlanZoneForRow(
+                    coveRow(),
+                    [...unknown, run({ tier: 2, team: ['Me'] })],
+                    provenWho('{"1":9}')
+                );
+                expect(zone.paceLabel).toBe('sim, failed runs');
+                expect(zone.note).toContain('2 runs of unknown tier not used');
+            });
+
+            test('another character’s run at another tier does not contradict this one', () => {
+                const zone = bestiaryPlanZoneForRow(
+                    coveRow(),
+                    [...unknown, run({ tier: 2, recordedBy: 'char2' })],
+                    provenWho('{"1":9}')
+                );
+                expect(zone.paceLabel).toContain('tier from Bestiary');
+            });
+
+            test('a failed attempt at another tier does not contradict it: only a clear kills the boss', () => {
+                const zone = bestiaryPlanZoneForRow(
+                    coveRow(),
+                    [...unknown, run({ tier: 2, result: 'fail' })],
+                    provenWho('{"1":9}')
+                );
+                expect(zone.paceLabel).toContain('tier from Bestiary');
+            });
+
+            test('a T? run newer than the reading, or one by another party, refuses the proof', () => {
+                const newer = { tier: null, timestamp: '2026-11-02T00:00:00Z' };
+                expect(bestiaryPlanZoneForRow(coveRow(), [run(), run(newer)], provenWho('{"1":9}')).note).toContain(
+                    'unknown tier not used'
+                );
+                expect(
+                    bestiaryPlanZoneForRow(
+                        coveRow(),
+                        [...unknown, run({ ...newer, team: ['Me'] })],
+                        provenWho('{"1":9}')
+                    ).note
+                ).toContain('unknown tier not used');
+            });
+
+            test('a run ending after the reading refuses it, though it began before', () => {
+                const late = { tier: null, timestamp: '2026-10-31T23:59:00Z', duration: 600_000 };
+                const zone = bestiaryPlanZoneForRow(coveRow(), [run(late)], provenWho('{"1":9}'));
+                expect(zone.note).toContain('unknown tier not used');
+            });
+
+            test('no time on the reading or on a T? run fails closed', () => {
+                expect(bestiaryPlanZoneForRow(coveRow(), unknown, provenWho('{"1":9}', null)).note).toContain(
+                    'unknown tier not used'
+                );
+                expect(bestiaryPlanZoneForRow(coveRow(), [run({ tier: null })], provenWho('{"1":9}')).note).toContain(
+                    'unknown tier not used'
+                );
+            });
+
+            test('tierData that cannot be read fails closed', () => {
+                expect(bestiaryPlanZoneForRow(coveRow(), unknown, provenWho('not json')).note).toContain(
+                    'unknown tier not used'
+                );
+            });
+
             test('the Bestiary not loaded: the rule simply does not apply', () => {
                 const zone = bestiaryPlanZoneForRow(coveRow(), unknown, { ...who, monsters: null });
                 expect(zone.paceLabel).toBe('sim, failed runs');
             });
 
             test('the panel hands the character’s Bestiary over', async () => {
-                mocks.dungeonRuns = [run({ tier: null, team: ['Me'] })];
+                mocks.dungeonRuns = [run({ ...old, team: ['Me'] })];
                 mocks.monsters = [{ monsterHrid: JACK, count: 9, tierData: '{"1":9}' }];
+                mocks.monstersAt = READ_AT;
                 await ui._displayAllZonesResults([coveT1()], 24, gameData);
                 click('#mwi-csim-bestiary-plan-btn');
                 expect(planRows()[0][1]).toContain('your 1 run, tier from Bestiary');
+                mocks.monstersAt = null;
             });
         });
 
@@ -10689,7 +10874,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                 [run(), run({ tier: null }), run({ tier: null, team: ['Me'] })],
                 who
             );
-            expect(zone.paceLabel).toBe('your 1 run');
+            expect(zone.paceLabel).toBe('your 1 run, no wipes counted');
             expect(zone.note).toContain('1 run of unknown tier not used');
         });
 
@@ -10700,13 +10885,17 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
 
             const rows = planRows();
             expect(rows[0][1]).toContain('[D] Pirate Cove T1');
-            expect(rows[0][1]).toContain('your 2 runs');
+            expect(rows[0][1]).toContain('your 2 runs, no wipes counted');
+            const tag = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td span')].find((span) =>
+                span.textContent.includes('no wipes counted')
+            );
+            expect(tag.getAttribute('style')).toContain('#ffb74d');
             // Fills the count it shows: clears, not waves and not a dash
             expect(rows[0][3]).toMatch(/clears$/);
             expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(1);
             const nameCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[1];
             expect(nameCell.getAttribute('title')).toContain('measured (2 runs');
-            expect(ui._bestiaryPlanText()).toContain('[your 2 runs]');
+            expect(ui._bestiaryPlanText()).toContain('[your 2 runs, no wipes counted]');
 
             const cell = bestiaryCell('Pirate Cove');
             expect(cell.getAttribute('title')).toContain('Dungeon pace: measured (2 runs');

@@ -315,18 +315,19 @@ function dungeonInfoFor(actionHrid) {
 
 /**
  * A dungeon's credit rates from your own clear time and the dungeon's definition,
- * for a dungeon the simulator could not clear cleanly.
+ * for a dungeon the simulator wipes in or never finished.
  *
  * {@link rescaleDungeonRates} cannot serve that case: it stretches the sim's
- * rates, and a sim that wipes has no clean clear to stretch from, while its kill
- * rates are of failed attempts that never reached the later waves or the boss.
+ * rates, and a sim that wipes may have no clean clear to stretch from, while its
+ * kill rates include failed attempts that never reached the later waves or the boss.
  * So nothing is taken from the simulation here. Kills per clear are what the
  * spawn tables say a clear contains ({@link expectedSpawnsPerClear}), clears per
  * hour are your median clear at this tier, and a kill is credited at the tier the
  * monster actually has, the dungeon's plus the spawn's own, split by the party.
  *
- * It counts your clears and nothing else, so it assumes every attempt clears:
- * the run history holds clears unless the player opted in to recording attempts.
+ * It counts your clears and nothing else, so on its own it assumes every attempt
+ * clears. A caller holding recorded failures scales the answer by
+ * {@link clearShareOfAttempts}, and otherwise has to say so on the row.
  *
  * @param {Object} input
  * @param {Array<Object>} input.runs - This dungeon's runs, already narrowed to this party
@@ -334,8 +335,9 @@ function dungeonInfoFor(actionHrid) {
  * @param {number} input.partySize - Players sharing each kill
  * @param {string} [input.actionHrid] - The dungeon, to read its definition from the game data
  * @param {Object} [input.dungeonInfo] - The definition itself; read from `actionHrid` when omitted
- * @returns {{creditsPerHour: Object, clearsPerHour: number, clearSeconds: number, runs: number}|null}
- *   Null when no run at this tier has a duration, or the definition gives no credits
+ * @returns {{creditsPerHour: Object, creditsPerKillByMonster: Object, clearsPerHour: number,
+ *   clearSeconds: number, runs: number}|null} Null when no run at this tier has a duration, or
+ *   the definition gives no credits
  */
 export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, actionHrid = null, dungeonInfo = null }) {
     if (!Number.isInteger(tier)) return null;
@@ -374,6 +376,30 @@ export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, ac
 }
 
 /**
+ * How many of your attempts at a dungeon clear it, from the failures you recorded.
+ *
+ * Failures are recorded only once the player opts in, so clears from before the
+ * first recorded failure say nothing about the failure rate: 300 old clears would
+ * hide a recent run of wipes. They count only if no clear has come since.
+ *
+ * @param {Array<Object>} clears - Clears at this tier and party
+ * @param {Array<Object>} fails - Failed attempts at this tier and party
+ * @returns {number} 0 to 1; 1 with no failures recorded
+ */
+export function clearShareOfAttempts(clears, fails) {
+    const failed = (fails || []).length;
+    if (!failed) return 1;
+    const all = clears || [];
+    if (!all.length) return 0;
+    const at = (run) => new Date(run?.timestamp).getTime();
+    const failTimes = fails.map(at).filter(Number.isFinite);
+    const since = failTimes.length ? Math.min(...failTimes) : -Infinity;
+    const recent = all.filter((run) => !(at(run) < since)).length;
+    const counted = recent || all.length;
+    return counted / (counted + failed);
+}
+
+/**
  * The monsters a zone's definition spawns.
  * @param {Object} combatZoneInfo - An action's `combatZoneInfo`
  * @returns {Set<string>} Monster hrids
@@ -404,7 +430,9 @@ function monstersInZone(combatZoneInfo) {
  * `tierData` keys are the monster's tier, which is the dungeon's plus the spawn
  * row's own, so the row's is taken back off.
  *
- * Read fresh and never stored: with the Bestiary not loaded this simply does not apply.
+ * Read fresh and never stored: with the Bestiary not loaded this simply does not
+ * apply, and a qualifying boss whose `tierData` cannot be read refuses the answer.
+ * The caller still has to check the reading is newer than the runs it would cover.
  *
  * @param {Object} input
  * @param {string} input.actionHrid - The dungeon
@@ -446,11 +474,10 @@ export function provenDungeonTier({ actionHrid, monsters, actionDetailMap = null
             // Two of one monster in the roster could be two spawn tiers
             if (!hrid || elsewhere.has(hrid) || countByHrid.get(hrid) > 1) continue;
             const row = monsters.find((monster) => monster?.monsterHrid === hrid);
-            if (!row?.tierData) continue;
+            if (!row?.tierData) return null;
             const tierData = typeof row.tierData === 'string' ? JSON.parse(row.tierData) : row.tierData;
             const tiers = Object.entries(tierData || {}).filter(([, count]) => Number(count) > 0);
-            if (!tiers.length) continue;
-            if (tiers.length > 1) return null;
+            if (tiers.length !== 1) return null;
             const tier = Number(tiers[0][0]) - (Number(entry.difficultyTier) || 0);
             if (!Number.isInteger(tier) || tier < 0) return null;
             if (proven !== null && proven !== tier) return null;
@@ -784,6 +811,7 @@ export function planBestiaryRoute({
                 isDungeon: Boolean(zone.isDungeon),
                 note: zone.note || null,
                 paceLabel: zone.paceLabel || null,
+                paceWarn: Boolean(zone.paceWarn),
                 viaScore,
                 monsters: result.monsters.map((m) => ({ ...m })),
             });
@@ -866,7 +894,7 @@ export function planBestiaryRoute({
                 points: toTarget === null ? 0 : target,
                 encounters: toTarget === null ? null : fightsFor(zone, toTarget),
                 hours: toTarget,
-                ...(zone.paceLabel ? { paceLabel: zone.paceLabel } : {}),
+                ...(zone.paceLabel ? { paceLabel: zone.paceLabel, paceWarn: Boolean(zone.paceWarn) } : {}),
             };
         }
     } else {
@@ -878,7 +906,7 @@ export function planBestiaryRoute({
                     name: zone.name || zone.zoneHrid,
                     points,
                     encounters: fightsFor(zone, budget),
-                    ...(zone.paceLabel ? { paceLabel: zone.paceLabel } : {}),
+                    ...(zone.paceLabel ? { paceLabel: zone.paceLabel, paceWarn: Boolean(zone.paceWarn) } : {}),
                 };
             }
         }

@@ -5,6 +5,7 @@ import {
     dungeonRatesFromRuns,
     runTierOf,
     provenDungeonTier,
+    clearShareOfAttempts,
     formatPlanHours,
     formatPlanText,
 } from './bestiary-plan.js';
@@ -1149,6 +1150,20 @@ describe('the tier the Bestiary proves', () => {
         ).toBeNull();
     });
 
+    test('a qualifying boss that cannot be read refuses the proof, even beside one that can', () => {
+        const other = '/monsters/manticore';
+        const actionDetailMap = { [DEN]: den([entry(BOSS), entry(other)]) };
+        const good = { monsterHrid: BOSS, tierData: '{"1":3}' };
+        for (const monsters of [
+            [good],
+            [good, { monsterHrid: other }],
+            [good, { monsterHrid: other, tierData: 'not json' }],
+            [good, { monsterHrid: other, tierData: '{}' }],
+        ]) {
+            expect(provenDungeonTier({ actionHrid: DEN, actionDetailMap, monsters })).toBeNull();
+        }
+    });
+
     test('two of the boss in the roster, or two bosses that disagree, prove nothing', () => {
         expect(prove('{"1":3}', den([entry(BOSS), entry(BOSS, 1)]))).toBeNull();
         const other = '/monsters/manticore';
@@ -1162,5 +1177,32 @@ describe('the tier the Bestiary proves', () => {
                 ],
             })
         ).toBeNull();
+    });
+});
+
+describe('the share of your attempts that clear', () => {
+    const at = (day) => ({ timestamp: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z` });
+
+    test('no failures on record leaves the rate alone', () => {
+        expect(clearShareOfAttempts([at(1)], [])).toBe(1);
+        expect(clearShareOfAttempts([], [])).toBe(1);
+    });
+
+    test('clears over clears and failures', () => {
+        expect(clearShareOfAttempts([at(3), at(4), at(5)], [at(2)])).toBe(0.75);
+    });
+
+    test('clears from before the first recorded failure do not dilute it', () => {
+        const old = Array.from({ length: 300 }, () => at(1));
+        expect(clearShareOfAttempts([...old, at(6), at(7)], [at(5), at(6)])).toBe(0.5);
+    });
+
+    test('with no clear since the failures, every clear counts, and with no clears at all nothing does', () => {
+        expect(clearShareOfAttempts([at(1), at(2), at(3)], [at(9)])).toBe(0.75);
+        expect(clearShareOfAttempts([], [at(9)])).toBe(0);
+    });
+
+    test('a clear with no date is kept rather than guessed away', () => {
+        expect(clearShareOfAttempts([{}], [at(9)])).toBe(0.5);
     });
 });

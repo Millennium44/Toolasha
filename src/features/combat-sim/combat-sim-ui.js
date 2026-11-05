@@ -95,12 +95,14 @@ import {
     planBestiaryRoute,
     rescaleDungeonRates,
     dungeonRatesFromRuns,
+    clearShareOfAttempts,
     provenDungeonTier,
     runTierOf,
     formatPlanHours,
     formatPlanText,
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
+import { isClearRun, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { getBestiaryTarget, setBestiaryTarget, requestBestiary } from '../../utils/bestiary-target.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
@@ -1559,10 +1561,7 @@ export function runMatchesSimParty(
           ? run.teamKey.split(',')
           : null;
 
-    const mine = run.recordedBy
-        ? characterId != null && String(run.recordedBy) === String(characterId)
-        : Boolean(characterName) && Boolean(team?.includes(characterName));
-    if (!mine) return false;
+    if (!runIsCharacters(run, { characterId, characterName })) return false;
 
     const size = Math.max(1, Math.floor(Number(partySize) || 1));
     if (!team || team.length !== size) return false;
@@ -1571,6 +1570,53 @@ export function runMatchesSimParty(
         if ([...team].sort().join(',') !== want) return false;
     }
     return true;
+}
+
+/**
+ * Whether a stored run is this character's own, by any party: its `recordedBy`
+ * stamp, or for a legacy run with none, this character's name on its roster.
+ *
+ * @param {Object} run - A stored run
+ * @param {{characterId: string|null, characterName: string|null}} who - The character
+ * @returns {boolean}
+ */
+function runIsCharacters(run, { characterId = null, characterName = null } = {}) {
+    if (run?.recordedBy) return characterId != null && String(run.recordedBy) === String(characterId);
+    const team = Array.isArray(run?.team)
+        ? run.team.map(String)
+        : typeof run?.teamKey === 'string' && run.teamKey
+          ? run.teamKey.split(',')
+          : null;
+    return Boolean(characterName) && Boolean(team?.includes(characterName));
+}
+
+/**
+ * The tier the Bestiary proves for this character's runs recorded with none, or
+ * null. Fails closed: the reading must postdate every such clear, since a later
+ * clear could be at another tier, and no recorded clear at any party may disagree.
+ *
+ * @param {Object} input
+ * @param {string} input.actionHrid - The dungeon
+ * @param {Array<Object>} input.clears - This character's clears of it, every party
+ * @param {Array<Object>|null} input.monsters - The Bestiary reading
+ * @param {number|null} input.monstersAt - When it was read, epoch milliseconds
+ * @returns {number|null}
+ */
+function provenTierForClears({ actionHrid, clears, monsters, monstersAt }) {
+    const readAt = Number(monstersAt);
+    if (!(readAt > 0)) return null;
+    const proven = provenDungeonTier({ actionHrid, monsters });
+    if (proven === null) return null;
+    for (const run of clears) {
+        const tier = runTierOf(run);
+        if (tier !== null) {
+            if (tier !== proven) return null;
+            continue;
+        }
+        const end = new Date(run?.timestamp).getTime() + (Number(run?.duration ?? run?.totalTime) || 0);
+        if (!Number.isFinite(end) || end > readAt) return null;
+    }
+    return proven;
 }
 
 /**
@@ -1647,6 +1693,9 @@ export function bestiaryPlanDetailItems(row, cols) {
 /** Fewer runs than this is what the Dungeon ROI board calls low confidence (`MEDIUM_CONFIDENCE_RUNS`) */
 const FEW_RUNS = 5;
 
+/** From this share of the sim's attempts wiping, your clears alone are not taken at face value */
+const HIGH_WIPE_SHARE = 0.25;
+
 /**
  * One results-table row as a Bestiary planner zone, at the rates it should be
  * planned at.
@@ -1656,8 +1705,8 @@ const FEW_RUNS = 5;
  * `rescaleDungeonRates`), and its "fights" are clears — completions, never the
  * waves the sim counts as encounters.
  *
- * A dungeon the sim wipes in has kill rates from failed attempts, and perhaps no
- * clean clear to stretch. With your own clears at that tier it is planned from
+ * A dungeon the sim wipes in or never finished has kill rates from attempts that
+ * did not clear, and perhaps no clean clear to stretch. With your own clears at that tier it is planned from
  * those and the dungeon's spawn tables (`dungeonRatesFromRuns`). Without them it
  * keeps the sim's rates and says they are that, and with no completion at all it
  * quotes no clear count rather than its waves as clears.
@@ -1665,7 +1714,8 @@ const FEW_RUNS = 5;
  * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace, at
  * the row's own tier. A run recorded with no tier could be any tier, so it sets
  * nothing, and the note counts what was left out, unless the Bestiary proves the
- * tier of every clear (`provenDungeonTier`, `who.monsters`). Nothing is stored.
+ * tier of every clear (`provenTierForClears`, `who.monsters`). Nothing is stored.
+ * Failed attempts at the tier and party charge the clear rate, where recorded.
  *
  * @param {Object} row - A results-table row (`_creditsPerHour`, `_creditsPerKill`, `_dungeon`, …)
  * @param {Array<Object>} [runs] - The dungeon run history, every dungeon
@@ -1706,18 +1756,29 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     const cleanSeconds = Number(row._dungeon.cleanClearSeconds);
     const hasClean = Number.isFinite(cleanSeconds) && cleanSeconds > 0;
     const partySize = row._partySize ?? who.partySize ?? 1;
-    const mine = (runs || []).filter(
+    const partyMatches = (run) => runMatchesSimParty(run, { ...who, partySize });
+    const history = (runs || []).filter(
         (run) =>
-            (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) &&
-            runMatchesSimParty(run, { ...who, partySize })
+            (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) && runIsCharacters(run, who)
+    );
+    const clearsAnyParty = history.filter(isClearRun);
+    const mine = clearsAnyParty.filter(partyMatches);
+    const failedAttempts = history.filter(
+        (run) => run?.result === RUN_RESULT_FAIL && runTierOf(run) === row.tier && partyMatches(run)
     );
     const unknownTier = mine.filter((run) => runTierOf(run) === null).length;
     const runWord = (count) => `${count} run${count === 1 ? '' : 's'}`;
 
     // A run with no recorded tier sets no pace, unless the Bestiary proves which
-    // tier every clear was. A recorded run at another tier contradicts the proof.
-    const proven = unknownTier ? provenDungeonTier({ actionHrid: row.zoneHrid, monsters: who.monsters }) : null;
-    const provenTier = mine.some((run) => runTierOf(run) !== null && runTierOf(run) !== proven) ? null : proven;
+    // tier every clear was
+    const provenTier = unknownTier
+        ? provenTierForClears({
+              actionHrid: row.zoneHrid,
+              clears: clearsAnyParty,
+              monsters: who.monsters,
+              monstersAt: who.monstersAt,
+          })
+        : null;
     const useProven = provenTier !== null && provenTier === row.tier;
     const paceRuns = useProven
         ? mine.map((run) => (runTierOf(run) === null ? { ...run, tier: provenTier } : run))
@@ -1728,8 +1789,23 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         : provenTier === null && unknownTier
           ? `${runWord(unknownTier)} of unknown tier not used`
           : null;
-    const yours = (count) => `your ${runWord(count)}${useProven ? ', tier from Bestiary' : ''}`;
     const finish = (fields) => withNote(withNote({ ...zone, isDungeon: true, ...fields }, tierNote), partySizeNote);
+
+    // Your own clear time counts clears only, so recorded failures cost their share
+    const fails = failedAttempts.length;
+    const clearShare = clearShareOfAttempts(
+        paceRuns.filter((run) => runTierOf(run) === row.tier),
+        failedAttempts
+    );
+    const atShare = (rates) =>
+        Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, rate * clearShare]));
+    const wipesCounted = fails ? `${fails} wipe${fails === 1 ? '' : 's'} counted` : null;
+    const shareNote = fails
+        ? `${fails} recorded failed attempt${fails === 1 ? '' : 's'} at this tier and party, so ` +
+          `${Math.round(clearShare * 100)}% of attempts count as clears`
+        : null;
+    const yours = (count, suffix = null) =>
+        [`your ${runWord(count)}`, useProven ? 'tier from Bestiary' : null, suffix].filter(Boolean).join(', ');
 
     // A sim that wiped charges its failed attempts to the clears, in its pace and
     // in its kills per clear, and with no clean clear it has no pace at all. Your
@@ -1742,16 +1818,28 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
             partySize,
             actionHrid: row.zoneHrid,
         });
-        if (measured) {
-            const why = hasClean ? 'the sim wipes here' : 'the sim never cleared it cleanly';
+        if (clearShare > 0 && measured) {
+            const why =
+                failed === 0
+                    ? 'the sim never finished a run'
+                    : hasClean
+                      ? 'the sim wipes here'
+                      : 'the sim never cleared it cleanly';
+            const few = measured.runs < FEW_RUNS;
+            const wipeShare = failed / (failed + completions);
+            // With no failures on record nothing charges for them, which a few runs
+            // or a sim that mostly wipes cannot take on trust: 1 clear and 20 wipes
+            // a day in the sim against one 20-minute clear of yours plans 72 clears.
+            const noWipes = !fails && (few || wipeShare >= HIGH_WIPE_SHARE);
             return finish({
-                creditsPerHour: measured.creditsPerHour,
+                creditsPerHour: atShare(measured.creditsPerHour),
                 creditsPerKillByMonster: measured.creditsPerKillByMonster,
-                encountersPerHour: measured.clearsPerHour,
+                encountersPerHour: measured.clearsPerHour * clearShare,
                 note:
-                    `measured (${runWord(measured.runs)}${measured.runs < FEW_RUNS ? ', few runs' : ''}) — kills ` +
-                    `per clear from the dungeon's spawn tables, because ${why}; assumes every attempt clears`,
-                paceLabel: yours(measured.runs),
+                    `measured (${runWord(measured.runs)}${few ? ', few runs' : ''}) — kills per clear from the ` +
+                    `dungeon's spawn tables, because ${why}; ${shareNote || 'assumes every attempt clears'}`,
+                paceLabel: yours(measured.runs, noWipes ? 'no wipes counted' : wipesCounted),
+                paceWarn: noWipes || (few && fails > 0),
             });
         }
     }
@@ -1768,20 +1856,25 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
             paceRuns.filter((run) => runTierOf(run) === row.tier).length > 0
                 ? 'your runs here could not be used (no duration, or no spawn table to read)'
                 : 'no clears of yours at this tier with this party';
+        const simSays =
+            failed > 0
+                ? 'never cleared in the sim — its kills are from failed runs'
+                : 'never finished a run in the simulated time — its kills are from an unfinished run';
         // Waves are not clears: with no completion there is nothing to quote
         return finish({
             encountersPerHour: null,
-            note: completions > 0 ? null : `never cleared in the sim — its kills are from failed runs; ${usedNone}`,
-            paceLabel: completions > 0 ? null : 'sim, failed runs',
+            note: completions > 0 ? null : `${simSays}; ${usedNone}`,
+            paceLabel: completions > 0 ? null : failed > 0 ? 'sim, failed runs' : 'sim, unfinished',
+            paceWarn: !(completions > 0),
         });
     }
     if (scaled.source === 'measured') {
         return finish({
-            creditsPerHour: scaled.creditsPerHour,
+            creditsPerHour: atShare(scaled.creditsPerHour),
             // A dungeon's "fights" are clears, which is also what the plan table calls them
-            encountersPerHour: scaled.clearsPerHour,
-            note: `measured (${runWord(scaled.runs)})`,
-            paceLabel: yours(scaled.runs),
+            encountersPerHour: scaled.clearsPerHour * clearShare,
+            note: [`measured (${runWord(scaled.runs)})`, shareNote].filter(Boolean).join('; '),
+            paceLabel: yours(scaled.runs, wipesCounted),
         });
     }
     return finish({
@@ -1789,6 +1882,7 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         encountersPerHour: scaled.clearsPerHour,
         note: failed > 0 ? 'sim clear time, wipes included — its kills include failed runs' : 'sim clear time',
         paceLabel: failed > 0 ? 'sim, wipes' : null,
+        paceWarn: failed > 0,
     });
 }
 
@@ -5758,7 +5852,8 @@ class CombatSimUI {
         let runs = [];
         if (rows.some((row) => row._dungeon)) {
             try {
-                runs = (await dungeonTrackerStorage()?.getAllRuns()) || [];
+                // Failed attempts too, where recorded: they charge the clear rate
+                runs = (await dungeonTrackerStorage()?.getAllRuns({ includeAttempts: true })) || [];
             } catch (error) {
                 console.error('[CombatSimUI] Reading the dungeon run history for the plan failed:', error);
             }
@@ -5771,6 +5866,7 @@ class CombatSimUI {
             characterName: dataManager.getCurrentCharacterName?.() ?? null,
             roster,
             monsters: dataManager.getCharacterMonsters?.() ?? null,
+            monstersAt: dataManager.getCharacterMonstersAt?.() ?? null,
         };
         return rows.map((row) => bestiaryPlanZoneForRow(row, runs, who));
     }
@@ -5936,7 +6032,7 @@ class CombatSimUI {
                     // changes nothing — and it never filtered the plan.
                     this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
-                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables; with none it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. Takes effect on the next All Zones run.">
+                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables, less any failed attempts you have recorded; a row marked no wipes counted has none on record to charge. With no runs it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
                     Include dungeons
                 </label>`
@@ -6197,8 +6293,8 @@ class CombatSimUI {
         const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
         // A dungeon's stay is quoted in clears — "≈3 fights" for three trips
         // through a fortress would be nonsense
-        const paceTag = (label) =>
-            `<span style="color:${label.startsWith('sim') ? '#ffb74d' : '#81c995'}; font-size:9px;">${esc(label)}</span>`;
+        const paceTag = (label, warn) =>
+            `<span style="color:${warn ? '#ffb74d' : '#81c995'}; font-size:9px;">${esc(label)}</span>`;
         const fightsCell = (segment) =>
             segment.encounters === null || segment.encounters === undefined
                 ? '—'
@@ -6245,7 +6341,7 @@ class CombatSimUI {
                     ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'
                     : '';
                 // Whether this dungeon's rates are your runs or the sim's, on the row itself
-                const paceMark = segment.paceLabel ? ` ${paceTag(segment.paceLabel)}` : '';
+                const paceMark = segment.paceLabel ? ` ${paceTag(segment.paceLabel, segment.paceWarn)}` : '';
                 // Open this step's zone at its exact tier and fill the count
                 // this row displays — never recomputed at click time, so the
                 // number the player agreed to is the number that gets typed.
@@ -6302,7 +6398,9 @@ class CombatSimUI {
             plan.bestSingle && this._allZonesDetailRows?.has(plan.bestSingle.zoneHrid)
                 ? `<span class="mwi-csim-plan-single" data-key="${esc(plan.bestSingle.zoneHrid)}" tabindex="0" role="button" aria-expanded="${singleOpen}" title="Show this zone's sim results" style="cursor:pointer; text-decoration:underline dotted;">${esc(plan.bestSingle.name)}</span>`
                 : esc(plan.bestSingle?.name || '');
-        const singleMark = plan.bestSingle?.paceLabel ? ` ${paceTag(plan.bestSingle.paceLabel)}` : '';
+        const singleMark = plan.bestSingle?.paceLabel
+            ? ` ${paceTag(plan.bestSingle.paceLabel, plan.bestSingle.paceWarn)}`
+            : '';
         let single;
         if (!plan.bestSingle) {
             single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';

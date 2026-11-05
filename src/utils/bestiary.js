@@ -21,8 +21,9 @@
  * Defeated: 150.6` is exactly 45x1 + 150.6x3), so the counts arriving from
  * `monsters_updated` are credits and need no conversion. A simulated kill rate
  * is not: `simResult.deaths` counts bodies, at one tier, for the whole party.
- * {@link monsterCreditsPerHour} is where those bodies become credits, and it is
- * the only place in the planner where a tier or a party size is looked at.
+ * {@link monsterCreditsPerHour} is where those bodies become credits. The other
+ * place is `dungeonRatesFromRuns` in `bestiary-plan.js`, which counts a clear's
+ * bodies from the spawn tables instead of a simulation.
  *
  * That conversion is only ever right for an ordinary zone or dungeon. A guild
  * trial monster is not tier-weighted at all — see {@link creditsPerKill}'s doc
@@ -83,7 +84,10 @@ export function totalBestiaryPoints(counts) {
  *    is not a guild trial monster (fact 2 below). Highest tier observed
  *    among these: 6. Worked example — Granite Golem's
  *    `{"0":8774,"4":31,"6":1028.8}` gives 8774x1 + 31x5 + 1028.8x7 =
- *    8774 + 155 + 7201.6 = 16130.6, its exact `count`.
+ *    8774 + 155 + 7201.6 = 16130.6, its exact `count`. Those keys are the monster's
+ *    own tier, the zone's plus the spawn row's: every combat action's maxDifficulty
+ *    tops out at 5, and Granite Golem spawns at spawn tier 4 in Pirate Cove, whose
+ *    maxDifficulty is 2, so 6 only exists as 2 + 4, and 4 fits 0 + 4.
  * 2. **A guild trial monster is not tier-weighted at all.** The 8 exceptions
  *    above are all `trial_*` monsters. Their "tiers" run as high as 21 —
  *    those are trial *wave numbers*, not difficulty tiers — and for every
@@ -142,9 +146,9 @@ export function resolvePartySize(recorded, fallback) {
  *
  * A result that states `monsterKillsByTier` is credited at each monster's own
  * tier, the zone's plus the spawn row's: nonzero spawn tiers are common in the
- * game's dungeons (43 rows in Chimerical Den), and at T0 a spawn one tier up is
- * worth twice the credit. `difficultyTier` is the fallback for a result that
- * does not state them.
+ * game's dungeons (43 rows in Chimerical Den, whose random spawns are mostly spawn
+ * tier 4), and at T0 a spawn tier 4 monster is worth five credits, not one.
+ * `difficultyTier` is the fallback for a result that does not state them.
  *
  * Not kills per hour, which is what `simResult.deaths` holds and what this used
  * to return: `deaths` is incremented once per monster that dies no matter which

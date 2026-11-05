@@ -577,8 +577,10 @@ describe('dungeon waves', () => {
 
 describe('a whole clear against the exact spawn expectation', () => {
     const HRID = '/actions/combat/test_dungeon';
-    const names = ['rat', 'frog', 'crab', 'bear', 'boss_a', 'boss_b', 'imp'].map((name) => `/monsters/${name}`);
-    const [RAT, FROG, CRAB, BEAR, BOSS_A, BOSS_B, IMP] = names;
+    const names = ['rat', 'butterjerry', 'jackalope', 'bear', 'boss_a', 'griffin', 'imp'].map(
+        (name) => `/monsters/${name}`
+    );
+    const [RAT, BUTTERJERRY, JACKALOPE, BEAR, BOSS_A, GRIFFIN, IMP] = names;
     const row = (hrid, rate, strength, difficultyTier = 0) => ({
         combatMonsterHrid: hrid,
         difficultyTier,
@@ -587,7 +589,9 @@ describe('a whole clear against the exact spawn expectation', () => {
     });
 
     // Shaped like Chimerical Den as read from the game: 50 waves, a fixed wave every
-    // fifth, random keys 0/10/30, and nonzero spawn tiers among its rows. Several slots, a strength cap that ends waves
+    // fifth, random keys 0/10/30, and the tiers it really gives these monsters: rat at
+    // spawn tier 4, butterjerry and jackalope at 0, griffin at 0 on wave 50. The rates
+    // and strengths, and bear and imp, are this fixture's own. Several slots, a strength cap that ends waves
     // early, duplicates in a roster, a monster in both a fixed wave and a table,
     // and one monster on two rows at different spawn tiers.
     const dungeonInfo = () => {
@@ -599,21 +603,21 @@ describe('a whole clear against the exact spawn expectation', () => {
                 { combatMonsterHrid: IMP, difficultyTier: 0 },
             ];
         }
-        fixedSpawnsMap['50'] = [{ combatMonsterHrid: BOSS_B, difficultyTier: 1 }];
+        fixedSpawnsMap['50'] = [{ combatMonsterHrid: GRIFFIN, difficultyTier: 0 }];
         return {
             maxWaves: 50,
             fixedSpawnsMap,
             randomSpawnInfoMap: {
-                0: { maxSpawnCount: 4, maxTotalStrength: 150, spawns: [row(RAT, 2, 40), row(FROG, 1, 65)] },
+                0: { maxSpawnCount: 4, maxTotalStrength: 150, spawns: [row(RAT, 2, 40, 4), row(BUTTERJERRY, 1, 65)] },
                 10: {
                     maxSpawnCount: 4,
                     maxTotalStrength: 180,
-                    spawns: [row(FROG, 1, 50), row(CRAB, 1, 70), row(IMP, 1, 40)],
+                    spawns: [row(BUTTERJERRY, 1, 50), row(JACKALOPE, 1, 70), row(IMP, 1, 40)],
                 },
                 30: {
                     maxSpawnCount: 5,
                     maxTotalStrength: 230,
-                    spawns: [row(CRAB, 1, 45), row(BEAR, 2, 60), row(BEAR, 1, 60, 1)],
+                    spawns: [row(JACKALOPE, 1, 45), row(BEAR, 2, 60), row(BEAR, 1, 60, 4)],
                 },
             },
         };
@@ -654,8 +658,9 @@ describe('a whole clear against the exact spawn expectation', () => {
         }
         // Written-down waves come out exact, not as an estimate
         expect(exact[BOSS_A][0]).toBe(9);
-        expect(exact[BOSS_B][1]).toBe(1);
-        expect(flat[`${BOSS_B}|3`]).toBe(1);
+        expect(exact[GRIFFIN][0]).toBe(1);
+        expect(flat[`${GRIFFIN}|2`]).toBe(1);
+        expect(Object.keys(exact[RAT])).toEqual(['4']);
     });
 
     test('credits from a simulated clear agree with the spawn-table path, spawn tiers included', () => {
@@ -687,11 +692,11 @@ describe('a whole clear against the exact spawn expectation', () => {
         for (const [hrid, rate] of Object.entries(planned.creditsPerHour)) {
             expect(Math.abs(simulated[hrid] - rate) / rate, hrid).toBeLessThan(0.05);
         }
-        // A T1 boss spawned a tier up is a T2 kill: 3/2 credits, not the 2/2 its zone tier gives
-        expect(simulated[BOSS_B]).toBeCloseTo(1.5, 9);
-        expect(monsterCreditsPerKill(result, options)[BOSS_B]).toBeCloseTo(1.5, 9);
-        expect(planned.creditsPerKillByMonster[BOSS_B]).toBeCloseTo(1.5, 9);
-        // Bear spawns on two rows, 2:1 at the zone's tier: 2/3 x 1 + 1/3 x 3/2 credits a kill
-        expect(planned.creditsPerKillByMonster[BEAR]).toBeCloseTo(7 / 6, 9);
+        // Griffin at spawn tier 0 is a T1 kill: 2/2. A rat at spawn tier 4 is T5: 6/2, not 2/2
+        expect(simulated[GRIFFIN]).toBeCloseTo(1, 9);
+        expect(monsterCreditsPerKill(result, options)[RAT]).toBeCloseTo(3, 9);
+        expect(planned.creditsPerKillByMonster[RAT]).toBeCloseTo(3, 9);
+        // Bear spawns on two rows, 2:1 at the zone's tier: 2/3 x 1 + 1/3 x 3 credits a kill
+        expect(planned.creditsPerKillByMonster[BEAR]).toBeCloseTo(5 / 3, 9);
     });
 });
