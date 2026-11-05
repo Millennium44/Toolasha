@@ -427,6 +427,31 @@ describe('saving and switching named layouts', () => {
         expect(line.textContent).toBe('Showing: Dashboard (edited)');
     });
 
+    test('Dense applies its twenty tiles with the nine-column spans, and keeps a count set by hand', async () => {
+        measureAs(2040);
+        await overlayPanel.applyNamedLayout('Dense');
+        expect(overlayPanel.columns).toBe(9);
+        expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+        expect(overlayPanel.settings.span.totalProfit).toBe(5);
+        expect(overlayPanel.settings.order).toHaveLength(20);
+
+        overlayPanel.settings.columns = 3;
+        overlayPanel.settings.columnsPinned = true;
+        await overlayPanel.applyNamedLayout('Dense');
+        expect(overlayPanel.columns).toBe(3);
+        expect(overlayPanel.settings.columnsPinned).toBe(true);
+        expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 3));
+    });
+
+    test('a saved layout named Dense shadows the preset, and the switcher lists it once', async () => {
+        measureAs(2040);
+        wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+        await overlayPanel.saveNamedLayout('Dense');
+        await overlayPanel.applyNamedLayout('Dense');
+        expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+        expect(await overlayPanel.listLayouts()).toEqual(['Dense']);
+    });
+
     test('a switch can be taken back', async () => {
         wear(dungeonLayout());
         await overlayPanel.saveNamedLayout('Dungeon');
@@ -550,6 +575,7 @@ describe('saving and switching named layouts', () => {
             'Skilling · preset',
             'Labyrinth · preset',
             'Dashboard · preset',
+            'Dense · preset',
         ]);
     });
 
@@ -607,6 +633,7 @@ describe('saving and switching named layouts', () => {
             'Labyrinth · preset',
             'Market · preset',
             'Dashboard · preset',
+            'Dense · preset',
         ]);
     });
 });

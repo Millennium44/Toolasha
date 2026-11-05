@@ -240,8 +240,8 @@ describe('the round trip', () => {
 });
 
 describe('presets', () => {
-    test('five are offered, each with an order and an activity; Default only resolves', () => {
-        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard']);
+    test('six are offered, each with an order and an activity; Default only resolves', () => {
+        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard', 'Dense']);
         // Retired from the switcher but still a name a stored layout or mapping can hold
         expect(isPreset('Default')).toBe(true);
         expect(PRESET_LAYOUTS.Default).toBe(PRESET_LAYOUTS.Dashboard);
@@ -552,6 +552,100 @@ describe('presets', () => {
         ]);
     });
 
+    test('Dense is the twenty tiles of the maintainer overlay, in order, never chosen by activity', () => {
+        expect(presetNames().indexOf('Dense')).toBe(presetNames().indexOf('Dashboard') + 1);
+        expect(PRESET_LAYOUTS.Dense.activity).toBe(ACTIVITY.NONE);
+        expect(PRESET_LAYOUTS.Dense.order).toHaveLength(20);
+        expect(PRESET_LAYOUTS.Dense.order.slice(0, 5)).toEqual([
+            'battleTimer',
+            'experiencePerHour',
+            'deathsPerHour',
+            'combatStatus',
+            'combatRevenue',
+        ]);
+        expect(PRESET_LAYOUTS.Dense.order[19]).toBe('netWorth');
+        expect(PRESET_LAYOUTS.Dense.order).not.toContain('overExpected');
+        expect(layoutForActivity(ACTIVITY.COMBAT, {}, [])).toBe('Combat');
+        const nine = presetSpans('Dense', 9);
+        expect(nine).toMatchObject({
+            battleTimer: 3,
+            experiencePerHour: 2,
+            combatRevenue: 3,
+            totalProfit: 5,
+            consumables: 4,
+            equipmentWatch: 5,
+            dps: 3,
+            luck: 2,
+            netWorth: 2,
+        });
+        // The single width that differs from the live overlay, so the row closes
+        expect(nine.treasure).toBe(3);
+    });
+
+    test('Dense reads in full rows at three and nine columns', () => {
+        const rowsOf = (columns) =>
+            layRows(PRESET_LAYOUTS.Dense.order, presetSpans('Dense', columns), columns).map(({ row }) => row.join('|'));
+        expect(rowsOf(3)).toEqual([
+            'battleTimer',
+            'experiencePerHour|deathsPerHour|combatStatus',
+            'combatRevenue',
+            'timeToLevel|houses|totalProfit',
+            'consumables|equipmentWatch',
+            'coins|marketListings|dps',
+            'luck|watchlist|skillBooks',
+            'inventoryValue|treasure',
+            'buildScore|netWorth',
+        ]);
+        expect(rowsOf(9)).toEqual([
+            'battleTimer|experiencePerHour|deathsPerHour|combatStatus',
+            'combatRevenue|timeToLevel|houses',
+            'totalProfit|consumables',
+            'equipmentWatch|coins|marketListings',
+            'dps|luck|watchlist|skillBooks',
+            'inventoryValue|treasure|buildScore|netWorth',
+        ]);
+        expect(rowsOf(2)).toEqual([
+            'battleTimer',
+            'experiencePerHour|deathsPerHour',
+            'combatStatus',
+            'combatRevenue',
+            'timeToLevel',
+            'houses',
+            'totalProfit',
+            'consumables',
+            'equipmentWatch',
+            'coins|marketListings',
+            'dps',
+            'luck|watchlist',
+            'skillBooks|inventoryValue',
+            'treasure',
+            'buildScore|netWorth',
+        ]);
+    });
+
+    test('Dense on one column is one tile per row in order', () => {
+        const span = presetFile('Dense', { columns: 1 }).toolasha.settings.span;
+        expect(PRESET_LAYOUTS.Dense.order.map((key) => spanFor(span[key], 1))).toEqual(Array(20).fill(1));
+    });
+
+    test('the Default alias and a saved layout named Dense keep their meanings', async () => {
+        expect(PRESET_LAYOUTS.Default).toBe(PRESET_LAYOUTS.Dashboard);
+        expect(offeredLayouts({ Dense: { file: {} } }).map((entry) => entry.name)).not.toContain('Dense · preset');
+        expect(offeredLayouts({ Dense: { file: {} } }).filter((entry) => entry.name === 'Dense')).toHaveLength(1);
+        const mine = file(['dps']);
+        await saveLayout('Dense', mine);
+        expect(await getLayout('Dense')).toEqual(mine);
+    });
+
+    test('a wide preset file is the same shape older builds read: an order and a flat numeric span map', () => {
+        const built = presetFile('Dense', { columns: 9 }).toolasha.settings;
+        expect(built.version).toBe(2);
+        expect(built.columns).toBe(2);
+        for (const wide of Object.values(built.span)) expect(Number.isInteger(wide)).toBe(true);
+        expect(built.sizes).toBeUndefined();
+        expect(JSON.parse(JSON.stringify(built)).span).toEqual(built.span);
+    });
+
     test('every span3 entry names a tile of the preset and asks for at most three columns', () => {
         for (const name of presetNames()) {
             for (const [key, columns] of Object.entries(PRESET_LAYOUTS[name].span3 || {})) {
@@ -578,7 +672,8 @@ describe('presets', () => {
         const activities = presetNames().map((name) => PRESET_LAYOUTS[name].activity);
         const active = activities.filter((activity) => activity !== ACTIVITY.NONE);
         expect(new Set(active).size).toBe(active.length);
-        expect(activities.filter((activity) => activity === ACTIVITY.NONE)).toHaveLength(1);
+        // The Dashboard and Dense are the two a character picks by hand
+        expect(activities.filter((activity) => activity === ACTIVITY.NONE)).toHaveLength(2);
     });
 
     test('a preset is a layout file of exactly the shape a saved one has', () => {
