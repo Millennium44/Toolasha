@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skilling figures back to normal with enhanced gear
+
+3.76.0 counted enhanced gear far too strongly, so skilling rates, exp/hr, profit/hr and queue times read too high or too short, up to 100 times off with +10 gear, and enhancing costs, net worth of items valued by cost, charm rankings, tea and gear advice went wrong with them. All correct again. Records saved while on 3.76.0, such as prediction accuracy, production income and the net worth chart, keep their old figures.
+
 <!-- shipped in 3.76.0 -->
 
 ### Character switches no longer push to GitHub
