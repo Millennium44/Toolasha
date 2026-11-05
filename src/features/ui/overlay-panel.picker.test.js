@@ -569,13 +569,12 @@ describe('resetting to the default tiles', () => {
 
         overlayPanel.pickerEl.querySelector('button[title^="Switch the rows back"]').click();
 
-        // Opted into the Dashboard's tiles, written out row by row: none of the
-        // three registered rows is one of them, so all three are off, and the
-        // order is the Dashboard's
+        // Opted into the Dashboard's tiles, written out row by row: dps and luck
+        // are two of them, houses is not, and the order is the Dashboard's
         expect(overlayPanel.settings.curatedDefaults).toBe(true);
-        expect(overlayPanel.settings.visible).toMatchObject({ dps: false, luck: false, houses: false, netWorth: true });
+        expect(overlayPanel.settings.visible).toMatchObject({ dps: true, luck: true, houses: false, netWorth: true });
         expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Dashboard.order);
-        expect(chipState()).toEqual({ dps: false, luck: false, houses: false });
+        expect(chipState()).toEqual({ dps: true, luck: true, houses: false });
 
         // Reset tiles is a bulk change, so it takes the undo like the rest
         overlayPanel.pickerEl.querySelector('button[title="Put the layout back to before that"]').click();
@@ -633,14 +632,14 @@ describe('resetting to the default tiles', () => {
     test('Reset layout arranges to the Dashboard preset: its spans, its order first', async () => {
         openGear();
         overlayPanel.settings.span = { dps: 2 };
-        overlayPanel.settings.order = ['luck', 'dps'];
+        overlayPanel.settings.order = ['houses', 'luck', 'dps'];
 
         dialog.answer = 'reset';
         await overlayPanel._resetLayout();
 
         expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Dashboard.span);
-        // Only registered rows are placed first; this suite registers neither of the Dashboard's
-        expect(overlayPanel.settings.order).toEqual(['luck', 'dps']);
+        // Registered Dashboard rows first, in its order; the rest keep theirs after
+        expect(overlayPanel.settings.order).toEqual(['dps', 'luck', 'houses']);
     });
 
     test('Reset layout also unpins columns, so the shipped spans are not flattened', async () => {

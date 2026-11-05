@@ -327,12 +327,15 @@ const DASHBOARD_PRESET = {
         'combatLevel',
         'timeToLevel',
         'experiencePerHour',
+        'dps',
+        'deathsPerHour',
+        'luck',
         'totalProfit',
         'consumables',
         'queueTimeLeft',
         'noticeLog',
     ],
-    span: { accountView: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
+    span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
 };
 
 /** Presets that resolve by name but are not offered in the Layouts switcher */
@@ -421,13 +424,13 @@ export const PRESET_LAYOUTS = {
     },
     /**
      * The starting dashboard, for a fresh character and for both Reset buttons.
-     * Eleven tiles that carry a character through every activity without
+     * Fourteen tiles that carry a character through every activity without
      * switching layouts. Mapped to `ACTIVITY.NONE`, which nothing is ever
      * detected as, so auto-switching never chooses it.
      *
-     * Two columns: the five wide tiles (account, profit, supplies, queue, log)
-     * take both, and the six narrow ones pair up (worth and coins, build and
-     * combat level, time to level and experience rate). On a one-column panel
+     * Two columns: the six wide tiles (account, luck, profit, supplies, queue,
+     * log) take both, and the eight narrow ones pair up (worth and coins, build
+     * and combat level, time to level and experience rate, DPS and deaths). On a one-column panel
      * every span collapses to one.
      */
     Dashboard: DASHBOARD_PRESET,
