@@ -279,8 +279,17 @@ describe('plan text', () => {
     test('hours read as h:mm', () => {
         expect(formatPlanHours(0)).toBe('0:00');
         expect(formatPlanHours(0.5)).toBe('0:30');
-        expect(formatPlanHours(25.25)).toBe('25:15');
+        expect(formatPlanHours(25.25)).toBe('1d 1:15');
         expect(formatPlanHours(1 / 120)).toBe('0:01');
+        // The maintainer's route: 114:38 reads as days
+        expect(formatPlanHours(114 + 38 / 60)).toBe('4d 18:38');
+        // Exactly a day, and rounding up across the line
+        expect(formatPlanHours(24)).toBe('1d 0:00');
+        expect(formatPlanHours(23.9999)).toBe('1d 0:00');
+        expect(formatPlanHours(23.5)).toBe('23:30');
+        // The unit is named only when the figure does not name itself
+        expect(formatPlanHours(5.5, { unit: true })).toBe('5:30 h');
+        expect(formatPlanHours(48, { unit: true })).toBe('2d 0:00');
     });
 
     test('the plain-text version lists the steps, the crossings, and the single-zone comparison', () => {

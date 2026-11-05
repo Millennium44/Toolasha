@@ -6248,7 +6248,7 @@ class CombatSimUI {
                 plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                     ? `no single zone reaches ${goal}`
                     : `best single zone ${singleName} reaches ${goal} in ` +
-                      `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours)} h</span>`;
+                      `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours, { unit: true })}</span>`;
         } else {
             single = `best single zone ${singleName}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
         }
@@ -6276,7 +6276,7 @@ class CombatSimUI {
                 </table>
             </div>
             <div id="mwi-csim-bestiary-plan-footer" style="font-size:11px; color:#888; margin-top:4px;">
-                Route: <span style="color:#4caf50; font-weight:600;">${routeAmount}</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
+                Route: <span style="color:#4caf50; font-weight:600;">${routeAmount}</span> in ${formatPlanHours(plan.hoursUsed, { unit: true })} · ${single}
             </div>
             <div id="mwi-csim-bestiary-plan-single-detail">${
                 singleOpen ? this._bestiaryDetailBoxHtml(plan.bestSingle.zoneHrid) : ''

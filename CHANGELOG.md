@@ -22,6 +22,10 @@ Combat Sim's shrine level box now stops at the level the game reports for shrine
 
 When the price panel's 99-item list is full, the pin button reads "Full (99)" and Combat Sim's Watch button says the panel is full, instead of doing nothing.
 
+### Bestiary plan times read in days
+
+A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in the plan and in copied text.
+
 ### Combat Sim tunes triggers in its own section
 
 The Upgrade tab's Triggers tick-box is now a Tune triggers section, as in Lab Sim: it says what a run will cost, runs without Analyze and shows its result in place. A result clears once its setup changes, and Apply waits for a running sim, flagging an Analyze table measured before the build changed.

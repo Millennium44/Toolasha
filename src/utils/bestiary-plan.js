@@ -739,15 +739,18 @@ export function planBestiaryRoute({
 }
 
 /**
- * Hours as `h:mm`, for a plan row.
+ * A plan's time: `h:mm` under a day, `Nd h:mm` from a day up, so a long route reads in days.
  * @param {number} hours
+ * @param {Object} [options]
+ * @param {boolean} [options.unit] - Name the unit after a bare `h:mm` ("5:30 h"); days name themselves
  * @returns {string}
  */
-export function formatPlanHours(hours) {
+export function formatPlanHours(hours, { unit = false } = {}) {
     const totalMinutes = Math.max(0, Math.round((Number(hours) || 0) * 60));
-    const h = Math.floor(totalMinutes / 60);
-    const m = totalMinutes % 60;
-    return `${h}:${String(m).padStart(2, '0')}`;
+    const totalHours = Math.floor(totalMinutes / 60);
+    const clock = `${totalHours % 24}:${String(totalMinutes % 60).padStart(2, '0')}`;
+    if (totalHours >= 24) return `${Math.floor(totalHours / 24)}d ${clock}`;
+    return unit ? `${clock} h` : clock;
 }
 
 /**
@@ -768,9 +771,9 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
         : `${plan.totalPoints} points`;
     const lines = [
         points
-            ? `Bestiary plan — ${amount} in ${formatPlanHours(plan.hoursUsed)} h` +
+            ? `Bestiary plan — ${amount} in ${formatPlanHours(plan.hoursUsed, { unit: true })}` +
               (plan.unreachable ? ` (${goal} not reachable)` : '')
-            : `Bestiary plan — ${formatPlanHours(plan.hours)} h, ${plan.totalPoints} points`,
+            : `Bestiary plan — ${formatPlanHours(plan.hours, { unit: true })}, ${plan.totalPoints} points`,
     ];
     plan.segments.forEach((segment, index) => {
         const crossings = segment.monsters
@@ -799,7 +802,7 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
             plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                 ? `Best single zone: none reaches ${goal}`
                 : `Best single zone: ${plan.bestSingle.name} — reaches ${totals ? goal : plan.targetPoints} in ` +
-                      `${formatPlanHours(plan.bestSingle.hours)} h`
+                      formatPlanHours(plan.bestSingle.hours, { unit: true })
         );
     } else if (plan.bestSingle) {
         lines.push(`Best single zone: ${plan.bestSingle.name} — ${plan.bestSingle.points} points`);
