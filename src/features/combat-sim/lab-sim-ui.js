@@ -561,7 +561,8 @@ const CHIP_BUTTON_STYLE =
  * `_onUpgradeSelectionChanged`.
  */
 const LAB_MODE_OPTIONS = {
-    ability_level: `
+    get ability_level() {
+        return `
         <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
@@ -572,29 +573,37 @@ const LAB_MODE_OPTIONS = {
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
             <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    ability_swap: `
+        </span>`;
+    },
+    get ability_swap() {
+        return `
         <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-labsim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for the loadout's archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own aura choice." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-labsim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
             </label>
-        </span>`,
-    combat_level: `
+        </span>`;
+    },
+    get combat_level() {
+        return `
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    house: `
+        </span>`;
+    },
+    get house() {
+        return `
         <span id="mwi-labsim-house-group" data-lab-mode-options="house" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-house-target-level" type="number" min="1" max="${maxHouseRoomLevel()}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${maxHouseRoomLevel()}.">
             <button id="mwi-labsim-house-targets-toggle" title="Set a target level per room instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    guild_shrine: `
+        </span>`;
+    },
+    get guild_shrine() {
+        return `
         <span id="mwi-labsim-shrine-group" data-lab-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
@@ -605,14 +614,17 @@ const LAB_MODE_OPTIONS = {
                 <input type="checkbox" id="mwi-labsim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
                 Guild-allowed only
             </label>
-        </span>`,
-    community_buff: `
+        </span>`;
+    },
+    get community_buff() {
+        return `
         <span id="mwi-labsim-community-group" data-lab-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-community-target-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Sim the buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which is what the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own.">
-        </span>`,
+        </span>`;
+    },
 };
 
 /**

@@ -81,7 +81,7 @@
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
 import { canStartAction } from '../../utils/efficiency.js';
-import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
+import { gameMaximumsLoaded, maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
 
 /** The goal kinds this version plans, and what to call them */
 export const GOAL_TYPES = {
@@ -287,10 +287,14 @@ export function summarize(steps) {
  * @param {Object} raw - A goal from storage or the creation form
  * @returns {Object|null} A normalised goal, or null when it cannot be one
  */
-export function normalizeGoal(raw) {
+export function normalizeGoal(raw, { keepUnloaded = false } = {}) {
     if (!raw || typeof raw !== 'object') return null;
     const type = raw.type;
     if (!GOAL_TYPES[type]) return null;
+
+    // A goal read back from storage is not clamped to a fallback cap before the game's tables exist: the
+    // fallback is today's cap, and cutting a saved level to it would lose a value a raised cap allows
+    const cap = (read) => (keepUnloaded && !gameMaximumsLoaded() ? Infinity : read());
 
     idCounter += 1;
     const base = {
@@ -309,17 +313,17 @@ export function normalizeGoal(raw) {
             return {
                 ...base,
                 itemHrid: raw.itemHrid,
-                enhancementLevel: clampInt(raw.enhancementLevel, 0, maxEnhancementLevel(), 0),
+                enhancementLevel: clampInt(raw.enhancementLevel, 0, cap(maxEnhancementLevel), 0),
             };
         }
         case 'skill': {
             if (typeof raw.skillHrid !== 'string' || !raw.skillHrid) return null;
-            const targetLevel = clampInt(raw.targetLevel, 1, maxLevel(), 0);
+            const targetLevel = clampInt(raw.targetLevel, 1, cap(maxLevel), 0);
             return targetLevel > 0 ? { ...base, skillHrid: raw.skillHrid, targetLevel } : null;
         }
         case 'house': {
             if (typeof raw.roomHrid !== 'string' || !raw.roomHrid) return null;
-            const targetLevel = clampInt(raw.targetLevel, 1, maxHouseRoomLevel(), 0);
+            const targetLevel = clampInt(raw.targetLevel, 1, cap(maxHouseRoomLevel), 0);
             return targetLevel > 0 ? { ...base, roomHrid: raw.roomHrid, targetLevel } : null;
         }
         default:

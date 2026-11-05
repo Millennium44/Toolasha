@@ -14,6 +14,7 @@ vi.mock('../core/data-manager.js', () => ({
 import {
     FALLBACK_MAX_ENHANCEMENT_LEVEL,
     FALLBACK_MAX_GUILD_BUILDING_LEVEL,
+    gameMaximumsLoaded,
     FALLBACK_MAX_GUILD_SHRINE_LEVEL,
     FALLBACK_MAX_HOUSE_ROOM_LEVEL,
     FALLBACK_MAX_LEVEL,
@@ -103,6 +104,50 @@ describe('detail-map maximums', () => {
         expect(read()).toBe(20);
         state.clientData = { [key]: { a: { maxLevel: 25 }, b: { maxLevel: 20 }, c: {} } };
         expect(read()).toBe(25);
+    });
+});
+
+describe('per-building maximum and the loaded check', () => {
+    test('a building reads its own maxLevel, falls back to 20, and the global one never drops below 20', () => {
+        state.clientData = {
+            guildBuildingDetailMap: {
+                '/guild_buildings/builders_hall': { maxLevel: 30 },
+                '/guild_buildings/treasury': { maxLevel: 12 },
+                '/guild_buildings/other': {},
+            },
+        };
+        expect(maxGuildBuildingLevel(undefined, 'buildershall')).toBe(30);
+        expect(maxGuildBuildingLevel(undefined, 'treasury')).toBe(12);
+        expect(maxGuildBuildingLevel(undefined, 'other')).toBe(20);
+        expect(maxGuildBuildingLevel(undefined, 'missing')).toBe(20);
+        expect(maxGuildBuildingLevel()).toBe(30);
+        state.clientData = { guildBuildingDetailMap: { '/guild_buildings/a': { maxLevel: 5 } } };
+        expect(maxGuildBuildingLevel()).toBe(20);
+        expect(maxGuildShrineLevel({ guildShrineDetailMap: { a: { maxLevel: 5 } } })).toBe(20);
+    });
+
+    test('gameMaximumsLoaded needs all three tables', () => {
+        expect(gameMaximumsLoaded()).toBe(false);
+        const full = {
+            levelExperienceTable: table(201),
+            enhancementLevelTotalBonusMultiplierTable: table(21),
+            houseRoomDetailMap: {},
+        };
+        expect(gameMaximumsLoaded(full)).toBe(true);
+        expect(gameMaximumsLoaded({ ...full, houseRoomDetailMap: undefined })).toBe(false);
+        expect(gameMaximumsLoaded({ ...full, levelExperienceTable: [] })).toBe(false);
+    });
+
+    test('a stored goal above the fallback survives with no data, and is clamped once data is present', () => {
+        const raw = { type: 'skill', skillHrid: '/skills/milking', targetLevel: 230 };
+        expect(normalizeGoal(raw, { keepUnloaded: true }).targetLevel).toBe(230);
+        expect(normalizeGoal(raw).targetLevel).toBe(200);
+        state.clientData = {
+            levelExperienceTable: table(201),
+            enhancementLevelTotalBonusMultiplierTable: table(21),
+            houseRoomDetailMap: {},
+        };
+        expect(normalizeGoal(raw, { keepUnloaded: true }).targetLevel).toBe(200);
     });
 });
 

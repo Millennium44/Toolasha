@@ -53,19 +53,19 @@ function ceilingFromTable(table, fallback) {
 }
 
 /**
- * The highest `maxLevel` any entry of a detail map states, or the fallback when none states a usable one.
- * Unlike a table length, the field is an explicit statement of the cap, so it is taken as given.
+ * The highest `maxLevel` any entry of a detail map states, never below the fallback: one odd entry cannot
+ * clamp a level a player can really have. A patch that raises a cap flows through.
  * @param {*} map
  * @param {number} fallback
  * @returns {number}
  */
 function ceilingFromDetailMap(map, fallback) {
-    let best = 0;
+    let best = fallback;
     for (const detail of Object.values(map && typeof map === 'object' ? map : {})) {
         const level = Math.floor(Number(detail?.maxLevel));
         if (Number.isFinite(level) && level > best) best = level;
     }
-    return best > 0 ? best : fallback;
+    return best;
 }
 
 /**
@@ -91,12 +91,28 @@ export function maxEnhancementLevel(gameData) {
 }
 
 /**
- * Highest level any guild building can reach, from the buildings' own `maxLevel`.
+ * Highest level a guild building can reach. With `letters` (an hrid's lowercase letters, e.g. 'treasury'),
+ * the matching building's own `maxLevel` when it states a usable one, else the fallback; without, the
+ * highest across buildings, never below the fallback.
  * @param {Object|null} [gameData] - Client data; read from the data manager when omitted
+ * @param {string} [letters] - Ending of the building hrid with everything but letters removed
  * @returns {number}
  */
-export function maxGuildBuildingLevel(gameData) {
-    return ceilingFromDetailMap(resolveClientData(gameData)?.guildBuildingDetailMap, FALLBACK_MAX_GUILD_BUILDING_LEVEL);
+export function maxGuildBuildingLevel(gameData, letters) {
+    const map = resolveClientData(gameData)?.guildBuildingDetailMap;
+    if (!letters) return ceilingFromDetailMap(map, FALLBACK_MAX_GUILD_BUILDING_LEVEL);
+    for (const [hrid, detail] of Object.entries(map && typeof map === 'object' ? map : {})) {
+        if (
+            !hrid
+                .toLowerCase()
+                .replace(/[^a-z]/g, '')
+                .endsWith(letters)
+        )
+            continue;
+        const level = Math.floor(Number(detail?.maxLevel));
+        if (Number.isFinite(level) && level > 0) return level;
+    }
+    return FALLBACK_MAX_GUILD_BUILDING_LEVEL;
 }
 
 /**
@@ -125,4 +141,22 @@ export function maxHouseRoomLevel(gameData) {
         }
     }
     return best;
+}
+
+/**
+ * Whether the tables the maximums are read from are present. A stored value must not be clamped down to a
+ * fallback cap just because this is false: the fallback is today's cap, not the game's current one.
+ * @param {Object|null} [gameData] - Client data; read from the data manager when omitted
+ * @returns {boolean}
+ */
+export function gameMaximumsLoaded(gameData) {
+    const data = resolveClientData(gameData);
+    return (
+        Array.isArray(data?.levelExperienceTable) &&
+        data.levelExperienceTable.length > 1 &&
+        Array.isArray(data?.enhancementLevelTotalBonusMultiplierTable) &&
+        data.enhancementLevelTotalBonusMultiplierTable.length > 1 &&
+        Boolean(data?.houseRoomDetailMap) &&
+        typeof data.houseRoomDetailMap === 'object'
+    );
 }

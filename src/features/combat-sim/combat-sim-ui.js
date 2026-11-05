@@ -3046,15 +3046,18 @@ const CHIP_BUTTON_STYLE =
  * `_onUpgradeModesChanged`.
  */
 const MODE_OPTIONS = {
-    equipment: `
+    get equipment() {
+        return `
         <span data-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
             </label>
-        </span>`,
-    ability_level: `
+        </span>`;
+    },
+    get ability_level() {
+        return `
         <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
@@ -3065,16 +3068,20 @@ const MODE_OPTIONS = {
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
             <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    ability_swap: `
+        </span>`;
+    },
+    get ability_swap() {
+        return `
         <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for your archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
             </label>
-        </span>`,
-    combat_level: `
+        </span>`;
+    },
+    get combat_level() {
+        return `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Charm</label>
@@ -3083,8 +3090,10 @@ const MODE_OPTIONS = {
                 width:44px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Enhancement level to sim the charm at (e.g. 5 for Expert +5). Leave blank to keep the equipped charm's level.">
             <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    house: `
+        </span>`;
+    },
+    get house() {
+        return `
         <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
@@ -3092,8 +3101,10 @@ const MODE_OPTIONS = {
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now."></span>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    guild_shrine: `
+        </span>`;
+    },
+    get guild_shrine() {
+        return `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
@@ -3105,15 +3116,18 @@ const MODE_OPTIONS = {
                 <input type="checkbox" id="mwi-csim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
                 Guild-allowed only
             </label>
-        </span>`,
-    community_buff: `
+        </span>`;
+    },
+    get community_buff() {
+        return `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-community-target-level" type="number" min="1" max="20" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Level to sim each community buff at, rather than one level up — Lv3 → Lv8 in one row. Capped at 20, which the game calls max. It changes nothing about the cost: a community buff's level is what the whole server's donated minutes add up to, so there is no per-level price either way. A buff already at 20 still measures what the whole buff is worth, by simulating it off."></span>
-        </span>`,
+        </span>`;
+    },
 };
 
 /**

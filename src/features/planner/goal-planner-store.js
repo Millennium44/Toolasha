@@ -175,7 +175,7 @@ function currentOwner() {
  * @returns {Array<Object>} Normalised goals, oldest first
  */
 function cleanGoals(list) {
-    return (Array.isArray(list) ? list : []).map((goal) => normalizeGoal(goal)).filter(Boolean);
+    return (Array.isArray(list) ? list : []).map((goal) => normalizeGoal(goal, { keepUnloaded: true })).filter(Boolean);
 }
 
 /**

@@ -56,7 +56,7 @@
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { createCuratedRecord, mergeMaps } from './persisted-record.js';
-import { FALLBACK_MAX_HOUSE_ROOM_LEVEL, maxHouseRoomLevel } from './game-maximums.js';
+import { FALLBACK_MAX_HOUSE_ROOM_LEVEL, gameMaximumsLoaded, maxHouseRoomLevel } from './game-maximums.js';
 
 /** The one record the whole feature is stored in, per character */
 const STORAGE_KEY = 'equipmentSavings';
@@ -553,7 +553,7 @@ export async function loadSavingsRecord() {
         rooms = {};
         for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
             if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
-            rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, maxHouseRoomLevel());
+            rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, gameMaximumsLoaded() ? maxHouseRoomLevel() : 0);
         }
         delete rest.houses;
 
