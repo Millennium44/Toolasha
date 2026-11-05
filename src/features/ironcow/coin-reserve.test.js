@@ -616,6 +616,55 @@ describe('what the queue is credited with agrees with what the engine will run',
         expect(queued.endless).toBeNull();
     });
 
+    test('a material-limited ∞ decompose of another item ahead: the engine finishes it, so the loop rows behind are credited', () => {
+        const APPLE = '/items/apple';
+        game.itemDetails[APPLE] = {
+            hrid: APPLE,
+            name: 'Apple',
+            itemLevel: 10,
+            sellPrice: 5,
+            alchemyDetail: { bulkMultiplier: 1, decomposeItems: [{ itemHrid: ESSENCE, count: 1 }] },
+        };
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000), stack(APPLE, 50)];
+        game.currentActions = [
+            row(1, DECOMPOSE, { item: APPLE }),
+            row(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 400 }),
+        ];
+        const walked = walkQueueCoins(engine);
+        const queued = queuedLegCounts(game.currentActions, loopItems, {
+            loop,
+            fruitHeld: 1000,
+            essenceHeld: 0,
+            walked,
+        });
+
+        // the engine ran the apple row to its materials and went on: no row stopped it
+        expect(walked.stoppedAt).toBeNull();
+        expect(walked.stages).toHaveLength(2);
+        expect(legOf(walked, DECOMPOSE).at(-1).count).toBe(400);
+        expect(queued.endless).toBeNull();
+        expect(queued.decompose.performed).toBe(400);
+        // and what is queued behind it is credited: nothing duplicated
+        const out = reduceBatchByQueue({ decomposeActions: 400 }, queued, loop);
+        expect(out.batch.decomposeActions).toBe(0);
+        expect(out.notes).toEqual([]);
+    });
+
+    test('a forage ∞ is the row the engine stops at, and the credit agrees', () => {
+        game.inventory = [stack(COIN, 1_000_000), stack(STAR_FRUIT, 1000)];
+        game.currentActions = [row(1, FORAGE), row(2, DECOMPOSE, { item: STAR_FRUIT, maxCount: 400 })];
+        const walked = walkQueueCoins(engine);
+        const queued = queuedLegCounts(game.currentActions, loopItems, {
+            loop,
+            fruitHeld: 1000,
+            essenceHeld: 0,
+            walked,
+        });
+        expect(walked.stoppedAt).toBe('Star Fruit');
+        expect(queued.endless).not.toBeNull();
+        expect(queued.decompose.performed).toBe(0);
+    });
+
     test('a forage ahead feeds the decompose behind it in both', () => {
         game.inventory = [stack(COIN, 1_000_000)];
         game.currentActions = [

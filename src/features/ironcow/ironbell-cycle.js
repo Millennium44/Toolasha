@@ -224,6 +224,10 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
  * @param {number} [stock.fruitHeld] - Star Fruit held (net of what another plan reserved)
  * @param {number} [stock.essenceHeld] - Essence held (net of reservations)
  * @param {((action: Object) => string|null)|null} [stock.labelOf] - The action's display name, for `endless`
+ * @param {Object|null} [stock.walked] - From `walkQueueCoins` over the same queue. The engine's own verdict on
+ *   which rows end (`calculateSingleQueueActionTime`: material limits, `isTrulyInfinite`): only the row it
+ *   stopped at is unbounded, so a Repeat ∞ row that is limited by its materials (any item) is not endless
+ *   and the rows behind it are credited. Without it the rule is the conservative one below.
  * @returns {{forage: {count: number, performed: number}, decompose: {count: number, performed: number},
  *   coinify: {count: number, performed: number}, endless: string|null, starved: Array<Object>,
  *   fruitAfter: number, essenceAfter: number}} `count` is what the rows ask for, `performed` what will
@@ -232,7 +236,7 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
 export function queuedLegCounts(
     actions,
     loopItems,
-    { loop = null, fruitHeld = 0, essenceHeld = 0, labelOf = null } = {}
+    { loop = null, fruitHeld = 0, essenceHeld = 0, labelOf = null, walked = null } = {}
 ) {
     const legs = {
         forage: { count: 0, performed: 0 },
@@ -249,19 +253,35 @@ export function queuedLegCounts(
     const starved = [];
 
     const rows = (actions || []).filter((action) => action && !action.isDone).sort(compareActionQueueOrder);
-    for (const action of rows) {
+    // The walk lists the rows in this same order, one stage per row, up to the row it stopped at
+    const haveWalk = Boolean(walked && Array.isArray(walked.stages));
+    const stoppedIndex = haveWalk && walked.stoppedAt ? walked.stages.length : Infinity;
+    const itemOf = (action) => String(action?.primaryItemHash || '').split('::')[2];
+    for (const [index, action] of rows.entries()) {
         const leg = loopLegOf(action, loopItems);
         // Repeat ∞ on an alchemy leg is limited by its materials (the queue shows "mat 184K"): it runs for
         // as long as the stock ahead of it lasts and then hands on, so it is covered up to that and never
-        // starved. Any other row with no count (a gather, a fight) has no limit and never hands on.
+        // starved. With the engine's verdict, any row it did not stop at ends the same way; without it, any
+        // other row with no count (a gather, a fight) is taken to have no limit and never hand on.
         const materialLimited = !action.hasMaxCount && (leg === 'decompose' || leg === 'coinify');
-        if (!action.hasMaxCount && !materialLimited) {
+        // A forage row with no count has no material limit whatever the walk says
+        const unbounded =
+            (leg === 'forage' && !action.hasMaxCount) ||
+            (haveWalk ? index >= stoppedIndex : !action.hasMaxCount && !materialLimited);
+        if (unbounded) {
             // Said by the action's display name (never an hrid): the caller knows how the game names it
             endless = labelOf?.(action) || (leg ? LEG_NAMES[leg] : 'An action with no count');
             break;
         }
-        if (!leg) continue;
-        const count = materialLimited
+        if (!leg) {
+            // A row that is not a loop leg but spends the loop's own fruit or essence (say a transmute of
+            // essence) takes stock the legs behind it were counting on. How much is not known, so all of it.
+            if (itemOf(action) === loopItems?.starfruitHrid) fruit = 0;
+            else if (itemOf(action) === loopItems?.essenceHrid) essence = 0;
+            continue;
+        }
+        const limitedByMaterials = !action.hasMaxCount;
+        const count = limitedByMaterials
             ? Infinity
             : Math.max(0, (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0));
         let performed = count;
@@ -276,9 +296,9 @@ export function queuedLegCounts(
             essence -= performed * coinifyBulk;
         }
         // An ∞ row asks for exactly what it can run
-        legs[leg].count += materialLimited ? performed : count;
+        legs[leg].count += limitedByMaterials ? performed : count;
         legs[leg].performed += performed;
-        if (!materialLimited && performed < count) starved.push({ leg, count, performed });
+        if (!limitedByMaterials && performed < count) starved.push({ leg, count, performed });
     }
     return { ...legs, endless, starved, fruitAfter: fruit, essenceAfter: essence };
 }

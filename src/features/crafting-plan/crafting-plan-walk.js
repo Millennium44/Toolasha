@@ -258,6 +258,44 @@ function selectedItemHrid(panel) {
     return id ? `/items/${id}` : null;
 }
 
+/**
+ * Put the bar where it was left, once storage answers. A storage failure leaves it at its default.
+ * @param {HTMLElement} strip - The bar
+ * @returns {Promise<void>}
+ */
+async function restoreStripPosition(strip) {
+    try {
+        await restoreGeometry(strip, STRIP_GEOMETRY_KEY, STRIP_MIN);
+    } catch (error) {
+        console.error('[CraftingPlanWalk] Restoring the bar position failed:', error);
+    }
+}
+
+/**
+ * Remember where the bar was dropped.
+ * @param {{left: number, top: number}} position - Pixels
+ * @returns {Promise<void>}
+ */
+async function saveStripPosition(position) {
+    try {
+        await saveGeometry(STRIP_GEOMETRY_KEY, position);
+    } catch (error) {
+        console.error('[CraftingPlanWalk] Saving the bar position failed:', error);
+    }
+}
+
+/**
+ * Forget the bar's saved position, so it opens at its default again.
+ * @returns {Promise<void>}
+ */
+async function forgetStripPosition() {
+    try {
+        await clearPosition(STRIP_GEOMETRY_KEY);
+    } catch (error) {
+        console.error('[CraftingPlanWalk] Forgetting the bar position failed:', error);
+    }
+}
+
 /** Human wording for one step, e.g. `craft 40 Rough Leather`. */
 function stepLabel(step) {
     const verb = step.kind === 'craft' ? 'craft' : 'buy';
@@ -1013,22 +1051,16 @@ class CraftingPlanWalk {
         cleanups.push(() => window.removeEventListener('resize', keepOnScreen));
 
         // The saved spot, if any, replaces the default once storage answers (unless the player has already moved it)
-        Promise.resolve()
-            .then(() => restoreGeometry(strip, STRIP_GEOMETRY_KEY, STRIP_MIN))
-            .catch((error) => console.error('[CraftingPlanWalk] Restoring the bar position failed:', error));
+        restoreStripPosition(strip);
 
         const detach = makeDraggable(strip, handle, ({ left, top }) => {
-            Promise.resolve()
-                .then(() => saveGeometry(STRIP_GEOMETRY_KEY, { left: parseFloat(left), top: parseFloat(top) }))
-                .catch((error) => console.error('[CraftingPlanWalk] Saving the bar position failed:', error));
+            saveStripPosition({ left: parseFloat(left), top: parseFloat(top) });
         });
         cleanups.push(detach);
 
         const reset = () => {
             applyDefault();
-            Promise.resolve()
-                .then(() => clearPosition(STRIP_GEOMETRY_KEY))
-                .catch((error) => console.error('[CraftingPlanWalk] Forgetting the bar position failed:', error));
+            forgetStripPosition();
         };
         handle.addEventListener('dblclick', reset);
         cleanups.push(() => handle.removeEventListener('dblclick', reset));

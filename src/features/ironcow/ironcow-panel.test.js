@@ -183,7 +183,13 @@ const FAILED = 'could not be drawn';
 
 /** A character part-way through the plan, as `readCharacterState` returns one */
 function character(overrides = {}) {
+    // What is physically in the bag defaults to what is held; a test of a reservation or a cap sets it apart
+    const owned = {
+        starfruitOwned: overrides.starfruitHeld ?? 0,
+        essenceOwned: overrides.essenceHeld ?? 0,
+    };
     return {
+        ...owned,
         levels: { milking: 80, woodcutting: 80, cheesesmithing: 80, foraging: 80, alchemy: 65, crafting: 34 },
         held: new Set(['/items/necklace_of_efficiency']),
         rooms: { '/house_rooms/garden': 3, '/house_rooms/laboratory': 0 },
@@ -2078,6 +2084,71 @@ describe('the queue helper', () => {
             // Max queues Repeat ∞ rows: one for the decompose and one for the coinify, however big the pile
             expect(buttonNamed('Walk it').textContent).toContain('2 presses');
             expect(buttonNamed('Walk it').textContent).toContain('Repeat ∞ rows');
+        });
+
+        test('plain Max (nothing capped, nothing kept for another plan) queues Repeat ∞ rows', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 50, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('Decompose and coinify go in as Repeat ∞.');
+            expect(buttonNamed('Walk it').textContent).toContain('Repeat ∞ rows: leave the count');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: true, coinify: true });
+        });
+
+        test('Max capped by Largest I can run is counted rows, so the count enforces the cap', async () => {
+            plan.state = character({ coins: 375 * 1200, starfruitHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            coinWalk.walked = { stages: [], stoppedAt: null };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+            buttonNamed('Largest I can run').click();
+
+            expect(text()).toContain('Decompose goes in as a counted row');
+            expect(text()).not.toContain('go in as Repeat ∞');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: false, coinify: true });
+            expect(walk.started[0].decomposeActions).toBe(1200);
+        });
+
+        test('Max with fruit kept for another plan counts the decompose row, and never lets ∞ eat the claim', async () => {
+            plan.state = character({
+                starfruitHeld: 4000,
+                starfruitOwned: 5000,
+                essenceHeld: 0,
+                holdingsCredited: true,
+            });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('Decompose goes in as a counted row');
+            expect(text()).toContain('kept for another plan');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: false, coinify: true });
+            expect(walk.started[0].decomposeActions).toBe(4000);
+        });
+
+        test('Max with essence kept for another plan counts the coinify row', async () => {
+            plan.state = character({
+                starfruitHeld: 1000,
+                essenceHeld: 100,
+                essenceOwned: 300,
+                holdingsCredited: true,
+            });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('coinify as a counted row');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: true, coinify: false });
         });
 
         test('without a cowbell price the bell box stays blank and Max still works', async () => {

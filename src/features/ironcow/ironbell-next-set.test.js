@@ -132,6 +132,58 @@ describe('what the game queue will really perform of each leg', () => {
     });
 });
 
+describe('which rows end: the engine’s verdict decides', () => {
+    const apple = (extra = {}) =>
+        row('/actions/alchemy/decompose', OTHER, { hasMaxCount: false, maxCount: 0, ordinal: 1, ...extra });
+    const loopD = (extra = {}) => row('/actions/alchemy/decompose', FRUIT, { maxCount: 400, ordinal: 2, ...extra });
+
+    test('a material-limited ∞ row of another item ahead does not stop inspection; the rows behind it are credited', () => {
+        const walked = { stages: [{ label: 'a' }, { label: 'b' }], stoppedAt: null };
+        const queued = queuedLegCounts([apple(), loopD()], items, { ...stock(1000), walked });
+        expect(queued.endless).toBeNull();
+        expect(queued.decompose.performed).toBe(400);
+    });
+
+    test('without the engine the same row is taken as unbounded, the conservative way', () => {
+        const queued = queuedLegCounts([apple(), loopD()], items, stock(1000));
+        expect(queued.endless).toBe('An action with no count');
+        expect(queued.decompose.performed).toBe(0);
+    });
+
+    test('only the row the engine stopped at is unbounded', () => {
+        // the engine listed one stage and stopped at the second row
+        const walked = { stages: [{ label: 'a' }], stoppedAt: 'Forage' };
+        const queued = queuedLegCounts(
+            [
+                apple(),
+                row(items.forageActionHrid, null, { hasMaxCount: false, maxCount: 0, ordinal: 2 }),
+                loopD({ ordinal: 3 }),
+            ],
+            items,
+            { ...stock(1000), walked, labelOf: () => 'Foraging: Star Fruit' }
+        );
+        expect(queued.endless).toBe('Foraging: Star Fruit');
+        expect(queued.decompose.performed).toBe(0);
+    });
+
+    test('a row ahead that spends the loop’s own fruit or essence takes it from the legs behind', () => {
+        const eatsFruit = row('/actions/alchemy/coinify', FRUIT, { maxCount: 10, ordinal: 1 });
+        const queued = queuedLegCounts([eatsFruit, loopD()], items, {
+            ...stock(1000),
+            walked: { stages: [{}, {}], stoppedAt: null },
+        });
+        expect(queued.decompose.performed).toBe(0);
+        expect(queued.starved).toHaveLength(1);
+        const eatsEssence = row('/actions/alchemy/transmute', ESSENCE, { maxCount: 10, ordinal: 1 });
+        const coinify = row('/actions/alchemy/coinify', ESSENCE, { maxCount: 40, ordinal: 2 });
+        const second = queuedLegCounts([eatsEssence, coinify], items, {
+            ...stock(0, 5000),
+            walked: { stages: [{}, {}], stoppedAt: null },
+        });
+        expect(second.coinify.performed).toBe(0);
+    });
+});
+
 describe('walking only what is missing', () => {
     const batch = { forageActions: 0, decomposeActions: 1000, coinifyActions: 300 };
     const reduce = (actions, fruit, essence, b = batch) =>

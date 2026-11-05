@@ -106,7 +106,8 @@ export function stripLines() {
                 ironCowRuntime.loop,
                 ironCowRuntime.batchSpec,
                 state,
-                dataManager.getCurrentActions?.() || []
+                dataManager.getCurrentActions?.() || [],
+                walked
             );
             if (nextSet?.stages?.length) {
                 budgetWalk = withBatchStages(walked, nextSet.stages);

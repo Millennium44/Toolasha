@@ -721,7 +721,20 @@ export function maxBatch(loop, state) {
             bells,
             credits: [],
             holdingsNote: '',
-            max: { fruitName, fruitHeld, leftoverFruit: fruitHeld - fruitUsed, essenceHeld },
+            max: {
+                fruitName,
+                fruitHeld,
+                leftoverFruit: fruitHeld - fruitUsed,
+                essenceHeld,
+                // A Repeat infinity row spends real stock, so it stands for "all of it" only when the batch uses
+                // all of what is physically in the bag: not when "Largest I can run" capped the fruit, and not
+                // when another plan has claimed some (the held figure then sits below the owned one). An owned
+                // figure the state does not carry is unknown, so counted.
+                unlimited: {
+                    decompose: Number.isFinite(state.starfruitOwned) && state.starfruitOwned === fruitHeld,
+                    coinify: Number.isFinite(state.essenceOwned) && state.essenceOwned === essenceHeld,
+                },
+            },
         },
     };
 }

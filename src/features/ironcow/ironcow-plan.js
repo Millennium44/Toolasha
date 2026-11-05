@@ -33,7 +33,7 @@
 import dataManager from '../../core/data-manager.js';
 
 import { resolveLoopItems } from './loop-items.js';
-import { effectiveInventory } from '../../utils/inventory-reservations.js';
+import { effectiveInventory, heldInInventory } from '../../utils/inventory-reservations.js';
 
 /** Where stages 1 and 2 stop */
 export const GATHERING_TARGET = 80;
@@ -151,6 +151,10 @@ export function readCharacterState() {
     // would size the forage leg short and leave the queue running dry early.
     const starfruitHeld = loopItems ? effectiveInventory(loopItems.starfruitHrid) : 0;
     const essenceHeld = loopItems ? effectiveInventory(loopItems.essenceHrid) : 0;
+    // What is physically in the bag, before another plan's claims: a Repeat infinity row spends real stock, so it
+    // may only stand for "all of it" when none of it is spoken for (`starfruitHeld` equals this)
+    const starfruitOwned = loopItems ? heldInInventory(loopItems.starfruitHrid) : 0;
+    const essenceOwned = loopItems ? heldInInventory(loopItems.essenceHrid) : 0;
 
     return {
         levels,
@@ -163,6 +167,8 @@ export function readCharacterState() {
         alchemyTargetAssumed: !loopItems,
         starfruitHeld,
         essenceHeld,
+        starfruitOwned,
+        essenceOwned,
         // Same condition as `alchemyTargetAssumed`, named for what it gates
         // here: only when the loop's items resolved can `starfruitHeld` and
         // `essenceHeld` be trusted to be counts of the *right* items.

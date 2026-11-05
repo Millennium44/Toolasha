@@ -17,10 +17,11 @@ import { batchForSpec } from './starfruit-loop.js';
  * @param {Object|null} spec - `{max, maxCap, basis, hours}`, what the helper is set to
  * @param {Object|null} state - From `readCharacterState`
  * @param {Array<Object>} actions - The game's action queue
+ * @param {Object|null} [walked] - From `walkQueueCoins`: the engine's verdict on which rows end
  * @returns {{stages: Array<Object>|null, batch: Object|null, missing: Object|null, reason: string}|null} Null
  *   when there is no batch to hold cash for; `stages` null with a reason when the decompose fee has no price
  */
-export function nextSetStages(loop, spec, state, actions) {
+export function nextSetStages(loop, spec, state, actions, walked = null) {
     if (!loop || loop.missing?.length || !spec) return null;
     const batch = batchForSpec(loop, spec, state);
     if (!batch) return null;
@@ -28,6 +29,7 @@ export function nextSetStages(loop, spec, state, actions) {
         loop,
         fruitHeld: state?.starfruitHeld || 0,
         essenceHeld: state?.essenceHeld || 0,
+        walked,
     });
     const missing = { ...reduceBatchByQueue(batch, queued, loop), queued };
     const stages = batchStages(loop, missing.batch);

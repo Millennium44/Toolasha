@@ -142,15 +142,17 @@ function legSteps({
 
 /**
  * Whether a leg of this batch is queued as one Repeat ∞ row rather than a counted one. The one place the
- * row shape is chosen: Max sizes its alchemy legs to all the stock held, and an ∞ alchemy row is limited by
- * its materials (the game moves on when they run out); the hours path stays counted, and so does any
- * forage leg, which has no material limit.
+ * row shape is chosen. An ∞ alchemy row spends whatever real stock it finds and is limited only by its
+ * materials (the game moves on when they run out), so it stands for the batch only when the batch uses ALL
+ * the physical stock of that leg's input: Max with nothing capped by "Largest I can run" and nothing claimed
+ * by another plan (`max.unlimited`, set by `maxBatch`). Otherwise the leg is a counted row, so the count
+ * enforces the limit. The hours path stays counted, and so does any forage leg, which has no material limit.
  * @param {Object} batch - The batch
  * @param {'forage'|'decompose'|'coinify'} leg - The leg
  * @returns {boolean} True for an ∞ row
  */
 export function legIsUnlimited(batch, leg) {
-    return Boolean(batch?.max) && (leg === 'decompose' || leg === 'coinify');
+    return Boolean(batch?.max?.unlimited?.[leg]) && (leg === 'decompose' || leg === 'coinify');
 }
 
 /**

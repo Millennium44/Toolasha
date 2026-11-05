@@ -878,6 +878,38 @@ describe('Max: all the held fruit, no foraging', () => {
         expect(maxBatch({ missing: ['x'] }, held(5)).batch).toBeNull();
     });
 
+    test('which legs may stand as Repeat ∞: only those that use all of the physical stock', async () => {
+        const loop = await calculateStarfruitLoop();
+        const flags = (state) => maxBatch(loop, state).batch.max.unlimited;
+        // plain Max
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1000, essenceOwned: 50 })).toEqual({
+            decompose: true,
+            coinify: true,
+        });
+        // fruit claimed elsewhere
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1500, essenceOwned: 50 })).toEqual({
+            decompose: false,
+            coinify: true,
+        });
+        // essence claimed elsewhere
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1000, essenceOwned: 90 })).toEqual({
+            decompose: true,
+            coinify: false,
+        });
+        // physical stock not known: counted
+        expect(flags(held(1000, 50))).toEqual({ decompose: false, coinify: false });
+    });
+
+    test('a capped Max (the fruit cut to what the gold pays for) is never Repeat ∞ on the decompose leg', async () => {
+        const loop = await calculateStarfruitLoop();
+        const state = { ...held(5000, 0), starfruitOwned: 5000, essenceOwned: 0 };
+        const capped = affordableBatch(loop, state, 375 * 1200, { max: true }).batch;
+        expect(capped.decomposeActions).toBe(1200);
+        expect(capped.max.unlimited.decompose).toBe(false);
+        const viaSpec = batchForSpec(loop, { max: true, maxCap: 1200, basis: 'hours', hours: 1 }, state);
+        expect(viaSpec.max.unlimited.decompose).toBe(false);
+    });
+
     test('bells are null, not zero, without a cowbell price', async () => {
         const loop = { ...(await calculateStarfruitLoop()), bellPrice: null };
         expect(maxBatch(loop, held(100)).batch.bells).toBeNull();

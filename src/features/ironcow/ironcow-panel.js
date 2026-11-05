@@ -1151,7 +1151,7 @@ class IronCowFarmPanel {
         // of what is left after its lowest point too. Legs the game queue already holds are in the walk
         // once, so nothing is held back twice. Off, this is today's number.
         let budget = own;
-        const nextSet = this.keepBatchCash ? this._nextSetStages(state) : null;
+        const nextSet = this.keepBatchCash ? this._nextSetStages(state, walked) : null;
         if (nextSet?.stages?.length) {
             budget = bellBudget(withBatchStages(walked, nextSet.stages), state.coins, pricing);
         }
@@ -1207,7 +1207,7 @@ class IronCowFarmPanel {
      *   `stages` null with a reason when the batch's fee has no price
      * @private
      */
-    _nextSetStages(state) {
+    _nextSetStages(state, walked = this._walkedQueue()) {
         // The strip works this out the same way, from the same spec
         let actions = [];
         try {
@@ -1215,7 +1215,7 @@ class IronCowFarmPanel {
         } catch (error) {
             console.error('[IronCow] Reading the queue failed:', error);
         }
-        return nextSetStages(this.loop, this._spec(), state, actions);
+        return nextSetStages(this.loop, this._spec(), state, actions, walked);
     }
 
     /**
@@ -1556,7 +1556,9 @@ class IronCowFarmPanel {
             const walkSteps = buildQueueSteps(loop, plan.missing.batch);
             const walkPresses = walkSteps.length === 1 ? '1 press' : `${formatWithSeparator(walkSteps.length)} presses`;
             const notes = [
-                ...(batch.max ? ['Repeat ∞ rows: leave the count'] : []),
+                ...(batch.max?.unlimited?.decompose || batch.max?.unlimited?.coinify
+                    ? ['Repeat ∞ rows: leave the count']
+                    : []),
                 ...(plan.missing.skipped.length ? [`${plan.missing.skipped.join(', ')} already queued`] : []),
                 ...(plan.missing.partial.length ? [`${plan.missing.partial.join(', ')}: only the difference`] : []),
             ];
@@ -1615,13 +1617,21 @@ class IronCowFarmPanel {
         }
         lines.push(...this._goldLines(batch));
         if (batch.max) {
-            const { fruitName, fruitHeld, leftoverFruit, essenceHeld } = batch.max;
+            const { fruitName, fruitHeld, leftoverFruit, essenceHeld, unlimited } = batch.max;
+            const rowShape =
+                unlimited?.decompose && unlimited?.coinify
+                    ? 'Decompose and coinify go in as Repeat ∞.'
+                    : !unlimited?.decompose && !unlimited?.coinify
+                      ? 'Decompose and coinify go in as counted rows: part of the stock is capped or kept for another plan, which a Repeat ∞ row would spend.'
+                      : unlimited.decompose
+                        ? 'Decompose goes in as Repeat ∞ and coinify as a counted row (some essence is kept for another plan).'
+                        : 'Decompose goes in as a counted row (some fruit is capped or kept for another plan) and coinify as Repeat ∞.';
             const left =
                 leftoverFruit > 0 ? `, ${formatWithSeparator(leftoverFruit)} left over (under one decompose)` : '';
             const essence = essenceHeld > 0 ? ` plus ${formatWithSeparator(essenceHeld)} essence held` : '';
             lines.push(
                 span(
-                    `Max: all ${formatWithSeparator(fruitHeld)} ${fruitName}${essence}, no foraging${left}. Decompose and coinify go in as Repeat ∞.`,
+                    `Max: all ${formatWithSeparator(fruitHeld)} ${fruitName}${essence}, no foraging${left}. ${rowShape}`,
                     {
                         display: 'block',
                         color: COLORS.textDim,
@@ -1896,7 +1906,7 @@ class IronCowFarmPanel {
      *   queued: Object}}
      * @private
      */
-    _missing(batch, state = this._queueState) {
+    _missing(batch, state = this._queueState, walked = this._walkedQueue()) {
         let actions = [];
         try {
             actions = dataManager.getCurrentActions?.() || [];
@@ -1908,8 +1918,25 @@ class IronCowFarmPanel {
             fruitHeld: state?.starfruitHeld || 0,
             essenceHeld: state?.essenceHeld || 0,
             labelOf: (action) => this._actionLabel(action),
+            // The engine's verdict on which rows end, so a material-limited ∞ row of any item is not "endless"
+            walked,
         });
         return { ...reduceBatchByQueue(batch, queued, this.loop), queued };
+    }
+
+    /**
+     * The queue walked through the action-time engine's own ledger, or null when it cannot be (engine not loaded,
+     * an unknown action, a gold-paying row behind a fight). Its verdict on which rows end is what the credit uses.
+     * @returns {Object|null}
+     * @private
+     */
+    _walkedQueue() {
+        try {
+            return walkQueueCoins(actionTimeDisplay());
+        } catch (error) {
+            console.error('[IronCow] Walking the queue failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -1951,14 +1978,9 @@ class IronCowFarmPanel {
      * @private
      */
     _goldCheck(batch) {
-        const missing = this._missing(batch);
+        const walked = this._walkedQueue();
+        const missing = this._missing(batch, this._queueState, walked);
         const stages = batchStages(this.loop, missing.batch);
-        let walked = null;
-        try {
-            walked = walkQueueCoins(actionTimeDisplay());
-        } catch (error) {
-            console.error('[IronCow] Walking the queue failed:', error);
-        }
         // A row that never ends hands on to nothing: the batch never starts, so it needs no gold
         const neverRuns = Boolean(walked?.stoppedAt);
         const queueNeed = walked ? coinReserve(walked.stages).reserve : 0;

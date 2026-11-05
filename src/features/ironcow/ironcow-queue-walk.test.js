@@ -108,6 +108,9 @@ function loop(overrides = {}) {
     };
 }
 
+/** A Max batch that uses every bit of the physical stock: nothing capped, nothing claimed by another plan */
+const ALL_STOCK = { fruitName: 'Star Fruit', unlimited: { decompose: true, coinify: true } };
+
 /** A balanced batch, as `balanceBatch` returns one */
 function batch(overrides = {}) {
     return { forageActions: 1600, decomposeActions: 1600, coinifyActions: 480, ...overrides };
@@ -192,7 +195,7 @@ describe('the three steps', () => {
     });
 
     test('Max queues decompose and coinify as Repeat ∞ rows with no count typed; forage would stay counted', () => {
-        const steps = buildQueueSteps(loop(), batch({ forageActions: 40, max: { fruitName: 'Star Fruit' } }));
+        const steps = buildQueueSteps(loop(), batch({ forageActions: 40, max: ALL_STOCK }));
         const [forage, decompose, coinify] = steps;
 
         expect(forage.unlimited).toBeUndefined();
@@ -203,6 +206,25 @@ describe('the three steps', () => {
         expect(decompose.verifyCount).toBeUndefined();
         expect(legIsUnlimited({ max: {} }, 'forage')).toBe(false);
         expect(legIsUnlimited({}, 'decompose')).toBe(false);
+    });
+
+    test('a leg is Repeat ∞ only when the batch uses all of that leg’s physical stock', () => {
+        const shape = (unlimited) =>
+            buildQueueSteps(loop(), batch({ forageActions: 0, max: { unlimited } })).map((s) => !!s.unlimited);
+        expect(shape({ decompose: true, coinify: true })).toEqual([true, true]);
+        // capped by Largest, or fruit claimed by another plan: the decompose row is counted
+        expect(shape({ decompose: false, coinify: true })).toEqual([false, true]);
+        // essence claimed by another plan: the coinify row is counted
+        expect(shape({ decompose: true, coinify: false })).toEqual([true, false]);
+        expect(shape({ decompose: false, coinify: false })).toEqual([false, false]);
+        // and a Max batch that says nothing about its stock is counted too
+        expect(buildQueueSteps(loop(), batch({ forageActions: 0, max: {} })).some((s) => s.unlimited)).toBe(false);
+        // the counted ones carry their count and the check on it
+        const counted = buildQueueSteps(loop(), batch({ forageActions: 0, max: { unlimited: {} } }));
+        expect(counted.map((s) => [s.actions, s.verifyCount])).toEqual([
+            [1600, true],
+            [480, true],
+        ]);
     });
 
     test('a count above the 32-bit limit is still split; below it is one row', () => {
@@ -327,7 +349,7 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
     test('a Max alchemy step is checked for being Repeat ∞, not for a count', () => {
         mocks.inventory[STARFRUIT] = 100;
         mocks.inventory[ESSENCE] = 100;
-        startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
+        startQueueWalk(loop(), batch({ forageActions: 0, max: ALL_STOCK }));
         pressed(DECOMPOSE_ACTION, `${DECOMPOSE_ACTION}::${STARFRUIT}`);
         expect(craftingPlanWalk.currentStep().actionHrid).toBe(DECOMPOSE_ACTION);
         craftingPlanWalk.next();
@@ -342,7 +364,7 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
         mocks.inventory[STARFRUIT] = 100;
         mountPanel(DECOMPOSE_ACTION, STARFRUIT);
         const before = document.querySelector('input').value;
-        startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
+        startQueueWalk(loop(), batch({ forageActions: 0, max: ALL_STOCK }));
         vi.advanceTimersByTime(2000);
         expect(document.querySelector('input').value).toBe(before);
     });
