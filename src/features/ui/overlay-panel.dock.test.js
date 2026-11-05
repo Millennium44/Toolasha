@@ -170,6 +170,56 @@ describe('docked into the character column', () => {
         }
     });
 
+    describe('on a phone the overlay always floats', () => {
+        const headerButtons = () => [...overlayPanel.panel.querySelectorAll('button')].map((b) => b.textContent);
+
+        afterEach(() => {
+            mobile.mode = 'off';
+        });
+
+        test('a stored dock floats, has no dock button, and keeps the stored setting', () => {
+            buildColumn();
+            overlayPanel.settings.docked = true;
+            mobile.mode = 'on';
+            overlayPanel.show();
+
+            expect(overlayPanel.panel.parentElement).toBe(document.body);
+            expect(overlayPanel.panel.dataset.docked).toBeUndefined();
+            expect(headerButtons()).not.toContain('⇱');
+            expect(headerButtons()).not.toContain('⇲');
+            expect(headerButtons()).not.toContain('⌛');
+            expect(overlayPanel.settings.docked).toBe(true);
+        });
+
+        test('a dock still waiting for its column shows no hourglass and is not stuck', () => {
+            // No column on the page at all: on a desktop this is the pending state
+            overlayPanel.settings.docked = true;
+            mobile.mode = 'on';
+            overlayPanel.show();
+            expect(headerButtons()).not.toContain('⌛');
+
+            // The column appears later: the refresh tick must not pull the panel into it
+            buildColumn();
+            overlayPanel._ensureDocked();
+            expect(overlayPanel.panel.parentElement).toBe(document.body);
+            expect(overlayPanel.settings.docked).toBe(true);
+        });
+
+        test('a dock request cannot change the stored setting', () => {
+            overlayPanel.settings.docked = true;
+            mobile.mode = 'on';
+            overlayPanel.show();
+            overlayPanel.toggleDock();
+            expect(overlayPanel.settings.docked).toBe(true);
+        });
+
+        test('desktop is unchanged: the button is there and the pending state shows the hourglass', () => {
+            overlayPanel.settings.docked = true;
+            overlayPanel.show();
+            expect(headerButtons()).toContain('⌛');
+        });
+    });
+
     test('on desktop a column that has not laid out yet is still the dock', () => {
         const host = buildColumn();
         vi.spyOn(document.getElementById('management-root'), 'getBoundingClientRect').mockReturnValue({

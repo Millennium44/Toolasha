@@ -660,6 +660,16 @@ class OverlayPanel {
         return Boolean(this.panel && document.body.contains(this.panel));
     }
 
+    /**
+     * Whether the panel should be docked right now: the stored choice, except on a phone, where
+     * the character column is hidden and the overlay always floats. The stored flag stays as it
+     * is so a desktop sharing the settings still docks.
+     * @returns {boolean}
+     */
+    _wantsDock() {
+        return this.settings.docked === true && !isMobileMode();
+    }
+
     /** Open the panel, or raise it if it is already up */
     show() {
         if (this.isOpen) {
@@ -803,7 +813,7 @@ class OverlayPanel {
         // Asked for docked but the column has not rendered yet — a reload lands
         // here — so it opens floating rather than not at all, and the next open
         // finds the column
-        const host = this.settings.docked ? this._findDockHost() : null;
+        const host = this._wantsDock() ? this._findDockHost() : null;
 
         this.panel = document.createElement('div');
         this.panel.id = PANEL_ID;
@@ -821,7 +831,7 @@ class OverlayPanel {
             overflow: 'hidden',
         });
 
-        this.panel.appendChild(this._createHeader(Boolean(host), this.settings.docked === true && !host));
+        this.panel.appendChild(this._createHeader(Boolean(host), this._wantsDock() && !host));
 
         // The scroll container, so the canvas below can be as large as the tiles
         // need without the panel growing to match
@@ -1341,6 +1351,7 @@ class OverlayPanel {
      * and a good deal to get wrong.
      */
     toggleDock() {
+        if (isMobileMode()) return;
         // The rebuild takes the popover with it, and docking is a thing you do
         // *from* the popover — so it is put back rather than silently dropped
         const wasPicking = this.isPickerOpen;
@@ -1410,7 +1421,10 @@ class OverlayPanel {
         );
         const closeBtn = this._iconButton('✕', 'Close', () => this.hide());
 
-        buttons.append(this.lockBtn, dockBtn, gearBtn, closeBtn);
+        // No dock button on a phone: the column it targets is not on screen there, so a request would
+        // wait (the hourglass) for a host that never appears. The stored choice is untouched.
+        if (isMobileMode()) buttons.append(this.lockBtn, gearBtn, closeBtn);
+        else buttons.append(this.lockBtn, dockBtn, gearBtn, closeBtn);
         header.appendChild(title);
         header.appendChild(buttons);
 
@@ -3981,7 +3995,7 @@ class OverlayPanel {
      * combat tick — costs more than the check it would be avoiding.
      */
     _ensureDocked() {
-        if (!this.panel || this.settings.docked !== true) return;
+        if (!this.panel || !this._wantsDock()) return;
 
         if (this.panel.dataset.docked === 'true' && this.panel.isConnected && this.dockHost?.isConnected) {
             this.dockHost.classList.add(DOCK_HOST_CLASS);

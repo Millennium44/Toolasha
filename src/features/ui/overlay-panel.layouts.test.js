@@ -19,7 +19,13 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 const store = vi.hoisted(() => ({ data: new Map(), transactions: [] }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, Z_HUD: 50, Z_FLOATING_PANEL: 1100, Z_POPUP: 9000 },
+    default: {
+        getSetting: () => true,
+        getSettingValue: (_key, fallback) => fallback,
+        Z_HUD: 50,
+        Z_FLOATING_PANEL: 1100,
+        Z_POPUP: 9000,
+    },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
