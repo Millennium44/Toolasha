@@ -25,6 +25,7 @@ When the price panel's 99-item list is full, the pin button reads "Full (99)" an
 ### Bestiary plan times read in days
 
 A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in the plan and in copied text.
+
 ### Iron Bell queue helper plans around what you hold
 
 - Hours now mean hours: Star Fruit you hold fills the time instead of shortening the queue.
