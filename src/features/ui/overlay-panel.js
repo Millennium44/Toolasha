@@ -630,8 +630,11 @@ class OverlayPanel {
         await this._restoreAppliedLayout(state);
 
         // Reopens itself where you left it — an overlay you have to summon after
-        // every refresh is an overlay you stop using
-        if (this.settings.open) this.show();
+        // every refresh is an overlay you stop using.
+        // Not on a phone: the panel opens over most of a 412 px screen, so a refresh would
+        // greet the player with the game covered. The saved flag is left as it is (a desktop
+        // on the same synced settings still reopens), and the sidebar entry opens it.
+        if (this.settings.open && !isMobileMode()) this.show();
 
         registerCommand({
             name: 'Overlay',
