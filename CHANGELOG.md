@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overlay picker keeps its place
+
+Switching layouts or ticking a tile in the overlay's tile picker no longer scrolls it back to the top.
+
 ### Panels stay out of the way when the game disconnects
 
 Toolasha's panels and overlay no longer draw over the game's Disconnected message, for example after the character was opened in another tab. They come back as they were on reconnect or reload.

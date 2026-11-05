@@ -1660,7 +1660,9 @@ class OverlayPanel {
         this.pickerEl.style.width = `${width}px`;
 
         // Uncapped first, so what comes back is the height it wants rather than
-        // the height it was last allowed
+        // the height it was last allowed. Uncapping it removes the overflow, which
+        // resets its scroll, so the position is put back once it is capped again
+        const scrolled = this.pickerEl.scrollTop;
         this.pickerEl.style.maxHeight = '';
         const wanted = this.pickerEl.getBoundingClientRect().height;
 
@@ -1696,11 +1698,24 @@ class OverlayPanel {
         this.pickerEl.style.maxHeight = `${Math.round(Math.max(MIN_PICKER_HEIGHT, cap))}px`;
         this.pickerEl.style.top = `${Math.round(Math.max(PICKER_EDGE, top))}px`;
         this.pickerEl.style.left = `${Math.round(Math.max(PICKER_EDGE, Math.min(anchor.left, window.innerWidth - width - PICKER_EDGE)))}px`;
+        this.pickerEl.scrollTop = scrolled;
     }
 
     _renderPicker() {
         // Reachable from a bulk change that a closed panel can still make
         if (!this.pickerEl) return;
+        // A redraw (switching layout, ticking a tile) keeps the list where it was
+        // scrolled; emptying it would otherwise drop the reader back at the top
+        const scrolled = this.pickerEl.scrollTop;
+        try {
+            this._drawPickerContents();
+        } finally {
+            this.pickerEl.scrollTop = scrolled;
+        }
+    }
+
+    /** The popover's contents, drawn from scratch. @private */
+    _drawPickerContents() {
         this.pickerEl.replaceChildren();
 
         const resolved = resolveRows(registeredRows(), this.settings);

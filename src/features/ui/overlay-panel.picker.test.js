@@ -279,6 +279,37 @@ afterEach(() => {
 });
 
 describe('getting out of the gear popover', () => {
+    test('a redraw and a re-placement keep the list where it was scrolled', () => {
+        panelAt({ left: 20, top: 400, width: 400, height: 360 });
+        pickerWants(400);
+        openGear();
+        overlayPanel._placePicker();
+
+        // A browser zeroes scrollTop when the contents are emptied or the cap is
+        // lifted; both are stood in for here, since happy-dom lays nothing out
+        const picker = overlayPanel.pickerEl;
+        let scroll = 240;
+        Object.defineProperty(picker, 'scrollTop', {
+            configurable: true,
+            get: () => scroll,
+            set: (value) => {
+                scroll = value;
+            },
+        });
+        const empty = picker.replaceChildren.bind(picker);
+        picker.replaceChildren = (...nodes) => {
+            scroll = 0;
+            return empty(...nodes);
+        };
+
+        overlayPanel._renderPicker();
+        expect(scroll).toBe(240);
+
+        scroll = 180;
+        overlayPanel._placePicker();
+        expect(scroll).toBe(180);
+    });
+
     test('it never covers the header, even with no room above or below', () => {
         // A panel nearly as tall as the window: there is nowhere for a popover
         // of any size to stand clear of it
