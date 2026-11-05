@@ -434,6 +434,7 @@ vi.mock('../../core/storage-persistence.js', () => ({
     },
 }));
 
+const sharedRecord = vi.hoisted(() => ({ clears: 0, fail: false }));
 vi.mock('../../core/settings-storage.js', () => ({
     default: {
         loadSettings: async () => {
@@ -441,6 +442,10 @@ vi.mock('../../core/settings-storage.js', () => ({
             return mocks.loadResult ?? mocks.settingsMap;
         },
         setSetting: async () => {},
+        clearSharedScopeConflicts: async () => {
+            sharedRecord.clears += 1;
+            if (sharedRecord.fail) throw new Error('storage closed');
+        },
         exportSettings: async () => '{}',
         importSettings: async () => null,
         resetToDefaults: async () => {
@@ -1615,6 +1620,24 @@ describe("switching tabs only touches this panel's own tab list", () => {
         expect(selectedTab.getAttribute('aria-selected')).toBe('true');
         expect(selectedTab.getAttribute('tabindex')).toBe('0');
         expect(selectedTab.classList.contains('Mui-selected')).toBe(true);
+    });
+});
+
+describe('the device-wide settings carry-over record', () => {
+    test('is cleared once per page, however often the panel initializes, and a failure never throws', async () => {
+        sharedRecord.fail = true;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            await settingsUI.initialize();
+            await settingsUI.initialize();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            // The earlier describes may have initialized already; either way, never more than once in all
+            expect(sharedRecord.clears).toBe(1);
+        } finally {
+            sharedRecord.fail = false;
+            warn.mockRestore();
+            settingsUI.cleanup();
+        }
     });
 });
 

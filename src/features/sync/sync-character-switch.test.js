@@ -142,6 +142,7 @@ const { default: config } = await import('../../core/config.js');
 const { default: domObserver } = await import('../../core/dom-observer.js');
 const { default: connectionState } = await import('../../core/connection-state.js');
 const { default: syncManager } = await import('./sync-manager.js');
+const { rememberPullSummary, lastPullSummary } = await import('./pull-summary.js');
 
 const ALICE = 32030;
 const BOB = 32031;
@@ -880,5 +881,59 @@ describe('with sync off', () => {
         expect(scheduled).toEqual([]);
         expect(getAll).not.toHaveBeenCalled();
         expect(github.writes).toEqual([]);
+    });
+});
+
+describe('the last pull summary across a switch', () => {
+    // The manager is never torn down on a switch, so the arriving character's settings load is what clears it
+    const summary = { at: 'alice-pull' };
+
+    test('a switch to another character clears it', async () => {
+        rememberPullSummary(summary);
+        const window = await enterWindow();
+        await leaveWindow(window);
+        expect(lastPullSummary()).toBeNull();
+    });
+
+    test('a settings reload of the same character keeps it', async () => {
+        rememberPullSummary(summary);
+        await config.loadSettings();
+        expect(lastPullSummary()).toBe(summary);
+    });
+
+    test('a quick switch back clears the one recorded on the other character', async () => {
+        const first = await enterWindow();
+        await leaveWindow(first);
+        const bobs = { at: 'bob-pull' };
+        rememberPullSummary(bobs);
+        const back = await enterWindow(ALICE, 'Alice');
+        await leaveWindow(back);
+        expect(lastPullSummary()).toBeNull();
+    });
+
+    test('a pull finishing inside the switch window is cleared by the arriving load', async () => {
+        const window = await enterWindow();
+        rememberPullSummary(summary);
+        await leaveWindow(window);
+        expect(lastPullSummary()).toBeNull();
+    });
+
+    test('a pull finishing after the arriving load keeps its summary there', async () => {
+        const window = await enterWindow();
+        await leaveWindow(window);
+        rememberPullSummary(summary);
+        await settle();
+        expect(lastPullSummary()).toBe(summary);
+    });
+
+    test('with sync off it is still cleared', async () => {
+        syncManager.cleanup();
+        settingsArea().set('script_settingsMap_shared', sharedMap({ enabled: false, token: '' }));
+        await config.loadSettings();
+        await syncManager.initialize();
+        rememberPullSummary(summary);
+        const window = await enterWindow();
+        await leaveWindow(window);
+        expect(lastPullSummary()).toBeNull();
     });
 });

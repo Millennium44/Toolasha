@@ -228,6 +228,19 @@ class SettingsUI {
         syncManager.initialize().catch((error) => {
             console.error('[SettingsUI] Starting cross-device sync failed:', error);
         });
+        // The device-wide settings carry-over records the choices it had to make between characters. That
+        // record was meant for a notice that never shipped, and it is too late to show now, so it is quietly
+        // dropped, once per page. Best effort and not awaited: a failure only leaves it for the next load
+        if (!this._sharedScopeConflictsCleared) {
+            this._sharedScopeConflictsCleared = true;
+            (async () => {
+                try {
+                    await settingsStorage.clearSharedScopeConflicts();
+                } catch (error) {
+                    console.warn('[SettingsUI] Clearing the settings carry-over record failed:', error);
+                }
+            })();
+        }
 
         // Joins the tab census for the PFormance all-tabs list. Here rather than
         // in the panel's own initialize(), which only the command palette calls

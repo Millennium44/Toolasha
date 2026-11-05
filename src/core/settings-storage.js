@@ -560,8 +560,9 @@ const SHARED_SETTING_IDS = [
 const SHARED_SCOPE_FLAG_KEY = 'settings_shared_scope_v3';
 
 /**
- * Where a carry-over that could not decide records what it found, for the sync
- * feature to show the player. See {@link SettingsStorage#migrateSharedSettings}.
+ * Where a carry-over that could not decide records what it found. Nothing shows it any more: the notice
+ * never shipped, and settings-ui clears the record once per page. See
+ * {@link SettingsStorage#migrateSharedSettings}.
  */
 const SHARED_SCOPE_CONFLICT_KEY = 'settings_shared_scope_conflicts';
 
@@ -1000,8 +1001,8 @@ class SettingsStorage {
     }
 
     /**
-     * What the account-wide carry-over could not decide on its own, for the
-     * sync feature to show the player once.
+     * What the account-wide carry-over could not decide on its own. Read only by tests now; see
+     * {@link SHARED_SCOPE_CONFLICT_KEY}.
      * @returns {Promise<{at: number, conflicts: Array<Object>}|null>}
      */
     async sharedScopeConflicts() {

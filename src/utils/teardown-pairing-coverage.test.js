@@ -322,8 +322,9 @@ const KNOWN_SAFE = {
         'The same market-data warm-up, from the planner’s second caller — nothing registered, nothing to stop.',
     'src/features/settings/settings-ui.js#syncManager':
         'The settings panel starts cross-device sync once per page load and it runs for the life of the page, ' +
-        'across character switches: it holds no character state, and `initialize()` is guarded against a second ' +
-        'start. Nothing stops it, by design.',
+        'across character switches: its only character state is the pull summary, which it clears itself when a ' +
+        'settings load names another character, and `initialize()` is guarded against a second start. Nothing ' +
+        'stops it, by design: a teardown on a switch would drop the takeover watch a switch has to keep.',
     'src/features/tasks/task-profit-display.js#expectedValueCalculator':
         'A registered feature (`entrypoint.js` key `expectedValueCalculator`), so the registry owns both ends ' +
         'of its lifecycle; `ensureMarketDataInitialized()` only makes sure it is up before asking it for a ' +

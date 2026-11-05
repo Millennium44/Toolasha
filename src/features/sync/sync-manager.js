@@ -281,10 +281,9 @@ const STARTUP_PULL_DELAYS_MS = [20 * 1000, 80 * 1000, 200 * 1000];
 const AUTO_PULL_OFFSET_MS = Math.floor(AUTO_PUSH_INTERVAL_MS / 2);
 
 /**
- * The character the manager last initialised for. Module-scoped on purpose:
- * a character switch tears the feature down and re-initialises it, and the
- * only thing that survives to say "this is a switch, not a page load" is the
- * module itself.
+ * The character whose settings the manager last saw load. The manager is started once per page (settings-ui.js)
+ * and lives through every switch, so a settings load naming another character is how it learns of one; see
+ * `_noteCharacter`. Module-scoped so a test's `cleanup()` and re-`initialize()` still reads as the same page.
  */
 let lastCharacterId = null;
 
@@ -360,7 +359,11 @@ class SyncManager {
         }
 
         // This instance outlives a character switch, so this runs for every load
-        this.settingsLoadedOff = config.onSettingsLoaded?.(() => this._scheduleOwed()) ?? null;
+        this.settingsLoadedOff =
+            config.onSettingsLoaded?.(() => {
+                this._noteCharacter();
+                this._scheduleOwed();
+            }) ?? null;
 
         this._startAuto();
         this._watchHandoff();
@@ -388,22 +391,39 @@ class SyncManager {
             when: () => Boolean(lastPullSummary()),
         });
 
-        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
-        // The summary describes what this device downloaded, not what this
-        // character owns; carrying it across a switch would put one character's
-        // pull on another character's screen.
-        if (characterId !== lastCharacterId) clearPullSummary();
-        if (characterId !== null) lastCharacterId = characterId;
+        this._noteCharacter();
     }
 
-    /** Stop timers and setting listeners. */
+    /**
+     * Forget the last pull's summary when the character has changed. The summary describes what this device
+     * downloaded, not what this character owns; carrying it across a switch would put one character's pull on
+     * another character's screen. A settings reload of the same character (a sync pull's, a retry) keeps it.
+     * A pull finishing inside the switch window loses its summary to the arriving load; one finishing after
+     * that load records it on the new screen, where it is still true: what it wrote is every character's.
+     * @private
+     */
+    _noteCharacter() {
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (characterId === null) return;
+        if (lastCharacterId !== null && characterId !== lastCharacterId) clearPullSummary();
+        lastCharacterId = characterId;
+    }
+
+    /**
+     * Stop timers and setting listeners.
+     *
+     * Nothing in the page calls this: the manager starts once per page load (settings-ui.js) and runs across
+     * character switches by design. Tearing it down on a switch would drop the takeover watch exactly when a
+     * takeover during the switch is waiting for the switch's signs to clear (`_lookAtHandoff`), and would
+     * cancel a pull whose writes are every character's anyway. It stays as the teardown tests and any future
+     * caller use.
+     */
     cleanup() {
-        // Character switches tear this feature down while a GitHub request may
-        // still be pending. Invalidate that operation's ownership token so it
-        // cannot apply its pull after the next character opens. `busy` itself
-        // stays held: an import already under way cannot be stopped, and
-        // without Web Locks this flag is the only thing keeping the next
-        // character's switch push from uploading a half-imported database.
+        // A GitHub request may still be pending. Invalidate that operation's
+        // ownership token so it cannot apply its pull after teardown. `busy`
+        // itself stays held: an import already under way cannot be stopped, and
+        // without Web Locks this flag is the only thing keeping another push
+        // from uploading a half-imported database.
         // The cancelled operation's own `finally` releases it.
         if (typeof this.busy === 'number') this.lastCancelledToken = this.busy;
         unregisterCommand('Sync push');
