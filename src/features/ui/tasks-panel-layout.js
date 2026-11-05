@@ -83,7 +83,6 @@ ${WIDE_BAR} > ${TIMER} { order: 21; margin-left: auto; }
 ${WIDE_BAR} > :not(${SLOTS}):not(${TIMER}):not(#${WALK_CHIP_ID}):not(#${MERGED_WALK_ID}) { order: 22; }
 `;
 const CSS = `
-${WIDE_CSS}
 ${ACTIVE} { min-width: 0 !important; max-width: 100% !important; }
 ${ACTIVE} [${LAYER}="owner"], ${ACTIVE} [${LAYER}="wrapper"], ${ACTIVE} [${LAYER}="root"] {
     min-width: 0 !important; max-width: 100% !important; width: 100% !important;
@@ -114,7 +113,8 @@ ${ACTIVE} [data-mwi-task-filters] {
     min-width: 0; max-width: 100%; flex-wrap: wrap;
 }
 ${ACTIVE} [class*="TasksPanel_taskTimer"] { margin-left: auto; }
-${FOLD_CSS}`;
+${FOLD_CSS}
+${WIDE_CSS}`;
 
 let current = null;
 let unregister = [];

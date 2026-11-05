@@ -144,7 +144,8 @@ test('the stylesheet folds by default: only the named bar items stay while close
     expect(rules).toContain('button[data-mwi-task-highlight]');
     expect(rules).toContain(':not([class*="TasksPanel_taskTimer"]):not(#toolasha-task-tools-btn)');
     // Sort Tasks and Upgrade Capacity are never in a hide selector
-    const hide = rules.slice(rules.lastIndexOf('[class*="TasksPanel_taskSlotCount"] > :not(button)'));
+    const hideStart = rules.lastIndexOf('[class*="TasksPanel_taskSlotCount"] > :not(button)');
+    const hide = rules.slice(hideStart, rules.indexOf('}', hideStart));
     expect(hide).not.toContain('data-mwi-task-sort');
     // Claim Reward has no display rule of its own, so its own display:none (nothing to claim) still wins
     expect(rules).not.toMatch(/#mwi-claim-proxy-btn\s*\{[^}]*display/);
@@ -274,7 +275,8 @@ test('crossing the narrow line both ways restores the desktop bar with nothing l
     expect(header(panel).hasAttribute(FOLD)).toBe(false);
     expect(header(panel).hasAttribute(OPEN)).toBe(false);
     expect(header(panel).outerHTML).toBe(snapshot);
-    expect(getComputedStyle(slots).display).not.toBe('contents');
+    // The wide bar sorts the same group with `order`, with nothing folded behind Tools
+    expect(getComputedStyle(slots).display).toBe('contents');
     rect.mockReturnValue({ width: 369 });
     window.dispatchEvent(new Event('resize'));
     expect(panel.querySelectorAll(TOOLS)).toHaveLength(1);
