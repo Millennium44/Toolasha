@@ -332,3 +332,60 @@ describe('the helpers', () => {
         expect(actionTypeLabel('/action_types/foraging')).toBe('Foraging');
     });
 });
+
+describe('a running activation counts toward the refill, as it counts toward time left', () => {
+    const TEA = '/items/gathering_tea';
+    const HOUR = 3600;
+    const entryFor = (held, activeMinutes, { slots } = {}) => {
+        runForaging();
+        game.characterData = { noncombatStats: { drinkConcentration: 0 } };
+        game.slots = slots || [slot(TEA, { isActive: activeMinutes > 0, duration: activeMinutes * MINUTE_NS })];
+        game.inventory = held ? [stack(TEA, held)] : [];
+        return skillingConsumables(FORAGING).forecasts[0];
+    };
+
+    test('eleven held five-minute teas plus a five-minute buff cover an hour: buy none', () => {
+        const entry = entryFor(11, 5);
+        expect(entry.secondsLeft).toBeCloseTo(HOUR, 6);
+        expect(forecastMod.refillFor(entry, HOUR).count).toBe(0);
+        expect(forecastMod.refillAll([entry], HOUR).items).toBe(0);
+        // One minute more than the coverage is one more tea
+        expect(forecastMod.refillFor(entry, HOUR + 60).count).toBe(1);
+    });
+
+    test('held 0 with an active buff buys only the time the buff does not cover', () => {
+        const entry = entryFor(0, 5);
+        expect(forecastMod.refillFor(entry, HOUR).count).toBe(11);
+        expect(forecastMod.refillFor(entry, 5 * 60).count).toBe(0);
+    });
+
+    test('a target shorter than the active buff buys nothing', () => {
+        const entry = entryFor(0, 5);
+        expect(forecastMod.refillFor(entry, 60)).toEqual({ count: 0, cost: null });
+    });
+
+    test('no activation behaves exactly as before', () => {
+        const entry = entryFor(2, 0);
+        expect(forecastMod.refillFor(entry, HOUR).count).toBe(10);
+    });
+
+    test('an unknown rate stays unknown whatever is running', () => {
+        runForaging();
+        game.slots = [slot('/items/mystery_tea', { isActive: true, duration: 5 * MINUTE_NS })];
+        const [entry] = skillingConsumables(FORAGING).forecasts;
+        expect(forecastMod.refillFor(entry, HOUR)).toMatchObject({ count: null, rateUnknown: true });
+    });
+
+    test('a tea in two slots is one entry and counts the longest activation, not the sum', () => {
+        const entry = entryFor(0, 0, {
+            slots: [
+                slot(TEA, { isActive: false }),
+                slot(TEA, { isActive: true, duration: 5 * MINUTE_NS, slotIndex: 1 }),
+                slot(TEA, { isActive: true, duration: 3 * MINUTE_NS, slotIndex: 2 }),
+            ],
+        });
+        expect(skillingConsumables(FORAGING).forecasts).toHaveLength(1);
+        expect(entry.activeSeconds).toBe(300);
+        expect(forecastMod.refillFor(entry, HOUR).count).toBe(11);
+    });
+});
