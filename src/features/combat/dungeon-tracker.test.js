@@ -2286,9 +2286,9 @@ describe('rebuilding history from the chat log', () => {
         });
     });
 
-    test('a backfilled run of the dungeon being run now inherits its tier', async () => {
-        // Chat carries no tier, so the only signal is the dungeon running when
-        // Backfill is pressed — here Chimerical Den T2.
+    test('a backfilled run of the dungeon being run now gets its dungeon, and never a guessed tier', async () => {
+        // Chat carries no tier, and the dungeon running when Backfill is pressed
+        // (here Chimerical Den T2) says nothing about which tier an older run was.
         game.actions = [{ actionHrid: DEN, difficultyTier: 2, isDone: false }];
         chatLog([
             { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
@@ -2299,7 +2299,7 @@ describe('rebuilding history from the chat log', () => {
         await tracker.backfillFromChatHistory();
 
         expect(game.savedRuns).toHaveLength(1);
-        expect(game.savedRuns[0].run.tier).toBe(2);
+        expect(game.savedRuns[0].run.tier).toBeUndefined();
         expect(game.savedRuns[0].run.dungeonHrid).toBe(DEN);
     });
 

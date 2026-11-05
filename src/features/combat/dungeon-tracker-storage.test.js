@@ -256,6 +256,19 @@ describe('saveTeamRun', () => {
         expect(runs[0].tier).toBe(2);
     });
 
+    test('a chat copy of a run with no tier never changes a live copy’s tier, in either order', async () => {
+        seedRuns([]);
+        const base = { timestamp: '2026-01-05T00:00:00Z', duration: 12000, dungeonName: 'Chimerical Den' };
+        await dungeonTrackerStorage.saveTeamRun('C,D', { ...base, tier: 2 }); // live first
+        await dungeonTrackerStorage.saveTeamRun('C,D', base);
+        const other = { ...base, timestamp: '2026-01-06T00:00:00Z' };
+        await dungeonTrackerStorage.saveTeamRun('C,D', other); // chat first
+        await dungeonTrackerStorage.saveTeamRun('C,D', { ...other, tier: 1 });
+
+        const runs = await dungeonTrackerStorage.getAllRuns();
+        expect(runs.map((run) => run.tier).sort()).toEqual([1, 2]);
+    });
+
     test('a chat run arriving as a duplicate does not erase a tracker run’s wave times', async () => {
         seedRuns([]);
         const base = { timestamp: '2026-01-05T00:00:00Z', duration: 12000, dungeonName: 'Chimerical Den' };
