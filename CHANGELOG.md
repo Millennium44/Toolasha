@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim results read long numbers short
+
+Encounters, DPS, XP, drop, consumable and history figures now read 1.2M instead of 1,234,567 from 1,000 up, with the exact number on hover.
+
 ### Bestiary credits follow each monster's real tier
 
 Combat Sim credited every kill at the zone's tier, undercounting monsters that spawn above it: most Chimerical Den monsters are worth five credits at T0, not one. Bestiary points, plan times and threshold alert estimates now use the monster's own tier, so many dungeons read faster than before.
