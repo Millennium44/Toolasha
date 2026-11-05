@@ -53,6 +53,15 @@ export const ENHANCEMENT_BONUSES = {
 };
 
 /**
+ * What one whole base stat is in the game's table.
+ *
+ * `enhancementLevelTotalBonusMultiplierTable` is not a fraction. It counts steps of an item's
+ * `noncombatEnhancementBonuses`, and the game adds `base + table[level] * bonus`, where that bonus is 2% of the
+ * base times the slot multiplier. So +20 reads 50 and means 100%; +10 reads 14.5 and means 29%.
+ */
+const GAME_TABLE_STEPS_PER_WHOLE = 50;
+
+/**
  * The total bonus fraction at an enhancement level: the game's own table when it is loaded and has the level,
  * else the table above. A patch that raises the cap or rebalances a level reaches every caller through this.
  * @param {number} enhancementLevel
@@ -65,7 +74,9 @@ export function enhancementBonusAt(enhancementLevel) {
     } catch {
         fromGame = undefined;
     }
-    if (typeof fromGame === 'number' && Number.isFinite(fromGame) && fromGame >= 0) return fromGame;
+    if (typeof fromGame === 'number' && Number.isFinite(fromGame) && fromGame >= 0) {
+        return fromGame / GAME_TABLE_STEPS_PER_WHOLE;
+    }
     return ENHANCEMENT_BONUSES[enhancementLevel] || 0;
 }
 
