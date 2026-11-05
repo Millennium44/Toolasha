@@ -349,7 +349,7 @@ registerRow({
                 { text: skilling.name, color: ROW_COLORS.dim, ellipsis: true, push: true },
             ]);
             container.title =
-                `${skilling.name} experience per hour, over the last ten minutes.\n` +
+                `${skilling.name} experience per hour since it started gaining (at most the last ten minutes).\n` +
                 'The rate Time to Level divides by.\nDouble-click for the per-skill breakdown and combat level.';
             return;
         }

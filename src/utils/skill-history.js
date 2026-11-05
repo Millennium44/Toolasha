@@ -41,9 +41,24 @@ const DEFAULT_SAMPLE_MS = 5000;
  * @param {Object} [options] - Tuning
  * @param {number} [options.windowMs] - How far back to measure over
  * @param {number} [options.sampleMs] - How often to take a reading
+ * @param {boolean} [options.startAtFirstGain] - Measure from the reading just before the skill
+ *   first gained, instead of from the oldest reading in the window. Without it a skill that
+ *   started a minute ago is divided over the whole ten minutes, including the flat readings
+ *   from before it started, and reads about a tenth of its true rate. A first gain that
+ *   lands across a sampling gap (nothing was reading while the panel was closed) starts
+ *   after the gap instead, since the skill may have started anywhere inside it; the rate
+ *   then reads as unmeasured until twenty seconds of readings exist after it, rather than low.
  * @returns {{sample: Function, rateFor: Function, rates: Function, readings: Function, clear: Function}}
  */
-export function createSkillHistory({ windowMs = DEFAULT_WINDOW_MS, sampleMs = DEFAULT_SAMPLE_MS } = {}) {
+export function createSkillHistory({
+    windowMs = DEFAULT_WINDOW_MS,
+    sampleMs = DEFAULT_SAMPLE_MS,
+    startAtFirstGain = false,
+} = {}) {
+    // Readings further apart than this mean nothing was sampling in between (the
+    // panel closed or its tiles hidden), so the time between them is not known
+    const gapMs = Math.max(3 * sampleMs, 15000);
+
     /** skillHrid → [{t, xp}], oldest first */
     const history = new Map();
 
@@ -86,7 +101,15 @@ export function createSkillHistory({ windowMs = DEFAULT_WINDOW_MS, sampleMs = DE
      */
     function rateFor(skillHrid) {
         const readings = history.get(skillHrid) || [];
-        return experiencePerHour(readings[0], readings[readings.length - 1]);
+        let start = 0;
+        if (startAtFirstGain && readings.length > 1) {
+            // The leading run of readings with the same experience is time before the skill moved
+            while (start + 1 < readings.length && readings[start + 1].xp === readings[start].xp) start += 1;
+            // The first gain sits in the interval after that run; if nothing was
+            // sampling during it, its start is unknown, so measure from its far end
+            if (start + 1 < readings.length && readings[start + 1].t - readings[start].t > gapMs) start += 1;
+        }
+        return experiencePerHour(readings[start], readings[readings.length - 1]);
     }
 
     /**

@@ -91,11 +91,24 @@ function draw() {
     return container.textContent;
 }
 
+/**
+ * Let five minutes pass the way they do with the overlay up: a redraw every five
+ * seconds, so no interval is a sampling gap (a first gain across a gap is
+ * deliberately not measured; see skill-history.js).
+ */
+function elapseFiveMinutes() {
+    const scratch = document.createElement('div');
+    for (let step = 0; step < 60; step += 1) {
+        vi.setSystemTime(Date.now() + 5 * 1000);
+        ttlRow.render(scratch);
+    }
+}
+
 /** Give the row two readings far enough apart to measure a rate from */
 function train(name, amount) {
     draw();
     grant(name, amount);
-    vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+    elapseFiveMinutes();
     return draw();
 }
 
@@ -238,7 +251,7 @@ describe('the Skill Time to Level tile answers only for the queue', () => {
 
         drawSkilling();
         grant('tailoring', 1000000);
-        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        elapseFiveMinutes();
         const container = drawSkilling();
 
         expect(container.textContent).toContain('Tailoring 151');
@@ -291,7 +304,7 @@ describe('Time to Level while a skilling action runs', () => {
         draw();
         grant('melee', 5_000_000);
         grant('foraging', 100_000);
-        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        elapseFiveMinutes();
         const tile = drawTile();
 
         expect(tile.textContent).toContain('Foraging 101');
@@ -337,7 +350,7 @@ describe('Time to Level while a skilling action runs', () => {
         expect(runningSkillReading()).toEqual({ hrid: '/skills/foraging', name: 'Foraging', xpPerHour: null });
 
         grant('foraging', 100_000);
-        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        elapseFiveMinutes();
         const reading = runningSkillReading();
         expect(reading.xpPerHour).toBeGreaterThan(0);
         expect(drawTile().title).toContain(`${Math.round(reading.xpPerHour).toLocaleString()} xp/hr`);
