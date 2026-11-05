@@ -3200,6 +3200,13 @@ if (combatSimulatorSite === 'metz') {
     // here; a different character is a switch, which feature-registry owns.
     let startupBegun = false;
 
+    // The same check for a character switched to later. Late enough that the
+    // new character's stats message has landed; the check itself skips a
+    // switch still under way and any character it has already compared.
+    dataManager.on('character_switched', () => {
+        setTimeout(() => UI.gearStatsCheck?.runGearStatsCheck?.(), 3000);
+    });
+
     dataManager.on('character_initialized', (_data) => {
         performanceMonitor.mark('character:data');
         // Skip full initialization during character switches
@@ -3350,6 +3357,11 @@ if (combatSimulatorSite === 'metz') {
                         UI.healthStatus.reportFailures(canaryFailures);
                     }
                 }, 500); // Wait 500ms after initialization to check health
+
+                // Worn-gear figures against the game's own stats, once for this
+                // character (runGearStatsCheck never throws and stays silent
+                // unless ours comes out higher than the game's)
+                setTimeout(() => UI.gearStatsCheck?.runGearStatsCheck?.(), 1500);
             } catch (error) {
                 // Nothing below this point ran, so the console was the only place
                 // that said so — and a script that silently did not start is
