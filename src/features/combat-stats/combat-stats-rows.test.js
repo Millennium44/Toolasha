@@ -77,6 +77,7 @@ vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: (breakdown) => (typeof game.forecasts === 'function' ? game.forecasts(breakdown) : game.forecasts),
+    firstToRunOut: () => null,
     costPerDaySides: () => game.consumableSides,
     partyOutlook: () => game.partySummary || { you: game.outlook, party: null, partyName: null },
     drinkRatePerDay: () => 0,
