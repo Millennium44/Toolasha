@@ -2639,17 +2639,23 @@ class OverlayPanel {
      * forgets *where* tiles sit, this one forgets *which* tiles are on and in
      * what order. It is the answer to the overlay that has drifted into the
      * everything-on wall — clearing the explicit visibility map and the saved
-     * order drops both back to what `resolveRows` reads off {@link CURATED_ROWS},
-     * and turning `curatedDefaults` on opts a pre-curated character in, so a
-     * layout arranged before the curated set existed can reach it too.
+     * order puts them back to the Dashboard preset's tiles, and turning
+     * `curatedDefaults` on opts a pre-curated character in, so a layout arranged
+     * before the curated set existed can reach it too.
      *
      * Spans and text sizes are left alone: a reset that also flattened a
      * carefully arranged layout would be two undos wearing one button.
      */
     _resetTiles() {
         this._snapshot('tile reset');
-        this.settings.visible = {};
-        this.settings.order = [];
+        // The Dashboard's tiles, written out row by row: the same set a fresh
+        // character starts with. Not left to `resolveRows` and CURATED_ROWS,
+        // which stay as the fallback for a character whose map is empty (an
+        // earlier reset) so changing this does not change theirs.
+        const dashboard = PRESET_LAYOUTS.Dashboard;
+        this.settings.visible = Object.fromEntries(registeredRows().map(({ key }) => [key, false]));
+        for (const key of dashboard.order) this.settings.visible[key] = true;
+        this.settings.order = [...dashboard.order];
         this.settings.curatedDefaults = true;
         this.justEnabled.clear();
         this._save();
@@ -2693,7 +2699,7 @@ class OverlayPanel {
         // The Default preset's own order and spans, for the rows this character
         // actually has on — "forget the arrangement" now has an arrangement to
         // go back to, rather than a packer to re-run
-        const shipped = PRESET_LAYOUTS.Default;
+        const shipped = PRESET_LAYOUTS.Dashboard;
         const known = new Set(registeredRows().map((row) => row.key));
         const first = shipped.order.filter((key) => known.has(key));
         const rest = (this.settings.order || []).filter((key) => !first.includes(key));

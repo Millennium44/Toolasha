@@ -380,7 +380,6 @@ describe('saving and switching named layouts', () => {
             'Skilling · preset',
             'Labyrinth · preset',
             'Dashboard · preset',
-            'Default · preset',
         ]);
     });
 
@@ -438,7 +437,6 @@ describe('saving and switching named layouts', () => {
             'Labyrinth · preset',
             'Market · preset',
             'Dashboard · preset',
-            'Default · preset',
         ]);
     });
 });

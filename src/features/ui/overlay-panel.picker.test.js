@@ -101,6 +101,7 @@ vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
 
 const { registerEscapeClose } = await import('../../utils/panel-escape.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
+const { PRESET_LAYOUTS } = await import('./overlay-layouts.js');
 
 /** The header band, which is the one part of the panel that must stay clickable */
 const HEADER_HEIGHT = 28;
@@ -568,11 +569,13 @@ describe('resetting to the default tiles', () => {
 
         overlayPanel.pickerEl.querySelector('button[title^="Switch the rows back"]').click();
 
-        // Opted into the curated set with the explicit opinions cleared, so the
-        // two curated rows come back on and the non-curated one drops away
+        // Opted into the Dashboard's tiles, written out row by row: none of the
+        // three registered rows is one of them, so all three are off, and the
+        // order is the Dashboard's
         expect(overlayPanel.settings.curatedDefaults).toBe(true);
-        expect(overlayPanel.settings.visible).toEqual({});
-        expect(chipState()).toEqual({ dps: true, luck: true, houses: false });
+        expect(overlayPanel.settings.visible).toMatchObject({ dps: false, luck: false, houses: false, netWorth: true });
+        expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Dashboard.order);
+        expect(chipState()).toEqual({ dps: false, luck: false, houses: false });
 
         // Reset tiles is a bulk change, so it takes the undo like the rest
         overlayPanel.pickerEl.querySelector('button[title="Put the layout back to before that"]').click();
@@ -625,6 +628,19 @@ describe('resetting to the default tiles', () => {
         dialog.answer = 'reset';
         await overlayPanel._resetLayout();
         expect(overlayPanel.settings.span).not.toEqual({ dps: 2 });
+    });
+
+    test('Reset layout arranges to the Dashboard preset: its spans, its order first', async () => {
+        openGear();
+        overlayPanel.settings.span = { dps: 2 };
+        overlayPanel.settings.order = ['luck', 'dps'];
+
+        dialog.answer = 'reset';
+        await overlayPanel._resetLayout();
+
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Dashboard.span);
+        // Only registered rows are placed first; this suite registers neither of the Dashboard's
+        expect(overlayPanel.settings.order).toEqual(['luck', 'dps']);
     });
 
     test('Reset layout also unpins columns, so the shipped spans are not flattened', async () => {
@@ -813,7 +829,11 @@ describe('retired tiles in the picker', () => {
         openGear();
         overlayPanel._resetTiles();
 
-        expect(overlayPanel.settings.visible).toEqual({});
+        expect(overlayPanel.settings.visible).toMatchObject({
+            skillLevel: false,
+            skillTimeToLevel: false,
+            consumables: true,
+        });
         expect(overlayPanel.settings.curatedDefaults).toBe(true);
         expect(chipOrder()).not.toContain('skillTimeToLevel');
         // Undo is the way back, and it carries the selection
