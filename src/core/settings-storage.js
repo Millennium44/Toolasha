@@ -625,6 +625,12 @@ class SettingsStorage {
          * standing in for settings that could not be read, not settings.
          */
         this.lastLoadReadable = true;
+        /**
+         * Whether the last `loadSettings()` could read the device-wide map as well. With it false, the
+         * sync settings and the palette in the map that came back are defaults or a stale per-character
+         * copy, not the player's. Config keeps what it read last instead.
+         */
+        this.lastSharedReadable = true;
         /** See SAVE_ALL_KEYS — carried on the instance so it crosses bundles */
         this.SAVE_ALL_KEYS = SAVE_ALL_KEYS;
     }
@@ -710,6 +716,7 @@ class SettingsStorage {
         // already has instead.
         const probed = await storage.tryGet(characterKey, this.storageArea);
         this.lastLoadReadable = probed !== null;
+        this.lastSharedReadable = this.lastLoadReadable;
         let saved = null;
 
         if (probed !== null) {
@@ -797,7 +804,13 @@ class SettingsStorage {
         // alone rather than cleaned up, so an older build loaded on the same
         // profile still finds the token it knows about.
         if (this.lastLoadReadable) {
-            const shared = await this._loadSharedSettings();
+            // Probed, as the character's map was: "none saved" and "could not be read" differ here too
+            const probedShared = await storage.tryGet(SHARED_SETTINGS_KEY, this.storageArea);
+            this.lastSharedReadable = probedShared !== null;
+            const parsedShared = probedShared?.found
+                ? storage.parseJSON(probedShared.value, SHARED_SETTINGS_KEY, null)
+                : null;
+            const shared = parsedShared && typeof parsedShared === 'object' ? parsedShared : null;
             if (shared) {
                 for (const settingId of this.sharedSettingIds()) {
                     if (settings[settingId] && shared[settingId]) {

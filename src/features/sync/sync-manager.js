@@ -62,16 +62,13 @@ import {
     applyPayload,
     retryPendingDisplacedDeletes,
     contentHash,
+    contentHashSliced,
     hashPayload,
-    addsToRemote,
     addsToRemoteSliced,
-    mergeForUpload,
     mergeForUploadSliced,
-    wholeKeyHashes,
     wholeKeyHashesSliced,
-    exchangeBaseline,
     exchangeBaselineSliced,
-    registeredKeysDiverge,
+    registeredKeysDivergeSliced,
     trimmedRegisteredKeys,
     restampRestoredSettings,
     learnExternalKeysFromText,
@@ -298,6 +295,12 @@ class SyncManager {
         this.leadership = null;
         /** Whether this tab currently runs the automatic schedule under the leader lock */
         this.isLeader = false;
+        /** What the automatic schedule stood down for during a settings reload, owed once it lands */
+        this.owedAfterReload = { push: false, pull: null };
+        /** Timer running what is owed, or null */
+        this.owedTimer = null;
+        /** Stops the settings-loaded listener */
+        this.settingsLoadedOff = null;
     }
 
     /**
@@ -315,8 +318,10 @@ class SyncManager {
             this._releaseLeadership();
             this.handoffUnregister?.();
             this.handoffUnregister = null;
+            this.owedTimer = null;
             this._startAuto();
             this._watchHandoff();
+            this._scheduleOwed();
         };
         for (const key of ['sync_enabled', 'sync_auto']) {
             config.onSettingChange(key, restart);
@@ -335,8 +340,12 @@ class SyncManager {
             this.settingListeners.push([key, forgetMergeChoice]);
         }
 
+        // This instance outlives a character switch, so this runs for every load
+        this.settingsLoadedOff = config.onSettingsLoaded?.(() => this._scheduleOwed()) ?? null;
+
         this._startAuto();
         this._watchHandoff();
+        this._scheduleOwed();
 
         // Offered only when a push or pull could actually succeed. Asked
         // fresh each time the palette opens rather than once here: sync is
@@ -402,7 +411,10 @@ class SyncManager {
         // Timers first: a waiting tab takes the schedule over as soon as the
         // leader lock goes, and this tab's intervals must already be dead
         this.timers.clearAll();
+        this.owedTimer = null;
         this._releaseLeadership();
+        this.settingsLoadedOff?.();
+        this.settingsLoadedOff = null;
         for (const [key, callback] of this.settingListeners) config.offSettingChange(key, callback);
         this.settingListeners = [];
         this.isInitialized = false;
@@ -427,6 +439,8 @@ class SyncManager {
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
     async push({ silent = false, unattended = false } = {}) {
+        const heldBack = this._holdForSettings('push', silent);
+        if (heldBack) return heldBack;
         return this._run('push', silent, (opToken) => this._doPush(silent, opToken, unattended));
     }
 
@@ -455,6 +469,11 @@ class SyncManager {
      * @private
      */
     async _doPush(silent, opToken, unattended = false, merged = null, checkRounds = 0) {
+        // Every wait below hands the page a frame on a large payload. What they work on cannot move meanwhile:
+        // the payload is a string in hand, its fingerprint is of that string, and a write landing later
+        // counts toward the next push because the write count was taken before the build. The payload holds
+        // every character's keys under their own ids and reads no current character, so no switch can file one
+        // character's data under another's; `_stillOwns` is checked again before the write and the record.
         // A previous pull could not read a local history and deliberately held
         // its downloaded counterpart back. Uploading this incomplete union
         // would replace that counterpart in the gist before it can be retried.
@@ -496,8 +515,8 @@ class SyncManager {
         // merged upload; the fingerprint remembered is always this device's,
         // because "has this device changed since?" is asked of its own data.
         let payload = merged ? merged.text : localPayload;
-        let hash = contentHash(payload);
-        let localHash = merged ? contentHash(localPayload) : hash;
+        let hash = await contentHashSliced(payload);
+        let localHash = merged ? await contentHashSliced(localPayload) : hash;
 
         if (!merged && silent && localHash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
             markSyncClean({ generation: builtAtGeneration, lastHash: localHash, scope });
@@ -560,7 +579,7 @@ class SyncManager {
             if (asked.localPayload && asked.localPayload !== localPayload) {
                 localPayload = asked.localPayload;
                 payload = localPayload;
-                hash = contentHash(payload);
+                hash = await contentHashSliced(payload);
                 localHash = hash;
             }
             if (asked.choice === 'cancel') return { ok: true, skipped: true, reason: 'cancelled' };
@@ -586,7 +605,7 @@ class SyncManager {
         // plain. A pressed Push still means this device's copy (see `push`).
         if (unattended && !merged && gistId) {
             const baseline = await storage.get(KEY_BASELINE, STORE, null);
-            if (registeredKeysDiverge(localPayload, baseline)) {
+            if (await registeredKeysDivergeSliced(localPayload, baseline)) {
                 traceSync('history-diverged');
                 return this._mergeIntoUpload(localPayload, opToken, silent);
             }
@@ -765,6 +784,12 @@ class SyncManager {
             });
         }
 
+        // Hashed before the record, and a wait of its own: a takeover during it leaves the record alone
+        const pushedBaseline = merged
+            ? await exchangeBaselineSliced(payload, localPayload)
+            : await wholeKeyHashesSliced(localPayload);
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
+
         await this._remember({
             gistId: written.id,
             exportedAt,
@@ -794,7 +819,7 @@ class SyncManager {
                 // A merged upload records both what went up and what this device
                 // holds (see exchangeBaseline); a plain one, where they are the
                 // same, records the one
-                [KEY_BASELINE]: merged ? exchangeBaseline(payload, localPayload) : wholeKeyHashes(localPayload),
+                [KEY_BASELINE]: pushedBaseline,
                 // A merged upload carried changes this device has not applied, or
                 // still carries ones an earlier merge did. A plain push replaced
                 // the gist with this device's data, so there are none.
@@ -887,7 +912,7 @@ class SyncManager {
         const baseline = await storage.get(KEY_BASELINE, STORE, null);
         let merged;
         try {
-            merged = mergeForUpload(localText, remote.payload, baseline);
+            merged = await mergeForUploadSliced(localText, remote.payload, baseline);
         } catch (error) {
             this._logStuckOnce('unmergeable', error);
             if (!unattended) {
@@ -905,7 +930,8 @@ class SyncManager {
 
         // An upload that only sheds stores this device's scope no longer syncs
         // adds nothing, yet is the write that stops every device downloading them
-        const changesRemote = merged.dropsFromRemote || addsToRemote(merged.text, remote.payload);
+        const changesRemote = merged.dropsFromRemote || (await addsToRemoteSliced(merged.text, remote.payload));
+        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
         if (!changesRemote && !merged.remoteAdds) {
             // The two hold the same data: another device pushed nothing this
             // one lacks. Settle on that version exactly as a pull finding
@@ -913,10 +939,13 @@ class SyncManager {
             // pull imports an identical payload, latches the stores and asks
             // for a reload over nothing.
             const lastSeq = readSeq(await storage.get(KEY_LAST_SYNCED_SEQ, STORE, null));
+            const settledHash = await contentHashSliced(localText);
+            const settledBaseline = await exchangeBaselineSliced(remote.payload, localText);
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
             await this._remember({
                 gistId,
                 exportedAt: remote.manifest?.exportedAt ?? null,
-                hash: contentHash(localText),
+                hash: settledHash,
                 chunkCount: Number(remote.manifest?.chunks) || 0,
                 syncSeq: advanceSeq(lastSeq, readSeq(remote.manifest?.syncSeq)),
                 version: remote.seen ? { ...remote.seen, current: true } : null,
@@ -924,7 +953,7 @@ class SyncManager {
                 // a history trimmed here to this device's retention, recorded as
                 // the gist's, would let the next plain push replace the gist's
                 // longer copy with it (see `registeredKeysDiverge`)
-                extra: { [KEY_BASELINE]: exchangeBaseline(remote.payload, localText), [KEY_UNAPPLIED]: null },
+                extra: { [KEY_BASELINE]: settledBaseline, [KEY_UNAPPLIED]: null },
             });
             if (!unattended) showToast('Nothing to push: the gist already holds the same data as this device.');
             return { ok: true, skipped: true, reason: 'in-step' };
@@ -935,8 +964,10 @@ class SyncManager {
             // send, but the gist is ahead: note it for the startup pull, and
             // remember this device's data as seen so the next interval does
             // not merge again until something changes here.
+            const seenHash = await contentHashSliced(localText);
+            if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
             await rememberLocal({
-                [KEY_LAST_HASH]: contentHash(localText),
+                [KEY_LAST_HASH]: seenHash,
                 [KEY_UNAPPLIED]: { since: remote.manifest?.exportedAt ?? null },
                 ...(remote.seen ? { [KEY_GIST_VERSION]: remote.seen } : {}),
             });
@@ -1047,7 +1078,7 @@ class SyncManager {
                 const replaced = await this._readRemote(token, gistId, null, null, version, {
                     refuseOtherServer: true,
                 });
-                text = mergeForUpload(text, replaced.payload, baseline).text;
+                text = (await mergeForUploadSliced(text, replaced.payload, baseline)).text;
             } catch (error) {
                 // The gist goes back to the newest replaced write as it was, which for the usual race is
                 // the other server's own; this device records no success, and `_run` says so once.
@@ -1087,7 +1118,7 @@ class SyncManager {
             await this._restoreReplaced(token, gistId, written.intervening.at(-1));
             return { ok: false, reason: 'storage' };
         }
-        remoteAdds = remoteAdds || addsToRemote(text, localPayload, { forUpload: false });
+        remoteAdds = remoteAdds || (await addsToRemoteSliced(text, localPayload, { forUpload: false }));
 
         return this._doPush(silent, opToken, true, {
             text,
@@ -1171,7 +1202,7 @@ class SyncManager {
             payloads.push(newest.payload);
             let text = payloads[0];
             for (const incoming of payloads.slice(1)) {
-                text = mergeForUpload(text, incoming, null, { revisionFold: true, scope }).text;
+                text = (await mergeForUploadSliced(text, incoming, null, { revisionFold: true, scope })).text;
             }
             const { body, compressed, encrypted } = await this._packBody(text);
             const chunks = chunkPayload(body);
@@ -1516,6 +1547,8 @@ class SyncManager {
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
     async pull({ silent = false, startup = false } = {}) {
+        const heldBack = this._holdForSettings('pull', silent, startup);
+        if (heldBack) return heldBack;
         return this._run('pull', silent, (opToken) => this._doPull(silent, opToken, startup));
     }
 
@@ -2344,6 +2377,79 @@ class SyncManager {
             );
         }
         return lastSyncedAt ? `Last synced ${formatWhen(lastSyncedAt)}.` : 'Linked to a gist, not yet synced.';
+    }
+
+    /**
+     * Whether a sync must wait for the settings, and the answer it gets if so.
+     *
+     * The automatic schedule stands down while a character switch has the settings map empty: features are
+     * tearing down, and a pull landing then would be applied under them. What it stood down for runs once the
+     * load lands (`_scheduleOwed`), without a word. A pressed sync goes ahead in that window, since the
+     * device-wide settings it reads are held across it. Neither runs on settings that were never read, which is
+     * told apart from a token that is really missing.
+     * @param {'push'|'pull'} label - The sync asked for
+     * @param {boolean} silent - Whether nobody pressed a button for it
+     * @param {boolean} [startup=false] - A pull's page-load flag, kept for when it runs
+     * @returns {{ok: boolean, skipped?: boolean, reason: string}|null} The answer, or null to go ahead
+     * @private
+     */
+    _holdForSettings(label, silent, startup = false) {
+        const known = config.areSharedSettingsKnown?.() !== false;
+        if (!silent && known) return null;
+        if (silent && known && !config.isSettingsReloading?.()) return null;
+        if (!silent) {
+            showToast(`Sync ${label} did not run: the sync settings could not be read just now. Reload the page.`, {
+                kind: 'warn',
+            });
+            return { ok: false, reason: 'settings-unread' };
+        }
+        traceSync('held-for-settings', { label });
+        if (label === 'push') this.owedAfterReload.push = true;
+        else this.owedAfterReload.pull = { startup: startup || Boolean(this.owedAfterReload.pull?.startup) };
+        return { ok: true, skipped: true, reason: 'settings-reloading' };
+    }
+
+    /**
+     * Run what the automatic schedule stood down for, a moment after the settings land.
+     * Each sync checks the settings again when it runs: one turned off meanwhile, or another switch begun,
+     * answers for itself, and a switch owes it again.
+     * @private
+     */
+    _scheduleOwed() {
+        const owed = this.owedAfterReload;
+        if (this.owedTimer !== null || (!owed.push && !owed.pull)) return;
+        if (config.isSettingsReloading?.()) return;
+        this.owedTimer = this.timers.scheduleTimeout(async () => {
+            this.owedTimer = null;
+            this.owedAfterReload = { push: false, pull: null };
+            try {
+                // One after the other: the second would otherwise find the first holding the lock
+                if (owed.push) await this._runOwed('push', () => this.push({ silent: true, unattended: true }));
+                if (owed.pull) {
+                    const { startup } = owed.pull;
+                    await this._runOwed('pull', () => this.pull({ silent: true, startup }), startup);
+                }
+            } catch (error) {
+                console.error('[Sync] A sync held for a settings reload failed:', error);
+            }
+        }, SWITCH_PUSH_DELAY_MS);
+    }
+
+    /**
+     * One owed sync. An operation still running turns it away, and this may be the only one there is,
+     * so it stays owed for another look.
+     * @param {'push'|'pull'} label - Which sync
+     * @param {() => Promise<{reason?: string}>} run - Runs it
+     * @param {boolean} [startup=false] - A pull's page-load flag
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _runOwed(label, run, startup = false) {
+        const outcome = await run();
+        if (outcome?.reason !== 'busy') return;
+        if (label === 'push') this.owedAfterReload.push = true;
+        else this.owedAfterReload.pull = { startup };
+        this._scheduleOwed();
     }
 
     /**
