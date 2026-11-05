@@ -626,11 +626,10 @@ class SettingsStorage {
          */
         this.lastLoadReadable = true;
         /**
-         * Whether the last `loadSettings()` could read the device-wide map as well. With it false, the
-         * sync settings and the palette in the map that came back are defaults or a stale per-character
-         * copy, not the player's. Config keeps what it read last instead.
+         * What each map `loadSettings()` returned could read, by the map itself. Two loads overlap on a
+         * character switch, and a flag on this instance would answer for whichever finished last.
          */
-        this.lastSharedReadable = true;
+        this._loadReadability = new WeakMap();
         /** See SAVE_ALL_KEYS — carried on the instance so it crosses bundles */
         this.SAVE_ALL_KEYS = SAVE_ALL_KEYS;
     }
@@ -715,11 +714,12 @@ class SettingsStorage {
         // browser's IDB task queue is under load. Parse what the probe
         // already has instead.
         const probed = await storage.tryGet(characterKey, this.storageArea);
-        this.lastLoadReadable = probed !== null;
-        this.lastSharedReadable = this.lastLoadReadable;
+        const characterReadable = probed !== null;
+        let sharedReadable = characterReadable;
+        this.lastLoadReadable = characterReadable;
         let saved = null;
 
-        if (probed !== null) {
+        if (characterReadable) {
             saved = probed.found ? storage.parseJSON(probed.value, characterKey, null) : null;
 
             // Migration: If this is a character-specific key and it doesn't exist
@@ -803,14 +803,10 @@ class SettingsStorage {
         // map happens to hold for them. A stale per-character copy is left
         // alone rather than cleaned up, so an older build loaded on the same
         // profile still finds the token it knows about.
-        if (this.lastLoadReadable) {
-            // Probed, as the character's map was: "none saved" and "could not be read" differ here too
-            const probedShared = await storage.tryGet(SHARED_SETTINGS_KEY, this.storageArea);
-            this.lastSharedReadable = probedShared !== null;
-            const parsedShared = probedShared?.found
-                ? storage.parseJSON(probedShared.value, SHARED_SETTINGS_KEY, null)
-                : null;
-            const shared = parsedShared && typeof parsedShared === 'object' ? parsedShared : null;
+        if (characterReadable) {
+            // "None saved" and "could not be read" differ here too
+            const { readable, map: shared } = await this._readSharedSettings();
+            sharedReadable = readable;
             if (shared) {
                 for (const settingId of this.sharedSettingIds()) {
                     if (settings[settingId] && shared[settingId]) {
@@ -820,7 +816,18 @@ class SettingsStorage {
             }
         }
 
+        this._loadReadability.set(settings, { character: characterReadable, shared: sharedReadable });
         return settings;
+    }
+
+    /**
+     * What a map `loadSettings()` returned could read.
+     * @param {Object} settings - The map
+     * @returns {{character: boolean, shared: boolean}|null} Whether each store read worked; with `shared` false
+     *   the device-wide settings in it are defaults or an old per-character copy. Null for any other object.
+     */
+    readabilityOf(settings) {
+        return this._loadReadability.get(settings) ?? null;
     }
 
     /**
@@ -842,13 +849,16 @@ class SettingsStorage {
     }
 
     /**
-     * The stored account-wide settings map, or null when there is none.
-     * @returns {Promise<Object|null>}
+     * The stored account-wide settings map, and whether the read worked. A failed read is never "none stored":
+     * a writer taking it for that would replace the whole map, token and passphrase with it, with its own ids.
+     * @returns {Promise<{readable: boolean, map: Object|null}>} The map, null when none or unreadable
      * @private
      */
-    async _loadSharedSettings() {
-        const map = await storage.getJSON(SHARED_SETTINGS_KEY, this.storageArea, null);
-        return map && typeof map === 'object' ? map : null;
+    async _readSharedSettings() {
+        const probed = await storage.tryGet(SHARED_SETTINGS_KEY, this.storageArea);
+        if (probed === null) return { readable: false, map: null };
+        const map = probed.found ? storage.parseJSON(probed.value, SHARED_SETTINGS_KEY, null) : null;
+        return { readable: true, map: map && typeof map === 'object' ? map : null };
     }
 
     /**
@@ -910,7 +920,9 @@ class SettingsStorage {
                     key !== SHARED_SETTINGS_KEY && (key === this.storageKey || key.startsWith(`${this.storageKey}_`))
             );
 
-            const existing = (await this._loadSharedSettings()) ?? {};
+            const sharedRead = await this._readSharedSettings();
+            if (!sharedRead.readable) return; // Could not see what is answered; decide nothing, retry next load
+            const existing = sharedRead.map ?? {};
             const defaults = this.buildDefaults();
             const maps = [];
             for (const key of mapKeys) {
@@ -1022,7 +1034,12 @@ class SettingsStorage {
     async _writeSharedEntries(settings, settingIds, userIds = undefined) {
         const ids = [...settingIds].filter((id) => settings?.[id]);
         if (ids.length === 0) return true;
-        const stored = (await this._loadSharedSettings()) ?? {};
+        const sharedRead = await this._readSharedSettings();
+        if (!sharedRead.readable) {
+            console.warn('[SettingsStorage] Device-wide settings not saved: the stored ones could not be read first');
+            return false;
+        }
+        const stored = sharedRead.map ?? {};
         const next = { ...stored };
         for (const id of ids) next[id] = { ...settings[id] };
         const stampIds = userIds === undefined ? ids : userIds;
@@ -1867,10 +1884,11 @@ class SettingsStorage {
         // Account-wide ids among them go to the shared map as well, which is
         // where every character reads them from — this is how the player
         // resolves a carry-over that could not decide for itself.
-        await this._writeSharedEntries(
+        const sharedWritten = await this._writeSharedEntries(
             entries,
             this.sharedSettingIds().filter((id) => ids.includes(id))
         );
+        if (!sharedWritten) throw new Error('The device-wide settings could not be written');
 
         // Fixed for the whole walk: the loop awaits a read and a write per
         // character, and a switch part way through would start excluding a
@@ -1996,7 +2014,7 @@ class SettingsStorage {
             );
             return;
         }
-        if (!this.lastLoadReadable) {
+        if (!this.readabilityOf(settings)?.character) {
             // The map in hand is defaults standing in for settings that could
             // not be read; writing it back would put them over the user's
             console.warn(`[SettingsStorage] Setting '${settingId}' not saved: settings could not be read first`);

@@ -74,6 +74,7 @@ const withSlicedPayload = vi.hoisted(() => (mod) => ({
     exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
     registeredKeysDivergeSliced: async (...args) => mod.registeredKeysDiverge(...args),
     contentHashSliced: async (...args) => mod.contentHash(...args),
+    learnExternalKeysFromTextSliced: async (...args) => mod.learnExternalKeysFromText?.(...args) ?? false,
 }));
 vi.mock('./sync-payload.js', () => {
     const mod = {
@@ -1266,33 +1267,21 @@ describe('the silent startup pull never raises a dialog', () => {
     });
 });
 
-describe('push on character switch', () => {
-    test('a re-initialise for a different character schedules one silent push; a page load does not', async () => {
+describe('a character switch', () => {
+    test('a re-initialise for a different character starts no push', async () => {
         vi.useFakeTimers();
         settings.values.sync_onSwitch = true;
         character.id = 'char-A';
         const pushes = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
 
         try {
-            // First initialise of the page: never fires, whatever the setting says
             syncManager.cleanup();
             await syncManager.initialize();
-            await vi.advanceTimersByTimeAsync(6 * 1000);
-            expect(pushes).not.toHaveBeenCalled();
-
-            // The switch: teardown, another character, re-initialise
             syncManager.cleanup();
             character.id = 'char-B';
             await syncManager.initialize();
-            await vi.advanceTimersByTimeAsync(6 * 1000);
-            expect(pushes).toHaveBeenCalledTimes(1);
-            expect(pushes).toHaveBeenCalledWith({ silent: true, unattended: true });
-
-            // The same character again is not a switch
-            syncManager.cleanup();
-            await syncManager.initialize();
-            await vi.advanceTimersByTimeAsync(6 * 1000);
-            expect(pushes).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(60 * 1000);
+            expect(pushes).not.toHaveBeenCalled();
         } finally {
             syncManager.cleanup();
             pushes.mockRestore();
@@ -1306,11 +1295,10 @@ describe('what a push actually carries', () => {
         // `storage.set` holds a value for three seconds, and
         // `buildPayloadJSON` reads IndexedDB — so a payload built without
         // flushing first is missing whatever this session recorded in that
-        // window. Usually the next interval push corrects it; the two pushes
-        // that exist precisely because there will be no next one — the
-        // handoff push when another device takes the session over, and the
-        // character-switch push — cannot rely on that, so they would hand
-        // over a copy with the last few seconds cut off.
+        // window. Usually the next interval push corrects it; the handoff
+        // push when another device takes the session over exists precisely
+        // because there will be no next one, so it would hand over a copy
+        // with the last few seconds cut off.
         await syncManager.push();
 
         expect(storageCalls.indexOf('flushAll')).toBeGreaterThanOrEqual(0);

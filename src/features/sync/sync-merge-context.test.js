@@ -10,6 +10,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { addsToRemote, exchangeBaseline, mergeForUpload, trimmedRegisteredKeys } from './sync-payload.js';
+import config from '../../core/config.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 import { boardKey, buildNameIndex, mergeBoards } from '../../utils/rank-badge-data.js';
 import { BASELINE_FUTURE_TOLERANCE_MS, mergeAverageBaselines } from '../combat/dungeon-tracker-storage.js';
@@ -254,7 +255,13 @@ describe('a merge that asked for the context still gets it through the upload', 
         const uploaded = JSON.parse(mergeForUpload(wrap(mine), wrap(gist), null).text);
 
         expect(uploaded.stores.settings.labyrinthRoomLogs_c1.sessions).toHaveLength(500);
-        expect(mergeForKey('settings', 'labyrinthRoomLogs_c1').mergeForPull(mine, gist).sessions).toHaveLength(120);
+        // With this character's settings in hand: a cap not yet known cuts nothing
+        config.characterSettingsLoaded = true;
+        try {
+            expect(mergeForKey('settings', 'labyrinthRoomLogs_c1').mergeForPull(mine, gist).sessions).toHaveLength(120);
+        } finally {
+            config.characterSettingsLoaded = false;
+        }
     });
 
     test('a chunked history: an upload offers everything, a pull leaves out what the owner would prune', () => {

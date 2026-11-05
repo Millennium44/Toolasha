@@ -452,7 +452,7 @@ export function isBulkOwnerCurrent(owner) {
 export async function saveBulkSnapshot(owner = captureBulkOwner()) {
     const snapshot = {};
     for (const id of presetTargetIds()) {
-        const entry = config.settingsMap[id];
+        const entry = config.getSettingEntry?.(id) ?? config.settingsMap[id];
         if (!entry) continue;
         snapshot[id] = entry.isTrue ?? false;
     }
@@ -497,7 +497,7 @@ export function writeCheckboxValues(values) {
     const written = [];
     for (const [id, value] of Object.entries(values || {})) {
         if (PRESET_EXCLUDED_IDS.has(id)) continue;
-        const entry = config.settingsMap[id];
+        const entry = config.getSettingEntry?.(id) ?? config.settingsMap[id];
         if (!entry) continue;
         if ((entry.isTrue ?? false) === value) continue;
         config.setSetting(id, value);

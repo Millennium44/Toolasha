@@ -639,14 +639,18 @@ class Config {
 
         // A character's map loaded around a device-wide read that failed holds defaults (or an old
         // per-character copy) for those settings, so what was read last goes on answering for them.
-        if (settingsStorage.lastLoadReadable !== false && settingsStorage.lastSharedReadable !== false) {
+        const readability = settingsStorage.readabilityOf?.(loadedMap) ?? {
+            character: settingsStorage.lastLoadReadable !== false,
+            shared: settingsStorage.lastLoadReadable !== false,
+        };
+        if (readability.character && readability.shared) {
             this._heldSharedSettings = null;
             this._sharedSettingsKnown = true;
         } else {
             this._holdSharedSettings(previousMap);
         }
 
-        if (settingsStorage.lastLoadReadable === false) {
+        if (!readability.character) {
             // The store could not be read, so what came back is schema defaults
             // standing in for the user's settings. Keep the map in hand when it
             // is this character's — it was read properly once — and take the
@@ -773,12 +777,23 @@ class Config {
     }
 
     /**
-     * Whether the settings map is empty, waiting for the load that refills it: the character-switch window.
-     * Device-wide settings still read correctly in it; a character's own settings read as schema defaults.
-     * @returns {boolean} True between `clearSettingsCache()` and the load that follows it
+     * Whether this character's own settings are not in hand: the character-switch window, from
+     * `clearSettingsCache()` to the load that follows it, or a store that could not be read. Device-wide
+     * settings still read correctly; a character's own read as schema defaults, so nothing that destroys data
+     * may act on one of those now.
+     * @returns {boolean} True until this character's settings have been read
      */
     isSettingsReloading() {
-        return Object.keys(this.settingsMap).length === 0;
+        return !this.characterSettingsLoaded;
+    }
+
+    /**
+     * Whether device-wide settings are being answered from what was read earlier rather than the store.
+     * Good enough to act on, and never to write back: another tab may have changed them since.
+     * @returns {boolean} True while a hold is in place
+     */
+    isHoldingSharedSettings() {
+        return Boolean(this._heldSharedSettings);
     }
 
     /**
@@ -1252,6 +1267,7 @@ class Config {
         this._pendingValues = Object.create(null);
         const current = dataManager.getCurrentCharacterId() ?? null;
         const latched = storage.isRestorePending?.('settings') === true;
+        const sharedIds = new Set(settingsStorage.sharedSettingIds?.() ?? []);
         for (const { method, key, value, characterId } of pending) {
             try {
                 if (latched) {
@@ -1261,7 +1277,8 @@ class Config {
                     );
                     continue;
                 }
-                if (characterId !== null && characterId !== current) {
+                // A device-wide setting is nobody's to be dropped from: it reads the same on every character
+                if (characterId !== null && characterId !== current && !sharedIds.has(key)) {
                     console.warn(
                         `[Config] Held write of '${key}' dropped: it was made on another character, ` +
                             'and replaying it here would change a setting this character never touched'
@@ -1437,6 +1454,10 @@ class Config {
      * @returns {Promise<{success: boolean, count: number, error?: string}>} Result object
      */
     async syncSettingsToAllCharacters(targetIds) {
+        // The map in hand is not this character's settings, or holds defaults for the device-wide ones
+        if (this.isSettingsReloading() || this.isHoldingSharedSettings()) {
+            return { success: false, count: 0, error: 'Settings are still loading. Try again in a moment.' };
+        }
         try {
             const characterId = dataManager.getCurrentCharacterId();
             if (!characterId) {

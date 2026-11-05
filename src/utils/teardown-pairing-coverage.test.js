@@ -321,9 +321,9 @@ const KNOWN_SAFE = {
     'src/features/planner/goal-planner-context.js#houseCostCalculator':
         'The same market-data warm-up, from the planner’s second caller — nothing registered, nothing to stop.',
     'src/features/settings/settings-ui.js#syncManager':
-        'Cross-device sync is a registered feature in its own right (`features/sync/index.js` pairs ' +
-        '`syncManager.initialize()` with `syncManager.cleanup()`); the settings panel starts it early because ' +
-        'its buttons live here, and stopping it from here would take it from the registry.',
+        'The settings panel starts cross-device sync once per page load and it runs for the life of the page, ' +
+        'across character switches: it holds no character state, and `initialize()` is guarded against a second ' +
+        'start. Nothing stops it, by design.',
     'src/features/tasks/task-profit-display.js#expectedValueCalculator':
         'A registered feature (`entrypoint.js` key `expectedValueCalculator`), so the registry owns both ends ' +
         'of its lifecycle; `ensureMarketDataInitialized()` only makes sure it is up before asking it for a ' +

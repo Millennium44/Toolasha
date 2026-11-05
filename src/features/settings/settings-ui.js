@@ -252,7 +252,9 @@ class SettingsUI {
     snapshotSettings() {
         const snapshot = {};
         for (const [id, entry] of Object.entries(config.settingsMap || {})) {
-            snapshot[id] = entry && typeof entry === 'object' ? { ...entry } : entry;
+            // Through config's read, so the panel never shows a device-wide default sync is not running on
+            const current = config.getSettingEntry?.(id) ?? entry;
+            snapshot[id] = current && typeof current === 'object' ? { ...current } : current;
         }
         return snapshot;
     }

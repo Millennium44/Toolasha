@@ -32,7 +32,7 @@ export const SYNC_SETTING_IDS = Object.keys(settingsGroups.sync?.settings ?? {})
 export function syncSetupEntries() {
     const entries = {};
     for (const id of SYNC_SETTING_IDS) {
-        const entry = config.getSettingEntry?.(id) ?? config.settingsMap?.[id];
+        const entry = config.settingsMap?.[id];
         if (entry && typeof entry === 'object') entries[id] = { ...entry };
     }
     return entries;
@@ -56,6 +56,13 @@ function isConfiguredHere() {
  * @returns {Promise<{ok: boolean, copied: number, skipped: string[], message: string}>}
  */
 export async function copySyncSetupToOtherCharacters() {
+    // A held value is what was read earlier. Written back here it would be stamped a fresh choice, and could
+    // outrank a newer token another tab saved meanwhile.
+    if (config.isSettingsReloading?.() || config.isHoldingSharedSettings?.()) {
+        const message = 'Settings are still loading. Try copying again in a moment.';
+        showToast(message, { kind: 'warn' });
+        return { ok: false, copied: 0, skipped: [], message };
+    }
     if (!isConfiguredHere()) {
         const message = 'Set sync up on this character first — turn it on and paste your GitHub token.';
         showToast(message, { kind: 'warn' });
