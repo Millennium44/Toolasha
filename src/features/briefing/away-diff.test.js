@@ -140,6 +140,14 @@ describe('awayDiffLines — readings', () => {
         );
         expect(line(lines, 'guild').value).toBe('Signed up: gathering');
     });
+
+    test('a signup with no guild reading this login says nothing, rather than claiming it ended', () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const lines = diff({ guild: { signedUp: true, trialName: 'gathering' } }, { guild: null });
+        expect(line(lines, 'guild')).toBeUndefined();
+        expect(error).not.toHaveBeenCalled();
+        error.mockRestore();
+    });
 });
 
 describe('awayDiffLines — the task board', () => {

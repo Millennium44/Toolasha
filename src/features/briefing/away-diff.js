@@ -210,7 +210,8 @@ function enhancementDiff({ was, is }) {
  * @returns {Object|null} A line body, or null
  */
 function guildDiff({ was, is }) {
-    if (Boolean(was?.signedUp) === Boolean(is?.signedUp)) return null;
+    // No reading this login is not the same as no longer signed up
+    if (!is || Boolean(was?.signedUp) === Boolean(is.signedUp)) return null;
     if (is.signedUp) {
         return {
             label: 'Guild trial',
