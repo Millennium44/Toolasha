@@ -42,7 +42,15 @@ import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownershi
  */
 const DATA_KEY = 'taskRerollData';
 const HISTORY_KEY = 'taskRerollHistory';
-const HISTORY_CAP = 500;
+/**
+ * Retired tasks kept. A row is about 220 bytes: measured, 2000 rows are 435 KB of JSON and 28 KB gzipped
+ * (500 rows were 109 KB and 7 KB). The completion tracker keeps eight weeks of claims; a history that
+ * runs out sooner leaves the older claims with no spend to net against, and the gold-sources reroll row
+ * silently starts later. Nothing sums the whole list into a lifetime figure: the week tile reads seven
+ * days, the payout analysis reads one row per claim (a missing row is "unknown", never zero), and the
+ * gold-sources row reports where its coverage begins.
+ */
+export const HISTORY_CAP = 2000;
 const STORE_NAME = 'rerollSpending';
 
 /** How long a task the server has just named is held back from retirement. */

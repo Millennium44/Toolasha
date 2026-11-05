@@ -27,8 +27,14 @@ export const SNAPSHOT_KEY = 'goalPlannerSnapshot';
 /** Unscoped key for the combat loadout the all-zones run is judged against */
 export const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
 
-/** Nobody needs a hundred goals, and a runaway list is a slow panel */
-const MAX_GOALS = 40;
+/**
+ * Goals a player can add before {@link addGoal} refuses another. A goal is about 115 bytes, so a full list
+ * is some 12 KB. Pure planning is cheap (a skill goal measured about 0.03 ms warm in
+ * `goal-planner.bench.test.js`) but it is not the whole of a replan: with inventory reservations on, every
+ * goal also writes a reservation, one after another, and that is what a long list pays for. The bound only
+ * stops a *new* goal: nothing that already exists is ever cut to it (see {@link mergeGoalLists}).
+ */
+export const MAX_GOALS = 100;
 
 /**
  * Two devices' goal lists as one.
@@ -52,9 +58,12 @@ const MAX_GOALS = 40;
  * yet, and the union keeps it — re-deleting costs one click, while losing an
  * afternoon of goals to a pull does not.
  *
- * The {@link MAX_GOALS} cap is re-applied to the union the way `saveGoals`
- * applies it: the first forty, so the goals that have been on the list longest
- * are the ones that survive rather than whichever device pushed last.
+ * **The union is not cut to {@link MAX_GOALS}.** Each device's list is bounded
+ * by `addGoal`, but two full lists are two hundred goals somebody asked for,
+ * and cutting the union kept the oldest and wrote the cut list over the store,
+ * so the newest goals of both devices were gone for good. The bound stops a new
+ * goal being added; it does not delete goals that exist. The list can only be
+ * as long as the devices' lists together, and removing one is a click.
  *
  * @param {Array<Object>|*} local - This device's goals
  * @param {Array<Object>|*} incoming - The downloaded goals
@@ -73,18 +82,13 @@ export function mergeGoalLists(local, incoming) {
         const keepMine = held && Number.isFinite(mine) && (!Number.isFinite(theirs) || mine > theirs);
         byId.set(goal.id, keepMine ? held : goal);
     }
-    // Sorted before the cap, and by the stamp rather than by which side the
-    // goal arrived on. The union's natural order is "everything local had,
-    // then everything only incoming had", so cutting its tail cut exactly the
-    // goals the pull brought — and both sides are already capped by
-    // `saveGoals`, which makes "local is full" the ordinary case. A device at
-    // the cap therefore discarded the whole of the other device's list, and
-    // the two merge directions kept different sets.
+    // Sorted by the stamp rather than by which side the goal arrived on, so the
+    // two merge directions give the same list in the same order.
     //
     // A goal written before `createdAt` existed sorts as the oldest there is,
     // which is what it is.
     const stamp = (goal) => (Number.isFinite(Number(goal?.createdAt)) ? Number(goal.createdAt) : 0);
-    return [...byId.values()].sort((a, b) => stamp(a) - stamp(b)).slice(0, MAX_GOALS);
+    return [...byId.values()].sort((a, b) => stamp(a) - stamp(b));
 }
 
 /*
@@ -205,12 +209,13 @@ export async function loadGoals() {
 }
 
 /**
- * Replace this character's goal list.
+ * Replace this character's goal list. Never cut to {@link MAX_GOALS}: the bound stops a new goal, and a
+ * list a sync or a second tab grew past it holds goals somebody asked for.
  * @param {Array<Object>} goals - Goals to keep
  * @returns {Promise<Array<Object>>} What was actually written
  */
 export async function saveGoals(goals) {
-    return writeGoals(cleanGoals(goals).slice(0, MAX_GOALS));
+    return writeGoals(cleanGoals(goals));
 }
 
 /**
@@ -245,25 +250,40 @@ export function flushGoalWrites() {
  * @returns {Promise<Array<Object>>} The new goal list
  */
 export async function addGoal(raw) {
+    return (await tryAddGoal(raw)).goals;
+}
+
+/**
+ * {@link addGoal}, saying what happened to the goal.
+ *
+ * `outcome` is one of: `added`; `duplicate` (the same goal is already on the list); `full` (the list is
+ * at {@link MAX_GOALS}, so nothing was written and the caller should say so where the player pressed);
+ * `invalid` (the form made no goal); `switched` (the character changed during the read, so nothing was
+ * written and the list is the departing character's).
+ *
+ * @param {Object} raw - A goal from the creation form
+ * @returns {Promise<{goals: Array<Object>, outcome: 'added'|'duplicate'|'full'|'invalid'|'switched'}>}
+ */
+export async function tryAddGoal(raw) {
     const goal = normalizeGoal(raw);
-    if (!goal) return loadGoals();
+    if (!goal) return { goals: await loadGoals(), outcome: 'invalid' };
 
     // Whose list this is, fixed before the read. `saveGoals` calls
     // `claimGoals()` itself, which points the record at whoever is current
     // *now* — so a switch inside the read would have it write the departing
     // character's list, plus this goal, into the arriving character's record,
-    // where `mergeById` folds it into their stored goals and the `MAX_GOALS`
-    // cap then drops their newest ones to make room.
+    // where `mergeById` folds it into their stored goals as extra goals on
+    // a list that was not theirs.
     const owner = currentOwner();
     const goals = await loadGoals();
-    if (currentOwner() !== owner) return goals;
+    if (currentOwner() !== owner) return { goals, outcome: 'switched' };
 
     const key = (entry) => JSON.stringify({ ...entry, id: null, createdAt: null });
-    if (goals.some((existing) => key(existing) === key(goal))) return goals;
+    if (goals.some((existing) => key(existing) === key(goal))) return { goals, outcome: 'duplicate' };
     // The cap stops a new goal; it never takes out one already on the list
-    if (goals.length >= MAX_GOALS) return goals;
+    if (goals.length >= MAX_GOALS) return { goals, outcome: 'full' };
 
-    return writeGoals([...goals, goal]);
+    return { goals: await writeGoals([...goals, goal]), outcome: 'added' };
 }
 
 /**
@@ -385,6 +405,7 @@ export default {
     loadGoals,
     saveGoals,
     addGoal,
+    tryAddGoal,
     removeGoal,
     loadSnapshot,
     saveSnapshot,

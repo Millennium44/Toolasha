@@ -29,6 +29,8 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => [], resolveEquipment: () => [] },
 }));
 vi.mock('./goal-planner-store.js', () => ({
+    MAX_GOALS: 100,
+    tryAddGoal: async () => ({ goals: [], outcome: 'added' }),
     loadCombatGear: async () => ({ preferred: null, baseline: null }),
     saveCombatGear: async () => ({}),
 }));

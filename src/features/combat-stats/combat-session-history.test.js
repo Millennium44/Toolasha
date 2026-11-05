@@ -146,6 +146,94 @@ describe('adding a run to the list', () => {
     test('a snapshot with no key is ignored rather than stored under one', () => {
         expect(withSession([], { players: [] })).toEqual([]);
     });
+
+    test('keeps fifty runs, the oldest going only on the fifty-first', () => {
+        const start = (i) => new Date(Date.UTC(2026, 7, 1, 0, i)).toISOString();
+        let history = [];
+        for (let i = 0; i < 50; i++) history = withSession(history, session(start(i)));
+        expect(MAX_SESSIONS).toBe(50);
+        expect(history).toHaveLength(50);
+        expect(history[49].combatStartTime).toBe(start(0));
+
+        history = withSession(history, session(start(50)));
+        expect(history).toHaveLength(50);
+        expect(history[49].combatStartTime).toBe(start(1));
+    });
+});
+
+describe('the list at its bound', () => {
+    const start = (i) => new Date(Date.UTC(2026, 7, 1, 0, i)).toISOString();
+    const stored = (i) => ({ ...session(start(i)), key: sessionKey(session(start(i))) });
+
+    test('two devices each holding thirty runs keep the fifty newest of the union, and agree whichever way round', () => {
+        const a = Array.from({ length: 30 }, (_, i) => stored(i * 2));
+        const b = Array.from({ length: 30 }, (_, i) => stored(i * 2 + 1));
+        const forwards = mergeSessions(a, b);
+        const backwards = mergeSessions(b, a);
+        expect(forwards).toHaveLength(50);
+        expect(forwards.map((entry) => entry.key)).toEqual(backwards.map((entry) => entry.key));
+        expect(forwards[0].combatStartTime).toBe(start(59));
+        expect(forwards[49].combatStartTime).toBe(start(10));
+    });
+
+    test('a run held by both devices counts once toward the bound', () => {
+        const a = Array.from({ length: 50 }, (_, i) => stored(i));
+        expect(mergeSessions(a, a)).toHaveLength(50);
+        expect(mergeSessions(a, [stored(0)])).toHaveLength(50);
+    });
+
+    test('empty and missing lists fold to nothing', () => {
+        expect(mergeSessions([], [])).toEqual([]);
+        expect(mergeSessions(null, undefined)).toEqual([]);
+    });
+
+    test('a full list of heavy five-player runs stays within a few megabytes, uncompressed', () => {
+        const heavy = (i) => {
+            const player = (n) => ({
+                name: `Player${n}`,
+                characterId: 30000 + n,
+                isCurrentPlayer: n === 0,
+                loot: Object.fromEntries(
+                    Array.from({ length: 60 }, (_, slot) => [
+                        `/item_locations/inventory::/items/some_long_item_name_${slot}`,
+                        {
+                            itemLocationHrid: '/item_locations/inventory',
+                            itemHrid: `/items/some_long_item_name_${slot}`,
+                            count: 123456 + slot,
+                        },
+                    ])
+                ),
+                experience: Object.fromEntries(
+                    ['stamina', 'intelligence', 'attack', 'power', 'defense', 'ranged', 'magic'].map((skill) => [
+                        `/skills/${skill}`,
+                        1234567.891,
+                    ])
+                ),
+                deathCount: 3,
+                consumables: Array.from({ length: 8 }, (_, c) => ({
+                    itemHrid: `/items/consumable_${c}`,
+                    currentCount: 12345,
+                    actualConsumed: 123,
+                    defaultConsumed: 12.123456789,
+                    consumed: 456.7891234,
+                    consumedPerDay: 321,
+                    consumptionRate: 0.0045678912,
+                    elapsedSeconds: 54321.123456,
+                    inventoryAmount: 12345,
+                    timeToZeroSeconds: 1234567.891234,
+                })),
+                combatStats: {
+                    combatDropQuantity: 0.1,
+                    combatDropRate: 0.2,
+                    combatRareFind: 0.3,
+                    drinkConcentration: 0.15,
+                },
+            });
+            return { ...stored(i), players: [0, 1, 2, 3, 4].map(player) };
+        };
+        const full = Array.from({ length: MAX_SESSIONS }, (_, i) => heavy(i));
+        expect(JSON.stringify(full).length).toBeLessThan(4_000_000);
+    });
 });
 
 describe('several runs as one', () => {
@@ -669,5 +757,12 @@ describe('knowing when the archive may have changed', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('the bound the gold-sources panel reports', () => {
+    test('its fallback cap is the real one, so a caller that forgets to pass it still reports an honest limit', async () => {
+        const { DEFAULT_SESSION_CAP } = await import('../networth/gold-sources.js');
+        expect(DEFAULT_SESSION_CAP).toBe(MAX_SESSIONS);
     });
 });

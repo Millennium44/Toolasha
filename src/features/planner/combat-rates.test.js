@@ -60,6 +60,8 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 vi.mock('./goal-planner-store.js', () => ({
+    MAX_GOALS: 100,
+    tryAddGoal: async () => ({ goals: [], outcome: 'added' }),
     loadCombatGear: async () => game.gear,
     saveCombatGear: async (patch) => {
         game.gear = { ...game.gear, ...patch };

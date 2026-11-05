@@ -20,6 +20,8 @@ import {
     chestOpeningDayValue,
     dayEnd,
     windowStart,
+    SOURCE_META,
+    DEFAULT_SESSION_CAP,
 } from './gold-sources.js';
 import {
     createSession,
@@ -1181,6 +1183,43 @@ describe('attributeGoldSources', () => {
         expect(result.combatBasis.sessionCap).toBe(20);
         // Twenty runs all landed on the 20th, so the 19th is still uncovered
         expect(result.combatBasis.uncoveredDays).toBe(1);
+    });
+
+    test('the row notes name the real bound, not a number written into the prose', () => {
+        for (const key of ['combat', 'consumables']) {
+            expect(SOURCE_META[key].note).toContain(`${DEFAULT_SESSION_CAP} most recent`);
+            expect(SOURCE_META[key].note).not.toMatch(/twenty/i);
+        }
+    });
+
+    test('the run in progress does not count toward the archive bound', () => {
+        // 49 archived runs plus the live one is 50 entries in the list, but the archive still has room
+        const archived = [];
+        for (let i = 0; i < 49; i += 1) archived.push(run(D20 - (i + 1) * 60_000, { '/items/log': 1 }));
+        const live = run(D20, { '/items/log': 1 });
+        const result = attributeGoldSources({
+            ...base,
+            combatSessions: [...archived, live],
+            archivedSessionCount: 49,
+            sessionCap: 50,
+        });
+
+        expect(result.combatBasis.sessionsHeld).toBe(49);
+        expect(result.combatBasis.capReached).toBe(false);
+    });
+
+    test('a full archive is capped whether or not a run is in progress', () => {
+        const archived = [];
+        for (let i = 0; i < 50; i += 1) archived.push(run(D20 - (i + 1) * 60_000, { '/items/log': 1 }));
+        const full = attributeGoldSources({ ...base, combatSessions: archived, sessionCap: 50 });
+        expect(full.combatBasis.capReached).toBe(true);
+        const withLive = attributeGoldSources({
+            ...base,
+            combatSessions: [...archived, run(D20, { '/items/log': 1 })],
+            archivedSessionCount: 50,
+            sessionCap: 50,
+        });
+        expect(withLive.combatBasis.capReached).toBe(true);
     });
 
     test('combat coverage falls back to the oldest archived run when the loot log is silent', () => {
