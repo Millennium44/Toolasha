@@ -905,6 +905,21 @@ class OverlayPanel {
         this._fitDock();
         this._watchViewport();
         this._startRefreshing();
+        this._checkPresetFit();
+    }
+
+    /**
+     * Once the panel is attached, hold an untouched preset against the column count it really has.
+     *
+     * The count cached before this (zero after a close, or the fallback measured before the
+     * scroller was in the document) cannot be trusted to say the spans are stale, and spans
+     * stored by another device or another window width are only found out here. In memory only:
+     * see `_refitPreset`.
+     */
+    _checkPresetFit() {
+        if (!this.panel) return;
+        this._applyColumns();
+        this._refitPreset(this.columns);
     }
 
     /**
@@ -1182,6 +1197,7 @@ class OverlayPanel {
             // was saved in, which on a phone is a window that no longer exists
             this._clampToViewport();
             this._renderBody();
+            this._checkPresetFit();
         });
     }
 
