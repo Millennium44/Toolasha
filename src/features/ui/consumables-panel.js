@@ -224,6 +224,17 @@ const BUY_TUNABLES = [
 ];
 const GEOMETRY_KEY = 'consumablesPanel';
 const DEFAULT_PANEL = { width: 520, height: 420 };
+
+/**
+ * Body widths, in px, either side of which the item rows are drawn on two lines.
+ * The one-line row needs ~420 px for its fixed columns before the name gets any
+ * room, so under {@link NARROW_BELOW_PX} the name vanishes and Lasts runs off the
+ * edge. Two numbers rather than one so a scrollbar appearing (which takes ~15 px
+ * and happens because the stacked rows are taller) cannot flip the layout back
+ * and forth: it stays as it was between them.
+ */
+const NARROW_BELOW_PX = 440;
+const WIDE_FROM_PX = 470;
 const REFRESH_MS = 5000;
 const DEFAULT_PANEL_GUTTER = 8;
 
@@ -359,6 +370,8 @@ class ConsumablesPanel {
          * may not train, so it is dropped with the idle pins on a switch.
          */
         this._skillPin = null;
+        /** Whether the body is narrow enough for two-line item rows; read off its width each render */
+        this._narrow = false;
         /**
          * Whose `_labFightAttempts` pool is in hand.
          *
@@ -2289,6 +2302,14 @@ class ConsumablesPanel {
         this._buyQueues = [];
         const players = this._players();
 
+        // From the live body, not the scratch div (which has no width) and not
+        // the viewport: a docked or resized panel can be narrow on a wide screen
+        const bodyWidth = this.bodyEl?.clientWidth || 0;
+        if (bodyWidth > 0) {
+            if (bodyWidth < NARROW_BELOW_PX) this._narrow = true;
+            else if (bodyWidth >= WIDE_FROM_PX) this._narrow = false;
+        }
+
         // Which action type this draws: a skill's teas, or (combat, and nothing
         // running with no pin) the fight the panel has always shown
         const running = runningActionTypeHrid();
@@ -2337,8 +2358,10 @@ class ConsumablesPanel {
 
         if (!skilling) for (const player of players) scratch.appendChild(this._playerSection(player));
 
+        // Not under a skill: the Labyrinth shopping list is another activity's
+        // and reads as this skill's under its heading
         try {
-            const lab = this._labSection();
+            const lab = skilling ? null : this._labSection();
             if (lab) scratch.appendChild(lab);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
@@ -3402,6 +3425,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
     /** @returns {HTMLElement} */
     _columnHeadings() {
+        // The stacked rows label their own figures
+        if (this._narrow) return document.createDocumentFragment();
         const row = this._grid();
         row.style.color = COLORS.textDim;
         row.style.marginBottom = '3px';
@@ -3533,7 +3558,55 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
             lasts.style.color =
                 isLimiting || entry.secondsLeft < this.target.seconds ? ROW_COLORS.bad : ROW_COLORS.good;
 
+        if (this._narrow) return this._stackedRow({ held, icon, name, perDay, cost, buy, lasts });
+
         row.append(held, icon, name, perDay, cost, buy, lasts);
+        return row;
+    }
+
+    /**
+     * The narrow-panel form of an item row: the icon, name and Lasts on one
+     * line, and what is held, the rate, the cost and the Buy button under it.
+     * The same cells as the wide row, so nothing is computed twice.
+     *
+     * @param {Object} cells - The wide row's cells
+     * @returns {HTMLElement}
+     */
+    _stackedRow({ held, icon, name, perDay, cost, buy, lasts }) {
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3px',
+            padding: '4px 0',
+            minWidth: '0',
+        });
+
+        const top = document.createElement('div');
+        Object.assign(top.style, { display: 'flex', alignItems: 'center', gap: '6px', minWidth: '0' });
+        Object.assign(name.style, { flex: '1 1 0', minWidth: '0' });
+        lasts.style.flex = '0 0 auto';
+        lasts.style.fontWeight = 'bold';
+        top.append(icon, name, lasts);
+
+        const bottom = document.createElement('div');
+        Object.assign(bottom.style, {
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '4px 12px',
+            paddingLeft: '24px',
+            minWidth: '0',
+        });
+        held.textContent = `${held.textContent} held`;
+        held.style.textAlign = 'left';
+        perDay.style.textAlign = 'left';
+        cost.style.textAlign = 'left';
+        // A finger-sized target for the one control on the line
+        Object.assign(buy.style, { marginLeft: 'auto', padding: '4px 8px', minHeight: '20px', textAlign: 'center' });
+        bottom.append(held, perDay, cost, buy);
+
+        row.append(top, bottom);
         return row;
     }
 

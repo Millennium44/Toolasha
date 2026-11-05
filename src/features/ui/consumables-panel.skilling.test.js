@@ -404,3 +404,108 @@ describe('a skill', () => {
         expect(text()).not.toContain('could not be drawn');
     });
 });
+
+describe('the Labyrinth section', () => {
+    const labStub = () =>
+        vi.spyOn(consumablesPanel, '_labSection').mockImplementation(() => {
+            const section = document.createElement('div');
+            section.textContent = 'Labyrinth shopping list';
+            return section;
+        });
+
+    test('is not drawn under a skill heading', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        const lab = labStub();
+        await open();
+        expect(skillingSection()).not.toBeNull();
+        expect(text()).not.toContain('Labyrinth shopping list');
+        expect(lab).not.toHaveBeenCalled();
+    });
+
+    test('is still drawn in the combat view and with nothing running', async () => {
+        runCombat();
+        game.latest = combatLatest();
+        labStub();
+        await open();
+        expect(text()).toContain('Labyrinth shopping list');
+
+        consumablesPanel.hide({ remember: false });
+        game.currentActions = [];
+        game.latest = null;
+        await open();
+        expect(text()).toContain('Labyrinth shopping list');
+    });
+});
+
+describe('on a narrow panel', () => {
+    const setWidth = (width) => {
+        Object.defineProperty(consumablesPanel.bodyEl, 'clientWidth', { configurable: true, get: () => width });
+        consumablesPanel._render();
+    };
+    const divs = () => [...skillingSection().querySelectorAll('div')];
+
+    beforeEach(() => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea', { isActive: true, duration: 100 * 1e9 })];
+        game.inventory = [stack('/items/gathering_tea', 7)];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+        consumablesPanel._narrow = false;
+    });
+
+    test('wide: one grid row and the column headings, as before', async () => {
+        await open();
+        setWidth(600);
+        expect(text()).toContain('Cost/day');
+        expect(text()).not.toContain(' held');
+        const grid = divs().find((el) => el.style.gridTemplateColumns && el.textContent.includes('Gathering Tea'));
+        expect(grid).toBeTruthy();
+        expect(grid.style.gridTemplateColumns).toBe('64px 20px minmax(0, 1fr) 76px 84px 74px 64px');
+    });
+
+    test('narrow: two lines, no headings, name and Lasts first, held and buy second', async () => {
+        await open();
+        setWidth(358);
+        expect(text()).not.toContain('Cost/day');
+        const row = divs().find(
+            (el) =>
+                el.children.length === 2 && el.textContent.includes('Gathering Tea') && el.textContent.includes('held')
+        );
+        expect(row).toBeTruthy();
+        const [top, bottom] = row.children;
+        expect(top.textContent).toContain('Gathering Tea');
+        expect(top.textContent).toMatch(/\d+[smhd]|∞/);
+        expect(bottom.textContent).toContain('7 held');
+        expect(bottom.textContent).toContain('/day');
+        // No row is a seven-column grid, so none can overflow sideways
+        expect(divs().some((el) => el.style.gridTemplateColumns.includes('76px'))).toBe(false);
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('between the two widths the layout stays as it was, so a scrollbar cannot flip it', async () => {
+        await open();
+        setWidth(358);
+        setWidth(455);
+        expect(consumablesPanel._narrow).toBe(true);
+        setWidth(480);
+        expect(consumablesPanel._narrow).toBe(false);
+        setWidth(455);
+        expect(consumablesPanel._narrow).toBe(false);
+    });
+
+    test('an unmeasured body (width 0) keeps the last layout', async () => {
+        await open();
+        setWidth(358);
+        setWidth(0);
+        expect(consumablesPanel._narrow).toBe(true);
+    });
+
+    test('a short item keeps its Buy control, finger-sized, on the narrow row', async () => {
+        game.inventory = [stack('/items/gathering_tea', 1)];
+        await open();
+        setWidth(358);
+        const buy = [...skillingSection().querySelectorAll('span')].find((el) => /[⚡⏳]/.test(el.textContent));
+        expect(buy).toBeTruthy();
+        expect(buy.style.minHeight).toBe('20px');
+    });
+});
