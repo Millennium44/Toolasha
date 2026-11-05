@@ -269,17 +269,25 @@ export const CURATED_ROWS = [
  * Other is last and holds whatever no table names, so a tile registered from
  * outside this repo is listed rather than lost.
  */
-export const ROW_GROUPS = ['Wealth', 'Skilling', 'Combat', 'Account and goals', 'Guild', 'Readouts', 'Other'];
+export const ROW_GROUPS = [
+    'Combat and skilling',
+    'Wealth',
+    'Skilling',
+    'Combat',
+    'Account and goals',
+    'Guild',
+    'Readouts',
+    'Other',
+];
 
 /**
  * Every shipped row's fold in the picker.
  *
  * Here for the reason {@link TILE_CLASSES} is: it is one judgement about the
- * overlay as a whole, wanted readable in one place. `experiencePerHour` and
- * `totalProfit` answer for a fight and for the running skilling action alike;
- * they are filed where a fight is the first thing anyone looked for them
- * (`experiencePerHour` under Skilling, since Time to Level beside it is the
- * question it is divided into, and `totalProfit` under Combat).
+ * overlay as a whole, wanted readable in one place. `experiencePerHour`,
+ * `totalProfit`, `consumables`, `timeToLevel` and `combatStatus` answer for a
+ * fight and for the running skilling action alike, so they share a first fold
+ * of their own rather than being filed under one activity.
  */
 const ROW_GROUP_TABLE = {
     netWorth: 'Wealth',
@@ -292,23 +300,23 @@ const ROW_GROUP_TABLE = {
     skillBooks: 'Wealth',
 
     skillLevel: 'Skilling',
-    timeToLevel: 'Skilling',
+    timeToLevel: 'Combat and skilling',
     skillTimeToLevel: 'Skilling',
-    experiencePerHour: 'Skilling',
+    experiencePerHour: 'Combat and skilling',
     queueTimeLeft: 'Skilling',
-    consumables: 'Skilling',
+    consumables: 'Combat and skilling',
     taskTokens: 'Skilling',
     houses: 'Skilling',
     enhancementSession: 'Skilling',
     ironBellNextStep: 'Skilling',
 
-    combatStatus: 'Combat',
+    combatStatus: 'Combat and skilling',
     combatLevel: 'Combat',
     dps: 'Combat',
     deathsPerHour: 'Combat',
     manaPerFight: 'Combat',
     luck: 'Combat',
-    totalProfit: 'Combat',
+    totalProfit: 'Combat and skilling',
     combatRevenue: 'Combat',
     battleTimer: 'Combat',
     combatSession: 'Combat',

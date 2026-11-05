@@ -704,6 +704,24 @@ describe('the picker folds its tiles into groups', () => {
 
     const header = (group) => overlayPanel.pickerEl.querySelector(`[data-overlay-group-header="${group}"]`);
 
+    test('the shared group is listed first and starts open when one of its tiles is on', () => {
+        registry.rows = [];
+        for (const key of ['netWorth', 'dps', 'experiencePerHour', 'consumables']) {
+            offerRow({ key, name: key, render: (el) => (el.textContent = key), defaultVisible: false });
+        }
+        overlayPanel.settings.visible = { consumables: true };
+        overlayPanel.settings.order = ['netWorth', 'dps', 'experiencePerHour', 'consumables'];
+        openGear();
+
+        const headers = [...overlayPanel.pickerEl.querySelectorAll('[data-overlay-group-header]')].map((el) =>
+            el.getAttribute('data-overlay-group-header')
+        );
+        expect(headers[0]).toBe('Combat and skilling');
+        expect(header('Combat and skilling').getAttribute('aria-expanded')).toBe('true');
+        expect(header('Combat and skilling').textContent).toContain('1 of 2 on');
+        expect(header('Wealth').getAttribute('aria-expanded')).toBe('false');
+    });
+
     test('a group with a tile on starts open, the rest folded, and each header counts', () => {
         offerGroups(['coins', 'dps']);
         openGear();
