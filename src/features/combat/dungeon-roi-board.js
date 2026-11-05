@@ -14,9 +14,9 @@
  *
  * ## Measured against simulated
  *
- * - **Clear time**: the median of recorded runs for the dungeon and tier. The
- *   median rather than the mean because a run where somebody went for dinner is
- *   in the history too. With no runs, the all-zones snapshot's completions per
+ * - **Clear time**: the median of recorded runs for the dungeon and tier, by
+ *   the party size the row prices. The median rather than the mean because a run
+ *   where somebody went for dinner is in the history too. With no runs, the all-zones snapshot's completions per
  *   simulated hour, marked `sim`. With neither, nothing — per-run economics
  *   still show, the hourly ones do not.
  * - **Consumables and XP**: the combat stats session history, where a session
@@ -78,9 +78,13 @@ export function median(values) {
  *
  * @param {number} runs - Recorded runs on the row
  * @param {boolean} hasSim - Whether the sim had anything to say when runs did not
+ * @param {Object} [options]
+ * @param {boolean} [options.tierKnown=true] - False for runs recorded without a tier, capped at low
  * @returns {{label: string, tone: 'good'|'ok'|'dim'|'sim'|'none'}}
  */
-export function confidenceTag(runs, hasSim) {
+export function confidenceTag(runs, hasSim, { tierKnown = true } = {}) {
+    // Runs of unknown tier can be any mix of tiers, however many there are
+    if (!tierKnown && runs > 0) return { label: 'low', tone: 'dim' };
     if (runs >= HIGH_CONFIDENCE_RUNS) return { label: 'high', tone: 'good' };
     if (runs >= MEDIUM_CONFIDENCE_RUNS) return { label: 'medium', tone: 'ok' };
     if (runs > 0) return { label: 'low', tone: 'dim' };
@@ -423,11 +427,6 @@ export function buildDungeonRoiRows(input) {
             const economicsTier = tier ?? 0;
             const sim = tier === null ? null : simReading(snapshot, dungeon.hrid, tier);
 
-            const durations = tierRuns.map(runDurationMs).filter(Boolean);
-            const measuredClearSeconds = durations.length ? median(durations) / 1000 : null;
-            const clearSeconds = measuredClearSeconds ?? sim?.clearSeconds ?? null;
-            const clearSource = measuredClearSeconds !== null ? 'measured' : sim?.clearSeconds ? 'sim' : null;
-
             let partySize;
             let partySizeSource;
             if (partyFilter !== 'all') {
@@ -443,6 +442,15 @@ export function buildDungeonRoiRows(input) {
                 partySize = 1;
                 partySizeSource = 'default';
             }
+
+            // The clear time of the party this row prices. A solo clear and a party
+            // clear of five can differ twofold, and a median across them is the time
+            // of no real run, charged against rewards split for one size.
+            const clearRuns = tierRuns.filter((run) => runPartySize(run) === partySize);
+            const durations = clearRuns.map(runDurationMs).filter(Boolean);
+            const measuredClearSeconds = durations.length ? median(durations) / 1000 : null;
+            const clearSeconds = measuredClearSeconds ?? sim?.clearSeconds ?? null;
+            const clearSource = measuredClearSeconds !== null ? 'measured' : sim?.clearSeconds ? 'sim' : null;
 
             // Null means the table could not be read. An actual empty Map is a
             // known payout with no chests, and correctly spends no entry keys.
@@ -516,6 +524,7 @@ export function buildDungeonRoiRows(input) {
                 tierAssumed: tier === null,
                 maxWaves: dungeon.maxWaves || 0,
                 runs: tierRuns.length,
+                clearRuns: durations.length,
                 partySize,
                 partySizeSource,
                 clearSeconds,
@@ -545,7 +554,8 @@ export function buildDungeonRoiRows(input) {
                 xpPerHour,
                 xpSource,
                 simDeathsPerHour: sim?.deathsPerHour ?? null,
-                confidence: confidenceTag(tierRuns.length, Boolean(sim?.clearSeconds)),
+                // What stands behind the row's figures: the runs its Clear is the median of
+                confidence: confidenceTag(durations.length, Boolean(sim?.clearSeconds), { tierKnown: tier !== null }),
             });
         }
     }
