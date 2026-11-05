@@ -692,14 +692,12 @@ class QuickInputButtons {
                             const enhText = trinketSlot.enhancementLevel > 0 ? ` +${trinketSlot.enhancementLevel}` : '';
 
                             // Calculate breakdown
-                            const baseTaskSpeed = itemDetails.equipmentDetail?.noncombatStats?.taskSpeed || 0;
-                            const enhancementBonus =
-                                itemDetails.equipmentDetail?.noncombatEnhancementBonuses?.taskSpeed || 0;
-                            const enhancementLevel = trinketSlot.enhancementLevel || 0;
+                            const { base: baseTaskSpeed, enhancement: enhancementTotal } =
+                                dataManager.getTaskSpeedParts(itemDetails, trinketSlot.enhancementLevel || 0);
 
                             const detailText =
-                                enhancementBonus > 0
-                                    ? ` (${(baseTaskSpeed * 100).toFixed(2)}% + ${(enhancementBonus * enhancementLevel * 100).toFixed(2)}%)`
+                                enhancementTotal > 0
+                                    ? ` (${(baseTaskSpeed * 100).toFixed(2)}% + ${(enhancementTotal * 100).toFixed(2)}%)`
                                     : '';
 
                             speedLines.push(

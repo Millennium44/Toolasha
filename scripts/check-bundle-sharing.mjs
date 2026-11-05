@@ -106,6 +106,12 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/enhancement-steps.js',
+        // A constant table and two pure functions, no imports and no module state: the game's enhancement
+        // step count and the task speed a worn item gives. Core's data manager and the utils bundle both read it.
+        'stateless table and arithmetic; no module state to share',
+    ],
+    [
         'src/utils/price-change.js',
         // One pure predicate, no imports and no module state: whether a market notification moved a
         // price. The price listeners in several bundles (inventory, net worth, EV, house, shop) ask it.
