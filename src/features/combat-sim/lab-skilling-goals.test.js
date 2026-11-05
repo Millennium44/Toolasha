@@ -1368,4 +1368,63 @@ describe('a plan that falls short retries with every candidate', () => {
         expect(events.length).toBeGreaterThan(10);
         expect(neverDecreases(fractions(events))).toBe(true);
     });
+
+    describe('when the full pool does worse than the capped run', () => {
+        // Capped at two, A+B reaches 70%. With C in the pool, C (a cheap pick on top of A) takes B's slot
+        // and the greedy ends at A+C, 65%
+        const RATES = { '': 0.5, a: 0.55, b: 0.54, c: 0.501, ab: 0.7, ac: 0.65 };
+        const worn = (setup) =>
+            ['a', 'b', 'c']
+                .filter((k) => Object.values(setup.dto.equipment).some((w) => w.hrid === `/items/${k}`))
+                .join('');
+        const rows = () => [
+            item('/items/a', 0, 10, 0.05),
+            item('/items/b', 1, 10, 0.04),
+            item('/items/c', 1, 1, 0.001),
+        ];
+        const go = async (extra = {}) => {
+            const calls = { n: 0 };
+            const result = await planSkillingGoal({
+                baseSetup: setupOf(2),
+                rows: rows(),
+                evaluate: (setup) => {
+                    calls.n++;
+                    return { clearRate: RATES[worn(setup)] ?? 0, xpPerRoom: 0 };
+                },
+                goalRoomLevel: 50,
+                goalRate: 0.9,
+                candidateCap: 2,
+                yieldFn: async () => {},
+                ...extra,
+            });
+            return { result, calls };
+        };
+
+        test('the better plan is returned, with the verdict naming the whole pool and the combined sims', async () => {
+            const { result, calls } = await go();
+
+            expect(result.reached).toBe(false);
+            expect(result.finalRate).toBeCloseTo(0.7, 10);
+            expect(result.steps.map((s) => s.row.candidate.upgradeHrid)).toEqual(['/items/a', '/items/b']);
+            expect(result.poolSize).toBe(2);
+            expect(result.sims).toBe(calls.n);
+            const html = renderPlanHtml(result, { goalText: '90%' });
+            expect(html).toContain('Not reachable even weighing all 3 candidates (best reached 70.0%)');
+        });
+
+        test('a Stop in the retry keeps the abort and returns the better partial plan', async () => {
+            let seen = false;
+            const { result } = await go({
+                onProgress: (e) => {
+                    if (e.description.startsWith('Step 2, every candidate')) seen = true;
+                },
+                abortSignal: () => seen,
+            });
+
+            expect(result.aborted).toBe(true);
+            expect(result.finalRate).toBeCloseTo(0.7, 10);
+            expect(result.steps).toHaveLength(2);
+            expect(renderPlanHtml(result, { goalText: '90%' })).toContain('Stopped early at 70.0% after 2 steps');
+        });
+    });
 });

@@ -760,7 +760,7 @@ export const PLAN_IMPROVE_SIM_BUDGET = 120;
  * @param {function(SkillingSetup): Promise<Object>} [params.measureMax] - Room-level search of a setup
  * @param {function(): Promise<void>} [params.yieldFn]
  * @returns {Promise<Object>} `{ steps, reached, aborted, baselineRate, finalRate, totals, poolSize, sims,
- *   improved, improveSims }`
+ *   improved, improveSims }`, plus `weighedAll` (the full pool's size) when a retry ran
  */
 export async function planSkillingGoal(params) {
     const shared = { sims: 0, high: 0, emit: params.onProgress || null };
@@ -770,7 +770,16 @@ export async function planSkillingGoal(params) {
     if (first.result.aborted || first.result.reached || !first.trimmed) return first.result;
     shared.floor = shared.high;
     const second = await planPass(params, shared, Infinity, first.reuse, true);
-    return second.result;
+    // A retry that reaches the goal always wins. Otherwise the better of the two is kept: greedy over more
+    // candidates can take a slot from a stronger pick and end lower than the capped run did. Either way the
+    // retry weighed the whole pool, so the verdict can say so
+    const best = !second.result.reached && first.result.finalRate > second.result.finalRate ? first : second;
+    return {
+        ...best.result,
+        aborted: second.result.aborted,
+        sims: shared.sims,
+        weighedAll: second.result.poolSize,
+    };
 }
 
 /**
@@ -1177,8 +1186,9 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
             ? `Best plan found reaches the goal at total ${describeCost(plan.totals)}.`
             : `Already at the goal: ${pct(plan.finalRate)} without buying anything.`;
     } else {
-        verdict = plan.poolSize
-            ? `Not reachable even weighing all ${plan.poolSize} candidate${plan.poolSize === 1 ? '' : 's'} (best reached ${pct(plan.finalRate)}).`
+        const weighed = plan.weighedAll ?? plan.poolSize;
+        verdict = weighed
+            ? `Not reachable even weighing all ${weighed} candidate${weighed === 1 ? '' : 's'} (best reached ${pct(plan.finalRate)}).`
             : `Not reachable with these candidates (best reached ${pct(plan.finalRate)}).`;
     }
     html += `<div data-plan-verdict style="margin-top:6px; font-size:12px; font-weight:600; color:${plan.reached && !plan.aborted ? '#4caf50' : '#ff9800'};">${esc(verdict)}</div>`;
