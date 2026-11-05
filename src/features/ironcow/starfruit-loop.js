@@ -506,6 +506,336 @@ export function applyHoldings(batch, loop, state) {
 }
 
 /**
+ * The gold a set of legs earns, net of the decompose fee. An unpriced fee makes the figure unknown (null),
+ * never free: a missing price read as 0 would overstate the gold and the bells.
+ * @param {Object} loop - From `calculateStarfruitLoop`
+ * @param {number} decomposeActions - Decompose actions
+ * @param {number} coinifyActions - Coinify actions
+ * @returns {number|null} Net gold, or null when the fee has no price
+ */
+function goldOfLegs(loop, decomposeActions, coinifyActions) {
+    const fee = loop.goldOutPerFruit;
+    if (decomposeActions > 0 && !Number.isFinite(fee)) return null;
+    return (
+        coinifyActions * (loop.coinsPerSuccess || 0) * (loop.coinifyRate || 0) -
+        decomposeActions * (loop.decomposeBulk || 1) * (Number.isFinite(fee) ? fee : 0)
+    );
+}
+
+/**
+ * Size a batch that keeps the queue busy for the whole of `hours`, spending what is held first.
+ *
+ * {@link balanceBatch} sizes a batch as if starting from nothing and {@link applyHoldings} then
+ * takes the held stock off it, which leaves the queue busy for less time than was asked. This
+ * solves the other way round, from each leg's own time per action (`forageActionsPerHour`,
+ * `decomposeActionsPerHour`, `coinifyActionsPerHour`, the same rates the rest of the loop
+ * uses): held fruit and held essence go in first, and the forage leg is whatever is needed to
+ * make up the rest of the time.
+ *
+ * For `F` forage actions the legs are
+ * `D = floor((held + F * fruitPerForageAction) / bulk)` decomposes,
+ * `C = floor((D * bulk * essencePerFruit + essenceHeld) / coinifyBulk)` coinifies, and the time is
+ * `F / forageRate + D / decomposeRate + C / coinifyRate`. That is non-decreasing in `F`, so the
+ * largest `F` whose time does not pass `hours` is found by bisection. The batch therefore
+ * never runs past the time asked and falls short of it by at most one forage action's worth of
+ * downstream work. Every leg rounds down, as in {@link balanceBatch}, so none asks for more input
+ * than the leg before it makes (decompose is a success rate, so coinify is on expected essence).
+ *
+ * When what is held already fills more than `hours`, there is no forage leg and the batch is cut
+ * to fit: held essence is coinified first (it earns without a fee), then as much fruit is
+ * decomposed as the remaining time allows (again by bisection).
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {number} hours - How long the queue should stay busy
+ * @param {Object|null} state - From `readCharacterState` (`starfruitHeld`, `essenceHeld`)
+ * @returns {Object|null} A batch shaped like {@link balanceBatch}'s plus `fill`
+ *   (`{fruitHeld, essenceHeld, scratchForage, trimmed}`), or null when it cannot be sized
+ *   (the caller falls back to {@link balanceBatch} + {@link applyHoldings}); also null when the
+ *   loop items could not be resolved (`holdingsCredited === false`), so the fallback can say so
+ */
+export function fillBatch(loop, hours, state) {
+    if (!loop || loop.missing?.length) return null;
+    if (!Number.isFinite(hours) || hours <= 0) return null;
+    if (state?.holdingsCredited === false) return null;
+
+    const fruitPerForageAction = loop.fruitPerForageAction || 0;
+    const forageRate = loop.forageActionsPerHour || 0;
+    const decomposeRate = loop.decomposeActionsPerHour || 0;
+    const coinifyRate = loop.coinifyActionsPerHour || 0;
+    if (!(fruitPerForageAction > 0 && forageRate > 0 && decomposeRate > 0 && coinifyRate > 0)) return null;
+    const decomposeBulk = loop.decomposeBulk || 1;
+    const coinifyBulk = loop.coinifyBulk || 1;
+    const essencePerFruit = loop.essencePerFruit || 0;
+
+    const EPS = 1e-9;
+    const solve = (fruitHeld, essenceHeld) => {
+        const legs = (forage) => {
+            const fruit = fruitHeld + forage * fruitPerForageAction;
+            const decompose = Math.floor(fruit / decomposeBulk);
+            const essence = decompose * decomposeBulk * essencePerFruit + essenceHeld;
+            const coinify = Math.floor(essence / coinifyBulk);
+            const time = forage / forageRate + decompose / decomposeRate + coinify / coinifyRate;
+            return { forage, decompose, coinify, fruit, essence, time };
+        };
+        if (legs(0).time <= hours + EPS) {
+            let lo = 0;
+            let hi = Math.ceil(hours * forageRate) + 1;
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                if (legs(mid).time <= hours + EPS) lo = mid;
+                else hi = mid - 1;
+            }
+            // Never an all-zero batch for a duration shorter than one chain: at least one action, as balanceBatch
+            if (lo === 0 && legs(0).decompose + legs(0).coinify === 0) lo = 1;
+            return { ...legs(lo), trimmed: false };
+        }
+
+        // Held stock alone is longer than the time asked: no forage, and only what fits
+        const coinifyOf = (decompose) =>
+            Math.floor((decompose * decomposeBulk * essencePerFruit + essenceHeld) / coinifyBulk);
+        const timeOf = (decompose) => decompose / decomposeRate + coinifyOf(decompose) / coinifyRate;
+        let decompose = 0;
+        if (timeOf(0) <= hours + EPS) {
+            let lo = 0;
+            let hi = Math.floor(fruitHeld / decomposeBulk);
+            while (lo < hi) {
+                const mid = Math.ceil((lo + hi) / 2);
+                if (timeOf(mid) <= hours + EPS) lo = mid;
+                else hi = mid - 1;
+            }
+            decompose = lo;
+        }
+        const coinify = Math.min(coinifyOf(decompose), Math.floor(hours * coinifyRate + EPS));
+        const fruit = fruitHeld;
+        const essence = decompose * decomposeBulk * essencePerFruit + essenceHeld;
+        return {
+            forage: 0,
+            decompose,
+            coinify,
+            fruit,
+            essence,
+            time: decompose / decomposeRate + coinify / coinifyRate,
+            trimmed: true,
+        };
+    };
+
+    const fruitHeld = Math.max(0, Math.floor(Number(state?.starfruitHeld) || 0));
+    const essenceHeld = Math.max(0, Math.floor(Number(state?.essenceHeld) || 0));
+    const picked = solve(fruitHeld, essenceHeld);
+    const scratch = fruitHeld > 0 || essenceHeld > 0 ? solve(0, 0) : picked;
+
+    const gold = goldOfLegs(loop, picked.decompose, picked.coinify);
+    const bellPrice = loop.bellPrice;
+    return {
+        hours: picked.time,
+        requestedHours: hours,
+        forageActions: picked.forage,
+        decomposeActions: picked.decompose,
+        coinifyActions: picked.coinify,
+        fruit: picked.fruit,
+        essence: picked.essence,
+        gold,
+        bells: gold !== null && Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null,
+        credits: [],
+        holdingsNote: '',
+        fill: {
+            fruitHeld,
+            essenceHeld,
+            scratchForage: scratch.forage,
+            trimmed: picked.trimmed,
+        },
+    };
+}
+
+/**
+ * The largest batch that uses ALL the Star Fruit held and forages none.
+ *
+ * The inverse of {@link balanceBatch}: that one starts from a duration and works out
+ * the fruit it needs; this one starts from the fruit and works out the duration.
+ * Forage is 0, decompose takes every fruit it can, and coinify takes the essence
+ * that decompose is expected to make plus any essence already held.
+ *
+ * ## Rounding
+ *
+ * Decompose rounds **down** to whole actions (`floor(held / bulk)`), so it never asks
+ * for more fruit than is held: an action without its input stops the queue. What is
+ * left over is fewer than one action's input (`bulk - 1` at most), and is returned as
+ * `max.leftoverFruit` for the panel to say. Coinify rounds down the same way, on the
+ * *expected* essence (decompose is a success rate, as in {@link balanceBatch}), so a bad
+ * run of decompose rolls can leave the last coinify actions without essence. They are the
+ * last rows of the queue, so the queue then ends short rather than stalls midway, and a
+ * Repeat ∞ coinify row simply runs for as much essence as there turns out to be.
+ *
+ * `starfruitHeld` and `essenceHeld` come from `readCharacterState`, which already takes
+ * off what another plan has reserved, so a reserved stack is never spent here.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {Object|null} state - From `readCharacterState`
+ * @returns {{batch: Object|null, reason: string}} The batch (same shape as {@link applyHoldings}
+ *   returns, plus `max`), or `batch: null` and a short reason the button can show
+ */
+export function maxBatch(loop, state) {
+    if (!loop || loop.missing?.length) return { batch: null, reason: 'Cost the loop first.' };
+    if (!state) return { batch: null, reason: 'Your inventory has not loaded yet.' };
+    if (state.holdingsCredited === false) {
+        return { batch: null, reason: 'The loop items could not be resolved, so what you hold is unknown.' };
+    }
+
+    const fruitName = loop.items?.starfruitName || 'Star Fruit';
+    const decomposeBulk = loop.decomposeBulk || 1;
+    const coinifyBulk = loop.coinifyBulk || 1;
+    const fruitHeld = Math.max(0, Math.floor(Number(state.starfruitHeld) || 0));
+    if (fruitHeld <= 0) return { batch: null, reason: `You hold no ${fruitName} to use.` };
+
+    const decomposeActions = Math.floor(fruitHeld / decomposeBulk);
+    if (decomposeActions <= 0) {
+        return {
+            batch: null,
+            reason: `${fruitHeld} ${fruitName} is less than one decompose (${decomposeBulk} to an action).`,
+        };
+    }
+
+    const fruitUsed = decomposeActions * decomposeBulk;
+    const essenceHeld = Math.max(0, Math.floor(Number(state.essenceHeld) || 0));
+    const essence = fruitUsed * (loop.essencePerFruit || 0) + essenceHeld;
+    const coinifyActions = Math.floor(essence / coinifyBulk);
+
+    const hours =
+        decomposeActions / (loop.decomposeActionsPerHour || Infinity) +
+        coinifyActions / (loop.coinifyActionsPerHour || Infinity);
+    const gold = goldOfLegs(loop, decomposeActions, coinifyActions);
+    const bellPrice = loop.bellPrice;
+    const bells = gold !== null && Number.isFinite(bellPrice) && bellPrice > 0 ? gold / bellPrice : null;
+
+    return {
+        reason: '',
+        batch: {
+            hours,
+            requestedHours: hours,
+            forageActions: 0,
+            decomposeActions,
+            coinifyActions,
+            fruit: fruitUsed,
+            essence,
+            gold,
+            bells,
+            credits: [],
+            holdingsNote: '',
+            max: {
+                fruitName,
+                fruitHeld,
+                leftoverFruit: fruitHeld - fruitUsed,
+                essenceHeld,
+                // A Repeat infinity row spends real stock, so it stands for "all of it" only when the batch uses
+                // all of what is physically in the bag: not when "Largest I can run" capped the fruit, and not
+                // when another plan has claimed some (the held figure then sits below the owned one). An owned
+                // figure the state does not carry is unknown, so counted.
+                unlimited: {
+                    decompose: Number.isFinite(state.starfruitOwned) && state.starfruitOwned === fruitHeld,
+                    coinify: Number.isFinite(state.essenceOwned) && state.essenceOwned === essenceHeld,
+                },
+            },
+        },
+    };
+}
+
+/**
+ * The batch the queue helper is showing, from the inputs that define it. One function for the panel, the
+ * walk and the action-bar strip, so none of them can size a different batch from the same inputs. A read:
+ * it changes nothing.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {{max?: boolean, maxCap?: number|null, basis?: 'hours'|'bells', hours?: number}|null} spec - What
+ *   the helper is set to
+ * @param {Object|null} state - From `readCharacterState`
+ * @returns {Object|null} The batch, or null when it cannot be sized (Max with nothing to use included)
+ */
+export function batchForSpec(loop, spec, state) {
+    if (!loop || !spec) return null;
+    if (spec.max) {
+        const capped =
+            state && Number.isFinite(spec.maxCap)
+                ? { ...state, starfruitHeld: Math.min(state.starfruitHeld || 0, spec.maxCap) }
+                : state;
+        return maxBatch(loop, capped).batch;
+    }
+    if ((spec.basis || 'hours') === 'hours') {
+        const filled = fillBatch(loop, spec.hours, state);
+        if (filled) return filled;
+    }
+    const batch = balanceBatch(loop, spec.hours);
+    return batch ? applyHoldings(batch, loop, state) : null;
+}
+
+/**
+ * The largest batch the gold on hand can pay for.
+ *
+ * Decompose is the only leg that costs gold and it runs before any coinify income, so the gold a batch
+ * needs at its lowest point is its decompose fees: `decomposeActions * bulk * goldOutPerFruit`. This
+ * finds the largest batch whose fees fit in `available`, from the same {@link fillBatch} /
+ * {@link maxBatch} sizing the helper shows, so the batch it returns is one the helper could have
+ * shown for some duration.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {Object|null} state - From `readCharacterState`
+ * @param {number} available - Gold the batch may spend (never read as 0 when unknown: pass a number)
+ * @param {Object} how
+ * @param {boolean} [how.max] - Size from all the held fruit (Max) rather than from a duration
+ * @param {number} [how.hours] - The duration to stay under, when not Max
+ * @param {number} [how.queuedDecompose] - Decompose actions of this item already queued, whose fees are
+ *   already in the queue's own need
+ * @returns {{batch: Object|null, hours: number|null, reason: string}} `batch` null with a reason when
+ *   the fee is not priced or not even one decompose is affordable
+ */
+export function affordableBatch(loop, state, available, { max = false, hours = 0, queuedDecompose = 0 } = {}) {
+    const perFruit = loop?.goldOutPerFruit;
+    if (!Number.isFinite(perFruit) || perFruit < 0) {
+        return {
+            batch: null,
+            hours: null,
+            reason: 'The decompose fee has no price, so what you can afford is unknown.',
+        };
+    }
+    const perAction = (loop.decomposeBulk || 1) * perFruit;
+    const purse = Number.isFinite(available) ? Math.max(0, available) : 0;
+    // Decomposes already queued are paid for in the queue's own fees, so they do not use up `available`
+    const maxActions =
+        perAction > 0 ? Math.floor(purse / perAction + 1e-9) + Math.max(0, queuedDecompose || 0) : Infinity;
+
+    if (max) {
+        const bulk = loop.decomposeBulk || 1;
+        const capped = Number.isFinite(maxActions)
+            ? { ...state, starfruitHeld: Math.min(Math.floor(Number(state?.starfruitHeld) || 0), maxActions * bulk) }
+            : state;
+        if (Number.isFinite(maxActions) && maxActions < 1 && Math.floor(Number(state?.starfruitHeld) || 0) > 0) {
+            // The fruit is there; it is the gold that is short, and the reason has to say so
+            return { batch: null, hours: null, reason: 'The gold on hand does not cover even one decompose fee.' };
+        }
+        const { batch, reason } = maxBatch(loop, capped);
+        return { batch, hours: batch ? batch.hours : null, reason: batch ? '' : reason };
+    }
+
+    const whole = fillBatch(loop, hours, state);
+    if (!whole) return { batch: null, hours: null, reason: 'This loop cannot be sized into a batch.' };
+    if (whole.decomposeActions <= maxActions) return { batch: whole, hours, reason: '' };
+
+    // Decompose fees grow with the hours, so bisect for the longest duration whose fees still fit
+    let lo = 0;
+    let hi = hours;
+    for (let step = 0; step < 60; step++) {
+        const mid = (lo + hi) / 2;
+        const probe = mid > 0 ? fillBatch(loop, mid, state) : null;
+        if (probe && probe.decomposeActions <= maxActions) lo = mid;
+        else hi = mid;
+    }
+    const batch = lo > 0 ? fillBatch(loop, lo, state) : null;
+    if (!batch || batch.forageActions + batch.decomposeActions + batch.coinifyActions <= 0) {
+        return { batch: null, hours: null, reason: 'The gold on hand does not cover even one decompose fee.' };
+    }
+    return { batch, hours: lo, reason: '' };
+}
+
+/**
  * What is wrong with the loop as it is set up right now.
  *
  * @param {Object} state - From `readCharacterState`

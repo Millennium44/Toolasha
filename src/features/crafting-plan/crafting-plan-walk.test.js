@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
     navigateSucceeds: true,
     /** The action queue `endCharacterActions` re-lists alongside anything new */
     currentActions: [],
+    geometry: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => mocks.settings[key],
-        getSettingValue: (_key, fallback) => fallback,
+        getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback,
+        Z_FLOATING_PANEL: 9000,
     },
 }));
 
@@ -43,6 +45,7 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 
 vi.mock('../../utils/item-navigation.js', () => ({
     navigateToEnhanceItem: () => false,
+    navigateToAlchemyItem: () => ({ opened: false, selected: false }),
     navigateToAction: (actionHrid) => {
         mocks.navigatedActions.push(actionHrid);
         return mocks.navigateSucceeds;
@@ -53,8 +56,19 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (itemHrid) => mocks.navigatedMarket.push(itemHrid),
 }));
 
+vi.mock('../../utils/panel-geometry.js', () => ({
+    restoreGeometry: async (_panel, key) => mocks.geometry.push(['restore', key]),
+    saveGeometry: async (key, geometry) => mocks.geometry.push(['save', key, geometry]),
+    clearPosition: async (key) => mocks.geometry.push(['clear', key]),
+    clampPanelToViewport: () => mocks.geometry.push(['clamp']),
+    markPanelInteracted: () => {},
+}));
+
 vi.mock('../../utils/react-input.js', () => ({
-    setReactInputValue: (input, value) => mocks.filled.push({ input, value }),
+    setReactInputValue: (input, value) => {
+        input.value = String(value);
+        mocks.filled.push({ input, value });
+    },
 }));
 
 vi.mock('../../utils/action-panel-helper.js', () => ({
@@ -130,6 +144,7 @@ beforeEach(() => {
     mocks.navigatedActions = [];
     mocks.navigatedMarket = [];
     mocks.filled = [];
+    mocks.geometry = [];
     mocks.panelActionHrid = null;
     mocks.navigateSucceeds = true;
     mocks.currentActions = [];
@@ -343,6 +358,9 @@ describe('walking a plan', () => {
         // Hide is a buy step; satisfy it so the walk moves to the first craft
         mocks.inventory.set('/items/hide', 120);
         mocks.dmHandlers.get('items_updated')();
+        // The bought step is finished; the next one opens only on the player's Next
+        expect(seen.map((entry) => entry.step)).toEqual(['buy:/items/hide']);
+        craftingPlanWalk.next();
 
         expect(seen.map((entry) => entry.step)).toEqual(['buy:/items/hide', 'craft:/actions/tailoring/leather']);
         // The hook for the craft step ran before its navigation
@@ -411,6 +429,10 @@ describe('walking a plan', () => {
         expect(stripText()).toContain('Step 1 of 2');
 
         onActions({ endCharacterActions: [{ actionHrid: '/a' }] });
+        // Queued: the step reads as done and nothing else opens until Next
+        expect(stripText()).toBe('Step 1 of 2: Queued ✓ craft 1 X');
+        expect(mocks.navigatedActions).toEqual(['/a']);
+        craftingPlanWalk.next();
         expect(stripText()).toBe('Step 2 of 2: craft 2 Y');
         expect(mocks.navigatedActions).toEqual(['/a', '/b']);
     });
@@ -453,6 +475,8 @@ describe('walking a plan', () => {
                 { id: 'just-queued', actionHrid: '/a' },
             ],
         });
+        expect(stripText()).toBe('Step 1 of 2: Queued ✓ craft 1 X');
+        craftingPlanWalk.next();
         expect(stripText()).toBe('Step 2 of 2: craft 2 Y');
     });
 
@@ -489,7 +513,276 @@ describe('walking a plan', () => {
 
         mocks.inventory.set('/items/hide', 15);
         onItems();
+        expect(stripText()).toBe('Step 1 of 2: Done ✓ buy 10 Hide');
+        craftingPlanWalk.next();
         expect(stripText()).toBe('Step 2 of 2: craft 1 X');
+    });
+
+    describe('the bar can be moved', () => {
+        const oneStep = () =>
+            craftingPlanWalk.start([
+                {
+                    key: 'craft:/a',
+                    kind: 'craft',
+                    itemHrid: '/items/x',
+                    itemName: 'X',
+                    actionHrid: '/a',
+                    count: 1,
+                    actions: 1,
+                },
+                {
+                    key: 'craft:/b',
+                    kind: 'craft',
+                    itemHrid: '/items/y',
+                    itemName: 'Y',
+                    actionHrid: '/b',
+                    count: 1,
+                    actions: 1,
+                },
+            ]);
+        const handle = () => strip().querySelector('[data-role="handle"]');
+        const pointer = (type, target, x, y) => {
+            const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+            target.dispatchEvent(event);
+        };
+
+        test('has a clear handle, a default under the header at the top, and asks for the saved spot', async () => {
+            document.body.innerHTML = '<div class="Header_header__x"></div>';
+            document.querySelector('.Header_header__x').getBoundingClientRect = () => ({ bottom: 40 });
+            oneStep();
+
+            expect(handle().textContent).toBe('⠿');
+            expect(handle().title).toContain('Drag to move');
+            expect(strip().style.top).toBe('48px');
+            expect(strip().style.bottom).toBe('auto');
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(mocks.geometry).toContainEqual(['restore', 'craftingWalkStrip']);
+        });
+
+        test('dragging by the handle moves it and remembers where it was dropped', async () => {
+            oneStep();
+            pointer('pointerdown', handle(), 100, 60);
+            pointer('pointermove', document, 300, 200);
+            pointer('pointerup', document, 300, 200);
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(strip().style.left).not.toBe('');
+            const saved = mocks.geometry.find((entry) => entry[0] === 'save');
+            expect(saved[1]).toBe('craftingWalkStrip');
+            expect(Number.isFinite(saved[2].left) && Number.isFinite(saved[2].top)).toBe(true);
+        });
+
+        test('pressing a button never starts a drag, and the buttons still work', () => {
+            oneStep();
+            pointer('pointerdown', strip().querySelector('[data-role="skip"]'), 100, 60);
+            pointer('pointermove', document, 300, 200);
+            pointer('pointerup', document, 300, 200);
+            expect(mocks.geometry.some((entry) => entry[0] === 'save')).toBe(false);
+
+            strip().querySelector('[data-role="skip"]').click();
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/b');
+        });
+
+        test('a double-click on the handle puts the bar back and forgets the saved spot', async () => {
+            oneStep();
+            strip().style.left = '500px';
+            strip().style.top = '300px';
+            handle().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(strip().style.top).not.toBe('300px');
+            expect(mocks.geometry).toContainEqual(['clear', 'craftingWalkStrip']);
+        });
+
+        test('it is pulled back on screen after a resize, and the listener goes when the walk ends', () => {
+            oneStep();
+            mocks.geometry = [];
+            window.dispatchEvent(new Event('resize'));
+            expect(mocks.geometry).toContainEqual(['clamp']);
+
+            craftingPlanWalk.stop('');
+            mocks.geometry = [];
+            window.dispatchEvent(new Event('resize'));
+            expect(mocks.geometry).toEqual([]);
+            expect(strip()).toBeNull();
+        });
+
+        test('on a phone it is full width at the bottom, with no handle and no drag', () => {
+            mocks.settings.mobileMode = 'on';
+            oneStep();
+
+            expect(handle()).toBeNull();
+            expect(strip().style.left).toBe('8px');
+            expect(strip().style.right).toBe('8px');
+            expect(strip().style.bottom).toContain('64px');
+            expect(mocks.geometry.some((entry) => entry[0] === 'restore')).toBe(false);
+        });
+
+        test('its label wraps instead of hiding what it asks for', () => {
+            oneStep();
+            const label = strip().querySelector('[data-role="label"]');
+            expect(label.style.whiteSpace).toBe('normal');
+            expect(label.style.overflow).not.toBe('hidden');
+        });
+    });
+
+    describe('how the walk ends', () => {
+        const three = () =>
+            craftingPlanWalk.start(
+                ['a', 'b', 'c'].map((name) => ({
+                    key: `craft:/${name}`,
+                    kind: 'craft',
+                    itemHrid: `/items/${name}`,
+                    itemName: name.toUpperCase(),
+                    shortName: name.toUpperCase(),
+                    actionHrid: `/${name}`,
+                    count: 1,
+                    actions: 1,
+                })),
+                'crafting-plan',
+                { finalNote: 'The new rows wait behind Golem Cave.' }
+            );
+        const press = (actionHrid) =>
+            mocks.wsHandlers.get('actions_updated')({ endCharacterActions: [{ id: `n${actionHrid}`, actionHrid }] });
+
+        test('a full success says complete, with the note the caller asked for', () => {
+            three();
+            press('/a');
+            craftingPlanWalk.next();
+            press('/b');
+            craftingPlanWalk.next();
+            press('/c');
+            expect(stripText()).toBe('Queued ✓ Walk complete. The new rows wait behind Golem Cave.');
+        });
+
+        test('skipped steps are named and said not to be queued', () => {
+            three();
+            craftingPlanWalk.skip();
+            press('/b');
+            craftingPlanWalk.next();
+            craftingPlanWalk.skip();
+            expect(stripText()).toBe(
+                'Walk finished: A and C were skipped, so they are not queued. The new rows wait behind Golem Cave.'
+            );
+            expect(stripText()).not.toContain('Walk complete');
+        });
+
+        test('one skipped step on the last row reads the same way', () => {
+            three();
+            press('/a');
+            craftingPlanWalk.next();
+            press('/b');
+            craftingPlanWalk.next();
+            craftingPlanWalk.skip();
+            expect(stripText()).toContain('Walk finished: C was skipped, so it is not queued.');
+        });
+
+        test('Stop says nothing of completion', () => {
+            three();
+            craftingPlanWalk.stop('');
+            expect(strip()).toBeNull();
+        });
+    });
+
+    describe('a queued step waits for the player’s Next', () => {
+        const twoSteps = () =>
+            craftingPlanWalk.start([
+                {
+                    key: 'craft:/a',
+                    kind: 'craft',
+                    itemHrid: '/items/x',
+                    itemName: 'X',
+                    actionHrid: '/a',
+                    count: 1,
+                    actions: 1,
+                },
+                {
+                    key: 'craft:/b',
+                    kind: 'craft',
+                    itemHrid: '/items/y',
+                    itemName: 'Y',
+                    actionHrid: '/b',
+                    count: 2,
+                    actions: 2,
+                },
+            ]);
+        const press = (actionHrid, extra = {}) =>
+            mocks.wsHandlers.get('actions_updated')({
+                endCharacterActions: [{ id: `new-${actionHrid}`, actionHrid, ...extra }],
+            });
+        const nextButton = () => document.querySelector('[data-role="next"]');
+
+        test('a queued row does not navigate, and shows Queued ✓ with a Next button', () => {
+            twoSteps();
+            press('/a');
+
+            expect(mocks.navigatedActions).toEqual(['/a']);
+            expect(stripText()).toContain('Queued ✓');
+            expect(nextButton().hidden).toBe(false);
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/a');
+        });
+
+        test('Next opens the following step once; a double press cannot skip one', () => {
+            twoSteps();
+            press('/a');
+            nextButton().click();
+            nextButton().click();
+            craftingPlanWalk.next();
+
+            expect(mocks.navigatedActions).toEqual(['/a', '/b']);
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/b');
+            expect(nextButton().hidden).toBe(true);
+        });
+
+        test('Next does nothing on a step that has not been queued', () => {
+            twoSteps();
+            craftingPlanWalk.next();
+            expect(mocks.navigatedActions).toEqual(['/a']);
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/a');
+        });
+
+        test('a further queue event for a finished step changes nothing', () => {
+            twoSteps();
+            press('/a');
+            press('/b');
+            expect(mocks.navigatedActions).toEqual(['/a']);
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/a');
+        });
+
+        test('Skip and Stop work in the queued state', () => {
+            twoSteps();
+            press('/a');
+            document.querySelector('[data-role="skip"]').click();
+            expect(craftingPlanWalk.currentStep().key).toBe('craft:/b');
+
+            press('/b');
+            document.querySelector('[data-role="stop"]').click();
+            expect(craftingPlanWalk.active).toBe(false);
+        });
+
+        test('the last step ends the walk in a Done state, with no Next to press', () => {
+            twoSteps();
+            press('/a');
+            craftingPlanWalk.next();
+            press('/b');
+
+            expect(craftingPlanWalk.active).toBe(false);
+            expect(stripText()).toBe('Queued ✓ Walk complete.');
+            expect(mocks.navigatedActions).toEqual(['/a', '/b']);
+        });
+
+        test('a character switch ends the walk; nothing advances on its own afterwards', () => {
+            twoSteps();
+            press('/a');
+            mocks.dmHandlers.get('character_switching')();
+            expect(craftingPlanWalk.active).toBe(false);
+            press('/b');
+            craftingPlanWalk.next();
+            expect(mocks.navigatedActions).toEqual(['/a']);
+        });
     });
 
     test('Skip advances without acting on the step', () => {
@@ -574,6 +867,7 @@ describe('walking a plan', () => {
         expect(document.querySelector('.mwi-crafting-walk-current').getAttribute(WALK_KEY_ATTRIBUTE)).toBe('craft:/a');
 
         mocks.wsHandlers.get('actions_updated')({ endCharacterActions: [{ actionHrid: '/a' }] });
+        craftingPlanWalk.next();
 
         expect(document.querySelector('.mwi-crafting-walk-current').getAttribute(WALK_KEY_ATTRIBUTE)).toBe('craft:/b');
     });

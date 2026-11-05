@@ -37,25 +37,21 @@ import craftingPlanWalk from '../crafting-plan/crafting-plan-walk.js';
 import { DECOMPOSE_ACTION, COINIFY_ACTION } from './ironbell-cycle.js';
 export { DECOMPOSE_ACTION, COINIFY_ACTION };
 
-/** What the strip says to do about a slot the script is not allowed to fill */
-const SELECT_NOTE = 'put it in the alchemy slot';
-
 /**
  * The most one queued action can hold.
  *
  * Not read off the game: nothing in `actionDetailMap`, in the
  * `actions_updated` payload, or on the game's own count box (it carries no
- * `max` attribute — see `ironcow-queue-walk.test.js`) states a repeat cap, and
- * a repo-wide search for a documented one (`maxActionCount`, an int32 bound, a
- * queue-sizing constant in `src/features/actions/*`) turned up nothing either.
- * So this is chosen, not discovered: a round number with wide headroom below
- * the 32-bit signed range (2,147,483,647) that anything this loop asks for in
- * practice — even a week, even at a fast action rate — clears in a small
- * number of repeats rather than a stack of them. If the game ever states the
- * real cap, this is the one constant to correct.
+ * `max` attribute — see `ironcow-queue-walk.test.js`) states a repeat cap.
+ * This is the 32-bit signed ceiling (2,147,483,647): a leg is one queue row
+ * up to it, and only a count above it is split (the split is kept for that,
+ * and for the typo guard on the duration). Each queue row is a slot the game
+ * limits, so fewer rows is the point. Whether the server stores a count this
+ * large as typed is checked after every press (`verifyCount` on each step), not
+ * assumed. If the game ever states a real cap, this is the one constant to correct.
  * @type {number}
  */
-export const MAX_STEP_ACTIONS = 100_000;
+export const MAX_STEP_ACTIONS = 2_147_483_647;
 
 /**
  * Split one leg's count into repeats no larger than {@link MAX_STEP_ACTIONS}.
@@ -91,7 +87,37 @@ function splitCount(count) {
  * @param {string} [params.note] - Extra wording, e.g. the alchemy slot reminder
  * @returns {Array<Object>} Steps for `craftingPlanWalk.start`
  */
-function legSteps({ key, actionHrid, itemHrid, itemName, requiresItemHrid, count, verb, note }) {
+function legSteps({
+    key,
+    actionHrid,
+    itemHrid,
+    itemName,
+    requiresItemHrid,
+    count,
+    verb,
+    note,
+    alchemyType,
+    unlimited,
+}) {
+    if (unlimited) {
+        // One Repeat ∞ row: the game's default count is left alone (nothing is typed), and the row runs for
+        // as long as its input lasts, then the game moves on. Checked afterwards for being ∞, not for a count.
+        const step = {
+            key,
+            kind: 'craft',
+            itemHrid,
+            itemName,
+            actionHrid,
+            count,
+            actions: 0,
+            label: `${verb} all ${itemName} — Repeat ∞, leave the count (about ${formatWithSeparator(count)} actions)`,
+            shortName: verb.charAt(0).toUpperCase() + verb.slice(1),
+            unlimited: true,
+        };
+        if (requiresItemHrid) step.requiresItemHrid = requiresItemHrid;
+        if (alchemyType) step.alchemyType = alchemyType;
+        return [step];
+    }
     const chunks = splitCount(count);
     return chunks.map((chunk, index) => {
         const repeat = chunks.length > 1 ? ` — repeat ${index + 1} of ${chunks.length}` : '';
@@ -104,10 +130,29 @@ function legSteps({ key, actionHrid, itemHrid, itemName, requiresItemHrid, count
             count: chunk,
             actions: chunk,
             label: `${verb} ${formatWithSeparator(chunk)} × ${itemName}${note ? ` — ${note}` : ''}${repeat}`,
+            shortName: verb.charAt(0).toUpperCase() + verb.slice(1),
+            // The walk checks the count the server kept against the count typed
+            verifyCount: true,
         };
         if (requiresItemHrid) step.requiresItemHrid = requiresItemHrid;
+        if (alchemyType) step.alchemyType = alchemyType;
         return step;
     });
+}
+
+/**
+ * Whether a leg of this batch is queued as one Repeat ∞ row rather than a counted one. The one place the
+ * row shape is chosen. An ∞ alchemy row spends whatever real stock it finds and is limited only by its
+ * materials (the game moves on when they run out), so it stands for the batch only when the batch uses ALL
+ * the physical stock of that leg's input: Max with nothing capped by "Largest I can run" and nothing claimed
+ * by another plan (`max.unlimited`, set by `maxBatch`). Otherwise the leg is a counted row, so the count
+ * enforces the limit. The hours path stays counted, and so does any forage leg, which has no material limit.
+ * @param {Object} batch - The batch
+ * @param {'forage'|'decompose'|'coinify'} leg - The leg
+ * @returns {boolean} True for an ∞ row
+ */
+export function legIsUnlimited(batch, leg) {
+    return Boolean(batch?.max?.unlimited?.[leg]) && (leg === 'decompose' || leg === 'coinify');
 }
 
 /**
@@ -155,7 +200,8 @@ export function buildQueueSteps(loop, batch) {
                 requiresItemHrid: items.starfruitHrid,
                 count: batch.decomposeActions,
                 verb: 'decompose',
-                note: SELECT_NOTE,
+                alchemyType: 'decompose',
+                unlimited: legIsUnlimited(batch, 'decompose'),
             })
         );
     }
@@ -170,7 +216,8 @@ export function buildQueueSteps(loop, batch) {
                 requiresItemHrid: items.essenceHrid,
                 count: batch.coinifyActions,
                 verb: 'coinify',
-                note: SELECT_NOTE,
+                alchemyType: 'coinify',
+                unlimited: legIsUnlimited(batch, 'coinify'),
             })
         );
     }
@@ -179,15 +226,62 @@ export function buildQueueSteps(loop, batch) {
 }
 
 /**
+ * How many queue rows a batch takes — one per walk step. The choice of counted rows (one per leg, split only
+ * past {@link MAX_STEP_ACTIONS}) lives in {@link buildQueueSteps}; this counts what it builds, so a change
+ * of row shape (for example Repeat ∞ rows) is one place.
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {Object|null} batch - Counts to queue
+ * @returns {number} Rows the walk would add
+ */
+export function queueRowsNeeded(loop, batch) {
+    return buildQueueSteps(loop, batch).length;
+}
+
+/**
+ * The queue rows still free, read off the game's "Queued Actions (used/total)" header.
+ *
+ * The limit is not in the data the script holds, only in that header, so it is read from the page; an
+ * unreadable header (not drawn, another language) answers null and the caller says the limit is unknown
+ * rather than assuming room.
+ *
+ * @param {Document|null} [doc] - Defaults to the page
+ * @returns {{used: number, total: number, free: number}|null} Null when the header cannot be read
+ */
+export function readQueueSlots(doc = typeof document === 'undefined' ? null : document) {
+    if (!doc) return null;
+    for (const element of doc.querySelectorAll('div, span, h1, h2, h3, h4, h5, h6')) {
+        if (element.children.length > 0) continue;
+        const match = /^\s*Queued Actions\s*\((\d+)\s*\/\s*(\d+)\)\s*$/i.exec(element.textContent || '');
+        if (!match) continue;
+        const used = Number(match[1]);
+        const total = Number(match[2]);
+        if (Number.isFinite(used) && Number.isFinite(total) && total > 0) {
+            return { used, total, free: Math.max(0, total - used) };
+        }
+    }
+    return null;
+}
+
+/**
  * Walk one balanced batch.
  * @param {Object|null} loop - From `calculateStarfruitLoop`
  * @param {Object|null} batch - From `balanceBatch`
+ * @param {Object} [options]
+ * @param {string} [options.finalNote] - Said in the walk's last message (rows waiting behind one that never ends)
  * @returns {boolean} Whether a walk started
  */
-export function startQueueWalk(loop, batch) {
+export function startQueueWalk(loop, batch, { finalNote = '' } = {}) {
     const steps = buildQueueSteps(loop, batch);
     if (!steps.length) return false;
-    return craftingPlanWalk.start(steps, 'ironcow-queue');
+    return craftingPlanWalk.start(steps, 'ironcow-queue', { finalNote });
 }
 
-export default { buildQueueSteps, startQueueWalk, DECOMPOSE_ACTION, COINIFY_ACTION, MAX_STEP_ACTIONS };
+export default {
+    buildQueueSteps,
+    startQueueWalk,
+    queueRowsNeeded,
+    readQueueSlots,
+    DECOMPOSE_ACTION,
+    COINIFY_ACTION,
+    MAX_STEP_ACTIONS,
+};

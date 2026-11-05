@@ -38,6 +38,9 @@ const {
     saveSnapshot,
     loadPlanCollapsed,
     setPlanCollapsed,
+    loadKeepBatchCash,
+    setKeepBatchCash,
+    KEEP_BATCH_CASH_KEY,
     OVERRIDES_KEY,
     SNAPSHOT_KEY,
     PLAN_COLLAPSED_KEY,
@@ -160,5 +163,30 @@ describe('whether the plan section is shut', () => {
     test('is keyed apart from the stage ticks and the snapshot', () => {
         expect(PLAN_COLLAPSED_KEY).not.toBe(OVERRIDES_KEY);
         expect(PLAN_COLLAPSED_KEY).not.toBe(SNAPSHOT_KEY);
+    });
+});
+
+describe('whether cash is kept for the helper’s batch', () => {
+    test('defaults to off, so the number is today’s', async () => {
+        await expect(loadKeepBatchCash()).resolves.toBe(false);
+    });
+
+    test('on round-trips, and off again', async () => {
+        await setKeepBatchCash(true);
+        expect(disk.values[KEEP_BATCH_CASH_KEY]).toBe(true);
+        await expect(loadKeepBatchCash()).resolves.toBe(true);
+        await setKeepBatchCash(false);
+        await expect(loadKeepBatchCash()).resolves.toBe(false);
+    });
+
+    test('anything stored that is not a boolean true reads as off', async () => {
+        disk.values[KEEP_BATCH_CASH_KEY] = 'yes';
+        await expect(loadKeepBatchCash()).resolves.toBe(false);
+    });
+
+    test('is keyed apart from the other stored state', () => {
+        expect(KEEP_BATCH_CASH_KEY).toBe('ironCowFarmKeepBatchCash');
+        expect(KEEP_BATCH_CASH_KEY).not.toBe(PLAN_COLLAPSED_KEY);
+        expect(KEEP_BATCH_CASH_KEY).not.toBe(OVERRIDES_KEY);
     });
 });

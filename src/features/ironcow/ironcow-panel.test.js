@@ -24,8 +24,12 @@ const store = vi.hoisted(() => ({
     collapses: [],
     snapshotGate: null,
     overrideGate: null,
+    keepCash: false,
+    keepCashWrites: [],
 }));
-const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
+const walk = vi.hoisted(() => ({ started: [], options: [], succeeds: true }));
+// The game's action queue, as `getCurrentActions` returns it
+const queue = vi.hoisted(() => ({ actions: [], capHours: null, details: {} }));
 // What the queue walk reports; null is "the actions bundle is not there"
 const coinWalk = vi.hoisted(() => ({ walked: null }));
 // Mutable so the character-switch race test can move the active character
@@ -51,6 +55,9 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => characterId.current,
+        getCurrentActions: () => queue.actions,
+        getOfflineHourCap: () => queue.capHours,
+        getActionDetails: (hrid) => queue.details[hrid] ?? null,
         on: (event, fn) => {
             if (!events.listeners.has(event)) events.listeners.set(event, new Set());
             events.listeners.get(event).add(fn);
@@ -96,6 +103,11 @@ vi.mock('./ironcow-store.js', () => ({
     },
     saveSnapshot: async (value) => {
         store.snapshot = value;
+    },
+    loadKeepBatchCash: async () => store.keepCash,
+    setKeepBatchCash: async (value) => {
+        store.keepCashWrites.push(value);
+        store.keepCash = value;
     },
     loadPlanCollapsed: async () => store.collapsed,
     setPlanCollapsed: async (value) => {
@@ -148,8 +160,9 @@ vi.mock('./ironcow-queue-walk.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
-        startQueueWalk: (costed, batch) => {
+        startQueueWalk: (costed, batch, options) => {
             walk.started.push(batch);
+            walk.options.push(options);
             return walk.succeeds;
         },
     };
@@ -170,7 +183,13 @@ const FAILED = 'could not be drawn';
 
 /** A character part-way through the plan, as `readCharacterState` returns one */
 function character(overrides = {}) {
+    // What is physically in the bag defaults to what is held; a test of a reservation or a cap sets it apart
+    const owned = {
+        starfruitOwned: overrides.starfruitHeld ?? 0,
+        essenceOwned: overrides.essenceHeld ?? 0,
+    };
     return {
+        ...owned,
         levels: { milking: 80, woodcutting: 80, cheesesmithing: 80, foraging: 80, alchemy: 65, crafting: 34 },
         held: new Set(['/items/necklace_of_efficiency']),
         rooms: { '/house_rooms/garden': 3, '/house_rooms/laboratory': 0 },
@@ -232,7 +251,12 @@ beforeEach(() => {
     store.written = [];
     store.collapsed = false;
     store.collapses = [];
+    store.keepCash = false;
+    store.keepCashWrites = [];
+    queue.actions = [];
+    queue.details = {};
     walk.started = [];
+    walk.options = [];
     walk.succeeds = true;
     coinWalk.walked = null;
 });
@@ -248,6 +272,7 @@ afterEach(() => {
     ironCowFarmPanel.busy = false;
     ironCowFarmPanel.batchHours = 16;
     ironCowFarmPanel.batchUnit = 'h';
+    ironCowFarmPanel.queueMax = false;
 });
 
 describe('drawing', () => {
@@ -381,6 +406,27 @@ describe('what it says', () => {
         // No depth in the price feed: the count is said to be at the cheapest listing only
         expect(row.title).toContain('all at the cheapest listing');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('the bag count has thousands separators like the bell count', async () => {
+        plan.state = character({ coins: 40_000_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        // 40,000M less 4M of fees and the 3M buffer at 9.5M a bag of ten: 4,200 bags
+        expect(text()).toMatch(/\d{1,3}(,\d{3})+ \(\d{1,3}(,\d{3})+ bags\)/);
+        expect(text()).not.toMatch(/\(\d{4,} bags\)/);
+    });
+
+    test('the keep-cash switch is called what it does, with a hover that says so', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        const label = [...ironCowFarmPanel.panel.querySelectorAll('label')].find((l) => l.querySelector('input'));
+        expect(label.textContent).toBe('Also keep cash for the next set');
+        expect(label.title).toContain('fees of the batch shown in the Queue helper');
+        expect(label.title).toContain('on top of what is already queued');
+        expect(text()).not.toContain('helper’s batch');
     });
 
     test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
@@ -1066,7 +1112,12 @@ describe('the queue helper', () => {
         await ironCowFarmPanel.refresh();
 
         // 1,600 forages at 16h, minus the 300 already held.
-        expect(text()).toContain('1,300');
+        // Held fruit is used first and the forage leg makes up the rest of the 16h: 300 held fruit
+        // need no foraging, so the same 16h forages 1,383 and decomposes 1,683 (not 1,300 and 1,600,
+        // which left the queue busy for 14.1h).
+        expect(text()).toContain('1,383');
+        expect(text()).toContain('1,683');
+        expect(text()).toContain('Keeps the queue busy about 16h');
         expect(text()).toContain('You have 300 Star Fruit');
         expect(text()).not.toContain(FAILED);
     });
@@ -1082,6 +1133,1035 @@ describe('the queue helper', () => {
 
         expect(walk.started).toHaveLength(1);
         expect(walk.started[0]).toMatchObject({ forageActions: 1600, decomposeActions: 1600, coinifyActions: 480 });
+    });
+
+    describe('hours fill the time, bells keep the least work', () => {
+        const withHrids = () =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+            });
+
+        test('a preset keeps the queue busy for the whole time and the bells follow the result', async () => {
+            plan.state = character({ starfruitHeld: 40_000, essenceHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((b) => b.textContent === '2 weeks').click();
+
+            // the held stock alone is ~292h, so 336h needs forage for the rest
+            expect(boxes()[0].value).toBe('336');
+            expect(text()).toContain('Keeps the queue busy about 336h');
+            expect(text()).not.toContain('not 336h');
+            // 336h at 277.5K/h is ~98 bells from scratch; the held stock is extra work, so the bells are not fewer
+            expect(Number(boxes()[1].value)).toBeGreaterThanOrEqual(Math.round((277_500 * 336) / 950_000) - 1);
+        });
+
+        test('a bell target keeps its own meaning: the least work, with the sooner finish said', async () => {
+            plan.state = character({ starfruitHeld: 5000, essenceHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            boxes()[1].value = '40';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+
+            expect(ironCowFarmPanel.batchBasis).toBe('bells');
+            expect(text()).toContain('sooner than the');
+            // the hours box follows the result, shorter than the 40 bells take from scratch
+            expect(Number(boxes()[0].value)).toBeLessThan((40 * 950_000) / 277_500);
+            expect(boxes()[1].value).toBe('40');
+        });
+
+        test('typing hours afterwards goes back to filling the time', async () => {
+            plan.state = character({ starfruitHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            boxes()[1].value = '40';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+            boxes()[0].value = '48';
+            boxes()[0].dispatchEvent(new Event('input', { bubbles: true }));
+
+            expect(ironCowFarmPanel.batchBasis).toBe('hours');
+            expect(text()).not.toContain('sooner than the');
+            expect(boxes()[0].value).toBe('48');
+        });
+
+        test('held stock longer than the time asked is cut to fit and says so', async () => {
+            plan.state = character({ starfruitHeld: 367_751, essenceHeld: 17_172, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((b) => b.textContent === '1 day').click();
+
+            expect(text()).toContain('only what fits is queued');
+            [...ironCowFarmPanel.panel.querySelectorAll('button')]
+                .find((b) => b.textContent.startsWith('Walk it'))
+                .click();
+            expect(walk.started[0].forageActions).toBe(0);
+        });
+
+        test('warns when the decompose fees are more gold than is held', async () => {
+            plan.state = character({ coins: 1000, starfruitHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            // 16h = 1,600 decomposes at 375 each = 600K against 1K held
+            expect(text()).toContain('at its lowest point');
+            expect(text()).toContain('short by');
+            expect(
+                [...ironCowFarmPanel.panel.querySelectorAll('button')].some(
+                    (b) => b.textContent === 'Largest I can run'
+                )
+            ).toBe(true);
+        });
+
+        test('missing fee price or unread purse says nothing rather than a wrong figure', async () => {
+            plan.state = character({ coins: undefined, starfruitHeld: 0, holdingsCredited: true });
+            loop.result = { ...withHrids(), goldOutPerFruit: undefined };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            expect(text()).toContain('Gold needed: unknown');
+            expect(text()).not.toContain('short by');
+            expect(text()).not.toContain(FAILED);
+        });
+    });
+
+    describe('the next set', () => {
+        const withHrids = (over = {}) =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+                ...over,
+            });
+        const queued = (actionHrid, item, extra = {}) => ({
+            actionHrid,
+            primaryItemHash: item ? `1::/item_locations/inventory::${item}::0` : undefined,
+            hasMaxCount: true,
+            maxCount: 100,
+            currentCount: 0,
+            isDone: false,
+            ...extra,
+        });
+        const buttonNamed = (label) =>
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((element) =>
+                element.textContent.startsWith(label)
+            );
+        const open = async () => {
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+        };
+        const switchBox = () => ironCowFarmPanel.panel.querySelector('input[type="checkbox"]');
+        // the queue's own walk: a 4M decompose dip, as in the reserve tests above
+        const queueWalk = (fee = -4_000_000) => ({
+            stages: [{ label: 'Decompose: Star Fruit', coinDelta: fee }],
+            stoppedAt: null,
+        });
+
+        describe('walk only what is missing', () => {
+            // 16h of this loop from nothing is forage 1,600, decompose 1,600, coinify 480
+            const forageRow = (extra = {}) =>
+                queued('/actions/foraging/star_fruit', null, { maxCount: 1600, ordinal: 1, ...extra });
+            const decomposeRow = (extra = {}) =>
+                queued('/actions/alchemy/decompose', '/items/star_fruit', { maxCount: 1600, ordinal: 2, ...extra });
+            const coinifyRow = (extra = {}) =>
+                queued('/actions/alchemy/coinify', '/items/foraging_essence', { maxCount: 480, ordinal: 3, ...extra });
+            afterEach(() => {
+                // the game's header is not the panel's: leave none behind for the next test
+                for (const node of document.querySelectorAll('[data-test-slots]')) node.remove();
+            });
+            const slotsHeader = (used, total) => {
+                const header = document.createElement('div');
+                header.dataset.testSlots = '1';
+                header.textContent = `Queued Actions (${used}/${total})`;
+                document.body.appendChild(header);
+                return header;
+            };
+
+            test('legs already queued in order are skipped, and the button says so', async () => {
+                loop.result = withHrids();
+                queue.actions = [forageRow(), decomposeRow()];
+                await open();
+
+                expect(buttonNamed('Walk it').textContent).toBe('Walk it — 1 press (Forage, Decompose already queued)');
+                buttonNamed('Walk it').click();
+                expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 0, coinifyActions: 480 });
+            });
+
+            test('a leg queued at less walks the difference only', async () => {
+                loop.result = withHrids();
+                queue.actions = [forageRow(), decomposeRow({ maxCount: 1000 })];
+                await open();
+
+                expect(buttonNamed('Walk it').textContent).toContain('Decompose: only the difference');
+                buttonNamed('Walk it').click();
+                expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 600, coinifyActions: 480 });
+            });
+
+            test('alchemy on another item, or a finished row, is not the leg', async () => {
+                loop.result = withHrids();
+                queue.actions = [
+                    queued('/actions/alchemy/coinify', '/items/star_fruit', { maxCount: 9999 }),
+                    coinifyRow({ maxCount: 9999, isDone: true }),
+                ];
+                await open();
+
+                expect(buttonNamed('Walk it').textContent).toBe('Walk it — 3 presses');
+                buttonNamed('Walk it').click();
+                expect(walk.started[0].coinifyActions).toBe(480);
+            });
+
+            test('with everything queued in order there is nothing to walk and it says so', async () => {
+                loop.result = withHrids();
+                queue.actions = [forageRow(), decomposeRow(), coinifyRow()];
+                await open();
+
+                expect(buttonNamed('Nothing to walk').textContent).toContain('already queued');
+            });
+
+            test('the maintainer’s queue: Repeat ∞ decompose and coinify are covered up to their materials', async () => {
+                plan.state = character({ starfruitHeld: 1600, holdingsCredited: true });
+                loop.result = withHrids();
+                queue.actions = [
+                    queued('/actions/alchemy/decompose', '/items/star_fruit', {
+                        hasMaxCount: false,
+                        maxCount: 0,
+                        ordinal: 1,
+                    }),
+                    queued('/actions/alchemy/coinify', '/items/foraging_essence', {
+                        hasMaxCount: false,
+                        maxCount: 0,
+                        ordinal: 2,
+                    }),
+                ];
+                await open();
+                buttonNamed('Max').click();
+
+                expect(text()).not.toContain('repeats forever');
+                expect(buttonNamed('Nothing to walk').textContent).toContain('Decompose, Coinify already queued');
+            });
+
+            test('a queued decompose that asks for more than the fruit ahead of it blocks the walk, visibly', async () => {
+                plan.state = character({ starfruitHeld: 1600, holdingsCredited: true });
+                loop.result = withHrids();
+                queue.actions = [
+                    decomposeRow({ maxCount: 1800, ordinal: 1 }),
+                    coinifyRow({ maxCount: 600, ordinal: 2 }),
+                ];
+                await open();
+
+                const go = buttonNamed('Walk it');
+                expect(go.textContent).toBe('Walk it — blocked');
+                expect(go.disabled).toBe(true);
+                expect(text()).toContain('Decompose is queued for 1,800');
+                expect(text()).toContain('stall');
+                go.click();
+                expect(walk.started).toHaveLength(0);
+            });
+
+            test('a row with no count and no material limit is a warning: the walk stays pressable and names the row', async () => {
+                loop.result = withHrids();
+                queue.details['/actions/foraging/star_fruit'] = { name: 'Foraging: Star Fruit' };
+                queue.actions = [queued('/actions/foraging/star_fruit', null, { hasMaxCount: false, maxCount: 0 })];
+                await open();
+
+                const go = buttonNamed('Walk it');
+                expect(go.disabled).toBe(false);
+                expect(go.textContent).toBe('Walk it — 3 presses');
+                expect(text()).toContain(
+                    'The new rows wait behind Foraging: Star Fruit, which repeats forever, until you stop it.'
+                );
+                expect(text()).not.toContain('already queued');
+                expect(text()).not.toContain('star_fruit repeats');
+                go.click();
+                expect(walk.started).toHaveLength(1);
+                expect(walk.started[0]).toMatchObject({
+                    forageActions: 1600,
+                    decomposeActions: 1600,
+                    coinifyActions: 480,
+                });
+            });
+
+            test('behind a combat row that never ends: truthful gold line, queue end and reserve', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 1_000 });
+                queue.details['/actions/combat/golem_cave'] = { name: 'Golem Cave' };
+                queue.actions = [queued('/actions/combat/golem_cave', null, { hasMaxCount: false, maxCount: 0 })];
+                coinWalk.walked = { stages: [], stoppedAt: 'Golem Cave' };
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                expect(text()).toContain(
+                    'The batch waits behind Golem Cave, so its gold is not needed until that is stopped.'
+                );
+                expect(text()).not.toContain('short by');
+                expect(text()).toContain('The queue repeats Golem Cave forever, so it never runs out.');
+                expect(text()).toContain('The next set waits behind Golem Cave, so no cash is held for it yet.');
+                expect(buttonNamed('Walk it').disabled).toBe(false);
+                expect(text()).not.toContain('golem_cave');
+            });
+
+            test('more rows than the game has free slots is refused, naming the shortfall', async () => {
+                loop.result = withHrids();
+                slotsHeader(5, 6);
+                await open();
+
+                expect(buttonNamed('Walk it').disabled).toBe(true);
+                expect(text()).toContain('needs 3 queue rows and only 1 is free (5/6 used)');
+                buttonNamed('Walk it').click();
+                expect(walk.started).toHaveLength(0);
+            });
+
+            test('enough free slots walks as before, and an unreadable header is not a refusal', async () => {
+                loop.result = withHrids();
+                const header = slotsHeader(3, 6);
+                await open();
+                expect(buttonNamed('Walk it').disabled).toBe(false);
+                header.remove();
+                ironCowFarmPanel._render();
+                expect(buttonNamed('Walk it').disabled).toBe(false);
+            });
+
+            test('the Check warning gets a button that starts the same walk', async () => {
+                loop.result = withHrids();
+                loop.warnings = [
+                    { id: 'queue', severity: 'warn', text: 'The queue has 1 of the 3 actions the loop needs' },
+                ];
+                queue.actions = [forageRow(), decomposeRow()];
+                await open();
+
+                buttonNamed('Walk what’s missing').click();
+                expect(walk.started[0]).toMatchObject({ coinifyActions: 480, decomposeActions: 0 });
+            });
+        });
+
+        describe('keep cash for the next set', () => {
+            test('off, the number is today’s; the switch is offered', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 17_000_000 });
+                coinWalk.walked = queueWalk();
+                await open();
+
+                expect(text()).toContain('10 (1 bag)');
+                expect(text()).not.toContain('Kept for the next set');
+                expect(switchBox().checked).toBe(false);
+            });
+
+            test('on, the batch’s lowest point is its own visible line and the bells follow it', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 26_500_000 });
+                coinWalk.walked = queueWalk();
+                await open();
+                expect(text()).toContain('20 (2 bags)');
+
+                switchBox().checked = true;
+                switchBox().dispatchEvent(new Event('change', { bubbles: true }));
+
+                // 16h = 1,600 decomposes x 375 = 600K behind the queue's 4M
+                expect(text()).toContain('Kept for the next set');
+                expect(text()).toContain('600.0K');
+                expect(text()).toContain('10 (1 bag)');
+                expect(text()).toContain('Kept for the queue');
+                expect(store.keepCashWrites).toEqual([true]);
+            });
+
+            test('a zero the switch causes says so on screen, not only in a tooltip', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 17_000_000 });
+                coinWalk.walked = queueWalk();
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                expect(text()).toContain('No bells are spare because');
+            });
+
+            test('a batch already queued is not held back twice', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 26_500_000 });
+                // the queue already holds the forage and all 1,600 decomposes, and its walk already shows their fee
+                coinWalk.walked = queueWalk(-600_000);
+                queue.actions = [
+                    queued('/actions/foraging/star_fruit', null, { maxCount: 1600, ordinal: 1 }),
+                    queued('/actions/alchemy/decompose', '/items/star_fruit', { maxCount: 1600, ordinal: 2 }),
+                ];
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                const row = [...ironCowFarmPanel.panel.querySelectorAll('div')].find((div) =>
+                    div.textContent.startsWith('Kept for the next set')
+                );
+                expect(row.textContent).toBe('Kept for the next set0');
+            });
+
+            test('an unpriced decompose fee is shown as unknown, not as nothing to hold back', async () => {
+                loop.result = withHrids({ goldOutPerFruit: undefined });
+                plan.state = character({ coins: 26_500_000 });
+                coinWalk.walked = queueWalk();
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                expect(text()).toContain('Kept for the next set—');
+            });
+
+            test('a queue that never ends never reaches the next set', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 26_500_000 });
+                coinWalk.walked = {
+                    stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }],
+                    stoppedAt: 'Forage',
+                };
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                expect(text()).toContain('Kept for the next set0');
+            });
+        });
+
+        describe('afford check', () => {
+            test('shows what the batch needs against what is held, before any press', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 10_000_000 });
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                await open();
+                expect(text()).toContain('Gold needed at its lowest point: 600.0K');
+                expect(text()).not.toContain('short by');
+            });
+
+            test('short: says by how much and offers Largest I can run, which fits the gold', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 300_000 });
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                await open();
+                expect(text()).toContain('short by 300.0K');
+
+                buttonNamed('Largest I can run').click();
+
+                // 300,000 / 375 = 800 decomposes
+                expect(text()).not.toContain('short by');
+                buttonNamed('Walk it').click();
+                const batch = walk.started[0];
+                expect(batch.decomposeActions).toBeLessThanOrEqual(800);
+                expect(batch.decomposeActions).toBeGreaterThan(790);
+                expect(batch.decomposeActions * 375).toBeLessThanOrEqual(300_000);
+            });
+
+            test('Largest reads the gold as it is when pressed', async () => {
+                loop.result = withHrids();
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                plan.state = character({ coins: 300_000 });
+                await open();
+                plan.state = character({ coins: 150_000 });
+                buttonNamed('Largest I can run').click();
+                buttonNamed('Walk it').click();
+                expect(walk.started[0].decomposeActions).toBeLessThanOrEqual(400);
+            });
+
+            test('with Max, Largest cuts the fruit to what the gold pays for', async () => {
+                loop.result = withHrids();
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                plan.state = character({ coins: 375 * 1200, starfruitHeld: 5000, holdingsCredited: true });
+                await open();
+                buttonNamed('Max').click();
+                expect(text()).toContain('short by');
+                buttonNamed('Largest I can run').click();
+                buttonNamed('Walk it').click();
+                expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 1200 });
+            });
+
+            test('gold too small for even one fee says why instead of a zero queue', async () => {
+                loop.result = withHrids();
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                plan.state = character({ coins: 100 });
+                await open();
+                buttonNamed('Largest I can run').click();
+                expect(ironCowFarmPanel.statusEl.textContent).toContain('does not cover even one decompose fee');
+                expect(text()).not.toContain(FAILED);
+            });
+
+            test('an unreadable queue is said, and only the batch is counted', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 300_000 });
+                coinWalk.walked = null;
+                await open();
+                expect(text()).toContain('could not be read in full');
+            });
+        });
+
+        describe('when the queue runs out', () => {
+            test('a clock time and an estimate of the bells by then', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 5_000_000 });
+                coinWalk.walked = {
+                    stages: [
+                        {
+                            actionHrid: '/actions/alchemy/decompose',
+                            itemHrid: '/items/star_fruit',
+                            count: 10,
+                            coinDelta: -2_000_000,
+                            earned: 0,
+                            seconds: 3600,
+                        },
+                        {
+                            actionHrid: '/actions/alchemy/coinify',
+                            itemHrid: '/items/foraging_essence',
+                            count: 10,
+                            coinDelta: 0,
+                            earned: 30_000_000,
+                            seconds: 3600,
+                        },
+                    ],
+                    stoppedAt: null,
+                };
+                await open();
+                expect(text()).toMatch(/The queue runs out .* \(in 2h[^)]*\) — about 30 bells by then \(estimate\)\./);
+            });
+
+            test('an empty queue and an endless one say so, not a date', async () => {
+                loop.result = withHrids();
+                coinWalk.walked = { stages: [], stoppedAt: null };
+                await open();
+                expect(text()).toContain('The queue is empty.');
+
+                coinWalk.walked = { stages: [], stoppedAt: 'Forage: Star Fruit' };
+                ironCowFarmPanel._render();
+                expect(text()).toContain('never runs out');
+            });
+
+            test('an unreadable queue shows no line at all', async () => {
+                loop.result = withHrids();
+                coinWalk.walked = null;
+                await open();
+                expect(text()).not.toContain('The queue runs out');
+                expect(text()).not.toContain(FAILED);
+            });
+        });
+    });
+
+    describe('the queue-dependent text stays true', () => {
+        const withHrids = (over = {}) =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+                ...over,
+            });
+        const row = (actionHrid, item, extra = {}) => ({
+            actionHrid,
+            primaryItemHash: item ? `1::/item_locations/inventory::${item}::0` : undefined,
+            hasMaxCount: true,
+            maxCount: 100,
+            currentCount: 0,
+            isDone: false,
+            ordinal: 1,
+            ...extra,
+        });
+        const buttonNamed = (label) =>
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((element) =>
+                element.textContent.startsWith(label)
+            );
+        const open = async () => {
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+        };
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 350));
+
+        test('a live queue change redraws the Check card, the walk button and Max, leaving an open input alone', async () => {
+            loop.result = withHrids();
+            coinWalk.walked = { stages: [], stoppedAt: null };
+            await open();
+            expect(text()).toContain('The queue is empty.');
+            expect(buttonNamed('Walk it').textContent).toBe('Walk it — 3 presses');
+
+            // the player is typing a duration when the queue changes
+            const hoursBox = boxes()[0];
+            hoursBox.value = '7';
+            hoursBox.focus();
+            queue.actions = [
+                row('/actions/foraging/star_fruit', null, { maxCount: 1600, ordinal: 1 }),
+                row('/actions/alchemy/decompose', '/items/star_fruit', { maxCount: 1600, ordinal: 2 }),
+            ];
+            coinWalk.walked = {
+                stages: [
+                    { actionHrid: '/actions/foraging/star_fruit', count: 1600, coinDelta: 0, earned: 0, seconds: 4800 },
+                    {
+                        actionHrid: '/actions/alchemy/decompose',
+                        itemHrid: '/items/star_fruit',
+                        count: 1600,
+                        coinDelta: -600_000,
+                        earned: 0,
+                        seconds: 32_000,
+                    },
+                ],
+                stoppedAt: null,
+            };
+            plan.state = character({ starfruitHeld: 0, holdingsCredited: true });
+            emit('actions_updated');
+            await settle();
+
+            expect(text()).toContain('The queue runs out');
+            expect(text()).not.toContain('The queue is empty.');
+            expect(buttonNamed('Walk it').textContent).toBe('Walk it — 1 press (Forage, Decompose already queued)');
+            // the open input kept what was typed
+            expect(boxes()[0].value).toBe('7');
+        });
+
+        test('live: the fruit Max was sized to is spent, so Max leaves with a reason and the old duration returns', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            coinWalk.walked = { stages: [], stoppedAt: null };
+            await open();
+            expect(ironCowFarmPanel.batchHours).toBe(16);
+            buttonNamed('Max').click();
+            expect(ironCowFarmPanel.queueMax).toBe(true);
+            expect(ironCowFarmPanel.batchHours).not.toBe(16);
+
+            plan.state = character({ starfruitHeld: 0, essenceHeld: 0, holdingsCredited: true });
+            emit('items_updated');
+            await settle();
+
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+            // Max's hours did not leak into the duration path
+            expect(ironCowFarmPanel.batchHours).toBe(16);
+            expect(text()).toContain('Max no longer applies: You hold no Star Fruit to use.');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('a Max-lost note and a typed bell target do not survive disable() or a fresh load()', async () => {
+            loop.result = withHrids();
+            await open();
+            ironCowFarmPanel.maxLostNote = 'Max no longer applies: gone';
+            ironCowFarmPanel.bellsTyped = '40';
+            ironCowFarmPanel.hoursBeforeMax = 99;
+            ironCowFarmPanel.disable();
+            expect(ironCowFarmPanel.maxLostNote).toBe('');
+            expect(ironCowFarmPanel.bellsTyped).toBe('');
+            expect(ironCowFarmPanel.hoursBeforeMax).toBeNull();
+
+            ironCowFarmPanel.maxLostNote = 'left over';
+            ironCowFarmPanel.bellsTyped = '12';
+            characterId.current = 'charB';
+            await ironCowFarmPanel.load();
+            expect(ironCowFarmPanel.maxLostNote).toBe('');
+            expect(ironCowFarmPanel.bellsTyped).toBe('');
+        });
+
+        test('reading the batch changes nothing: a Max with no fruit stays Max until a draw or a press settles it', async () => {
+            plan.state = character({ starfruitHeld: 1000, holdingsCredited: true });
+            loop.result = withHrids();
+            await open();
+            buttonNamed('Max').click();
+
+            const spent = character({ starfruitHeld: 0, holdingsCredited: true });
+            expect(ironCowFarmPanel._batchFor(16, spent)).toBeNull();
+            expect(ironCowFarmPanel.queueMax).toBe(true);
+            expect(ironCowFarmPanel.batchHours).not.toBe(16);
+        });
+
+        test('login with the panel closed: the saved switch and a spec reach the strip, and A then B never share them', async () => {
+            loop.result = withHrids();
+            store.snapshot = costedLoop();
+            store.keepCash = true;
+            characterId.current = 'charA';
+            await ironCowFarmPanel.load();
+            expect(ironCowRuntime.keepBatchCash).toBe(true);
+            expect(ironCowRuntime.batchSpec).toMatchObject({ max: false, basis: 'hours' });
+            expect(ironCowRuntime.owner).toBe('charA');
+
+            // the character switches: nothing of A's is left to read
+            ironCowFarmPanel.disable();
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.batchSpec).toBeNull();
+            expect(ironCowRuntime.owner).toBeNull();
+
+            // B has the switch off
+            characterId.current = 'charB';
+            store.keepCash = false;
+            await ironCowFarmPanel.load();
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.owner).toBe('charB');
+        });
+
+        test('a load that loses a race to a switch publishes nothing', async () => {
+            store.snapshot = costedLoop();
+            store.keepCash = true;
+            characterId.current = 'charA';
+            let release;
+            store.snapshotGate = new Promise((resolve) => {
+                release = resolve;
+            });
+            const pending = ironCowFarmPanel.load();
+            ironCowFarmPanel.disable();
+            release();
+            await pending;
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.batchSpec).toBeNull();
+            store.snapshotGate = null;
+        });
+
+        test('rows waiting behind a row that never ends are carried into the walk’s final message', async () => {
+            loop.result = withHrids();
+            queue.details['/actions/foraging/star_fruit'] = { name: 'Foraging: Star Fruit' };
+            queue.actions = [row('/actions/foraging/star_fruit', null, { hasMaxCount: false, maxCount: 0 })];
+            await open();
+            buttonNamed('Walk it').click();
+            expect(walk.options[0].finalNote).toContain('wait behind Foraging: Star Fruit');
+        });
+
+        test('a typed bell target is kept through a redraw and a Walk, not rewritten with the batch’s figure', async () => {
+            loop.result = withHrids();
+            await open();
+            boxes()[1].value = '40';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+            expect(boxes()[1].value).toBe('40');
+
+            buttonNamed('Walk it').click();
+            expect(boxes()[1].value).toBe('40');
+            ironCowFarmPanel._render();
+            expect(boxes()[1].value).toBe('40');
+        });
+
+        test('the queue end says gold runs out first when it does, with no bell estimate', async () => {
+            loop.result = withHrids();
+            plan.state = character({ coins: 100_000 });
+            coinWalk.walked = {
+                stages: [
+                    {
+                        actionHrid: '/actions/alchemy/decompose',
+                        itemHrid: '/items/star_fruit',
+                        label: 'Decompose: Star Fruit',
+                        count: 1000,
+                        coinDelta: -2_000_000,
+                        earned: 0,
+                        seconds: 7200,
+                    },
+                ],
+                stoppedAt: null,
+            };
+            await open();
+
+            expect(text()).toContain('Gold runs out on Decompose: Star Fruit');
+            expect(text()).toContain('the queue stops there, not when its rows finish');
+            expect(text()).not.toContain('bells by then');
+        });
+
+        test('the queue end names the offline cap when the queue outlasts it', async () => {
+            loop.result = withHrids();
+            queue.capHours = 16;
+            coinWalk.walked = {
+                stages: [
+                    {
+                        actionHrid: '/actions/alchemy/coinify',
+                        itemHrid: '/items/foraging_essence',
+                        count: 10,
+                        coinDelta: 0,
+                        earned: 0,
+                        seconds: 40 * 3600,
+                    },
+                ],
+                stoppedAt: null,
+            };
+            await open();
+            expect(text()).toContain('Away from the game it stops 16h after you leave.');
+            queue.capHours = null;
+        });
+
+        test('the queue already short of gold is said even when this batch needs none', async () => {
+            loop.result = withHrids();
+            plan.state = character({ coins: 1_000_000 });
+            queue.actions = [
+                row('/actions/foraging/star_fruit', null, { maxCount: 1600, ordinal: 1 }),
+                row('/actions/alchemy/decompose', '/items/star_fruit', { maxCount: 1600, ordinal: 2 }),
+                row('/actions/alchemy/coinify', '/items/foraging_essence', { maxCount: 480, ordinal: 3 }),
+            ];
+            coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+            await open();
+
+            expect(text()).toContain('The queue already needs 4.0M at its lowest point');
+            expect(text()).toContain('short by 3.0M');
+            // nothing of this batch to size down
+            expect(buttonNamed('Largest I can run')).toBeUndefined();
+        });
+
+        test('behind a row that never ends there is no false gold alarm, only the reason it will not run', async () => {
+            loop.result = withHrids();
+            plan.state = character({ coins: 1000 });
+            queue.actions = [row('/actions/foraging/star_fruit', null, { hasMaxCount: false, maxCount: 0 })];
+            coinWalk.walked = { stages: [], stoppedAt: 'Star Fruit' };
+            await open();
+
+            expect(text()).not.toContain('short by');
+            expect(buttonNamed('Largest I can run')).toBeUndefined();
+            expect(text()).toContain('which repeats forever, until you stop it');
+        });
+
+        test('Largest refuses when the queue cannot be read, as the bell budget does', async () => {
+            loop.result = withHrids();
+            plan.state = character({ coins: 300_000 });
+            coinWalk.walked = null;
+            await open();
+            // the line offers the way out; the press refuses with the reason
+            buttonNamed('Largest I can run').click();
+            expect(ironCowFarmPanel.statusEl.textContent).toContain('the queue could not be read in full');
+            expect(ironCowFarmPanel.batchHours).toBe(16);
+        });
+
+        test('Max with the purse under one fee says gold is the limit', async () => {
+            loop.result = withHrids();
+            plan.state = character({ coins: 100, starfruitHeld: 5000, holdingsCredited: true });
+            coinWalk.walked = { stages: [], stoppedAt: null };
+            await open();
+            buttonNamed('Max').click();
+            buttonNamed('Largest I can run').click();
+            expect(ironCowFarmPanel.statusEl.textContent).toBe(
+                'The gold on hand does not cover even one decompose fee.'
+            );
+        });
+
+        test('the wording matches the sizing: a fill batch names the fruit held plus forage, and essence is counted into coinify', async () => {
+            plan.state = character({ starfruitHeld: 300, essenceHeld: 500, holdingsCredited: true });
+            loop.result = withHrids();
+            await open();
+
+            // (the row's explanation is its tooltip)
+            const html = ironCowFarmPanel.panel.innerHTML;
+            expect(html).toContain('the 300 you hold plus what the forage leg yields');
+            expect(text()).toContain('counted into the coinify leg');
+            expect(text()).not.toContain('coinified first');
+            // the press count is the walk button's alone: the summary no longer quotes a different one
+            expect(ironCowFarmPanel.queueRefs.summary.textContent).not.toMatch(/press/);
+            expect(buttonNamed('Walk it').textContent).toMatch(/\d presses?/);
+        });
+
+        test('Max says its alchemy legs go in as Repeat ∞ and the walk button says to leave the count', async () => {
+            plan.state = character({ starfruitHeld: 1000, holdingsCredited: true });
+            loop.result = withHrids();
+            await open();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('Decompose and coinify go in as Repeat ∞.');
+            expect(buttonNamed('Walk it').textContent).toBe('Walk it — 2 presses (Repeat ∞ rows: leave the count)');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0]).toMatchObject({
+                forageActions: 0,
+                decomposeActions: 1000,
+                max: expect.any(Object),
+            });
+        });
+    });
+
+    describe('Max', () => {
+        const withHrids = () =>
+            costedLoop({
+                items: {
+                    starfruitName: 'Star Fruit',
+                    essenceName: 'Foraging Essence',
+                    essencePerDecompose: 5,
+                    forageActionHrid: '/actions/foraging/star_fruit',
+                    starfruitHrid: '/items/star_fruit',
+                    essenceHrid: '/items/foraging_essence',
+                },
+            });
+        const buttonNamed = (label) =>
+            [...ironCowFarmPanel.panel.querySelectorAll('button')].find((element) =>
+                element.textContent.startsWith(label)
+            );
+
+        test('uses all the fruit held with no foraging and fills the hours and bells boxes', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 25, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            buttonNamed('Max').click();
+
+            const hoursNow = 1000 / 180 + 302 / 180;
+            expect(boxes()[0].value).toBe(String(Math.round(hoursNow * 10) / 10));
+            expect(Number(boxes()[1].value)).toBe(Math.round(((302 * 15_000 * 0.7 - 1000 * 375) / 950_000) * 1) || 0);
+            expect(text()).toContain('Max: all 1,000 Star Fruit');
+            expect(text()).not.toContain(FAILED);
+            buttonNamed('Walk it').click();
+            expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 1000, coinifyActions: 302 });
+        });
+
+        test('reads the inventory as it is when pressed, not as the card was drawn', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 0, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            plan.state = character({ starfruitHeld: 400, essenceHeld: 0, holdingsCredited: true });
+            buttonNamed('Max').click();
+            expect(text()).toContain('all 400 Star Fruit');
+
+            // and again at Walk: fruit spent in between must not be walked
+            plan.state = character({ starfruitHeld: 250, essenceHeld: 0, holdingsCredited: true });
+            buttonNamed('Walk it').click();
+            expect(walk.started[0]).toMatchObject({ forageActions: 0, decomposeActions: 250 });
+        });
+
+        test('with no fruit the button is disabled and the reason is in view', async () => {
+            plan.state = character({ starfruitHeld: 0, essenceHeld: 500, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            expect(buttonNamed('Max').disabled).toBe(true);
+            expect(text()).toContain('You hold no Star Fruit to use.');
+        });
+
+        test('fruit gone by the time of the press says so and keeps the duration path', async () => {
+            plan.state = character({ starfruitHeld: 100, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+
+            plan.state = character({ starfruitHeld: 0, holdingsCredited: true });
+            buttonNamed('Max').click();
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+            expect(text()).toContain('You hold no Star Fruit to use.');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('fruit gone before Walk stops the walk rather than walking stale counts', async () => {
+            plan.state = character({ starfruitHeld: 100, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            plan.state = character({ starfruitHeld: 0, holdingsCredited: true });
+            buttonNamed('Walk it').click();
+            expect(walk.started).toHaveLength(0);
+        });
+
+        test('editing the duration or the bells leaves Max', async () => {
+            plan.state = character({ starfruitHeld: 1000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+            expect(ironCowFarmPanel.queueMax).toBe(true);
+
+            buttonNamed('1 week').click();
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+            buttonNamed('Max').click();
+            boxes()[1].value = '5';
+            boxes()[1].dispatchEvent(new Event('input', { bubbles: true }));
+            expect(ironCowFarmPanel.queueMax).toBe(false);
+        });
+
+        test('a pile bigger than one action can hold becomes several presses', async () => {
+            plan.state = character({ starfruitHeld: 250_000, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            // Max queues Repeat ∞ rows: one for the decompose and one for the coinify, however big the pile
+            expect(buttonNamed('Walk it').textContent).toContain('2 presses');
+            expect(buttonNamed('Walk it').textContent).toContain('Repeat ∞ rows');
+        });
+
+        test('plain Max (nothing capped, nothing kept for another plan) queues Repeat ∞ rows', async () => {
+            plan.state = character({ starfruitHeld: 1000, essenceHeld: 50, holdingsCredited: true });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('Decompose and coinify go in as Repeat ∞.');
+            expect(buttonNamed('Walk it').textContent).toContain('Repeat ∞ rows: leave the count');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: true, coinify: true });
+        });
+
+        test('Max capped by Largest I can run is counted rows, so the count enforces the cap', async () => {
+            plan.state = character({ coins: 375 * 1200, starfruitHeld: 5000, holdingsCredited: true });
+            loop.result = withHrids();
+            coinWalk.walked = { stages: [], stoppedAt: null };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+            buttonNamed('Largest I can run').click();
+
+            expect(text()).toContain('Decompose goes in as a counted row');
+            expect(text()).not.toContain('go in as Repeat ∞');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: false, coinify: true });
+            expect(walk.started[0].decomposeActions).toBe(1200);
+        });
+
+        test('Max with fruit kept for another plan counts the decompose row, and never lets ∞ eat the claim', async () => {
+            plan.state = character({
+                starfruitHeld: 4000,
+                starfruitOwned: 5000,
+                essenceHeld: 0,
+                holdingsCredited: true,
+            });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('Decompose goes in as a counted row');
+            expect(text()).toContain('kept for another plan');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: false, coinify: true });
+            expect(walk.started[0].decomposeActions).toBe(4000);
+        });
+
+        test('Max with essence kept for another plan counts the coinify row', async () => {
+            plan.state = character({
+                starfruitHeld: 1000,
+                essenceHeld: 100,
+                essenceOwned: 300,
+                holdingsCredited: true,
+            });
+            loop.result = withHrids();
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(text()).toContain('coinify as a counted row');
+            buttonNamed('Walk it').click();
+            expect(walk.started[0].max.unlimited).toEqual({ decompose: true, coinify: false });
+        });
+
+        test('without a cowbell price the bell box stays blank and Max still works', async () => {
+            plan.state = character({ starfruitHeld: 600, holdingsCredited: true });
+            loop.result = { ...withHrids(), bellPrice: null, bellPricing: { price: null }, bells: null };
+            loop.pricing = { price: null };
+            ironCowFarmPanel.show();
+            await ironCowFarmPanel.refresh();
+            buttonNamed('Max').click();
+
+            expect(boxes()[1].value).toBe('');
+            expect(text()).toContain('Max: all 600');
+        });
     });
 
     test('an uncosted loop offers no counts to type in', async () => {

@@ -42,6 +42,8 @@ vi.mock('./loop-items.js', () => ({ resolveLoopItems: () => loop.items }));
 
 vi.mock('../../utils/inventory-reservations.js', () => ({
     onReservationsChanged: () => () => {},
+    heldInInventory: (itemHrid) =>
+        game.inventory.filter((item) => item?.itemHrid === itemHrid).reduce((sum, item) => sum + (item.count || 0), 0),
     effectiveInventory: (itemHrid) => {
         const raw = game.inventory
             .filter((item) => item?.itemHrid === itemHrid)

@@ -28,11 +28,14 @@ const game = vi.hoisted(() => ({
     market: new Set(),
     settings: new Map(),
     reads: 0,
+    batch: null,
+    charId: 'charA',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentActions: () => game.actions,
+        getCurrentCharacterId: () => game.charId,
         getOfflineHourCap: () => game.cap,
         getCurrentCharacterGameMode: () => game.state?.gameMode ?? null,
         on: (event, fn) => {
@@ -78,13 +81,14 @@ vi.mock('./ironcow-plan.js', () => ({
 vi.mock('./loop-items.js', () => ({
     resolveLoopItems: () => ({ forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE }),
 }));
-vi.mock('./starfruit-loop.js', () => ({ cowbellPricing: () => game.pricing }));
+vi.mock('./starfruit-loop.js', () => ({ cowbellPricing: () => game.pricing, batchForSpec: () => game.batch }));
 vi.mock('./coin-reserve.js', async (importOriginal) => ({
     ...(await importOriginal()),
     walkQueueCoins: () => game.walked,
 }));
 
 const { default: strip, stripLines } = await import('./ironcow-action-strip.js');
+const { default: ironCowRuntime } = await import('./ironcow-runtime.js');
 
 const hash = (item) => `42::/item_locations/inventory::${item}::0`;
 const action = (ordinal, actionHrid, item = null) => ({
@@ -127,11 +131,77 @@ beforeEach(() => {
     game.engine = {};
     game.pricing = { price: 1000, quoted: true };
     game.cap = 20;
+    game.batch = null;
+    game.charId = 'charA';
+    ironCowRuntime.keepBatchCash = false;
+    ironCowRuntime.owner = null;
+    ironCowRuntime.batchSpec = null;
+    ironCowRuntime.loop = null;
 });
 
 afterEach(() => {
     strip.stop();
     vi.useRealTimers();
+});
+
+describe('cash kept for the next set', () => {
+    const costed = () => ({
+        missing: [],
+        goldOutPerFruit: 375,
+        decomposeBulk: 1,
+        coinifyBulk: 10,
+        essencePerFruit: 3,
+        fruitPerForageAction: 1,
+        coinsPerSuccess: 15_000,
+        coinifyRate: 0.7,
+        items: { forageActionHrid: FORAGE, starfruitHrid: STAR_FRUIT, essenceHrid: ESSENCE },
+    });
+
+    test('off, the strip keeps what the queue needs; on, it keeps the batch’s fees too, as the panel does', () => {
+        game.state = { coins: 40_000_000, gameMode: 'ironcow', starfruitHeld: 1000, essenceHeld: 0 };
+        // a batch the queue holds none of: 1,000 decomposes at 375 = 375K more behind the queue's 450K
+        game.actions = [action(1, FORAGE)];
+        game.batch = { forageActions: 0, decomposeActions: 1000, coinifyActions: 300 };
+        ironCowRuntime.loop = costed();
+        ironCowRuntime.batchSpec = { max: false, basis: 'hours', hours: 16 };
+
+        const off = text()[0];
+        expect(off).not.toContain('keeps 3.8M');
+        expect(off).not.toContain('next set');
+
+        ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
+        const on = text()[0];
+        expect(on).toContain('and the next set');
+        // 450K + 375K of fees plus the 3M buffer
+        expect(on).toContain('keeps 3.8M for the queue');
+    });
+
+    test('a spec published for another character is never used: the strip says it does not know', () => {
+        game.state = { coins: 40_000_000, gameMode: 'ironcow', starfruitHeld: 1000, essenceHeld: 0 };
+        game.actions = [action(1, FORAGE)];
+        game.batch = { forageActions: 0, decomposeActions: 1000, coinifyActions: 300 };
+        ironCowRuntime.loop = costed();
+        ironCowRuntime.batchSpec = { max: false, basis: 'hours', hours: 16 };
+        ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
+
+        game.charId = 'charB';
+        const text0 = text()[0];
+        expect(text0).not.toContain('and the next set');
+        expect(text0).toContain('next set not counted: open Iron Bell Farming');
+
+        game.charId = 'charA';
+        expect(text()[0]).toContain('and the next set');
+    });
+
+    test('with the switch on but no batch published, the strip is today’s number', () => {
+        game.batch = null;
+        ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
+        ironCowRuntime.loop = costed();
+        expect(text()[0]).not.toContain('and the next set');
+    });
 });
 
 describe('when the strip draws', () => {

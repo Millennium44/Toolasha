@@ -20,7 +20,9 @@ import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
 import { isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import { resolveLoopItems } from './loop-items.js';
 import { cowbellPricing } from './starfruit-loop.js';
-import { bellBudget, walkQueueCoins } from './coin-reserve.js';
+import { bellBudget, walkQueueCoins, withBatchStages } from './coin-reserve.js';
+import ironCowRuntime from './ironcow-runtime.js';
+import { nextSetStages } from './ironbell-next-set.js';
 import { onIronBellLive } from './ironbell-live.js';
 import {
     ESTIMATE_NOTE,
@@ -90,7 +92,30 @@ export function stripLines() {
     }
 
     const pricing = cowbellPricing({ buyNow: true });
-    const budget = bellBudget(walked, state.coins, pricing);
+    // With the panel's switch on, the next set (the batch in the Queue helper) is held back for too, exactly as the panel does
+    // (`nextSetStages` is the one place it is worked out), so the two show the same number
+    let budgetWalk = walked;
+    let keepsNextSet = false;
+    let nextSetUnknown = false;
+    if (ironCowRuntime.keepBatchCash) {
+        // The spec belongs to the character the panel published it for: never another one's, and never none
+        if (ironCowRuntime.owner !== dataManager.getCurrentCharacterId?.() || !ironCowRuntime.batchSpec) {
+            nextSetUnknown = true;
+        } else {
+            const nextSet = nextSetStages(
+                ironCowRuntime.loop,
+                ironCowRuntime.batchSpec,
+                state,
+                dataManager.getCurrentActions?.() || [],
+                walked
+            );
+            if (nextSet?.stages?.length) {
+                budgetWalk = withBatchStages(walked, nextSet.stages);
+                keepsNextSet = budgetWalk !== walked;
+            }
+        }
+    }
+    const budget = bellBudget(budgetWalk, state.coins, pricing);
     const bellPrice = budget.status === 'ok' ? pricing.price : null;
     const cap = dataManager.getOfflineHourCap?.();
     const cycle = summarizeCycle(walked, { coins: state.coins, loopItems, bellPrice, offlineCapHours: cap });
@@ -104,7 +129,9 @@ export function stripLines() {
         lines.push({
             text:
                 `Iron Bell: spend now ${approx}${formatWithSeparator(can.bells)} bells ` +
-                `(${can.bags} ${plural(can.bags, 'bag')}) · keeps ${approx}${coins(reserve)} for the queue`,
+                `(${formatWithSeparator(can.bags)} ${plural(can.bags, 'bag')}) · keeps ${approx}${coins(reserve)} for the queue` +
+                (keepsNextSet ? ' and the next set' : '') +
+                (nextSetUnknown ? ' (next set not counted: open Iron Bell Farming)' : ''),
             color: can.bells > 0 ? COLORS.good : COLORS.dim,
             title:
                 `Out of your ${coins(state.coins)}. ${kept}${estimated ? ESTIMATE_NOTE : ''}` +

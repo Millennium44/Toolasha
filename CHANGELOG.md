@@ -38,6 +38,21 @@ The goal limit is up from 40 to 100, and a full list now says so under the form 
 
 A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in the plan and in copied text.
 
+### Iron Bell queue helper plans around what you hold
+
+- Hours now mean hours: Star Fruit you hold fills the time instead of shortening the queue.
+- New Max button uses all your Star Fruit and essence, queued as Repeat ∞.
+- Walk it adds only what's missing, warns when new rows would wait behind an endless one, and says when the queue is short of gold.
+- Bells you can buy now can also keep cash for the next set.
+
+### Queue walks wait for your Next press
+
+After a row is queued the walk bar shows "Queued ✓" and waits for Next instead of moving on by itself. Alchemy steps now put the right item in the slot and fill the amount, and on desktop the bar can be dragged and remembers where you put it.
+
+### Iron Bell walk handles bigger stacks
+
+The walk no longer splits a leg at 100,000 actions: it types the whole count, up to 2.1 billion, and warns if the game stored a different count.
+
 ### Combat Sim tunes triggers in its own section
 
 The Upgrade tab's Triggers tick-box is now a Tune triggers section, as in Lab Sim: it says what a run will cost, runs without Analyze and shows its result in place. A result clears once its setup changes, and Apply waits for a running sim, flagging an Analyze table measured before the build changed.

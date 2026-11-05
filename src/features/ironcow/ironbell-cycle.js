@@ -12,6 +12,8 @@
  */
 
 import { COWBELLS_PER_BAG } from './coin-reserve.js';
+import { formatDateTime, formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
+import { compareActionQueueOrder } from '../../utils/combat-actions.js';
 
 /** The alchemy actions the loop uses; the item is chosen in the slot, so it is read off the hash */
 export const DECOMPOSE_ACTION = '/actions/alchemy/decompose';
@@ -198,5 +200,273 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
         // An endless cycle outlasts any cap; an untimed one cannot be said to
         outlastsCap: capHours !== null && (endless ? true : timed ? seconds > capHours * 3600 : false),
         capHours,
+    };
+}
+
+/**
+ * What the game queue still holds of each loop leg, by action AND item (alchemy is one action for
+ * every item, so the action alone says nothing). Every unfinished row counts, the running one
+ * included, at what it has left to do; the queue is never read by position.
+ *
+ * The rows are walked in queue order (never by position in the array, and never by "the first row is the
+ * running one"), with the fruit and essence the character holds as the starting stock. A forage row adds
+ * the fruit it is expected to yield; a decompose row can perform only as many actions as the fruit ahead
+ * of it covers; a coinify row only as many as the essence ahead of it covers. That is the same limit the
+ * engine's `walkQueueCoins` applies (`limitCountedByMaterials`), so `performed` is what will really run,
+ * not just what the row asks for. A row whose count exceeds what it can perform is `starved`: it would
+ * stall the queue there. A row with no count (Repeat ∞) never hands on, so the rows behind it are
+ * unreachable and the walk stops at it.
+ *
+ * @param {Array<Object>|null} actions - `dataManager.getCurrentActions()`
+ * @param {Object|null} loopItems - From `resolveLoopItems`
+ * @param {Object} [stock]
+ * @param {Object|null} [stock.loop] - From `calculateStarfruitLoop` (bulk sizes, yields)
+ * @param {number} [stock.fruitHeld] - Star Fruit held (net of what another plan reserved)
+ * @param {number} [stock.essenceHeld] - Essence held (net of reservations)
+ * @param {((action: Object) => string|null)|null} [stock.labelOf] - The action's display name, for `endless`
+ * @param {Object|null} [stock.walked] - From `walkQueueCoins` over the same queue. The engine's own verdict on
+ *   which rows end (`calculateSingleQueueActionTime`: material limits, `isTrulyInfinite`): only the row it
+ *   stopped at is unbounded, so a Repeat ∞ row that is limited by its materials (any item) is not endless
+ *   and the rows behind it are credited. Without it the rule is the conservative one below.
+ * @returns {{forage: {count: number, performed: number}, decompose: {count: number, performed: number},
+ *   coinify: {count: number, performed: number}, endless: string|null, starved: Array<Object>,
+ *   fruitAfter: number, essenceAfter: number}} `count` is what the rows ask for, `performed` what will
+ *   run; `endless` names the first row with no count; `starved` lists `{leg, count, performed}`
+ */
+export function queuedLegCounts(
+    actions,
+    loopItems,
+    { loop = null, fruitHeld = 0, essenceHeld = 0, labelOf = null, walked = null } = {}
+) {
+    const legs = {
+        forage: { count: 0, performed: 0 },
+        decompose: { count: 0, performed: 0 },
+        coinify: { count: 0, performed: 0 },
+    };
+    const fruitPerForage = loop?.fruitPerForageAction || 0;
+    const decomposeBulk = loop?.decomposeBulk || 1;
+    const coinifyBulk = loop?.coinifyBulk || 1;
+    const essencePerFruit = loop?.essencePerFruit || 0;
+    let fruit = Math.max(0, Number(fruitHeld) || 0);
+    let essence = Math.max(0, Number(essenceHeld) || 0);
+    let endless = null;
+    const starved = [];
+
+    const rows = (actions || []).filter((action) => action && !action.isDone).sort(compareActionQueueOrder);
+    // The walk lists the rows in this same order, one stage per row, up to the row it stopped at
+    const haveWalk = Boolean(walked && Array.isArray(walked.stages));
+    const stoppedIndex = haveWalk && walked.stoppedAt ? walked.stages.length : Infinity;
+    const itemOf = (action) => String(action?.primaryItemHash || '').split('::')[2];
+    for (const [index, action] of rows.entries()) {
+        const leg = loopLegOf(action, loopItems);
+        // Repeat ∞ on an alchemy leg is limited by its materials (the queue shows "mat 184K"): it runs for
+        // as long as the stock ahead of it lasts and then hands on, so it is covered up to that and never
+        // starved. With the engine's verdict, any row it did not stop at ends the same way; without it, any
+        // other row with no count (a gather, a fight) is taken to have no limit and never hand on.
+        const materialLimited = !action.hasMaxCount && (leg === 'decompose' || leg === 'coinify');
+        // A forage row with no count has no material limit whatever the walk says
+        const unbounded =
+            (leg === 'forage' && !action.hasMaxCount) ||
+            (haveWalk ? index >= stoppedIndex : !action.hasMaxCount && !materialLimited);
+        if (unbounded) {
+            // Said by the action's display name (never an hrid): the caller knows how the game names it
+            endless = labelOf?.(action) || (leg ? LEG_NAMES[leg] : 'An action with no count');
+            break;
+        }
+        if (!leg) {
+            // A row that is not a loop leg but spends the loop's own fruit or essence (say a transmute of
+            // essence) takes stock the legs behind it were counting on. How much is not known, so all of it.
+            if (itemOf(action) === loopItems?.starfruitHrid) fruit = 0;
+            else if (itemOf(action) === loopItems?.essenceHrid) essence = 0;
+            continue;
+        }
+        const limitedByMaterials = !action.hasMaxCount;
+        const count = limitedByMaterials
+            ? Infinity
+            : Math.max(0, (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0));
+        let performed = count;
+        // Where the walk is available its stage for this very row (same order) is the engine's own performed
+        // count, which also reflects limits the stock alone does not show, such as a catalyst that runs out
+        // before the fruit or essence does. Only what the row really performs is taken from the stock, and only
+        // the essence of the decomposes that really run is added.
+        const stage = haveWalk && walked.stages[index]?.actionHrid === action.actionHrid ? walked.stages[index] : null;
+        const engineCount = Number.isFinite(stage?.count) ? stage.count : Infinity;
+        if (leg === 'forage') {
+            fruit += count * fruitPerForage;
+        } else if (leg === 'decompose') {
+            performed = Math.min(count, Math.floor(fruit / decomposeBulk), engineCount);
+            fruit -= performed * decomposeBulk;
+            essence += performed * decomposeBulk * essencePerFruit;
+        } else {
+            performed = Math.min(count, Math.floor(essence / coinifyBulk), engineCount);
+            essence -= performed * coinifyBulk;
+        }
+        // An ∞ row asks for exactly what it can run
+        legs[leg].count += limitedByMaterials ? performed : count;
+        legs[leg].performed += performed;
+        if (!limitedByMaterials && performed < count) starved.push({ leg, count, performed });
+    }
+    return { ...legs, endless, starved, fruitAfter: fruit, essenceAfter: essence };
+}
+
+/** Display names of the legs, for the walk button's note */
+const LEG_NAMES = { forage: 'Forage', decompose: 'Decompose', coinify: 'Coinify' };
+
+/**
+ * Take off a batch what the game queue already holds, leg by leg.
+ *
+ * New rows go on at the END of the queue, in forage, decompose, coinify order, so nothing walked can
+ * feed a row that is already queued ahead of it. A leg is therefore credited only for what the queue
+ * will really perform (`performed`, in order), and what is walked is capped to what its own inputs
+ * allow: the fruit left after the queued rows plus the new forage, and the essence left plus the new
+ * decompose. The batch itself is not changed, only the copy the walk is built from.
+ *
+ * The walk is refused (`blocked`, with the reason) only when it would itself leave a queue that looks complete
+ * but idles for good: a starved queued row whose missing input the new rows would make from behind it. A row with
+ * no count that the new rows sit behind is a warning (`waitingBehind`, `notes`), not a refusal.
+ *
+ * @param {Object|null} batch - Counts as `forageActions` / `decomposeActions` / `coinifyActions`
+ * @param {ReturnType<typeof queuedLegCounts>} queued - From {@link queuedLegCounts}
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @returns {{batch: Object|null, skipped: Array<string>, partial: Array<string>, blocked: string|null}}
+ *   The batch to walk, the legs left out entirely, the legs cut to a difference, and why the walk is
+ *   refused (null when it is not)
+ */
+export function reduceBatchByQueue(batch, queued, loop = null) {
+    if (!batch) return { batch, skipped: [], partial: [], blocked: null };
+    const reduced = { ...batch };
+    const skipped = [];
+    const partial = [];
+    const fruitPerForage = loop?.fruitPerForageAction || 0;
+    const decomposeBulk = loop?.decomposeBulk || 1;
+    const coinifyBulk = loop?.coinifyBulk || 1;
+    const essencePerFruit = loop?.essencePerFruit || 0;
+
+    const credit = (leg, wanted) => {
+        const have = queued?.[leg]?.performed || 0;
+        return Math.min(wanted, have);
+    };
+    const forageHave = credit('forage', batch.forageActions || 0);
+    const decomposeHave = credit('decompose', batch.decomposeActions || 0);
+    const coinifyHave = credit('coinify', batch.coinifyActions || 0);
+    reduced.forageActions = Math.max(0, (batch.forageActions || 0) - forageHave);
+    // What the new rows can use: the stock the queue leaves, plus what the new rows make ahead of them
+    const fruitForNew = (queued?.fruitAfter || 0) + reduced.forageActions * fruitPerForage;
+    const decomposeWanted = Math.max(0, (batch.decomposeActions || 0) - decomposeHave);
+    reduced.decomposeActions = Math.min(decomposeWanted, Math.floor(fruitForNew / decomposeBulk));
+    const essenceForNew = (queued?.essenceAfter || 0) + reduced.decomposeActions * decomposeBulk * essencePerFruit;
+    const coinifyWanted = Math.max(0, (batch.coinifyActions || 0) - coinifyHave);
+    reduced.coinifyActions = Math.min(coinifyWanted, Math.floor(essenceForNew / coinifyBulk));
+
+    for (const [leg, have, key] of [
+        ['forage', forageHave, 'forageActions'],
+        ['decompose', decomposeHave, 'decomposeActions'],
+        ['coinify', coinifyHave, 'coinifyActions'],
+    ]) {
+        const need = batch[key] || 0;
+        if (need <= 0 || have <= 0) continue;
+        if (reduced[key] <= 0 && have >= need) skipped.push(LEG_NAMES[leg]);
+        else partial.push(LEG_NAMES[leg]);
+    }
+
+    let blocked = null;
+    const notes = [];
+    const anythingToWalk = reduced.forageActions + reduced.decomposeActions + reduced.coinifyActions > 0;
+    // A starved queued row stalls the queue with or without this walk. The walk is refused only when it would
+    // itself leave that row idle for good: the row's missing input would be made by a row added BEHIND it, which
+    // can never run until the starved row does.
+    const feeders = { decompose: reduced.forageActions > 0, coinify: reduced.decomposeActions > 0 };
+    for (const { leg, count, performed } of queued?.starved || []) {
+        const message =
+            `${LEG_NAMES[leg]} is queued for ${formatWithSeparator(count)} but the stock ahead of it covers only ` +
+            `${formatWithSeparator(performed)}`;
+        if (feeders[leg] && !blocked) {
+            blocked = `${message}, and what would feed it is queued behind it, so the queue would stall there for good.`;
+        } else if (!feeders[leg]) {
+            notes.push(`${message}, so it stalls there until more arrives; rows added behind it wait.`);
+        }
+    }
+    // A row with no count and no material limit never hands on: the new rows wait behind it until it is stopped.
+    // A warning, not a refusal; the rows are queued and run when it is stopped.
+    let waitingBehind = null;
+    if (queued?.endless && anythingToWalk) {
+        waitingBehind = queued.endless;
+        notes.push(`The new rows wait behind ${queued.endless}, which repeats forever, until you stop it.`);
+    }
+    return { batch: reduced, skipped, partial, blocked, waitingBehind, notes };
+}
+
+/**
+ * A clock time `seconds` from `now`, with the date when it is not today.
+ * @param {number} seconds - From now
+ * @param {number} [now] - Epoch ms
+ * @returns {string} e.g. "11-04 3:05 PM"
+ */
+export function clockAfterSeconds(seconds, now = Date.now()) {
+    const at = new Date(now + seconds * 1000);
+    const today = at.toDateString() === new Date(now).toDateString();
+    return formatDateTime(at, { includeDate: !today, includeSeconds: false });
+}
+
+/**
+ * When the queue runs out and about what the bell balance would be then.
+ *
+ * Bells by then are an estimate: the gold on hand plus the coinify the queue is expected to pay (its rolls
+ * can fail) less the fees it takes, at the price a bell can be bought at now, whole bags of ten.
+ *
+ * @param {Object|null} walked - From `walkQueueCoins`
+ * @param {Object|null} cycle - From {@link summarizeCycle} over the same walk
+ * @param {{coins: number, bellPrice?: number|null, now?: number}} params
+ * @returns {{text: string, title: string}|null} Null when the queue could not be read
+ */
+export function queueEndText(walked, cycle, { coins, bellPrice = null, now = Date.now(), capHours = null }) {
+    if (!walked || !cycle) return null;
+    if (cycle.endless) {
+        return {
+            text: `The queue repeats ${cycle.endless} forever, so it never runs out.`,
+            title: 'A row with no count never hands on to the rows behind it.',
+        };
+    }
+    if (!walked.stages?.length) return { text: 'The queue is empty.', title: 'Nothing is queued to run.' };
+    if (cycle.seconds === null) {
+        return {
+            text: 'The queue holds a fight that cannot be timed, so when it runs out is unknown.',
+            title: 'Counted fights have no fixed length.',
+        };
+    }
+    const when = `${clockAfterSeconds(cycle.seconds, now)} (in ${timeReadable(cycle.seconds)})`;
+    const capText =
+        Number.isFinite(capHours) && capHours > 0 && cycle.outlastsCap
+            ? ` Away from the game it stops ${capHours}h after you leave.`
+            : '';
+    // The gold runs out before the rows do: the queue stops there, so neither the end time nor the bells
+    // by then describe what will happen
+    if (cycle.shortfall) {
+        const { label, atSeconds, short } = cycle.shortfall;
+        const at =
+            atSeconds === null
+                ? 'partway through'
+                : atSeconds <= 0
+                  ? 'at once'
+                  : `at ${clockAfterSeconds(atSeconds, now)} (in ${timeReadable(atSeconds)})`;
+        return {
+            text:
+                `⚠ Gold runs out on ${label} ${at}, ${formatKMB(Math.round(short))} short: the queue stops there, ` +
+                `not when its rows finish (${when}).${capText}`,
+            title: 'The fees of every queued row, in order, against your gold, with no coinify income counted on.',
+        };
+    }
+    const priced = Number.isFinite(bellPrice) && bellPrice > 0;
+    let bellsText = '';
+    if (priced) {
+        const held = Number.isFinite(coins) ? Math.max(0, coins) : 0;
+        const bags = Math.floor(Math.max(0, held + cycle.net) / (bellPrice * COWBELLS_PER_BAG) + 1e-9);
+        bellsText = ` — about ${formatWithSeparator(bags * COWBELLS_PER_BAG)} bells by then (estimate)`;
+    }
+    return {
+        text: `The queue runs out ${when}${bellsText}.${capText}`,
+        title:
+            'Estimate: the gold on hand plus the coinify the queue is expected to pay (its rolls can fail), ' +
+            'less its decompose fees, in whole bags of ten at the price you can buy at now.',
     };
 }

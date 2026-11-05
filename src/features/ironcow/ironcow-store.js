@@ -141,10 +141,45 @@ export async function setPlanCollapsed(collapsed) {
     }
 }
 
+/** Unscoped key for whether Bells you can buy now also keeps cash back for the helper's next batch */
+export const KEEP_BATCH_CASH_KEY = 'ironCowFarmKeepBatchCash';
+
+/**
+ * Whether this character keeps cash back for the queue helper's next batch.
+ * Off unless a stored `true`: the default is today's number.
+ * @returns {Promise<boolean>} True when on
+ */
+export async function loadKeepBatchCash() {
+    try {
+        const stored = await readScoped(KEEP_BATCH_CASH_KEY, 'settings', false, { migrate: 'discard' });
+        return stored === true;
+    } catch (error) {
+        console.error('[IronCow] Loading the keep-cash switch failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Turn the keep-cash switch on or off. The key is resolved inside `writeScoped`, against whoever is
+ * current at the write, as for the plan section.
+ * @param {boolean} on - The new state
+ * @returns {Promise<void>}
+ */
+export async function setKeepBatchCash(on) {
+    try {
+        await writeScoped(KEEP_BATCH_CASH_KEY, on === true, 'settings');
+    } catch (error) {
+        console.error('[IronCow] Saving the keep-cash switch failed:', error);
+    }
+}
+
 export default {
     OVERRIDES_KEY,
     SNAPSHOT_KEY,
     PLAN_COLLAPSED_KEY,
+    KEEP_BATCH_CASH_KEY,
+    loadKeepBatchCash,
+    setKeepBatchCash,
     loadOverrides,
     setOverride,
     loadSnapshot,

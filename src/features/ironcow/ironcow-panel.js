@@ -41,21 +41,34 @@ import { actionTimeDisplay } from '../../utils/bundle-bridge.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import {
     ASSUMED_OFFLINE_HOURS,
-    applyHoldings,
-    balanceBatch,
-    bellsForHours,
+    affordableBatch,
     calculateStarfruitLoop,
     cowbellPricing,
     hoursForBells,
+    batchForSpec,
     loopWarnings,
+    maxBatch,
     offlineWindow,
 } from './starfruit-loop.js';
-import { buildQueueSteps, startQueueWalk } from './ironcow-queue-walk.js';
-import { bellBudget, walkQueueCoins } from './coin-reserve.js';
-import { ESTIMATE_NOTE, UNQUOTED_NOTE, UNREADABLE_NOTE, keptNote, stoppedNote } from './ironbell-cycle.js';
+import { buildQueueSteps, queueRowsNeeded, readQueueSlots, startQueueWalk } from './ironcow-queue-walk.js';
+import { batchStages, bellBudget, coinReserve, walkQueueCoins, withBatchStages } from './coin-reserve.js';
+import {
+    ESTIMATE_NOTE,
+    UNQUOTED_NOTE,
+    UNREADABLE_NOTE,
+    keptNote,
+    queueEndText,
+    queuedLegCounts,
+    reduceBatchByQueue,
+    stoppedNote,
+    summarizeCycle,
+} from './ironbell-cycle.js';
+import { nextSetStages } from './ironbell-next-set.js';
 import { onIronBellLive } from './ironbell-live.js';
 import ironBellStrip from './ironcow-action-strip.js';
 import {
+    loadKeepBatchCash,
+    setKeepBatchCash,
     loadOverrides,
     loadPlanCollapsed,
     loadSnapshot,
@@ -164,8 +177,8 @@ const QUEUE_PRESETS = [
 
 /**
  * Not a game limit — the game states none for a queue's length. A typo guard well past any real plan (ten
- * years): the walk splits a leg into repeats of 100,000 actions, so an absurd finite duration like 1e12 days
- * would build billions of steps and hang the tab.
+ * years): the walk splits a leg into repeats of at most 2,147,483,647 actions, so an absurd finite duration like 1e12 days
+ * would still build a very large number of steps and hang the tab.
  */
 const MAX_QUEUE_HOURS = 24 * 365 * 10;
 
@@ -278,6 +291,24 @@ class IronCowFarmPanel {
         this.batchHours = ASSUMED_OFFLINE_HOURS;
         /** Which unit the duration box is being typed in: 'h' or 'd' */
         this.batchUnit = 'h';
+        /** True while the helper is sized by the Max button (all held fruit) rather than by a duration */
+        this.queueMax = false;
+        /**
+         * What drives the numbers when Max is off: 'hours' keeps the queue busy for `batchHours` (held stock
+         * first, forage for the rest); 'bells' sizes the least work that earns the bells typed, which can
+         * finish sooner than the hours it was converted from
+         */
+        this.batchBasis = 'hours';
+        /** Fruit Max may use, when "Largest I can run" cut it to what the gold on hand pays for; null for all */
+        this.maxCap = null;
+        /** The duration in force before Max was pressed, to go back to when Max stops applying */
+        this.hoursBeforeMax = null;
+        /** Why Max was left on its own (fruit spent), shown on the card until the next press */
+        this.maxLostNote = '';
+        /** The bell target as typed, kept while a bell target drives the batch */
+        this.bellsTyped = '';
+        /** Whether Bells you can buy now also keeps cash back for the helper's current batch */
+        this.keepBatchCash = false;
         this.queueRefs = null;
         this.busy = false;
         this.loaded = null;
@@ -289,7 +320,7 @@ class IronCowFarmPanel {
         this._loadGen = 0;
         // Per-field counts of the player's own edits; a load that read a field before an edit must not
         // publish its older value over it
-        this._edits = { overrides: 0, planCollapsed: 0, batch: 0 };
+        this._edits = { overrides: 0, planCollapsed: 0, batch: 0, keepCash: 0 };
         // The overlay tile opens the same panel this toggles, and reads the
         // loop and the overrides through the same runtime object this keeps
         // current below.
@@ -368,6 +399,17 @@ class IronCowFarmPanel {
         this._lifeGen++;
         this._loadGen++;
         this.loaded = null;
+        this.queueMax = false;
+        this.batchBasis = 'hours';
+        this.maxCap = null;
+        // Per character, like the batch itself: neither a Max-lost note nor a typed bell target travels to the next one
+        this.maxLostNote = '';
+        this.bellsTyped = '';
+        this.hoursBeforeMax = null;
+        // Nothing of this character's is left for the strip to read
+        ironCowRuntime.batchSpec = null;
+        ironCowRuntime.keepBatchCash = false;
+        ironCowRuntime.owner = null;
         this._remove();
     }
 
@@ -407,6 +449,8 @@ class IronCowFarmPanel {
         // and "costed <time>" as if they were this character's.
         const planCollapsed = await loadPlanCollapsed();
         if (!current()) return;
+        const keepBatchCash = await loadKeepBatchCash();
+        if (!current()) return;
         // Per character, like everything else here: the window a batch is sized
         // against is this character's, and a duration typed for the last one is
         // not an answer for this one.
@@ -420,12 +464,24 @@ class IronCowFarmPanel {
         if (snapshot?.bellPricing && !('quoted' in snapshot.bellPricing)) snapshot = null;
         if (unedited('overrides')) this.overrides = overrides;
         if (unedited('planCollapsed')) this.planCollapsed = planCollapsed;
+        // Written here unconditionally for a character with nothing stored, so the last one's switch
+        // never carries over
+        if (unedited('keepCash')) this.keepBatchCash = keepBatchCash;
         if (unedited('batch')) {
             if (window?.hours > 0) this.batchHours = window.hours;
             this.batchUnit = 'h';
+            this.queueMax = false;
+            this.batchBasis = 'hours';
+            this.maxCap = null;
+            this.maxLostNote = '';
+            this.bellsTyped = '';
+            this.hoursBeforeMax = null;
         }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
+        // Published here, after every check above, so the strip knows this character's saved switch and spec even
+        // with the panel closed, and a load that lost a race to a switch publishes nothing
+        this._publishSpec();
         this._render();
     }
 
@@ -509,6 +565,19 @@ class IronCowFarmPanel {
         await setPlanCollapsed(this.planCollapsed);
     }
 
+    /**
+     * Turn "keep cash for the next set" on or off, redraw, and remember which.
+     * @param {boolean} on - The new state
+     * @returns {Promise<void>}
+     */
+    async setKeepCash(on) {
+        this._edits.keepCash++;
+        this.keepBatchCash = on === true;
+        // The player's own click lands at once, whatever storage does next
+        this._onLiveChange();
+        await setKeepBatchCash(this.keepBatchCash);
+    }
+
     // -------------------------------------------------------------------------
     // Panel construction
     // -------------------------------------------------------------------------
@@ -580,8 +649,50 @@ class IronCowFarmPanel {
 
     /** Redraw the bells-you-can-buy lines against the coins and queue as they stand now */
     _onLiveChange() {
+        this._redrawAffordable();
+        this._redrawQueueParts();
+    }
+
+    /** Redraw just the bells-you-can-buy lines */
+    _redrawAffordable() {
         if (!this.affordableEl?.isConnected) return;
         this.affordableEl.replaceChildren(...this._affordableLines(this._safeState()));
+    }
+
+    /**
+     * Redraw everything that reads the queue, the gold or the stock — the Check card (queue end, warnings),
+     * Max's state, and the helper's counts, gold lines and walk button — against the character as it is now.
+     * The duration and bell boxes are left alone while one has focus, so typing is never overwritten.
+     * @private
+     */
+    _redrawQueueParts() {
+        const state = this._freshState();
+        if (!state) return;
+        if (this.checksEl?.isConnected) {
+            const previous = this.checksEl;
+            this.checksEl = null;
+            const next = this._checksCard(state);
+            previous.replaceWith(next);
+        }
+        const refs = this.queueRefs;
+        if (!refs?.counts?.isConnected || !this.loop || this.loop.missing?.length) return;
+        this._settleMax(state);
+        this._paintMax(refs.maxButton, refs.maxNote, maxBatch(this.loop, state));
+        const batch = this._batchFor(this.batchHours, state);
+        if (!batch) return;
+        if (this.queueMax) this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+        this.shownHours = this._shownHoursFor(batch);
+        const typing = (box) => typeof document !== 'undefined' && document.activeElement === box;
+        if (!typing(refs.hoursBox)) {
+            refs.hoursBox.value = String(
+                round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours)
+            );
+        }
+        const typedBells = this.batchBasis === 'bells' && !this.queueMax && this.bellsTyped !== '';
+        if (refs.hasBellPrice && !typedBells && !typing(refs.bellsBox)) {
+            refs.bellsBox.value = String(Math.round(batch.bells || 0));
+        }
+        this._drawBatch(batch);
     }
 
     _remove() {
@@ -591,6 +702,7 @@ class IronCowFarmPanel {
         clearTimeout(this._liveTimer);
         this._liveTimer = null;
         this.affordableEl = null;
+        this.checksEl = null;
         this.detachDrag?.();
         this.detachResize?.();
         this.detachDrag = null;
@@ -1024,23 +1136,32 @@ class IronCowFarmPanel {
      */
     _affordableLines(state) {
         if (!state) return [];
+        this._publishSpec();
         const pricing = cowbellPricing({ buyNow: true });
         const label = 'Bells you can buy now';
         // One answer for the panel and the action-bar strip: see `bellBudget`
-        const budget = bellBudget(
-            pricing.price && pricing.quoted ? walkQueueCoins(actionTimeDisplay()) : null,
-            state.coins,
-            pricing
-        );
-        if (budget.status === 'noPrice') return [];
-        if (budget.status === 'unquoted') return [line(label, '—', COLORS.textDim, UNQUOTED_NOTE)];
-        if (budget.status === 'unreadable') return [line(label, '—', COLORS.textDim, UNREADABLE_NOTE)];
+        const walked = pricing.price && pricing.quoted ? walkQueueCoins(actionTimeDisplay()) : null;
+        const own = bellBudget(walked, state.coins, pricing);
+        if (own.status === 'noPrice') return [];
+        const keepSwitch = this._keepCashSwitch();
+        if (own.status === 'unquoted') return [line(label, '—', COLORS.textDim, UNQUOTED_NOTE), keepSwitch];
+        if (own.status === 'unreadable') return [line(label, '—', COLORS.textDim, UNREADABLE_NOTE), keepSwitch];
+
+        // With the switch on, the helper's current batch is walked behind the queue and the bells come out
+        // of what is left after its lowest point too. Legs the game queue already holds are in the walk
+        // once, so nothing is held back twice. Off, this is today's number.
+        let budget = own;
+        const nextSet = this.keepBatchCash ? this._nextSetStages(state, walked) : null;
+        if (nextSet?.stages?.length) {
+            budget = bellBudget(withBatchStages(walked, nextSet.stages), state.coins, pricing);
+        }
+        const nextSetKept = Math.max(0, (budget.reserve || 0) - (own.reserve || 0));
 
         const { reserve, buffer, spenders, estimated, can } = budget;
         const approx = estimated ? '~' : '';
         const estimateNote = estimated ? ESTIMATE_NOTE : '';
 
-        const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
+        const value = `${bells(can.bells)} (${formatWithSeparator(can.bags)} bag${can.bags === 1 ? '' : 's'})`;
         const kept = keptNote(reserve, spenders, coins, buffer);
         const stopped = stoppedNote(budget.stoppedAt);
         // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
@@ -1050,17 +1171,118 @@ class IronCowFarmPanel {
             ' If fewer bags are listed at that price, the rest cost more and you get fewer.';
         const title = `Out of your ${coins(state.coins)}. ${kept}${estimateNote}${stopped}${route}`;
 
-        return [
+        // "Kept for the queue" is the queue's own reserve, as before; the next set is its own line
+        const ownApprox = own.estimated ? '~' : '';
+        const lines = [
             line(label, `${approx}${value}`, can.bells > 0 ? COLORS.good : COLORS.textDim, title),
             line(
                 'Kept for the queue',
-                reserve > 0 ? `${approx}${coins(reserve)}` : '0',
+                own.reserve > 0 ? `${ownApprox}${coins(own.reserve)}` : '0',
                 COLORS.textDim,
-                reserve > buffer
-                    ? `For ${spenders.join(', ')}, plus a ${coins(buffer)} safety buffer.${estimateNote}`
-                    : kept
+                own.reserve > own.buffer
+                    ? `For ${own.spenders.join(', ')}, plus a ${coins(own.buffer)} safety buffer.${estimateNote}`
+                    : keptNote(own.reserve, own.spenders, coins, own.buffer)
             ),
         ];
+        if (this.keepBatchCash) {
+            lines.push(this._nextSetLine(nextSet, nextSetKept, can, own.can));
+            if (walked?.stoppedAt && nextSet?.stages?.length) {
+                lines.push(
+                    span(`The next set waits behind ${walked.stoppedAt}, so no cash is held for it yet.`, {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        fontSize: '11px',
+                    })
+                );
+            }
+        }
+        lines.push(keepSwitch);
+        return lines;
+    }
+
+    /**
+     * The helper's current batch as gold stages behind the game queue, for the reserve.
+     * @param {Object|null} state - From `readCharacterState`
+     * @returns {{stages: Array<Object>|null, reason: string}|null} Null when there is no batch to hold cash for;
+     *   `stages` null with a reason when the batch's fee has no price
+     * @private
+     */
+    _nextSetStages(state, walked = this._walkedQueue()) {
+        // The strip works this out the same way, from the same spec
+        let actions = [];
+        try {
+            actions = dataManager.getCurrentActions?.() || [];
+        } catch (error) {
+            console.error('[IronCow] Reading the queue failed:', error);
+        }
+        return nextSetStages(this.loop, this._spec(), state, actions, walked);
+    }
+
+    /**
+     * The visible line beside "Kept for the queue": what the current batch needs at its lowest point.
+     * @param {{stages: Array<Object>|null, reason: string}|null} nextSet - From `_nextSetStages`
+     * @param {number} kept - Coins held back beyond the queue's own reserve
+     * @param {{bells: number}} can - The bells that can still be bought
+     * @param {{bells: number}} ownCan - The bells the queue alone would leave to buy
+     * @returns {HTMLElement} The line
+     * @private
+     */
+    _nextSetLine(nextSet, kept, can, ownCan) {
+        if (!nextSet) {
+            return line(
+                'Kept for the next set',
+                '—',
+                COLORS.textDim,
+                'Cost the loop to size a batch to hold cash for.'
+            );
+        }
+        if (!nextSet.stages) return line('Kept for the next set', '—', COLORS.warn, nextSet.reason);
+        const title =
+            'The most the current queue-helper batch dips below your gold (its decompose fees, which come ' +
+            'before any coinify income), on top of the queue. Legs the game queue already holds are not ' +
+            'counted twice.';
+        const row = line('Kept for the next set', kept > 0 ? coins(kept) : '0', COLORS.textDim, title);
+        if (!(kept > 0 && can.bells <= 0 && ownCan.bells > 0)) return row;
+        // Visible, not only in a tooltip: a zero that the switch caused must say so
+        const holder = document.createElement('div');
+        holder.append(
+            row,
+            span(
+                `No bells are spare because ${coins(kept)} is held back for the next set. Turn the switch off to ignore it.`,
+                {
+                    display: 'block',
+                    color: COLORS.warn,
+                    fontSize: '11px',
+                }
+            )
+        );
+        return holder;
+    }
+
+    /**
+     * The switch for holding cash back for the next set (the batch shown in the Queue helper).
+     * @returns {HTMLElement} A labeled checkbox
+     * @private
+     */
+    _keepCashSwitch() {
+        const label = document.createElement('label');
+        Object.assign(label.style, {
+            display: 'flex',
+            gap: '6px',
+            alignItems: 'center',
+            fontSize: '11px',
+            color: COLORS.textDim,
+            marginTop: '2px',
+        });
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = this.keepBatchCash;
+        box.addEventListener('change', () => this.setKeepCash(box.checked));
+        label.append(box, document.createTextNode('Also keep cash for the next set'));
+        label.title =
+            'Holds back the gold to pay the fees of the batch shown in the Queue helper, on top of what is already ' +
+            'queued, so buying bells cannot starve it.';
+        return label;
     }
 
     /**
@@ -1086,14 +1308,20 @@ class IronCowFarmPanel {
         }
 
         const hasBellPrice = Number.isFinite(loop.bellPrice) && loop.bellPrice > 0;
+        this._settleMax(state);
         const batch = this._batchFor(this.batchHours, state);
         if (!batch) {
             holder.appendChild(span('This loop cannot be sized into a batch.', { color: COLORS.warn }));
             return holder;
         }
 
-        // Shown in the unit the select is on: batchHours is always hours, and the select remembers 'd'
-        const shownDuration = this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours;
+        // In Max the duration is an output (how long the held fruit keeps the queue busy); so it is for a bell
+        // target. Only a typed duration is an input, and then the box shows what was asked.
+        if (batch.max) this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+        this.shownHours = this._shownHoursFor(batch);
+
+        // Shown in the unit the select is on: shownHours is always hours, and the select remembers 'd'
+        const shownDuration = this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours;
         const hoursBox = numberBox(round1(shownDuration), (raw) => this._setBatchHours(Number(raw), 'hours'));
         const unit = document.createElement('select');
         for (const [value, label] of [
@@ -1116,7 +1344,7 @@ class IronCowFarmPanel {
         unit.addEventListener('change', () => {
             this._edits.batch++;
             this.batchUnit = unit.value;
-            hoursBox.value = String(round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours));
+            hoursBox.value = String(round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours));
         });
 
         const durationRow = document.createElement('div');
@@ -1125,10 +1353,21 @@ class IronCowFarmPanel {
         for (const preset of QUEUE_PRESETS) {
             durationRow.appendChild(button(preset.label, () => this._setBatchHours(preset.hours, 'preset')));
         }
+        // Max: every Star Fruit held, no foraging. Disabled (with the reason in view, since a title
+        // does not show on a touch screen) when there is nothing for it to use.
+        const maxInfo = maxBatch(loop, state);
+        const maxButton = button('Max', () => this._setMax());
+        const maxNote = span('', { display: 'block', color: COLORS.textDim, fontSize: '11px' });
+        this._paintMax(maxButton, maxNote, maxInfo);
+        durationRow.appendChild(maxButton);
         holder.appendChild(durationRow);
+        holder.appendChild(maxNote);
 
-        const bellsBox = numberBox(hasBellPrice ? Math.round(bellsForHours(loop, this.batchHours) || 0) : '', (raw) =>
-            this._setBatchBells(Number(raw))
+        // A bell target stays as typed while it drives the batch; otherwise the box shows the batch's own bells
+        const typedBells = this.batchBasis === 'bells' && !this.queueMax && this.bellsTyped !== '';
+        const bellsBox = numberBox(
+            hasBellPrice ? (typedBells ? this.bellsTyped : Math.round(batch.bells || 0)) : '',
+            (raw) => this._setBatchBells(Number(raw), raw)
         );
         const bellsRow = document.createElement('div');
         Object.assign(bellsRow.style, { display: 'flex', gap: '6px', alignItems: 'center' });
@@ -1167,8 +1406,21 @@ class IronCowFarmPanel {
             'Opens each action in turn and types the count into the game\u2019s own box. ' +
             'It never presses anything — the press that queues each action is yours.';
         holder.appendChild(walk);
+        const walkNote = span('', { display: 'block', color: COLORS.warn, fontSize: '11px' });
+        holder.appendChild(walkNote);
 
-        this.queueRefs = { hoursBox, unit, bellsBox, counts, summary, walk, hasBellPrice };
+        this.queueRefs = {
+            hoursBox,
+            unit,
+            bellsBox,
+            counts,
+            summary,
+            walk,
+            walkNote,
+            maxButton,
+            maxNote,
+            hasBellPrice,
+        };
         this._drawBatch(batch);
         return holder;
     }
@@ -1184,9 +1436,63 @@ class IronCowFarmPanel {
      * @private
      */
     _batchFor(hours, state = this._queueState) {
-        const batch = balanceBatch(this.loop, hours);
-        if (!batch) return null;
-        return applyHoldings(batch, this.loop, state);
+        // A read, never a change: Max that no longer applies answers null here, and the callers that draw
+        // or walk (`_settleMax`, `_walkQueue`) are the ones that leave Max and say why
+        return batchForSpec(this.loop, { ...this._spec(), hours }, state);
+    }
+
+    /**
+     * What the helper is set to, as the inputs that define the batch. The strip reads the same spec (see
+     * `_publishSpec`), so both size the same batch.
+     * @returns {{max: boolean, maxCap: number|null, basis: string, hours: number}}
+     * @private
+     */
+    _spec() {
+        return { max: this.queueMax, maxCap: this.maxCap, basis: this.batchBasis, hours: this.batchHours };
+    }
+
+    /** Hand the strip what the helper is set to, and whether cash is being kept for it */
+    _publishSpec() {
+        ironCowRuntime.batchSpec = this._spec();
+        ironCowRuntime.keepBatchCash = this.keepBatchCash;
+        // Whose spec it is: the strip never uses another character's
+        ironCowRuntime.owner = dataManager.getCurrentCharacterId();
+    }
+
+    /**
+     * Show whether Max can be pressed and, when it cannot, why in visible text (a title does not show on a
+     * touch screen).
+     * @param {HTMLElement} maxButton - The button
+     * @param {HTMLElement} maxNote - The line under the duration row
+     * @param {{batch: Object|null, reason: string}} info - From `maxBatch`
+     * @private
+     */
+    _paintMax(maxButton, maxNote, info) {
+        maxButton.title = info.batch
+            ? `Decompose all ${formatWithSeparator(info.batch.max.fruitHeld)} ${info.batch.max.fruitName} you ` +
+              'hold, coinify the essence, and forage nothing.'
+            : info.reason;
+        maxButton.disabled = !info.batch;
+        maxButton.style.opacity = info.batch ? '' : '0.5';
+        maxNote.textContent = info.batch ? this.maxLostNote : this.maxLostNote || `Max: ${info.reason}`;
+    }
+
+    /**
+     * Leave Max when the fruit it was sized to is gone, going back to the duration the player had before
+     * pressing it, and remember why so the card can say. Run at draw and press time, never from a read.
+     * @param {Object|null} state - From `readCharacterState`
+     * @returns {boolean} True when Max was left
+     * @private
+     */
+    _settleMax(state) {
+        if (!this.queueMax) return false;
+        const { batch, reason } = maxBatch(this.loop, this._capFruit(state));
+        if (batch) return false;
+        this.queueMax = false;
+        this.maxCap = null;
+        if (this.hoursBeforeMax !== null) this.batchHours = this.hoursBeforeMax;
+        this.maxLostNote = `Max no longer applies: ${reason}`;
+        return true;
     }
 
     /**
@@ -1208,7 +1514,11 @@ class IronCowFarmPanel {
                 'Decompose',
                 formatWithSeparator(batch.decomposeActions),
                 COLORS.good,
-                `Sized to the ${formatWithSeparator(Math.floor(batch.fruit))} ${fruit} the forage leg yields.`
+                batch.max
+                    ? `Uses ${formatWithSeparator(Math.floor(batch.fruit))} of the ${fruit} you hold.`
+                    : batch.fill
+                      ? `Sized to the ${formatWithSeparator(Math.floor(batch.fruit))} ${fruit}: the ${formatWithSeparator(batch.fill.fruitHeld)} you hold plus what the forage leg yields.`
+                      : `Sized to the ${formatWithSeparator(Math.floor(batch.fruit))} ${fruit} the forage leg yields.`
             ),
             line(
                 'Coinify',
@@ -1222,16 +1532,53 @@ class IronCowFarmPanel {
 
         const earns = batch.bells === null ? '' : ` · about ${bells(batch.bells)} bells`;
         const steps = buildQueueSteps(loop, batch);
-        const presses = steps.length === 1 ? '1 press' : `${formatWithSeparator(steps.length)} presses`;
         // Stock on hand can shrink the batch well below the duration asked; say so
         // rather than leave a short figure next to a longer request unexplained.
-        const shortened =
-            batch.credits?.length && batch.requestedHours > 0 && batch.hours < batch.requestedHours * 0.99
-                ? ` (not ${round1(batch.requestedHours)}h: what you hold replaces the legs that would have made it)`
-                : '';
-        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${shortened}${earns} — ${presses}.`;
+        let shortened = '';
+        if (batch.fill?.trimmed) {
+            shortened = ` (not ${round1(batch.requestedHours)}h: what you hold already fills more than that, so only what fits is queued)`;
+        } else if (
+            !batch.fill &&
+            !batch.max &&
+            batch.credits?.length &&
+            batch.requestedHours > 0 &&
+            batch.hours < batch.requestedHours * 0.99
+        ) {
+            // Bell target: the least work that earns the bells, which finishes sooner than the hours they convert to
+            shortened = ` (sooner than the ${round1(batch.requestedHours)}h these bells take from scratch: what you hold replaces the legs that would have made them)`;
+        }
+        // The presses are the walk button's to say: they depend on what the queue already holds
+        refs.summary.textContent = `Keeps the queue busy about ${round1(batch.hours)}h${shortened}${earns}.`;
 
-        if (refs.walk) refs.walk.textContent = steps.length ? `Walk it — ${presses}` : 'Walk it';
+        if (refs.walk) {
+            // Only what the game queue does not already hold is walked, and the button says what it leaves out
+            const plan = this._walkPlan(batch);
+            const walkSteps = buildQueueSteps(loop, plan.missing.batch);
+            const walkPresses = walkSteps.length === 1 ? '1 press' : `${formatWithSeparator(walkSteps.length)} presses`;
+            const notes = [
+                ...(batch.max?.unlimited?.decompose || batch.max?.unlimited?.coinify
+                    ? ['Repeat ∞ rows: leave the count']
+                    : []),
+                ...(plan.missing.skipped.length ? [`${plan.missing.skipped.join(', ')} already queued`] : []),
+                ...(plan.missing.partial.length ? [`${plan.missing.partial.join(', ')}: only the difference`] : []),
+            ];
+            const note = notes.length ? ` (${notes.join('; ')})` : '';
+            refs.walk.textContent = steps.length
+                ? plan.blocked
+                    ? 'Walk it — blocked'
+                    : walkSteps.length
+                      ? `Walk it — ${walkPresses}${note}`
+                      : `Nothing to walk${note}`
+                : 'Walk it';
+            // A walk that would leave the queue short or stalled is not offered; the reason stays on screen
+            refs.walk.disabled = Boolean(plan.blocked);
+            refs.walk.style.opacity = plan.blocked ? '0.5' : '';
+            // A refusal, or the warnings that leave the button pressable (rows waiting behind a row that never ends)
+            if (refs.walkNote) refs.walkNote.textContent = plan.blocked || plan.notes.join(' ');
+        }
+        // The cash held back for the batch follows the batch, here and in the strip
+        this._publishSpec();
+        if (this.keepBatchCash) this._redrawAffordable();
     }
 
     /**
@@ -1244,6 +1591,55 @@ class IronCowFarmPanel {
      */
     _creditLines(batch) {
         const lines = [];
+        const dim = { display: 'block', color: COLORS.textDim, fontSize: '11px' };
+        if (batch.fill) {
+            const { fruitHeld, essenceHeld, scratchForage } = batch.fill;
+            const fruitName = this.loop?.items?.starfruitName || 'Star Fruit';
+            const essenceName = this.loop?.items?.essenceName || 'essence';
+            if (fruitHeld > 0) {
+                const saved = Math.max(0, scratchForage - batch.forageActions);
+                lines.push(
+                    span(
+                        `You have ${formatWithSeparator(fruitHeld)} ${fruitName} — used first, ` +
+                            `${formatWithSeparator(saved)} fewer forage actions.`,
+                        dim
+                    )
+                );
+            }
+            if (essenceHeld > 0) {
+                lines.push(
+                    span(
+                        `You have ${formatWithSeparator(essenceHeld)} ${essenceName} — counted into the coinify leg.`,
+                        dim
+                    )
+                );
+            }
+        }
+        lines.push(...this._goldLines(batch));
+        if (batch.max) {
+            const { fruitName, fruitHeld, leftoverFruit, essenceHeld, unlimited } = batch.max;
+            const rowShape =
+                unlimited?.decompose && unlimited?.coinify
+                    ? 'Decompose and coinify go in as Repeat ∞.'
+                    : !unlimited?.decompose && !unlimited?.coinify
+                      ? 'Decompose and coinify go in as counted rows: part of the stock is capped or kept for another plan, which a Repeat ∞ row would spend.'
+                      : unlimited.decompose
+                        ? 'Decompose goes in as Repeat ∞ and coinify as a counted row (some essence is kept for another plan).'
+                        : 'Decompose goes in as a counted row (some fruit is capped or kept for another plan) and coinify as Repeat ∞.';
+            const left =
+                leftoverFruit > 0 ? `, ${formatWithSeparator(leftoverFruit)} left over (under one decompose)` : '';
+            const essence = essenceHeld > 0 ? ` plus ${formatWithSeparator(essenceHeld)} essence held` : '';
+            lines.push(
+                span(
+                    `Max: all ${formatWithSeparator(fruitHeld)} ${fruitName}${essence}, no foraging${left}. ${rowShape}`,
+                    {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        fontSize: '11px',
+                    }
+                )
+            );
+        }
         for (const credit of batch.credits || []) {
             lines.push(
                 span(
@@ -1268,23 +1664,116 @@ class IronCowFarmPanel {
     _setBatchHours(hours, source) {
         if (!Number.isFinite(hours) || hours <= 0) return;
         this._edits.batch++;
+        this.queueMax = false;
+        this.maxCap = null;
+        // Typed or pressed hours are the input (held stock first, forage for the rest); a bell target is
+        // converted to hours and sized as the least work that earns it
+        this.batchBasis = source === 'bells' ? 'bells' : 'hours';
+        if (source !== 'bells') this.bellsTyped = '';
+        this.maxLostNote = '';
         const inDays = source === 'hours' && this.batchUnit === 'd';
         this.batchHours = Math.min(MAX_QUEUE_HOURS, inDays ? hours * HOURS_PER_DAY : hours);
 
         const refs = this.queueRefs;
+        // What is held is read again on every press: the card may have been drawn a while ago
+        this._freshState();
         const batch = this._batchFor(this.batchHours);
         if (!refs || !batch) return;
 
-        // The field the player is typing in is left alone; the other two follow.
+        // The field the player is typing in is left alone; the other follows from the result.
+        this.shownHours = this._shownHoursFor(batch);
         if (source !== 'hours') {
             refs.hoursBox.value = String(
-                round1(this.batchUnit === 'd' ? this.batchHours / HOURS_PER_DAY : this.batchHours)
+                round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours)
             );
         }
         if (source !== 'bells' && refs.hasBellPrice) {
-            refs.bellsBox.value = String(Math.round(bellsForHours(this.loop, this.batchHours) || 0));
+            refs.bellsBox.value = String(Math.round(batch.bells || 0));
         }
         this._drawBatch(batch);
+    }
+
+    /**
+     * Read the character again and keep it as the state the card sizes against.
+     * @returns {Object|null} The fresh state, or null when it cannot be read (the old one is kept)
+     * @private
+     */
+    _freshState() {
+        const state = this._safeState();
+        if (state) this._queueState = state;
+        return state;
+    }
+
+    /**
+     * The hours the duration box should show: what was asked when the duration is the input, the batch's own
+     * figure when the output (Max, or a bell target).
+     * @param {Object} batch - From `_batchFor`
+     * @returns {number} Hours
+     * @private
+     */
+    _shownHoursFor(batch) {
+        const derived = this.queueMax || this.batchBasis === 'bells';
+        return derived ? Math.min(MAX_QUEUE_HOURS, batch.hours) : this.batchHours;
+    }
+
+    /**
+     * The gold a batch needs at its lowest point against the gold held, before any press, with the way out
+     * when short. The decompose leg runs before any coinify income, so the queue stalls on fees if the gold
+     * is not there up front.
+     * @param {Object} batch - From `_batchFor`
+     * @returns {Array<HTMLElement>} One or two lines
+     * @private
+     */
+    _goldLines(batch) {
+        const dim = { display: 'block', color: COLORS.textDim, fontSize: '11px' };
+        const check = this._goldCheck(batch);
+        // A fee with no price is unknown, never free
+        if (!check.known) {
+            return [span('Gold needed: unknown — the decompose fee has no price yet.', { ...dim, color: COLORS.warn })];
+        }
+        // Behind a row that never ends nothing runs until it is stopped, so no gold is needed for the batch yet
+        if (check.neverRuns) {
+            return [
+                span(
+                    `The batch waits behind ${check.walked.stoppedAt}, so its gold is not needed until that is stopped.`,
+                    dim
+                ),
+            ];
+        }
+        const heldText = check.held === null ? 'your gold could not be read' : `you hold ${coins(check.held)}`;
+        const onTop =
+            check.queueNeed > 0 && check.need > 0
+                ? ` on top of the ${coins(check.queueNeed)} the queue already needs`
+                : '';
+        const unread = check.queueReadable
+            ? ''
+            : ' (the queue could not be read in full, so only this batch is counted)';
+        if (check.short <= 0) {
+            if (check.need <= 0) return [];
+            return [span(`Gold needed at its lowest point: ${coins(check.need)}${onTop}; ${heldText}.${unread}`, dim)];
+        }
+        const holder = document.createElement('div');
+        // Short even with nothing from this batch: the queue itself stalls on gold, which is still said
+        const subject =
+            check.need > 0
+                ? `Needs ${coins(check.need)}${onTop} at its lowest point`
+                : `The queue already needs ${coins(check.queueNeed)} at its lowest point`;
+        holder.appendChild(
+            span(
+                `⚠ ${subject}; ${heldText} — short by ${coins(check.short)}, so the queue would stall on gold.${unread}`,
+                {
+                    ...dim,
+                    color: COLORS.warn,
+                }
+            )
+        );
+        if (check.need > 0) {
+            const largest = button('Largest I can run', () => this._runLargest());
+            largest.style.marginTop = '2px';
+            largest.title = 'Fills the helper with the largest batch your gold pays the decompose fees for.';
+            holder.appendChild(largest);
+        }
+        return [holder];
     }
 
     /**
@@ -1292,10 +1781,56 @@ class IronCowFarmPanel {
      * @param {number} target - Bells wanted
      * @private
      */
-    _setBatchBells(target) {
+    _setBatchBells(target, raw = String(target)) {
         const hours = hoursForBells(this.loop, target);
         if (hours === null) return;
         this._setBatchHours(hours, 'bells');
+        // Kept as typed: a redraw or a Walk must not rewrite the target with the batch's own figure
+        this.bellsTyped = String(raw);
+    }
+
+    /**
+     * Size the helper to every Star Fruit held, from the inventory as it is right now (the card was
+     * drawn against an older reading), and bring the duration and bell boxes with it.
+     * @private
+     */
+    _setMax() {
+        const state = this._safeState();
+        const { batch, reason } = maxBatch(this.loop, state);
+        if (!batch) {
+            this.queueMax = false;
+            this._render();
+            this._status(`Max: ${reason}`);
+            return;
+        }
+        this._edits.batch++;
+        this.maxCap = null;
+        this._queueState = state;
+        // Where to go back to if the fruit is spent while Max is on
+        if (!this.queueMax) this.hoursBeforeMax = this.batchHours;
+        this.maxLostNote = '';
+        this.bellsTyped = '';
+        this.queueMax = true;
+        this.batchHours = Math.min(MAX_QUEUE_HOURS, batch.hours);
+        this._syncFields(batch);
+    }
+
+    /**
+     * Put the duration and bell boxes at the batch's own figures and redraw the counts.
+     * @param {Object} batch - From `_batchFor` or `maxBatch`
+     * @private
+     */
+    _syncFields(batch) {
+        const refs = this.queueRefs;
+        if (!refs) return;
+        this.shownHours = this._shownHoursFor(batch);
+        refs.hoursBox.value = String(
+            round1(this.batchUnit === 'd' ? this.shownHours / HOURS_PER_DAY : this.shownHours)
+        );
+        // What was typed in the bells box stays while a bell target drives the batch
+        const typedBells = this.batchBasis === 'bells' && !this.queueMax && this.bellsTyped !== '';
+        if (refs.hasBellPrice && !typedBells) refs.bellsBox.value = String(Math.round(batch.bells || 0));
+        this._drawBatch(batch);
     }
 
     /**
@@ -1303,10 +1838,231 @@ class IronCowFarmPanel {
      * @private
      */
     _walkQueue() {
-        const batch = this._batchFor(this.batchHours);
-        if (!startQueueWalk(this.loop, batch)) {
-            this._status('Nothing to walk — cost the loop first.');
+        // The card was drawn some time ago: size against what is held and queued now, show the player
+        // those figures, and walk exactly them
+        const state = this._freshState();
+        if (this.queueMax) {
+            const { batch: fresh, reason } = maxBatch(this.loop, this._capFruit(state));
+            if (!fresh) {
+                this._settleMax(state);
+                this._render();
+                this._status(`Max no longer applies: ${reason}`);
+                return;
+            }
+            this.batchHours = Math.min(MAX_QUEUE_HOURS, fresh.hours);
         }
+        const batch = this._batchFor(this.batchHours);
+        if (!batch) {
+            this._status('Nothing to walk — cost the loop first.');
+            return;
+        }
+        this._syncFields(batch);
+
+        // Only what the game queue does not already hold, and only if it will all run and fit
+        const plan = this._walkPlan(batch);
+        if (plan.blocked) {
+            this._status(`Not walked — ${plan.blocked}`);
+            return;
+        }
+        if (!startQueueWalk(this.loop, plan.missing.batch, { finalNote: plan.notes.join(' ') })) {
+            this._status(
+                plan.missing.skipped.length
+                    ? `Nothing to walk — ${plan.missing.skipped.join(', ')} already queued.`
+                    : 'Nothing to walk — cost the loop first.'
+            );
+        } else if (plan.notes.length) {
+            this._status(plan.notes.join(' '));
+        }
+    }
+
+    /**
+     * What a walk of this batch would do given the queue as it stands: the legs it adds, the rows that
+     * takes against the free queue slots, and why it is refused, if it is.
+     * @param {Object} batch - From `_batchFor`
+     * @returns {{missing: Object, rows: number, slots: Object|null, blocked: string|null, notes: Array<string>}}
+     * @private
+     */
+    _walkPlan(batch) {
+        const missing = this._missing(batch);
+        const rows = queueRowsNeeded(this.loop, missing.batch);
+        // The game limits queue rows (the header reads "Queued Actions (3/6)"); unreadable means unknown
+        const slots = rows > 0 ? readQueueSlots() : null;
+        let blocked = missing.blocked;
+        if (!blocked && slots && rows > slots.free) {
+            blocked =
+                `This walk needs ${rows} queue ${rows === 1 ? 'row' : 'rows'} and only ${slots.free} ` +
+                `${slots.free === 1 ? 'is' : 'are'} free (${slots.used}/${slots.total} used), so a leg would be ` +
+                'left unqueued. Free some rows and walk again.';
+        }
+        return { missing, rows, slots, blocked, notes: missing.notes || [] };
+    }
+
+    /**
+     * The batch with what the game queue already holds taken off, by action and item, and in queue order:
+     * a leg is credited only for what the queue will really perform.
+     * @param {Object} batch - From `_batchFor`
+     * @param {Object|null} [state] - Character state; defaults to the one the card sizes against
+     * @returns {{batch: Object, skipped: Array<string>, partial: Array<string>, blocked: string|null,
+     *   queued: Object}}
+     * @private
+     */
+    _missing(batch, state = this._queueState, walked = this._walkedQueue()) {
+        let actions = [];
+        try {
+            actions = dataManager.getCurrentActions?.() || [];
+        } catch (error) {
+            console.error('[IronCow] Reading the queue failed:', error);
+        }
+        const queued = queuedLegCounts(actions, this.loop?.items, {
+            loop: this.loop,
+            fruitHeld: state?.starfruitHeld || 0,
+            essenceHeld: state?.essenceHeld || 0,
+            labelOf: (action) => this._actionLabel(action),
+            // The engine's verdict on which rows end, so a material-limited ∞ row of any item is not "endless"
+            walked,
+        });
+        return { ...reduceBatchByQueue(batch, queued, this.loop), queued };
+    }
+
+    /**
+     * The queue walked through the action-time engine's own ledger, or null when it cannot be (engine not loaded,
+     * an unknown action, a gold-paying row behind a fight). Its verdict on which rows end is what the credit uses.
+     * @returns {Object|null}
+     * @private
+     */
+    _walkedQueue() {
+        try {
+            return walkQueueCoins(actionTimeDisplay());
+        } catch (error) {
+            console.error('[IronCow] Walking the queue failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * How the game names a queued action, for messages: its display name, with the alchemy item after it. Never
+     * an hrid; null when the game data cannot say.
+     * @param {Object} action - A queued action
+     * @returns {string|null}
+     * @private
+     */
+    _actionLabel(action) {
+        const name = dataManager.getActionDetails?.(action?.actionHrid)?.name;
+        if (!name) return null;
+        const itemHrid = String(action.primaryItemHash || '').split('::')[2];
+        const itemName = itemHrid ? dataManager.getItemDetails?.(itemHrid)?.name : null;
+        return itemName ? `${name}: ${itemName}` : name;
+    }
+
+    /**
+     * The state with the fruit Max may use cut to what "Largest I can run" allowed, if it did.
+     * @param {Object|null} state - From `readCharacterState`
+     * @returns {Object|null} The state, or a copy holding less fruit
+     * @private
+     */
+    _capFruit(state) {
+        if (!state || this.maxCap === null) return state;
+        return { ...state, starfruitHeld: Math.min(state.starfruitHeld || 0, this.maxCap) };
+    }
+
+    /**
+     * What the batch's legs cost in gold at the lowest point, against the gold held.
+     *
+     * The decompose fees come before any coinify income, so the lowest point is the fees of the legs the
+     * walk would queue (the ones the game queue does not already hold), on top of the fees the queue
+     * already needs. A fee with no price is unknown, never 0.
+     *
+     * @param {Object} batch - From `_batchFor`
+     * @returns {{known: boolean, need: number, queueNeed: number, held: number|null, short: number,
+     *   queueReadable: boolean, stages: Array<Object>|null, walked: Object|null, missing: Object}}
+     * @private
+     */
+    _goldCheck(batch) {
+        const walked = this._walkedQueue();
+        const missing = this._missing(batch, this._queueState, walked);
+        const stages = batchStages(this.loop, missing.batch);
+        // A row that never ends hands on to nothing: the batch never starts, so it needs no gold
+        const neverRuns = Boolean(walked?.stoppedAt);
+        const queueNeed = walked ? coinReserve(walked.stages).reserve : 0;
+        const need = stages && !neverRuns ? coinReserve(stages).reserve : 0;
+        const held = Number.isFinite(this._queueState?.coins) ? this._queueState.coins : null;
+        const short = stages && held !== null ? Math.max(0, queueNeed + need - held) : 0;
+        return {
+            known: stages !== null,
+            need,
+            queueNeed,
+            held,
+            short,
+            neverRuns,
+            queueReadable: !!walked,
+            stages,
+            walked,
+            missing,
+        };
+    }
+
+    /**
+     * "Largest I can run": fill the helper with the largest batch the gold on hand pays for, from the
+     * inventory, queue and gold as they are right now.
+     * @private
+     */
+    _runLargest() {
+        const state = this._freshState();
+        const batch = this._batchFor(this.batchHours, state);
+        if (!batch) return;
+        const check = this._goldCheck(batch);
+        if (!check.known || check.held === null) {
+            this._status('Cannot size to your gold — the decompose fee or your gold is unknown.');
+            return;
+        }
+        // No reserve is better than a low one, so as in the bell budget an unreadable queue is refused
+        if (!check.queueReadable) {
+            this._status(
+                'Cannot size to your gold — the queue could not be read in full, so its own fees are unknown.'
+            );
+            return;
+        }
+        const result = affordableBatch(this.loop, state, check.held - check.queueNeed, {
+            max: this.queueMax,
+            hours: this.batchHours,
+            queuedDecompose: check.missing.queued.decompose.performed,
+        });
+        if (!result.batch) {
+            this._status(result.reason);
+            return;
+        }
+        this._edits.batch++;
+        if (this.queueMax) {
+            this.maxCap = result.batch.fruit;
+        } else {
+            this.batchBasis = 'hours';
+            this.batchHours = result.hours;
+        }
+        const resized = this._batchFor(this.batchHours, state);
+        if (resized) this._syncFields(resized);
+    }
+
+    /**
+     * When the queue runs out, from the same ledger walk the reserve reads, with what the bell balance
+     * would be by then (an estimate).
+     * @param {Object|null} state - Character state, for the coins on hand
+     * @returns {{text: string, title: string}|null} Null when the queue cannot be read
+     * @private
+     */
+    _queueEnd(state) {
+        // The engine is not loaded until the actions bundle is: the walk then answers null
+        const walked = walkQueueCoins(actionTimeDisplay());
+        if (!walked) return null;
+        const pricing = cowbellPricing({ buyNow: true });
+        const bellPrice = pricing?.price && pricing.quoted ? pricing.price : null;
+        const capHours = dataManager.getOfflineHourCap?.();
+        const cycle = summarizeCycle(walked, {
+            coins: state.coins,
+            loopItems: this.loop?.items,
+            bellPrice,
+            offlineCapHours: capHours,
+        });
+        return queueEndText(walked, cycle, { coins: state.coins, bellPrice, capHours });
     }
 
     /**
@@ -1324,6 +2080,13 @@ class IronCowFarmPanel {
         holder.appendChild(line('Gold', coins(state.coins), state.coins > 0 ? COLORS.text : COLORS.bad));
         holder.appendChild(line('Queued actions', String(state.queueLength), COLORS.text));
 
+        const end = this._queueEnd(state);
+        if (end) {
+            const row = span(end.text, { display: 'block', color: COLORS.textDim, fontSize: '11px', marginTop: '3px' });
+            row.title = end.title;
+            holder.appendChild(row);
+        }
+
         for (const warning of loopWarnings(state, this.loop)) {
             holder.appendChild(
                 span(`${warning.severity === 'warn' ? '⚠' : 'ℹ'} ${warning.text}`, {
@@ -1333,7 +2096,15 @@ class IronCowFarmPanel {
                     marginTop: '3px',
                 })
             );
+            if (warning.id === 'queue' && this.loop && !this.loop.missing?.length) {
+                // The walk skips legs the game queue already holds, so this fills only what is missing
+                const missing = button('Walk what’s missing', () => this._walkQueue());
+                missing.style.marginTop = '3px';
+                missing.title = 'Starts the guided walk for the legs of the current batch that are not queued yet.';
+                holder.appendChild(missing);
+            }
         }
+        this.checksEl = holder;
         return holder;
     }
 }

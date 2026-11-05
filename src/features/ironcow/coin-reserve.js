@@ -284,3 +284,63 @@ export function bellBudget(walked, coins, pricing) {
         can,
     };
 }
+
+/**
+ * The gold flow of a batch the helper would queue, as stages in the shape {@link walkQueueCoins}
+ * returns, so {@link coinReserve} reads them the same way as the queue's own rows.
+ *
+ * Only the legs the walk would actually queue are passed in (the caller has already taken off what the
+ * game queue holds), so a leg already queued is in the walk once, not twice. Decompose is the only leg that
+ * pays; coinify's proceeds are recorded as `earned` and, as for the queue, not counted on.
+ *
+ * @param {Object|null} loop - From `calculateStarfruitLoop`
+ * @param {{decomposeActions?: number, coinifyActions?: number}|null} toQueue - Counts still to queue
+ * @returns {Array<Object>|null} Stages in run order; empty when nothing pays; null when the decompose
+ *   fee is not priced (never read as 0)
+ */
+export function batchStages(loop, toQueue) {
+    const stages = [];
+    const decompose = toQueue?.decomposeActions || 0;
+    if (decompose > 0) {
+        const perFruit = loop?.goldOutPerFruit;
+        if (!Number.isFinite(perFruit) || perFruit < 0) return null;
+        const fee = decompose * (loop.decomposeBulk || 1) * perFruit;
+        stages.push({
+            actionHrid: '/actions/alchemy/decompose',
+            itemHrid: loop?.items?.starfruitHrid ?? null,
+            label: 'Decompose (next set)',
+            count: decompose,
+            coinDelta: -fee,
+            earned: 0,
+            seconds: 0,
+            estimated: false,
+        });
+    }
+    const coinify = toQueue?.coinifyActions || 0;
+    if (coinify > 0) {
+        stages.push({
+            actionHrid: '/actions/alchemy/coinify',
+            itemHrid: loop?.items?.essenceHrid ?? null,
+            label: 'Coinify (next set)',
+            count: coinify,
+            coinDelta: 0,
+            earned: coinify * (loop?.coinsPerSuccess || 0) * (loop?.coinifyRate || 0),
+            seconds: 0,
+            estimated: true,
+        });
+    }
+    return stages;
+}
+
+/**
+ * The queue's walk with a batch's stages behind it. A queue that never ends (a row with no count) never
+ * reaches the batch, so nothing is added then.
+ *
+ * @param {Object|null} walked - From {@link walkQueueCoins}
+ * @param {Array<Object>|null} stages - From {@link batchStages}
+ * @returns {Object|null} A walk; the same one when there is nothing to add or it cannot be added
+ */
+export function withBatchStages(walked, stages) {
+    if (!walked || !stages?.length || walked.stoppedAt) return walked;
+    return { ...walked, stages: [...walked.stages, ...stages] };
+}

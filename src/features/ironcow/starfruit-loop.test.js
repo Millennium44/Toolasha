@@ -124,6 +124,10 @@ const {
     offlineWindow,
     balanceBatch,
     applyHoldings,
+    maxBatch,
+    fillBatch,
+    batchForSpec,
+    affordableBatch,
     bellsForHours,
     hoursForBells,
     LOW_GOLD_BUFFER,
@@ -725,5 +729,238 @@ describe('a bulk decompose is shared out over the fruit it swallows', () => {
             expect(Number.isFinite(loop.hoursPerFruit)).toBe(true);
             expect(Number.isFinite(loop.goldPerHour)).toBe(true);
         }
+    });
+});
+
+describe('filling the whole time asked', () => {
+    const held = (starfruitHeld, essenceHeld = 0) => ({ starfruitHeld, essenceHeld, holdingsCredited: true });
+    /** Hours the three legs take, from the loop's own rates */
+    const busy = (loop, b) =>
+        b.forageActions / loop.forageActionsPerHour +
+        b.decomposeActions / loop.decomposeActionsPerHour +
+        b.coinifyActions / loop.coinifyActionsPerHour;
+
+    test('nothing held: the same 16h batch the from-scratch sizing gives', async () => {
+        const loop = await calculateStarfruitLoop();
+        const batch = fillBatch(loop, 16, held(0));
+        expect(batch).toMatchObject({ forageActions: 1600, decomposeActions: 1600, coinifyActions: 480 });
+    });
+
+    test('held fruit and essence are used first and the forage leg fills the rest of the time', async () => {
+        const loop = await calculateStarfruitLoop();
+        const credited = applyHoldings(balanceBatch(loop, 720), loop, held(40_000, 5_000));
+        const filled = fillBatch(loop, 720, held(40_000, 5_000));
+
+        // The old way left the queue busy for well under the 720h asked
+        expect(credited.hours).toBeLessThan(720 * 0.9);
+        expect(filled.hours).toBeLessThanOrEqual(720 + 1e-9);
+        expect(filled.hours).toBeGreaterThan(720 - 0.05);
+        expect(busy(loop, filled)).toBeCloseTo(filled.hours, 9);
+        // more work, more bells
+        expect(filled.bells).toBeGreaterThan(credited.bells);
+        expect(filled.fill.trimmed).toBe(false);
+    });
+
+    test('never past the time asked, never short by more than one forage action of work', async () => {
+        const loop = await calculateStarfruitLoop();
+        for (const hours of [0.3, 1, 7.77, 24, 168, 720]) {
+            for (const [fruit, essence] of [
+                [0, 0],
+                [1, 0],
+                [999, 7],
+                [12_345, 4_321],
+            ]) {
+                const b = fillBatch(loop, hours, held(fruit, essence));
+                if (b.fill.trimmed) continue;
+                expect(busy(loop, b)).toBeLessThanOrEqual(hours + 1e-9);
+                // one more forage action would have gone past it
+                const next = { ...b, forageActions: b.forageActions + 1 };
+                const fr = fruit + next.forageActions;
+                next.decomposeActions = Math.floor(fr / loop.decomposeBulk);
+                next.coinifyActions = Math.floor((next.decomposeActions * loop.decomposeBulk * 3 + essence) / 10);
+                expect(busy(loop, next)).toBeGreaterThan(hours - 1e-9);
+            }
+        }
+    });
+
+    test('no leg asks for more input than the leg before it makes', async () => {
+        const loop = await calculateStarfruitLoop();
+        for (const hours of [0.3, 5, 100]) {
+            const b = fillBatch(loop, hours, held(77, 13));
+            expect(b.decomposeActions * loop.decomposeBulk).toBeLessThanOrEqual(77 + b.forageActions);
+            expect(b.coinifyActions * loop.coinifyBulk).toBeLessThanOrEqual(b.decomposeActions * 3 + 13);
+        }
+    });
+
+    test('held stock that already fills more than the hours asked is cut to fit, with no forage', async () => {
+        const loop = await calculateStarfruitLoop();
+        const b = fillBatch(loop, 10, held(40_000, 5_000));
+
+        expect(b.fill.trimmed).toBe(true);
+        expect(b.forageActions).toBe(0);
+        expect(busy(loop, b)).toBeLessThanOrEqual(10 + 1e-9);
+        expect(busy(loop, b)).toBeGreaterThan(10 - 0.05);
+        expect(b.decomposeActions).toBeLessThanOrEqual(367_751);
+        expect(b.coinifyActions * 10).toBeLessThanOrEqual(b.decomposeActions * 3 + 17_172);
+    });
+
+    test('so much held essence that coinify alone is longer than the time: no decompose either', async () => {
+        const loop = await calculateStarfruitLoop();
+        const b = fillBatch(loop, 1, held(500, 100_000));
+        expect(b.decomposeActions).toBe(0);
+        expect(b.forageActions).toBe(0);
+        expect(b.coinifyActions).toBe(180);
+    });
+
+    test('a bulk-2 decompose never takes the odd fruit', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), decomposeBulk: 2 };
+        const b = fillBatch(loop, 50, held(1001));
+        expect(b.decomposeActions * 2).toBeLessThanOrEqual(1001 + b.forageActions);
+    });
+
+    test('unresolved items, an uncosted loop and a bad duration size nothing', async () => {
+        const loop = await calculateStarfruitLoop();
+        expect(fillBatch(loop, 16, { holdingsCredited: false })).toBeNull();
+        expect(fillBatch(null, 16, held(1))).toBeNull();
+        expect(fillBatch(loop, 0, held(1))).toBeNull();
+        expect(fillBatch(loop, Number.NaN, held(1))).toBeNull();
+    });
+
+    test('bells are null, not zero, without a cowbell price', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), bellPrice: null };
+        expect(fillBatch(loop, 16, held(5)).bells).toBeNull();
+    });
+});
+
+describe('Max: all the held fruit, no foraging', () => {
+    const held = (starfruitHeld, essenceHeld = 0) => ({ starfruitHeld, essenceHeld, holdingsCredited: true });
+
+    test('forages nothing, decomposes every fruit and coinifies what that makes plus the essence held', async () => {
+        const loop = await calculateStarfruitLoop();
+        const { batch } = maxBatch(loop, held(1000, 25));
+
+        expect(batch.forageActions).toBe(0);
+        expect(batch.decomposeActions).toBe(1000);
+        // 1,000 fruit x 3 essence + 25 held = 3,025 essence, ten to an action
+        expect(batch.coinifyActions).toBe(302);
+        expect(batch.hours).toBeCloseTo(1000 / 180 + 302 / 180, 6);
+        expect(batch.max.leftoverFruit).toBe(0);
+    });
+
+    test('never asks for more fruit than is held: a bulk-2 decompose leaves the odd fruit over', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), decomposeBulk: 2 };
+        const { batch } = maxBatch(loop, held(1001));
+
+        expect(batch.decomposeActions).toBe(500);
+        expect(batch.decomposeActions * 2).toBeLessThanOrEqual(1001);
+        expect(batch.max.leftoverFruit).toBe(1);
+    });
+
+    test('coinify never takes more essence than decompose is expected to make plus what is held', async () => {
+        const loop = await calculateStarfruitLoop();
+        for (const fruit of [1, 3, 7, 99, 1234]) {
+            for (const essence of [0, 1, 9, 10, 11]) {
+                const { batch } = maxBatch(loop, held(fruit, essence));
+                expect(batch.coinifyActions * loop.coinifyBulk).toBeLessThanOrEqual(fruit * 3 + essence);
+            }
+        }
+    });
+
+    test('no fruit, less than one decompose, an unreadable inventory and an uncosted loop all say why', async () => {
+        const loop = await calculateStarfruitLoop();
+        expect(maxBatch(loop, held(0, 500))).toEqual({ batch: null, reason: 'You hold no Star Fruit to use.' });
+        const bulk = { ...loop, decomposeBulk: 2 };
+        expect(maxBatch(bulk, held(1)).batch).toBeNull();
+        expect(maxBatch(bulk, held(1)).reason).toContain('less than one decompose');
+        expect(maxBatch(loop, null).batch).toBeNull();
+        expect(maxBatch(loop, { starfruitHeld: 50, holdingsCredited: false }).batch).toBeNull();
+        expect(maxBatch(null, held(5)).batch).toBeNull();
+        expect(maxBatch({ missing: ['x'] }, held(5)).batch).toBeNull();
+    });
+
+    test('which legs may stand as Repeat ∞: only those that use all of the physical stock', async () => {
+        const loop = await calculateStarfruitLoop();
+        const flags = (state) => maxBatch(loop, state).batch.max.unlimited;
+        // plain Max
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1000, essenceOwned: 50 })).toEqual({
+            decompose: true,
+            coinify: true,
+        });
+        // fruit claimed elsewhere
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1500, essenceOwned: 50 })).toEqual({
+            decompose: false,
+            coinify: true,
+        });
+        // essence claimed elsewhere
+        expect(flags({ ...held(1000, 50), starfruitOwned: 1000, essenceOwned: 90 })).toEqual({
+            decompose: true,
+            coinify: false,
+        });
+        // physical stock not known: counted
+        expect(flags(held(1000, 50))).toEqual({ decompose: false, coinify: false });
+    });
+
+    test('a capped Max (the fruit cut to what the gold pays for) is never Repeat ∞ on the decompose leg', async () => {
+        const loop = await calculateStarfruitLoop();
+        const state = { ...held(5000, 0), starfruitOwned: 5000, essenceOwned: 0 };
+        const capped = affordableBatch(loop, state, 375 * 1200, { max: true }).batch;
+        expect(capped.decomposeActions).toBe(1200);
+        expect(capped.max.unlimited.decompose).toBe(false);
+        const viaSpec = batchForSpec(loop, { max: true, maxCap: 1200, basis: 'hours', hours: 1 }, state);
+        expect(viaSpec.max.unlimited.decompose).toBe(false);
+    });
+
+    test('bells are null, not zero, without a cowbell price', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), bellPrice: null };
+        expect(maxBatch(loop, held(100)).batch.bells).toBeNull();
+    });
+});
+
+describe('review fixes to the sizing', () => {
+    const held = (starfruitHeld, essenceHeld = 0) => ({ starfruitHeld, essenceHeld, holdingsCredited: true });
+
+    test('a duration shorter than one chain of work still queues one action, as balanceBatch does', async () => {
+        const loop = await calculateStarfruitLoop();
+        const b = fillBatch(loop, 0.0001, held(0));
+        expect(b.forageActions).toBe(1);
+        expect(balanceBatch(loop, 0.0001).forageActions).toBe(1);
+    });
+
+    test('an unpriced decompose fee makes the gold and bells unknown, never free', async () => {
+        const loop = { ...(await calculateStarfruitLoop()), goldOutPerFruit: Number.NaN };
+        const filled = fillBatch(loop, 16, held(0));
+        expect(filled.gold).toBeNull();
+        expect(filled.bells).toBeNull();
+        const maxed = maxBatch(loop, held(100)).batch;
+        expect(maxed.gold).toBeNull();
+        expect(maxed.bells).toBeNull();
+    });
+
+    test('Max with fruit held but gold under one fee says gold is the limit, not that there is no fruit', async () => {
+        const loop = await calculateStarfruitLoop();
+        const out = affordableBatch(loop, held(5000), 100, { max: true });
+        expect(out.batch).toBeNull();
+        expect(out.reason).toBe('The gold on hand does not cover even one decompose fee.');
+        expect(out.reason).not.toContain('no Star Fruit');
+    });
+
+    test('batchForSpec is the one sizing: Max, hours and bells specs, a read that changes nothing', async () => {
+        const loop = await calculateStarfruitLoop();
+        const state = held(1000, 25);
+        const spec = { max: true, maxCap: null, basis: 'hours', hours: 16 };
+        const frozen = JSON.stringify(spec);
+        expect(batchForSpec(loop, spec, state).forageActions).toBe(0);
+        // a Max spec whose fruit is gone is null, not a duration batch
+        expect(batchForSpec(loop, spec, held(0))).toBeNull();
+        expect(batchForSpec(loop, { max: false, basis: 'hours', hours: 16 }, state)).toMatchObject({
+            fill: expect.any(Object),
+        });
+        expect(batchForSpec(loop, { max: false, basis: 'bells', hours: 16 }, state).fill).toBeUndefined();
+        expect(JSON.stringify(spec)).toBe(frozen);
+        // a cap cuts Max's fruit
+        expect(batchForSpec(loop, { max: true, maxCap: 100, basis: 'hours', hours: 1 }, state).decomposeActions).toBe(
+            100
+        );
+        expect(batchForSpec(null, spec, state)).toBeNull();
     });
 });

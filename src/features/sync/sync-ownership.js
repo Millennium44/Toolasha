@@ -186,6 +186,7 @@ export const OWNED_KEY_PREFIXES = [
     'toolasha_ironCowSnapshot',
     'ironCowFarmOverrides',
     'ironCowFarmPlanCollapsed',
+    'ironCowFarmKeepBatchCash',
     'ironCowFarmSnapshot',
     'whatsNew_state',
     'updateCheckIntroduced',

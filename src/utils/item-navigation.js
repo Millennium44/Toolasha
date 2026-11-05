@@ -4,6 +4,31 @@
  */
 
 import dataManager from '../core/data-manager.js';
+import { openAlchemyOnItem } from './alchemy-navigation.js';
+
+/**
+ * Open the Alchemy panel with one item already selected, through the game's own item-menu handler
+ * (`handleAlchemizeItem`). Navigation only: nothing is pressed. With no such stack in the bag the game
+ * cannot select it, and the panel opens on the alchemy action alone.
+ *
+ * @param {string} itemHrid - The item to put in the slot
+ * @param {string} alchemyType - The tab, e.g. `decompose`
+ * @returns {{opened: boolean, selected: boolean}} Whether the game was navigated, and whether an item was
+ *   selected for the player (false when it is not held or the handler is missing)
+ */
+export function navigateToAlchemyItem(itemHrid, alchemyType) {
+    const game = getGameObject();
+    if (!game) return { opened: false, selected: false };
+    const held = (dataManager.getInventory?.() || []).some(
+        (item) =>
+            item?.itemHrid === itemHrid &&
+            (!item.itemLocationHrid || item.itemLocationHrid === '/item_locations/inventory') &&
+            !(Number(item.enhancementLevel) > 0) &&
+            (item.count == null || item.count > 0)
+    );
+    const opened = openAlchemyOnItem(game, { itemHrid, actionType: alchemyType });
+    return { opened, selected: opened && held && typeof game.handleAlchemizeItem === 'function' };
+}
 
 /**
  * Get game object via React fiber tree traversal
