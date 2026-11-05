@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Character switches no longer push to GitHub
+
+Switching characters no longer shows a false "No GitHub token" error, reads sync settings as blank, or starts a push; those changes go up with the next automatic push, and automatic syncs hold the page for shorter stretches.
+
+### Sync pushes when another device takes over
+
+The "push when another device takes over" setting now really fires on a takeover, so your latest changes reach the other device. It was missing the game's banner.
+
 ### Nature healer party template
 
 The Party Finder templates gain a Nature healer build beside the Nature template, which is now named Nature DPS.
