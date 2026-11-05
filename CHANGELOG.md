@@ -25,6 +25,20 @@ When the price panel's 99-item list is full, the pin button reads "Full (99)" an
 ### Bestiary plan times read in days
 
 A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in the plan and in copied text.
+### Iron Bell queue helper plans around what you hold
+
+- Hours now mean hours: Star Fruit you hold fills the time instead of shortening the queue.
+- New Max button uses all your Star Fruit and essence, queued as Repeat ∞.
+- Walk it adds only what's missing, warns when new rows would wait behind an endless one, and says when the queue is short of gold.
+- Bells you can buy now can also keep cash for the next set.
+
+### Queue walks wait for your Next press
+
+After a row is queued the walk bar shows "Queued ✓" and waits for Next instead of moving on by itself. Alchemy steps now put the right item in the slot and fill the amount, and the bar can be dragged and remembers where you put it.
+
+### Iron Bell walk handles bigger stacks
+
+One queue row can now hold up to 2.1 billion actions instead of 100,000, and the walk warns if the game stored a different count than it typed.
 
 ### Combat Sim tunes triggers in its own section
 
