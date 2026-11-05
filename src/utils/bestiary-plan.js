@@ -327,7 +327,7 @@ function dungeonInfoFor(actionHrid) {
  *
  * It counts your clears and nothing else, so on its own it assumes every attempt
  * clears. A caller holding recorded failures scales the answer by
- * {@link clearShareOfAttempts}, and otherwise has to say so on the row.
+ * {@link clearTimeShare}, and otherwise has to say so on the row.
  *
  * @param {Object} input
  * @param {Array<Object>} input.runs - This dungeon's runs, already narrowed to this party
@@ -376,17 +376,25 @@ export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, ac
 }
 
 /**
- * How many of your attempts at a dungeon clear it, from the failures you recorded.
+ * The share of your dungeon time that goes to clears, from the failures you recorded.
+ *
+ * Your clear rate is clears over the time they and the failures took, which is the
+ * clears-only rate times this: clears x clear time / (clears x clear time + the
+ * failures' durations). A failure with no duration is charged one clear's time.
+ *
+ * Kills during failed attempts are not credited, because how far each got is not
+ * known per monster, so with failures on record the rate reads slightly low.
  *
  * Failures are recorded only once the player opts in, so clears from before the
- * first recorded failure say nothing about the failure rate: 300 old clears would
+ * first recorded failure say nothing about how often you fail: 300 old clears would
  * hide a recent run of wipes. They count only if no clear has come since.
  *
  * @param {Array<Object>} clears - Clears at this tier and party
  * @param {Array<Object>} fails - Failed attempts at this tier and party
+ * @param {number} clearSeconds - The clear time the rate being scaled uses
  * @returns {number} 0 to 1; 1 with no failures recorded
  */
-export function clearShareOfAttempts(clears, fails) {
+export function clearTimeShare(clears, fails, clearSeconds) {
     const failed = (fails || []).length;
     if (!failed) return 1;
     const all = clears || [];
@@ -395,8 +403,12 @@ export function clearShareOfAttempts(clears, fails) {
     const failTimes = fails.map(at).filter(Number.isFinite);
     const since = failTimes.length ? Math.min(...failTimes) : -Infinity;
     const recent = all.filter((run) => !(at(run) < since)).length;
-    const counted = recent || all.length;
-    return counted / (counted + failed);
+    const clearMs = Number(clearSeconds) > 0 ? Number(clearSeconds) * 1000 : 0;
+    // With no clear time to weigh against, each failure is simply one more clear's time
+    if (!clearMs) return (recent || all.length) / ((recent || all.length) + failed);
+    const clearTime = (recent || all.length) * clearMs;
+    const failedTime = fails.reduce((sum, run) => sum + (runDurationMs(run) ?? clearMs), 0);
+    return clearTime / (clearTime + failedTime);
 }
 
 /**

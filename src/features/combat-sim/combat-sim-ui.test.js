@@ -10559,6 +10559,27 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             const clear = (n) => run({ timestamp: day(n) });
             const fail = (n, over = {}) => run({ timestamp: day(n), result: 'fail', wavesCompleted: 9, ...over });
 
+            test('a 1-minute failure costs a minute, on the rate and every credit: Codex’s example', () => {
+                const runs = [fail(1, { duration: 60_000 }), clear(2), clear(3), clear(4)];
+                const zone = bestiaryPlanZoneForRow(coveRow(), runs, who);
+                // Three 30-minute clears in 91 minutes
+                expect(zone.encountersPerHour).toBeCloseTo(180 / 91, 9);
+                expect(zone.creditsPerHour[JACK]).toBeCloseTo(180 / 91, 9);
+                expect(zone.creditsPerHour[MARK]).toBeCloseTo((3 * 180) / 91, 9);
+                expect(zone.paceLabel).toBe('your 3 runs, 1 wipe counted');
+                expect(zone.note).toContain('99% of your time here goes to clears');
+                expect(zone.note).toContain('their kills are not counted');
+            });
+
+            test('the measured stretch path charges by time too', () => {
+                const clean = coveRow({ completions: 24, failed: 0, cleanClearSeconds: 3600 });
+                const runs = [fail(1, { duration: 60_000 }), clear(2), clear(3), clear(4)];
+                const zone = bestiaryPlanZoneForRow(clean, runs, who);
+                expect(zone.encountersPerHour).toBeCloseTo(180 / 91, 9);
+                expect(zone.creditsPerHour[MARK]).toBeCloseTo((5 * 90) / 91, 9);
+                expect(zone.note).toContain('99% of your time here goes to clears');
+            });
+
             test('charge the clear rate, are named on the row, and leave the clear time alone', () => {
                 const zone = bestiaryPlanZoneForRow(coveRow(), [fail(1), clear(2), clear(3), clear(4)], who);
                 // Three clears in four attempts of a 30-minute clear: 1.5 an hour, not 2
@@ -10567,7 +10588,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                 expect(zone.paceLabel).toBe('your 3 runs, 1 wipe counted');
                 expect(zone.paceWarn).toBe(true);
                 expect(zone.note).toContain('1 recorded failed attempt at this tier and party');
-                expect(zone.note).toContain('75% of attempts');
+                expect(zone.note).toContain('75% of your time here goes to clears');
                 expect(zone.note).not.toContain('assumes every attempt clears');
             });
 

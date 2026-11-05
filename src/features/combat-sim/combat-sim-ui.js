@@ -95,7 +95,7 @@ import {
     planBestiaryRoute,
     rescaleDungeonRates,
     dungeonRatesFromRuns,
-    clearShareOfAttempts,
+    clearTimeShare,
     provenDungeonTier,
     runTierOf,
     formatPlanHours,
@@ -1793,17 +1793,15 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
 
     // Your own clear time counts clears only, so recorded failures cost their share
     const fails = failedAttempts.length;
-    const clearShare = clearShareOfAttempts(
-        paceRuns.filter((run) => runTierOf(run) === row.tier),
-        failedAttempts
-    );
-    const atShare = (rates) =>
-        Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, rate * clearShare]));
+    const clearsHere = paceRuns.filter((run) => runTierOf(run) === row.tier);
+    const atShare = (rates, share) =>
+        Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, rate * share]));
     const wipesCounted = fails ? `${fails} wipe${fails === 1 ? '' : 's'} counted` : null;
-    const shareNote = fails
-        ? `${fails} recorded failed attempt${fails === 1 ? '' : 's'} at this tier and party, so ` +
-          `${Math.round(clearShare * 100)}% of attempts count as clears`
-        : null;
+    const shareNote = (share) =>
+        fails
+            ? `${fails} recorded failed attempt${fails === 1 ? '' : 's'} at this tier and party counted by the time ` +
+              `they took: ${Math.round(share * 100)}% of your time here goes to clears, and their kills are not counted`
+            : null;
     const yours = (count, suffix = null) =>
         [`your ${runWord(count)}`, useProven ? 'tier from Bestiary' : null, suffix].filter(Boolean).join(', ');
 
@@ -1818,7 +1816,8 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
             partySize,
             actionHrid: row.zoneHrid,
         });
-        if (clearShare > 0 && measured) {
+        if (measured) {
+            const clearShare = clearTimeShare(clearsHere, failedAttempts, measured.clearSeconds);
             const why =
                 failed === 0
                     ? 'the sim never finished a run'
@@ -1832,12 +1831,12 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
             // a day in the sim against one 20-minute clear of yours plans 72 clears.
             const noWipes = !fails && (few || wipeShare >= HIGH_WIPE_SHARE);
             return finish({
-                creditsPerHour: atShare(measured.creditsPerHour),
+                creditsPerHour: atShare(measured.creditsPerHour, clearShare),
                 creditsPerKillByMonster: measured.creditsPerKillByMonster,
                 encountersPerHour: measured.clearsPerHour * clearShare,
                 note:
                     `measured (${runWord(measured.runs)}${few ? ', few runs' : ''}) — kills per clear from the ` +
-                    `dungeon's spawn tables, because ${why}; ${shareNote || 'assumes every attempt clears'}`,
+                    `dungeon's spawn tables, because ${why}; ${shareNote(clearShare) || 'assumes every attempt clears'}`,
                 paceLabel: yours(measured.runs, noWipes ? 'no wipes counted' : wipesCounted),
                 paceWarn: noWipes || (few && fails > 0),
             });
@@ -1869,11 +1868,12 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         });
     }
     if (scaled.source === 'measured') {
+        const clearShare = clearTimeShare(clearsHere, failedAttempts, scaled.clearSeconds);
         return finish({
-            creditsPerHour: atShare(scaled.creditsPerHour),
+            creditsPerHour: atShare(scaled.creditsPerHour, clearShare),
             // A dungeon's "fights" are clears, which is also what the plan table calls them
             encountersPerHour: scaled.clearsPerHour * clearShare,
-            note: [`measured (${runWord(scaled.runs)})`, shareNote].filter(Boolean).join('; '),
+            note: [`measured (${runWord(scaled.runs)})`, shareNote(clearShare)].filter(Boolean).join('; '),
             paceLabel: yours(scaled.runs, wipesCounted),
         });
     }

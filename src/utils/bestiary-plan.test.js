@@ -5,7 +5,7 @@ import {
     dungeonRatesFromRuns,
     runTierOf,
     provenDungeonTier,
-    clearShareOfAttempts,
+    clearTimeShare,
     formatPlanHours,
     formatPlanText,
 } from './bestiary-plan.js';
@@ -1180,29 +1180,51 @@ describe('the tier the Bestiary proves', () => {
     });
 });
 
-describe('the share of your attempts that clear', () => {
-    const at = (day) => ({ timestamp: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z` });
-
-    test('no failures on record leaves the rate alone', () => {
-        expect(clearShareOfAttempts([at(1)], [])).toBe(1);
-        expect(clearShareOfAttempts([], [])).toBe(1);
+describe('the share of your time that goes to clears', () => {
+    const CLEAR = 1800;
+    const at = (day, duration) => ({
+        timestamp: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z`,
+        ...(duration === undefined ? {} : { duration }),
     });
 
-    test('clears over clears and failures', () => {
-        expect(clearShareOfAttempts([at(3), at(4), at(5)], [at(2)])).toBe(0.75);
+    test('three 30-minute clears and a 1-minute failure lose one minute in 91, not a quarter', () => {
+        const share = clearTimeShare([at(3), at(4), at(5)], [at(2, 60_000)], CLEAR);
+        expect(share).toBeCloseTo(90 / 91, 12);
+        expect((3600 / CLEAR) * share).toBeCloseTo(180 / 91, 12); // about 1.98 clears an hour
+    });
+
+    test('a failure with no duration, or an unusable one, is charged one clear', () => {
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2, 0)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([at(3)], [at(2), at(2, 900_000)], CLEAR)).toBeCloseTo(1800 / (1800 + 1800 + 900), 12);
+    });
+
+    test('no failures on record leaves the rate alone', () => {
+        expect(clearTimeShare([at(1)], [], CLEAR)).toBe(1);
+        expect(clearTimeShare([], [], CLEAR)).toBe(1);
+    });
+
+    test('failures older than the first clear in the window all count', () => {
+        const share = clearTimeShare([at(8), at(9)], [at(1, 600_000), at(2, 600_000)], CLEAR);
+        expect(share).toBeCloseTo(3600 / (3600 + 1200), 12);
     });
 
     test('clears from before the first recorded failure do not dilute it', () => {
         const old = Array.from({ length: 300 }, () => at(1));
-        expect(clearShareOfAttempts([...old, at(6), at(7)], [at(5), at(6)])).toBe(0.5);
+        const share = clearTimeShare([...old, at(6), at(7)], [at(5, 1_800_000), at(6, 1_800_000)], CLEAR);
+        expect(share).toBeCloseTo(0.5, 12);
     });
 
     test('with no clear since the failures, every clear counts, and with no clears at all nothing does', () => {
-        expect(clearShareOfAttempts([at(1), at(2), at(3)], [at(9)])).toBe(0.75);
-        expect(clearShareOfAttempts([], [at(9)])).toBe(0);
+        expect(clearTimeShare([at(1), at(2), at(3)], [at(9)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([], [at(9)], CLEAR)).toBe(0);
     });
 
     test('a clear with no date is kept rather than guessed away', () => {
-        expect(clearShareOfAttempts([{}], [at(9)])).toBe(0.5);
+        expect(clearTimeShare([{}], [at(9)], CLEAR)).toBeCloseTo(0.5, 12);
+    });
+
+    test('with no clear time to weigh against, a failure is one more clear', () => {
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2, 60_000)], 0)).toBeCloseTo(0.75, 12);
     });
 });
