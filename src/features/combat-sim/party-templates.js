@@ -6,7 +6,8 @@
  * The builds are standard endgame setups: items, consumables, abilities, triggers, house rooms and guild shrine levels
  * as recorded, with levels standardized so the styles compare fairly (main stat 150, other stats 125, abilities 75,
  * gear +12 weapon, +10 armor and off hand, +7 jewelry, +5 neck/charm/pouch/cape/trinket). Every item and ability hrid
- * was checked against live game data on 2026-10-29.
+ * was checked against live game data on 2026-10-29. The Nature healer is the exception: it keeps its recorded levels,
+ * gear enhancement and ability levels, and carries no charm because the recorded build wore none.
  */
 
 function deepFreeze(value) {
@@ -882,7 +883,7 @@ export const PARTY_TEMPLATES = deepFreeze([
     {
         id: 'magic-nature',
         role: 'nature_mage',
-        label: 'Nature mage',
+        label: 'Nature DPS',
         guildCombatBuffLevels: { force: 5, tempo: 5, spirit: 3, rarity: 0, scholar: 4 },
         playerDto: {
             staminaLevel: 125,
@@ -1060,6 +1061,193 @@ export const PARTY_TEMPLATES = deepFreeze([
                 '/house_rooms/gym': 3,
                 '/house_rooms/library': 6,
                 '/house_rooms/mystical_study': 7,
+            },
+        },
+    },
+    // magic-nature-healer
+    {
+        id: 'magic-nature-healer',
+        role: 'nature_mage',
+        label: 'Nature healer',
+        guildCombatBuffLevels: { force: 3, tempo: 1, spirit: 1, rarity: 0, scholar: 2 },
+        playerDto: {
+            staminaLevel: 121,
+            intelligenceLevel: 120,
+            attackLevel: 129,
+            meleeLevel: 31,
+            defenseLevel: 115,
+            rangedLevel: 45,
+            magicLevel: 141,
+            equipment: {
+                '/equipment_types/back': { hrid: '/items/enchanted_cloak', enhancementLevel: 4 },
+                '/equipment_types/body': { hrid: '/items/royal_nature_robe_top_refined', enhancementLevel: 10 },
+                '/equipment_types/earrings': { hrid: '/items/philosophers_earrings', enhancementLevel: 5 },
+                '/equipment_types/feet': { hrid: '/items/pathseeker_boots_refined', enhancementLevel: 10 },
+                '/equipment_types/hands': { hrid: '/items/chrono_gloves', enhancementLevel: 10 },
+                '/equipment_types/head': { hrid: '/items/magicians_hat_refined', enhancementLevel: 10 },
+                '/equipment_types/legs': { hrid: '/items/royal_nature_robe_bottoms_refined', enhancementLevel: 10 },
+                '/equipment_types/main_hand': { hrid: '/items/blooming_trident_refined', enhancementLevel: 12 },
+                '/equipment_types/neck': { hrid: '/items/philosophers_necklace', enhancementLevel: 5 },
+                '/equipment_types/off_hand': { hrid: '/items/bishops_codex_refined', enhancementLevel: 10 },
+                '/equipment_types/pouch': { hrid: '/items/guzzling_pouch', enhancementLevel: 5 },
+                '/equipment_types/ring': { hrid: '/items/philosophers_ring', enhancementLevel: 5 },
+                '/equipment_types/trinket': { hrid: '/items/basic_task_badge', enhancementLevel: 0 },
+            },
+            food: [
+                {
+                    hrid: '/items/spaceberry_cake',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 600,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/star_fruit_gummy',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_mp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 280,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/star_fruit_yogurt',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/missing_mp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 350,
+                        },
+                    ],
+                },
+            ],
+            drinks: [
+                {
+                    hrid: '/items/channeling_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/channeling_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/super_attack_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/attack_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/items/super_magic_coffee',
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/magic_coffee',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+            ],
+            abilities: [
+                {
+                    hrid: '/abilities/guardian_aura',
+                    level: 34,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: '/combat_trigger_conditions/guardian_aura',
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                            value: 0,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/quick_aid',
+                    level: 55,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_allies',
+                            conditionHrid: '/combat_trigger_conditions/lowest_hp_percentage',
+                            comparatorHrid: '/combat_trigger_comparators/less_than_equal',
+                            value: 75,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/rejuvenate',
+                    level: 55,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_allies',
+                            conditionHrid: '/combat_trigger_conditions/missing_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 600,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/toxic_pollen',
+                    level: 65,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+                            conditionHrid: '/combat_trigger_conditions/number_of_active_units',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 1,
+                        },
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/all_enemies',
+                            conditionHrid: '/combat_trigger_conditions/current_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 250,
+                        },
+                    ],
+                },
+                {
+                    hrid: '/abilities/entangle',
+                    level: 68,
+                    triggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+                            conditionHrid: '/combat_trigger_conditions/current_hp',
+                            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+                            value: 1,
+                        },
+                    ],
+                },
+            ],
+            houseRooms: {
+                '/house_rooms/armory': 1,
+                '/house_rooms/brewery': 3,
+                '/house_rooms/dairy_barn': 1,
+                '/house_rooms/dining_room': 2,
+                '/house_rooms/dojo': 3,
+                '/house_rooms/forge': 1,
+                '/house_rooms/garden': 1,
+                '/house_rooms/gym': 1,
+                '/house_rooms/kitchen': 1,
+                '/house_rooms/laboratory': 1,
+                '/house_rooms/library': 4,
+                '/house_rooms/log_shed': 1,
+                '/house_rooms/mystical_study': 5,
+                '/house_rooms/observatory': 4,
+                '/house_rooms/sewing_parlor': 1,
+                '/house_rooms/workshop': 1,
             },
         },
     },

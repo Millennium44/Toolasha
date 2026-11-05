@@ -4,9 +4,9 @@ import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeamm
 import { validateTeammateDTO, sanitizeTeammateDTO } from './party-roster.js';
 
 describe('party templates', () => {
-    test('there are 9 with unique ids', () => {
-        expect(PARTY_TEMPLATES).toHaveLength(9);
-        expect(new Set(PARTY_TEMPLATES.map((t) => t.id)).size).toBe(9);
+    test('there are 10 with unique ids', () => {
+        expect(PARTY_TEMPLATES).toHaveLength(10);
+        expect(new Set(PARTY_TEMPLATES.map((t) => t.id)).size).toBe(10);
     });
 
     test.each(PARTY_TEMPLATES.map((t) => [t.id, t]))('%s passes validateTeammateDTO and sanitizes whole', (_id, t) => {
@@ -30,6 +30,7 @@ describe('party templates', () => {
         'ranged-cursed-bow': 'ranged-cursed-bow',
         'ranged-sundering-crossbow': 'ranged-sundering-crossbow',
         'magic-nature': 'magic-nature',
+        'magic-nature-healer': 'magic-nature-healer',
         'magic-fire': 'magic-fire',
         'magic-water': 'magic-water',
         'tank-bulwark': 'tank-bulwark',
@@ -62,6 +63,9 @@ describe('party templates', () => {
         }
     });
 
+    // Kept as the player recorded it (levels, enhancement, ability levels), not standardized
+    const AS_RECORDED = new Set(['magic-nature-healer']);
+
     test('every endgame template is standardized: main stat 150, others 125, abilities 75, gear by slot', () => {
         const MAIN = {
             melee_stab: 'melee',
@@ -90,7 +94,7 @@ describe('party templates', () => {
             back: 5,
             trinket: 5,
         };
-        for (const t of PARTY_TEMPLATES) {
+        for (const t of PARTY_TEMPLATES.filter((x) => !AS_RECORDED.has(x.id))) {
             for (const k of ['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic']) {
                 expect(t.playerDto[k + 'Level'], t.id + ' ' + k).toBe(k === MAIN[t.role] ? 150 : 125);
             }
@@ -116,6 +120,34 @@ describe('party templates', () => {
             enhancementLevel: 10,
         });
         expect(JSON.stringify(t)).not.toMatch(/"name"|characterName/);
+    });
+
+    test('the Nature group holds the DPS and the healer, in that order, under the same role', () => {
+        const nature = TEMPLATE_ROLE_GROUPS.find((g) => g.id === 'nature');
+        const list = templatesForGroup(nature);
+        expect(list.map((t) => [t.id, t.label])).toEqual([
+            ['magic-nature', 'Nature DPS'],
+            ['magic-nature-healer', 'Nature healer'],
+        ]);
+        expect(list.every((t) => t.role === 'nature_mage')).toBe(true);
+        expect(templateTeammateName(list[0])).toBe('Nature DPS');
+    });
+
+    test('the Nature healer is the recorded build with quick aid listed before rejuvenate', () => {
+        const t = PARTY_TEMPLATES.find((x) => x.id === 'magic-nature-healer');
+        expect(t.playerDto.abilities.map((a) => [a.hrid, a.level])).toEqual([
+            ['/abilities/guardian_aura', 34],
+            ['/abilities/quick_aid', 55],
+            ['/abilities/rejuvenate', 55],
+            ['/abilities/toxic_pollen', 65],
+            ['/abilities/entangle', 68],
+        ]);
+        expect(t.playerDto.magicLevel).toBe(141);
+        expect(t.playerDto.equipment['/equipment_types/main_hand']).toEqual({
+            hrid: '/items/blooming_trident_refined',
+            enhancementLevel: 12,
+        });
+        expect(t.guildCombatBuffLevels).toEqual({ force: 3, tempo: 1, spirit: 1, rarity: 0, scholar: 2 });
     });
 
     test('no template carries a player name', () => {
