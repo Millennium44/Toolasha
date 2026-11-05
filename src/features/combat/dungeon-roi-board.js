@@ -168,15 +168,20 @@ export function groupRunsByDungeonTier(runs) {
  * What the session history measured for one dungeon: consumables and XP per
  * hour for the character, over every archived session in that zone.
  *
- * Sessions name the action but not the tier, so the figure is per dungeon.
+ * Sessions name the action but not the tier, so the figure is per dungeon. They
+ * do carry the whole party, so with `partySize` only sessions run in a party of
+ * that size count: a food bill per hour is divided by the row's clear pace, and
+ * a solo session's bill over a party's pace (or the reverse) is the bill of no
+ * real run.
  *
  * @param {Array<Object>} sessions - From `combat-session-history`'s `loadSessions`
  * @param {string} dungeonHrid - The dungeon action
  * @param {Function} consumablePrice - `(itemHrid) => number|null`
+ * @param {number|null} [partySize] - Count only sessions with exactly this many players; null counts all
  * @returns {{hours: number, consumableCostPerHour: number|null, xpPerHour: number, sessions: number}|null}
  *   `consumableCostPerHour` is null when anything consumed has no price
  */
-export function measuredSessionRates(sessions, dungeonHrid, consumablePrice) {
+export function measuredSessionRates(sessions, dungeonHrid, consumablePrice, partySize = null) {
     let seconds = 0;
     let cost = 0;
     let costKnown = true;
@@ -187,11 +192,14 @@ export function measuredSessionRates(sessions, dungeonHrid, consumablePrice) {
         if (!session || session.actionHrid !== dungeonHrid) continue;
         const duration = Number(session.durationSeconds);
         if (!(duration > 0)) continue;
+        if (partySize !== null && (!Array.isArray(session.players) || session.players.length !== partySize)) continue;
         const me = ownPlayer(session.players);
         if (!me) continue;
 
         seconds += duration;
         count += 1;
+        // No consumables list at all is "not recorded", not "ate nothing"
+        if (!Array.isArray(me.consumables)) costKnown = false;
         for (const consumable of me.consumables || []) {
             const consumed = Number(consumable?.consumed) || 0;
             if (consumed <= 0) continue;
@@ -413,7 +421,16 @@ export function buildDungeonRoiRows(input) {
     for (const dungeon of dungeons) {
         if (!dungeon?.hrid) continue;
         const byTier = grouped.get(dungeon.name) || new Map();
-        const measured = measuredSessionRates(sessions, dungeon.hrid, pricing.consumablePrice || (() => null));
+        const measuredByParty = new Map();
+        const measuredFor = (size) => {
+            if (!measuredByParty.has(size)) {
+                measuredByParty.set(
+                    size,
+                    measuredSessionRates(sessions, dungeon.hrid, pricing.consumablePrice || (() => null), size)
+                );
+            }
+            return measuredByParty.get(size);
+        };
 
         const tiers = [];
         for (let tier = 0; tier <= (dungeon.maxDifficulty || 0); tier++) tiers.push(tier);
@@ -454,6 +471,13 @@ export function buildDungeonRoiRows(input) {
 
             // Null means the table could not be read. An actual empty Map is a
             // known payout with no chests, and correctly spends no entry keys.
+            // Food and XP are per-hour figures of one party: sessions of this row's
+            // party size, and a sim reading only when it simulated that size (an
+            // unrecorded sim size is trusted only beside the sim's own clear time)
+            const measured = measuredFor(partySize);
+            const simParty =
+                sim && (sim.partySize ? sim.partySize === partySize : clearSource !== 'measured') ? sim : null;
+
             let rewardMap = null;
             try {
                 rewardMap = pricing.rewardsPerRun?.(dungeon.hrid, economicsTier, partySize, dropQuantity) ?? null;
@@ -475,8 +499,8 @@ export function buildDungeonRoiRows(input) {
             if (measured && Number.isFinite(measured.consumableCostPerHour)) {
                 consumableCostPerHour = measured.consumableCostPerHour;
                 consumableSource = 'measured';
-            } else if (sim && Number.isFinite(sim.consumableCostPerHour)) {
-                consumableCostPerHour = sim.consumableCostPerHour;
+            } else if (simParty && Number.isFinite(simParty.consumableCostPerHour)) {
+                consumableCostPerHour = simParty.consumableCostPerHour;
                 consumableSource = 'sim';
             }
             // Sessions were recorded here but something they consumed has no
@@ -488,8 +512,8 @@ export function buildDungeonRoiRows(input) {
             if (measured && Number.isFinite(measured.xpPerHour) && measured.xpPerHour > 0) {
                 xpPerHour = measured.xpPerHour;
                 xpSource = 'measured';
-            } else if (sim && Number.isFinite(sim.xpPerHour)) {
-                xpPerHour = sim.xpPerHour;
+            } else if (simParty && Number.isFinite(simParty.xpPerHour)) {
+                xpPerHour = simParty.xpPerHour;
                 xpSource = 'sim';
             }
 
