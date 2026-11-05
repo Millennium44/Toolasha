@@ -46,6 +46,7 @@
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { toOPanelConfig } from '../../utils/opanel-config.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
+import { MAX_SPAN } from '../../utils/overlay-flow.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** The one key the whole map lives under */
@@ -338,6 +339,15 @@ const DASHBOARD_PRESET = {
     span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
     // Nine figures make three even rows; then luck and profit, supplies, and the queue beside the log
     span3: { luck: 2, consumables: 3, noticeLog: 2 },
+    // Figures pair up, accounts and profit are blocks, supplies and the log are wide
+    sizes: {
+        accountView: 'block',
+        luck: 'block',
+        totalProfit: 'block',
+        consumables: 'wide',
+        queueTimeLeft: 'block',
+        noticeLog: 'wide',
+    },
 };
 
 /** Presets that resolve by name but are not offered in the Layouts switcher */
@@ -372,6 +382,12 @@ const UNLISTED_PRESETS = new Set(['Default']);
  * a flat map of spans in the shape every older build reads. Absent means the
  * flat `span` serves.
  *
+ * From four columns up a preset carries `sizes` rather than a span per count:
+ * each tile is a figure (the default), a block or a wide list, and
+ * {@link wideSpans} turns those classes into spans that fill every row at the
+ * columns there are. The flat `span` is what older builds read and what is saved
+ * for one or two columns. `exact` pins the spans for one particular count.
+ *
  * `activity` is what the preset answers for when auto-switching is on. A player
  * who maps one of their own layouts to the same activity takes precedence — the
  * preset is the fallback, not the rule.
@@ -398,6 +414,7 @@ export const PRESET_LAYOUTS = {
         // session beside the supplies block: four full rows, none of them a lone
         // block stretched across the width
         span3: { treasure: 2, combatRevenue: 2, consumables: 2 },
+        sizes: { treasure: 'block', combatRevenue: 'block', consumables: 'wide' },
     },
     Skilling: {
         activity: ACTIVITY.SKILLING,
@@ -419,6 +436,7 @@ export const PRESET_LAYOUTS = {
         span: { consumables: 2 },
         // Level, time and rate; profit beside the supplies block; queue beside coins
         span3: { consumables: 2, coins: 2 },
+        sizes: { totalProfit: 'block', consumables: 'wide' },
     },
     Labyrinth: {
         activity: ACTIVITY.LABYRINTH,
@@ -431,6 +449,7 @@ export const PRESET_LAYOUTS = {
         // The three figures make a row, then treasure beside the session; revenue
         // and the supplies block each take their own
         span3: { treasure: 2, combatRevenue: 3, consumables: 3 },
+        sizes: { treasure: 'block', combatRevenue: 'block', consumables: 'block' },
     },
     Market: {
         activity: ACTIVITY.MARKET,
@@ -443,6 +462,7 @@ export const PRESET_LAYOUTS = {
         span: { skillBooks: 2, watchlist: 2, equipmentWatch: 2 },
         // Worth, coins and inventory; listings beside the skill books; one list per row
         span3: { skillBooks: 2, watchlist: 3, equipmentWatch: 3 },
+        sizes: { equipmentWatch: 'wide' },
     },
     /**
      * The starting dashboard, for a fresh character and for both Reset buttons.
@@ -500,6 +520,75 @@ function registryKeys(rows) {
     return new Set(registry.map((row) => row.key));
 }
 
+/** How wide each class of tile wants to be as a share of the columns, its least, and its pull on leftovers */
+const SIZE_CLASSES = {
+    figure: { share: 0.22, min: 1, weight: 0 },
+    block: { share: 1 / 3, min: 2, weight: 1 },
+    wide: { share: 0.5, min: 2, weight: 2 },
+};
+
+/**
+ * Spans for a grid of four or more columns, resolved from tile classes.
+ *
+ * Each tile asks for its class's share of the grid (a figure about a fifth, a
+ * block a third, a wide list half). Rows are filled in order, a tile that does
+ * not fit starts the next row, and what is left of a row goes back to its
+ * widest tiles one column at a time, so no row is left with a hole. Pure, and a
+ * function of the count alone: the same preset at the same columns always gives
+ * the same spans, whatever was on screen before.
+ *
+ * @param {string[]} order - Tiles in reading order
+ * @param {Object} sizes - `{ [key]: 'figure'|'block'|'wide' }`; absent is a figure
+ * @param {number} columns - Columns in the grid
+ * @returns {Object} A flat span map holding only the tiles wider than one column
+ */
+export function wideSpans(order, sizes, columns) {
+    const cols = Math.max(1, Math.min(MAX_SPAN, Math.round(columns)));
+    const classOf = (key) => SIZE_CLASSES[sizes?.[key]] || SIZE_CLASSES.figure;
+    const wanted = (key) => Math.min(cols, Math.max(classOf(key).min, Math.round(cols * classOf(key).share)));
+
+    const rows = [[]];
+    let used = 0;
+    for (const key of order) {
+        const want = wanted(key);
+        if (used + want > cols && rows[rows.length - 1].length) {
+            rows.push([]);
+            used = 0;
+        }
+        rows[rows.length - 1].push({ key, span: want });
+        used += want;
+    }
+
+    const span = {};
+    for (const row of rows) {
+        let left = cols - row.reduce((sum, tile) => sum + tile.span, 0);
+        const widest = [...row].sort((a, b) => classOf(b.key).weight - classOf(a.key).weight);
+        for (let at = 0; left > 0; at = (at + 1) % widest.length, left--) widest[at].span++;
+        for (const tile of row) if (tile.span > 1) span[tile.key] = tile.span;
+    }
+    return span;
+}
+
+/**
+ * The flat span map a preset uses at a given number of columns.
+ *
+ * Two columns take `span`, three take `span3` when there is one, four and more
+ * take the preset's `exact` map for that count or else the resolved classes, and
+ * a preset with no classes stays flat. One column needs nothing: spans clamp.
+ *
+ * @param {string} name - Preset name
+ * @param {number} [columns] - Columns the grid has
+ * @returns {Object|null} The spans, or null when there is no such preset
+ */
+export function presetSpans(name, columns = 2) {
+    const preset = PRESET_LAYOUTS[normalizeName(name)];
+    if (!preset) return null;
+    if (columns === 3 && preset.span3) return { ...preset.span3 };
+    if (columns >= 4 && preset.exact?.[columns]) return { ...preset.exact[columns] };
+    if (columns >= 4 && preset.sizes) return wideSpans(preset.order, preset.sizes, columns);
+    return { ...preset.span };
+}
+
 /**
  * A preset as a layout file, in exactly the shape a saved one has.
  *
@@ -537,7 +626,7 @@ function registryKeys(rows) {
  * @param {string} name - Preset name
  * @param {Object} [options] - How to build it
  * @param {Array<Object>} [options.rows] - A registry snapshot, for tests
- * @param {number} [options.columns] - The columns the grid has right now; three picks the preset's `span3`
+ * @param {number} [options.columns] - The columns the grid has right now; picks `span3`, or the wide spans from four up
  * @returns {Object|null} A file for `fromOPanelConfig`, or null when there is no such preset
  */
 export function presetFile(name, { rows = null, columns = 2 } = {}) {
@@ -558,7 +647,7 @@ export function presetFile(name, { rows = null, columns = 2 } = {}) {
         // Every preset is written for the two columns the default panel gives
         columns: 2,
         order: [...preset.order],
-        span: { ...(columns === 3 && preset.span3 ? preset.span3 : preset.span) },
+        span: presetSpans(name, columns),
         visible,
         zoom: {},
         // Applied locked. A preset is somebody else's arrangement arriving

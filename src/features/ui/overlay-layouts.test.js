@@ -55,6 +55,8 @@ const {
     PRESET_SUFFIX,
     presetNames,
     presetFile,
+    presetSpans,
+    wideSpans,
     isPreset,
     offeredLayouts,
     layoutForActivity,
@@ -284,6 +286,14 @@ describe('presets', () => {
             ],
             span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
             span3: { luck: 2, consumables: 3, noticeLog: 2 },
+            sizes: {
+                accountView: 'block',
+                luck: 'block',
+                totalProfit: 'block',
+                consumables: 'wide',
+                queueTimeLeft: 'block',
+                noticeLog: 'wide',
+            },
         });
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('inventoryValue');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('skillTimeToLevel');
@@ -429,13 +439,18 @@ describe('presets', () => {
         ]);
     });
 
-    test('a preset built for two columns, or for a count it has no map for, is the flat one', () => {
+    test('a preset built for one or two columns, or with no count given, is the flat one', () => {
         for (const name of presetNames()) {
-            for (const columns of [1, 2, 4, 9]) {
+            for (const columns of [1, 2]) {
                 expect(presetFile(name, { columns }).toolasha.settings.span).toEqual(PRESET_LAYOUTS[name].span);
             }
             expect(presetFile(name).toolasha.settings.span).toEqual(PRESET_LAYOUTS[name].span);
         }
+    });
+
+    test('a preset with no size classes stays flat at any width', () => {
+        expect(presetSpans('Dungeon', 9)).toBeNull();
+        expect(wideSpans(['a', 'b'], undefined, 6)).toEqual({ a: 3, b: 3 });
     });
 
     test('a preset whose tiles do not fill the last row still has no gap inside it', () => {
@@ -444,6 +459,97 @@ describe('presets', () => {
         expect(two[two.length - 1].row).toEqual(['queueTimeLeft', 'coins']);
         const three = layRows(PRESET_LAYOUTS.Skilling.order, PRESET_LAYOUTS.Skilling.span3, 3);
         expect(three[three.length - 1]).toEqual({ row: ['queueTimeLeft', 'coins'], gap: 0 });
+    });
+
+    const WIDE_COUNTS = [4, 5, 6, 7, 8, 9, 10, 12];
+
+    test('from four columns up no preset has a hole in any row, and no span exceeds the grid', () => {
+        for (const name of presetNames()) {
+            for (const columns of WIDE_COUNTS) {
+                // The panel offers at most MAX_SPAN columns; a larger count resolves as that many
+                const grid = Math.min(columns, MAX_SPAN);
+                const span = presetFile(name, { columns }).toolasha.settings.span;
+                for (const [key, wide] of Object.entries(span)) {
+                    expect(PRESET_LAYOUTS[name].order).toContain(key);
+                    expect(Number.isInteger(wide)).toBe(true);
+                    expect(wide).toBeGreaterThanOrEqual(2);
+                    expect(wide).toBeLessThanOrEqual(grid);
+                }
+                const rows = layRows(PRESET_LAYOUTS[name].order, span, grid);
+                for (const { row, gap } of rows)
+                    expect([name, columns, row.join('|'), gap]).toEqual([name, columns, row.join('|'), 0]);
+            }
+        }
+    });
+
+    test('the wide spans are a function of the column count alone and are not shared between calls', () => {
+        const first = presetSpans('Combat', 9);
+        first.treasure = 99;
+        expect(presetSpans('Combat', 9).treasure).not.toBe(99);
+        expect(presetSpans('Combat', 9)).toEqual(presetSpans('Combat', 9));
+        expect(PRESET_LAYOUTS.Combat.sizes.treasure).toBe('block');
+        expect(presetSpans('Combat', 12)).toEqual(presetSpans('Combat', MAX_SPAN));
+    });
+
+    test('blocks and lists get more of a wide grid than figures do', () => {
+        const nine = presetSpans('Combat', 9);
+        expect(nine.consumables).toBeGreaterThanOrEqual(5);
+        expect(nine.treasure).toBeGreaterThanOrEqual(3);
+        expect(nine.dps).toBe(2);
+        const six = presetSpans('Market', 6);
+        expect(six.equipmentWatch).toBe(6);
+    });
+
+    test('every preset lands the rows written down at six and nine columns', () => {
+        const rowsOf = (name, columns) =>
+            layRows(PRESET_LAYOUTS[name].order, presetSpans(name, columns), columns).map(({ row }) => row.join('|'));
+        expect(rowsOf('Combat', 6)).toEqual([
+            'battleTimer|dps|deathsPerHour|manaPerFight|treasure',
+            'combatRevenue|luck|combatSession',
+            'consumables',
+        ]);
+        expect(rowsOf('Combat', 9)).toEqual([
+            'battleTimer|dps|deathsPerHour|manaPerFight',
+            'treasure|combatRevenue|luck',
+            'combatSession|consumables',
+        ]);
+        expect(rowsOf('Skilling', 6)).toEqual([
+            'skillLevel|timeToLevel|experiencePerHour|totalProfit',
+            'consumables|queueTimeLeft|coins',
+        ]);
+        expect(rowsOf('Skilling', 9)).toEqual([
+            'skillLevel|timeToLevel|experiencePerHour|totalProfit',
+            'consumables|queueTimeLeft|coins',
+        ]);
+        expect(rowsOf('Labyrinth', 6)).toEqual([
+            'dps|deathsPerHour|manaPerFight|treasure|combatSession',
+            'combatRevenue|consumables',
+        ]);
+        expect(rowsOf('Labyrinth', 9)).toEqual([
+            'dps|deathsPerHour|manaPerFight|treasure',
+            'combatSession|combatRevenue|consumables',
+        ]);
+        expect(rowsOf('Market', 6)).toEqual([
+            'netWorth|coins|inventoryValue|marketListings|skillBooks|watchlist',
+            'equipmentWatch',
+        ]);
+        expect(rowsOf('Market', 9)).toEqual([
+            'netWorth|coins|inventoryValue|marketListings',
+            'skillBooks|watchlist|equipmentWatch',
+        ]);
+        expect(rowsOf('Dashboard', 6)).toEqual([
+            'netWorth|coins|accountView|buildScore|combatLevel',
+            'timeToLevel|experiencePerHour|dps|deathsPerHour|luck',
+            'totalProfit|consumables',
+            'queueTimeLeft|noticeLog',
+        ]);
+        expect(rowsOf('Dashboard', 9)).toEqual([
+            'netWorth|coins|accountView|buildScore',
+            'combatLevel|timeToLevel|experiencePerHour|dps',
+            'deathsPerHour|luck|totalProfit',
+            'consumables|queueTimeLeft',
+            'noticeLog',
+        ]);
     });
 
     test('every span3 entry names a tile of the preset and asks for at most three columns', () => {
