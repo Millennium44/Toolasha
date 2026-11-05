@@ -16706,3 +16706,116 @@ describe('upgrade results as cards', () => {
         expect(container().querySelector('[data-upgrade-stopped]')).toBeTruthy();
     });
 });
+
+describe('the Results tab reads long counts short', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+        mocks.pricingMode = 'hybrid';
+        mocks.patientTick = false;
+    });
+
+    /** The title on an element in the results whose text is exactly `text` (null when none carries one). */
+    function titleOf(results, text) {
+        const hits = [...results.querySelectorAll('span, td')].filter((el) => el.textContent.trim() === text);
+        return hits.map((el) => el.getAttribute('title')).find((title) => title !== null) ?? null;
+    }
+
+    test('a large encounters, DPS and XP rate shortens and keeps the exact figure on hover', () => {
+        const results = showFight(
+            oneHourFight({
+                encounters: 3_000_000,
+                totalDamageDealt: { player1: 3600 * 1_234_567 },
+                experienceGained: { player1: { attack: 2_500_000 } },
+            })
+        );
+
+        expect(results.textContent).not.toContain('3,000,000');
+        expect(results.textContent).not.toContain('1,234,567');
+        expect(titleOf(results, '3.0M')).toBe('3,000,000');
+        expect(titleOf(results, '1.2M')).toBe('1,234,567');
+        expect(titleOf(results, '2.5M')).toBe('2,500,000');
+    });
+
+    test('a rate under 1,000 keeps its whole figure and carries no hover', () => {
+        const results = showFight(oneHourFight({ encounters: 999 }));
+
+        expect(titleOf(results, '999')).toBeNull();
+    });
+
+    test('a zero rate reads 0, not a dash', () => {
+        const results = showFight(oneHourFight({ encounters: 0 }));
+        const row = [...results.querySelectorAll('div')].find((el) => el.textContent.startsWith('Encounters/hr'));
+
+        expect(row.textContent).toContain('0');
+        expect(row.textContent).not.toContain('—');
+    });
+
+    test('a large drop count shortens in the Drops table and a fractional one stays fractional', () => {
+        mocks.drops = new Map([
+            ['/items/cheese', 2_500_000],
+            ['/items/milk', 0.4],
+        ]);
+        const results = showFight();
+        const shown = results.textContent;
+
+        expect(shown).not.toContain('2,500,000');
+        expect(titleOf(results, '2.5M')).toBe('2,500,000');
+        // 0.4 an hour is not rounded away to 0
+        expect(shown).toContain('0.40');
+    });
+
+    test('a large consumable count shortens and keeps the exact figure', () => {
+        mocks.prices['/items/cheese'] = { bid: 1, ask: 1 };
+        const results = showFight(oneHourFight({ consumablesUsed: { player1: { '/items/cheese': 1_500_000 } } }));
+
+        expect(results.textContent).not.toContain('1,500,000');
+        expect(titleOf(results, '1.5M')).toBe('1,500,000');
+    });
+});
+
+describe('the change beside a figure', () => {
+    beforeEach(() => {
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('a large change shortens, keeps its sign and keeps the exact figure on hover', () => {
+        expect(ui._formatDelta(1000, 6000)).toContain('(-5.0K)');
+        expect(ui._formatDelta(1000, 6000)).toContain('title="-5,000"');
+        expect(ui._formatDelta(2_000_000, 1_000_000)).toContain('(+1.0M)');
+        expect(ui._formatDelta(2_000_000, 1_000_000)).toContain('title="1,000,000"');
+    });
+
+    test('a change under 1,000 stays whole with no hover', () => {
+        const small = ui._formatDelta(1500, 1000);
+
+        expect(small).toContain('(+500)');
+        expect(small).not.toContain('title=');
+    });
+
+    test('a sub-unit change is not news, and an unknown previous value draws nothing', () => {
+        expect(ui._formatDelta(10.2, 10)).toBe('');
+        expect(ui._formatDelta(10, null)).toBe('');
+        expect(ui._formatDelta(10, undefined)).toBe('');
+    });
+
+    test('a decimal delta is unchanged', () => {
+        const rate = ui._formatDelta(0.05, 0.02, false, false, 3);
+
+        expect(rate).toContain('(+0.030)');
+        expect(rate).not.toContain('title=');
+    });
+});
