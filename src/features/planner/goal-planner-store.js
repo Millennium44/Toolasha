@@ -28,10 +28,11 @@ export const SNAPSHOT_KEY = 'goalPlannerSnapshot';
 export const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
 
 /**
- * Goals a player can add before {@link addGoal} refuses another. Planning a skill goal measured at about
- * 0.03 ms warm (`goal-planner.bench.test.js`), so planning a hundred is a few milliseconds, and a goal is
- * about 150 bytes, so a full list is some 15 KB. The bound only stops a *new* goal: nothing that already
- * exists is ever cut to it (see {@link mergeGoalLists}).
+ * Goals a player can add before {@link addGoal} refuses another. A goal is about 115 bytes, so a full list
+ * is some 12 KB. Pure planning is cheap (a skill goal measured about 0.03 ms warm in
+ * `goal-planner.bench.test.js`) but it is not the whole of a replan: with inventory reservations on, every
+ * goal also writes a reservation, one after another, and that is what a long list pays for. The bound only
+ * stops a *new* goal: nothing that already exists is ever cut to it (see {@link mergeGoalLists}).
  */
 export const MAX_GOALS = 100;
 
@@ -271,8 +272,8 @@ export async function tryAddGoal(raw) {
     // `claimGoals()` itself, which points the record at whoever is current
     // *now* — so a switch inside the read would have it write the departing
     // character's list, plus this goal, into the arriving character's record,
-    // where `mergeById` folds it into their stored goals and the `MAX_GOALS`
-    // cap then drops their newest ones to make room.
+    // where `mergeById` folds it into their stored goals as extra goals on
+    // a list that was not theirs.
     const owner = currentOwner();
     const goals = await loadGoals();
     if (currentOwner() !== owner) return { goals, outcome: 'switched' };

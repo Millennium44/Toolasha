@@ -1783,7 +1783,8 @@ export function reservationLines(plan) {
  * been claimed) plus a walk of each finished plan's steps, so replanning N goals
  * is O(N × rates) on top of the O(N) planning that was already happening. With
  * the rate list capped in the low hundreds and goal lists in the low tens, that
- * is microseconds against a refresh measured in seconds.
+ * is microseconds against a refresh measured in seconds. (That is the planning alone: with inventory
+ * reservations on, the UI then records one reservation per goal, serially, and a long list pays for that.)
  *
  * Which is why every goal is replanned whenever any goal changes rather than
  * patched: the plans are no longer independent, and the memoised providers on

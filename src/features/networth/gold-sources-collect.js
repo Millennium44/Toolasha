@@ -328,6 +328,8 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         },
         null
     );
+    // Counted before the live run joins the list: the archive's bound is about archived runs only
+    const archivedSessionCount = combatSessions.length;
     if (liveSession) combatSessions.push(liveSession);
 
     return {
@@ -352,6 +354,7 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         // The bound the archived runs are kept under, carried through so the
         // panel can say how far the combat fallback actually reaches back
         sessionCap: MAX_SESSIONS,
+        archivedSessionCount,
         price,
         basisPrice: createBasisPricer(price),
         holdingPrice: createHoldingPricer(price),

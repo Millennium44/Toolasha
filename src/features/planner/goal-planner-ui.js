@@ -730,8 +730,13 @@ class GoalPlannerPanel {
         if (outcome === 'full') {
             // Nothing was added, so nothing to replan: say so under the form that was pressed, and leave
             // the form open (closing it would read as the goal having been taken)
-            this.addNotice = `The goal list is full (${MAX_GOALS} goals). Remove one to add another.`;
-            this._render();
+            // The real count, not the limit: a sync can leave a list past it. And no promise that a removal
+            // lasts: the list keeps no tombstones, so with sync on a removed goal can return from another
+            // device's copy
+            this.addNotice =
+                `The goal list is full (${goals.length} goals, limit ${MAX_GOALS}). Remove one to make room. ` +
+                'With sync on, a goal you remove can come back from another device.';
+            this._renderKeepingForm();
             return;
         }
         this.addNotice = null;
@@ -1024,6 +1029,7 @@ class GoalPlannerPanel {
     _addSection() {
         const section = document.createElement('div');
         section.style.marginBottom = '10px';
+        section.dataset.goalAdd = '1';
 
         const strip = document.createElement('div');
         Object.assign(strip.style, { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' });
@@ -1055,6 +1061,20 @@ class GoalPlannerPanel {
         }
 
         return section;
+    }
+
+    /**
+     * Draw the panel again without losing what is typed in the Add form: a redraw rebuilds its inputs empty.
+     * @returns {void}
+     */
+    _renderKeepingForm() {
+        const fields = () => [
+            ...(this.bodyEl?.querySelectorAll('[data-goal-add] input, [data-goal-add] select') || []),
+        ];
+        const typed = fields().map((field) => field.value);
+        this._render();
+        const after = fields();
+        if (after.length === typed.length) after.forEach((field, index) => (field.value = typed[index]));
     }
 
     /**

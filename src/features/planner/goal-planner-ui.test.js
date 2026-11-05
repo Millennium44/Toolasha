@@ -1600,11 +1600,35 @@ describe('a full goal list', () => {
 
         await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
 
-        expect(text()).toContain(`The goal list is full (${MAX_GOALS} goals). Remove one to add another.`);
+        expect(text()).toContain(
+            `The goal list is full (${MAX_GOALS} goals, limit ${MAX_GOALS}). Remove one to make room.`
+        );
+        expect(text()).toContain('a goal you remove can come back from another device');
         expect(goalPlannerPanel.formType).toBe('gold');
         expect(goalPlannerPanel.goals).toHaveLength(MAX_GOALS);
         expect(plannerContext.builds).toBe(0);
         expect(store.data.goalPlannerGoals_char1).toHaveLength(MAX_GOALS);
+    });
+
+    test('a list a sync grew past the limit reports its real count', async () => {
+        seedGoals(MAX_GOALS + 3);
+        await openForm();
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+        expect(text()).toContain(`(${MAX_GOALS + 3} goals, limit ${MAX_GOALS})`);
+    });
+
+    test('the full notice keeps what was typed in the form', async () => {
+        seedGoals(MAX_GOALS);
+        await openForm();
+        const field = document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input');
+        field.value = '7B';
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+        expect(text()).toContain('goal list is full');
+        expect(document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input').value).toBe('7B');
     });
 
     test('the press that takes the last place adds, closes the form and shows no warning', async () => {

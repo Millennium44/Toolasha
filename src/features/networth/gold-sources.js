@@ -23,7 +23,7 @@
  *
  * - market movement — everything owned repriced, which no activity caused;
  * - activity older than a recorder's coverage window (the loot log keeps five
- *   hundred entries, the combat session history twenty runs);
+ *   hundred entries, the combat session history fifty runs);
  * - activity nothing records at all (quests, task rewards, chest opens,
  *   guild contributions, gifts);
  * - valuation drift, because every source here is priced at *today's* market,
@@ -55,7 +55,7 @@
  *   the game is open, whatever panel is showing;
  * - the **loot log**, the game's own record, but only sent while its Loot & XP
  *   Log panel is open — so often a stale early snapshot of a run, or nothing;
- * - the **archived runs**, the twenty most recent, plus the one in progress.
+ * - the **archived runs**, the fifty most recent, plus the one in progress.
  *
  * All three are readings of the same running total — the game counts a run's
  * loot from its `combatStartTime`, and the loot log counts an action's drops
@@ -76,7 +76,7 @@
  *
  * What combat COST is reconciled the same way, from two recordings rather than
  * three: the live record of every combat food and drink whose count fell while
- * the game was open (`item-flow-recorder.js`), and the same twenty archived
+ * the game was open (`item-flow-recorder.js`), and the same fifty archived
  * runs, each carrying its own estimate of what it consumed. A run counts the
  * most either saw, never their sum — see {@link combatConsumablesByDay}.
  *
@@ -140,7 +140,9 @@ export const SOURCE_META = {
         source: 'Battle feed recorded live, with the loot log and archived runs for what it missed',
         note:
             'Your own share of every combat drop, priced at today’s market. The battle feed is recorded whenever ' +
-            'the game is open; the loot log (only sent while its panel is open) and the twenty most recent ' +
+            'the game is open; the loot log (only sent while its panel is open) and the ' +
+            DEFAULT_SESSION_CAP +
+            ' most recent ' +
             'archived runs fill in what the feed did not see. Each run counts the most any one of them saw, never ' +
             'two added together, and time spent offline is left to the offline row. The live record is ' +
             'forward-only — it starts the day it was installed.',
@@ -227,7 +229,8 @@ export const SOURCE_META = {
         note:
             'Food and drinks burned in combat, priced at today’s market. Each one is counted live as its own ' +
             'count falls by one while a combat action runs and the game is open, and the archived runs (the ' +
-            'twenty most recent, each with its own estimate of what it consumed) fill in what the live record ' +
+            DEFAULT_SESSION_CAP +
+            ' most recent, each with its own estimate of what it consumed) fill in what the live record ' +
             'did not see. A run counts the most either of them saw, never two added together. What you ate ' +
             'while offline is in the offline row. The live record is forward-only — it starts the day it was ' +
             'installed.',
@@ -1574,7 +1577,7 @@ const COMBAT_CONSUMABLE_TAG = 'combat';
  * - the **live record** (`item-flow-recorder.js`): every combat food or drink
  *   whose count fell by one while the game was open, kept as what each unbroken
  *   watched stretch used up;
- * - the **archived runs**, the twenty most recent, each carrying its own
+ * - the **archived runs**, the fifty most recent, each carrying its own
  *   estimate of what every player consumed over the run.
  *
  * They are combined by {@link addSpanExcess}: a live stretch counts whole on its
@@ -1661,6 +1664,7 @@ export function combatConsumablesByDay({ liveDays = [], sessions = [], offline =
  * @param {Array<Object>} [input.chestDays] - Chest opening recorder rows `{d, openings}`
  * @param {Array<Object>} [input.detailSnapshots] - Item-level snapshots `{t, items}`
  * @param {number} [input.sessionCap] - How many runs the history keeps
+ * @param {number} [input.archivedSessionCount] - How many of `combatSessions` are archived (all, by default)
  * @param {Function} input.price - `(itemHrid, enhancementLevel) => number|null`
  * @param {Function} [input.basisPrice] - Cost-basis fallback for what was consumed
  * @param {Function} [input.holdingPrice] - What net worth carries an item at, for
@@ -1703,6 +1707,9 @@ export function attributeGoldSources(input) {
         chestDays = [],
         detailSnapshots = [],
         sessionCap = DEFAULT_SESSION_CAP,
+        // How many of `combatSessions` are archived runs: the run in progress is appended to that list but
+        // is not in the archive, so counting it would read 49 archived plus the live one as a full archive
+        archivedSessionCount = combatSessions.length,
         price = () => null,
         // Cost-basis lookups fall further than income ones: an alchemy input
         // or an opened chest with no market price can still have a material
@@ -2144,12 +2151,12 @@ export function attributeGoldSources(input) {
             uncoveredDays: uncoveredCombatDays,
             sessions: sessionsInWindow,
             emptySessions: emptyLootSessions,
-            sessionsHeld: (combatSessions || []).length,
+            sessionsHeld: archivedSessionCount,
             sessionCap,
             // The archive's run bound only limits a window the live record
             // does not reach back to the start of
             capReached:
-                (combatSessions || []).length >= sessionCap &&
+                archivedSessionCount >= sessionCap &&
                 !(Number.isFinite(combatLoot.liveSince) && combatLoot.liveSince <= from),
             liveSince: combatLoot.liveSince,
             lastLootLog: lastCombatLootLog,

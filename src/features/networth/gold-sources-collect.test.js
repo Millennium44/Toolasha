@@ -163,6 +163,18 @@ describe('the live combat session', () => {
         expect(inputs.combatSessions[0].combatStartTime).toBe('2026-08-28T01:00:00Z');
     });
 
+    test('the archive count leaves the run in progress out', async () => {
+        game.archived = [session('2026-08-27T01:00:00Z')];
+        game.live = {
+            combatStartTime: '2026-08-28T01:00:00Z',
+            players: [{ name: 'Me', isCurrentPlayer: true, loot: {} }],
+        };
+
+        const inputs = await collectGoldSourceInputs({ price: () => 0 });
+        expect(inputs.combatSessions).toHaveLength(2);
+        expect(inputs.archivedSessionCount).toBe(1);
+    });
+
     test('a live run the archive already holds is not counted twice', async () => {
         game.archived = [session('2026-08-28T01:00:00Z')];
         game.live = {

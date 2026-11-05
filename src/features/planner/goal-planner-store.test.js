@@ -266,9 +266,9 @@ describe('a full goal list', () => {
     const gold = (index) => ({ id: `g${index}`, type: 'gold', amount: 1_000 + index, createdAt: index });
     const fill = (count) => saveGoals(Array.from({ length: count }, (_, index) => gold(index)));
 
-    test('the bound is a hundred, and the planner is cheap enough for it', () => {
-        // Planning a skill goal measured at about 0.03 ms warm (goal-planner.bench.test.js), so a hundred goals
-        // is a few milliseconds; the old forty protected a panel that was never slow
+    test('the bound is a hundred', () => {
+        // Planning alone is cheap (about 0.03 ms a skill goal, goal-planner.bench.test.js), but with
+        // inventory reservations on each goal also writes one, serially; that is what a long list pays for
         expect(MAX_GOALS).toBe(100);
     });
 
