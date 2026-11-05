@@ -9,6 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Plan to goal weighs every upgrade before giving up
 
 A Lab skilling plan that falls short now reruns over all helpful upgrades instead of only the 12 best by price, so a goal is not called unreachable when a lower-ranked upgrade could reach it.
+
 ### Combat Sim results read long numbers short
 
 Encounters, DPS, XP, drop, consumable and history figures now read 1.2M instead of 1,234,567 from 1,000 up, with the exact number on hover.
