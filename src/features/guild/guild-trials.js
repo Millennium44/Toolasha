@@ -332,12 +332,16 @@ function rangedPace(range) {
  * @param {string} label - The heading
  * @param {string} title - The hover, already escaped
  * @param {boolean} collapsed - Whether the section is folded
+ * @param {boolean} [inline] - Size to its label instead of a full-width row, so it can lead a row of figures
  * @returns {string} Markup
  */
-function foldHeading(key, label, title, collapsed) {
+function foldHeading(key, label, title, collapsed, inline = false) {
+    const size = inline
+        ? 'flex:none; width:auto; min-height:24px; margin:0;'
+        : 'width:100%; min-height:32px; margin:0 0 2px;';
     return (
         `<button type="button" data-fold="${key}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${title}" ` +
-        `style="display:flex; align-items:center; gap:6px; width:100%; min-height:32px; padding:0; margin:0 0 2px; ` +
+        `style="display:flex; align-items:center; gap:6px; ${size} padding:0; ` +
         `background:none; border:0; cursor:pointer; text-align:left; color:${ACCENT}; font:inherit; font-weight:700;">` +
         `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span style="min-width:0; overflow-wrap:anywhere;">${label}</span></button>`
     );
@@ -1259,6 +1263,29 @@ function line(label, value, color = GAME_COLORS.text, title = '') {
         `<span style="color:${GAME_COLORS.textDim}; overflow-wrap:break-word; hyphens:none;">${label}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; overflow-wrap:break-word; ` +
         `line-height:1.35;">${text}</span></div>`
+    );
+}
+
+/**
+ * A label/value pair that sizes to its content, for a row of figures that wraps as whole pairs.
+ *
+ * The label never breaks (`white-space:nowrap`) and stays beside its value; a pair too wide for the row
+ * moves down whole, and only a value longer than the row itself wraps.
+ *
+ * @param {string} label - Left side
+ * @param {string} value - Right side
+ * @param {string} [color] - Value color
+ * @param {string} [title] - Tooltip
+ * @returns {string} HTML
+ */
+function pair(label, value, color = GAME_COLORS.text, title = '') {
+    const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+    return (
+        `<div data-payout-pair="1" style="display:flex; align-items:baseline; gap:6px; flex:0 1 auto; ` +
+        `max-width:100%;"${tip}>` +
+        `<span style="color:${GAME_COLORS.textDim}; white-space:nowrap; flex:none;">${label}</span>` +
+        `<span style="color:${color}; font-weight:600; min-width:0; overflow-wrap:anywhere;">` +
+        `${String(value ?? '')}</span></div>`
     );
 }
 
@@ -5568,7 +5595,7 @@ class GuildTrials {
             : tokenPayoutLine(projected.participantTokens, participantTitle, { showGold: !inProgress });
 
         const bankedRow = !anyTierKnown
-            ? line(
+            ? pair(
                   'Guild Points banked',
                   'not known yet',
                   DIM,
@@ -5577,13 +5604,13 @@ class GuildTrials {
                       'It is unknown rather than zero.'
               )
             : !anyBanked
-              ? line(
+              ? pair(
                     'Guild Points banked',
                     'nothing banked yet',
                     DIM,
                     'A trial pays for tiers it has finished. This appears after the first tier completes.'
                 )
-              : line('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
+              : pair('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
         // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
         // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
@@ -5596,27 +5623,29 @@ class GuildTrials {
             collapsed
                 ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
                       `${paceFigure((end) => end.participantTokens)} tokens`
-                : 'Trial payout',
+                : 'Payout',
             'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
                 (collapsed
                     ? 'The summary is the pace and the tokens if you took part.'
                     : 'Fold it to a one-line summary; the buttons stay.'),
-            collapsed
+            collapsed,
+            !collapsed
         );
 
-        const rows = [
+        const figures = [
             bankedRow,
             spread
-                ? line(
+                ? pair(
                       'Guild Points on pace',
                       `~${exact(lowEnd.guildPoints)}–${exact(highEnd.guildPoints)}`,
                       ACCENT,
                       `What the pace would add to what is banked, at each end of its range of tiers.${rangeNote}`
                   )
-                : line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
-            line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
-            line('Tokens, if you took part', participant.value, GOOD, participant.title),
+                : pair('Guild Points on pace', exact(projected.guildPoints), ACCENT),
+            pair('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
+            pair('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
+        const rows = [];
 
         // The partial-tier rule (an unfinished tier paying 0.5% per 1% of
         // progress) is folded into the pace and banked figures silently now — the
@@ -5723,7 +5752,13 @@ class GuildTrials {
                 }
                 return root.firstElementChild === block;
             },
-            html: payoutHeading + (collapsed ? '' : rows.join('')) + this._controlsHTML(),
+            // Open, the toggle leads the row of figures; the notes take their own full-width line below
+            html:
+                (collapsed
+                    ? payoutHeading
+                    : `<div data-payout-figures="1" style="display:flex; flex-wrap:wrap; align-items:baseline; ` +
+                      `column-gap:18px; row-gap:2px; width:100%;">${payoutHeading}${figures.join('')}</div>` +
+                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) + this._controlsHTML(),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row

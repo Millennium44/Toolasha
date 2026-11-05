@@ -2260,7 +2260,7 @@ describe('the panel, end to end', () => {
         fire(root);
 
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(2);
-        expect(text()).toContain('Trial payout');
+        expect(text()).toContain('Guild Points banked');
         expect(text()).toContain('measuring');
     });
 
@@ -2275,7 +2275,7 @@ describe('the panel, end to end', () => {
         fire();
 
         expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
-        expect(text()).toContain('Trial payout');
+        expect(text()).toContain('Guild Points banked');
     });
 
     test('a card with no progress bar is identity, not a reading', () => {
@@ -2289,7 +2289,7 @@ describe('the panel, end to end', () => {
         const record = guildTrials.record.tiles['combat::trial chameleon'];
         expect(record.tier).toBe(5);
         expect(record.samples).toHaveLength(0);
-        expect(text()).toContain('Trial payout');
+        expect(text()).toContain('Guild Points banked');
     });
 
     test('the payout block sits above the cards when there is no status row to hang it on', () => {
@@ -2298,7 +2298,7 @@ describe('the panel, end to end', () => {
         fire();
 
         const payout = [...document.querySelectorAll('.mwi-trial-info')].find((el) =>
-            el.textContent.includes('Trial payout')
+            el.textContent.includes('Guild Points banked')
         );
         const card = document.querySelector('[class*="GuildPanel_tile__"]');
         expect(payout.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -2655,7 +2655,7 @@ describe('the panel, end to end', () => {
         const pending = trialsFeature.initialize();
         // Before the record load has settled
         expect(document.querySelectorAll('.mwi-trial-info').length).toBeGreaterThan(0);
-        expect(text()).toContain('Trial payout');
+        expect(text()).toContain('Guild Points banked');
         // The first pass saves nothing: the stored record has not been read yet
         expect(Object.keys(game.store)).toEqual([]);
 
@@ -3235,7 +3235,7 @@ describe('the panel, end to end', () => {
         fire();
 
         expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
-        expect(text()).not.toContain('Trial payout');
+        expect(text()).not.toContain('Guild Points banked');
     });
 
     test('blocks drawn on the trials tab do not survive the switch away from it', () => {
@@ -4651,7 +4651,7 @@ describe('the panel, end to end', () => {
 
         // The payout block is one of these too, so take the card's own
         const block = [...document.querySelectorAll('.mwi-trial-info')].find(
-            (el) => !el.textContent.includes('Trial payout')
+            (el) => !el.textContent.includes('Guild Points banked')
         );
         expect(block).toBeTruthy();
         const body = block.textContent;
@@ -5077,7 +5077,7 @@ describe('the panel, end to end', () => {
             expect(text()).toContain('Banked');
             expect(text()).toContain('ago');
             // The payout strip survives too, with the stated points intact
-            expect(text()).toContain('Trial payout');
+            expect(text()).toContain('Guild Points banked');
             expect(text()).toContain('Guild Points banked1,200');
             // And nothing pretends to be live
             expect(text()).not.toContain('On pace for');
@@ -5107,7 +5107,7 @@ describe('the panel, end to end', () => {
             fire(buildTab([{ name: 'Milking', level: 110, bar: '1,000 / 4,000' }]));
 
             expect(text()).not.toContain('Last trial');
-            expect(text()).toContain('Trial payout');
+            expect(text()).toContain('Guild Points banked');
         });
 
         test('an empty record still draws nothing on an empty tab', () => {
@@ -5809,7 +5809,7 @@ describe('the two trial tabs, as the game draws them', () => {
         // sign-up traffic has been seen at all — the old count would be zero
         expect(participantCounts()).toEqual({});
         expect(guildTrials.record.tiles['skilling::alchemy'].signups.signed).toBe(2);
-        expect(document.body.textContent).toContain('Trial payout');
+        expect(document.body.textContent).toContain('Guild Points banked');
     });
 
     test('the skill’s base work is learned the moment tier, target and party line up', async () => {
@@ -8707,6 +8707,23 @@ describe('a fight you are in: the pace is a range until the damage rate has show
             expect(block().textContent).toContain('Guild Points on pace');
             expect(actions()).toContain('record');
             expect(block().textContent).not.toContain('could not be drawn');
+        });
+
+        test('open: the toggle leads the same row as the figures, and no label can break', () => {
+            draw([trial()]);
+            const row = block().querySelector('[data-payout-figures]');
+            expect(row.contains(heading())).toBe(true);
+            const pairs = [...row.querySelectorAll('[data-payout-pair]')];
+            expect(pairs).toHaveLength(4);
+            expect(heading().nextElementSibling).toBe(pairs[0]);
+            expect(heading().textContent).toBe('▾Payout');
+            expect(row.style.flexWrap).toBe('wrap');
+            for (const one of pairs) {
+                // the label and value are one flex item, so the pair wraps whole
+                expect(one.children[0].style.whiteSpace).toBe('nowrap');
+                expect(one.children).toHaveLength(2);
+            }
+            expect(row.contains(block().querySelector('[data-action]'))).toBe(false);
         });
 
         test('folded: the figures go, the buttons stay, and the heading carries the pace', async () => {
