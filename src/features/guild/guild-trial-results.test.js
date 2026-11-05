@@ -272,7 +272,7 @@ describe('trialResultsHistory', () => {
         const results = resultsFromCycle(cycle(weeksAgo(1), { a: badger(6, 2240) }));
         const { rows } = trialResultsHistory(results, { now });
         expect(rows).toHaveLength(1);
-        expect(trialHistoryCells(rows[0])).toBe('T6 · best T6 (last week)');
+        expect(trialHistoryCells(rows[0])).toBe('T6 50% · best T6 50% (last week)');
     });
 
     test('a trial that changed tier across weeks, a week it is absent from, newest first, best and when', () => {
@@ -287,10 +287,10 @@ describe('trialResultsHistory', () => {
         // Combat first
         expect(history_.rows.map((row) => row.name)).toEqual(['Trial Badger', 'Alchemy']);
         // Absent two weeks ago: a dash, never a zero
-        expect(trialHistoryCells(badgerRow)).toBe('T7 · — · T9 · best T9 (3 weeks ago)');
+        expect(trialHistoryCells(badgerRow)).toBe('T7 50% · — · T9 50% · best T9 50% (3 weeks ago)');
         expect(trialHistoryCells(alchemyRow)).toBe('T5 · T6 · T4 · best T6 (2 weeks ago)');
         expect(trialHistoryDetail(badgerRow)).toContain('2 weeks ago: —');
-        expect(trialHistoryDetail(badgerRow)).toContain('Last week: T7 · 3,000 pts');
+        expect(trialHistoryDetail(badgerRow)).toContain('Last week: T7 50% · 3,000 pts');
     });
 
     test('a server-only week prices its points as derived', () => {
@@ -325,13 +325,15 @@ describe('trialResultsHistory', () => {
         // The plain end time leads on the test server, and a finished cycle is never "This week"
         expect(cycles[0].label).toMatch(/^[A-Z][a-z]{2} \d{1,2}:\d{2} [AP]M$/);
         expect(cycles[0].label).not.toMatch(/this week/i);
-        expect(trialHistoryCells(rows[0])).toMatch(/^T4 · T2 · best T4/);
+        expect(trialHistoryCells(rows[0])).toMatch(/^T4 50% · T2 50% · best T4 50%/);
     });
 
     test('more cycles than fit inline say how many more there are', () => {
         const history = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => cycle(weeksAgo(n), { a: badger(n, n * 100) }));
         const [row] = trialResultsHistory(resultsFromHistory(history), { now }).rows;
-        expect(trialHistoryCells(row)).toBe('T1 · T2 · T3 · T4 · T5 · T6 · +2 earlier · best T8 (8 weeks ago)');
+        expect(trialHistoryCells(row)).toBe(
+            'T1 50% · T2 50% · T3 50% · T4 50% · T5 50% · T6 50% · +2 earlier · best T8 50% (8 weeks ago)'
+        );
     });
 
     test('a card’s name with no past results has no row', () => {

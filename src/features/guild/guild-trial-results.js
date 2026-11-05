@@ -232,6 +232,27 @@ function cycleWeek(cycle) {
 }
 
 /**
+ * How far into the next tier a tile's last bar reading says the trial got, as a whole percent.
+ *
+ * The tile's samples already carry the bar (`{current, max}` per reading, the boss reading first for
+ * combat), so this is read off what is kept rather than recorded anew. A skilling bar counts up and a
+ * combat bar counts down (the boss's health), as the live card reads them. Nothing usable gives null.
+ *
+ * @param {Object} tile - An archived tile
+ * @returns {number|null} 0-99, or null when the tile has no bar reading
+ */
+export function tileProgressPercent(tile) {
+    const samples = Array.isArray(tile?.samples) ? tile.samples : [];
+    for (let at = samples.length - 1; at >= 0; at -= 1) {
+        const reading = samples[at]?.readings?.[0];
+        if (!reading || !(reading.max > 0) || !Number.isFinite(reading.current)) continue;
+        const done = tile.kind === 'combat' ? reading.max - reading.current : reading.current;
+        return Math.min(99, Math.max(0, Math.floor((done / reading.max) * 100)));
+    }
+    return null;
+}
+
+/**
  * The results one archived cycle states.
  * @param {Object} cycle - An archived cycle from `record.history`
  * @returns {Array<Object>} One entry per trial that stated a result; none for a foreign cycle
@@ -256,6 +277,7 @@ export function resultsFromCycle(cycle) {
         // nothing banked, not finished and no payload statement states nothing
         // (the untouched zero Past weeks prints as "—"). A finished T0 is a result
         if (cardTier === 0 && !(tile.points > 0) && !tile.completed && serverTier === null) continue;
+        const progress = tileProgressPercent(tile);
         results.push({
             weekStart,
             cycleFrom,
@@ -269,6 +291,7 @@ export function resultsFromCycle(cycle) {
             serverTier,
             serverTierAt: serverTier !== null && Number.isFinite(tile.serverTierAt) ? tile.serverTierAt : null,
             // Additive: an entry from a build before these existed has none of them, which reads as unknown
+            ...(progress === null ? {} : { progress }),
             ...clearsField(encodeClears(tile.tierSeenAt)),
             ...mergeTrialFacts(tile, null),
             // The guild's own figure, an older build's record has none; read as absent
@@ -334,6 +357,12 @@ function mergeResult(held, other) {
     const stamps = [held.archivedAt, other.archivedAt].filter(Number.isFinite);
     // The card's copy is kept whole, but the other copy can carry what it lacks: stamps, the end, the sign-ups
     const rest = { ...card };
+    // The percent belongs to the card's tier: from either copy at that tier, the further one
+    const progresses = [held, other]
+        .filter((result) => result.cardTier === card.cardTier && Number.isFinite(result.progress))
+        .map((result) => result.progress);
+    if (progresses.length) rest.progress = Math.max(...progresses);
+    else delete rest.progress;
     for (const field of ['endedAt', 'endReason', 'signupLevels', 'signupLevelsAt', 'clears']) delete rest[field];
     // The payload's figure only stands while the card has not outrun it, the rule `payloadPoints` applies
     const outrun = server && Number.isFinite(card.cardTier) && card.cardTier > server.serverTier;
@@ -783,10 +812,14 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                     if (didNotRun(cycle.key, entry.kind, entry.trial)) empty.notRun = true;
                     return empty;
                 }
+                const tier = resultTier(result);
+                // The percent is of the card's own tier; a tier only the payload stated has none
+                const progress = Number.isFinite(result.progress) && result.cardTier === tier ? result.progress : null;
                 return {
                     key: cycle.key,
                     label: cycle.label,
-                    tier: resultTier(result),
+                    tier,
+                    progress,
                     points: resultPoints(result, buildersHallBonus),
                     completed: Boolean(result.completed),
                 };
@@ -794,7 +827,14 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
             // The best ever, and the most recent cycle that reached it
             let best = null;
             for (const week of weeks) {
-                if (Number.isFinite(week.tier) && (best === null || week.tier > best.tier)) best = week;
+                // The highest tier, and at a tie the further one; a tie of those keeps the newest
+                const further = (week.progress ?? -1) > (best?.progress ?? -1);
+                if (
+                    Number.isFinite(week.tier) &&
+                    (best === null || week.tier > best.tier || (week.tier === best.tier && further))
+                ) {
+                    best = week;
+                }
             }
             return {
                 id: entry.id,
@@ -802,7 +842,7 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                 kind: entry.kind,
                 name: entry.name,
                 weeks,
-                best: best ? { tier: best.tier, label: best.label } : null,
+                best: best ? { tier: best.tier, progress: best.progress ?? null, label: best.label } : null,
             };
         })
         .sort((a, b) =>
@@ -812,18 +852,28 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
     return { cycles, rows };
 }
 
-/** The cell for a cycle the game's own list says a trial did not run in */
-export const NOT_RUN_CELL = 'n/r';
+/** The cell for a cycle the game's own list says a trial did not run in: empty */
+export const NOT_RUN_CELL = '';
 
 /**
- * One week's tier as a cell: `T7`, "n/r" when the game's list for that cycle did
- * not include the trial, or "—" when there is no result for it (it ran, or this
- * client has no list for the cycle).
+ * A tier with the percent reached in the next one, e.g. `T21 63%`; the tier alone where no percent was kept.
+ * @param {number} tier - Tiers cleared
+ * @param {number|null} [progress] - Whole percent into the next tier
+ * @returns {string} The text
+ */
+function tierWithProgress(tier, progress) {
+    return Number.isFinite(progress) ? `T${tier} ${progress}%` : `T${tier}`;
+}
+
+/**
+ * One week's tier as a cell: `T21 63%` (the tier and the progress reached in the next one; the tier
+ * alone for a cycle recorded before the percent was), empty when the game's list for that cycle did not
+ * include the trial, or "—" when it is not tracked (it ran, or this client has no list for the cycle).
  * @param {Object} week - A row's week
  * @returns {string} The cell
  */
 export function trialHistoryCell(week) {
-    if (Number.isFinite(week?.tier)) return `T${week.tier}`;
+    if (Number.isFinite(week?.tier)) return tierWithProgress(week.tier, week.progress);
     return week?.notRun ? NOT_RUN_CELL : '—';
 }
 
@@ -837,7 +887,8 @@ export const INLINE_CYCLES = 6;
  * @returns {string} e.g. `T20 · n/r · —`, with `+3 earlier` after them when some are left out
  */
 export function trialHistoryTiers(row, inline = INLINE_CYCLES) {
-    const shown = (row?.weeks || []).slice(0, inline).map(trialHistoryCell);
+    // Written text keeps "n/r" for a cycle the table leaves blank, so the line still reads
+    const shown = (row?.weeks || []).slice(0, inline).map((week) => trialHistoryCell(week) || 'n/r');
     const hidden = Math.max(0, (row?.weeks || []).length - inline);
     return [...shown, ...(hidden ? [`+${hidden} earlier`] : [])].join(' · ');
 }
@@ -848,7 +899,7 @@ export function trialHistoryTiers(row, inline = INLINE_CYCLES) {
  * @returns {string} `T20`, or "—" when no cycle has a result
  */
 export function trialHistoryBest(row) {
-    return row?.best ? `T${row.best.tier}` : '—';
+    return row?.best ? tierWithProgress(row.best.tier, row.best.progress) : '—';
 }
 
 /**
@@ -869,7 +920,9 @@ function inSentence(label) {
  * @returns {string} e.g. `T7 · T9 · — · T8 · best T9 (2 weeks ago)`
  */
 export function trialHistoryCells(row, inline = INLINE_CYCLES) {
-    const best = row?.best ? `best T${row.best.tier} (${inSentence(row.best.label)})` : 'best —';
+    const best = row?.best
+        ? `best ${tierWithProgress(row.best.tier, row.best.progress)} (${inSentence(row.best.label)})`
+        : 'best —';
     return [trialHistoryTiers(row, inline), best].filter(Boolean).join(' · ');
 }
 
@@ -885,14 +938,17 @@ export function trialHistoryDetail(row) {
         const points = week.points
             ? `${week.points.derived ? '~' : ''}${formatWithSeparator(Math.round(week.points.points))} pts`
             : '— pts';
-        return `${week.label}: T${week.tier} · ${points}`;
+        return `${week.label}: ${tierWithProgress(week.tier, week.progress)} · ${points}`;
     });
     return [
-        `${row?.name ?? 'Trial'} — tier reached each finished cycle, newest first.`,
-        '"—" is a cycle this client has no result for (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
-        '"n/r" is a cycle the game’s own list says the trial did not run in.',
+        `${row?.name ?? 'Trial'} — tier and progress reached each finished cycle, newest first.`,
+        '"T21 63%" is tier 21 cleared and 63% of the way through the next; a cycle from before progress was kept shows the tier alone.',
+        '"—" is a cycle this client has not tracked (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
+        'A blank cell is a cycle the game’s own list says the trial did not run in.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',
-        ...(row?.best ? [`Best: T${row.best.tier}, ${inSentence(row.best.label)}.`] : []),
+        ...(row?.best
+            ? [`Best: ${tierWithProgress(row.best.tier, row.best.progress)}, ${inSentence(row.best.label)}.`]
+            : []),
         '',
         ...lines,
     ].join('\n');

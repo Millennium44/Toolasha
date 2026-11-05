@@ -3488,12 +3488,50 @@ describe('the panel, end to end', () => {
             return row ? [...row.children].map((cell) => cell.textContent) : null;
         };
 
-        test('a one-line key under the table explains T, n/r and the dash', () => {
+        test('the cell and the Best column carry the percent reached; a cycle kept without one shows the tier', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            const bar = (current, max) => [{ t: 5, readings: [{ current, max }] }];
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [
+                    // A skilling bar counts up: 31,360 of 65,280 is 48%
+                    archivedWeek({
+                        weekStart: weekAgo(1),
+                        tiles: { 'skilling::alchemy': { ...alchemy(21, 1200), samples: bar(31_360, 65_280) } },
+                    }),
+                    // An older archive has no bar reading: the tier alone
+                    archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(21, 1200) } }),
+                    // A combat bar counts down: 250 left of 1,000 is 75% done
+                    archivedWeek({
+                        weekStart: weekAgo(3),
+                        tiles: {
+                            'combat::trial chameleon': {
+                                name: 'Trial Chameleon',
+                                kind: 'combat',
+                                tier: 5,
+                                points: 960,
+                                pointsByTier: { 5: 960 },
+                                completed: false,
+                                samples: bar(250, 1000),
+                                tiers: [],
+                            },
+                        },
+                    }),
+                ],
+            };
+            fire(root);
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T21 48%', 'T21', '—', 'T21 48%']);
+            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', '—', '—', 'T5 75%', 'T5 75%']);
+        });
+
+        test('a one-line key under the table explains the percent, the dash and the blank', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = { ...guildTrials.record, history: [archivedWeek({ weekStart: weekAgo(1) })] };
             fire(root);
             const key = document.querySelector('[data-mwi-block="trial-history"] [data-history-key]');
-            expect(key.textContent).toContain('T = tier reached · n/r = didn’t run · — = no result seen');
+            expect(key.textContent).toContain(
+                'T21 63% = tier and progress reached · — = not tracked · blank = didn’t run'
+            );
         });
 
         /** A summary row of the Trial history table, by its label */
@@ -3619,7 +3657,7 @@ describe('the panel, end to end', () => {
             expect(text()).not.toContain('could not be drawn');
         });
 
-        test('a trial the game’s list left off a cycle reads n/r; one with no list to go on keeps its dash', () => {
+        test('a trial the game’s list left off a cycle is blank; one with no list to go on keeps its dash', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             const at = weekAgo(1) + 2 * 24 * 60 * 60 * 1000;
             guildTrials.record = {
@@ -3641,8 +3679,8 @@ describe('the panel, end to end', () => {
             fire(root);
 
             expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T7', '—', 'T9', 'T9']);
-            expect(historyCells('Milking')).toEqual(['Milking', 'n/r', 'T6', '—', 'T6']);
-            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', 'n/r', 'T5', '—', 'T5']);
+            expect(historyCells('Milking')).toEqual(['Milking', '', 'T6', '—', 'T6']);
+            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', '', 'T5', '—', 'T5']);
             const block = document.querySelector('[data-mwi-block="trial-history"]');
             const milkingRow = [...block.children].find((node) => node.children[0]?.textContent === 'Milking');
             expect(milkingRow.children[1].getAttribute('title')).toBe('The game did not run this trial that cycle');
