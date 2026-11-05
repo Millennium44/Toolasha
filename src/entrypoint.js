@@ -3063,6 +3063,10 @@ if (combatSimulatorSite === 'metz') {
     // Set up scroll listener to dismiss stuck tooltips
     setupScrollTooltipDismissal();
 
+    // Hide Toolasha's panels while the game shows its Disconnected screen. Page-level, not a
+    // registry feature: a page that loads straight into Disconnected needs it before any feature runs.
+    UI.disconnectPanelGuard?.initialize();
+
     // Initialize network alert (must be early, before market features)
     Market.networkAlert.initialize();
 
