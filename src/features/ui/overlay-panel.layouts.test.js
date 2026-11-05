@@ -425,6 +425,31 @@ describe('saving and switching named layouts', () => {
             }
         );
 
+        test('a resize chain writes nothing to storage, and the re-fitted preset still reads unedited', async () => {
+            measureAs(660);
+            await overlayPanel.applyNamedLayout('Dense');
+            const saves = vi.spyOn(overlayPanel, '_save');
+            const stored = JSON.stringify(overlayPanel.settings.span);
+
+            for (const [width, columns] of [
+                [1350, 5],
+                [2050, 9],
+                [1000, 4],
+            ]) {
+                await resizeTo(width);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', columns));
+            }
+
+            expect(saves).not.toHaveBeenCalled();
+            expect(stored).toBe(JSON.stringify(presetSpans('Dense', 3)));
+            const line = document.createElement('div');
+            document.body.appendChild(line);
+            line.textContent = 'Showing: Dense';
+            await overlayPanel._markAppliedLayoutDrift(line);
+            expect(line.textContent).toBe('Showing: Dense');
+            saves.mockRestore();
+        });
+
         test('a window resize that applies the new count first still re-fits the preset', async () => {
             measureAs(660);
             await overlayPanel.applyNamedLayout('Dense');

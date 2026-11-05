@@ -1008,8 +1008,11 @@ class OverlayPanel {
             if (!wanted?.settings?.span) return;
             if (JSON.stringify(wanted.settings.span) === JSON.stringify(this.settings.span)) return;
 
+            // In memory and on screen only. The overlay settings are synced, and devices with
+            // different widths (a phone and a desktop) would each rewrite the spans on every open and
+            // push them; what is stored stays what the player applied, and a reload re-fits from it.
+            // A later save for another reason writes these spans, and that edit is a real one.
             this.settings.span = { ...wanted.settings.span };
-            this._save();
             this._renderBody('a preset re-fitted to the new column count');
             this._placePicker();
         } catch (error) {
