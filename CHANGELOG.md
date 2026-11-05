@@ -33,6 +33,9 @@ Reroll spending now covers your last 2,000 retired tasks instead of 500, so olde
 ### Goal planner keeps more goals and says when it's full
 
 The goal limit is up from 40 to 100, and a full list now says so under the form instead of doing nothing. Pulling goals from another device no longer cuts the list back to the limit, which could lose the newest goals.
+### Bestiary plan times read in days
+
+A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in the plan and in copied text.
 
 ### Combat Sim tunes triggers in its own section
 

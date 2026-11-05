@@ -10366,7 +10366,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
 
         expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 24.5h');
         click('#mwi-csim-bestiary-plan-btn');
-        expect(planRows()[0][2]).toBe('24:31');
+        expect(planRows()[0][2]).toBe('1d 0:31');
         const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
         expect(fightsCell.getAttribute('title')).toContain('sim clear time');
 
@@ -10408,7 +10408,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
 
         expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 24.5h');
         click('#mwi-csim-bestiary-plan-btn');
-        expect(planRows()[0][2]).toBe('24:31');
+        expect(planRows()[0][2]).toBe('1d 0:31');
         const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
         expect(fightsCell.getAttribute('title')).toContain('sim clear time');
     });
