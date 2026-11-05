@@ -1013,6 +1013,29 @@ describe('mergeRuns', () => {
         expect(merged[0].tier).toBe(2);
     });
 
+    test('a tier only the other copy holds is taken, and nothing the kept copy holds is replaced', () => {
+        const base = { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 };
+        const memory = [{ ...base, tier: null, keyCountsMap: { A: 1 } }];
+        const stored = [{ ...base, tier: 2, dungeonHrid: '/actions/combat/den', waveTimes: [1, 2], avgWaveTime: 1.5 }];
+
+        const [run] = mergeRuns(memory, stored);
+
+        expect(run).toMatchObject({ tier: 2, dungeonHrid: '/actions/combat/den', waveTimes: [1, 2], avgWaveTime: 1.5 });
+        expect(run.keyCountsMap).toEqual({ A: 1 });
+        // Tier 0 is a tier: a stored T2 never overwrites it
+        expect(mergeRuns([{ ...base, tier: 0 }], [{ ...base, tier: 2 }])[0].tier).toBe(0);
+        // Neither copy knowing leaves it unknown, on the same object
+        const unknown = { ...base, tier: null };
+        expect(mergeRuns([unknown], [{ ...base, tier: null }])[0]).toBe(unknown);
+    });
+
+    test('a deleted run stays out, and a run in memory is never lost to a tombstone in the fold', () => {
+        const base = { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 };
+        const id = 'A,B|2026-01-01T00:00:00Z|500';
+        expect(mergeRuns([], [base], new Set([id]))).toEqual([]);
+        expect(mergeRuns([base], [{ ...base, tier: 1 }], new Set([id]))).toHaveLength(1);
+    });
+
     test('runs without a usable timestamp keep the order they came in', () => {
         const merged = mergeRuns([{ teamKey: 'A' }, { teamKey: 'B' }], [{ teamKey: 'C' }]);
         expect(merged.map((r) => r.teamKey)).toEqual(['A', 'B', 'C']);
