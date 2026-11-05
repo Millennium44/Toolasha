@@ -737,6 +737,10 @@ export const PLAN_IMPROVE_SIM_BUDGET = 120;
  * set that still meets the goal. The result is the best plan found, not a proof
  * of the cheapest one.
  *
+ * The pool is capped for speed. A plan that falls short while the cap left priced candidates out runs
+ * once more over all of them, reusing the baseline and ranking sims, so "not reachable" always means
+ * every helpful candidate was weighed. A cheaper plan found within the cap is never retried.
+ *
  * A candidate is only in the pool if it moved the clear rate on its own, so an
  * upgrade that helps only alongside another is never found; and slot closure
  * means a slot is upgraded once, not walked up level after level.
@@ -757,6 +761,27 @@ export const PLAN_IMPROVE_SIM_BUDGET = 120;
  *   improved, improveSims }`
  */
 export async function planSkillingGoal(params) {
+    const shared = { sims: 0 };
+    const first = await planPass(params, shared, params.candidateCap ?? PLAN_CANDIDATE_CAP, null, false);
+    // Only a plan that came up short retries, and only when the cap left priced rows out: a cap that
+    // hid the one candidate that reaches the goal would otherwise report "not reachable" wrongly
+    if (first.result.aborted || first.result.reached || !first.trimmed) return first.result;
+    const second = await planPass(params, shared, Infinity, first.reuse, true);
+    return second.result;
+}
+
+/**
+ * One planning run over at most `cap` priced candidates.
+ *
+ * @param {Object} params - The `planSkillingGoal` params
+ * @param {{sims: number}} shared - Simulation count, carried across a retry so the total adds up
+ * @param {number} cap - Priced rows to weigh
+ * @param {{baseline: Object, eligible: Array<Object>, goalDelta: Map}|null} reuse - A prior run's baseline
+ *   and goal-level ranking, so a retry does not pay for them again
+ * @param {boolean} retry - Whether this is the full-pool rerun (labels progress)
+ * @returns {Promise<{result: Object, trimmed: boolean, reuse: Object|null}>}
+ */
+async function planPass(params, shared, cap, reuse, retry) {
     const {
         baseSetup,
         rows,
@@ -764,21 +789,20 @@ export async function planSkillingGoal(params) {
         goalRoomLevel,
         goalRate,
         targetSkill = null,
-        candidateCap = PLAN_CANDIDATE_CAP,
         abortSignal = null,
         onProgress = null,
         measureMax = null,
         yieldFn = defaultYield,
     } = params;
 
-    let sims = 0;
     const run = (setup) => {
-        sims++;
+        shared.sims++;
         return evaluate(setup, goalRoomLevel);
     };
 
     let setup = baseSetup;
-    let current = run(setup);
+    const baseline = reuse ? reuse.baseline : run(setup);
+    let current = baseline;
     const baselineRate = current.clearRate;
     const applied = [];
     const steps = [];
@@ -787,10 +811,14 @@ export async function planSkillingGoal(params) {
     // Rank on the gain at the goal level. One simulation per eligible row, once;
     // skipped when there is nothing to buy.
     let pool = [];
+    let trimmed = false;
+    let ranking = reuse;
     if (current.clearRate < goalRate - RATE_EPSILON) {
-        const eligible = (Array.isArray(rows) ? rows : []).filter((r) => r?.candidate && r.metricType !== 'xpPerRoom');
-        const goalDelta = new Map();
-        for (let i = 0; i < eligible.length; i++) {
+        const eligible = reuse
+            ? reuse.eligible
+            : (Array.isArray(rows) ? rows : []).filter((r) => r?.candidate && r.metricType !== 'xpPerRoom');
+        const goalDelta = reuse ? reuse.goalDelta : new Map();
+        for (let i = 0; !reuse && i < eligible.length; i++) {
             if (abortSignal?.()) {
                 aborted = true;
                 break;
@@ -804,7 +832,12 @@ export async function planSkillingGoal(params) {
             const alone = run(applySkillingCandidate(baseSetup, eligible[i].candidate, targetSkill));
             goalDelta.set(eligible[i], alone.clearRate - baselineRate);
         }
-        if (!aborted) pool = selectPlanPool(eligible, candidateCap, (r) => goalDelta.get(r) || 0);
+        if (!aborted) {
+            const deltaOf = (r) => goalDelta.get(r) || 0;
+            pool = selectPlanPool(eligible, cap, deltaOf);
+            trimmed = Number.isFinite(cap) && selectPlanPool(eligible, Infinity, deltaOf).length > pool.length;
+            ranking = { baseline, eligible, goalDelta };
+        }
     }
     let remaining = [...pool];
 
@@ -826,7 +859,7 @@ export async function planSkillingGoal(params) {
             onProgress?.({
                 current: i,
                 total: remaining.length,
-                description: `Step ${steps.length + 1}: ${row.candidate?.description || 'upgrade'}`,
+                description: `Step ${steps.length + 1}: ${retry ? 'every candidate, ' : ''}${row.candidate?.description || 'upgrade'}`,
             });
             const trialSetup = applySkillingCandidate(setup, row.candidate, targetSkill);
             const result = run(trialSetup);
@@ -866,7 +899,7 @@ export async function planSkillingGoal(params) {
         if (aborted) break;
     }
 
-    const greedySims = sims;
+    const greedySims = shared.sims;
     let chosen = applied;
     let improved = false;
     if (!aborted && applied.length && current.clearRate >= goalRate - RATE_EPSILON) {
@@ -880,7 +913,7 @@ export async function planSkillingGoal(params) {
                 );
                 return run(setupOf).clearRate >= goalRate - RATE_EPSILON;
             },
-            budget: () => PLAN_IMPROVE_SIM_BUDGET - (sims - greedySims),
+            budget: () => PLAN_IMPROVE_SIM_BUDGET - (shared.sims - greedySims),
             abortSignal,
             yieldFn,
         });
@@ -923,16 +956,20 @@ export async function planSkillingGoal(params) {
     }
 
     return {
-        steps,
-        reached: current.clearRate >= goalRate - RATE_EPSILON,
-        aborted,
-        baselineRate,
-        finalRate: current.clearRate,
-        totals: sumCosts(chosen.map(rowCost)),
-        poolSize: pool.length,
-        sims,
-        improved,
-        improveSims: sims - greedySims,
+        result: {
+            steps,
+            reached: current.clearRate >= goalRate - RATE_EPSILON,
+            aborted,
+            baselineRate,
+            finalRate: current.clearRate,
+            totals: sumCosts(chosen.map(rowCost)),
+            poolSize: pool.length,
+            sims: shared.sims,
+            improved,
+            improveSims: shared.sims - greedySims,
+        },
+        trimmed,
+        reuse: ranking,
     };
 }
 
@@ -1106,7 +1143,9 @@ export function renderPlanHtml(plan, { goalText, showLevels = false }) {
             ? `Best plan found reaches the goal at total ${describeCost(plan.totals)}.`
             : `Already at the goal: ${pct(plan.finalRate)} without buying anything.`;
     } else {
-        verdict = `Not reachable with these candidates (best reached ${pct(plan.finalRate)}).`;
+        verdict = plan.poolSize
+            ? `Not reachable even weighing all ${plan.poolSize} candidate${plan.poolSize === 1 ? '' : 's'} (best reached ${pct(plan.finalRate)}).`
+            : `Not reachable with these candidates (best reached ${pct(plan.finalRate)}).`;
     }
     html += `<div data-plan-verdict style="margin-top:6px; font-size:12px; font-weight:600; color:${plan.reached && !plan.aborted ? '#4caf50' : '#ff9800'};">${esc(verdict)}</div>`;
     return html;
