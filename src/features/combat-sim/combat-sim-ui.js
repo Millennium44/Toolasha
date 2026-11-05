@@ -10680,9 +10680,12 @@ class CombatSimUI {
         if (abilityTargetsToggle) abilityTargetsToggle.style.display = isLevelMode ? '' : 'none';
         if (!isLevelMode) {
             this.panel.querySelector('#mwi-csim-ability-targets').style.display = 'none';
-        } else {
+        } else if (!this._abilityLevelModeOn) {
+            // Only when Ability Lv is turned on: every other candidate box lands here too,
+            // and ticking one must not throw away the mode and number already chosen
             this._setDefaultAbilityTargetLevel();
         }
+        this._abilityLevelModeOn = isLevelMode;
 
         if (!modes.has('house')) {
             this.panel.querySelector('#mwi-csim-house-targets').style.display = 'none';
