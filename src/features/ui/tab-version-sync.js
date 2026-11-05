@@ -33,8 +33,8 @@
  *   may have been taken by another tab, and a reload would take it back.
  * - Becoming visible while a reload is pending turns it into the notice.
  *
- * Setting `tabVersionSync`: `auto` (default; hidden tabs reload, a visible tab
- * asks), `reload` (always reload), `ask` (always ask), `off` (no channel).
+ * Setting `tabVersionSync`: `ask` (default; always ask), `auto` (hidden tabs
+ * reload, a visible tab asks), `reload` (always reload), `off` (no channel).
  */
 
 import config from '../../core/config.js';
@@ -71,8 +71,8 @@ const VERSION_PATTERN = /^\d+(\.\d+)*$/;
  * @returns {'auto'|'reload'|'ask'|'off'} Unknown values read as the default
  */
 export function getMode() {
-    const raw = config.getSettingValue(SETTING_KEY, 'auto');
-    return raw === 'reload' || raw === 'ask' || raw === 'off' ? raw : 'auto';
+    const raw = config.getSettingValue(SETTING_KEY, 'ask');
+    return raw === 'reload' || raw === 'auto' || raw === 'off' ? raw : 'ask';
 }
 
 /**

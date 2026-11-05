@@ -94,7 +94,8 @@ function setVisibility(value) {
 beforeEach(async () => {
     vi.useFakeTimers();
     vi.stubGlobal('BroadcastChannel', FakeChannel);
-    state.settings = {};
+    // The endings below are about background reloading, which is opt-in; the default is pinned separately
+    state.settings = { tabVersionSync: 'auto' };
     state.version = '3.16.0';
     state.root = {};
     state.connected = true;
@@ -317,6 +318,15 @@ describe('endings', () => {
         await settle();
         expect(reload).not.toHaveBeenCalled();
         expect(state.toasts).toHaveLength(0);
+        setVisibility('visible');
+        expect(state.toasts).toHaveLength(1);
+    });
+
+    test('by default nothing reloads by itself: a hidden tab waits and asks once looked at', async () => {
+        delete state.settings.tabVersionSync;
+        hear('3.17.0');
+        await vi.advanceTimersByTimeAsync(HIDDEN_RELOAD_DELAY_MS * 2);
+        expect(reload).not.toHaveBeenCalled();
         setVisibility('visible');
         expect(state.toasts).toHaveLength(1);
     });

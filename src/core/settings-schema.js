@@ -4231,19 +4231,20 @@ export const settingsGroups = {
                 id: 'tabVersionSync',
                 label: 'Follow a newer Toolasha version loaded in another tab',
                 type: 'select',
-                default: 'auto',
+                default: 'ask',
                 options: [
+                    { value: 'ask', label: 'Ask (show a Reload notice)' },
                     { value: 'auto', label: 'Background tabs reload, the tab in use asks' },
                     { value: 'reload', label: 'Always reload' },
-                    { value: 'ask', label: 'Always ask' },
                     { value: 'off', label: 'Off' },
                 ],
                 help:
-                    'When another tab of this site loads a newer Toolasha, this tab can catch up. A hidden tab ' +
-                    'reloads itself after a few seconds (only while connected, and after pending saves are ' +
-                    'written); a tab you are looking at shows a notice with a Reload button instead. A reload ' +
-                    'that does not bring a newer version is not repeated. Tabs talk only within the same site, ' +
-                    'so the test server and the live game never affect each other. Off opens no channel.',
+                    'When another tab of this site loads a newer Toolasha, this tab can catch up. By default it ' +
+                    'shows a notice with a Reload button. With background reload on, a tab that has stayed hidden ' +
+                    'for 2 minutes reloads itself (only while connected, and after pending saves are written), ' +
+                    'and a tab you are looking at still asks. A reload that does not bring a newer version is not ' +
+                    'repeated. Tabs talk only within the same site, so the test server and the live game never ' +
+                    'affect each other. Off opens no channel.',
             },
             updateCheckHours: {
                 id: 'updateCheckHours',

@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Other tabs offer to reload after an update
+
+When another tab of the same site loads a newer Toolasha, your other tabs show a notice with a Reload button. A setting can let tabs that have stayed hidden for 2 minutes reload on their own.
+
+### Toolasha tab keeps its icon row in reach
+
+On the Toolasha inventory tab, the inventory's icon row now stays at the top while you scroll, as it does on the game's own tabs.
+
 ### Item spacing covers the game's Inventory view
 
 The Custom Inventory Tabs item spacing setting now also sets the gap in the game's own Inventory view, not only the Toolasha tab. The default matches the game, so nothing changes unless you've set it. Below the default, long tabs like All fit the same number of columns as the Toolasha tab.
