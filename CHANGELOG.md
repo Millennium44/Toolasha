@@ -6,6 +6,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumables follow your skilling
+
+The Consumables panel and overlay tile now follow the teas of the skill you are running, with what to buy and how long each lasts, and a skill picker in game order. The panel's rows also fit on a phone, so item names and Lasts stay in view.
+
+### Overlay tiles fill in while skilling
+
+Experience/hr shows the running skill's measured rate, Total Profit shows the action's estimated rate marked est., and Time to Level follows the running skill. Combat readings are unchanged.
+
+### Overlay tile picker folds into groups
+
+The overlay's tile picker now folds into Wealth, Skilling, Combat, Account and goals, Guild, and Readouts. Skill Time to Level and the three simulator readings leave the list unless already on, and Charm Value and Skill Books are renamed Next Charm and Next Ability Book.
+
+### Overlay presets trimmed
+
+Skilling no longer shows blanks; Combat and Labyrinth lose Combat Status, and Labyrinth loses Sim Accuracy. Dashboard is now 14 tiles and also replaces Default, while saved layouts stay as they are. The combat Consumables tile is two lines, with Bid in its hover text.
+
+### Cooldown numbers no longer show through the overlay
+
+The game's ability and consumable countdowns no longer draw on top of the overlay, and neither do its loot chips.
+
 <!-- shipped in 3.76.1 -->
 
 ### Skilling figures back to normal with enhanced gear
