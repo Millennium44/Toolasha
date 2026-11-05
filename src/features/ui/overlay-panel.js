@@ -943,13 +943,62 @@ class OverlayPanel {
             if (Math.abs(width - this.lastWidth) < 1) return;
             this.lastWidth = width;
 
+            const columnsBefore = this.columns;
             this._applyColumns();
+            if (columnsBefore && this.columns !== columnsBefore) this._refitPreset(this.columns);
             this._renderBody('the panel being resized');
             this._placePicker();
         };
 
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
         else run();
+    }
+
+    /**
+     * The grid gained or lost columns: give an untouched preset the spans it has at the new count.
+     *
+     * A preset's spans are resolved for the column count it was applied at, so a panel widened or
+     * narrowed afterwards kept spans written for the old grid. Only a preset in force exactly as
+     * it was applied is re-fit: a saved layout of the same name, an edited preset, or a layout of
+     * the player's own is never touched, and neither is a hand-pinned count (a pin does not change
+     * with the width, so this is not reached). Runs once per change of column count, not per
+     * resize tick, and the redraw it asks for changes tile heights, not the width the resize
+     * observer compares, so it cannot feed back.
+     *
+     * @param {number} columns - The count the grid now has
+     * @returns {Promise<void>}
+     */
+    async _refitPreset(columns) {
+        try {
+            const key = normalizeName(this.appliedLayout);
+            if (!key || !isPreset(key)) return;
+            const panel = this.panel;
+            const applied = this.appliedLayout;
+            const map = await loadLayouts();
+            // After the await: another resize, a layout switch or a close may have happened
+            if (this.panel !== panel || !panel?.isConnected) return;
+            if (this.appliedLayout !== applied || this.columns !== columns) return;
+            if (map[key]?.file) return;
+
+            const rows = registeredRows();
+            const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
+            const current = layoutHalf(toOPanelConfig(this.settings, null));
+            let unedited = false;
+            for (let at = 1; !unedited && at <= MAX_SPAN; at++)
+                unedited = layoutHalf(presetFile(key, { rows, columns: at })) === current;
+            if (!unedited) return;
+
+            const wanted = fromOPanelConfig(presetFile(key, { rows, columns }));
+            if (!wanted?.settings?.span) return;
+            if (JSON.stringify(wanted.settings.span) === JSON.stringify(this.settings.span)) return;
+
+            this.settings.span = { ...wanted.settings.span };
+            this._save();
+            this._renderBody('a preset re-fitted to the new column count');
+            this._placePicker();
+        } catch (error) {
+            console.error('[OverlayPanel] Re-fitting the preset failed:', error);
+        }
     }
 
     /**
