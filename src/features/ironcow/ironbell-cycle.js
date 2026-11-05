@@ -285,14 +285,20 @@ export function queuedLegCounts(
             ? Infinity
             : Math.max(0, (Number(action.maxCount) || 0) - (Number(action.currentCount) || 0));
         let performed = count;
+        // Where the walk is available its stage for this very row (same order) is the engine's own performed
+        // count, which also reflects limits the stock alone does not show, such as a catalyst that runs out
+        // before the fruit or essence does. Only what the row really performs is taken from the stock, and only
+        // the essence of the decomposes that really run is added.
+        const stage = haveWalk && walked.stages[index]?.actionHrid === action.actionHrid ? walked.stages[index] : null;
+        const engineCount = Number.isFinite(stage?.count) ? stage.count : Infinity;
         if (leg === 'forage') {
             fruit += count * fruitPerForage;
         } else if (leg === 'decompose') {
-            performed = Math.min(count, Math.floor(fruit / decomposeBulk));
+            performed = Math.min(count, Math.floor(fruit / decomposeBulk), engineCount);
             fruit -= performed * decomposeBulk;
             essence += performed * decomposeBulk * essencePerFruit;
         } else {
-            performed = Math.min(count, Math.floor(essence / coinifyBulk));
+            performed = Math.min(count, Math.floor(essence / coinifyBulk), engineCount);
             essence -= performed * coinifyBulk;
         }
         // An ∞ row asks for exactly what it can run
