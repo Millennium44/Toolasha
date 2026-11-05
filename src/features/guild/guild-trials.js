@@ -215,7 +215,13 @@ import {
     tileKey,
     tilePersonalStats,
 } from './guild-trials-store.js';
-import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import {
+    FOREIGN_CYCLE_REASON,
+    cyclePointsText,
+    cycleTokensText,
+    pastCycles,
+    summariseArchivedCycle,
+} from './guild-trial-history.js';
 import {
     cycleTrialsOf,
     historyRowFor,
@@ -4730,7 +4736,6 @@ class GuildTrials {
                 }
                 // The archive still has last cycles' figures to show — a trial
                 // tab between weeks is exactly when they are asked for
-                if (this._renderHistory(root, now, bonuses)) drawn.add('history');
                 if (this._renderTrialHistory(root, now, bonuses)) drawn.add('trial-history');
                 this._reapBlocks(root, drawn);
                 return;
@@ -4839,7 +4844,6 @@ class GuildTrials {
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
             }
-            if (this._renderHistory(root, now, bonuses)) drawn.add('history');
             if (this._renderTrialHistory(root, now, bonuses, pastTiers)) drawn.add('trial-history');
             this._reapBlocks(root, drawn);
         } catch (error) {
@@ -5963,59 +5967,6 @@ class GuildTrials {
     }
 
     /**
-     * The "Past weeks" block: one compact line per archived cycle.
-     *
-     * The archive exists because the figures were real when they were taken and
-     * a player who wants last cycle's numbers has nowhere else to get them —
-     * and until this block, nowhere to read them either. Drawn under everything
-     * else on the tab, and not at all when there is no history: an empty header
-     * would be a promise about data that does not exist.
-     *
-     * @param {Element} root - The trials content element
-     * @param {number} [now] - Clock
-     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
-     * @returns {boolean} Whether a history block is on screen
-     */
-    _renderHistory(root, now = Date.now(), bonuses = null) {
-        // The In Progress tab is the live fight or the live skilling row; past
-        // cycles are the Trials tab's business. On the In Progress view the
-        // block landed at the top and was stretched by the view's own layout
-        // into an empty box over the live cards.
-        if (isInProgressView(root)) return false;
-        const summaries = this._pastWeekSummaries(now, bonuses);
-        if (!summaries.length) return false;
-
-        const collapsed = this._foldsFor().history === true;
-        const rows = [
-            foldHeading(
-                'history',
-                isTestServer() ? 'Past cycles' : 'Past weeks',
-                'The last few finished cycles, kept when the week rolled over. Newest first. ' +
-                    '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
-                    'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
-                    'derived from today’s building bonuses, which is what the ~ marks. Points the guild’s own ' +
-                    'payload stated are exact. Tokens each is what every eligible member receives; members ' +
-                    'who took part receive a further half of it, rounded up.',
-                collapsed
-            ),
-        ];
-        for (const summary of collapsed ? [] : summaries) {
-            const title = summary.reason ? ` title="Archived: ${String(summary.reason).replace(/"/g, '&quot;')}"` : '';
-            rows.push(`<div style="color:${DIM};"${title}>${pastWeekLine(summary)}</div>`);
-        }
-
-        this._placeBlock(root, 'history', {
-            html: rows.join(''),
-            onBuild: (block) => this._wireFolds(block, root),
-            style:
-                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
-                'border-radius:6px; font-size:12px; line-height:1.7;',
-            place: (block) => root.insertAdjacentElement('beforeend', block),
-        });
-        return true;
-    }
-
-    /**
      * Which of the Trials tab's history sections are folded, `{[blockKey]: true}`.
      *
      * Read from the `settings` store once per session, as the Guild panel's
@@ -6065,7 +6016,6 @@ class GuildTrials {
                     refresh();
                     return;
                 }
-                this._renderHistory(root);
                 this._renderTrialHistory(root);
             });
         }
@@ -6088,7 +6038,7 @@ class GuildTrials {
 
     /**
      * The "Trial history" block: one line per trial, its tier each finished
-     * cycle, newest first, and its best. Drawn under "Past weeks", and not at
+     * cycle, newest first, and its best. Not drawn at
      * all before any cycle has finished.
      *
      * @param {Element} root - The trials content element
@@ -6115,6 +6065,25 @@ class GuildTrials {
         const cell = (text, color, title = '', weight = 400) =>
             `<span style="color:${color}; text-align:center; font-weight:${weight}; overflow-wrap:break-word;"` +
             `${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeText(text)}</span>`;
+
+        // The archived cycles' summaries, found by the identity the columns use, never by position
+        const summaryOf = new Map();
+        for (const summary of this._pastWeekSummaries(now, bonuses)) {
+            if (summary.foreign || !Number.isFinite(summary.weekStart)) continue;
+            summaryOf.set(`${summary.weekStart}|${summary.cycleFrom ?? ''}`, summary);
+        }
+        const summaryRow = (label, pick) =>
+            `<div data-history-summary="${escapeAttr(label)}" style="${grid} border-top:1px solid rgba(255,255,255,0.1); ` +
+            `margin-top:2px;">` +
+            `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(label)}</span>` +
+            shown
+                .map((cycle) => {
+                    const summary = summaryOf.get(cycle.key);
+                    return cell(summary ? pick(summary) : '—', GAME_COLORS.textDim);
+                })
+                .join('') +
+            cell('', GAME_COLORS.text) +
+            '</div>';
 
         const header =
             `<div style="${grid} font-size:10px; margin-top:2px;">` +
@@ -6156,6 +6125,9 @@ class GuildTrials {
                     '</div>'
                 );
             }),
+            ...(collapsed
+                ? []
+                : [summaryRow('Guild Points', cyclePointsText), summaryRow('Tokens each', cycleTokensText)]),
             ...(!collapsed
                 ? [
                       `<div data-history-key="1" style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +

@@ -372,6 +372,9 @@ export function summariseArchivedCycle(
     }
 
     return {
+        // The identity the Trial history table's columns use, so a summary finds its column
+        weekStart: Number.isFinite(cycle?.weekStart) ? cycle.weekStart : null,
+        cycleFrom: Number.isFinite(cycle?.cycleFrom) ? cycle.cycleFrom : null,
         when: describeCycleAge(cycle, now),
         // When the cycle ended, for a week's several cycles: only test-server
         // archives carry it, and it is what tells their lines apart
@@ -384,6 +387,26 @@ export function summariseArchivedCycle(
         foreign,
         reason: typeof cycle?.reason === 'string' ? cycle.reason : null,
     };
+}
+
+/**
+ * A cycle's Guild Points as text: `~` when priced off the ladder, a dash when unknown.
+ * @param {Object} summary - From {@link summariseArchivedCycle}
+ * @returns {string} e.g. `1,800`, `~1,800`, `—`
+ */
+export function cyclePointsText(summary) {
+    return Number.isFinite(summary?.points)
+        ? `${summary.pointsDerived ? '~' : ''}${formatWithSeparator(Math.round(summary.points))}`
+        : '—';
+}
+
+/**
+ * A cycle's tokens each as text: always derived, so `~`; a dash when unknown.
+ * @param {Object} summary - From {@link summariseArchivedCycle}
+ * @returns {string} e.g. `~825`, `—`
+ */
+export function cycleTokensText(summary) {
+    return Number.isFinite(summary?.tokens) ? `~${formatWithSeparator(Math.round(summary.tokens))}` : '—';
 }
 
 /**
@@ -407,8 +430,8 @@ export function pastWeekLine(summary) {
         cycleEndLabel(summary?.when, summary?.endedAt),
         `combat ${tier(summary?.combatTier)}`,
         `skilling ${tier(summary?.skillingTier)}`,
-        `${Number.isFinite(summary?.points) ? `${summary.pointsDerived ? '~' : ''}${formatWithSeparator(Math.round(summary.points))}` : dash} pts`,
-        `${Number.isFinite(summary?.tokens) ? `~${formatWithSeparator(Math.round(summary.tokens))}` : dash} tokens each`,
+        `${cyclePointsText(summary)} pts`,
+        `${cycleTokensText(summary)} tokens each`,
     ];
     if (summary?.foreign) parts.push('another guild’s week');
     return parts.join(' · ');

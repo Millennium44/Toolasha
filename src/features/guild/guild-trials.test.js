@@ -3467,125 +3467,6 @@ describe('the panel, end to end', () => {
         ...overrides,
     });
 
-    test('archived cycles come back as one “Past weeks” line each, newest first', () => {
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        guildTrials.record = {
-            ...guildTrials.record,
-            history: [
-                archivedWeek({
-                    weekStart: trialWeekStart(now) - 14 * 24 * 60 * 60 * 1000,
-                    tiles: {
-                        'combat::trial hedgehog': {
-                            name: 'Trial Hedgehog',
-                            kind: 'combat',
-                            points: 0,
-                            completed: true,
-                            pointsByTier: {},
-                            samples: [],
-                            tiers: [],
-                        },
-                    },
-                }),
-                archivedWeek(),
-            ],
-        };
-        fire(root);
-
-        expect(text()).toContain('Past weeks');
-        // No building level has been seen, so the token figure is a dash — the
-        // stated points are repeated exactly as the cards said them
-        expect(text()).toContain('Last week · combat T5 · skilling T6 · 1,800 pts · — tokens each');
-        // A failed week is a real outcome and prints its zeros, and the half
-        // that never stated anything is a dash rather than one of them
-        expect(text()).toContain('2 weeks ago · combat T0 · skilling — · 0 pts · — tokens each');
-        // Newest first
-        expect(text().indexOf('Last week')).toBeLessThan(text().indexOf('2 weeks ago'));
-    });
-
-    test('one line per past week and none for this week, however often a week was archived', () => {
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        const zeroed = {
-            'skilling::milking': {
-                name: 'Milking',
-                kind: 'skilling',
-                tier: 19,
-                points: 0,
-                pointsByTier: {},
-                samples: [],
-                tiers: [],
-            },
-        };
-        const emptyThisWeek = archivedWeek({ archivedAt: now - 60_000, weekStart: trialWeekStart(now), tiles: zeroed });
-        guildTrials.record = {
-            ...guildTrials.record,
-            history: [archivedWeek(), archivedWeek({ tiles: zeroed }), emptyThisWeek, emptyThisWeek, emptyThisWeek],
-        };
-        fire(root);
-
-        expect(text()).not.toContain('This week');
-        expect(text().split('Last week ·')).toHaveLength(2);
-        expect(text()).toContain('Last week · combat T5 · skilling T6 · 1,800 pts');
-    });
-
-    test('a past week’s tokens are derived once the buildings are known, and marked as derived', () => {
-        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
-        fire(root);
-
-        // 1,800 stated ÷ 1.2 is 1,500 base; half of it at +10% Treasury is 825
-        expect(text()).toContain('~825 tokens each');
-    });
-
-    test('a week archived off another guild’s record is labelled, not mixed in', () => {
-        game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        guildTrials.record = {
-            ...guildTrials.record,
-            history: [archivedWeek({ reason: 'belongs to another guild' })],
-        };
-        fire(root);
-
-        expect(text()).toContain('another guild’s week');
-        // …and this guild's buildings are never applied to it
-        expect(text()).not.toContain('~825');
-    });
-
-    test.each([
-        [false, 'Past weeks'],
-        [true, 'Past cycles'],
-    ])('the history fold is titled by the cycle length (test server %s)', (testServer, title) => {
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
-        const was = game.testServer;
-        game.testServer = testServer;
-        try {
-            fire(root);
-            expect(document.querySelector('[data-fold="history"]').textContent).toContain(title);
-        } finally {
-            game.testServer = was;
-        }
-    });
-
-    test('no history renders no “Past weeks” header at all', () => {
-        fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
-        expect(text()).not.toContain('Past weeks');
-    });
-
-    test('the In Progress view never draws “Past weeks” — past cycles are the Trials tab’s', () => {
-        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
-        // The live skilling row marks the In Progress view; on the Trials tab it
-        // does not exist. The block used to land at the top of this view,
-        // stretched by its layout into an empty box over the live cards.
-        const challenge = document.createElement('div');
-        challenge.className = 'SkillingInstancePanel_challengeArea__x';
-        root.appendChild(challenge);
-        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
-        fire(root);
-
-        expect(text()).not.toContain('Past weeks');
-    });
-
     describe('Trial history', () => {
         const weekAgo = (n) => trialWeekStart(now) - n * 7 * 24 * 60 * 60 * 1000;
         const alchemy = (tier, points) => ({
@@ -3613,6 +3494,96 @@ describe('the panel, end to end', () => {
             fire(root);
             const key = document.querySelector('[data-mwi-block="trial-history"] [data-history-key]');
             expect(key.textContent).toContain('T = tier reached · n/r = didn’t run · — = no result seen');
+        });
+
+        /** A summary row of the Trial history table, by its label */
+        const summaryCells = (label) => {
+            const row = document.querySelector(`[data-history-summary="${label}"]`);
+            return row ? [...row.children].map((cell) => cell.textContent) : null;
+        };
+
+        test('the Past weeks fold is gone; its figures are two rows under the table, one cell per cycle', () => {
+            game.buildingLevels = { '/guild_buildings/builders_hall': 10, '/guild_buildings/treasury': 5 };
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [
+                    archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(9, 1500) } }),
+                    archivedWeek({ weekStart: weekAgo(1) }),
+                ],
+            };
+            fire(root);
+
+            expect(text()).not.toContain('Past weeks');
+            expect(document.querySelector('[data-fold="history"]')).toBeNull();
+            expect(document.querySelector('[data-mwi-block="history"]')).toBeNull();
+            // Columns are newest first: last week, then 2 weeks ago; the Best cell is blank
+            expect(historyCells()).toEqual(['', 'Last week', '2 weeks ago', 'Best']);
+            // 1,800 stated ÷ 1.2 is 1,500 base; half of it at +10% Treasury is 825
+            expect(summaryCells('Guild Points')).toEqual(['Guild Points', '1,800', '1,500', '']);
+            expect(summaryCells('Tokens each')[1]).toBe('~825');
+            expect(summaryCells('Tokens each')[3]).toBe('');
+        });
+
+        test('with no building level seen the tokens are a dash, not a zero', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = { ...guildTrials.record, history: [archivedWeek({ weekStart: weekAgo(1) })] };
+            fire(root);
+            expect(summaryCells('Guild Points')).toEqual(['Guild Points', '1,800', '']);
+            expect(summaryCells('Tokens each')).toEqual(['Tokens each', '—', '']);
+        });
+
+        test('a cycle with no archived summary shows a dash in both rows', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [],
+                trialResults: [
+                    {
+                        weekStart: weekAgo(10),
+                        cycleFrom: null,
+                        archivedAt: weekAgo(9),
+                        trial: 'alchemy',
+                        kind: 'skilling',
+                        name: 'Alchemy',
+                        cardTier: 11,
+                        points: 2000,
+                        completed: true,
+                        serverTier: null,
+                        serverTierAt: null,
+                    },
+                ],
+            };
+            fire(root);
+            expect(summaryCells('Guild Points')).toEqual(['Guild Points', '—', '']);
+            expect(summaryCells('Tokens each')).toEqual(['Tokens each', '—', '']);
+        });
+
+        test('a summary finds its column by cycle, not by position', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(9, 1500) } })],
+                trialResults: [
+                    {
+                        weekStart: weekAgo(1),
+                        cycleFrom: null,
+                        archivedAt: weekAgo(0.5),
+                        trial: 'alchemy',
+                        kind: 'skilling',
+                        name: 'Alchemy',
+                        cardTier: 4,
+                        points: 700,
+                        completed: true,
+                        serverTier: null,
+                        serverTierAt: null,
+                    },
+                ],
+            };
+            fire(root);
+            // Last week has a result but no archived summary; 2 weeks ago has both
+            expect(historyCells()).toEqual(['', 'Last week', '2 weeks ago', 'Best']);
+            expect(summaryCells('Guild Points')).toEqual(['Guild Points', '—', '1,500', '']);
         });
 
         test('one table row per trial, newest week first, a dash for a week it has no result, and its best', () => {
@@ -3712,8 +3683,7 @@ describe('the panel, end to end', () => {
 
             test('a section nobody has touched is expanded, and its heading is a button', () => {
                 drawn();
-                expect(heading('history').tagName).toBe('BUTTON');
-                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
+                expect(heading('trial-history').tagName).toBe('BUTTON');
                 expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
                 expect(historyCells('Alchemy')).not.toBeNull();
             });
@@ -3724,10 +3694,6 @@ describe('the panel, end to end', () => {
                 heading('trial-history').click();
                 expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
                 expect(document.querySelector('[data-mwi-block="trial-history"]').children).toHaveLength(1);
-                // Past weeks is untouched
-                expect(heading('history').getAttribute('aria-expanded')).toBe('true');
-                expect(document.querySelector('[data-mwi-block="history"]').children.length).toBeGreaterThan(1);
-
                 // The live trial redraws the tab every pass
                 fire(root);
                 fire(root);
@@ -3742,22 +3708,20 @@ describe('the panel, end to end', () => {
             test('a fold is written down and read back on the next load', async () => {
                 drawn();
                 await settle();
-                heading('history').click();
+                heading('trial-history').click();
                 await settle();
-                expect(game.store.guildTrialSectionFolds).toEqual({ history: true });
+                expect(game.store.guildTrialSectionFolds).toEqual({ 'trial-history': true });
 
                 document.body.innerHTML = '';
                 guildTrials.sectionFolds = {};
                 guildTrials.foldsHydration = null;
                 drawn();
                 await settle();
-                expect(heading('history').getAttribute('aria-expanded')).toBe('false');
-                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('true');
+                expect(heading('trial-history').getAttribute('aria-expanded')).toBe('false');
             });
 
             test('a section with nothing to show has no heading to fold', () => {
                 fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
-                expect(heading('history')).toBeNull();
                 expect(heading('trial-history')).toBeNull();
             });
         });
@@ -3794,7 +3758,6 @@ describe('the panel, end to end', () => {
                 history: [archivedWeek({ reason: 'belongs to another guild' })],
             };
             fire(root);
-            expect(text()).toContain('another guild’s week');
             expect(text()).not.toContain('Trial history');
             expect(text()).not.toContain('Past tiers');
         });
