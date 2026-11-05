@@ -691,6 +691,43 @@ describe('resetting to the default tiles', () => {
     });
 });
 
+describe('the move arrows on the chips', () => {
+    const arrows = () => [
+        ...overlayPanel.pickerEl.querySelectorAll('[data-overlay-row-chip] button[title*="layout order"]'),
+    ];
+
+    afterEach(() => {
+        delete window.matchMedia;
+        delete globalThis.matchMedia;
+    });
+
+    function offerOne() {
+        registry.rows = [];
+        offerRow({ key: 'dps', name: 'DPS', render: (el) => (el.textContent = 'dps') });
+        overlayPanel.settings.order = ['dps'];
+        openGear();
+    }
+
+    test('on a coarse pointer they are about 28 px to hit', () => {
+        globalThis.matchMedia = (query) => ({ matches: query.includes('pointer: coarse') });
+        offerOne();
+        expect(arrows()).toHaveLength(2);
+        for (const arrow of arrows()) {
+            expect(arrow.style.minWidth).toBe('28px');
+            expect(arrow.style.minHeight).toBe('28px');
+        }
+    });
+
+    test('with a mouse they stay small', () => {
+        globalThis.matchMedia = () => ({ matches: false });
+        offerOne();
+        for (const arrow of arrows()) {
+            expect(arrow.style.fontSize).toBe('8px');
+            expect(arrow.style.minWidth).toBe('');
+        }
+    });
+});
+
 describe('the picker folds its tiles into groups', () => {
     /** Offer rows from several groups, with `on` listing the ones switched on */
     function offerGroups(on) {

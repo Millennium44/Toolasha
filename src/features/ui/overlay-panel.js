@@ -2430,10 +2430,17 @@ class OverlayPanel {
         // is placed after
         const up = this._iconButton('◀', 'Earlier in the layout order', () => this._move(row.key, -1));
         const down = this._iconButton('▶', 'Later in the layout order', () => this._move(row.key, 1));
+        // A finger needs about 28 px to hit, and these are 8 px on a desktop. The glyph stays small and
+        // the button grows around it, so the chip is taller but not wider than the arrows need
+        const coarse = hasCoarsePointer();
         for (const button of [up, down]) {
-            button.style.fontSize = '8px';
+            button.style.fontSize = coarse ? '12px' : '8px';
             button.style.padding = '2px 1px';
             button.style.color = COLORS.textDim;
+            if (coarse) {
+                button.style.minWidth = '28px';
+                button.style.minHeight = '28px';
+            }
         }
 
         chip.append(checkbox, name, ...(badge ? [badge] : []), up, down);
