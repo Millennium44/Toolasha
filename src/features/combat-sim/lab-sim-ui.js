@@ -37,6 +37,7 @@ import {
 } from './lab-upgrade-cards.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
+import { nextMultipleLevel, abilityLevelBoxHints } from '../../utils/ability-level-step.js';
 import { LAB_SIM_KEYS, LAB_SIM_GLOBAL_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import {
     buildGameDataPayload,
@@ -568,6 +569,7 @@ const LAB_MODE_OPTIONS = {
             <select class="toolasha-select" id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
+                <option value="next_multiple">Next mult. of</option>
             </select>
             <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
@@ -2028,8 +2030,21 @@ class LabSimUI {
             const opening = grid.style.display === 'none';
             grid.style.display = opening ? 'flex' : 'none';
             if (opening) {
-                this._prefillAbilityTargets(grid, '#mwi-labsim-upgrade-player', '#mwi-labsim-upgrade-target-level');
+                this._prefillAbilityTargets(
+                    grid,
+                    '#mwi-labsim-upgrade-player',
+                    '#mwi-labsim-upgrade-target-level',
+                    '#mwi-labsim-upgrade-level-type'
+                );
             }
+        });
+        this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.addEventListener('change', (e) => {
+            const input = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
+            if (!input) return;
+            const hints = abilityLevelBoxHints(e.target.value);
+            input.value = hints.value;
+            input.placeholder = hints.placeholder;
+            input.title = hints.title;
         });
         this.panel.querySelector('#mwi-labsim-combat-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-combat-targets');
@@ -2475,7 +2490,12 @@ class LabSimUI {
         // a change to the list — leaving it showing one loadout's abilities
         // after the scope grew to ten fights is exactly the bug it had
         if (isLevelMode && abilityGrid.style.display !== 'none') {
-            this._prefillAbilityTargets(abilityGrid, '#mwi-labsim-upgrade-player', '#mwi-labsim-upgrade-target-level');
+            this._prefillAbilityTargets(
+                abilityGrid,
+                '#mwi-labsim-upgrade-player',
+                '#mwi-labsim-upgrade-target-level',
+                '#mwi-labsim-upgrade-level-type'
+            );
         }
 
         // Scope row: the subset picker and the skip-level rule only mean
@@ -6281,8 +6301,9 @@ class LabSimUI {
      * because a second fight was ticked.
      * @private
      */
-    _prefillAbilityTargets(grid, playerSelector, levelSelector) {
+    _prefillAbilityTargets(grid, playerSelector, levelSelector, typeSelector) {
         const boost = parseInt(this.panel.querySelector(levelSelector)?.value) || 5;
+        const nextMultiple = this.panel.querySelector(typeSelector)?.value === 'next_multiple';
         const typed = {};
         grid.querySelectorAll('[data-ability-target]').forEach((input) => {
             const value = parseInt(input.value, 10);
@@ -6314,7 +6335,11 @@ class LabSimUI {
                     const loadoutText = entry.shared ? '' : ` [${entry.loadouts.join(', ')}]`;
                     // Off the highest of them, so the boost is a real boost in
                     // every loadout rather than a no-op in the ones already past it
-                    const target = Math.min(maxLevel(), typed[entry.hrid] || highest + boost);
+                    const target = Math.min(
+                        maxLevel(),
+                        typed[entry.hrid] ||
+                            (nextMultiple ? nextMultipleLevel(highest, boost, maxLevel()) : highest + boost)
+                    );
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:${GAME_COLORS.textDim};">${loadoutText}</span></label>

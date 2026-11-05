@@ -123,6 +123,7 @@ import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { sharedProfileSummary } from '../../utils/shared-profile-status.js';
 import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
+import { nextMultipleLevel, abilityLevelBoxHints } from '../../utils/ability-level-step.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -3214,6 +3215,7 @@ const MODE_OPTIONS = {
             <select class="toolasha-select" id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
+                <option value="next_multiple">Next mult. of</option>
             </select>
             <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" placeholder="+5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
@@ -4278,7 +4280,12 @@ class CombatSimUI {
             const opening = grid.style.display === 'none';
             grid.style.display = opening ? 'flex' : 'none';
             if (opening) {
-                this._prefillAbilityTargets(grid, '#mwi-csim-upgrade-player', '#mwi-csim-upgrade-target-level');
+                this._prefillAbilityTargets(
+                    grid,
+                    '#mwi-csim-upgrade-player',
+                    '#mwi-csim-upgrade-target-level',
+                    '#mwi-csim-upgrade-level-type'
+                );
             }
         });
         this.panel.querySelector('#mwi-csim-combat-targets-toggle').addEventListener('click', () => {
@@ -4324,15 +4331,10 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-level-type').addEventListener('change', (e) => {
             const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
-            if (e.target.value === 'increment') {
-                input.value = '5';
-                input.placeholder = '+5';
-                input.title = 'Number of levels to add to each ability';
-            } else {
-                input.value = '';
-                input.placeholder = 'e.g. 80';
-                input.title = 'Absolute target level for all abilities';
-            }
+            const hints = abilityLevelBoxHints(e.target.value);
+            input.value = hints.value;
+            input.placeholder = hints.placeholder;
+            input.title = hints.title;
         });
         this.panel.querySelector('#mwi-csim-upgrade-target-level').addEventListener('change', (e) => {
             const val = parseInt(e.target.value);
@@ -10531,12 +10533,13 @@ class CombatSimUI {
      * player's equipped abilities (current level + the +Levels boost).
      * @private
      */
-    _prefillAbilityTargets(grid, playerSelector, levelSelector) {
+    _prefillAbilityTargets(grid, playerSelector, levelSelector, typeSelector) {
         const playerIndex = parseInt(this.panel.querySelector(playerSelector)?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const abilities = (dto?.abilities || []).filter(Boolean);
         const boost = parseInt(this.panel.querySelector(levelSelector)?.value) || 5;
+        const nextMultiple = this.panel.querySelector(typeSelector)?.value === 'next_multiple';
         const gameData = buildGameDataPayload();
 
         if (!abilities.length) {
@@ -10554,7 +10557,9 @@ class CombatSimUI {
             abilities
                 .map((ability) => {
                     const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
-                    const target = Math.min(maxLevel(), (ability.level || 1) + boost);
+                    const target = nextMultiple
+                        ? nextMultipleLevel(ability.level, boost, maxLevel())
+                        : Math.min(maxLevel(), (ability.level || 1) + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
@@ -10589,9 +10594,10 @@ class CombatSimUI {
         const input = this.panel.querySelector('#mwi-csim-upgrade-target-level');
         if (!input) return;
         if (typeSelect) typeSelect.value = 'increment';
-        input.value = '5';
-        input.placeholder = '+5';
-        input.title = 'Number of levels to add to each ability';
+        const hints = abilityLevelBoxHints('increment');
+        input.value = hints.value;
+        input.placeholder = hints.placeholder;
+        input.title = hints.title;
     }
 
     /**

@@ -859,6 +859,128 @@ describe('generateCandidates ability_level targets', () => {
     });
 });
 
+describe('generateCandidates ability_level next_multiple', () => {
+    const NAMES = {
+        '/abilities/fierce_aura': 'Fierce Aura',
+        '/abilities/frenzy': 'Frenzy',
+        '/abilities/berserk': 'Berserk',
+        '/abilities/puncture': 'Puncture',
+        '/abilities/penetrating_strike': 'Penetrating Strike',
+        '/abilities/cleave': 'Cleave',
+    };
+    const run = (levels, step, type = 'next_multiple', targets = null) => {
+        const gameData = buildGameData();
+        gameData.abilityDetailMap = Object.fromEntries(Object.entries(NAMES).map(([hrid, name]) => [hrid, { name }]));
+        const player = {
+            equipment: {},
+            abilities: levels.map((entry) => (entry ? { hrid: entry[0], level: entry[1] } : null)),
+        };
+        return generateCandidates(player, gameData, 'ability_level', step, type, false, null, targets);
+    };
+    const pairs = (candidates) => candidates.map((c) => [c.currentLevel, c.upgradeLevel]);
+
+    test("the maintainer's hand-typed targets: 42, 61, 66, 70, 75 go to 45, 65, 70, 75, 80", () => {
+        const candidates = run(
+            [
+                ['/abilities/fierce_aura', 42],
+                ['/abilities/frenzy', 61],
+                ['/abilities/berserk', 66],
+                ['/abilities/puncture', 70],
+                ['/abilities/penetrating_strike', 75],
+            ],
+            5
+        );
+        expect(pairs(candidates)).toEqual([
+            [42, 45],
+            [61, 65],
+            [66, 70],
+            [70, 75],
+            [75, 80],
+        ]);
+        expect(candidates[3].description).toBe('Puncture Lv70 → Lv75');
+    });
+
+    test('levels 1 and 0 go to the first multiple', () => {
+        const levels = [
+            ['/abilities/frenzy', 1],
+            ['/abilities/cleave', 0],
+        ];
+        expect(pairs(run(levels, 5))).toEqual([
+            [1, 5],
+            [0, 5],
+        ]);
+    });
+
+    test('at the cap nothing is offered; one below goes to the cap; a step past the cap is cut to it', () => {
+        expect(run([['/abilities/frenzy', 200]], 5)).toEqual([]);
+        expect(pairs(run([['/abilities/frenzy', 199]], 5))).toEqual([[199, 200]]);
+        expect(pairs(run([['/abilities/frenzy', 198]], 5))).toEqual([[198, 200]]);
+        expect(pairs(run([['/abilities/frenzy', 195]], 10))).toEqual([[195, 200]]);
+    });
+
+    test('step 10 and step 1', () => {
+        const levels = [
+            ['/abilities/frenzy', 70],
+            ['/abilities/berserk', 66],
+        ];
+        expect(pairs(run(levels, 10))).toEqual([
+            [70, 80],
+            [66, 70],
+        ]);
+        expect(pairs(run(levels, 1))).toEqual([
+            [70, 71],
+            [66, 67],
+        ]);
+    });
+
+    test('a blank, zero, negative or NaN step does what +Levels does: falls back to 5; a fraction truncates', () => {
+        for (const step of [0, -3, NaN, undefined, null]) {
+            expect(pairs(run([['/abilities/frenzy', 70]], step))).toEqual([[70, 75]]);
+        }
+        expect(pairs(run([['/abilities/frenzy', 70]], 10.9))).toEqual([[70, 80]]);
+    });
+
+    test('the same ability in two slots gets a candidate per slot, each from its own level', () => {
+        const candidates = run(
+            [
+                ['/abilities/frenzy', 61],
+                ['/abilities/frenzy', 70],
+            ],
+            5
+        );
+        expect(pairs(candidates)).toEqual([
+            [61, 65],
+            [70, 75],
+        ]);
+        expect(candidates.map((c) => c.slot)).toEqual(['ability_0', 'ability_1']);
+    });
+
+    test('an empty slot and an ability the player has not equipped produce nothing', () => {
+        const candidates = run([null, ['/abilities/frenzy', 61]], 5);
+        expect(candidates.map((c) => c.upgradeHrid)).toEqual(['/abilities/frenzy']);
+        expect(run([null], 5)).toEqual([]);
+    });
+
+    test('an open Targets row still takes priority over the step', () => {
+        const candidates = run(
+            [
+                ['/abilities/frenzy', 61],
+                ['/abilities/berserk', 66],
+            ],
+            5,
+            'next_multiple',
+            { '/abilities/berserk': 90 }
+        );
+        expect(pairs(candidates)).toEqual([[66, 90]]);
+    });
+
+    test('the other two modes are unchanged', () => {
+        expect(pairs(run([['/abilities/frenzy', 70]], 5, 'increment'))).toEqual([[70, 75]]);
+        expect(pairs(run([['/abilities/frenzy', 66]], 5, 'increment'))).toEqual([[66, 71]]);
+        expect(pairs(run([['/abilities/frenzy', 66]], 80, 'target'))).toEqual([[66, 80]]);
+    });
+});
+
 describe('findMatchingCharmForSkill', () => {
     const CHARM = '/equipment_types/charm';
     function charmGameData() {
