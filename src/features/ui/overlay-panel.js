@@ -558,6 +558,8 @@ class OverlayPanel {
          * finger on the redraw that follows.
          */
         this.pickerFolds = new Map();
+        /** Retired tiles that were listed when the popover opened; they stay listed until it closes */
+        this.pickerKept = new Set();
     }
 
     async initialize() {
@@ -1495,6 +1497,14 @@ class OverlayPanel {
         if (!this.pickerEl) return;
         this.pickerEl.style.display = '';
         this.pickerFolds.clear();
+        // A retired tile that is on is listed so it can be switched off. Switching it off
+        // must not make it vanish from under the pointer, with no way to switch it back
+        // on in this open popover: whatever was listed on opening stays listed until close
+        this.pickerKept = new Set(
+            resolveRows(registeredRows(), this.settings)
+                .filter((row) => isListed(row))
+                .map((row) => row.key)
+        );
         this._renderPicker();
         this._placePicker();
         this._refreshStacking();
@@ -1514,7 +1524,18 @@ class OverlayPanel {
     closePicker() {
         if (!this.pickerEl) return;
         this.pickerEl.style.display = 'none';
+        this.pickerKept.clear();
         this._refreshStacking();
+    }
+
+    /**
+     * Whether the popover lists a resolved row: a non-retired one, a retired one that is on,
+     * or a retired one that was listed when the popover opened.
+     * @param {Object} row - From `resolveRows`
+     * @returns {boolean}
+     */
+    _isOffered(row) {
+        return isListed(row) || this.pickerKept.has(row.key);
     }
 
     /**
@@ -1695,7 +1716,7 @@ class OverlayPanel {
         // wall of forty-odd chips is a wall, and a fold with something on in it
         // is the only one most players ever need open. A retired row is left out
         // unless it is on, so nobody loses sight of a tile they have.
-        const offered = resolved.filter((row) => isListed(row));
+        const offered = resolved.filter((row) => this._isOffered(row));
         const folds = document.createElement('div');
         Object.assign(folds.style, { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' });
         for (const group of ROW_GROUPS) {
@@ -2562,7 +2583,7 @@ class OverlayPanel {
         const group = groupFor(byKey.get(key));
         const sharesFold = (other) => {
             const row = byKey.get(other);
-            return row && groupFor(row) === group && isListed(row);
+            return row && groupFor(row) === group && this._isOffered(row);
         };
         const nextRendered = moveRowWithin(rendered, key, delta, sharesFold);
         if (nextRendered === rendered) return;

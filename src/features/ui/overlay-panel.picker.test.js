@@ -802,6 +802,28 @@ describe('retired tiles in the picker', () => {
         expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(false);
     });
 
+    test('switching a retired tile off keeps its chip until the popover closes, so it can be switched back on', () => {
+        overlayPanel.settings.visible = { skillLevel: true, skillTimeToLevel: true };
+        openGear();
+        const chip = () => overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="skillTimeToLevel"] input');
+        chip().checked = false;
+        chip().dispatchEvent(new Event('change'));
+        expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(false);
+
+        // Still listed, and can be ticked again
+        expect(chipOrder()).toEqual(['skillLevel', 'skillTimeToLevel']);
+        chip().checked = true;
+        chip().dispatchEvent(new Event('change'));
+        expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(true);
+
+        // Off and closed: gone, as for any retired tile that is off
+        chip().checked = false;
+        chip().dispatchEvent(new Event('change'));
+        overlayPanel.closePicker();
+        overlayPanel.openPicker();
+        expect(chipOrder()).toEqual(['skillLevel']);
+    });
+
     test('a tile retired only while its setting is off is read when the picker draws', () => {
         openGear();
         expect(chipOrder()).toEqual(['skillLevel']);
@@ -834,6 +856,10 @@ describe('retired tiles in the picker', () => {
             consumables: true,
         });
         expect(overlayPanel.settings.curatedDefaults).toBe(true);
+        // It was listed when the popover opened, so it stays until the popover closes
+        expect(chipOrder()).toContain('skillTimeToLevel');
+        overlayPanel.closePicker();
+        overlayPanel.openPicker();
         expect(chipOrder()).not.toContain('skillTimeToLevel');
         // Undo is the way back, and it carries the selection
         expect(overlayPanel.undoState.visible.skillTimeToLevel).toBe(true);
