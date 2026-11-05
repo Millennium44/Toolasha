@@ -392,6 +392,21 @@ describe('drawing', () => {
         expect(rowFor('Den T?').children[2].title).toBe('Median of 1 recorded run with a party of 2');
     });
 
+    test('runs that recorded no clear time are not called no runs', async () => {
+        state.runs = [run('Chimerical Den', 0, 0)];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+        const row = [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+            tr.firstChild.textContent.includes('Den T0')
+        );
+        expect(row.children[1].textContent).toBe('1');
+        expect(row.children[2].title).toBe(
+            'These runs recorded no clear time, and there is no simulation for this tier'
+        );
+        expect(row.children[2].title).not.toContain('No runs');
+    });
+
     test('measured consumables are priced off the market ask for a normal character', async () => {
         state.runs = [run('Chimerical Den', 0, 600_000)]; // clear 10:00 → 6 runs/hr
         state.sessions = [sessionWithConsumable(6)]; // 6 donuts/hr @ ask 200 = 1200/hr

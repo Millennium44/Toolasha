@@ -70,7 +70,7 @@ const COLUMNS = [
     {
         key: 'confidence',
         label: 'Conf.',
-        title: 'From the runs behind Clear: high ≥ 20, medium ≥ 5, low ≥ 1, sim = no runs but simulated. T? is never above low.',
+        title: 'From the runs behind Clear: high ≥ 20, medium ≥ 5, low ≥ 1, sim = no timed runs but simulated. T? is never above low.',
     },
 ];
 
@@ -619,7 +619,9 @@ class DungeonRoiBoardUI {
                       (row.clearRuns < row.runs ? `, of ${row.runs} on this row` : '')
                     : row.clearSource === 'sim'
                       ? 'Simulated clear time from the last All Zones run'
-                      : 'No runs and no simulation for this tier',
+                      : row.runs > 0
+                        ? 'These runs recorded no clear time, and there is no simulation for this tier'
+                        : 'No runs and no simulation for this tier',
             mark: row.clearSource === 'sim' ? 'sim' : null,
         });
         cell(row.wavesPerMinute ? row.wavesPerMinute.toFixed(1) : '—', {
