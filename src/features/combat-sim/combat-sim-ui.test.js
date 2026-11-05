@@ -1368,6 +1368,26 @@ describe('the panel', () => {
             expect(targets().frenzy).toBe('66');
         });
 
+        test('ticking another candidate box keeps the mode and number; turning Ability Lv on again resets them', () => {
+            const ability = ui.panel.querySelector('[data-upgrade-mode="ability_level"]');
+            const house = ui.panel.querySelector('[data-upgrade-mode="house"]');
+            ability.checked = true;
+            ui._onUpgradeModesChanged();
+            pick('next_multiple');
+            levelBox().value = '10';
+
+            house.checked = !house.checked;
+            ui._onUpgradeModesChanged();
+            expect(typeSelect().value).toBe('next_multiple');
+            expect(levelBox().value).toBe('10');
+
+            ability.checked = false;
+            ui._onUpgradeModesChanged();
+            ability.checked = true;
+            ui._onUpgradeModesChanged();
+            expect(typeSelect().value).toBe('increment');
+        });
+
         test('an ability at the max is prefilled at the max, so the row skips it', () => {
             mocks.editedDTOs.player1.abilities = [{ hrid: '/abilities/frenzy', level: 200 }];
             pick('next_multiple');

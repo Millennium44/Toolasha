@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim upgrade finders can aim abilities at the next 5
+
+Ability Lv in the Combat and Lab Sims gains "Next mult. of": with 5, Puncture 70 tries 75 and Frenzy 61 tries 65. Ticking another candidate box in the Combat Sim also no longer resets the mode and number you chose.
+
 ### Consumables follow your skilling
 
 The Consumables panel and overlay tile now follow the teas of the skill you are running, with what to buy and how long each lasts, and a skill picker in game order. The panel's rows also fit on a phone, so item names and Lasts stay in view.
