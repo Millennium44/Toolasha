@@ -163,6 +163,28 @@ describe('which actions get an estimate', () => {
         expect(runningSkillingProfit().state).toBe('none');
     });
 
+    test('zero revenue with missing prices is no estimate, not a green zero', async () => {
+        run(FORAGING, '/action_types/foraging');
+        game.gather = vi.fn(async () => profit(0, { hasMissingPrices: true, revenuePerHour: 0 }));
+        runningSkillingProfit();
+        await settle();
+        expect(runningSkillingProfit()).toMatchObject({ state: 'none', failed: false });
+
+        // Some revenue with a price still missing is a partial figure, drawn as one
+        game.handlers.character_switching();
+        game.gather = vi.fn(async () => profit(500, { hasMissingPrices: true, revenuePerHour: 900 }));
+        runningSkillingProfit();
+        await settle();
+        expect(runningSkillingProfit()).toMatchObject({ state: 'ready' });
+
+        // Zero revenue with every price known really is an action that earns nothing
+        game.handlers.character_switching();
+        game.gather = vi.fn(async () => profit(-40, { revenuePerHour: 0 }));
+        runningSkillingProfit();
+        await settle();
+        expect(runningSkillingProfit()).toMatchObject({ state: 'ready' });
+    });
+
     test('a calculator that throws settles as no estimate, flagged as failed, without a hot retry loop', async () => {
         const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
         run(FORAGING, '/action_types/foraging');
@@ -204,7 +226,7 @@ describe('pending, priced, partly priced and a loss', () => {
     });
 
     test('a partly priced result keeps its flag and shows in the version', async () => {
-        game.gather = vi.fn(async () => profit(400_000, { hasMissingPrices: true }));
+        game.gather = vi.fn(async () => profit(400_000, { hasMissingPrices: true, revenuePerHour: 450_000 }));
         run(FORAGING, '/action_types/foraging');
         runningSkillingProfit();
         await settle();

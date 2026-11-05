@@ -84,6 +84,11 @@ async function calculate(actionHrid, type, upgradeLevel) {
         ? await module.calculateGatheringProfit(actionHrid)
         : await module.calculateProductionProfit(actionHrid, { upgradeItemLevel: upgradeLevel });
     if (!data || !Number.isFinite(data.profitPerHour)) return null;
+    // No revenue at all while prices are missing is every output unpriced (before the
+    // market loads, say), not an action that earns nothing: the calculator then answers
+    // 0, or minus the tea cost, with only a "partial" flag. A figure the tile would
+    // draw as green "0/hr est." is worse than a blank, so it is no estimate yet.
+    if (data.hasMissingPrices && Number.isFinite(data.revenuePerHour) && data.revenuePerHour <= 0) return null;
     return {
         profitPerHour: data.profitPerHour,
         hasMissingPrices: Boolean(data.hasMissingPrices),

@@ -202,7 +202,12 @@ describe('Total Profit', () => {
     });
 
     test('a partly priced estimate says partial on the tile and in the tooltip', async () => {
-        game.gather = vi.fn(async () => ({ profitPerHour: 400_000, hasMissingPrices: true, pricingMode: 'hybrid' }));
+        game.gather = vi.fn(async () => ({
+            profitPerHour: 400_000,
+            revenuePerHour: 450_000,
+            hasMissingPrices: true,
+            pricingMode: 'hybrid',
+        }));
         run(FORAGING, '/action_types/foraging', 'Star Fruit');
         draw('totalProfit');
         await settle();
