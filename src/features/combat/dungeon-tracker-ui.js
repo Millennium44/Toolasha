@@ -1203,7 +1203,7 @@ class DungeonTrackerUI {
         paceElement.textContent = chip.text;
         paceElement.style.color = chip.tone === 'good' ? '#5fda5f' : chip.tone === 'bad' ? '#ff6b6b' : '#aaa';
         paceElement.title =
-            "This run's average wave time against your stored average for this dungeon. Green is faster than your history.";
+            "This run's average wave time against your stored average for this dungeon and tier. Green is faster than your history.";
     }
 
     /**

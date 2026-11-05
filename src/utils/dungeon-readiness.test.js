@@ -48,13 +48,19 @@ describe('typicalRunSeconds', () => {
         expect(typicalRunSeconds(runs, { dungeonName: 'Chimerical Den' })).toEqual({ seconds: 660, samples: 3 });
     });
 
-    test('a run with no tier recorded still counts against a tiered query', () => {
-        const mixed = [
-            { dungeonName: 'Chimerical Den', tier: null, duration: 600_000 },
-            { dungeonName: 'Chimerical Den', tier: 2, duration: 900_000 },
-        ];
-        expect(typicalRunSeconds(mixed, { dungeonName: 'Chimerical Den', tier: 2 }).samples).toBe(2);
-        expect(typicalRunSeconds(mixed, { dungeonName: 'Chimerical Den', tier: 0 }).samples).toBe(1);
+    test('a run with no tier recorded counts only when the dungeon has nothing tiered', () => {
+        const name = { dungeonName: 'Chimerical Den' };
+        const untiered = { ...name, tier: null, duration: 600_000 };
+        const t2 = { ...name, tier: 2, duration: 900_000 };
+        const elsewhere = { dungeonName: 'Pirate Cove', tier: 2, duration: 100_000 };
+
+        expect(typicalRunSeconds([untiered, t2], { ...name, tier: 2 })).toEqual({ seconds: 900, samples: 1 });
+        expect(typicalRunSeconds([t2], { ...name, tier: 2 })).toEqual({ seconds: 900, samples: 1 });
+        expect(typicalRunSeconds([untiered, elsewhere], { ...name, tier: 2 })).toEqual({ seconds: 600, samples: 1 });
+        // A tier with no runs of its own has no typical length, not another tier's
+        expect(typicalRunSeconds([untiered, t2], { ...name, tier: 0 })).toBeNull();
+        // No tier asked for: every run of the dungeon
+        expect(typicalRunSeconds([untiered, t2], name).samples).toBe(2);
     });
 
     test('no history is null, not zero', () => {
