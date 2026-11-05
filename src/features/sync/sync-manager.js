@@ -38,6 +38,7 @@
  */
 
 import config from '../../core/config.js';
+import connectionState from '../../core/connection-state.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { GAME } from '../../utils/selectors.js';
@@ -71,7 +72,7 @@ import {
     registeredKeysDivergeSliced,
     trimmedRegisteredKeys,
     restampRestoredSettings,
-    learnExternalKeysFromText,
+    learnExternalKeysFromTextSliced,
     assertExternalKeysSaved,
     RESTORED_BASELINE,
 } from './sync-payload.js';
@@ -253,8 +254,18 @@ export function getSyncTrace() {
 
 export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 
-/** How long after a character switch the on-switch push waits for the dust. */
-const SWITCH_PUSH_DELAY_MS = 5 * 1000;
+/** How long after the settings land a startup pull that stood down for a switch waits for the dust */
+const OWED_PULL_DELAY_MS = 5 * 1000;
+
+/**
+ * How long the connection banner has to stay, and between later looks at it, before it is taken for a takeover.
+ * A switch passes through the same banner on its way to the next character's socket. A takeover's banner
+ * stays, so this costs a real takeover next to nothing: the phone's first startup pull is twenty seconds off.
+ */
+const HANDOFF_SETTLE_MS = 1500;
+
+/** How many looks a banner gets while a switch seems under way, before it is left alone */
+const HANDOFF_MAX_LOOKS = 20;
 
 /**
  * Startup pulls, staggered. One pull twenty seconds in raced the handoff: a
@@ -295,10 +306,12 @@ class SyncManager {
         this.leadership = null;
         /** Whether this tab currently runs the automatic schedule under the leader lock */
         this.isLeader = false;
-        /** What the automatic schedule stood down for during a settings reload, owed once it lands */
-        this.owedAfterReload = { push: false, pull: null };
-        /** Timer running what is owed, or null */
+        /** A page-load pull stood down for a settings reload, owed once it lands. It cannot wait for an interval */
+        this.startupPullOwed = false;
+        /** Timer running the owed pull, or null */
         this.owedTimer = null;
+        /** Timer for the next look at the connection banner, or null */
+        this.handoffTimer = null;
         /** Stops the settings-loaded listener */
         this.settingsLoadedOff = null;
     }
@@ -319,11 +332,12 @@ class SyncManager {
             this.handoffUnregister?.();
             this.handoffUnregister = null;
             this.owedTimer = null;
+            this.handoffTimer = null;
             this._startAuto();
             this._watchHandoff();
             this._scheduleOwed();
         };
-        for (const key of ['sync_enabled', 'sync_auto']) {
+        for (const key of ['sync_enabled', 'sync_auto', 'sync_onSwitch']) {
             config.onSettingChange(key, restart);
             this.settingListeners.push([key, restart]);
         }
@@ -369,26 +383,11 @@ class SyncManager {
             when: () => Boolean(lastPullSummary()),
         });
 
-        // A re-initialise for a DIFFERENT character is a switch: push shortly,
-        // so the character just left has its changes on GitHub without waiting
-        // out the quarter-hour timer. The unchanged-skip makes this free when
-        // nothing moved; the first initialise of a page load never fires it.
         const characterId = dataManager.getCurrentCharacterId?.() ?? null;
         // The summary describes what this device downloaded, not what this
         // character owns; carrying it across a switch would put one character's
         // pull on another character's screen.
         if (characterId !== lastCharacterId) clearPullSummary();
-        if (
-            lastCharacterId !== null &&
-            characterId !== null &&
-            characterId !== lastCharacterId &&
-            config.getSetting('sync_onSwitch', false) &&
-            this.isConfigured()
-        ) {
-            this.timers.scheduleTimeout(() => {
-                this.push({ silent: true, unattended: true });
-            }, SWITCH_PUSH_DELAY_MS);
-        }
         if (characterId !== null) lastCharacterId = characterId;
     }
 
@@ -412,6 +411,7 @@ class SyncManager {
         // leader lock goes, and this tab's intervals must already be dead
         this.timers.clearAll();
         this.owedTimer = null;
+        this.handoffTimer = null;
         this._releaseLeadership();
         this.settingsLoadedOff?.();
         this.settingsLoadedOff = null;
@@ -434,7 +434,7 @@ class SyncManager {
      * @param {boolean} [options.silent=false] - Skip when nothing changed, and
      *   only speak up on failure. Used by the interval.
      * @param {boolean} [options.unattended=false] - Nobody pressed a button for this push (the
-     *   interval, a character switch, a session handoff): it never removes the gist's encryption
+     *   interval, a session handoff): it never removes the gist's encryption
      *   and never writes a gist it could not list. See `writeSyncGist`.
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      */
@@ -485,11 +485,10 @@ class SyncManager {
         // for three seconds before it gets there — so an unflushed payload is
         // this session's data minus whatever it recorded last. The interval
         // push can shrug that off, because the next tick picks the write up.
-        // The two pushes that exist *because* there will be no next tick
-        // cannot: the handoff push fires when another device has taken the
-        // session over, and the character-switch push fires as the character
-        // being left goes away. Both would upload a copy with the final
-        // seconds cut off, and nothing would ever put them back.
+        // The push that exists *because* there will be no next tick cannot:
+        // the handoff push fires when another device has taken the session
+        // over, and would upload a copy with the final seconds cut off, with
+        // nothing to ever put them back.
         //
         // An automatic push first asks the write counter (see `sync-dirty.js`)
         // whether anything synced was written since the last build proved this
@@ -653,6 +652,12 @@ class SyncManager {
             ...(encrypted ? { encrypted } : {}),
         };
 
+        // Before the write: these are pure functions of the two texts, and hashed after it they were a long
+        // gap between a write landing and the record of it, for a page close or a takeover to fall into
+        const pushedBaseline = merged
+            ? await exchangeBaselineSliced(payload, localPayload)
+            : await wholeKeyHashesSliced(localPayload);
+
         // Last check before the write that actually reaches GitHub. Nothing
         // between the top of this method and here normally takes long enough
         // for a takeover to happen without the dialog above, but a stalled
@@ -784,12 +789,6 @@ class SyncManager {
             });
         }
 
-        // Hashed before the record, and a wait of its own: a takeover during it leaves the record alone
-        const pushedBaseline = merged
-            ? await exchangeBaselineSliced(payload, localPayload)
-            : await wholeKeyHashesSliced(localPayload);
-        if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'push', opToken);
-
         await this._remember({
             gistId: written.id,
             exportedAt,
@@ -905,7 +904,7 @@ class SyncManager {
         // carries whatever it holds under them, and the fingerprint remembered
         // below is of a payload with the registry it now has — not of one
         // without it, which every later rebuild would read as a local change
-        if (learnExternalKeysFromText(remote.payload)) {
+        if (await learnExternalKeysFromTextSliced(remote.payload)) {
             localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
         }
 
@@ -1392,7 +1391,7 @@ class SyncManager {
      */
     async _decideTrim(token, gistId, remote, builtPayload, scope, opToken) {
         let localPayload = builtPayload;
-        if (remote?.payload && learnExternalKeysFromText(remote.payload)) {
+        if (remote?.payload && (await learnExternalKeysFromTextSliced(remote.payload))) {
             await assertExternalKeysSaved();
             localPayload = await buildPayloadJSON(scope);
         }
@@ -2383,73 +2382,60 @@ class SyncManager {
      * Whether a sync must wait for the settings, and the answer it gets if so.
      *
      * The automatic schedule stands down while a character switch has the settings map empty: features are
-     * tearing down, and a pull landing then would be applied under them. What it stood down for runs once the
-     * load lands (`_scheduleOwed`), without a word. A pressed sync goes ahead in that window, since the
-     * device-wide settings it reads are held across it. Neither runs on settings that were never read, which is
-     * told apart from a token that is really missing.
+     * tearing down, and a build or a pull landing then would run under them. A push goes up with the next
+     * interval, as a switch never starts one. Only a page-load pull is owed: it exists to collect a handoff
+     * from another device, and the next interval pull does not take what `startup` takes. A pressed sync is
+     * told to try again: a push's trim check and a pull's folds weigh this character's settings, which are not
+     * in hand. Neither runs on settings that were never read, which is told apart from a token that is really
+     * missing, and that still says so.
      * @param {'push'|'pull'} label - The sync asked for
      * @param {boolean} silent - Whether nobody pressed a button for it
-     * @param {boolean} [startup=false] - A pull's page-load flag, kept for when it runs
+     * @param {boolean} [startup=false] - A pull's page-load flag
      * @returns {{ok: boolean, skipped?: boolean, reason: string}|null} The answer, or null to go ahead
      * @private
      */
     _holdForSettings(label, silent, startup = false) {
         const known = config.areSharedSettingsKnown?.() !== false;
-        if (!silent && known) return null;
-        if (silent && known && !config.isSettingsReloading?.()) return null;
+        const reloading = Boolean(config.isSettingsReloading?.());
+        if (known && !reloading) return null;
         if (!silent) {
+            if (known) {
+                if (!this.isConfigured()) return null;
+                showToast('Switching characters. Press it again in a moment.', { kind: 'warn' });
+                return { ok: false, reason: 'settings-reloading' };
+            }
             showToast(`Sync ${label} did not run: the sync settings could not be read just now. Reload the page.`, {
                 kind: 'warn',
             });
             return { ok: false, reason: 'settings-unread' };
         }
         traceSync('held-for-settings', { label });
-        if (label === 'push') this.owedAfterReload.push = true;
-        else this.owedAfterReload.pull = { startup: startup || Boolean(this.owedAfterReload.pull?.startup) };
+        if (label === 'pull' && startup) this.startupPullOwed = true;
         return { ok: true, skipped: true, reason: 'settings-reloading' };
     }
 
     /**
-     * Run what the automatic schedule stood down for, a moment after the settings land.
-     * Each sync checks the settings again when it runs: one turned off meanwhile, or another switch begun,
-     * answers for itself, and a switch owes it again.
+     * Run the page-load pull that stood down, a moment after the settings land. It was asked for by the
+     * automatic schedule, so `sync_auto` turned off meanwhile ends it; sync turned off or another switch begun
+     * answers for itself. A sync still running turns it away, so it stays owed for another look.
      * @private
      */
     _scheduleOwed() {
-        const owed = this.owedAfterReload;
-        if (this.owedTimer !== null || (!owed.push && !owed.pull)) return;
+        if (this.owedTimer !== null || !this.startupPullOwed) return;
         if (config.isSettingsReloading?.()) return;
         this.owedTimer = this.timers.scheduleTimeout(async () => {
             this.owedTimer = null;
-            this.owedAfterReload = { push: false, pull: null };
+            this.startupPullOwed = false;
+            if (!config.getSetting('sync_auto', false)) return;
             try {
-                // One after the other: the second would otherwise find the first holding the lock
-                if (owed.push) await this._runOwed('push', () => this.push({ silent: true, unattended: true }));
-                if (owed.pull) {
-                    const { startup } = owed.pull;
-                    await this._runOwed('pull', () => this.pull({ silent: true, startup }), startup);
-                }
+                const outcome = await this.pull({ silent: true, startup: true });
+                if (outcome?.reason !== 'busy') return;
+                this.startupPullOwed = true;
+                this._scheduleOwed();
             } catch (error) {
-                console.error('[Sync] A sync held for a settings reload failed:', error);
+                console.error('[Sync] A startup pull held for a settings reload failed:', error);
             }
-        }, SWITCH_PUSH_DELAY_MS);
-    }
-
-    /**
-     * One owed sync. An operation still running turns it away, and this may be the only one there is,
-     * so it stays owed for another look.
-     * @param {'push'|'pull'} label - Which sync
-     * @param {() => Promise<{reason?: string}>} run - Runs it
-     * @param {boolean} [startup=false] - A pull's page-load flag
-     * @returns {Promise<void>}
-     * @private
-     */
-    async _runOwed(label, run, startup = false) {
-        const outcome = await run();
-        if (outcome?.reason !== 'busy') return;
-        if (label === 'push') this.owedAfterReload.push = true;
-        else this.owedAfterReload.pull = { startup };
-        this._scheduleOwed();
+        }, OWED_PULL_DELAY_MS);
     }
 
     /**
@@ -2612,13 +2598,37 @@ class SyncManager {
      * collect them seconds later. Once per banner: the flag rearms only after
      * the banner goes away (a reconnect), so a flickering connection does not
      * hammer the gist.
+     *
+     * An in-page character switch shows the same banner on its way to the next
+     * socket, and a switch never starts a push: see `_switchSeemsUnderWay`.
      * @private
      */
     _watchHandoff() {
         if (!config.getSetting('sync_onSwitch', false) || !this.isConfigured()) return;
         this.handoffUnregister = domObserver.onClass('SyncHandoff', 'GamePage_connectionMessage', () => {
-            if (this.handoffPushed) return;
+            if (this.handoffPushed || this.handoffTimer !== null) return;
             if (!document.querySelector(GAME.CONNECTION_MESSAGE)) return;
+            this._lookAtHandoff(1);
+        });
+    }
+
+    /**
+     * Give the banner a moment, then decide. Gone means a reconnect or a switch that finished, which owes
+     * nothing. Still there with a switch seeming under way, it is looked at again rather than dropped: a
+     * takeover landing during a switch keeps its banner once the switch's signs have cleared.
+     * @param {number} look - Which look this is
+     * @private
+     */
+    _lookAtHandoff(look) {
+        this.handoffTimer = this.timers.scheduleTimeout(() => {
+            this.handoffTimer = null;
+            if (this.handoffPushed || !document.querySelector(GAME.CONNECTION_MESSAGE)) return;
+            if (this._switchSeemsUnderWay()) {
+                if (look < HANDOFF_MAX_LOOKS) this._lookAtHandoff(look + 1);
+                return;
+            }
+            // Checked when it runs: the setting can be turned off after the watcher started
+            if (!config.getSetting('sync_onSwitch', false)) return;
             this.handoffPushed = true;
             this.push({ silent: true, unattended: true });
             // Rearm when the banner clears — checked lazily on the next appearance
@@ -2629,7 +2639,30 @@ class SyncManager {
                 }
             }, 30 * 1000);
             this.timers.registerInterval(rearm);
-        });
+        }, HANDOFF_SETTLE_MS);
+    }
+
+    /**
+     * Whether the banner on screen looks like a character switch rather than a takeover.
+     *
+     * Missing a takeover is the failure that loses data on the other device, and taking a switch for one
+     * only costs a push, so this answers true only on a sign no takeover shows. A takeover leaves the page
+     * where it is, on this character's own URL, with the socket closed and no new one: the game does not
+     * reconnect by itself. Its close code cannot tell them apart, as a socket this page closes itself also
+     * reports 1005.
+     * @returns {boolean} True when a switch is under way
+     * @private
+     */
+    _switchSeemsUnderWay() {
+        if (dataManager.getIsCharacterSwitching?.() || config.isSettingsReloading?.()) return true;
+        // A new socket is opening, which is not what a takeover does
+        if (connectionState.getState?.() === 'reconnecting') return true;
+        const { pathname = '', search = '' } = globalThis.location ?? {};
+        if (pathname.includes('characterSelect')) return true;
+        // On the way to another character: the URL has moved and the character has not yet
+        const heading = new URLSearchParams(search).get('characterId');
+        const current = dataManager.getCurrentCharacterId?.();
+        return Boolean(heading && current !== null && current !== undefined && String(heading) !== String(current));
     }
 
     /**

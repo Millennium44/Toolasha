@@ -296,6 +296,101 @@ describe('an automatic push of a large payload hands the page a frame as it goes
         }
     });
 
+    test('the parse splits a payload by key, and gives what JSON.parse gives, for any text', async () => {
+        const hard = {
+            formatVersion: 1,
+            'odd"name\\': 'a "quoted" \\ value }]{[',
+            externalKeys: { prefixes: ['x'] },
+            stores: {
+                settings: {
+                    plain: 1,
+                    'quote"key☃': { nested: [1, 'two', null, { a: '}' }] },
+                    ['__proto__']: { polluted: true },
+                    12: 'an integer-like key',
+                    empty: {},
+                    zero: 0,
+                    no: false,
+                    nothing: null,
+                    backslash: 'ends with a backslash\\',
+                },
+                emptyStore: {},
+                notAnObject: [1, 2],
+                aNull: null,
+            },
+            after: true,
+        };
+        const texts = [
+            JSON.stringify(hard),
+            JSON.stringify(hard, null, 2),
+            '  {"stores" : { "a" : { "k" : 1 , "k" : 2 } } }\n',
+            '{"stores":null}',
+            '{"stores":[1,2]}',
+            '{}',
+            '[1,2]',
+            '3',
+            '"text"',
+        ];
+        for (const text of texts) {
+            const parsed = await sync.parsePayloadSliced(text, { minChars: 0 });
+            expect(JSON.stringify(parsed)).toBe(JSON.stringify(JSON.parse(text)));
+            expect(parsed).toEqual(JSON.parse(text));
+        }
+        const own = await sync.parsePayloadSliced(JSON.stringify(hard), { minChars: 0 });
+        expect(Object.hasOwn(own.stores.settings, '__proto__')).toBe(true);
+        expect({}.polluted).toBeUndefined();
+
+        for (const broken of [
+            '',
+            '{',
+            '{"stores":{"a":{"k":1}}',
+            '{"stores":{"a":{"k":}}}',
+            '{"stores":{"a":{"k":1}}} trailing',
+            '{"stores":{"a":{"k":[1}]}}}',
+            '{"stores":{"a":{"k":"unterminated}}}',
+            '{"stores":{"a":{k:1}}}',
+            '{"stores":{"a":{"k":1,}}}',
+        ]) {
+            expect(() => JSON.parse(broken)).toThrow();
+            await expect(sync.parsePayloadSliced(broken, { minChars: 0 })).rejects.toThrow();
+        }
+    });
+
+    test('the parse and the write-out yield between keys, and the write-out is the text JSON.stringify gives', async () => {
+        const stores = buildFixture(0.05);
+        const payload = { formatVersion: 1, exportedAt: 'x', syncScope: 'everything', stores };
+        const text = JSON.stringify(payload);
+        const clock = steppedClock();
+        try {
+            yields.count = 0;
+            await sync.parsePayloadSliced(text, { minChars: 0 });
+            expect(yields.count).toBeGreaterThan(5);
+
+            yields.count = 0;
+            await expect(sync.stringifyPayloadSliced(payload)).resolves.toBe(text);
+            expect(yields.count).toBeGreaterThan(5);
+
+            const odd = {
+                a: undefined,
+                stores: { s: { left: undefined, kept: 1 }, list: [1], none: null, skipped: undefined },
+                z: [undefined],
+            };
+            await expect(sync.stringifyPayloadSliced(odd)).resolves.toBe(JSON.stringify(odd));
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    test('a payload naming no registry is answered without parsing, and a damaged one still teaches nothing', async () => {
+        const parse = vi.spyOn(JSON, 'parse');
+        try {
+            await expect(sync.learnExternalKeysFromTextSliced('{"stores":{"a":{"b":1}}}')).resolves.toBe(false);
+            expect(parse).not.toHaveBeenCalled();
+        } finally {
+            parse.mockRestore();
+        }
+        await expect(sync.learnExternalKeysFromTextSliced('{"externalKeys":["x"')).resolves.toBe(false);
+    });
+
     test('a hidden tab is not yielded in, where throttled timers would hold the push for minutes', async () => {
         storeState.stores = buildFixture(0.05);
         const hadDocument = 'document' in globalThis;

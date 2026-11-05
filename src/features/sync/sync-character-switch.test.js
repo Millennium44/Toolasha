@@ -84,6 +84,16 @@ vi.mock('../../utils/performance-monitor.js', () => ({
     default: { mark: () => {}, sinceBoot: () => 0, snapshot: () => {}, enabled: false },
 }));
 
+// Counted, passed through, and a place to act from inside a yield
+const yields = vi.hoisted(() => ({ count: 0, onYield: null }));
+vi.mock('../../utils/yield-to-browser.js', () => ({
+    yieldToBrowser: () => {
+        yields.count += 1;
+        yields.onYield?.();
+        return new Promise((resolve) => setTimeout(resolve, 0));
+    },
+}));
+
 const toasts = vi.hoisted(() => []);
 vi.mock('../../utils/toast.js', () => ({
     showToast: (message, options) => {
@@ -129,6 +139,8 @@ const { default: storage } = await import('../../core/storage.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
 const { default: featureRegistry } = await import('../../core/feature-registry.js');
 const { default: config } = await import('../../core/config.js');
+const { default: domObserver } = await import('../../core/dom-observer.js');
+const { default: connectionState } = await import('../../core/connection-state.js');
 const { default: syncManager } = await import('./sync-manager.js');
 
 const ALICE = 32030;
@@ -229,7 +241,8 @@ beforeEach(async () => {
     syncManager.cleanup();
     syncManager.busy = false;
     syncManager.lastCancelledToken = 0;
-    syncManager.owedAfterReload = { push: false, pull: null };
+    syncManager.startupPullOwed = false;
+    syncManager.handoffPushed = false;
 
     await send(ALICE, 'Alice');
     await config.loadSettings();
@@ -311,8 +324,8 @@ describe('a push already running when the switch empties the settings', () => {
     });
 });
 
-describe('an automatic push asked for during the window', () => {
-    test('stands down quietly and runs after the switch with the real settings', async () => {
+describe('an automatic sync asked for during the window', () => {
+    test('a push stands down quietly, is not run after the load, and the next interval carries it', async () => {
         const window = await enterWindow();
 
         const outcome = await syncManager.push({ silent: true, unattended: true });
@@ -321,9 +334,11 @@ describe('an automatic push asked for during the window', () => {
         expect(toasts).toEqual([]);
 
         await leaveWindow(window);
-        expect(scheduled).toHaveLength(1);
-        await runOwed();
+        expect(scheduled).toEqual([]);
+        expect(github.writes).toEqual([]);
 
+        // The next tick of the interval
+        await syncManager.push({ silent: true, unattended: true });
         expect(toasts).toEqual([]);
         expect(github.writes).toHaveLength(1);
         expect(github.writes[0].token).toBe('ghp_real');
@@ -331,65 +346,123 @@ describe('an automatic push asked for during the window', () => {
         expect(github.writes[0].manifest.encrypted).toBeTruthy();
     });
 
-    test('an automatic pull is owed too, and keeps its page-load flag', async () => {
+    test('a page-load pull is owed and keeps its flag; an interval pull waits for the next interval', async () => {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_auto: entry(true) });
         const window = await enterWindow();
         const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
 
+        await syncManager.pull({ silent: true });
+        await leaveWindow(window);
+        expect(scheduled).toEqual([]);
+
+        const second = await enterWindow(CARA, 'Cara');
         await syncManager.pull({ silent: true, startup: true });
         expect(pull).not.toHaveBeenCalled();
+        await leaveWindow(second);
 
-        await leaveWindow(window);
         await runOwed();
         expect(pull).toHaveBeenCalledTimes(1);
         expect(pull.mock.calls[0][2]).toBe(true);
     });
 
-    test('what is owed survives a teardown and re-initialise, should sync ever be stopped by the switch', async () => {
+    test('automatic sync turned off while a pull is owed ends it', async () => {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_auto: entry(true) });
         const window = await enterWindow();
-        await syncManager.push({ silent: true, unattended: true });
-        syncManager.cleanup();
+        const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
+        await syncManager.pull({ silent: true, startup: true });
         await leaveWindow(window);
-        expect(scheduled).toEqual([]);
 
-        await syncManager.initialize();
-        expect(scheduled).toHaveLength(1);
+        config.setSetting('sync_auto', false);
         await runOwed();
 
-        expect(github.writes).toHaveLength(1);
-        expect(toasts).toEqual([]);
+        expect(pull).not.toHaveBeenCalled();
+        expect(syncManager.startupPullOwed).toBe(false);
     });
 
-    test('sync turned off while it waits does not run', async () => {
+    test('sync turned off while a pull is owed ends it', async () => {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_auto: entry(true) });
         const window = await enterWindow();
-        await syncManager.push({ silent: true, unattended: true });
+        const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
+        await syncManager.pull({ silent: true, startup: true });
         await leaveWindow(window);
 
         config.setSetting('sync_enabled', false);
         await runOwed();
 
-        expect(github.writes).toEqual([]);
+        expect(pull).not.toHaveBeenCalled();
         expect(toasts).toEqual([]);
     });
 
-    test('a sync still running when it comes due leaves it owed, not dropped', async () => {
+    test('a sync still running when the pull comes due leaves it owed, not dropped', async () => {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_auto: entry(true) });
         const window = await enterWindow();
-        await syncManager.push({ silent: true, unattended: true });
+        const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
+        await syncManager.pull({ silent: true, startup: true });
         await leaveWindow(window);
 
         syncManager.busy = 999;
         syncManager.busySince = Date.now();
         await runOwed();
-        expect(github.writes).toEqual([]);
+        expect(pull).not.toHaveBeenCalled();
         expect(scheduled).toHaveLength(1);
 
         syncManager.busy = false;
         await runOwed();
-        expect(github.writes).toHaveLength(1);
+        expect(pull).toHaveBeenCalledTimes(1);
+    });
+
+    test('what is owed survives a teardown and re-initialise, should sync ever be stopped by the switch', async () => {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_auto: entry(true) });
+        const window = await enterWindow();
+        const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
+        await syncManager.pull({ silent: true, startup: true });
+        syncManager.cleanup();
+        await leaveWindow(window);
+        expect(scheduled).toEqual([]);
+
+        await syncManager.initialize();
+        expect(syncManager.startupPullOwed).toBe(true);
+        expect(syncManager.owedTimer).not.toBeNull();
+        await runOwed();
+        expect(pull).toHaveBeenCalled();
+    });
+});
+
+describe('a switch landing during a yield', () => {
+    test('the push finishes on the real settings, and nothing reads a default', async () => {
+        for (let index = 0; index < 200; index += 1)
+            settingsArea().set(`script_settingsMap_${90000 + index}`, { itemTooltip_prices: { isTrue: false } });
+        let now = 0;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 1));
+        let release = null;
+        let switched = null;
+        yields.onYield = () => {
+            yields.onYield = null;
+            release = holdReads(`script_settingsMap_${BOB}`);
+            switched = send(BOB, 'Bob');
+        };
+        try {
+            yields.count = 0;
+            await syncManager.push({ silent: true, unattended: true });
+
+            expect(yields.count).toBeGreaterThan(0);
+            expect(release).not.toBeNull();
+            expect(toasts).toEqual([]);
+            expect(github.writes).toHaveLength(1);
+            expect(github.writes[0].token).toBe('ghp_real');
+            expect(github.writes[0].manifest.scope).toBe('everything');
+            expect(github.writes[0].manifest.encrypted).toBeTruthy();
+        } finally {
+            yields.onYield = null;
+            clock.mockRestore();
+            release?.();
+            await switched;
+        }
     });
 });
 
 describe('two quick switches', () => {
-    test('the settings read true throughout, and the push waits for the last one', async () => {
+    test('the settings read true throughout, and no push starts', async () => {
         const first = await enterWindow(BOB, 'Bob');
         await syncManager.push({ silent: true, unattended: true });
         expect(config.getSetting('sync_scope', 'settings')).toBe('everything');
@@ -402,16 +475,14 @@ describe('two quick switches', () => {
         expect(config.getSetting('sync_token', '')).toBe('ghp_real');
         expect(config.getSetting('sync_scope', 'settings')).toBe('everything');
         expect(config.getSetting('sync_passphrase', '')).toBe('hunter2');
-        expect(github.writes).toEqual([]);
 
         releaseCara();
         await second;
         await waitFor(() => config.settingsOwner === CARA, "Cara's settings to land");
         expect(dataManager.getCurrentCharacterId()).toBe(CARA);
 
-        await runOwed();
-        expect(github.writes).toHaveLength(1);
-        expect(github.writes[0].manifest.scope).toBe('everything');
+        expect(scheduled).toEqual([]);
+        expect(github.writes).toEqual([]);
         expect(toasts).toEqual([]);
     });
 });
@@ -443,16 +514,53 @@ describe('a token that really is missing', () => {
     });
 });
 
-describe('a pressed push during the window', () => {
-    test('runs on the real settings and does not claim sync is off', async () => {
+describe('a pressed sync during the window', () => {
+    test('a push is told to try again, and does not claim sync is off', async () => {
         const window = await enterWindow();
         const outcome = await syncManager.push();
 
-        expect(outcome.ok).toBe(true);
-        expect(github.writes[0].token).toBe('ghp_real');
-        expect(github.writes[0].manifest.scope).toBe('everything');
-        expect(toasts.map(({ message }) => message).join()).not.toContain('turned off');
+        expect(outcome.reason).toBe('settings-reloading');
+        expect(github.writes).toEqual([]);
+        const said = toasts.map(({ message }) => message).join();
+        expect(said).toContain('Switching characters');
+        expect(said).not.toContain('turned off');
 
+        await leaveWindow(window);
+    });
+
+    test('a pull never reaches its folds', async () => {
+        const window = await enterWindow();
+        const pull = vi.spyOn(syncManager, '_doPull').mockResolvedValue({ ok: true });
+
+        const outcome = await syncManager.pull();
+
+        expect(pull).not.toHaveBeenCalled();
+        expect(outcome.reason).toBe('settings-reloading');
+        expect(toasts[0].message).toContain('Switching characters');
+        await leaveWindow(window);
+
+        await syncManager.pull();
+        expect(pull).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('a fold that runs in the window', () => {
+    test("a cap read as its default does not trim this device's room logs", async () => {
+        await import('../combat/labyrinth-room-logs.js');
+        const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
+        settingsArea().set(`script_settingsMap_${ALICE}`, { labyrinthRoomLogSize: { value: 500 } });
+        await config.loadSettings();
+        const rooms = Array.from({ length: 200 }, (_, index) => ({
+            startedAt: 1_000_000 + index * 60_000,
+            endedAt: 1_000_000 + index * 60_000 + 30_000,
+            runKey: `run${index}`,
+            roomKey: `room${index}`,
+        }));
+        const fold = mergeForKey('settings', 'labyrinthRoomLogs');
+
+        const window = await enterWindow();
+        const folded = fold.foldPull({ sessions: rooms }, { sessions: rooms.slice(0, 1) }, { download: {} });
+        expect(folded.sessions).toHaveLength(200);
         await leaveWindow(window);
     });
 });
@@ -489,18 +597,51 @@ describe('the device-wide settings across the window', () => {
         expect(config.getSetting('sync_scope', 'x')).toBe('settings');
     });
 
-    test('the sync setup copy finds the entries it says it has', async () => {
+    test('a hold is never written back: the setup copy refuses in the window, with a reason', async () => {
+        const { copySyncSetupToOtherCharacters } = await import('./sync-setup-copy.js');
         const window = await enterWindow();
-        const { syncSetupEntries } = await import('./sync-setup-copy.js');
-        expect(syncSetupEntries().sync_token?.value).toBe('ghp_real');
+        // Another tab saves a newer token while this one holds the old
+        settingsArea().set('script_settingsMap_shared', sharedMap({ token: 'ghp_newer' }));
+
+        const outcome = await copySyncSetupToOtherCharacters();
+
+        expect(outcome.ok).toBe(false);
+        expect(outcome.message).toContain('still loading');
+        expect(settingsArea().get('script_settingsMap_shared').sync_token.value).toBe('ghp_newer');
+
+        const copied = await config.syncSettingsToAllCharacters([ALICE]);
+        expect(copied.success).toBe(false);
+
         await leaveWindow(window);
+        expect(config.getSetting('sync_token', '')).toBe('ghp_newer');
     });
 
-    test('a change written during the window answers at once', async () => {
+    test('Reset in the window clears the settings, and the hold cannot bring them back', async () => {
         const window = await enterWindow();
-        config.setSettingValue('color_profit', '#abcdef');
-        expect(config.getSettingValue('color_profit', 'fallback')).toBe('#abcdef');
+        await config.resetToDefaults();
+
+        expect(config._heldSharedSettings).toBeNull();
+        expect(config.getSetting('sync_token', 'x')).toBe('');
+        expect(settingsArea().get('script_settingsMap_shared').sync_token.value).toBe('');
+
         await leaveWindow(window);
+        expect(config.getSetting('sync_token', 'x')).toBe('');
+    });
+
+    test('a shared setting written before the pointer moves is kept; a per-character one still is not', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        dataManager.on('character_switching', () => {
+            config.setSettingValue('sync_passphrase', 'new-pass');
+            config.setSetting('itemTooltip_prices', false);
+        });
+        await send(BOB, 'Bob');
+        await waitFor(() => config.settingsOwner === BOB, "Bob's settings");
+        await settle();
+
+        expect(config.getSetting('sync_passphrase', '')).toBe('new-pass');
+        expect(settingsArea().get('script_settingsMap_shared').sync_passphrase.value).toBe('new-pass');
+        expect(config.getSetting('itemTooltip_prices')).toBe(true);
+        expect(warn.mock.calls.some(([line]) => String(line).includes("'itemTooltip_prices' dropped"))).toBe(true);
     });
 });
 
@@ -513,6 +654,8 @@ describe('when the device-wide map cannot be read', () => {
         expect(config.getSetting('sync_token', '')).toBe('ghp_real');
         expect(config.getSetting('sync_scope', 'settings')).toBe('everything');
         expect(config.areSharedSettingsKnown()).toBe(true);
+        // What a panel or a bulk snapshot reads agrees with what sync runs on
+        expect(config.getSettingEntry('sync_token').value).toBe('ghp_real');
 
         config.setSettingValue('sync_scope', 'settings');
         expect(config.getSetting('sync_scope', 'x')).toBe('settings');
@@ -520,6 +663,65 @@ describe('when the device-wide map cannot be read', () => {
         db.unreadable.clear();
         await config.loadSettings();
         expect(config._heldSharedSettings).toBeNull();
+    });
+
+    test('an unrelated save leaves the shared map alone, and a shared save is refused, not destructive', async () => {
+        db.unreadable.add('script_settingsMap_shared');
+        const before = JSON.stringify(settingsArea().get('script_settingsMap_shared'));
+
+        config.setSetting('itemTooltip_prices', false);
+        config.setSettingValue('color_profit', '#abcdef');
+        await settle();
+        await settle();
+
+        expect(JSON.stringify(settingsArea().get('script_settingsMap_shared'))).toBe(before);
+        expect(settingsArea().get('script_settingsMap_shared').sync_passphrase.value).toBe('hunter2');
+    });
+
+    test('overlapping loads: the older one reading fine does not vouch for the newer one that could not', async () => {
+        config.clearSettingsCache();
+        settingsArea().set(`script_settingsMap_${ALICE}`, {
+            sync_enabled: { isTrue: true },
+            sync_token: { value: 'ghp_stale' },
+            sync_scope: { value: 'settings' },
+        });
+        const realTryGet = storage.tryGet;
+        let sharedReads = 0;
+        let releaseOlder;
+        const older = new Promise((resolve) => {
+            releaseOlder = resolve;
+        });
+        let releaseNewer;
+        const newer = new Promise((resolve) => {
+            releaseNewer = resolve;
+        });
+        vi.spyOn(storage, 'tryGet').mockImplementation(async (key, name) => {
+            if (key === 'script_settingsMap_shared') {
+                sharedReads += 1;
+                if (sharedReads === 1) {
+                    await older;
+                    return realTryGet(key, name);
+                }
+                return null;
+            }
+            // The live-prices read that follows each load, where the newer one waits for the older to pass
+            if (key === 'Toolasha_marketAPI_livePrices') await newer;
+            return realTryGet(key, name);
+        });
+
+        const first = config.loadSettings();
+        await waitFor(() => sharedReads === 1, 'the older load');
+        const second = config.loadSettings();
+        await waitFor(() => sharedReads === 2, 'the newer load');
+        releaseOlder();
+        await settle();
+        await settle();
+        releaseNewer();
+        await Promise.all([first, second]);
+
+        expect(config.getSetting('sync_scope', 'x')).toBe('everything');
+        expect(config.getSetting('sync_token', '')).toBe('ghp_real');
+        expect(config.isHoldingSharedSettings()).toBe(true);
     });
 
     test('with nothing read before, sync does not run on a stale per-character copy', async () => {
@@ -546,12 +748,120 @@ describe('when the device-wide map cannot be read', () => {
         expect(toasts[0].message).not.toContain('token');
         expect(github.writes).toEqual([]);
 
-        // The next good load runs what the automatic one owed
+        // The next good load, and the next interval carries it
         db.unreadable.clear();
         await config.loadSettings();
-        await runOwed();
+        await syncManager.push({ silent: true, unattended: true });
         expect(github.writes).toHaveLength(1);
         expect(github.writes[0].token).toBe('ghp_real');
+    });
+});
+
+describe('the connection banner', () => {
+    let banner;
+    let fire;
+
+    /** Start the watcher with the banner's observer in the test's hands */
+    async function watch() {
+        settingsArea().set('script_settingsMap_shared', { ...sharedMap(), sync_onSwitch: entry(true) });
+        await config.loadSettings();
+        banner = false;
+        vi.stubGlobal('document', { querySelector: () => (banner ? {} : null) });
+        vi.stubGlobal('location', { pathname: '/game', search: `?characterId=${ALICE}` });
+        vi.spyOn(domObserver, 'onClass').mockImplementation((_name, _className, callback) => {
+            fire = callback;
+            return () => {};
+        });
+        syncManager.handoffUnregister = null;
+        syncManager._watchHandoff();
+    }
+
+    /** The game's takeover: banner up, this socket closed, nothing reopening */
+    function takeover() {
+        connectionState.setDisconnected('socket_close', { code: 1005, wasClean: true }, null);
+        banner = true;
+        fire();
+    }
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        connectionState.state = 'connected';
+    });
+
+    test('a takeover pushes, once, without waiting on anything but its settle', async () => {
+        await watch();
+        const push = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+        takeover();
+        fire();
+
+        expect(push).not.toHaveBeenCalled();
+        expect(scheduled).toHaveLength(1);
+        await runOwed();
+
+        expect(push).toHaveBeenCalledTimes(1);
+        expect(push).toHaveBeenCalledWith({ silent: true, unattended: true });
+    });
+
+    test.each([
+        [
+            'the URL already names the next character',
+            () => vi.stubGlobal('location', { pathname: '/game', search: `?characterId=${BOB}` }),
+        ],
+        ['the character select page', () => vi.stubGlobal('location', { pathname: '/characterSelect', search: '' })],
+        ['a new socket opening', () => connectionState.updateState('reconnecting', { reason: 'socket_open' })],
+    ])('on a switch (%s) it starts no push, and a banner that goes away owes nothing', async (_name, arrange) => {
+        await watch();
+        const push = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+        banner = true;
+        arrange();
+        fire();
+
+        await runOwed();
+        expect(push).not.toHaveBeenCalled();
+        expect(scheduled).toHaveLength(1);
+
+        banner = false;
+        await runOwed();
+        expect(push).not.toHaveBeenCalled();
+        expect(scheduled).toEqual([]);
+    });
+
+    test('through the window it holds off, and a takeover still there afterwards still pushes', async () => {
+        await watch();
+        const push = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+        const window = await enterWindow();
+        takeover();
+
+        await runOwed();
+        expect(push).not.toHaveBeenCalled();
+        expect(scheduled).toHaveLength(1);
+
+        await leaveWindow(window);
+        vi.stubGlobal('location', { pathname: '/game', search: `?characterId=${BOB}` });
+        connectionState.setDisconnected('socket_close', { code: 1005, wasClean: true }, null);
+        await runOwed();
+
+        expect(push).toHaveBeenCalledTimes(1);
+    });
+
+    test('the setting turned off before it decides stops it', async () => {
+        await watch();
+        const push = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+        takeover();
+        config.setSetting('sync_onSwitch', false);
+        await runOwed();
+        expect(push).not.toHaveBeenCalled();
+    });
+
+    test('it gives up on a banner that never settles rather than look for ever', async () => {
+        await watch();
+        const push = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+        banner = true;
+        vi.stubGlobal('location', { pathname: '/characterSelect', search: '' });
+        fire();
+        for (let look = 0; look < 30 && scheduled.length; look += 1) await runOwed();
+        expect(scheduled).toEqual([]);
+        expect(push).not.toHaveBeenCalled();
     });
 });
 

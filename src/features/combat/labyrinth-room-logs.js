@@ -325,6 +325,9 @@ class LabyrinthRoomLogs {
 
     /** How many rooms of history to keep */
     logSize() {
+        // Not knowing this character's cap must not cut anything: a switch has every per-character setting on its
+        // default until the load lands, and a sync fold or this feature's own save can run in that window
+        if (config.isSettingsReloading?.()) return MAX_LOG_SESSIONS;
         const raw = Number(config.getSettingValue('labyrinthRoomLogSize', DEFAULT_SESSIONS));
         return Math.min(MAX_LOG_SESSIONS, Math.max(20, Math.floor(raw) || DEFAULT_SESSIONS));
     }

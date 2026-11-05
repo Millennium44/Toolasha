@@ -5200,14 +5200,14 @@ export const settingsGroups = {
             },
             sync_onSwitch: {
                 id: 'sync_onSwitch',
-                label: 'Push to GitHub on hand-off (character switch or session takeover)',
+                label: 'Push to GitHub when another device takes over',
                 type: 'checkbox',
                 default: false,
                 help:
-                    'With sync configured, this device pushes when it stops being the active session: a few ' +
-                    'seconds after switching characters, and immediately when another login takes the session ' +
-                    'over (a phone, say) — whose own startup pulls then collect the changes. Skipped when ' +
-                    'nothing changed.',
+                    'With sync configured, this device pushes as soon as another login takes the session over ' +
+                    '(a phone, say), whose own startup pulls then collect the changes. Skipped when nothing ' +
+                    'changed. Switching characters here does not push: those changes go up with the next ' +
+                    'automatic push, or when you press Push.',
             },
             sync_auto: {
                 id: 'sync_auto',

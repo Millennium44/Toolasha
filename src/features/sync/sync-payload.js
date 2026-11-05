@@ -364,10 +364,29 @@ function learnPayloadExternalKeys(payload) {
  * @returns {boolean} Whether the registry changed
  */
 export function learnExternalKeysFromText(text) {
-    if (typeof text !== 'string') return false;
+    return runSteps(learnExternalKeysSteps(text));
+}
+
+/**
+ * {@link learnExternalKeysFromText}, handing the page a frame as it goes. Most payloads name no registry, and
+ * those are answered without parsing anything.
+ * @param {string} text - Payload text
+ * @returns {Promise<boolean>} Whether the registry changed
+ */
+export function learnExternalKeysFromTextSliced(text) {
+    return runStepsSliced(learnExternalKeysSteps(text));
+}
+
+/**
+ * The body of {@link learnExternalKeysFromText}.
+ * @param {string} text - Payload text
+ * @returns {Generator<void, boolean>} Steps; returns whether the registry changed
+ */
+function* learnExternalKeysSteps(text) {
+    if (typeof text !== 'string' || !text.includes('"externalKeys"')) return false;
     let payload;
     try {
-        payload = JSON.parse(text);
+        payload = yield* parsePayloadSteps(text);
     } catch {
         return false;
     }
@@ -632,6 +651,218 @@ function createSlicer() {
 async function pageFrame() {
     if (globalThis.document?.visibilityState === 'hidden') return;
     await yieldToBrowser();
+}
+
+/** Below this, a payload is parsed in one go: the work is smaller than one look at the clock is worth */
+const SPLIT_PARSE_MIN_CHARS = 1 << 20;
+
+/**
+ * The index just past a JSON string that starts at `start`, or -1 when it does not end.
+ * @param {string} text - The text
+ * @param {number} start - Index of the opening quote
+ * @returns {number} Index after the closing quote
+ */
+function skipString(text, start) {
+    let index = start + 1;
+    for (;;) {
+        const quote = text.indexOf('"', index);
+        if (quote < 0) return -1;
+        let backslashes = 0;
+        while (text.charCodeAt(quote - 1 - backslashes) === 92) backslashes += 1;
+        if (backslashes % 2 === 0) return quote + 1;
+        index = quote + 1;
+    }
+}
+
+/**
+ * The index just past the JSON value at `start`, or -1 when the text is not shaped as JSON there. It checks
+ * only enough to find the end: parsing the span is what validates it.
+ * @param {string} text - The text
+ * @param {number} start - Index of the value's first character
+ * @returns {number} Index after the value
+ */
+function skipValue(text, start) {
+    const first = text.charCodeAt(start);
+    if (first === 34) return skipString(text, start);
+    if (first !== 123 && first !== 91) {
+        let index = start;
+        for (; index < text.length; index += 1) {
+            const code = text.charCodeAt(index);
+            if (code === 44 || code === 125 || code === 93 || code <= 32) break;
+        }
+        return index > start ? index : -1;
+    }
+    let depth = 0;
+    for (let index = start; index < text.length; index += 1) {
+        const code = text.charCodeAt(index);
+        if (code === 34) {
+            index = skipString(text, index);
+            if (index < 0) return -1;
+            index -= 1;
+        } else if (code === 123 || code === 91) {
+            depth += 1;
+        } else if (code === 125 || code === 93) {
+            depth -= 1;
+            if (depth === 0) return index + 1;
+        }
+    }
+    return -1;
+}
+
+/** The index of the first character at or after `index` that is not JSON whitespace */
+function skipSpace(text, index) {
+    let at = index;
+    for (;;) {
+        const code = text.charCodeAt(at);
+        if (code !== 32 && code !== 10 && code !== 13 && code !== 9) return at;
+        at += 1;
+    }
+}
+
+/**
+ * Walk the members of the JSON object at `start`, handing each to `member`, which yields as it likes.
+ * @param {string} text - The text
+ * @param {number} start - Index of the opening brace
+ * @param {(key: string, valueStart: number, valueEnd: number) => Generator} member - Takes one member
+ * @returns {Generator<void, number>} Steps; returns the index after the closing brace. Throws on any other shape
+ */
+function* walkObject(text, start, member) {
+    let at = skipSpace(text, start + 1);
+    if (text.charCodeAt(at) === 125) return at + 1;
+    for (;;) {
+        if (text.charCodeAt(at) !== 34) throw new SyntaxError('Not an object member');
+        const keyEnd = skipString(text, at);
+        if (keyEnd < 0) throw new SyntaxError('Unterminated key');
+        const key = JSON.parse(text.slice(at, keyEnd));
+        const colon = skipSpace(text, keyEnd);
+        if (text.charCodeAt(colon) !== 58) throw new SyntaxError('No colon after a key');
+        const valueStart = skipSpace(text, colon + 1);
+        const valueEnd = skipValue(text, valueStart);
+        if (valueEnd < 0) throw new SyntaxError('Value does not end');
+        yield* member(key, valueStart, valueEnd);
+        at = skipSpace(text, valueEnd);
+        const next = text.charCodeAt(at);
+        if (next === 125) return at + 1;
+        if (next !== 44) throw new SyntaxError('No comma between members');
+        at = skipSpace(text, at + 1);
+    }
+}
+
+/** Set a member the way `JSON.parse` does: `__proto__` is an ordinary own property */
+function setMember(target, key, value) {
+    if (key === '__proto__') {
+        Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+    } else {
+        target[key] = value;
+    }
+}
+
+/**
+ * `JSON.parse` of a payload, a key at a time.
+ *
+ * One parse of a whole payload is the longest task a sync puts on the page, about half a second on a played-in
+ * "everything" payload, and a sync does several. A payload is mostly thousands of small values two levels under
+ * `stores`, so each is parsed from its own slice of the text with a step between. The same value comes out:
+ * anything this walk does not recognize, valid or not, is handed to `JSON.parse` whole, which decides.
+ * @param {string} text - Payload text
+ * @param {number} [minChars] - Parse a shorter text in one go
+ * @returns {Generator<void, *>} Steps; returns the parsed payload, and throws as `JSON.parse` throws
+ */
+function* parsePayloadSteps(text, minChars = SPLIT_PARSE_MIN_CHARS) {
+    if (typeof text !== 'string' || text.length < minChars) return JSON.parse(text);
+    const payload = {};
+    try {
+        const root = skipSpace(text, 0);
+        if (text.charCodeAt(root) !== 123) return JSON.parse(text);
+        const parseSpan = (from, to) => JSON.parse(text.slice(from, to));
+        const end = yield* walkObject(text, root, function* (field, fieldStart, fieldEnd) {
+            if (field !== 'stores' || text.charCodeAt(fieldStart) !== 123) {
+                setMember(payload, field, parseSpan(fieldStart, fieldEnd));
+                return;
+            }
+            const stores = {};
+            setMember(payload, field, stores);
+            yield* walkObject(text, fieldStart, function* (storeName, storeStart, storeEnd) {
+                if (text.charCodeAt(storeStart) !== 123) {
+                    setMember(stores, storeName, parseSpan(storeStart, storeEnd));
+                    return;
+                }
+                const entries = {};
+                setMember(stores, storeName, entries);
+                yield* walkObject(text, storeStart, function* (key, valueStart, valueEnd) {
+                    setMember(entries, key, parseSpan(valueStart, valueEnd));
+                    yield;
+                });
+            });
+        });
+        if (skipSpace(text, end) !== text.length) return JSON.parse(text);
+    } catch {
+        return JSON.parse(text);
+    }
+    return payload;
+}
+
+/**
+ * {@link parsePayloadSteps}, handing the page a frame as it goes.
+ * @param {string} text - Payload text
+ * @param {{minChars?: number}} [options] - `minChars` lowers the size it splits from, for a test
+ * @returns {Promise<*>} The parsed payload; rejects as `JSON.parse` throws
+ */
+export function parsePayloadSliced(text, { minChars = SPLIT_PARSE_MIN_CHARS } = {}) {
+    return runStepsSliced(parsePayloadSteps(text, minChars));
+}
+
+/**
+ * `JSON.stringify` of a payload, a key at a time: the same text.
+ * @param {Object} payload - A payload, with its stores of entries
+ * @returns {Generator<void, string>} Steps; returns the text
+ */
+function* stringifyPayloadSteps(payload) {
+    const fields = [];
+    for (const [field, value] of Object.entries(payload)) {
+        const isStores = field === 'stores' && isPlainRecord(value);
+        const text = isStores ? yield* stringifyStoresSteps(value) : JSON.stringify(value);
+        if (text !== undefined) fields.push(`${JSON.stringify(field)}:${text}`);
+    }
+    return `{${fields.join(',')}}`;
+}
+
+/**
+ * The `stores` member of a payload as JSON text.
+ * @param {Object} stores - Entries by store name
+ * @returns {Generator<void, string>} Steps; returns the text
+ */
+function* stringifyStoresSteps(stores) {
+    const pieces = [];
+    for (const [storeName, entries] of Object.entries(stores)) {
+        let text;
+        if (isPlainRecord(entries)) {
+            const members = [];
+            for (const [key, value] of Object.entries(entries)) {
+                const valueText = JSON.stringify(value);
+                if (valueText !== undefined) members.push(`${JSON.stringify(key)}:${valueText}`);
+                yield;
+            }
+            text = `{${members.join(',')}}`;
+        } else {
+            text = JSON.stringify(entries);
+        }
+        if (text !== undefined) pieces.push(`${JSON.stringify(storeName)}:${text}`);
+    }
+    return `{${pieces.join(',')}}`;
+}
+
+/** Whether a value is an object JSON writes member by member, with no `toJSON` of its own to ask */
+const isPlainRecord = (value) =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value) && typeof value.toJSON !== 'function';
+
+/**
+ * {@link stringifyPayloadSteps}, handing the page a frame as it goes.
+ * @param {Object} payload - A payload
+ * @returns {Promise<string>} The JSON text
+ */
+export function stringifyPayloadSliced(payload) {
+    return runStepsSliced(stringifyPayloadSteps(payload));
 }
 
 /**
@@ -957,8 +1188,7 @@ function refoldIfAppeared(registration, context) {
  *   the payload text as actually applied
  */
 export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
-    const payload = JSON.parse(json);
-    // A whole gist parsed is a task's worth on its own; the page gets a frame before the rest
+    const payload = await parsePayloadSliced(json);
     await pageFrame();
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
@@ -1083,7 +1313,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             Boolean(settingsStore);
         // ...and again around re-serializing it, which costs about as much
         if (rewrote) await pageFrame();
-        const applied = rewrote ? JSON.stringify(payload) : json;
+        const applied = rewrote ? await stringifyPayloadSliced(payload) : json;
         if (rewrote) await pageFrame();
 
         // After `applied`, which describes the data as it now stands here: a
@@ -1541,7 +1771,7 @@ function* wholeKeyHashesSteps(text) {
     const hashes = {};
     let stores;
     try {
-        stores = JSON.parse(text)?.stores || {};
+        stores = (yield* parsePayloadSteps(text))?.stores || {};
     } catch {
         return hashes;
     }
@@ -1711,7 +1941,7 @@ export function registeredKeysDivergeSliced(localText, baseline) {
 function* registeredKeysDivergeSteps(localText, baseline) {
     let stores;
     try {
-        stores = JSON.parse(localText)?.stores || {};
+        stores = (yield* parsePayloadSteps(localText))?.stores || {};
     } catch {
         return false;
     }
@@ -2122,9 +2352,9 @@ export function mergeForUploadSliced(localText, remoteText, baseline, options = 
  *   result
  */
 function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = false, scope = null } = {}) {
-    const local = JSON.parse(localText);
+    const local = yield* parsePayloadSteps(localText);
     yield;
-    const remote = JSON.parse(remoteText);
+    const remote = yield* parsePayloadSteps(remoteText);
     yield;
     // Every prefix either side knows another script registered is carried, so
     // the gist's copies of those keys survive an upload from a device that has
@@ -2254,7 +2484,7 @@ function* mergeForUploadSteps(localText, remoteText, baseline, { revisionFold = 
     }
 
     const externalKeys = externalKeyRecord();
-    const text = JSON.stringify({
+    const text = yield* stringifyPayloadSteps({
         formatVersion: FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
         syncScope: revisionFold ? uploadScope : (local?.syncScope ?? remote.syncScope ?? 'settings'),
@@ -2332,9 +2562,9 @@ function* addsToRemoteSteps(localText, remoteText, { forUpload = true } = {}) {
     let local;
     let remote;
     try {
-        local = JSON.parse(localText)?.stores || {};
+        local = (yield* parsePayloadSteps(localText))?.stores || {};
         yield;
-        remote = JSON.parse(remoteText)?.stores || {};
+        remote = (yield* parsePayloadSteps(remoteText))?.stores || {};
     } catch {
         return true;
     }
