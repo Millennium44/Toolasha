@@ -2011,6 +2011,16 @@ function registerFeatures() {
             customCheck: () => true,
         },
         {
+            // The select gates behavior inside (off opens no channel), so the
+            // module always initializes
+            key: 'tabVersionSync',
+            name: 'Tab Version Sync',
+            category: 'UI',
+            module: UI.tabVersionSync,
+            async: false,
+            customCheck: () => true,
+        },
+        {
             // A `max-height` fix for a Firefox-only layout bug in three game
             // dialogs (see modal-scroll-caps.js) — not a togglable feature, so
             // no settings-schema entry: always on, same as updateCheck above.

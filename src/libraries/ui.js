@@ -24,6 +24,7 @@ import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
 import textAppearance from '../features/ui/text-appearance.js';
 import updateCheck from '../features/ui/update-check.js';
+import tabVersionSync from '../features/ui/tab-version-sync.js';
 import modalScrollCaps from '../features/ui/modal-scroll-caps.js';
 import combatTabsLayout from '../features/ui/combat-tabs-layout.js';
 import tasksPanelLayout from '../features/ui/tasks-panel-layout.js';
@@ -225,6 +226,7 @@ toolashaRoot.UI = {
     combatPanelScale,
     textAppearance,
     updateCheck,
+    tabVersionSync,
     modalScrollCaps,
     combatTabsLayout,
     tasksPanelLayout,
