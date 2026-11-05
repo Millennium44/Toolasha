@@ -21,6 +21,7 @@ Combat Sim's shrine level box now stops at the level the game reports for shrine
 ### Full watchlist says so
 
 When the price panel's 99-item list is full, the pin button reads "Full (99)" and Combat Sim's Watch button says the panel is full, instead of doing nothing.
+
 ### Longer combat run history
 
 The Combat Stats run picker, Combined view and Gold Sources combat row now keep your last 50 runs instead of 20.
