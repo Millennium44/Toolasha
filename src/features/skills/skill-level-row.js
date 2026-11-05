@@ -32,29 +32,21 @@ import { registerRow } from '../../utils/overlay-rows.js';
 import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { experienceToNextLevel, skillName } from '../../utils/skill-progress.js';
 import { levelFraction } from '../../utils/combat-level.js';
-import { compareActionQueueOrder } from '../../utils/combat-actions.js';
-
-/** Action types that do not train a single skill this row can report on */
-const NOT_A_TRAINED_SKILL = new Set(['/action_types/combat', '/action_types/labyrinth']);
+import { runningSkillingAction } from '../../utils/combat-actions.js';
 
 /**
- * The skill hrid the front (most active) queued action trains.
+ * The skill hrid the running skilling action trains.
  *
  * @returns {string|null} e.g. `/skills/tailoring`, or null when the queue is
- *   empty or the front action is combat/labyrinth
+ *   empty or the action that runs is combat/labyrinth
  */
-function activeSkillHrid() {
-    const actions = (dataManager.getCurrentActions?.() || []).filter((action) => action && !action.isDone);
-    if (!actions.length) return null;
-
-    // Insertion order is not queue order: the front is the first action under
-    // the game's own queue comparator (party actions first, then ordinal)
-    const front = actions.reduce((first, action) => (compareActionQueueOrder(action, first) < 0 ? action : first));
-
-    const details = dataManager.getActionDetails?.(front.actionHrid);
-    if (!details?.type || NOT_A_TRAINED_SKILL.has(details.type)) return null;
-
-    return details.type.replace('/action_types/', '/skills/');
+export function activeSkillHrid() {
+    // The game's own queue order picks what runs (party actions first, then
+    // ordinal); insertion order and array position do not
+    return (
+        runningSkillingAction(dataManager.getCurrentActions?.() || [], (hrid) => dataManager.getActionDetails?.(hrid))
+            ?.skillHrid ?? null
+    );
 }
 
 /**

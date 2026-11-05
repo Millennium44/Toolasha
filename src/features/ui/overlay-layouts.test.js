@@ -284,6 +284,36 @@ describe('presets', () => {
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('battleTimer');
     });
 
+    test('the Skilling preset is the skilling set, and no preset carries the retired tile', () => {
+        expect(PRESET_LAYOUTS.Skilling.order).toEqual([
+            'skillLevel',
+            'timeToLevel',
+            'experiencePerHour',
+            'totalProfit',
+            'consumables',
+            'queueTimeLeft',
+            'coins',
+        ]);
+        expect(PRESET_LAYOUTS.Skilling.span).toEqual({ consumables: 2 });
+        for (const name of presetNames()) {
+            expect(PRESET_LAYOUTS[name].order).not.toContain('skillTimeToLevel');
+        }
+    });
+
+    test('applying Skilling switches the retired tile off and the rest of the set on', () => {
+        const file = presetFile('Skilling', {
+            rows: [
+                { key: 'skillTimeToLevel' },
+                { key: 'houses' },
+                ...PRESET_LAYOUTS.Skilling.order.map((key) => ({ key })),
+            ],
+        });
+        const visible = file.toolasha.settings.visible;
+        expect(visible.skillTimeToLevel).toBe(false);
+        expect(visible.houses).toBe(false);
+        for (const key of PRESET_LAYOUTS.Skilling.order) expect(visible[key]).toBe(true);
+    });
+
     test('every span is a whole number of columns a panel can actually offer', () => {
         for (const name of presetNames()) {
             const { order, span } = PRESET_LAYOUTS[name];

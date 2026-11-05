@@ -10,10 +10,13 @@
  *
  * ## Which question it answers
  *
- * Two, and the second wins. On its own it reports whichever skill is going up
- * fastest. Once a target has been chosen in the Combat Level panel it reports
- * that instead — otherwise the selector drives nothing you can see, which is
- * indistinguishable from a selector that does not work.
+ * Three. While a skilling action is running it follows the skill the queue is
+ * training, the line the retired Skill Time to Level tile drew. Otherwise it
+ * reports whichever skill is going up fastest, and once a target has been chosen
+ * in the Combat Level panel it reports that instead — otherwise the selector
+ * drives nothing you can see, which is indistinguishable from a selector that
+ * does not work. A combat action running, or nothing running, leaves those
+ * second and third answers exactly as they were.
  *
  * ## Why it keeps its own readings
  *
@@ -39,7 +42,7 @@ import { timeToNextLevel, fastestGaining, skillName } from '../../utils/skill-pr
 import { createSkillHistory } from '../../utils/skill-history.js';
 import { COMBAT_SKILLS } from '../../utils/combat-level.js';
 import { combatLevelPanel, selectedTarget } from '../ui/combat-level-panel.js';
-import { activeSkillProgress } from './skill-level-row.js';
+import { activeSkillProgress, activeSkillHrid } from './skill-level-row.js';
 
 /** How far back the rate is measured over */
 const WINDOW_MS = 10 * 60 * 1000;
@@ -109,13 +112,89 @@ export function trainingSkill() {
     };
 }
 
+/**
+ * What the character is skilling right now, and how fast the skill is going up.
+ *
+ * The one place Experience/hr's skilling reading comes from, so a player who
+ * divides it into Time to Level's experience-to-go gets Time to Level's answer:
+ * the same rolling window, the same history instance. Reached from the combat
+ * bundle through the bridge, since the instance lives here in the UI bundle.
+ *
+ * @returns {{hrid: string, name: string, xpPerHour: number|null}|null} Null when
+ *   no skilling action is running (combat, labyrinth, or nothing); `xpPerHour`
+ *   is null until two readings exist to measure between
+ */
+export function runningSkillReading() {
+    const hrid = activeSkillHrid();
+    if (!hrid) return null;
+
+    // Sampled here as well as in the tiles, so the window fills while only this
+    // reading is wanted; the history's own throttle makes a second call free
+    sample();
+    return { hrid, name: skillName(hrid), xpPerHour: history.rates()[hrid] || null };
+}
+
+/**
+ * Draw the skill the queue is training: the level being worked towards and the
+ * time to reach it.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} [options]
+ * @param {boolean} [options.follows] - Say in the tooltip that the tile is following the running skill
+ * @param {Object|null} [options.chosen] - The Combat Level panel's target, if one is set; named in
+ *   the tooltip so a tile that is not showing it says why
+ */
+function drawRunningSkill(container, { follows = false, chosen = null } = {}) {
+    const active = activeSkillProgress();
+    if (!active) return blank(container);
+
+    const rate = history.rates()[active.hrid] || 0;
+    const atCap = active.remaining === null;
+    const seconds = !atCap && rate > 0 ? (active.remaining / rate) * 3600 : null;
+
+    row(container, [
+        // The level being worked towards, not the one in hand — except at
+        // the cap, where there is no next number to introduce
+        {
+            text: `${active.name} ${atCap ? active.level : active.level + 1}:`,
+            color: ROW_COLORS.gold,
+            ellipsis: true,
+        },
+        {
+            text: seconds === null ? '—' : shortDuration(seconds),
+            color: ROW_COLORS.accent,
+            push: true,
+        },
+    ]);
+    container.title =
+        (atCap
+            ? `${active.name} is at the level cap.`
+            : rate > 0
+              ? `${Math.round(rate).toLocaleString()} xp/hr over the last ten minutes.\nTime to ${active.name} ${active.level + 1}.`
+              : 'No experience rate measured yet — it settles within a minute of skilling.') +
+        (follows
+            ? (chosen
+                  ? `\nFollowing the skill you are training; the ${chosen.name} ${chosen.target} target shows when you are not skilling.`
+                  : '\nFollowing the skill you are training.') + '\nDouble-click for every skill, with targets.'
+            : '');
+}
+
 registerRow({
     key: 'timeToLevel',
     empty: 'No experience rate yet',
     name: 'Time to Level',
     defaultSize: { width: 200, height: 30 },
+    // No `version()`, deliberately: render is what takes the readings, and a
+    // memo would stop them on every tick it skipped.
     render: (container) => {
         sample();
+
+        // A skilling action running: follow the skill the queue is training, the
+        // line Skill Time to Level drew. Ahead of the target and the fastest
+        // gainer, which answer for combat and for an idle queue below. Picked by
+        // `runningAction`, so a skilling action queued behind a fight does not
+        // take the tile.
+        if (activeSkillHrid()) return drawRunningSkill(container, { follows: true, chosen: selectedTarget() });
 
         // The panel's Target Selector wins when it has been set. Otherwise this
         // row would keep answering about whichever skill happens to be going up
@@ -220,31 +299,6 @@ registerRow({
     render: (container) => {
         sample();
 
-        const active = activeSkillProgress();
-        if (!active) return blank(container);
-
-        const rate = history.rates()[active.hrid] || 0;
-        const atCap = active.remaining === null;
-        const seconds = !atCap && rate > 0 ? (active.remaining / rate) * 3600 : null;
-
-        row(container, [
-            // The level being worked towards, not the one in hand — except at
-            // the cap, where there is no next number to introduce
-            {
-                text: `${active.name} ${atCap ? active.level : active.level + 1}:`,
-                color: ROW_COLORS.gold,
-                ellipsis: true,
-            },
-            {
-                text: seconds === null ? '—' : shortDuration(seconds),
-                color: ROW_COLORS.accent,
-                push: true,
-            },
-        ]);
-        container.title = atCap
-            ? `${active.name} is at the level cap.`
-            : rate > 0
-              ? `${Math.round(rate).toLocaleString()} xp/hr over the last ten minutes.\nTime to ${active.name} ${active.level + 1}.`
-              : 'No experience rate measured yet — it settles within a minute of skilling.';
+        drawRunningSkill(container);
     },
 });
