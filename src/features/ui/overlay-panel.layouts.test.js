@@ -376,6 +376,93 @@ describe('saving and switching named layouts', () => {
         expect(overlayPanel.settings.span.consumables).toBeGreaterThan(2);
     });
 
+    describe('a preset follows the panel as it is resized afterwards', () => {
+        /** Resize the panel and let the coalesced redraw and the refit run. @param {number} width - Pixels */
+        async function resizeTo(width) {
+            measureAs(width);
+            overlayPanel._onPanelResized();
+            await new Promise((resolve) => setTimeout(resolve, 60));
+        }
+
+        test('an unedited preset gets the spans of each new count: 2, 3, 9, 3', async () => {
+            measureAs(480);
+            await overlayPanel.applyNamedLayout('Skilling');
+            expect(overlayPanel.columns).toBe(2);
+
+            for (const [width, columns] of [
+                [640, 3],
+                [2040, 9],
+                [640, 3],
+            ]) {
+                await resizeTo(width);
+                expect(overlayPanel.columns).toBe(columns);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Skilling', columns));
+            }
+            expect(overlayPanel.appliedLayout).toBe('Skilling');
+        });
+
+        test('a preset the player edited keeps the spans it has', async () => {
+            measureAs(480);
+            await overlayPanel.applyNamedLayout('Skilling');
+            overlayPanel.settings.zoom = { coins: 130 };
+            const before = { ...overlayPanel.settings.span };
+
+            await resizeTo(2040);
+
+            expect(overlayPanel.columns).toBe(9);
+            expect(overlayPanel.settings.span).toEqual(before);
+        });
+
+        test('a hand-edited span keeps the spans it has', async () => {
+            measureAs(480);
+            await overlayPanel.applyNamedLayout('Skilling');
+            overlayPanel.settings.span = { ...overlayPanel.settings.span, coins: 2 };
+            const before = { ...overlayPanel.settings.span };
+
+            await resizeTo(640);
+
+            expect(overlayPanel.columns).toBe(3);
+            expect(overlayPanel.settings.span).toEqual(before);
+        });
+
+        test('a saved layout named like a preset keeps its own spans', async () => {
+            measureAs(480);
+            wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+            await overlayPanel.saveNamedLayout('Skilling');
+            await overlayPanel.applyNamedLayout('Skilling');
+
+            await resizeTo(2040);
+
+            expect(overlayPanel.columns).toBe(9);
+            expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+        });
+
+        test('a layout of their own keeps its spans', async () => {
+            measureAs(480);
+            wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+            await overlayPanel.saveNamedLayout('Mine');
+            await overlayPanel.applyNamedLayout('Mine');
+
+            await resizeTo(2040);
+
+            expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+        });
+
+        test('a hand-set column count is not changed by a resize, and neither are the spans', async () => {
+            measureAs(480);
+            overlayPanel.settings.columns = 2;
+            overlayPanel.settings.columnsPinned = true;
+            await overlayPanel.applyNamedLayout('Skilling');
+            const before = { ...overlayPanel.settings.span };
+
+            await resizeTo(2040);
+
+            expect(overlayPanel.columns).toBe(2);
+            expect(overlayPanel.settings.columns).toBe(2);
+            expect(overlayPanel.settings.span).toEqual(before);
+        });
+    });
+
     test('a hand-set column count of six or nine is kept and the preset is built for it', async () => {
         measureAs(380);
         for (const columns of [6, 9]) {
