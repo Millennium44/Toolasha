@@ -35,6 +35,10 @@ import { getInventoryCount } from '../../utils/house-cost-calculator.js';
 import { navigateToAction, navigateToAlchemyItem } from '../../utils/item-navigation.js';
 import { selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { readAlchemyTabType } from '../alchemy/alchemy-tabs.js';
+import { isMobileMode } from '../../utils/mobile.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
+import { clampPanelToViewport, clearPosition, restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, resolveDetailPanel } from '../../utils/action-panel-helper.js';
@@ -46,6 +50,11 @@ import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.
 import { normalizePlannedSurplus } from './crafting-plan-surplus.js';
 
 const STRIP_ID = 'mwi-crafting-walk-strip';
+
+/** Where the bar's position is remembered (the shared panel-geometry record, as for every movable panel) */
+const STRIP_GEOMETRY_KEY = 'craftingWalkStrip';
+/** The smallest the bar may be pushed to by the clamp */
+const STRIP_MIN = { width: 120, height: 24 };
 const CURRENT_CLASS = 'mwi-crafting-walk-current';
 
 /** Attribute the plan display tags its rows with, so a step can point at its own row */
@@ -76,6 +85,8 @@ const ALCHEMY_WATCH_MS = 1000;
 /** Re-assertions in a row before the walk leaves the choice to the player, and in total for one step */
 const ALCHEMY_ATTEMPTS_PER_RUN = 6;
 const ALCHEMY_ATTEMPTS_TOTAL = 30;
+/** Writes to one count box before the walk stops fighting a box that will not keep the figure */
+const COUNT_WRITES_PER_BOX = 5;
 
 /**
  * How long a step may sit untouched before the walk ends itself.
@@ -249,7 +260,14 @@ function stepLabel(step) {
     const warn = step.warn ? ` ⚠ ${step.warn}` : '';
     // A step that has been queued has nothing left to press: it says so, and keeps any warning in view
     if (step.done) return `${step.kind === 'craft' ? 'Queued' : 'Done'} ✓ ${base}${warn}`;
-    if (!step.alchemyType) return `${base}${warn}`;
+    // The count box, said truthfully for the steps that type one: "filled" only when the box was read back showing it
+    const countNote =
+        step.verifyCount && step.actions > 0
+            ? step.countFilled
+                ? ` — count ${formatWithSeparator(step.actions)} filled`
+                : ` — type ${formatWithSeparator(step.actions)} in the count box`
+            : '';
+    if (!step.alchemyType) return `${base}${countNote}${warn}`;
     // Said plainly, because the script never presses a game button: the player's press queues the row.
     // "In the slot" only when the slot was read showing the item.
     let pressNote;
@@ -262,7 +280,7 @@ function stepLabel(step) {
     } else {
         pressNote = `choose ${step.itemName} in the slot, then press Start`;
     }
-    return `${base} — ${pressNote}${warn}`;
+    return `${base}${countNote} — ${pressNote}${warn}`;
 }
 
 /** The starter name Crafting Plan's own surfaces (the plan's Walk button, the task board's walk) use */
@@ -419,6 +437,8 @@ class CraftingPlanWalk {
         this.buyTarget = 0;
         this.queuedBefore = new Set();
         this._alchemyTickNow = null;
+        this._fillCleanup?.();
+        this._fillCleanup = null;
         this.message = message;
         // The hook belonged to the walk that just ended; see its own comment
         this._stepHook = null;
@@ -568,26 +588,74 @@ class CraftingPlanWalk {
      */
     _prefillSoon(step) {
         if (!(step.actions > 0)) return;
+        const figure = String(step.actions);
         let retries = 0;
+        let lastInput = null;
+        let writes = 0;
+        step.countFilled = false;
+        step.playerEdited = false;
+
+        // The player typing in the count box is theirs: a trusted input event there ends our filling for
+        // good. (Our own writes are synthetic, so they never count as the player's.)
+        const onInput = (event) => {
+            if (event.isTrusted && event.target?.closest?.('[class*="maxActionCountInput"]')) step.playerEdited = true;
+        };
+        document.addEventListener('input', onInput, true);
+        this._fillCleanup = () => document.removeEventListener('input', onInput, true);
+
+        const setFilled = (value) => {
+            if (step.countFilled === value) return;
+            step.countFilled = value;
+            this._render();
+        };
 
         const tryFill = () => {
-            if (!this.active || this.steps[this.index] !== step) return;
+            if (!this.active || this.steps[this.index] !== step || step.done) return;
 
-            const panel = document.querySelector(GAME.SKILL_ACTION_DETAIL);
-            if (panel && resolveDetailPanel(panel)?.actionHrid === step.actionHrid) {
-                // A step chosen by item is not this step until its item is the
-                // one in the slot, however right the action is.
-                const itemReady = !step.requiresItemHrid || selectedItemHrid(panel) === step.requiresItemHrid;
-                const input = itemReady ? findActionInput(panel) : null;
-                if (input) {
-                    setReactInputValue(input, step.actions, { focus: false });
-                    return;
+            let input = null;
+            if (step.alchemyType) {
+                // Alchemy is one panel for every tab and item, so it is the step's own when the tab and the
+                // item in the slot are, not by an action hrid the panel does not carry
+                const panel =
+                    document.querySelector(GAME.SKILL_ACTION_DETAIL_ALCHEMY) ||
+                    document.querySelector(GAME.SKILL_ACTION_DETAIL);
+                const tab = readAlchemyTabType();
+                const ready =
+                    panel &&
+                    selectedItemHrid(document) === step.requiresItemHrid &&
+                    (tab === null || tab === step.alchemyType);
+                input = ready ? findActionInput(panel) : null;
+            } else {
+                const panel = document.querySelector(GAME.SKILL_ACTION_DETAIL);
+                if (panel && resolveDetailPanel(panel)?.actionHrid === step.actionHrid) {
+                    input = findActionInput(panel);
                 }
             }
-            if (step.requiresItemHrid) {
-                this.timerRegistry.scheduleTimeout(tryFill, ITEM_WAIT_POLL_MS);
-            } else if (++retries < NAV_RETRY_LIMIT) {
-                this.timerRegistry.scheduleTimeout(tryFill, NAV_SETTLE_MS);
+
+            if (input && !step.playerEdited) {
+                // Written through React's own setter, and again whenever the box is a new element (the form
+                // remounted) or no longer shows the figure; then read back: "filled" is only said if it shows it
+                if (input !== lastInput) writes = 0;
+                if ((input !== lastInput || input.value !== figure) && writes < COUNT_WRITES_PER_BOX) {
+                    writes++;
+                    setReactInputValue(input, step.actions, { focus: false });
+                }
+                lastInput = input;
+                setFilled(input.value === figure);
+            } else if (!input) {
+                lastInput = null;
+                setFilled(false);
+            }
+
+            // Keep watching for as long as the step waits, so a remount that clears the box is filled again;
+            // the first look gives up after a bounded wait for a panel that never comes
+            if (input || step.requiresItemHrid || ++retries < NAV_RETRY_LIMIT) {
+                const wait = step.countFilled
+                    ? ALCHEMY_WATCH_MS
+                    : step.requiresItemHrid
+                      ? ITEM_WAIT_POLL_MS
+                      : NAV_SETTLE_MS;
+                this.timerRegistry.scheduleTimeout(tryFill, wait);
             }
         };
 
@@ -691,6 +759,8 @@ class CraftingPlanWalk {
         step.done = true;
         this.timerRegistry.clearAll();
         this._alchemyTickNow = null;
+        this._fillCleanup?.();
+        this._fillCleanup = null;
         this._clearHighlight();
         if (this.index >= this.steps.length - 1) {
             this.stop(step.warn ? `Queued ✓ Walk complete. ⚠ ${step.warn}` : 'Queued ✓ Walk complete.');
@@ -727,6 +797,8 @@ class CraftingPlanWalk {
     /** @private */
     _advance() {
         this.timerRegistry.clearAll();
+        this._fillCleanup?.();
+        this._fillCleanup = null;
         this.index += 1;
         if (this.index >= this.steps.length) {
             this.stop('Walk complete.');
@@ -760,18 +832,36 @@ class CraftingPlanWalk {
 
         strip = document.createElement('div');
         strip.id = STRIP_ID;
+        const mobile = this._mobile();
+        // Fixed, and placed by script (never by a centering transform) so it can be dragged and clamped. Full
+        // width and not draggable on a phone; the label wraps rather than hiding the figure it asks for.
         strip.style.cssText = `
-            position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
-            z-index: 150; display: flex; align-items: center; gap: 10px;
-            max-width: calc(100vw - 24px); padding: 6px 12px;
-            border: ${GAME_FRAME.border}; border-radius: 999px;
+            position: fixed; z-index: 150; display: flex; align-items: center; gap: 10px;
+            ${mobile ? 'left: 8px; right: 8px;' : 'max-width: min(760px, calc(100vw - 24px));'}
+            padding: 6px 12px; box-sizing: border-box;
+            border: ${GAME_FRAME.border}; border-radius: 14px;
             background: ${GAME_FRAME.background}; color: ${GAME_COLORS.text};
             font-size: 0.85em; box-shadow: ${GAME_FRAME.boxShadow};
         `;
 
+        if (!mobile) {
+            // A clear handle, not hover-only: a grip glyph with a label for assistive tech
+            const handle = document.createElement('span');
+            handle.dataset.role = 'handle';
+            handle.textContent = '⠿';
+            handle.title = 'Drag to move. Double-click to put it back.';
+            handle.setAttribute('aria-label', 'Move the walk bar');
+            handle.style.cssText =
+                'cursor: grab; user-select: none; padding: 2px 6px; margin: -2px 0 -2px -6px; font-size: 1.3em;' +
+                'line-height: 1; color: ' +
+                GAME_COLORS.text +
+                '; opacity: 0.85; flex-shrink: 0;';
+            strip.appendChild(handle);
+        }
+
         const label = document.createElement('span');
         label.dataset.role = 'label';
-        label.style.cssText = 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        label.style.cssText = 'min-width: 0; overflow-wrap: anywhere; white-space: normal; line-height: 1.25;';
         strip.appendChild(label);
 
         const next = this._stripButton('Next', () => this.next());
@@ -789,7 +879,83 @@ class CraftingPlanWalk {
 
         markToolashaSurface(strip, 'panel');
         document.body.appendChild(strip);
+        this._placeStrip(strip, mobile);
         return strip;
+    }
+
+    /** Phone-sized and touch-driven? Never throws: an unreadable setting means a desktop. @private */
+    _mobile() {
+        try {
+            return Boolean(isMobileMode());
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Put the bar where the player is already looking and make it movable.
+     *
+     * Default: top centre, just under the game's header. A saved position (the shared panel-geometry record)
+     * replaces it; a resize or a smaller window pulls it back on screen; a double-click on the handle puts it back
+     * to the default and forgets the saved spot. On a phone it is full width, not draggable, and sits at the bottom
+     * above the phone's own bar, clear of the header and the queue controls under it. The z-order is the shared
+     * floating-panel one.
+     * @param {HTMLElement} strip
+     * @param {boolean} mobile
+     * @private
+     */
+    _placeStrip(strip, mobile) {
+        const cleanups = [];
+        registerFloatingPanel(strip);
+        cleanups.push(() => unregisterFloatingPanel(strip));
+
+        const header = document.querySelector('[class*="Header_header"]');
+        const defaultTop = Math.round((header?.getBoundingClientRect().bottom || 48) + 8);
+        const applyDefault = () => {
+            if (mobile) {
+                strip.style.top = 'auto';
+                strip.style.bottom = 'calc(env(safe-area-inset-bottom, 0px) + 64px)';
+                return;
+            }
+            const width = strip.getBoundingClientRect().width || 0;
+            strip.style.right = 'auto';
+            strip.style.bottom = 'auto';
+            strip.style.top = `${defaultTop}px`;
+            strip.style.left = `${Math.max(8, Math.round((window.innerWidth - width) / 2))}px`;
+        };
+        applyDefault();
+        if (mobile) {
+            this._stripCleanup = () => cleanups.forEach((fn) => fn());
+            return;
+        }
+
+        const handle = strip.querySelector('[data-role="handle"]');
+        const keepOnScreen = () => clampPanelToViewport(strip, STRIP_MIN);
+        window.addEventListener('resize', keepOnScreen);
+        cleanups.push(() => window.removeEventListener('resize', keepOnScreen));
+
+        // The saved spot, if any, replaces the default once storage answers (unless the player has already moved it)
+        Promise.resolve()
+            .then(() => restoreGeometry(strip, STRIP_GEOMETRY_KEY, STRIP_MIN))
+            .catch((error) => console.error('[CraftingPlanWalk] Restoring the bar position failed:', error));
+
+        const detach = makeDraggable(strip, handle, ({ left, top }) => {
+            Promise.resolve()
+                .then(() => saveGeometry(STRIP_GEOMETRY_KEY, { left: parseFloat(left), top: parseFloat(top) }))
+                .catch((error) => console.error('[CraftingPlanWalk] Saving the bar position failed:', error));
+        });
+        cleanups.push(detach);
+
+        const reset = () => {
+            applyDefault();
+            Promise.resolve()
+                .then(() => clearPosition(STRIP_GEOMETRY_KEY))
+                .catch((error) => console.error('[CraftingPlanWalk] Forgetting the bar position failed:', error));
+        };
+        handle.addEventListener('dblclick', reset);
+        cleanups.push(() => handle.removeEventListener('dblclick', reset));
+
+        this._stripCleanup = () => cleanups.forEach((fn) => fn());
     }
 
     /** @private */
@@ -805,6 +971,9 @@ class CraftingPlanWalk {
 
     /** @private */
     _removeStrip() {
+        // Listeners (drag, resize, z-order) go with the bar
+        this._stripCleanup?.();
+        this._stripCleanup = null;
         document.getElementById(STRIP_ID)?.remove();
     }
 
@@ -833,6 +1002,7 @@ class CraftingPlanWalk {
         strip.querySelector('[data-role="next"]').hidden = !step.done;
         strip.querySelector('[data-role="stop"]').textContent = 'Stop';
         this._highlight(step.key);
+        if (!this._mobile()) clampPanelToViewport(strip, STRIP_MIN);
     }
 
     /**

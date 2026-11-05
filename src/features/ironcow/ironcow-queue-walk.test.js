@@ -80,7 +80,8 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
 // The real react-input, deliberately: what it dispatches on the game's own count
 // box is part of what the no-click test is watching.
 vi.mock('../../utils/action-panel-helper.js', () => ({
-    findActionInput: (panel) => panel.querySelector('input'),
+    // The game's real rule: the repeat box is the input inside the max-count container, not the first input
+    findActionInput: (panel) => panel.querySelector('[class*="maxActionCountInput"] input'),
     resolveDetailPanel: (panel) => ({ actionHrid: panel.dataset.actionHrid || null }),
 }));
 
@@ -126,7 +127,7 @@ function mountPanel(actionHrid, selectedItemHrid = null) {
         : '';
     document.body.innerHTML =
         `<div class="SkillActionDetail_skillActionDetail__abc" data-action-hrid="${actionHrid}">` +
-        `<input value="1" />${slot}</div>`;
+        `<div class="SkillActionDetail_maxActionCountInput__z"><input value="1" /></div>${slot}</div>`;
     return document.querySelector('input');
 }
 
@@ -455,6 +456,118 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
         expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, DECOMPOSE_ACTION]);
         expect(mocks.alchemyOpened).toHaveLength(1);
         expect(craftingPlanWalk.currentStep().actionHrid).toBe(DECOMPOSE_ACTION);
+    });
+});
+
+describe('the count box on the game’s alchemy form', () => {
+    /**
+     * The alchemy panel as the live game draws it: several inputs (a repeat box showing ∞ with a max length of
+     * 10, and others holding 41730 and 102), the item slot with its icon carrying only xlink:href.
+     */
+    const alchemyForm = (item = 'star_fruit', repeatValue = '∞') => {
+        document.body.innerHTML =
+            '<div class="SkillActionDetail_skillActionDetail__a SkillActionDetail_alchemyComponent__b">' +
+            `<div class="SkillActionDetail_itemRequirements__x"><div class="Item_itemContainer__y"><svg><use xlink:href="#${item}"></use></svg></div></div>` +
+            '<div class="other__c"><input data-name="price" value="41730" /></div>' +
+            `<div class="SkillActionDetail_maxActionCountInput__q"><input data-name="repeat" maxlength="10" value="${repeatValue}" /></div>` +
+            '<input data-name="other" value="102" />' +
+            '</div>';
+        return {
+            repeat: () => document.querySelector('[data-name="repeat"]'),
+            price: () => document.querySelector('[data-name="price"]'),
+            other: () => document.querySelector('[data-name="other"]'),
+        };
+    };
+    const startCounted = () => {
+        mocks.inventory[STARFRUIT] = 5000;
+        mocks.alchemyResult = { opened: true, selected: true };
+        return startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 1600, coinifyActions: 0 }));
+    };
+
+    test('after the slot reads right the count goes in the repeat box only, and is said filled once read back', () => {
+        const form = alchemyForm();
+        startCounted();
+        vi.advanceTimersByTime(3000);
+
+        expect(form.repeat().value).toBe('1600');
+        expect(form.price().value).toBe('41730');
+        expect(form.other().value).toBe('102');
+        expect(document.body.textContent).toContain('count 1,600 filled');
+    });
+
+    test('nothing is typed while the wrong item is in the slot', () => {
+        const form = alchemyForm('holy_milk');
+        startCounted();
+        vi.advanceTimersByTime(3000);
+        expect(form.repeat().value).toBe('∞');
+        expect(craftingPlanWalk.currentStep().countFilled).toBe(false);
+    });
+
+    test('it goes in again when the form is remounted and cleared', () => {
+        alchemyForm();
+        startCounted();
+        vi.advanceTimersByTime(3000);
+        expect(document.querySelector('[data-name="repeat"]').value).toBe('1600');
+
+        const fresh = alchemyForm();
+        expect(fresh.repeat().value).toBe('∞');
+        vi.advanceTimersByTime(3000);
+        expect(fresh.repeat().value).toBe('1600');
+        expect(craftingPlanWalk.currentStep().countFilled).toBe(true);
+    });
+
+    test('a number the player typed since is never overwritten', () => {
+        const form = alchemyForm();
+        startCounted();
+        vi.advanceTimersByTime(3000);
+
+        // the player types their own figure: a trusted input event in the count box
+        form.repeat().value = '777';
+        const typed = new Event('input', { bubbles: true });
+        Object.defineProperty(typed, 'isTrusted', { value: true });
+        form.repeat().dispatchEvent(typed);
+        vi.advanceTimersByTime(5000);
+        expect(form.repeat().value).toBe('777');
+
+        // and the form being remounted does not bring our figure back over theirs
+        const fresh = alchemyForm();
+        vi.advanceTimersByTime(5000);
+        expect(fresh.repeat().value).toBe('∞');
+    });
+
+    test('a box that does not keep the figure is not called filled: the strip says to type it', () => {
+        const form = alchemyForm();
+        const shown = '∞';
+        Object.defineProperty(form.repeat(), 'value', {
+            get: () => shown,
+            set: () => {},
+            configurable: true,
+        });
+        startCounted();
+        vi.advanceTimersByTime(8000);
+
+        expect(craftingPlanWalk.currentStep().countFilled).toBe(false);
+        expect(document.body.textContent).toContain('type 1,600 in the count box');
+        expect(document.body.textContent).not.toContain('filled');
+        expect(shown).toBe('∞');
+    });
+
+    test('a counted forage step still fills, and says so', () => {
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch({ forageActions: 5000, decomposeActions: 0, coinifyActions: 0 }));
+        vi.advanceTimersByTime(300);
+        expect(document.querySelector('input').value).toBe('5000');
+        expect(document.body.textContent).toContain('count 5,000 filled');
+    });
+
+    test('a forage box that is remounted is filled again', () => {
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch({ forageActions: 5000, decomposeActions: 0, coinifyActions: 0 }));
+        vi.advanceTimersByTime(300);
+        const fresh = mountPanel(FORAGE_ACTION);
+        expect(fresh.value).toBe('1');
+        vi.advanceTimersByTime(2000);
+        expect(fresh.value).toBe('5000');
     });
 });
 

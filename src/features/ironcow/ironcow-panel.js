@@ -1154,7 +1154,7 @@ class IronCowFarmPanel {
         const approx = estimated ? '~' : '';
         const estimateNote = estimated ? ESTIMATE_NOTE : '';
 
-        const value = `${bells(can.bells)} (${can.bags} bag${can.bags === 1 ? '' : 's'})`;
+        const value = `${bells(can.bells)} (${formatWithSeparator(can.bags)} bag${can.bags === 1 ? '' : 's'})`;
         const kept = keptNote(reserve, spenders, coins, buffer);
         const stopped = stoppedNote(budget.stoppedAt);
         // The price feed carries no depth: every bag is priced at the cheapest listing, so this is a
@@ -1241,7 +1241,7 @@ class IronCowFarmPanel {
         holder.append(
             row,
             span(
-                `No bells are spare because ${coins(kept)} is held back for the helper’s batch. Turn the switch off to ignore it.`,
+                `No bells are spare because ${coins(kept)} is held back for the next set. Turn the switch off to ignore it.`,
                 {
                     display: 'block',
                     color: COLORS.warn,
@@ -1253,7 +1253,7 @@ class IronCowFarmPanel {
     }
 
     /**
-     * The switch for holding cash back for the helper's batch.
+     * The switch for holding cash back for the next set (the batch shown in the Queue helper).
      * @returns {HTMLElement} A labeled checkbox
      * @private
      */
@@ -1271,9 +1271,10 @@ class IronCowFarmPanel {
         box.type = 'checkbox';
         box.checked = this.keepBatchCash;
         box.addEventListener('change', () => this.setKeepCash(box.checked));
-        label.append(box, document.createTextNode('Also keep cash for the helper’s batch'));
+        label.append(box, document.createTextNode('Also keep cash for the next set'));
         label.title =
-            'Holds back the gold the batch below needs at its lowest point, so buying bells cannot starve it.';
+            'Holds back the gold to pay the fees of the batch shown in the Queue helper, on top of what is already ' +
+            'queued, so buying bells cannot starve it.';
         return label;
     }
 

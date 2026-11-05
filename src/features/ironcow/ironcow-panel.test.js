@@ -400,6 +400,27 @@ describe('what it says', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    test('the bag count has thousands separators like the bell count', async () => {
+        plan.state = character({ coins: 40_000_000_000 });
+        coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+
+        // 40,000M less 4M of fees and the 3M buffer at 9.5M a bag of ten: 4,200 bags
+        expect(text()).toMatch(/\d{1,3}(,\d{3})+ \(\d{1,3}(,\d{3})+ bags\)/);
+        expect(text()).not.toMatch(/\(\d{4,} bags\)/);
+    });
+
+    test('the keep-cash switch is called what it does, with a hover that says so', async () => {
+        ironCowFarmPanel.show();
+        await ironCowFarmPanel.refresh();
+        const label = [...ironCowFarmPanel.panel.querySelectorAll('label')].find((l) => l.querySelector('input'));
+        expect(label.textContent).toBe('Also keep cash for the next set');
+        expect(label.title).toContain('fees of the batch shown in the Queue helper');
+        expect(label.title).toContain('on top of what is already queued');
+        expect(text()).not.toContain('helper’s batch');
+    });
+
     test('spending coins redraws the bell count while the panel stays open, and closing unsubscribes', async () => {
         plan.state = character({ coins: 33_000_000 });
         coinWalk.walked = { stages: [{ label: 'Decompose: Star Fruit', coinDelta: -4_000_000 }], stoppedAt: null };

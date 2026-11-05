@@ -140,7 +140,7 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-describe('cash kept for the helper’s batch', () => {
+describe('cash kept for the next set', () => {
     const costed = () => ({
         missing: [],
         goldOutPerFruit: 375,

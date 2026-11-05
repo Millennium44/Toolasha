@@ -92,7 +92,7 @@ export function stripLines() {
     }
 
     const pricing = cowbellPricing({ buyNow: true });
-    // With the panel's switch on, the helper's batch is held back for too, exactly as the panel does
+    // With the panel's switch on, the next set (the batch in the Queue helper) is held back for too, exactly as the panel does
     // (`nextSetStages` is the one place it is worked out), so the two show the same number
     let budgetWalk = walked;
     let keepsNextSet = false;
@@ -122,7 +122,7 @@ export function stripLines() {
         lines.push({
             text:
                 `Iron Bell: spend now ${approx}${formatWithSeparator(can.bells)} bells ` +
-                `(${can.bags} ${plural(can.bags, 'bag')}) · keeps ${approx}${coins(reserve)} for the queue` +
+                `(${formatWithSeparator(can.bags)} ${plural(can.bags, 'bag')}) · keeps ${approx}${coins(reserve)} for the queue` +
                 (keepsNextSet ? ' and the next set' : ''),
             color: can.bells > 0 ? COLORS.good : COLORS.dim,
             title:
