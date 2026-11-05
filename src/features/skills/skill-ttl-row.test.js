@@ -263,6 +263,96 @@ describe('the Skill Time to Level tile answers only for the queue', () => {
     });
 });
 
+describe('Time to Level while a skilling action runs', () => {
+    const FORAGING = '/actions/foraging/star_fruit';
+    const TAILORING = '/actions/tailoring/kraken_tunic';
+    const COMBAT = '/actions/combat/golem_cave';
+
+    function withActions(actions) {
+        game.skills.push({ skillHrid: '/skills/foraging', level: 100, experience: game.table[100] });
+        game.skills.push({ skillHrid: '/skills/tailoring', level: 150, experience: game.table[150] });
+        game.actionDetails[FORAGING] = { type: '/action_types/foraging' };
+        game.actionDetails[TAILORING] = { type: '/action_types/tailoring' };
+        game.actionDetails[COMBAT] = { type: '/action_types/combat' };
+        game.actions = actions;
+        game.dmHandlers.character_switching();
+    }
+
+    function drawTile() {
+        const container = document.createElement('div');
+        ttlRow.render(container);
+        return container;
+    }
+
+    test('it follows the running skill even when combat skill is climbing faster and a target is set', () => {
+        withActions([{ actionHrid: FORAGING, isDone: false, ordinal: 0 }]);
+        select({ skill: 'melee', level: 140 });
+
+        draw();
+        grant('melee', 5_000_000);
+        grant('foraging', 100_000);
+        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        const tile = drawTile();
+
+        expect(tile.textContent).toContain('Foraging 101');
+        expect(tile.textContent).not.toContain('Melee');
+        expect(tile.title).toContain('Following the skill you are training');
+        expect(tile.title).toContain('Melee 140 target');
+    });
+
+    test('a skilling action queued behind the running one does not take the tile, whatever the array order', () => {
+        // Insertion order is not queue order: tailoring sits first in the array
+        // but runs second
+        withActions([
+            { actionHrid: TAILORING, isDone: false, ordinal: 7 },
+            { actionHrid: FORAGING, isDone: false, ordinal: 3 },
+        ]);
+
+        expect(drawTile().textContent).toContain('Foraging 101');
+    });
+
+    test('a combat action running keeps today’s tile, even with skilling queued behind it', () => {
+        withActions([
+            { actionHrid: TAILORING, isDone: false, ordinal: 9 },
+            { actionHrid: COMBAT, isDone: false, ordinal: 2 },
+        ]);
+
+        expect(train('melee', 1000000)).toContain('Melee 135');
+        select({ skill: 'defense', level: 121, focus: 'defense' });
+        expect(draw()).toContain('Defense 121');
+    });
+
+    test('nothing running keeps today’s tile, target included', () => {
+        withActions([]);
+        select({ skill: 'melee', level: 140 });
+
+        expect(draw()).toContain('Melee 140');
+    });
+
+    test('Experience/hr reads the very window the tile divides by', async () => {
+        const { runningSkillReading } = await import('./skill-ttl-row.js');
+        withActions([{ actionHrid: FORAGING, isDone: false, ordinal: 0 }]);
+
+        // One reading is not a rate
+        expect(runningSkillReading()).toEqual({ hrid: '/skills/foraging', name: 'Foraging', xpPerHour: null });
+
+        grant('foraging', 100_000);
+        vi.setSystemTime(Date.now() + 5 * 60 * 1000);
+        const reading = runningSkillReading();
+        expect(reading.xpPerHour).toBeGreaterThan(0);
+        expect(drawTile().title).toContain(`${Math.round(reading.xpPerHour).toLocaleString()} xp/hr`);
+    });
+
+    test('there is no reading while combat or nothing is running', async () => {
+        const { runningSkillReading } = await import('./skill-ttl-row.js');
+        withActions([{ actionHrid: COMBAT, isDone: false, ordinal: 0 }]);
+        expect(runningSkillReading()).toBeNull();
+
+        game.actions = [];
+        expect(runningSkillReading()).toBeNull();
+    });
+});
+
 describe('this row keeps its own history, apart from combat-level-panel.js', () => {
     test('character_switching clears it, so a switch to a higher-xp character is not read as a burst of progress', () => {
         // This row's own skill-history instance only self-corrects a reading

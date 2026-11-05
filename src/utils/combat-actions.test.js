@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'vitest';
-import { compareActionQueueOrder, runningAction, runningCombatAction, lastUsedTierForZone } from './combat-actions.js';
+import {
+    compareActionQueueOrder,
+    runningAction,
+    runningCombatAction,
+    runningSkillingAction,
+    lastUsedTierForZone,
+} from './combat-actions.js';
 
 describe('the live party-fight queue after a drag reorder', () => {
     // MillenniumTest on the test server, right after dragging Apple Gummy from
@@ -246,5 +252,44 @@ describe('lastUsedTierForZone: the last tier the player set on a zone, read from
         expect(lastUsedTierForZone([], '/actions/combat/gobo_planet')).toBeNull();
         expect(lastUsedTierForZone(null, '/actions/combat/gobo_planet')).toBeNull();
         expect(lastUsedTierForZone([{ actionHrid: '/actions/combat/gobo_planet' }], '')).toBeNull();
+    });
+});
+
+describe('runningSkillingAction', () => {
+    const types = {
+        '/actions/foraging/star_fruit': { type: '/action_types/foraging' },
+        '/actions/tailoring/kraken_tunic': { type: '/action_types/tailoring' },
+        '/actions/combat/golem_cave': { type: '/action_types/combat' },
+        '/actions/labyrinth/room': { type: '/action_types/labyrinth' },
+    };
+    const details = (hrid) => types[hrid];
+
+    test('names the skill the running action trains, whatever order the array is in', () => {
+        const found = runningSkillingAction(
+            [
+                { actionHrid: '/actions/tailoring/kraken_tunic', ordinal: 5 },
+                { actionHrid: '/actions/foraging/star_fruit', ordinal: 2 },
+            ],
+            details
+        );
+        expect(found.actionHrid).toBe('/actions/foraging/star_fruit');
+        expect(found.skillHrid).toBe('/skills/foraging');
+        expect(found.type).toBe('/action_types/foraging');
+    });
+
+    test('a fight or a labyrinth room running is not skilling, even with skilling queued behind it', () => {
+        const queued = { actionHrid: '/actions/foraging/star_fruit', ordinal: 9 };
+        const fight = { actionHrid: '/actions/combat/golem_cave', ordinal: 1 };
+        const room = { actionHrid: '/actions/labyrinth/room', ordinal: 1 };
+        expect(runningSkillingAction([queued, fight], details)).toBeNull();
+        expect(runningSkillingAction([queued, room], details)).toBeNull();
+    });
+
+    test('nothing running, an unknown action, or no lookup is null', () => {
+        const star = { actionHrid: '/actions/foraging/star_fruit', ordinal: 0 };
+        expect(runningSkillingAction([], details)).toBeNull();
+        expect(runningSkillingAction([{ actionHrid: '/actions/mystery/thing', ordinal: 0 }], details)).toBeNull();
+        expect(runningSkillingAction([star])).toBeNull();
+        expect(runningSkillingAction([{ ...star, isDone: true }], details)).toBeNull();
     });
 });

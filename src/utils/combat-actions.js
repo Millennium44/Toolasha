@@ -149,3 +149,35 @@ export function lastUsedTierForZone(actions, zoneHrid) {
     const front = matches.reduce((f, a) => (compareActionQueueOrder(a, f) < 0 ? a : f));
     return Number(front.difficultyTier) || 0;
 }
+
+/** Action types that train no single skill: a fight, or a labyrinth room */
+const NOT_A_TRAINED_SKILL = new Set(['/action_types/combat', '/action_types/labyrinth']);
+
+/**
+ * The skilling action the game is actually running, with the skill it trains.
+ *
+ * `runningAction` over the whole queue, then asked whether the one that runs
+ * is a skilling action: a combat or labyrinth action running, or a skilling
+ * action queued behind one, answers null, because the character is not
+ * skilling. Never a position read.
+ *
+ * @param {Array<Object>} actions - The character action queue
+ * @param {(actionHrid: string) => ({type?: string}|undefined|null)} getActionDetails -
+ *   `dataManager.getActionDetails`, passed in so this module stays free of core imports
+ * @returns {{action: Object, actionHrid: string, type: string, skillHrid: string}|null}
+ *   `skillHrid` is the matching `/skills/` hrid, e.g. `/skills/foraging`
+ */
+export function runningSkillingAction(actions, getActionDetails) {
+    const action = runningAction(actions);
+    if (!action) return null;
+
+    const type = getActionDetails?.(action.actionHrid)?.type;
+    if (!type || NOT_A_TRAINED_SKILL.has(type)) return null;
+
+    return {
+        action,
+        actionHrid: action.actionHrid,
+        type,
+        skillHrid: type.replace('/action_types/', '/skills/'),
+    };
+}

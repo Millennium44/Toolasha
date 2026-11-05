@@ -364,20 +364,22 @@ export const PRESET_LAYOUTS = {
     },
     Skilling: {
         activity: ACTIVITY.SKILLING,
-        // Where the trained skill stands and when it next levels, then the
-        // session's numbers, then the two blocks that decide whether the
-        // queue is worth running
+        // Where the trained skill stands and when it next levels, how fast it
+        // is going and what it earns (Experience/hr and Total Profit both answer
+        // for the running skilling action), then the supplies block, then the
+        // queue and the purse. Every tile is one column but the supplies block,
+        // so on a two-column panel the rows pair up (level and time, rate and
+        // profit, queue and coins) and on a phone it is one even column.
         order: [
             'skillLevel',
-            'skillTimeToLevel',
+            'timeToLevel',
             'experiencePerHour',
-            'queueTimeLeft',
-            'coins',
             'totalProfit',
             'consumables',
-            'houses',
+            'queueTimeLeft',
+            'coins',
         ],
-        span: { totalProfit: 2, consumables: 2, houses: 2 },
+        span: { consumables: 2 },
     },
     Labyrinth: {
         activity: ACTIVITY.LABYRINTH,
