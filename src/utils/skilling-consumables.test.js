@@ -286,6 +286,36 @@ describe('every ending', () => {
 });
 
 describe('the helpers', () => {
+    test('skilling types are in the game order, and unnumbered ones follow by name', () => {
+        game.map = new Map([
+            ['/action_types/woodcutting', []],
+            ['/action_types/brewing', []],
+            ['/action_types/milking', []],
+            ['/action_types/alchemy', []],
+            ['/action_types/zzz_new_skill', []],
+            ['/action_types/aaa_new_skill', []],
+            ['/action_types/foraging', []],
+        ]);
+        game.clientData = {
+            actionTypeDetailMap: {
+                '/action_types/milking': { sortIndex: 1 },
+                '/action_types/foraging': { sortIndex: 2 },
+                '/action_types/woodcutting': { sortIndex: 3 },
+                '/action_types/brewing': { sortIndex: 8 },
+                '/action_types/alchemy': { sortIndex: 9 },
+            },
+        };
+        expect(skillingActionTypes()).toEqual([
+            '/action_types/milking',
+            '/action_types/foraging',
+            '/action_types/woodcutting',
+            '/action_types/brewing',
+            '/action_types/alchemy',
+            '/action_types/aaa_new_skill',
+            '/action_types/zzz_new_skill',
+        ]);
+    });
+
     test('skilling types leave out combat, labyrinth and special, by name', () => {
         game.map = new Map([
             ['/action_types/woodcutting', []],

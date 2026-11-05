@@ -54,6 +54,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { formatPercentage, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { sortActionTypes } from '../../utils/action-type-order.js';
 import { calculateDrinkRemainingSeconds } from '../../utils/drink-calculator.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { registerCommand } from '../../utils/command-registry.js';
@@ -243,7 +244,7 @@ export function collectBuffs(actionTypeHrid) {
  * Derived rather than listed, so a skill the game adds appears here the day it
  * ships instead of the day somebody remembers to type it in.
  *
- * @returns {Array<string>} Action type hrids, ordered by their readable name
+ * @returns {Array<string>} Action type hrids, in the game's order
  */
 export function knownActionTypes() {
     const types = new Set();
@@ -255,7 +256,7 @@ export function knownActionTypes() {
     // Combat's consumables are not in the maps, so combat can be missing from
     // every one of them while being exactly what the player wants to look at
     if (dataManager.getActionDrinkSlots?.(COMBAT_ACTION_TYPE)?.length) types.add(COMBAT_ACTION_TYPE);
-    return [...types].sort((a, b) => titleizeHrid(a).localeCompare(titleizeHrid(b)));
+    return sortActionTypes(types);
 }
 
 /**

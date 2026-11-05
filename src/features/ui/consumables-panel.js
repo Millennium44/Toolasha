@@ -74,6 +74,7 @@ import {
     skillingActionTypes,
     skillingConsumables,
 } from '../../utils/skilling-consumables.js';
+import { sortActionTypes } from '../../utils/action-type-order.js';
 import {
     buildReadiness,
     keyReadiness,
@@ -2363,7 +2364,7 @@ class ConsumablesPanel {
         const types = new Set(skillingActionTypes());
         types.add(COMBAT_ACTION_TYPE);
         if (running) types.add(running);
-        return [...types].sort((a, b) => actionTypeLabel(a).localeCompare(actionTypeLabel(b)));
+        return sortActionTypes(types);
     }
 
     /**
