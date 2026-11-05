@@ -489,6 +489,7 @@ registerRow({
     name: 'Wave Gap',
     empty: 'No wave transitions yet',
     defaultVisible: false,
+    retired: () => !config.getSetting('waveGapWatch'),
     defaultSize: { width: 250, height: 30 },
     tileClass: TILE_CLASS.MEASUREMENT,
     onOpen: () => waveGapPanel.toggle(),

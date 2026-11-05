@@ -58,15 +58,26 @@ const rows = [];
  *   needs before anyone has resized it. A row knows how much it draws; the panel
  *   does not, and guessing one size for all of them leaves half of them clipped.
  * @param {number} [row.defaultZoom] - Starting text size, as a percentage
- * @param {string} [row.empty] - What the tile says when the row draws nothing,
+ * @param {string|Function} [row.empty] - What the tile says when the row draws nothing,
  *   and only where that is worth a whole tile — see {@link emptyPolicyFor}, which
  *   decides whether an empty tile says this, says its own name, or stands down.
- *   Defaults to naming the row.
+ *   Defaults to naming the row. A row that is empty for different reasons in
+ *   different states can pass a `() => string`, read each time the placeholder
+ *   is drawn (see {@link emptyText}).
  * @param {string} [row.tileClass] - One of {@link TILE_CLASS}. What kind of thing
  *   the tile shows, which is what decides how it behaves before it has anything
  *   to show. Optional: rows that do not say are classed by the table below.
  * @param {string} [row.whenEmpty] - `hide`, `compact` or `full`, when this
  *   particular row wants something other than what its class would give it.
+ * @param {string} [row.group] - Which fold of the picker lists it, one of
+ *   {@link ROW_GROUPS}. Optional: the table below classes the rows this script
+ *   ships, and anything neither names (a tile registered from outside this repo)
+ *   lands in Other.
+ * @param {boolean|Function} [row.retired] - Hidden from the picker unless the
+ *   tile is on. `true`, or a `() => boolean` read each time the picker draws, so
+ *   a row can be retired only while the setting behind it is off. It changes
+ *   nothing else: a retired tile that is on keeps drawing, keeps its place in
+ *   every saved layout and export, and can still be switched off.
  */
 export function registerRow({
     key,
@@ -80,6 +91,8 @@ export function registerRow({
     empty = '',
     tileClass = '',
     whenEmpty = '',
+    group = '',
+    retired = false,
 }) {
     if (!key || typeof render !== 'function') {
         console.error('[OverlayPanel] A row needs a key and a render function:', key);
@@ -98,6 +111,8 @@ export function registerRow({
         empty,
         tileClass,
         whenEmpty,
+        group,
+        retired,
     };
     const existing = rows.findIndex((row) => row.key === key);
     if (existing >= 0) rows[existing] = definition;
@@ -247,6 +262,145 @@ export const CURATED_ROWS = [
     'luck',
     'timeToLevel',
 ];
+
+/**
+ * The folds of the row picker, in the order they are offered.
+ *
+ * Other is last and holds whatever no table names, so a tile registered from
+ * outside this repo is listed rather than lost.
+ */
+export const ROW_GROUPS = ['Wealth', 'Skilling', 'Combat', 'Account and goals', 'Guild', 'Readouts', 'Other'];
+
+/**
+ * Every shipped row's fold in the picker.
+ *
+ * Here for the reason {@link TILE_CLASSES} is: it is one judgement about the
+ * overlay as a whole, wanted readable in one place. `experiencePerHour` and
+ * `totalProfit` answer for a fight and for the running skilling action alike;
+ * they are filed where a fight is the first thing anyone looked for them
+ * (`experiencePerHour` under Skilling, since Time to Level beside it is the
+ * question it is divided into, and `totalProfit` under Combat).
+ */
+const ROW_GROUP_TABLE = {
+    netWorth: 'Wealth',
+    coins: 'Wealth',
+    inventoryValue: 'Wealth',
+    marketListings: 'Wealth',
+    watchlist: 'Wealth',
+    equipmentWatch: 'Wealth',
+    charmValue: 'Wealth',
+    skillBooks: 'Wealth',
+
+    skillLevel: 'Skilling',
+    timeToLevel: 'Skilling',
+    skillTimeToLevel: 'Skilling',
+    experiencePerHour: 'Skilling',
+    queueTimeLeft: 'Skilling',
+    consumables: 'Skilling',
+    taskTokens: 'Skilling',
+    houses: 'Skilling',
+    enhancementSession: 'Skilling',
+    ironBellNextStep: 'Skilling',
+
+    combatStatus: 'Combat',
+    combatLevel: 'Combat',
+    dps: 'Combat',
+    deathsPerHour: 'Combat',
+    manaPerFight: 'Combat',
+    luck: 'Combat',
+    totalProfit: 'Combat',
+    combatRevenue: 'Combat',
+    battleTimer: 'Combat',
+    combatSession: 'Combat',
+    treasure: 'Combat',
+    combatText: 'Combat',
+
+    accountView: 'Account and goals',
+    buildScore: 'Account and goals',
+    noticeLog: 'Account and goals',
+    sessionBriefing: 'Account and goals',
+    goalNextStep: 'Account and goals',
+
+    guildTrialsPace: 'Guild',
+    guildRoster: 'Guild',
+    guildTrialLedger: 'Guild',
+
+    replayCheck: 'Readouts',
+    predictionCalibration: 'Readouts',
+    stunPersistence: 'Readouts',
+    waveGap: 'Readouts',
+    tickPeriod: 'Readouts',
+};
+
+/**
+ * Which fold of the picker a row sits in.
+ * @param {Object} row - A row definition
+ * @returns {string} One of {@link ROW_GROUPS}; Other for a row nothing names
+ */
+export function groupFor(row) {
+    const declared = row?.group;
+    if (declared && ROW_GROUPS.includes(declared)) return declared;
+    return ROW_GROUP_TABLE[row?.key] || 'Other';
+}
+
+/**
+ * Whether a row has been withdrawn from the picker.
+ *
+ * A predicate that throws counts as not retired: the safe failure is a tile
+ * listed that did not need to be, never one that someone has on and cannot find.
+ *
+ * @param {Object} row - A row definition
+ * @returns {boolean}
+ */
+export function isRetired(row) {
+    const retired = row?.retired;
+    if (typeof retired === 'function') {
+        try {
+            return Boolean(retired());
+        } catch (error) {
+            console.error('[OverlayPanel] A retired check failed:', row?.key, error);
+            return false;
+        }
+    }
+    return retired === true;
+}
+
+/**
+ * Whether the picker (or the command palette) should offer a resolved row: a
+ * retired row only while it is on, so nobody who has it loses sight of it.
+ * @param {Object} row - A row from {@link resolveRows}, which carries `visible`
+ * @returns {boolean}
+ */
+export function isListed(row) {
+    return row?.visible === true || !isRetired(row);
+}
+
+/**
+ * The registered rows worth offering, given what this character has switched on.
+ * @param {Object} saved - The panel's settings, as {@link resolveRows} reads them
+ * @param {Array<Object>} [available] - The rows to filter; the registry's by default
+ * @returns {Array<Object>} The rows, in the order given, minus the retired ones that are off
+ */
+export function listedRows(saved, available = registeredRows()) {
+    const visible = new Map(resolveRows(available, saved).map((row) => [row.key, row.visible]));
+    return available.filter((row) => isListed({ ...row, visible: visible.get(row.key) === true }));
+}
+
+/**
+ * What a row's placeholder says right now.
+ * @param {Object} row - A row definition
+ * @returns {string} The row's `empty`, called if it is a function; an empty string when it has none
+ */
+export function emptyText(row) {
+    const empty = row?.empty;
+    if (typeof empty !== 'function') return empty || '';
+    try {
+        return String(empty() || '');
+    } catch (error) {
+        console.error('[OverlayPanel] An empty-text check failed:', row?.key, error);
+        return '';
+    }
+}
 
 /**
  * Which class a row belongs to.
@@ -446,6 +600,39 @@ export function moveRow(order, key, delta) {
 
     const next = [...order];
     [next[index], next[target]] = [next[target], next[index]];
+    return next;
+}
+
+/**
+ * Move a key past the nearest neighbor it shares a fold with.
+ *
+ * The picker shows one fold at a time, so the neighbor that matters is the next
+ * chip in the same fold, not the next key in the layout: the layout order spans
+ * every fold, so a plain swap with the adjacent key mostly trades places with a
+ * tile in another fold and nothing visible happens. The key lands on the far
+ * side of that neighbor and every other key keeps its relative order.
+ *
+ * @param {string[]} order - Current order (the rendered one)
+ * @param {string} key - What to move
+ * @param {number} delta - Negative earlier, positive later
+ * @param {(key: string) => boolean} sharesFold - Whether another key is in this key's fold and listed
+ * @returns {string[]} A new order, or the same array when there is nobody to move past
+ */
+export function moveRowWithin(order, key, delta, sharesFold) {
+    const index = order.indexOf(key);
+    if (index < 0) return order;
+
+    const step = delta < 0 ? -1 : 1;
+    let target = index + step;
+    while (target >= 0 && target < order.length && !sharesFold(order[target])) target += step;
+    if (target < 0 || target >= order.length) return order;
+
+    const next = [...order];
+    next.splice(index, 1);
+    // Going earlier the neighbor keeps its index and the key goes in front of
+    // it; going later the removal shifted the neighbor back one, so inserting at
+    // the old index puts the key just after it
+    next.splice(target, 0, key);
     return next;
 }
 

@@ -73,7 +73,7 @@ import itemFlowRecorder from '../features/networth/item-flow-recorder.js';
 import '../features/networth/networth-rows.js';
 import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
 import abilityCheckpoints from '../features/abilities/ability-checkpoints.js';
-// Side-effect import: registers the Charm Value overlay row
+// Side-effect import: registers the Next Charm overlay row
 import '../features/inventory/charm-value-row.js';
 
 // Offline Progress features

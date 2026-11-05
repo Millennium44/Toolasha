@@ -207,6 +207,10 @@ registerRow({
     empty: 'No skilling action',
     name: 'Skill Time to Level',
     defaultSize: { width: 200, height: 30 },
+    // Retired from the picker: Time to Level follows the running skill while a
+    // skilling action runs, which is the whole of what this tile said. Anyone who
+    // has it on keeps it and can still switch it off.
+    retired: true,
     // The same question as Time to Level, asked only of the queue. Where that
     // row follows the fastest-gaining skill — combat included — and yields to
     // the Combat Level panel's target, this one reports the skill the front

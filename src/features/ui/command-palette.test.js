@@ -47,7 +47,11 @@ vi.mock('../../utils/toast.js', () => ({
 }));
 
 const rows = vi.hoisted(() => ({ current: [] }));
-vi.mock('../../utils/overlay-rows.js', () => ({ registeredRows: () => rows.current }));
+// The real rules about rows (retired, listed) over a stood-in registry
+vi.mock('../../utils/overlay-rows.js', async (importActual) => ({
+    ...(await importActual()),
+    registeredRows: () => rows.current,
+}));
 
 const overlay = vi.hoisted(() => ({
     toggle: vi.fn(),
@@ -421,6 +425,25 @@ describe('the palette in the page', () => {
         // No onOpen means nothing to open
         expect(labels).not.toContain('Coins');
         expect(labels).toContain('Draggable modals');
+    });
+
+    test('a retired row is offered only while its tile is on', async () => {
+        rows.current = [
+            { key: 'waveGap', name: 'Wave Gap', onOpen: () => {}, defaultVisible: false, retired: () => true },
+            { key: 'tickPeriod', name: 'Tick Period', onOpen: () => {}, defaultVisible: false, retired: () => true },
+            { key: 'dps', name: 'DPS', onOpen: () => {}, defaultVisible: true },
+        ];
+        overlay.settings = { visible: { tickPeriod: true } };
+
+        palette.initialize();
+        palette.open();
+        await vi.waitFor(() => expect(overlay.listLayouts).toHaveBeenCalled());
+
+        const labels = drawnLabels();
+        expect(labels).toContain('DPS');
+        expect(labels).toContain('Tick Period');
+        expect(labels).not.toContain('Wave Gap');
+        overlay.settings = undefined;
     });
 
     test('saved layouts arrive as their own entries and can be chosen', async () => {

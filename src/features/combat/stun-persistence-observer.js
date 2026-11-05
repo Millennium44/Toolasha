@@ -359,6 +359,8 @@ registerRow({
     name: 'Stun Persistence',
     empty: 'No stun episodes yet',
     defaultVisible: false,
+    // Listed in the picker only while its watch is on (or the tile already is)
+    retired: () => !config.getSetting('stunPersistenceWatch'),
     defaultSize: { width: 250, height: 30 },
     tileClass: TILE_CLASS.MEASUREMENT,
     onOpen: () => stunPersistencePanel.toggle(),

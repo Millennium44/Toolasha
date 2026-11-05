@@ -218,14 +218,14 @@ describe('the panel renders', () => {
 });
 
 /**
- * The Charm Value tile's `version()`.
+ * The Next Charm tile's `version()`.
  *
  * `familyRows()` asks the market for every enhancement level of every charm in
  * the family — around a hundred lookups — and the overlay called it once a
  * second. The two things that can change the answer are the charm in the slot
  * and the price feed, and both have to move the version.
  */
-describe('the Charm Value tile summarises its own inputs', () => {
+describe('the Next Charm tile summarises its own inputs', () => {
     const version = () => game.rows.charmValue.version();
 
     test('it holds still while the slot and the feed do', () => {

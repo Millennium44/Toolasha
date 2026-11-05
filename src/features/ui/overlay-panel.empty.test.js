@@ -629,6 +629,13 @@ describe('switching a tile on by hand', () => {
         overlayPanel.show();
         overlayPanel.pickerEl.style.display = '';
         overlayPanel._renderPicker();
+        // The picker folds a group with nothing on in it; these tests tick rows
+        // from every group, so open them the way a tap does
+        for (let pass = 0; pass < 10; pass += 1) {
+            const folded = overlayPanel.pickerEl.querySelector('[data-overlay-group-header][aria-expanded="false"]');
+            if (!folded) break;
+            folded.click();
+        }
     }
 
     /**
