@@ -29,6 +29,9 @@ With all parties shown, Clear was a median across every party size, which also m
 ### Dungeon backfill no longer guesses a tier
 
 Runs read from chat now stay T? instead of taking the tier of whatever dungeon was running. A live run still records its tier, and a tier recorded on one device now survives syncing.
+### Tall character panel no longer cuts off its last rows
+
+The "Character panel: Height" setting could push the panel's bottom off-screen with no way to scroll to it, hiding your last loadouts or inventory rows. It now stops at the bottom of the game's area.
 
 ### Collection plan says when it hit its step limit
 

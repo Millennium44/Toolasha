@@ -134,13 +134,16 @@ function layoutRules(layout) {
     return '';
 }
 
-/** The character panel's height, in vh. Zero leaves the game's own. */
+/**
+ * The character panel's height, in vh. Zero leaves the game's own. Never past the game's own area: the panel starts
+ * below the header and that area clips it, so anything taller hangs its last rows off-screen, out of scrolling's reach.
+ */
 function panelHeightRules() {
     const vh = Number(config.getSettingValue('combatScalePanelHeight', 0));
     if (!Number.isFinite(vh) || vh <= 0) return '';
     return `
         ${RIGHT_PANEL} {
-            height: ${Math.min(100, Math.max(20, vh))}vh !important;
+            height: min(${Math.min(100, Math.max(20, vh))}vh, 100%) !important;
             overflow-y: auto !important;
         }
     `;
