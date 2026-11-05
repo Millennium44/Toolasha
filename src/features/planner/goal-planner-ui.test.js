@@ -1631,6 +1631,26 @@ describe('a full goal list', () => {
         expect(document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input').value).toBe('7B');
     });
 
+    test('a refused press that loads a changed list replans it, keeping the notice and what was typed', async () => {
+        seedGoals(MAX_GOALS - 1);
+        await openForm();
+        const buildsBefore = plannerContext.builds;
+        const field = document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input');
+        field.value = '7B';
+        // Another tab or a pull fills the list while this panel is open
+        seedGoals(MAX_GOALS);
+
+        await goalPlannerPanel.addGoal({ type: 'gold', amount: 7_000_000_000 });
+
+        expect(goalPlannerPanel.goals).toHaveLength(MAX_GOALS);
+        expect(plannerContext.builds).toBeGreaterThan(buildsBefore);
+        expect(goalPlannerPanel.plans.map((plan) => plan.goalId)).toContain(`g${MAX_GOALS - 1}`);
+        expect(text()).toContain('goal list is full');
+        expect(goalPlannerPanel.formType).toBe('gold');
+        expect(document.querySelector('#toolasha-goal-planner-panel [data-goal-add] input').value).toBe('7B');
+        expect(store.data.goalPlannerGoals_char1).toHaveLength(MAX_GOALS);
+    });
+
     test('the press that takes the last place adds, closes the form and shows no warning', async () => {
         seedGoals(MAX_GOALS - 1);
         await openForm();

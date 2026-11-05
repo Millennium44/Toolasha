@@ -724,19 +724,23 @@ class GoalPlannerPanel {
      */
     async addGoal(raw) {
         const current = this._currentOperation();
+        const previous = this.goals;
         const { goals, outcome } = await tryAddGoal(raw);
         if (!current()) return;
         this.goals = goals;
         if (outcome === 'full') {
-            // Nothing was added, so nothing to replan: say so under the form that was pressed, and leave
-            // the form open (closing it would read as the goal having been taken)
+            // Say so under the form that was pressed, and leave the form open (closing it would read as the
+            // goal having been taken)
             // The real count, not the limit: a sync can leave a list past it. And no promise that a removal
             // lasts: the list keeps no tombstones, so with sync on a removed goal can return from another
             // device's copy
             this.addNotice =
                 `The goal list is full (${goals.length} goals, limit ${MAX_GOALS}). Remove one to make room. ` +
                 'With sync on, a goal you remove can come back from another device.';
-            this._renderKeepingForm();
+            this._render();
+            // Nothing was added, but the read may have brought in another tab's or a pull's goals. Plans share
+            // coins and materials in goal order, so those change what the cards should say.
+            if (JSON.stringify(previous) !== JSON.stringify(goals)) await this.replan();
             return;
         }
         this.addNotice = null;
@@ -907,6 +911,22 @@ class GoalPlannerPanel {
 
     _render() {
         if (!this.bodyEl) return;
+        // While the full-list notice stands, the player still has their goal in the form, and any redraw
+        // (the replan after it, a queued one) would rebuild those inputs empty
+        const fields = () => [...this.bodyEl.querySelectorAll('[data-goal-add] input, [data-goal-add] select')];
+        const typed = this.addNotice ? fields().map((field) => field.value) : null;
+        this._draw();
+        if (typed) {
+            const after = fields();
+            if (after.length === typed.length) after.forEach((field, index) => (field.value = typed[index]));
+        }
+    }
+
+    /**
+     * Draw the panel from the current state.
+     * @returns {void}
+     */
+    _draw() {
         this.bodyEl.replaceChildren();
 
         this._status(
@@ -1061,20 +1081,6 @@ class GoalPlannerPanel {
         }
 
         return section;
-    }
-
-    /**
-     * Draw the panel again without losing what is typed in the Add form: a redraw rebuilds its inputs empty.
-     * @returns {void}
-     */
-    _renderKeepingForm() {
-        const fields = () => [
-            ...(this.bodyEl?.querySelectorAll('[data-goal-add] input, [data-goal-add] select') || []),
-        ];
-        const typed = fields().map((field) => field.value);
-        this._render();
-        const after = fields();
-        if (after.length === typed.length) after.forEach((field, index) => (field.value = typed[index]));
     }
 
     /**
