@@ -5989,7 +5989,7 @@ class GuildTrials {
         const rows = [
             foldHeading(
                 'history',
-                'Past weeks',
+                isTestServer() ? 'Past cycles' : 'Past weeks',
                 'The last few finished cycles, kept when the week rolled over. Newest first. ' +
                     '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
                     'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
@@ -6156,10 +6156,14 @@ class GuildTrials {
                     '</div>'
                 );
             }),
-            ...(hidden > 0 && !collapsed
+            ...(!collapsed
                 ? [
-                      `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
-                          `+${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover</div>`,
+                      `<div data-history-key="1" style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
+                          'T = tier reached · n/r = didn’t run · — = no result seen' +
+                          (hidden > 0
+                              ? ` · +${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover`
+                              : '') +
+                          '</div>',
                   ]
                 : []),
         ].join('');

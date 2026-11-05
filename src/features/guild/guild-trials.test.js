@@ -3551,6 +3551,22 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('~825');
     });
 
+    test.each([
+        [false, 'Past weeks'],
+        [true, 'Past cycles'],
+    ])('the history fold is titled by the cycle length (test server %s)', (testServer, title) => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+        const was = game.testServer;
+        game.testServer = testServer;
+        try {
+            fire(root);
+            expect(document.querySelector('[data-fold="history"]').textContent).toContain(title);
+        } finally {
+            game.testServer = was;
+        }
+    });
+
     test('no history renders no “Past weeks” header at all', () => {
         fire(buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]));
         expect(text()).not.toContain('Past weeks');
@@ -3590,6 +3606,14 @@ describe('the panel, end to end', () => {
             const row = name === null ? rows[0] : rows.find((node) => node.children[0].textContent === name);
             return row ? [...row.children].map((cell) => cell.textContent) : null;
         };
+
+        test('a one-line key under the table explains T, n/r and the dash', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = { ...guildTrials.record, history: [archivedWeek({ weekStart: weekAgo(1) })] };
+            fire(root);
+            const key = document.querySelector('[data-mwi-block="trial-history"] [data-history-key]');
+            expect(key.textContent).toContain('T = tier reached · n/r = didn’t run · — = no result seen');
+        });
 
         test('one table row per trial, newest week first, a dash for a week it has no result, and its best', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
