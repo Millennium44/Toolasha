@@ -410,15 +410,12 @@ describe('presets', () => {
         expect(rowsOf('Combat', 3)).toEqual([
             'battleTimer|dps|deathsPerHour',
             'manaPerFight|treasure',
-            'combatRevenue',
-            'luck',
-            'combatSession',
-            'consumables',
+            'combatRevenue|luck',
+            'combatSession|consumables',
         ]);
         expect(rowsOf('Labyrinth', 3)).toEqual([
             'dps|deathsPerHour|manaPerFight',
-            'treasure',
-            'combatSession',
+            'treasure|combatSession',
             'combatRevenue',
             'consumables',
         ]);
