@@ -40,6 +40,14 @@ export const BASE_SUCCESS_RATES = [
  * Blessed Tea's base chance to skip an extra level on success, as a decimal.
  * Used when the caller has no live consumable data to read the real flatBoost from.
  */
+/**
+ * The highest target level the solver can model. Its success-rate table, its 20x20 transition matrix and the
+ * worker pools are all built for +20, so a game patch that raises the enhancement cap does not make a higher
+ * target computable: callers treat a level above this as "not computed" instead of a wrong figure or a throw.
+ * Mirrored as ENHANCEMENT_SOLVER_MAX_LEVEL in game-maximums.js (this module must stay free of game data).
+ */
+export const SOLVER_MAX_LEVEL = 20;
+
 export const BLESSED_TEA_BASE_CHANCE = 0.01;
 
 /**
@@ -663,8 +671,8 @@ function solveEnhancement(params) {
     } = params;
 
     // Validate inputs
-    if (targetLevel < 1 || targetLevel > 20) {
-        throw new Error('Target level must be between 1 and 20');
+    if (targetLevel < 1 || targetLevel > SOLVER_MAX_LEVEL) {
+        throw new Error(`Target level must be between 1 and ${SOLVER_MAX_LEVEL}`);
     }
     if (protectFrom < 0 || protectFrom > targetLevel) {
         throw new Error('Protection level must be between 0 and target level');

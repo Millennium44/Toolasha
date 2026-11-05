@@ -13,7 +13,7 @@
  * Formula: actionTime = baseTime / (1 + totalEfficiency + totalSpeed)
  */
 
-import { ENHANCEMENT_BONUSES } from './enhancement-multipliers.js';
+import { enhancementBonusAt } from './enhancement-multipliers.js';
 
 /**
  * Map action type HRID to equipment field name
@@ -87,7 +87,7 @@ function calculateEnhancementScaling(baseValue, enhancementLevel, slotHrid) {
     }
 
     // Get enhancement percentage from shared table (no level-0 entry; early return above covers it)
-    const enhancementPercentage = ENHANCEMENT_BONUSES[enhancementLevel] || 0;
+    const enhancementPercentage = enhancementBonusAt(enhancementLevel);
 
     // Get slot multiplier (default to 1× if slot not found)
     const slotMultiplier = SLOT_MULTIPLIERS[slotHrid] || 1;

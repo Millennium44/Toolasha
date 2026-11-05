@@ -470,6 +470,16 @@ describe('the stored record', () => {
         expect(houseGoalFor('/house_rooms/dojo')).toMatchObject({ targetLevel: 6, cost: 40_000_000 });
     });
 
+    test('a stored room goal above the fallback cap survives a load before game data exists, and a save', async () => {
+        stored.record = { targets: {}, houses: { '/house_rooms/dojo': { targetLevel: 12, cost: 1, label: 'Dojo' } } };
+
+        await loadSavingsRecord();
+        expect(houseGoalFor('/house_rooms/dojo').targetLevel).toBe(12);
+
+        await saveSavingsRecord({ targets: {} });
+        expect(stored.record.houses['/house_rooms/dojo'].targetLevel).toBe(12);
+    });
+
     test('gear, abilities and rooms all survive one write, because there is one writer', async () => {
         await saveSavingsRecord({ targets: { '/items/holy_sword': { enhancementLevel: 0 } } });
         await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });

@@ -64,7 +64,6 @@ import {
     generateHouseCandidates,
     describeHouseScan,
     houseRoomMovesWinRate,
-    MAX_HOUSE_LEVEL,
     MAX_GUILD_SHRINE_LEVEL,
     getGuildShrineMaxLevel,
     candidateAssignmentKey,
@@ -125,8 +124,6 @@ import {
 import { scopeEquipmentToSkill } from './skilling-gear-candidates.js';
 import { collapseHeaderHtml, enhanceCollapsibles } from './collapsible-sections.js';
 import {
-    MAX_SWAP_LEVEL,
-    MAX_ABILITY_SWAP_LEVEL,
     MAX_QUEUED_SWAPS,
     extractAbilityOrderSection,
     buildCombatAbilityCheck,
@@ -203,6 +200,7 @@ import {
 import { labyrinthClearRate, loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
 
@@ -563,40 +561,49 @@ const CHIP_BUTTON_STYLE =
  * `_onUpgradeSelectionChanged`.
  */
 const LAB_MODE_OPTIONS = {
-    ability_level: `
+    get ability_level() {
+        return `
         <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
             </select>
-            <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="200" value="5" style="
+            <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
             <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    ability_swap: `
+        </span>`;
+    },
+    get ability_swap() {
+        return `
         <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-labsim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for the loadout's archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own aura choice." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-labsim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
             </label>
-        </span>`,
-    combat_level: `
+        </span>`;
+    },
+    get combat_level() {
+        return `
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    house: `
+        </span>`;
+    },
+    get house() {
+        return `
         <span id="mwi-labsim-house-group" data-lab-mode-options="house" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
-            <input id="mwi-labsim-house-target-level" type="number" min="1" max="${MAX_HOUSE_LEVEL}" placeholder="Lv" style="
+            <input id="mwi-labsim-house-target-level" type="number" min="1" max="${maxHouseRoomLevel()}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${MAX_HOUSE_LEVEL}.">
+                title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${maxHouseRoomLevel()}.">
             <button id="mwi-labsim-house-targets-toggle" title="Set a target level per room instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    guild_shrine: `
+        </span>`;
+    },
+    get guild_shrine() {
+        return `
         <span id="mwi-labsim-shrine-group" data-lab-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
@@ -607,14 +614,17 @@ const LAB_MODE_OPTIONS = {
                 <input type="checkbox" id="mwi-labsim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
                 Guild-allowed only
             </label>
-        </span>`,
-    community_buff: `
+        </span>`;
+    },
+    get community_buff() {
+        return `
         <span id="mwi-labsim-community-group" data-lab-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-community-target-level" type="number" min="1" max="${MAX_COMMUNITY_BUFF_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Sim the buff at this level rather than one level up — Lv3 → Lv8 in one row. Capped at ${MAX_COMMUNITY_BUFF_LEVEL}, which is what the game calls max. The cowbell figure is per minute of uptime either way; a level has no price of its own.">
-        </span>`,
+        </span>`;
+    },
 };
 
 /**
@@ -1510,7 +1520,7 @@ class LabSimUI {
                     ([key, label]) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${label}</label>
-                    <input type="number" min="1" max="200" data-lab-combat-target="${key}" style="
+                    <input type="number" min="1" max="${maxLevel()}" data-lab-combat-target="${key}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
@@ -3626,7 +3636,7 @@ class LabSimUI {
                     placeholder="${kind === 'combat' ? 'Item or ability, e.g. Sinister Cape' : 'Item name, e.g. Sinister Cape'}" style="${inputStyle} width:210px; max-width:100%;">
                 <datalist id="mwi-labsim-swap-items-${kind}"></datalist>
                 <span style="color:#888; font-size:12px;">+</span>
-                <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${kind === 'combat' ? MAX_ABILITY_SWAP_LEVEL : MAX_SWAP_LEVEL}" step="1"
+                <input id="mwi-labsim-swap-level-${kind}" type="number" min="0" max="${kind === 'combat' ? maxLevel() : maxEnhancementLevel()}" step="1"
                     placeholder="Lv" title="${kind === 'combat' ? 'Enhancement level to check (the ability level, for an ability)' : 'Enhancement level to check'}" style="${inputStyle} width:46px; text-align:center;">
                 <button id="mwi-labsim-swap-add-${kind}" style="${buttonStyle}" title="Queue this swap">Add</button>
                 <button id="mwi-labsim-swap-check-${kind}" style="${buttonStyle}" title="${escapeHtmlAttribute(what)}">Check</button>
@@ -5065,7 +5075,7 @@ class LabSimUI {
         }
         const abilityLevelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.value || 'increment';
         let abilityTargetLevel = Math.min(
-            200,
+            maxLevel(),
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
         );
         const isCombatLevelMode = selectedDimensions.has('combat_level');
@@ -5585,7 +5595,7 @@ class LabSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const uniform = Math.min(MAX_HOUSE_LEVEL, Math.max(0, parseInt(this._getHouseTargetLevelInput()) || 0));
+        const uniform = Math.min(maxHouseRoomLevel(), Math.max(0, parseInt(this._getHouseTargetLevelInput()) || 0));
 
         const rooms = Object.entries(roomMap)
             .filter(([, detail]) => houseRoomMovesWinRate(detail))
@@ -5615,9 +5625,9 @@ class LabSimUI {
                     (room) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
-                    <input type="number" min="1" max="${MAX_HOUSE_LEVEL}" data-lab-house-target="${room.hrid}"
-                        value="${room.level >= MAX_HOUSE_LEVEL ? '' : Math.min(MAX_HOUSE_LEVEL, Math.max(uniform, room.level + 1))}"
-                        ${room.level >= MAX_HOUSE_LEVEL ? 'disabled title="Already at max level"' : ''} style="
+                    <input type="number" min="1" max="${maxHouseRoomLevel()}" data-lab-house-target="${room.hrid}"
+                        value="${room.level >= maxHouseRoomLevel() ? '' : Math.min(maxHouseRoomLevel(), Math.max(uniform, room.level + 1))}"
+                        ${room.level >= maxHouseRoomLevel() ? 'disabled title="Already at max level"' : ''} style="
                         width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
@@ -6114,7 +6124,7 @@ class LabSimUI {
      */
     _getHouseTargetLevel() {
         const value = parseInt(this._getHouseTargetLevelInput(), 10);
-        return Number.isFinite(value) && value > 0 ? Math.min(MAX_HOUSE_LEVEL, value) : 0;
+        return Number.isFinite(value) && value > 0 ? Math.min(maxHouseRoomLevel(), value) : 0;
     }
 
     /**
@@ -6129,7 +6139,7 @@ class LabSimUI {
         grid.querySelectorAll('[data-lab-house-target]').forEach((input) => {
             const value = parseInt(input.value, 10);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.labHouseTarget] = Math.min(MAX_HOUSE_LEVEL, value);
+                targets[input.dataset.labHouseTarget] = Math.min(maxHouseRoomLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -6181,7 +6191,7 @@ class LabSimUI {
                 return;
             }
             const current = Math.max(1, Math.floor(dto?.[input.dataset.labCombatTarget] || 1));
-            input.value = Math.min(200, current + boost);
+            input.value = Math.min(maxLevel(), current + boost);
         });
     }
 
@@ -6304,11 +6314,11 @@ class LabSimUI {
                     const loadoutText = entry.shared ? '' : ` [${entry.loadouts.join(', ')}]`;
                     // Off the highest of them, so the boost is a real boost in
                     // every loadout rather than a no-op in the ones already past it
-                    const target = Math.min(200, typed[entry.hrid] || highest + boost);
+                    const target = Math.min(maxLevel(), typed[entry.hrid] || highest + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:${GAME_COLORS.textDim};">${loadoutText}</span></label>
-                    <input type="number" min="1" max="200" data-ability-target="${entry.hrid}" value="${target}" style="
+                    <input type="number" min="1" max="${maxLevel()}" data-ability-target="${entry.hrid}" value="${target}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`;
@@ -6328,7 +6338,7 @@ class LabSimUI {
         grid.querySelectorAll('[data-ability-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.abilityTarget] = Math.min(200, value);
+                targets[input.dataset.abilityTarget] = Math.min(maxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -6346,7 +6356,7 @@ class LabSimUI {
         grid.querySelectorAll('[data-lab-combat-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.labCombatTarget] = Math.min(200, value);
+                targets[input.dataset.labCombatTarget] = Math.min(maxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;

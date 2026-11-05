@@ -13,6 +13,7 @@ import { parseItemHash } from '../../utils/item-hash.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { priceAtLevel, priceGuarded, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { SessionState, getCurrentLegCounters, addGapAttempts } from './enhancement-session.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL } from '../../utils/game-maximums.js';
 
 // Id of the queue action the tracker last saw running as the enhance row. Read against
 // dataManager's merged queue in handleActionsUpdated so a second enhance queued behind the
@@ -630,7 +631,7 @@ async function startSessionFor(action, itemHrid, newLevel, baselineLevel, baseli
             startLevel = newLevel - 1;
         }
     }
-    const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+    const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, ENHANCEMENT_SOLVER_MAX_LEVEL);
 
     // Auto-resume (off by default): the most recent session ended short of its target, and this
     // run is the same item, target and protection setup and starts exactly where it ended — the
@@ -709,7 +710,7 @@ async function handleEnhancementResult(action, _data) {
                 action
             );
             if (extendableSessionId) {
-                const newTarget = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+                const newTarget = action.enhancingMaxLevel || Math.min(newLevel + 5, ENHANCEMENT_SOLVER_MAX_LEVEL);
                 await enhancementTracker.extendSessionTarget(extendableSessionId, newTarget);
                 currentSession = enhancementTracker.getCurrentSession();
 

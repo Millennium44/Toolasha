@@ -15,6 +15,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { maxEnhancementLevel, maxLevel } from '../../utils/game-maximums.js';
 import { calculateCombatScore } from '../profile/score-calculator.js';
 import { ensureOwnScore, scorePricingStamp, ownProfileData, buildFingerprint } from '../profile/build-score-row.js';
 
@@ -77,7 +78,7 @@ const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 /**
  * A copy of a template build with every gear enhancement level and ability level moved by the offset: weapons, off
  * hand and armor by k, every other slot by half of k (rounded); ability levels by 5 per step. Enhancement stays in
- * 0..20, ability levels in 1..200.
+ * 0..the game's enhancement cap (20), ability levels in 1..its level cap (200).
  * @param {Object} dto
  * @param {number} k
  * @returns {Object}
@@ -88,10 +89,10 @@ export function applyOffset(dto, k) {
         if (!item) continue;
         const slot = key.replace('/equipment_types/', '');
         const step = FULL_OFFSET_SLOTS.has(slot) ? k : Math.round(k / 2);
-        item.enhancementLevel = clamp((item.enhancementLevel || 0) + step, 0, 20);
+        item.enhancementLevel = clamp((item.enhancementLevel || 0) + step, 0, maxEnhancementLevel());
     }
     for (const ability of copy.abilities || []) {
-        if (ability) ability.level = clamp((ability.level || 1) + 5 * k, 1, 200);
+        if (ability) ability.level = clamp((ability.level || 1) + 5 * k, 1, maxLevel());
     }
     return copy;
 }

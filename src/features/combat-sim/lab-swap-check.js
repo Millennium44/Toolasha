@@ -37,11 +37,17 @@ import {
 } from './upgrade-advisor.js';
 import { affectsSkill, isCombatOnlyItem } from './skilling-gear-candidates.js';
 import { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities } from './ability-order.js';
+import {
+    FALLBACK_MAX_ENHANCEMENT_LEVEL,
+    FALLBACK_MAX_LEVEL,
+    maxEnhancementLevel,
+    maxLevel,
+} from '../../utils/game-maximums.js';
 
 export { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities };
 
-/** The highest enhancement level a swap may ask for */
-export const MAX_SWAP_LEVEL = 20;
+/** The highest enhancement level a swap may ask for, until the game's own table says otherwise */
+export const MAX_SWAP_LEVEL = FALLBACK_MAX_ENHANCEMENT_LEVEL;
 
 const ALL_SKILLS = [
     '/skills/milking',
@@ -59,8 +65,8 @@ const ALL_SKILLS = [
 /** Abilities are checked by their hrid, which starts with this */
 const ABILITY_PREFIX = '/abilities/';
 
-/** The highest ability level a swap may ask for (the game's cap) */
-export const MAX_ABILITY_SWAP_LEVEL = 200;
+/** The highest ability level a swap may ask for, until the game's own level table says otherwise */
+export const MAX_ABILITY_SWAP_LEVEL = FALLBACK_MAX_LEVEL;
 
 /**
  * Whether a swap is an ability rather than a piece of equipment.
@@ -79,7 +85,7 @@ export function isAbilitySwap(swap) {
 export function clampAbilityLevel(value) {
     const level = Math.floor(Number(value));
     if (!Number.isFinite(level)) return 1;
-    return Math.min(MAX_ABILITY_SWAP_LEVEL, Math.max(1, level));
+    return Math.min(maxLevel(), Math.max(1, level));
 }
 
 /**
@@ -112,7 +118,7 @@ export function checkedSwapKey(swap) {
 export function clampSwapLevel(value) {
     const level = Math.floor(Number(value));
     if (!Number.isFinite(level)) return 0;
-    return Math.min(MAX_SWAP_LEVEL, Math.max(0, level));
+    return Math.min(maxEnhancementLevel(), Math.max(0, level));
 }
 
 /**

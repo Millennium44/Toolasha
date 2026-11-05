@@ -122,6 +122,7 @@ import {
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { sharedProfileSummary } from '../../utils/shared-profile-status.js';
+import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -3196,45 +3197,54 @@ const CHIP_BUTTON_STYLE =
  * `_onUpgradeModesChanged`.
  */
 const MODE_OPTIONS = {
-    equipment: `
+    get equipment() {
+        return `
         <span data-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
             </label>
-        </span>`,
-    ability_level: `
+        </span>`;
+    },
+    get ability_level() {
+        return `
         <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <select class="toolasha-select" id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
             </select>
-            <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="200" value="5" placeholder="+5" style="
+            <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" placeholder="+5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
             <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    ability_swap: `
+        </span>`;
+    },
+    get ability_swap() {
+        return `
         <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for your archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-swap-aura-only" style="margin:0; cursor:pointer;">
                 Aura only
             </label>
-        </span>`,
-    combat_level: `
+        </span>`;
+    },
+    get combat_level() {
+        return `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Charm</label>
             <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select></span>
-            <input id="mwi-csim-charm-enh" type="number" min="0" max="20" placeholder="+" style="
+            <input id="mwi-csim-charm-enh" type="number" min="0" max="${maxEnhancementLevel()}" placeholder="+" style="
                 width:44px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Enhancement level to sim the charm at (e.g. 5 for Expert +5). Leave blank to keep the equipped charm's level.">
             <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    house: `
+        </span>`;
+    },
+    get house() {
+        return `
         <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
@@ -3242,8 +3252,10 @@ const MODE_OPTIONS = {
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now."></span>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
-        </span>`,
-    guild_shrine: `
+        </span>`;
+    },
+    get guild_shrine() {
+        return `
         <span id="mwi-csim-shrine-group" data-mode-options="guild_shrine" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
@@ -3255,15 +3267,18 @@ const MODE_OPTIONS = {
                 <input type="checkbox" id="mwi-csim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
                 Guild-allowed only
             </label>
-        </span>`,
-    community_buff: `
+        </span>`;
+    },
+    get community_buff() {
+        return `
         <span id="mwi-csim-community-group" data-mode-options="community_buff" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Lv</label>
             <input id="mwi-csim-community-target-level" type="number" min="1" max="20" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Level to sim each community buff at, rather than one level up — Lv3 → Lv8 in one row. Capped at 20, which the game calls max. It changes nothing about the cost: a community buff's level is what the whole server's donated minutes add up to, so there is no per-level price either way. A buff already at 20 still measures what the whole buff is worth, by simulating it off."></span>
-        </span>`,
+        </span>`;
+    },
 };
 
 /**
@@ -4017,7 +4032,7 @@ class CombatSimUI {
                     ([key, label]) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${label}</label>
-                    <input type="number" min="1" max="200" data-combat-target="${key}" style="
+                    <input type="number" min="1" max="${maxLevel()}" data-combat-target="${key}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
@@ -4321,7 +4336,7 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-target-level').addEventListener('change', (e) => {
             const val = parseInt(e.target.value);
-            if (val > 200) e.target.value = 200;
+            if (val > maxLevel()) e.target.value = maxLevel();
             if (val < 1 && e.target.value !== '') e.target.value = 1;
         });
 
@@ -10489,7 +10504,7 @@ class CombatSimUI {
                 return;
             }
             const current = Math.max(1, Math.floor(dto?.[input.dataset.combatTarget] || 1));
-            input.value = Math.min(200, current + boost);
+            input.value = Math.min(maxLevel(), current + boost);
         });
     }
 
@@ -10505,7 +10520,7 @@ class CombatSimUI {
         grid.querySelectorAll('[data-combat-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.combatTarget] = Math.min(200, value);
+                targets[input.dataset.combatTarget] = Math.min(maxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -10539,11 +10554,11 @@ class CombatSimUI {
             abilities
                 .map((ability) => {
                     const name = gameData?.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
-                    const target = Math.min(200, (ability.level || 1) + boost);
+                    const target = Math.min(maxLevel(), (ability.level || 1) + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
-                    <input type="number" min="1" max="200" data-ability-target="${ability.hrid}" value="${target}" style="
+                    <input type="number" min="1" max="${maxLevel()}" data-ability-target="${ability.hrid}" value="${target}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`;
@@ -10563,7 +10578,7 @@ class CombatSimUI {
         grid.querySelectorAll('[data-ability-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.abilityTarget] = Math.min(200, value);
+                targets[input.dataset.abilityTarget] = Math.min(maxLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -10728,9 +10743,9 @@ class CombatSimUI {
                     (room) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
                     <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
-                    <input type="number" min="1" max="8" data-house-target="${room.hrid}"
-                        value="${room.level >= 8 ? '' : Math.min(8, Math.max(uniform, room.level + 1))}"
-                        ${room.level >= 8 ? 'disabled title="Already at max level"' : ''} style="
+                    <input type="number" min="1" max="${maxHouseRoomLevel()}" data-house-target="${room.hrid}"
+                        value="${room.level >= maxHouseRoomLevel() ? '' : Math.min(maxHouseRoomLevel(), Math.max(uniform, room.level + 1))}"
+                        ${room.level >= maxHouseRoomLevel() ? 'disabled title="Already at max level"' : ''} style="
                         width:44px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
                 </span>`
@@ -10750,7 +10765,7 @@ class CombatSimUI {
         grid.querySelectorAll('[data-house-target]').forEach((input) => {
             const value = parseInt(input.value);
             if (Number.isFinite(value) && value > 0) {
-                targets[input.dataset.houseTarget] = Math.min(8, value);
+                targets[input.dataset.houseTarget] = Math.min(maxHouseRoomLevel(), value);
             }
         });
         return Object.keys(targets).length > 0 ? targets : null;
@@ -11208,7 +11223,7 @@ class CombatSimUI {
         const upgradeModes = this._getUpgradeModes();
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
         let abilityTargetLevel = Math.min(
-            200,
+            maxLevel(),
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
         let charmTier = null;
@@ -11218,7 +11233,9 @@ class CombatSimUI {
             charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
             const enhRaw = this.panel.querySelector('#mwi-csim-charm-enh')?.value;
             charmEnhancement =
-                enhRaw === '' || enhRaw === undefined ? null : Math.max(0, Math.min(20, parseInt(enhRaw) || 0));
+                enhRaw === '' || enhRaw === undefined
+                    ? null
+                    : Math.max(0, Math.min(maxEnhancementLevel(), parseInt(enhRaw) || 0));
         }
 
         if (!upgradeModes.length) {

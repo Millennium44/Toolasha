@@ -46,6 +46,7 @@ import { createSkillHistory } from '../../utils/skill-history.js';
 import { rateFor as checkpointRateFor, rateWindowLabel } from './ability-checkpoints.js';
 import { abilityPlan, cheapestNextLevel, aimedTotals, bookItemFor } from '../../utils/ability-books.js';
 import { registerCommand } from '../../utils/command-registry.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 
 const PANEL_ID = 'toolasha-ability-book-panel';
 const GEOMETRY_KEY = 'abilityBookPanel';
@@ -830,7 +831,7 @@ class AbilityBookPanel {
         const input = document.createElement('input');
         input.type = 'number';
         input.min = String(plan.level + 1);
-        input.max = '200';
+        input.max = String(maxLevel());
         input.value = String(plan.targetLevel ?? plan.level + 1);
         input.dataset.ability = plan.abilityHrid;
         Object.assign(input.style, {

@@ -36,6 +36,7 @@ import {
     MAX_TRIAL_INPUT_BYTES,
 } from '../guild/guild-trial-simulation-inputs.js';
 import { TrialAssignPlanner } from './guild-trial-assign-ui.js';
+import { maxGuildBuildingLevel } from '../../utils/game-maximums.js';
 
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
 const EXTRA_BUFFS = [
@@ -125,9 +126,9 @@ function select(parent, label, value, options, change, disabled = false) {
 /** Payout buildings, matched by letters as the trials store does (`/guild_buildings/builders_hall`). */
 const PAYOUT_BUILDINGS = { hall: 'buildershall', treasury: 'treasury' };
 
-function clampBuildingLevel(value) {
+function clampBuildingLevel(value, letters) {
     const level = Math.floor(Number(value));
-    return Number.isFinite(level) ? Math.max(0, Math.min(20, level)) : 0;
+    return Number.isFinite(level) ? Math.max(0, Math.min(maxGuildBuildingLevel(undefined, letters), level)) : 0;
 }
 
 /** A payout building's level from a `guildBuildingLevelMap`, 0 when the guild has not built it. */
@@ -139,7 +140,7 @@ function payoutBuildingLevel(levelMap, letters) {
                 .replace(/[^a-z]/g, '')
                 .endsWith(letters)
         )
-            return clampBuildingLevel(level);
+            return clampBuildingLevel(level, letters);
     }
     return 0;
 }
@@ -800,8 +801,12 @@ export class GuildTrialSim {
                 };
                 this.extra = {};
                 this.includeHouses = true;
-                this.hallLevel = input.hallLevel == null ? null : clampBuildingLevel(input.hallLevel);
-                this.treasuryLevel = input.treasuryLevel == null ? null : clampBuildingLevel(input.treasuryLevel);
+                this.hallLevel =
+                    input.hallLevel == null ? null : clampBuildingLevel(input.hallLevel, PAYOUT_BUILDINGS.hall);
+                this.treasuryLevel =
+                    input.treasuryLevel == null
+                        ? null
+                        : clampBuildingLevel(input.treasuryLevel, PAYOUT_BUILDINGS.treasury);
                 this.notice = 'Setup imported with its saved buff context. Check the snapshot dates before using it.';
             } else {
                 const imported = parseShykaiImport(text);
@@ -1021,18 +1026,18 @@ export class GuildTrialSim {
             'Builder’s Hall level',
             levels.hall,
             (v) => {
-                this.hallLevel = clampBuildingLevel(v);
+                this.hallLevel = clampBuildingLevel(v, PAYOUT_BUILDINGS.hall);
             },
-            { min: 0, max: 20, disabled: busy }
+            { min: 0, max: maxGuildBuildingLevel(undefined, PAYOUT_BUILDINGS.hall), disabled: busy }
         );
         const treasuryInput = field(
             payout,
             'Treasury level',
             levels.treasury,
             (v) => {
-                this.treasuryLevel = clampBuildingLevel(v);
+                this.treasuryLevel = clampBuildingLevel(v, PAYOUT_BUILDINGS.treasury);
             },
-            { min: 0, max: 20, disabled: busy }
+            { min: 0, max: maxGuildBuildingLevel(undefined, PAYOUT_BUILDINGS.treasury), disabled: busy }
         );
         hallInput.addEventListener('change', () => this.panel?.render());
         treasuryInput.addEventListener('change', () => this.panel?.render());

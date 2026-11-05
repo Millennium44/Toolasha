@@ -1,3 +1,5 @@
+import dataManager from '../core/data-manager.js';
+
 /**
  * Enhancement Multiplier System
  *
@@ -51,6 +53,23 @@ export const ENHANCEMENT_BONUSES = {
 };
 
 /**
+ * The total bonus fraction at an enhancement level: the game's own table when it is loaded and has the level,
+ * else the table above. A patch that raises the cap or rebalances a level reaches every caller through this.
+ * @param {number} enhancementLevel
+ * @returns {number} Bonus fraction (0 for level 0 or an unknown level)
+ */
+export function enhancementBonusAt(enhancementLevel) {
+    let fromGame;
+    try {
+        fromGame = dataManager.getInitClientData?.()?.enhancementLevelTotalBonusMultiplierTable?.[enhancementLevel];
+    } catch {
+        fromGame = undefined;
+    }
+    if (typeof fromGame === 'number' && Number.isFinite(fromGame) && fromGame >= 0) return fromGame;
+    return ENHANCEMENT_BONUSES[enhancementLevel] || 0;
+}
+
+/**
  * Get enhancement multiplier for an item
  * @param {Object} itemDetails - Item details from itemDetailMap
  * @param {number} enhancementLevel - Current enhancement level of item
@@ -63,7 +82,7 @@ export function getEnhancementMultiplier(itemDetails, enhancementLevel) {
 
     const equipmentType = itemDetails?.equipmentDetail?.type;
     const slotMultiplier = ENHANCEMENT_MULTIPLIERS[equipmentType] || 1;
-    const enhancementBonus = ENHANCEMENT_BONUSES[enhancementLevel] || 0;
+    const enhancementBonus = enhancementBonusAt(enhancementLevel);
 
     return 1 + enhancementBonus * slotMultiplier;
 }

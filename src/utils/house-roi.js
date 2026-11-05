@@ -38,9 +38,10 @@ import { MODELLED_ROOM_BUFF_TYPES, roomActionBuffTypes } from './house-efficienc
 import { calculateHouseBuildCost } from './house-cost-calculator.js';
 import { calculateSkillPerformance, SKILL_TO_ACTION_TYPE } from './tea-optimizer.js';
 import { resolveActionContext } from './action-context.js';
+import { FALLBACK_MAX_HOUSE_ROOM_LEVEL, maxHouseRoomLevel } from './game-maximums.js';
 
-/** The game's ceiling on a house room. */
-export const MAX_ROOM_LEVEL = 8;
+/** The game's ceiling on a house room, until the room data says otherwise. */
+export const MAX_ROOM_LEVEL = FALLBACK_MAX_HOUSE_ROOM_LEVEL;
 
 /**
  * Skills whose board is read on gold rather than XP.
@@ -140,7 +141,7 @@ export function currentRoomLevels() {
  *   priceable next level (already at the cap, or the game lists no cost)
  */
 export function nextLevelPrice(houseRoomHrid, currentLevel) {
-    if (currentLevel >= MAX_ROOM_LEVEL) return null;
+    if (currentLevel >= maxHouseRoomLevel()) return null;
     const cost =
         calculateHouseBuildCost(houseRoomHrid, currentLevel + 1) - calculateHouseBuildCost(houseRoomHrid, currentLevel);
     return cost > 0 ? cost : null;
@@ -238,8 +239,9 @@ export function rankHouseRoomUpgrades() {
                 continue;
             }
 
-            if (currentLevel >= MAX_ROOM_LEVEL) {
-                excluded.push({ roomHrid, roomName, skill, reason: `Already level ${MAX_ROOM_LEVEL}` });
+            const roomCap = maxHouseRoomLevel();
+            if (currentLevel >= roomCap) {
+                excluded.push({ roomHrid, roomName, skill, reason: `Already level ${roomCap}` });
                 continue;
             }
 

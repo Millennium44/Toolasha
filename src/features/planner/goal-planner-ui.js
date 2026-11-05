@@ -79,6 +79,7 @@ import {
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
 import { GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL, maxLevel } from '../../utils/game-maximums.js';
 
 const PANEL_ID = 'toolasha-goal-planner-panel';
 const GEOMETRY_KEY = 'goalPlannerPanel';
@@ -1132,7 +1133,13 @@ class GoalPlannerPanel {
             form.appendChild(datalist);
 
             const name = input({ placeholder: 'Sinister Cape', list: listId, width: '160px' });
-            const level = input({ type: 'number', value: '10', min: 0, max: 20, width: '54px' });
+            const level = input({
+                type: 'number',
+                value: '10',
+                min: 0,
+                max: ENHANCEMENT_SOLVER_MAX_LEVEL,
+                width: '54px',
+            });
             form.append(span('Item:', { color: COLORS.textDim }), name, span('+', { color: COLORS.textDim }), level);
             form.appendChild(
                 button('Add', () => {
@@ -1160,7 +1167,7 @@ class GoalPlannerPanel {
                     .replace(/^./, (c) => c.toUpperCase()),
             }));
             const picker = select(skills.length ? skills : [{ value: '', label: 'No skills loaded' }]);
-            const level = input({ type: 'number', value: '100', min: 1, max: 200, width: '58px' });
+            const level = input({ type: 'number', value: '100', min: 1, max: maxLevel(), width: '58px' });
             form.append(
                 span('Skill:', { color: COLORS.textDim }),
                 picker,

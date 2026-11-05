@@ -122,14 +122,11 @@ import {
     resetHouseGoals,
     targetKey,
     migrateSavingsTargets,
-    MAX_HOUSE_ROOM_LEVEL,
 } from '../../utils/equipment-savings.js';
+import { ENHANCEMENT_SOLVER_MAX_LEVEL, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
 
 const MENU_BUTTON_CLASS = 'toolasha-savings-button';
 const MENU_BUTTON_SETTING = 'equipmentSavings_menuButton';
-
-/** The enhancement levels the game allows, which is what the picker offers */
-const MAX_ENHANCEMENT = 20;
 
 /**
  * The color the house cards are drawn in.
@@ -875,7 +872,7 @@ export function watchedHouseGoals() {
 export async function watchHouse(houseRoomHrid, targetLevel, cost = undefined) {
     if (!houseRoomHrid || !(targetLevel > 0)) return;
 
-    const wanted = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.floor(Number(targetLevel) || 0));
+    const wanted = Math.min(maxHouseRoomLevel(), Math.floor(Number(targetLevel) || 0));
     const priced = cost === undefined ? houseUpgradeCost(houseRoomHrid, wanted) : cost;
     await addHouseGoal({
         houseRoomHrid,
@@ -1233,7 +1230,7 @@ const SWEPT_RUN_LIMIT = 400;
  * @returns {number|null} Coins, or null when the run cannot be modelled
  */
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
-    if (!(targetLevel > startLevel) || targetLevel > MAX_ENHANCEMENT) return null;
+    if (!(targetLevel > startLevel) || targetLevel > ENHANCEMENT_SOLVER_MAX_LEVEL) return null;
 
     // The character's own gear, skill and teas — always. This path only fires when the
     // finished piece has no ask at any price, so there is nobody else whose bench could
@@ -1966,7 +1963,7 @@ function enhancementButtons() {
     const wrap = document.createElement('div');
     Object.assign(wrap.style, { display: 'flex', flexWrap: 'wrap', gap: '3px' });
 
-    for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+    for (let level = 0; level <= maxEnhancementLevel(); level++) {
         const ask = editing.itemHrid ? getItemPrices(editing.itemHrid, level)?.ask || 0 : 0;
         const sold = ask > 0;
         const chosen = level === editing.enhancementLevel && Boolean(editing.itemHrid);
@@ -3165,7 +3162,7 @@ export function houseChoices() {
 
     const byName = (a, b) => a.name.localeCompare(b.name);
     return [
-        ...rooms.filter((room) => room.built && room.level < MAX_HOUSE_ROOM_LEVEL).sort(byName),
+        ...rooms.filter((room) => room.built && room.level < maxHouseRoomLevel()).sort(byName),
         ...rooms.filter((room) => !room.built).sort(byName),
     ];
 }
@@ -3225,7 +3222,7 @@ function housePicker() {
         // A level below the one the room is already at is not a goal, so the
         // form opens on the next one up rather than on zero
         const at = choices.find((choice) => choice.houseRoomHrid === list.value)?.level || 0;
-        if (editing.houseLevel <= at) editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, at + 1);
+        if (editing.houseLevel <= at) editing.houseLevel = Math.min(maxHouseRoomLevel(), at + 1);
         equipmentSavingsPanel.render();
     });
     list.addEventListener('keydown', (event) => event.stopPropagation());
@@ -3241,7 +3238,7 @@ function housePicker() {
     const level = document.createElement('input');
     level.type = 'number';
     level.min = '1';
-    level.max = String(MAX_HOUSE_ROOM_LEVEL);
+    level.max = String(maxHouseRoomLevel());
     level.dataset.houseLevel = 'true';
     level.value = String(editing.houseLevel || '');
     Object.assign(level.style, {
@@ -3254,9 +3251,9 @@ function housePicker() {
         width: '60px',
     });
     level.addEventListener('input', () => {
-        // Capped as it is typed: the game stops at MAX_HOUSE_ROOM_LEVEL, and a
+        // Capped as it is typed: the game stops at the room cap, and a
         // goal past it would be costed for levels that cannot be built
-        editing.houseLevel = Math.min(MAX_HOUSE_ROOM_LEVEL, Math.max(0, Math.floor(Number(level.value) || 0)));
+        editing.houseLevel = Math.min(maxHouseRoomLevel(), Math.max(0, Math.floor(Number(level.value) || 0)));
     });
     // On change rather than on every keystroke: the estimate below is worth
     // redrawing once the number has settled, not three times while it is typed

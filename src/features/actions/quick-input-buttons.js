@@ -38,6 +38,7 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 import { SCROLL_BUFF_ITEMS, SELECTION_CHANGED_EVENT } from '../../utils/scroll-buff-values.js';
 import {
     clearUnlimitedEstimateCache,
@@ -1620,7 +1621,7 @@ class QuickInputButtons {
                     id="mwi-target-level-input"
                     value="${initialTargetLevel}"
                     min="${nextLevel}"
-                    max="200"
+                    max="${maxLevel()}"
                     style="
                         width: 50px;
                         padding: 2px 4px;
@@ -1654,7 +1655,7 @@ class QuickInputButtons {
                 const targetLevel = parseInt(targetLevelInput.value);
                 this._targetLevelByAction.set(actionDetails.hrid, targetLevel);
 
-                if (targetLevel > currentLevel && targetLevel <= 200) {
+                if (targetLevel > currentLevel && targetLevel <= maxLevel()) {
                     const result = calculateMultiLevelProgress(
                         currentLevel,
                         currentXP,

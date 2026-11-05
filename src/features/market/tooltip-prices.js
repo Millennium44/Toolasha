@@ -47,6 +47,7 @@ import { findProducingAction } from '../../utils/production-index.js';
 import { craftingPlanCalculator } from '../../utils/bundle-bridge.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import { parseWearable, highestOwnedEnhancements, resolveEnhancementLevel } from '../../utils/loadout-equipment.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 import {
     bestSelfUseCandidate,
     ownUseUnitCost,
@@ -2726,7 +2727,7 @@ class TooltipPrices {
 
         // Calculate XP to next level
         const nextLevel = currentLevel + 1;
-        if (nextLevel > 200 || !levelXpTable[nextLevel]) {
+        if (nextLevel > maxLevel(gameData) || !levelXpTable[nextLevel]) {
             // Max level
             return {
                 learned: true,

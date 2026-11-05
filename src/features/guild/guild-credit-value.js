@@ -44,7 +44,7 @@ import { setReactInputValue } from '../../utils/react-input.js';
 import { walkForQuantity, walkForBudget } from '../../utils/order-book.js';
 import { estimatedListingAge } from '../../utils/bundle-bridge.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
-import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
+import { maxGuildShrineLevel } from '../../utils/game-maximums.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from './guild-token-value.js';
 import {
     capturedTokenExchange,
@@ -2449,7 +2449,7 @@ class GuildCreditValue {
                 // "Lv. x / 20") — a different ladder from the 21 trial tiers, and a
                 // shrine level or levelCosts table that claims more than that is
                 // not one to plan an upgrade past.
-                const capLevel = Math.min(rawCap, GUILD_BUILDING_MAX_LEVEL);
+                const capLevel = Math.min(rawCap, maxGuildShrineLevel());
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px;';
