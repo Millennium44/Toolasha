@@ -441,7 +441,10 @@ registerRow({
  * Only a worked-out figure is drawn as a figure. A partial one (some price
  * missing) says so on the tile as well as in the tooltip, and a loss reads as a
  * loss; while the estimate is being worked out, or when this kind of action has
- * none, the tile draws nothing and the row's placeholder says which.
+ * none, the tile draws nothing. What a blank tile then says depends on the
+ * empty-tile setting: the default (compact) shows only the tile's name, and the
+ * row's `empty` wording below ("Estimating profit…", "No profit estimate for X",
+ * "Could not estimate profit for X") appears only under Full.
  *
  * @param {HTMLElement} container - The tile
  * @param {Object} skilling - From `runningSkillingProfit`, not idle
@@ -482,11 +485,18 @@ function drawSkillingProfit(container, skilling) {
 registerRow({
     key: 'totalProfit',
     // Worded for what the tile is waiting on while a skilling action runs: an
-    // estimate being worked out, or an action the calculators do not cover
+    // estimate being worked out, an action the calculators do not cover, or a
+    // calculation that threw. Only drawn under the Full empty-tile setting; the
+    // default policy is compact and shows just the tile's name (overlay-rows.js
+    // `emptyPolicyFor`, `compactLabel`)
     empty: () => {
         const skilling = runningSkillingProfit();
         if (skilling.state === 'pending') return 'Estimating profit…';
-        if (skilling.state === 'none') return `No profit estimate for ${skilling.skillName}`;
+        if (skilling.state === 'none') {
+            return skilling.failed
+                ? `Could not estimate profit for ${skilling.skillName}`
+                : `No profit estimate for ${skilling.skillName}`;
+        }
         return 'No loot tracked yet';
     },
     name: 'Total Profit',
@@ -678,7 +688,7 @@ registerRow({
             'Total cost per day of the consumables in use:\n' +
             `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
             `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
-            'Click to open the Consumables panel.';
+            'Double-click to open the Consumables panel.';
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
@@ -857,7 +867,7 @@ function renderSkilling(container, skill) {
         `and what a day of them costs at the Ask price. Both assume it runs continuously.\n` +
         `Ask: ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
         `Bid: ${skillingCostText(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
-        'Click to open the Consumables panel.';
+        'Double-click to open the Consumables panel.';
 }
 
 /**

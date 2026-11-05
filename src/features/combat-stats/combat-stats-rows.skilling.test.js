@@ -230,6 +230,20 @@ describe('Total Profit', () => {
         expect(emptyText('totalProfit')).toBe('No profit estimate for Enhancing');
     });
 
+    test('a calculation that threw is worded as a failure, not as an action without an estimate', async () => {
+        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+        game.gather = vi.fn(async () => {
+            throw new Error('boom');
+        });
+        run(FORAGING, '/action_types/foraging', 'Star Fruit');
+        draw('totalProfit');
+        await settle();
+
+        expect(draw('totalProfit').textContent).toBe('');
+        expect(emptyText('totalProfit')).toBe('Could not estimate profit for Foraging');
+        quiet.mockRestore();
+    });
+
     test('its version moves when the estimate lands', async () => {
         const version = rowsByKey.get('totalProfit').version;
         run(FORAGING, '/action_types/foraging', 'Star Fruit');

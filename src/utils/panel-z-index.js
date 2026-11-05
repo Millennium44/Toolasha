@@ -15,8 +15,9 @@ const panels = new Set();
  * Panels that keep their own z-index.
  *
  * The overlay is the one of these: it is always up, so at rest it deliberately
- * sits at `Z_HUD` — *below* the game's own interactive UI — and rises to the
- * panel band only while it is being arranged. The cap-overflow renumber below
+ * sits at `Z_HUD` (101: above the game's cooldown numbers and loot chips at
+ * 100, below its modals at 200) and rises to the panel band only while it is
+ * being arranged. The cap-overflow renumber below
  * rewrites every registered panel from the base upward, which would promote that
  * always-on panel over the game's tabs and ability bar after enough raises in a
  * session, and would stamp an inline z-index on a docked panel that has no
@@ -139,8 +140,9 @@ export function bringPanelToFront(el) {
  * "In front" is the stacking order this module already keeps, asked rather
  * than guessed: a panel is in front when no other managed panel sits at a
  * higher z-index. Panels that manage their own z-index are not part of the
- * order and are not consulted — the overlay in particular sits below the
- * game's UI at rest and would answer for a layer nobody is competing in.
+ * order and are not consulted — the overlay in particular rests at `Z_HUD`,
+ * outside the floating-panel band, and would answer for a layer nobody is
+ * competing in.
  *
  * Deliberately not a hit-test. Whether one panel visually covers another
  * depends on sizes and positions that are only knowable once the browser has

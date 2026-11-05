@@ -17,7 +17,8 @@
  * Nothing stale: an answer is kept against the character, the action, the
  * pricing mode and the sell-tax setting it was worked out for, and a reading
  * whose key is not the current one is not drawn. Between the key changing and
- * the new answer arriving the tile says it is estimating. An answer that lands
+ * the new answer arriving the tile draws nothing (it says "Estimating profit…"
+ * only under the Full empty-tile setting; the default shows just its name). An answer that lands
  * after the character or the action moved on is dropped on arrival.
  *
  * The calculators live in the market bundle and are reached through the bundle
