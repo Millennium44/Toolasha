@@ -113,4 +113,25 @@ export function resolveLoadoutContext(actionTypeHrid, characterLoadoutID) {
     };
 }
 
-export default { resolveActionContext, resolveLoadoutContext };
+/**
+ * The gear and drinks the RUNNING action is using, by the loadout id it carries.
+ *
+ * The game applies a loadout when its action starts (gear swap, drink slots rewritten), so what
+ * is worn and slotted now is what the action runs on. Unlike {@link resolveLoadoutContext} this
+ * never answers with the per-skill default pick: an id that is 0 ("No Loadout"), or a saved id
+ * this build has no snapshot for (deleted, feature off, not loaded), reads the live gear and
+ * slots, which are what is really in force. Null for an action with no numeric id.
+ *
+ * @param {string} actionTypeHrid - e.g. "/action_types/foraging"
+ * @param {number|null|undefined} characterLoadoutID - The running action's loadout id
+ * @returns {{equipment: Map, drinks: Array}|null}
+ */
+export function resolveRunningContext(actionTypeHrid, characterLoadoutID) {
+    if (typeof characterLoadoutID !== 'number' || !Number.isFinite(characterLoadoutID)) return null;
+    if (characterLoadoutID > 0 && !loadouts().getSnapshotById?.(characterLoadoutID)) {
+        return resolveLoadoutContext(actionTypeHrid, 0);
+    }
+    return resolveLoadoutContext(actionTypeHrid, characterLoadoutID);
+}
+
+export default { resolveActionContext, resolveLoadoutContext, resolveRunningContext };

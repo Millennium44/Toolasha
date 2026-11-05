@@ -28,6 +28,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js';
+import { resolveRunningContext } from '../../utils/action-context.js';
 import { runningSkillingAction } from '../../utils/combat-actions.js';
 import { GATHERING_TYPES, ALL_SKILL_TYPES } from '../../utils/profit-constants.js';
 import { skillName } from '../../utils/skill-progress.js';
@@ -57,16 +58,35 @@ dataManager.on('character_switching', () => {
 });
 
 /**
+ * The loadout a running action uses, as a string for the key: its id, plus the gear and drinks
+ * that id resolves to now, so a loadout edited or deleted mid-run is a different answer.
+ * @param {number|undefined} loadoutId - The running action's characterLoadoutID
+ * @param {{equipment?: Map, drinks?: Array}|null} context - From resolveRunningContext
+ * @returns {string}
+ */
+function loadoutKeyFor(loadoutId, context) {
+    if (!context) return 'default';
+    const gear = context.equipment instanceof Map ? [...context.equipment.values()] : [];
+    const worn = gear
+        .map((entry) => `${entry?.itemHrid ?? ''}+${entry?.enhancementLevel ?? 0}`)
+        .sort()
+        .join(',');
+    const drinks = (context.drinks || []).map((drink) => drink?.itemHrid ?? '').join(',');
+    return `${loadoutId}:${worn}:${drinks}`;
+}
+
+/**
  * Everything that changes the figure, as one string.
  * @param {string|number|null} characterId - Who is playing
  * @param {string} actionHrid - The running action
  * @param {number} upgradeLevel - Enhancement level of the upgrade stack the action draws
+ * @param {string} loadoutKey - From {@link loadoutKeyFor}
  * @returns {string}
  */
-function keyFor(characterId, actionHrid, upgradeLevel) {
+function keyFor(characterId, actionHrid, upgradeLevel, loadoutKey) {
     const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
     const excludeSellTax = config.getSettingValue('profitCalc_excludeSellTax', false) ? 'notax' : 'tax';
-    return `${characterId ?? ''}|${actionHrid}|${upgradeLevel}|${pricingMode}|${excludeSellTax}`;
+    return `${characterId ?? ''}|${actionHrid}|${upgradeLevel}|${loadoutKey}|${pricingMode}|${excludeSellTax}`;
 }
 
 /**
@@ -75,14 +95,16 @@ function keyFor(characterId, actionHrid, upgradeLevel) {
  * @param {string} actionHrid - e.g. `/actions/foraging/star_fruit`
  * @param {string} type - e.g. `/action_types/foraging`
  * @param {number} upgradeLevel - Enhancement level of the upgrade stack, as the Actions panel prices it
+ * @param {{equipment: Map, drinks: Array}|null} actionContext - The running action's own gear and drinks
+ * @param {string} loadoutKey - Identifies that context, kept on the estimate for the tile's version
  * @returns {Promise<Object|null>} The calculator's profit data, or null when this action has no estimate
  */
-async function calculate(actionHrid, type, upgradeLevel) {
+async function calculate(actionHrid, type, upgradeLevel, actionContext, loadoutKey) {
     const module = GATHERING_TYPES.includes(type) ? gatheringProfit() : productionProfit();
     if (!module) return null;
     const data = GATHERING_TYPES.includes(type)
-        ? await module.calculateGatheringProfit(actionHrid)
-        : await module.calculateProductionProfit(actionHrid, { upgradeItemLevel: upgradeLevel });
+        ? await module.calculateGatheringProfit(actionHrid, { actionContext })
+        : await module.calculateProductionProfit(actionHrid, { upgradeItemLevel: upgradeLevel, actionContext });
     if (!data || !Number.isFinite(data.profitPerHour)) return null;
     // No revenue at all while prices are missing is every output unpriced (before the
     // market loads, say), not an action that earns nothing: the calculator then answers
@@ -93,6 +115,7 @@ async function calculate(actionHrid, type, upgradeLevel) {
         profitPerHour: data.profitPerHour,
         hasMissingPrices: Boolean(data.hasMissingPrices),
         upgradeLevel,
+        loadoutKey,
         pricingMode: data.pricingMode || config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
     };
 }
@@ -105,16 +128,18 @@ async function calculate(actionHrid, type, upgradeLevel) {
  * @param {string} key - The key it is being worked out for
  * @param {string|number|null} characterId - Who it is being worked out for
  * @param {number} upgradeLevel - Enhancement level of the upgrade stack
+ * @param {{equipment: Map, drinks: Array}|null} actionContext - The running action's own gear and drinks
+ * @param {string} loadoutKey - Identifies that context
  * @returns {Promise<void>}
  */
-async function request(actionHrid, type, key, characterId, upgradeLevel) {
+async function request(actionHrid, type, key, characterId, upgradeLevel, actionContext, loadoutKey) {
     const ticket = { key };
     inflight = ticket;
 
     let estimate = null;
     let failed = false;
     try {
-        estimate = await calculate(actionHrid, type, upgradeLevel);
+        estimate = await calculate(actionHrid, type, upgradeLevel, actionContext, loadoutKey);
     } catch (error) {
         console.error('[SkillingProfit] Estimating the running action failed:', error);
         failed = true;
@@ -150,7 +175,13 @@ export function runningSkillingProfit() {
         dataManager.getActionDetails?.(running.actionHrid)?.upgradeItemHrid,
         running.action
     );
-    const key = keyFor(characterId, running.actionHrid, upgradeLevel);
+    // The running action's own loadout, as the queue rows are costed: id 0 is the gear worn now, a
+    // saved id its snapshot, an unknown id the live gear (the game applied it at start). Not the
+    // per-skill default pick, which is another loadout's gear and teas.
+    const loadoutId = running.action.characterLoadoutID;
+    const actionContext = resolveRunningContext(running.type, loadoutId);
+    const loadoutKey = loadoutKeyFor(loadoutId, actionContext);
+    const key = keyFor(characterId, running.actionHrid, upgradeLevel, loadoutKey);
     const named = {
         actionName: dataManager.getActionDetails?.(running.actionHrid)?.name || skillName(running.actionHrid),
         skillName: skillName(running.skillHrid),
@@ -161,7 +192,8 @@ export function runningSkillingProfit() {
     // Types the calculators do not cover (Enhancing, Alchemy) are settled here
     // without a call; request() settles the rest in the background
     if (!ALL_SKILL_TYPES.includes(running.type)) return { state: 'none', failed: false, ...named };
-    if (!fresh && inflight?.key !== key) void request(running.actionHrid, running.type, key, characterId, upgradeLevel);
+    if (!fresh && inflight?.key !== key)
+        void request(running.actionHrid, running.type, key, characterId, upgradeLevel, actionContext, loadoutKey);
 
     if (!held) return { state: 'pending', ...named };
     if (!held.estimate) return { state: 'none', failed: held.failed, ...named };
@@ -178,8 +210,8 @@ export function runningSkillingProfit() {
  */
 export function skillingProfitVersion(reading) {
     if (reading.state === 'ready') {
-        const { profitPerHour, hasMissingPrices, pricingMode, upgradeLevel } = reading.estimate;
-        return `skill|${reading.actionName}|+${upgradeLevel || 0}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${pricingMode}`;
+        const { profitPerHour, hasMissingPrices, pricingMode, upgradeLevel, loadoutKey } = reading.estimate;
+        return `skill|${reading.actionName}|+${upgradeLevel || 0}|${loadoutKey || ''}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${pricingMode}`;
     }
     return `skill|${reading.actionName}|${reading.state}${reading.failed ? '!' : ''}`;
 }

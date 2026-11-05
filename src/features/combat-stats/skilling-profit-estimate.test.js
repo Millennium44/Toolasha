@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     gather: null,
     produce: null,
     bridgeUp: true,
+    context: () => null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -32,6 +33,9 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({
     default: { getSettingValue: (key, fallback) => game.settings[key] ?? fallback },
+}));
+vi.mock('../../utils/action-context.js', () => ({
+    resolveRunningContext: (...args) => game.context(...args),
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
@@ -75,6 +79,7 @@ beforeEach(() => {
     game.characterId = 'char1';
     game.settings = { profitCalc_pricingMode: 'hybrid', profitCalc_excludeSellTax: false };
     game.bridgeUp = true;
+    game.context = () => null;
     game.gather = vi.fn(async () => profit(1_310_000));
     game.produce = vi.fn(async () => profit(250_000));
 });
@@ -102,13 +107,13 @@ describe('which actions get an estimate', () => {
     test('a gathering action goes to the gathering calculator and a crafting one to the production calculator', async () => {
         run(FORAGING, '/action_types/foraging');
         runningSkillingProfit();
-        expect(game.gather).toHaveBeenCalledWith(FORAGING);
+        expect(game.gather).toHaveBeenCalledWith(FORAGING, { actionContext: null });
         expect(game.produce).not.toHaveBeenCalled();
 
         game.handlers.character_switching();
         run(CRAFTING, '/action_types/crafting', 'Wooden Bow');
         runningSkillingProfit();
-        expect(game.produce).toHaveBeenCalledWith(CRAFTING, { upgradeItemLevel: 0 });
+        expect(game.produce).toHaveBeenCalledWith(CRAFTING, { upgradeItemLevel: 0, actionContext: null });
         await settle();
     });
 
@@ -120,7 +125,7 @@ describe('which actions get an estimate', () => {
         };
         queue(`1::/item_locations/inventory::${UPGRADE}::5`);
         runningSkillingProfit();
-        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 5 });
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 5, actionContext: null });
         await settle();
         const five = runningSkillingProfit();
         expect(five).toMatchObject({ state: 'ready' });
@@ -128,14 +133,14 @@ describe('which actions get an estimate', () => {
         // Another level must not be served the +5 answer
         queue(`1::/item_locations/inventory::${UPGRADE}::7`);
         expect(runningSkillingProfit().state).toBe('pending');
-        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 7 });
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 7, actionContext: null });
         await settle();
         expect(skillingProfitVersion(runningSkillingProfit())).not.toBe(skillingProfitVersion(five));
 
         // A hash naming some other item leaves the +0 stack
         queue('1::/item_locations/inventory::/items/other::9');
         runningSkillingProfit();
-        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 0 });
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 0, actionContext: null });
         await settle();
     });
 
@@ -353,6 +358,72 @@ describe('nothing stale is drawn', () => {
         await settle();
 
         game.gather = vi.fn(async () => profit(5_000));
+        expect(runningSkillingProfit().state).toBe('pending');
+    });
+});
+
+describe("the running action's own loadout", () => {
+    const ctx = (tea) => ({
+        equipment: new Map([['/item_locations/main_hand', { itemHrid: '/items/pan', enhancementLevel: 0 }]]),
+        drinks: [{ itemHrid: tea }],
+    });
+
+    test('the context is passed to both calculators and a different loadout is a different answer', async () => {
+        game.context = vi.fn((type, id) => (id === 0 ? ctx('/items/a') : ctx('/items/b')));
+        run(FORAGING, '/action_types/foraging');
+        game.actions[0].characterLoadoutID = 0;
+        runningSkillingProfit();
+        expect(game.gather).toHaveBeenLastCalledWith(FORAGING, { actionContext: ctx('/items/a') });
+        await settle();
+        const zero = skillingProfitVersion(runningSkillingProfit());
+
+        game.actions[0].characterLoadoutID = 30284;
+        expect(runningSkillingProfit().state).toBe('pending');
+        expect(game.gather).toHaveBeenLastCalledWith(FORAGING, { actionContext: ctx('/items/b') });
+        await settle();
+        expect(skillingProfitVersion(runningSkillingProfit())).not.toBe(zero);
+
+        game.handlers.character_switching();
+        run(CRAFTING, '/action_types/crafting', 'Wooden Bow');
+        game.actions[0].characterLoadoutID = 30284;
+        runningSkillingProfit();
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, {
+            upgradeItemLevel: 0,
+            actionContext: ctx('/items/b'),
+        });
+        await settle();
+    });
+
+    test('edited drinks under the same id are not served the old answer', async () => {
+        let tea = '/items/a';
+        game.context = () => ctx(tea);
+        run(FORAGING, '/action_types/foraging');
+        game.actions[0].characterLoadoutID = 30284;
+        runningSkillingProfit();
+        await settle();
+        expect(runningSkillingProfit().state).toBe('ready');
+        tea = '/items/c';
+        expect(runningSkillingProfit().state).toBe('pending');
+        await settle();
+    });
+
+    test('a character switch while pending drops the answer worked out for the old loadout', async () => {
+        let release;
+        game.gather = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    release = () => resolve(profit(1));
+                })
+        );
+        game.context = () => ctx('/items/a');
+        run(FORAGING, '/action_types/foraging');
+        game.actions[0].characterLoadoutID = 30284;
+        runningSkillingProfit();
+        game.handlers.character_switching();
+        game.characterId = 'char2';
+        release();
+        await settle();
+        game.gather = vi.fn(async () => profit(2));
         expect(runningSkillingProfit().state).toBe('pending');
     });
 });

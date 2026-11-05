@@ -26,9 +26,14 @@ const PRODUCTION_TYPES = [
  * @param {boolean} [options.keepSellTax=false] - Ignore the personal-use sell-tax exclusion
  * @param {number} [options.upgradeItemLevel=0] - Enhancement level of the upgrade item stack the
  *   action draws, so an upgrade craft prices the +N input and its enhanced output
+ * @param {{equipment: Map, drinks: Array}|null} [options.actionContext=null] - Gear and drinks to cost
+ *   the action with (the running action's own loadout); the per-skill default when omitted
  * @returns {Object|null} Profit data or null if not applicable
  */
-export async function calculateProductionProfit(actionHrid, { keepSellTax = false, upgradeItemLevel = 0 } = {}) {
+export async function calculateProductionProfit(
+    actionHrid,
+    { keepSellTax = false, upgradeItemLevel = 0, actionContext = null } = {}
+) {
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData.actionDetailMap[actionHrid];
 
@@ -59,6 +64,7 @@ export async function calculateProductionProfit(actionHrid, { keepSellTax = fals
         actionHrid,
         keepSellTax,
         upgradeItemLevel,
+        actionContext,
     });
 
     if (!profitData) {
