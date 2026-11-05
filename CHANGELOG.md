@@ -6,9 +6,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Overlay presets use three columns on a wide panel
+### Overlay presets fill wide panels
 
-On a panel wide enough for three tiles, the overlay now uses three columns, and each preset packs its tiles into full rows there. Applying a preset also keeps a column count you set by hand instead of resetting it.
+Presets now use three columns once the panel is wide enough, fill every row at any wider count, and re-fit when you resize the panel. Applying a preset keeps a column count you set by hand.
+
+### Dense overlay preset
+
+A new Dense preset packs twenty combat, wealth and progress tiles into a wide panel, for players who like a full overlay at a glance.
+
+### Overlay text shrinks to fit
+
+Tile text that would be cut off now shrinks a little to fit, then grows back when there's room.
+
+### Overlay on phones
+
+On a phone the overlay no longer reopens over the game after a refresh (open it from the sidebar), always floats instead of waiting to dock, and has larger move arrows in its tile picker.
+
+### Overlay picker groups tiles for both activities
+
+A new "Combat and skilling" group, listed first, holds Experience/hr, Total Profit, Consumables, Time to Level and Combat Status.
 
 ### Task badge speed counts enhancement correctly
 
