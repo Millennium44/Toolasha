@@ -39,6 +39,7 @@ vi.mock('../../core/data-manager.js', () => ({
         get personalActionTypeBuffsMap() {
             return game.personal;
         },
+        getInitClientData: () => game.clientData ?? null,
         getCurrentActions: () => game.actions,
         getActionDetails: (hrid) => game.details[hrid] || null,
         getItemDetails: (hrid) => game.items[hrid] || null,
@@ -300,6 +301,24 @@ describe('the action type on show', () => {
         ];
         expect(knownActionTypes()).toContain('/action_types/tailoring');
         expect(knownActionTypes()).toContain(COOKING);
+    });
+
+    test('the list is in the game order, not alphabetical, with unnumbered types last', () => {
+        game.characterData.houseActionTypeBuffsMap['/action_types/tailoring'] = [
+            buff('/buff_uniques/house_efficiency', '/buff_types/efficiency', { flatBoost: 0.3 }),
+        ];
+        game.clientData = {
+            actionTypeDetailMap: {
+                '/action_types/tailoring': { sortIndex: 6 },
+                [COOKING]: { sortIndex: 7 },
+            },
+        };
+        const types = knownActionTypes();
+        expect(types.indexOf('/action_types/tailoring')).toBeLessThan(types.indexOf(COOKING));
+        // Anything the game has not numbered goes after the numbered ones
+        const numbered = types.filter((hrid) => game.clientData.actionTypeDetailMap[hrid]);
+        expect(types.slice(0, numbered.length)).toEqual(numbered);
+        game.clientData = null;
     });
 });
 

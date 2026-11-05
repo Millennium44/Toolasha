@@ -36,6 +36,7 @@ import { getDrinkConcentration } from './tea-parser.js';
 import { resolveActionContext } from './action-context.js';
 import { runningAction } from './combat-actions.js';
 import { heldInInventory } from './dungeon-key-forecast.js';
+import { sortActionTypes } from './action-type-order.js';
 
 export const COMBAT_ACTION_TYPE = '/action_types/combat';
 
@@ -86,13 +87,13 @@ export function runningActionTypeHrid() {
 }
 
 /**
- * Every skill the character has drink slots for, ordered by name.
+ * Every skill the character has drink slots for, in the game's order.
  * @returns {string[]} Action type hrids, combat, labyrinth and special left out
  */
 export function skillingActionTypes() {
     const map = dataManager.actionTypeDrinkSlotsMap;
     const keys = map && typeof map.keys === 'function' ? [...map.keys()] : [];
-    return keys.filter(isSkillingActionType).sort((a, b) => actionTypeLabel(a).localeCompare(actionTypeLabel(b)));
+    return sortActionTypes(keys.filter(isSkillingActionType));
 }
 
 /**
