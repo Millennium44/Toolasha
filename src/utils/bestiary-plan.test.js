@@ -1009,6 +1009,7 @@ describe('dungeon rates from your own clears and the spawn tables', () => {
         // 20 credits at 4 a clear is exactly five clears
         expect(fixed.encountersUnpadded).toBeCloseTo(5, 9);
         expect(fixed.encounters).toBe(5);
+        // Null because nothing bound: five clears were needed and five were quoted
         expect(fixed.fightPadding).toBeNull();
         expect(quote(new Set()).encounters).toBeGreaterThan(fixed.encounters);
     });
