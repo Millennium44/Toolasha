@@ -109,6 +109,13 @@ function renderRow(key) {
     return container.textContent;
 }
 
+/** The tooltip a registered row's `render` leaves on its tile */
+function titleOf(key) {
+    const container = document.createElement('div');
+    rowsByKey.get(key).render(container);
+    return container.title;
+}
+
 /** One registered row's `version()`, as the panel would call it */
 function versionOf(key) {
     return rowsByKey.get(key).version();
@@ -292,12 +299,16 @@ describe('the rows summarise their own inputs', () => {
         game.consumableSides = { ask: 2400, bid: 2160, askUnpriced: 1, bidUnpriced: 1 };
 
         const initial = versionOf('consumables');
-        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 unpriced)\nBid: 2.16K (1 unpriced)');
+        // The tile is two lines: the Ask figure with a gold flag, the notes in the tooltip
+        expect(renderRow('consumables')).toContain('Ask 2.40K/day*');
+        expect(renderRow('consumables')).not.toContain('Bid');
+        expect(titleOf('consumables')).toContain('Ask: 2.40K (1 unpriced)\nBid: 2.16K (1 unpriced)');
 
         game.consumableSides = { ask: null, bid: null, askUnpriced: 2, bidUnpriced: 2 };
         game.dmHandlers.character_switching();
         expect(versionOf('consumables')).not.toBe(initial);
-        expect(renderRow('consumables')).toContain('Ask: — (2 unpriced)\nBid: — (2 unpriced)');
+        expect(renderRow('consumables')).toContain('Ask —/day*');
+        expect(titleOf('consumables')).toContain('Ask: — (2 unpriced)\nBid: — (2 unpriced)');
     });
 
     test('the consumables tile stays visible when rates are unknown', () => {
@@ -323,7 +334,8 @@ describe('the rows summarise their own inputs', () => {
 
         expect(versionOf('consumables')).not.toBe('blank');
         expect(renderRow('consumables')).toContain('rate unknown');
-        expect(renderRow('consumables')).toContain('Ask: — (1 rate unknown)');
+        expect(renderRow('consumables')).toContain('Ask —/day*');
+        expect(titleOf('consumables')).toContain('Ask: — (1 rate unknown)');
     });
 
     test('the tile marks a known countdown as partial when another rate is unknown', () => {
@@ -356,7 +368,8 @@ describe('the rows summarise their own inputs', () => {
         game.dmHandlers.character_switching();
 
         expect(renderRow('consumables')).toContain('15m + ?');
-        expect(renderRow('consumables')).toContain('Ask: 2.40K (1 rate unknown)');
+        expect(renderRow('consumables')).toContain('Ask 2.40K/day*');
+        expect(titleOf('consumables')).toContain('Ask: 2.40K (1 rate unknown)');
     });
 
     test('the version changes when a party member gains an unknown rate beside the same limiter', () => {

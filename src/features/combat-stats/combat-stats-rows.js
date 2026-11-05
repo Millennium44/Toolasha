@@ -582,7 +582,7 @@ registerRow({
     empty: 'No teas or food slotted',
     name: 'Consumables',
     // Each market side has its own line so unpriced-item counts fit.
-    defaultSize: { width: 240, height: 92 },
+    defaultSize: { width: 240, height: 52 },
     // Every figure and color the tile carries, in the precision it carries
     // them: the two countdowns as they are worded, the color each is given —
     // which is a comparison against the Consumables panel's target, so a change
@@ -652,7 +652,7 @@ registerRow({
                       : '--',
                 color: runOutColor(you),
             },
-            { text: 'Party:', color: ROW_COLORS.dim, push: true },
+            { text: 'Party:', color: ROW_COLORS.dim },
             {
                 text: party
                     ? `${shortDuration(party.secondsLeft)}${payload.partyUnknown ? ' + ?' : ''}`
@@ -661,49 +661,43 @@ registerRow({
                       : '--',
                 color: runOutColor(party),
             },
+            askSegment(sides),
         ]);
-        if (partyName) first.title = `${partyName} runs out first in the party.`;
         container.appendChild(first);
 
         container.appendChild(limitingLine(limiting));
 
-        // The label above its figures rather than beside them, as CRack has it.
-        // On a tile this narrow the two never fitted on one line anyway — they
-        // simply ran together instead of admitting it.
-        // Both left-aligned, like the two lines above them. The tile centres its
-        // text, which a flex line is unaffected by and a plain div is not — so
-        // these two sat in the middle while everything else started at the edge.
-        const label = document.createElement('div');
-        label.textContent = 'Total Cost/Day:';
-        Object.assign(label.style, {
-            color: ROW_COLORS.good,
-            fontWeight: 'bold',
-            fontSize: '90%',
-            textAlign: 'left',
-        });
-        container.appendChild(label);
-
-        const cost = document.createElement('div');
-        cost.textContent =
+        // The Bid side and the unpriced/unknown wording are the tooltip's: the
+        // tile is two lines, like the skilling one.
+        container.title =
+            `${partyName ? `${partyName} runs out first in the party.\n` : ''}` +
+            'Total cost per day of the consumables in use:\n' +
             `Ask: ${formatConsumableCostSide(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
-            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}`;
-        // Existing layouts retain their saved dimensions; the full cost is
-        // still available on hover if a player has made the tile smaller.
-        container.title = cost.textContent;
-        Object.assign(cost.style, {
-            color: ROW_COLORS.neutral,
-            fontSize: '90%',
-            textAlign: 'left',
-            whiteSpace: 'pre-line',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-        });
-        container.appendChild(cost);
+            `Bid: ${formatConsumableCostSide(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
+            'Click to open the Consumables panel.';
     },
     // Looked up at click time, not imported: the panel lives in the UI bundle,
     // which loads after this one
     onOpen: () => consumablesPanel()?.toggle(),
 });
+
+/**
+ * The Ask-side daily cost as the right end of a tile's first line. A side with
+ * a missing quote or an unknown rate is marked in gold on the tile itself (an
+ * asterisk, because the line has no room for the words); the words are in the
+ * tooltip.
+ * @param {{ask: number|null, askUnpriced?: number, askUnknown?: number}} sides
+ * @returns {Object} A `drawLine` segment
+ */
+function askSegment(sides) {
+    const total = sides.ask === null ? '—' : formatLargeNumber(Math.round(sides.ask));
+    const partial = Boolean(sides.askUnpriced || sides.askUnknown);
+    return {
+        text: `Ask ${total}/day${partial ? '*' : ''}`,
+        color: partial ? ROW_COLORS.gold : ROW_COLORS.neutral,
+        push: true,
+    };
+}
 
 /**
  * The item that stops you: how many are left, then its icon, then its name —
