@@ -135,3 +135,62 @@ describe('two trackers do not share a memory', () => {
         expect(overlayRow.rateFor('/skills/melee')).toBeCloseTo(1000, 6);
     });
 });
+
+describe('startAtFirstGain', () => {
+    const SEC = 1000;
+    /** Nine minutes flat, then a minute of 1,000 xp per minute */
+    function nineFlatThenOneActive(options) {
+        const tracker = createSkillHistory(options);
+        for (let t = 0; t <= 9 * MINUTE; t += 5 * SEC) tracker.sample(at(0), t);
+        for (let t = 9 * MINUTE + 5 * SEC, xp = 0; t <= 10 * MINUTE; t += 5 * SEC) {
+            xp += 1000 / 12;
+            tracker.sample(at(xp), t);
+        }
+        return tracker;
+    }
+
+    test('by default the flat readings before the skill started dilute the rate (the old behavior)', () => {
+        const rate = nineFlatThenOneActive({}).rateFor('/skills/melee');
+        expect(rate).toBeLessThan(7000);
+    });
+
+    test('with the option the rate is measured from just before the first gain', () => {
+        const rate = nineFlatThenOneActive({ startAtFirstGain: true }).rateFor('/skills/melee');
+        // 1,000 xp a minute is 60,000 an hour
+        expect(rate).toBeGreaterThan(59000);
+        expect(rate).toBeLessThan(61000);
+    });
+
+    test('a skill that never flattened is measured over the whole window as before', () => {
+        const tracker = createSkillHistory({ startAtFirstGain: true });
+        for (let i = 0; i <= 12; i += 1) tracker.sample(at(i * 100), i * 5 * SEC);
+        expect(tracker.rateFor('/skills/melee')).toBeCloseTo(72000, 6);
+    });
+
+    test('a pause after the skill has been gaining is part of the measurement, not trimmed', () => {
+        const tracker = createSkillHistory({ startAtFirstGain: true });
+        tracker.sample(at(0), 0);
+        tracker.sample(at(100), 5 * SEC);
+        tracker.sample(at(100), 30 * SEC);
+        tracker.sample(at(100), 60 * SEC);
+        expect(tracker.rateFor('/skills/melee')).toBeCloseTo((100 / 60) * 3600, 6);
+    });
+
+    test('a first gain across a sampling gap starts after the gap and reads unmeasured until the next window', () => {
+        const tracker = createSkillHistory({ startAtFirstGain: true });
+        tracker.sample(at(0), 0);
+        tracker.sample(at(0), 5 * SEC);
+        // Panel hidden for nine minutes; the skill started somewhere in there
+        tracker.sample(at(900), 9 * MINUTE);
+        expect(tracker.rateFor('/skills/melee')).toBeNull();
+        for (let i = 1; i <= 6; i += 1) tracker.sample(at(900 + i * 100), 9 * MINUTE + i * 5 * SEC);
+        const rate = tracker.rateFor('/skills/melee');
+        expect(rate).toBeCloseTo((600 / 30) * 3600, 6);
+    });
+
+    test('a skill with no gain at all is no rate', () => {
+        const tracker = createSkillHistory({ startAtFirstGain: true });
+        for (let t = 0; t <= MINUTE; t += 5 * SEC) tracker.sample(at(50), t);
+        expect(tracker.rateFor('/skills/melee')).toBeNull();
+    });
+});

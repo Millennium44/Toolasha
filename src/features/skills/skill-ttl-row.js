@@ -58,7 +58,7 @@ const SAMPLE_MS = 5000;
  * `utils/skill-history.js` rather than in a copy of the loop here. There were
  * two copies, and only one of them had been fixed.
  */
-const history = createSkillHistory({ windowMs: WINDOW_MS, sampleMs: SAMPLE_MS });
+const history = createSkillHistory({ windowMs: WINDOW_MS, sampleMs: SAMPLE_MS, startAtFirstGain: true });
 
 // skill-history.js only self-corrects a reading that goes *backwards* — a
 // switch to a character further along in a skill (an iron cow to the main,
@@ -170,8 +170,8 @@ function drawRunningSkill(container, { follows = false, chosen = null } = {}) {
         (atCap
             ? `${active.name} is at the level cap.`
             : rate > 0
-              ? `${Math.round(rate).toLocaleString()} xp/hr over the last ten minutes.\nTime to ${active.name} ${active.level + 1}.`
-              : 'No experience rate measured yet — it settles within a minute of skilling.') +
+              ? `${Math.round(rate).toLocaleString()} xp/hr since ${active.name} started gaining (up to the last ten minutes).\nTime to ${active.name} ${active.level + 1}.`
+              : 'No experience rate measured yet — it needs a few seconds of experience gains to measure between.') +
         (follows
             ? (chosen
                   ? `\nFollowing the skill you are training; the ${chosen.name} ${chosen.target} target shows when you are not skilling.`
