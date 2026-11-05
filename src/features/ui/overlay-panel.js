@@ -943,9 +943,7 @@ class OverlayPanel {
             if (Math.abs(width - this.lastWidth) < 1) return;
             this.lastWidth = width;
 
-            const columnsBefore = this.columns;
             this._applyColumns();
-            if (columnsBefore && this.columns !== columnsBefore) this._refitPreset(this.columns);
             this._renderBody('the panel being resized');
             this._placePicker();
         };
@@ -3072,8 +3070,13 @@ class OverlayPanel {
         const columns = this._columns();
         if (columns === this.columns) return;
 
+        const first = !this.columns;
         this.columns = columns;
         this.canvasEl.style.setProperty(COLUMN_VARIABLE, String(columns));
+        // Whoever notices the new count first must be the one to re-fit, and several paths call
+        // this (the panel observer, the window resize, a layout switch): hooking only the
+        // observer's call missed every change that a window resize had already applied
+        if (!first && this.settings.columnsPinned !== true) this._refitPreset(columns);
     }
 
     /**

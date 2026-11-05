@@ -82,7 +82,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => dialog.a
 
 const { registerRow } = await import('../../utils/overlay-rows.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
-const { loadLayouts, layoutNames, presetSpans } = await import('./overlay-layouts.js');
+const { loadLayouts, layoutNames, presetSpans, PRESET_LAYOUTS } = await import('./overlay-layouts.js');
 const { toOPanelConfig, fromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /** An arrangement worth telling apart from another one. @returns {Object} */
@@ -399,6 +399,59 @@ describe('saving and switching named layouts', () => {
                 expect(overlayPanel.settings.span).toEqual(presetSpans('Skilling', columns));
             }
             expect(overlayPanel.appliedLayout).toBe('Skilling');
+        });
+
+        test.each(['Dense', 'Dashboard'])(
+            '%s follows a chain 3, 5, 9, 4, 3 exactly as applying it would',
+            async (name) => {
+                // The whole registry, as a live game has it: the preset's own tiles and others it switches off
+                for (const key of [...PRESET_LAYOUTS[name].order, 'houses', 'skillLevel', 'accountView', 'noticeLog'])
+                    registerRow({ key, name: key, render: (el) => (el.textContent = key) });
+                overlayPanel.settings.visible = {};
+                measureAs(660);
+                await overlayPanel.applyNamedLayout(name);
+                expect(overlayPanel.columns).toBe(3);
+
+                for (const [width, columns] of [
+                    [1350, 5],
+                    [2050, 9],
+                    [1000, 4],
+                    [660, 3],
+                ]) {
+                    await resizeTo(width);
+                    expect(overlayPanel.columns).toBe(columns);
+                    expect(overlayPanel.settings.span).toEqual(presetSpans(name, columns));
+                }
+            }
+        );
+
+        test('a window resize that applies the new count first still re-fits the preset', async () => {
+            measureAs(660);
+            await overlayPanel.applyNamedLayout('Dense');
+            for (const [width, columns] of [
+                [1350, 5],
+                [2050, 9],
+            ]) {
+                measureAs(width);
+                overlayPanel._onViewportChange();
+                await new Promise((resolve) => setTimeout(resolve, 60));
+                expect(overlayPanel.columns).toBe(columns);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', columns));
+            }
+        });
+
+        test('a span edited after the first re-fit stops the re-fitting', async () => {
+            measureAs(660);
+            await overlayPanel.applyNamedLayout('Dense');
+            await resizeTo(1350);
+            expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 5));
+
+            overlayPanel.settings.span = { ...overlayPanel.settings.span, netWorth: 4 };
+            const edited = { ...overlayPanel.settings.span };
+            await resizeTo(2050);
+
+            expect(overlayPanel.columns).toBe(9);
+            expect(overlayPanel.settings.span).toEqual(edited);
         });
 
         test('a preset the player edited keeps the spans it has', async () => {
