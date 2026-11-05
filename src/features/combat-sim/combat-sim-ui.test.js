@@ -328,6 +328,7 @@ vi.mock('../../core/data-manager.js', () => ({
             // Only the self-enhanced (cape) tests put items here; everything
             // else is unknown to the map and keeps the ordinary market path
             itemDetailMap: mocks.itemDetailMap || {},
+            actionDetailMap: mocks.actionDetails || undefined,
         }),
         // `characterItems`, read by the Enhance button to pick a held copy
         getInventory: () => mocks.inventory ?? null,
@@ -10294,6 +10295,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
     });
 
     test('a wiping dungeon at a measured pace: the column and the plan name the same first point', async () => {
+        // No spawn table is readable here, so the stretch is the only pace left.
         // Ten minutes a clear at T2 is 2.4x the sim's clean 24 minutes, so the
         // Jackalope's 7.75 credits/hr (62 bodies x 3 over 24 h) become 18.6 and
         // its 190 credits to 1,000 take 10.2 h, in the column and in the plan.
@@ -10521,12 +10523,104 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             expect(zone.note).toContain('measured (5 runs)');
         });
 
-        test('wipes with a clean clear: still stretched from the sim, as before', () => {
+        test('wipes with a clean clear, with runs: the spawn tables, not a stretch of the wipes', () => {
             const zone = bestiaryPlanZoneForRow(coveRow({ completions: 24, cleanClearSeconds: 900 }), [run()], who);
-            // A 15-minute clean clear against your 30 halves the rates
+            expect(zone.encountersPerHour).toBeCloseTo(2, 9);
+            expect(zone.creditsPerHour[MARK]).toBeCloseTo(6, 9);
+            expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
+            expect(zone.paceLabel).toBe('your 1 run');
+            expect(zone.note).toContain('because the sim wipes here');
+        });
+
+        test('wipes with a clean clear, with no runs: the sim stays, labeled', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow({ completions: 24, cleanClearSeconds: 900 }), [], who);
+            expect(zone.creditsPerHour[MARK]).toBeCloseTo(2.5, 9);
+            expect(zone.encountersPerHour).toBeCloseTo(1, 9);
+            expect(zone.paceLabel).toBe('sim, wipes');
+            expect(zone.note).toContain('wipes included');
+        });
+
+        test('wipes with a clean clear, runs, but no spawn table: stretched as the only pace left', () => {
+            mocks.actionDetails = {};
+            const zone = bestiaryPlanZoneForRow(coveRow({ completions: 24, cleanClearSeconds: 900 }), [run()], who);
             expect(zone.creditsPerHour[MARK]).toBeCloseTo(1.25, 9);
-            expect(zone.creditsPerHour[JACK]).toBeUndefined();
             expect(zone.note).toBe('measured (1 run)');
+        });
+
+        describe('when the Bestiary proves the tier of runs recorded with none', () => {
+            const finalBoss = {
+                combatZoneInfo: {
+                    isDungeon: true,
+                    dungeonInfo: {
+                        maxWaves: 4,
+                        fixedSpawnsMap: { 4: [{ combatMonsterHrid: JACK, difficultyTier: 0 }] },
+                        randomSpawnInfoMap: coveDetails.combatZoneInfo.dungeonInfo.randomSpawnInfoMap,
+                    },
+                },
+            };
+            const provenWho = (tierData) => ({ ...who, monsters: [{ monsterHrid: JACK, count: 9, tierData }] });
+            const unknown = [run({ tier: null }), run({ tier: null })];
+
+            beforeEach(() => {
+                mocks.actionDetails = { [COVE]: finalBoss };
+            });
+
+            test('at the proven tier they count, the row says how, and nothing is written to the runs', () => {
+                const zone = bestiaryPlanZoneForRow(coveRow(), unknown, provenWho('{"1":9}'));
+                expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
+                expect(zone.paceLabel).toBe('your 2 runs, tier from Bestiary');
+                expect(zone.note).toContain('2 runs with no recorded tier counted as T1');
+                expect(unknown[0].tier).toBeNull();
+            });
+
+            test('at another tier they are not used, and not called unknown', () => {
+                const zone = bestiaryPlanZoneForRow(coveRow({}, { tier: 2 }), unknown, provenWho('{"1":9}'));
+                expect(zone.paceLabel).toBe('sim, failed runs');
+                expect(zone.note).not.toContain('unknown tier');
+            });
+
+            test('a clean sim is paced by them too', () => {
+                const clean = coveRow({ completions: 24, failed: 0, cleanClearSeconds: 3600 });
+                const zone = bestiaryPlanZoneForRow(clean, unknown, provenWho('{"1":9}'));
+                expect(zone.creditsPerHour[MARK]).toBeCloseTo(5, 9);
+                expect(zone.paceLabel).toBe('your 2 runs, tier from Bestiary');
+            });
+
+            test('two tiers, or a recorded run at another tier, keep them out', () => {
+                const two = bestiaryPlanZoneForRow(coveRow(), unknown, provenWho('{"0":1,"1":9}'));
+                expect(two.paceLabel).toBe('sim, failed runs');
+                expect(two.note).toContain('2 runs of unknown tier not used');
+
+                const contradicted = bestiaryPlanZoneForRow(
+                    coveRow(),
+                    [...unknown, run({ tier: 2 })],
+                    provenWho('{"1":9}')
+                );
+                expect(contradicted.paceLabel).toBe('sim, failed runs');
+                expect(contradicted.note).toContain('2 runs of unknown tier not used');
+            });
+
+            test('the Bestiary not loaded: the rule simply does not apply', () => {
+                const zone = bestiaryPlanZoneForRow(coveRow(), unknown, { ...who, monsters: null });
+                expect(zone.paceLabel).toBe('sim, failed runs');
+            });
+
+            test('the panel hands the character’s Bestiary over', async () => {
+                mocks.dungeonRuns = [run({ tier: null, team: ['Me'] })];
+                mocks.monsters = [{ monsterHrid: JACK, count: 9, tierData: '{"1":9}' }];
+                await ui._displayAllZonesResults([coveT1()], 24, gameData);
+                click('#mwi-csim-bestiary-plan-btn');
+                expect(planRows()[0][1]).toContain('your 1 run, tier from Bestiary');
+            });
+        });
+
+        test('a row built from a real result carries each monster’s credit for the padding', async () => {
+            const result = coveT1();
+            result.simResult.monsterKillsByTier = { [MARK]: { 2: 30 } };
+            await ui._displayAllZonesResults([result], 24, gameData);
+            // Thirty kills a day at T2, solo, is three credits each: 3.75 an hour, not the T1 rate of 2.5
+            expect(ui._bestiaryPlanZones[0].creditsPerHour[MARK]).toBeCloseTo(3.75, 9);
+            expect(ui._bestiaryPlanZones[0].creditsPerKillByMonster[MARK]).toBe(3);
         });
 
         test('clears cleanly with runs, and with none', () => {

@@ -140,6 +140,12 @@ export function resolvePartySize(recorded, fallback) {
 /**
  * Bestiary credits per hour by monster, off a simulation result.
  *
+ * A result that states `monsterKillsByTier` is credited at each monster's own
+ * tier, the zone's plus the spawn row's: nonzero spawn tiers are common in the
+ * game's dungeons (43 rows in Chimerical Den), and at T0 a spawn one tier up is
+ * worth twice the credit. `difficultyTier` is the fallback for a result that
+ * does not state them.
+ *
  * Not kills per hour, which is what `simResult.deaths` holds and what this used
  * to return: `deaths` is incremented once per monster that dies no matter which
  * party member landed the blow (`sim-result.js`'s `addDeath`), and it carries no
@@ -162,7 +168,47 @@ export function monsterCreditsPerHour(simResult, simHours, { difficultyTier = 0,
     for (const [hrid, deaths] of Object.entries(simResult?.deaths || {})) {
         if (!String(hrid).startsWith(MONSTER_PREFIX)) continue;
         const n = Number(deaths) || 0;
-        if (n > 0) out[hrid] = (n * perKill) / hours;
+        if (!(n > 0)) continue;
+        const stated = creditsFromTierKills(simResult?.monsterKillsByTier?.[hrid], partySize);
+        out[hrid] = (stated ? stated.credits : n * perKill) / hours;
+    }
+    return out;
+}
+
+/**
+ * The credits and kills a monster's by-tier kill counts add up to.
+ * @param {Object<string, number>|undefined} byTier - The monster's tier → kills
+ * @param {number} partySize - Players the run simulated
+ * @returns {{credits: number, kills: number}|null} Null with no kills stated
+ */
+function creditsFromTierKills(byTier, partySize) {
+    let credits = 0;
+    let kills = 0;
+    for (const [tier, count] of Object.entries(byTier || {})) {
+        const n = Number(count) || 0;
+        if (!(n > 0)) continue;
+        credits += n * creditsPerKill({ difficultyTier: Number(tier), partySize });
+        kills += n;
+    }
+    return kills > 0 ? { credits, kills } : null;
+}
+
+/**
+ * What one kill of each monster was worth in a simulation, averaged over the
+ * tiers it was killed at. The planner's fight-count padding turns credits back
+ * into bodies with this; a single figure per zone is wrong where spawn tiers differ.
+ *
+ * @param {Object} simResult - From the simulator
+ * @param {Object} [options]
+ * @param {number} [options.partySize=1] - Players the run simulated
+ * @returns {Object} monsterHrid → credits per kill, only for monsters with stated tiers
+ */
+export function monsterCreditsPerKill(simResult, { partySize = 1 } = {}) {
+    const out = {};
+    for (const [hrid, byTier] of Object.entries(simResult?.monsterKillsByTier || {})) {
+        if (!String(hrid).startsWith(MONSTER_PREFIX)) continue;
+        const stated = creditsFromTierKills(byTier, partySize);
+        if (stated) out[hrid] = stated.credits / stated.kills;
     }
     return out;
 }

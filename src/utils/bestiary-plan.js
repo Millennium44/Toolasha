@@ -351,15 +351,116 @@ export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, ac
 
     const spawns = expectedSpawnsPerClear(dungeonInfo || dungeonInfoFor(actionHrid));
     const rates = {};
+    const perKill = {};
     for (const [hrid, bySpawnTier] of Object.entries(spawns)) {
         let credits = 0;
+        let bodies = 0;
         for (const [spawnTier, count] of Object.entries(bySpawnTier)) {
             credits += count * creditsPerKill({ difficultyTier: tier + Number(spawnTier), partySize });
+            bodies += count;
         }
-        if (credits > 0) rates[hrid] = credits * clearsPerHour;
+        if (!(credits > 0)) continue;
+        rates[hrid] = credits * clearsPerHour;
+        perKill[hrid] = credits / bodies;
     }
     if (!Object.keys(rates).length) return null;
-    return { creditsPerHour: rates, clearsPerHour, clearSeconds, runs: durations.length };
+    return {
+        creditsPerHour: rates,
+        creditsPerKillByMonster: perKill,
+        clearsPerHour,
+        clearSeconds,
+        runs: durations.length,
+    };
+}
+
+/**
+ * The monsters a zone's definition spawns.
+ * @param {Object} combatZoneInfo - An action's `combatZoneInfo`
+ * @returns {Set<string>} Monster hrids
+ */
+function monstersInZone(combatZoneInfo) {
+    const found = new Set();
+    const addAll = (rows) => {
+        for (const row of Array.isArray(rows) ? rows : []) {
+            if (row?.combatMonsterHrid) found.add(row.combatMonsterHrid);
+        }
+    };
+    const fight = combatZoneInfo?.fightInfo;
+    addAll(fight?.randomSpawnInfo?.spawns);
+    addAll(fight?.bossSpawns);
+    const dungeon = combatZoneInfo?.dungeonInfo;
+    for (const roster of Object.values(dungeon?.fixedSpawnsMap || {})) addAll(roster);
+    for (const table of Object.values(dungeon?.randomSpawnInfoMap || {})) addAll(table?.spawns);
+    return found;
+}
+
+/**
+ * The one tier a character has ever cleared a dungeon at, when the Bestiary proves it.
+ *
+ * A clear kills the final wave's boss, so a boss found nowhere else in the game
+ * records the tier of every clear in its `tierData`. With credits at exactly one
+ * tier, every clear was at that tier, and a run recorded with no tier is known
+ * after all. Two tiers prove nothing about any one run, so there is no answer.
+ * `tierData` keys are the monster's tier, which is the dungeon's plus the spawn
+ * row's own, so the row's is taken back off.
+ *
+ * Read fresh and never stored: with the Bestiary not loaded this simply does not apply.
+ *
+ * @param {Object} input
+ * @param {string} input.actionHrid - The dungeon
+ * @param {Array<{monsterHrid: string, tierData?: string|Object}>|null} input.monsters - `monsters_updated.monsters`
+ * @param {Object} [input.actionDetailMap] - The game's actions; read from the game data when omitted
+ * @returns {number|null} The dungeon tier, or null when nothing proves one
+ */
+export function provenDungeonTier({ actionHrid, monsters, actionDetailMap = null }) {
+    try {
+        if (!Array.isArray(monsters)) return null;
+        const actions = actionDetailMap || dataManager.getInitClientData?.()?.actionDetailMap;
+        const dungeon = actions?.[actionHrid]?.combatZoneInfo?.dungeonInfo;
+        const finalKey = String(dungeon?.maxWaves);
+        const finalRoster = dungeon?.fixedSpawnsMap?.[finalKey];
+        if (!Array.isArray(finalRoster) || !finalRoster.length) return null;
+
+        // Anywhere else this monster can die, in this dungeon or any other zone
+        const elsewhere = new Set();
+        for (const [hrid, action] of Object.entries(actions)) {
+            if (hrid === actionHrid) continue;
+            for (const monster of monstersInZone(action?.combatZoneInfo)) elsewhere.add(monster);
+        }
+        const inside = {
+            ...dungeon,
+            fixedSpawnsMap: Object.fromEntries(
+                Object.entries(dungeon.fixedSpawnsMap).filter(([wave]) => String(wave) !== finalKey)
+            ),
+        };
+        for (const monster of monstersInZone({ dungeonInfo: inside })) elsewhere.add(monster);
+
+        const countByHrid = new Map();
+        for (const entry of finalRoster) {
+            countByHrid.set(entry?.combatMonsterHrid, (countByHrid.get(entry?.combatMonsterHrid) || 0) + 1);
+        }
+
+        let proven = null;
+        for (const entry of finalRoster) {
+            const hrid = entry?.combatMonsterHrid;
+            // Two of one monster in the roster could be two spawn tiers
+            if (!hrid || elsewhere.has(hrid) || countByHrid.get(hrid) > 1) continue;
+            const row = monsters.find((monster) => monster?.monsterHrid === hrid);
+            if (!row?.tierData) continue;
+            const tierData = typeof row.tierData === 'string' ? JSON.parse(row.tierData) : row.tierData;
+            const tiers = Object.entries(tierData || {}).filter(([, count]) => Number(count) > 0);
+            if (!tiers.length) continue;
+            if (tiers.length > 1) return null;
+            const tier = Number(tiers[0][0]) - (Number(entry.difficultyTier) || 0);
+            if (!Number.isInteger(tier) || tier < 0) return null;
+            if (proven !== null && proven !== tier) return null;
+            proven = tier;
+        }
+        return proven;
+    } catch (error) {
+        console.error('[BestiaryPlan] Reading a tier from the Bestiary failed:', error);
+        return null;
+    }
 }
 
 /**
@@ -506,16 +607,17 @@ function padSegmentFights(segments, zonesByHrid, options) {
         // The rate a zone's monsters were struck at — (tier + 1) / partySize,
         // see `creditsPerKill` in bestiary.js. A zone that never recorded one
         // (every caller and test that predates the credits conversion) keeps
-        // credits and bodies the same number.
-        const perKill = Number(zone.creditsPerKill) || 1;
+        // credits and bodies the same number. Spawn tiers make it per monster
+        // where the zone knows them, since one zone holds several tiers.
+        const perKillOf = (hrid) => Number(zone.creditsPerKillByMonster?.[hrid]) || Number(zone.creditsPerKill) || 1;
         const shape = options.spawnShape(segment.zoneHrid);
         // `killsNeeded` and `killsPerFight` are fight-confidence.js's names and
         // are left alone, but the values handed to them are bodies, converted
         // back out of the Bestiary credits the rest of the planner works in —
         // see the module doc above.
         const thresholds = crossings.map((m) => ({
-            killsNeeded: (m.to - m.from) / perKill,
-            killsPerFight: (Number(zone.creditsPerHour?.[m.monsterHrid]) || 0) / perHour / perKill,
+            killsNeeded: (m.to - m.from) / perKillOf(m.monsterHrid),
+            killsPerFight: (Number(zone.creditsPerHour?.[m.monsterHrid]) || 0) / perHour / perKillOf(m.monsterHrid),
             slotsPerFight: shape?.slotsPerFight ?? null,
             deterministic:
                 Boolean(options.isBossMonster(m.monsterHrid)) || Boolean(shape?.fixedOnly?.has(m.monsterHrid)),

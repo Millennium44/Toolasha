@@ -9,7 +9,10 @@ import { describe, test, expect, afterEach } from 'vitest';
 import { setGameData } from './game-data.js';
 import { clearSimRng, random, randomSpawn, seedSimRng } from './rng.js';
 import Zone from './zone.js';
+import SimResult from './sim-result.js';
 import { expectedSpawnsPerClear } from '../../../utils/spawn-expectation.js';
+import { monsterCreditsPerHour, monsterCreditsPerKill } from '../../../utils/bestiary.js';
+import { dungeonRatesFromRuns } from '../../../utils/bestiary-plan.js';
 
 const ZONE_HRID = '/actions/combat/test_zone';
 
@@ -583,8 +586,8 @@ describe('a whole clear against the exact spawn expectation', () => {
         strength,
     });
 
-    // Shaped like Chimerical Den: three tables, a fixed wave every fifth, every
-    // non-zero key on a fixed wave. Several slots, a strength cap that ends waves
+    // Shaped like Chimerical Den as read from the game: 50 waves, a fixed wave every
+    // fifth, random keys 0/10/30, and nonzero spawn tiers among its rows. Several slots, a strength cap that ends waves
     // early, duplicates in a roster, a monster in both a fixed wave and a table,
     // and one monster on two rows at different spawn tiers.
     const dungeonInfo = () => {
@@ -653,5 +656,42 @@ describe('a whole clear against the exact spawn expectation', () => {
         expect(exact[BOSS_A][0]).toBe(9);
         expect(exact[BOSS_B][1]).toBe(1);
         expect(flat[`${BOSS_B}|3`]).toBe(1);
+    });
+
+    test('credits from a simulated clear agree with the spawn-table path, spawn tiers included', () => {
+        const info = dungeonInfo();
+        setGameData({
+            actionDetailMap: {
+                [HRID]: { buffs: null, combatZoneInfo: { isDungeon: true, fightInfo: null, dungeonInfo: info } },
+            },
+            combatMonsterDetailMap: Object.fromEntries(names.map((hrid) => [hrid, { enrageTime: 0, abilities: [] }])),
+        });
+        seedSimRng(20261105);
+        const zone = new Zone(HRID, 1);
+        const result = new SimResult({ hrid: HRID, difficultyTier: 1 }, 2);
+        const CLEARS = 1500;
+        for (let wave = 0; wave < CLEARS * info.maxWaves; wave++) {
+            for (const monster of zone.getNextWave()) result.addDeath(monster);
+        }
+
+        // One clear an hour on both sides
+        const options = { difficultyTier: 1, partySize: 2 };
+        const simulated = monsterCreditsPerHour(result, CLEARS, options);
+        const planned = dungeonRatesFromRuns({
+            runs: [{ tier: 1, duration: 3_600_000 }],
+            tier: 1,
+            partySize: 2,
+            dungeonInfo: info,
+        });
+        expect(Object.keys(simulated).sort()).toEqual(Object.keys(planned.creditsPerHour).sort());
+        for (const [hrid, rate] of Object.entries(planned.creditsPerHour)) {
+            expect(Math.abs(simulated[hrid] - rate) / rate, hrid).toBeLessThan(0.05);
+        }
+        // A T1 boss spawned a tier up is a T2 kill: 3/2 credits, not the 2/2 its zone tier gives
+        expect(simulated[BOSS_B]).toBeCloseTo(1.5, 9);
+        expect(monsterCreditsPerKill(result, options)[BOSS_B]).toBeCloseTo(1.5, 9);
+        expect(planned.creditsPerKillByMonster[BOSS_B]).toBeCloseTo(1.5, 9);
+        // Bear spawns on two rows, 2:1 at the zone's tier: 2/3 x 1 + 1/3 x 3/2 credits a kill
+        expect(planned.creditsPerKillByMonster[BEAR]).toBeCloseTo(7 / 6, 9);
     });
 });

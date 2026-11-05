@@ -4,6 +4,7 @@ import {
     rescaleDungeonRates,
     dungeonRatesFromRuns,
     runTierOf,
+    provenDungeonTier,
     formatPlanHours,
     formatPlanText,
 } from './bestiary-plan.js';
@@ -1047,5 +1048,119 @@ describe('dungeon rates from your own clears and the spawn tables', () => {
         const text = formatPlanText(plan);
         expect(text).toContain('1. [D] Den T0 [your 3 runs] — ');
         expect(text).toContain('Best single zone: [D] Den T0 [your 3 runs] — ');
+    });
+});
+
+describe('padding a zone whose monsters differ in tier', () => {
+    test('each monster converts to bodies at its own credit, not one figure for the zone', () => {
+        const quote = (creditsPerKillByMonster) =>
+            planBestiaryRoute({
+                zones: [
+                    {
+                        zoneHrid: 'den|T0',
+                        creditsPerHour: { '/monsters/rat': 20 },
+                        encountersPerHour: 1,
+                        creditsPerKill: 1,
+                        creditsPerKillByMonster,
+                    },
+                ],
+                counts: { '/monsters/rat': 9000 },
+                targetPoints: 1,
+                confidencePercent: 90,
+                bufferPercent: 0,
+                isBossMonster: () => false,
+                spawnShape: () => ({ slotsPerFight: 40, fixedOnly: new Set() }),
+            }).segments[0].encounters;
+        // Twenty credits a clear is ten bodies worth two each: fewer draws, so wider
+        // proportional variance, than twenty bodies worth one
+        expect(quote({ '/monsters/rat': 2 })).toBeGreaterThan(quote(undefined));
+    });
+});
+
+describe('the tier the Bestiary proves', () => {
+    const DEN = '/actions/combat/chimerical_den';
+    const BOSS = '/monsters/griffin';
+    const entry = (combatMonsterHrid, difficultyTier = 0) => ({ combatMonsterHrid, difficultyTier });
+    const den = (finalRoster = [entry(BOSS)]) => ({
+        combatZoneInfo: {
+            isDungeon: true,
+            dungeonInfo: {
+                keyItemHrid: '/items/chimerical_entry_key',
+                rewardDropTable: [],
+                maxWaves: 50,
+                fixedSpawnsMap: { 5: [entry('/monsters/jackalope')], 50: finalRoster },
+                randomSpawnInfoMap: {
+                    0: {
+                        maxSpawnCount: 4,
+                        maxTotalStrength: 250,
+                        spawns: [{ ...entry('/monsters/rat', 1), rate: 1, strength: 40 }],
+                    },
+                },
+            },
+        },
+    });
+    const prove = (tierData, details = den()) =>
+        provenDungeonTier({
+            actionHrid: DEN,
+            actionDetailMap: { [DEN]: details },
+            monsters: [{ monsterHrid: BOSS, count: 1, tierData }],
+        });
+
+    test('credits at one tier prove it, read from the JSON string the game sends', () => {
+        expect(prove(JSON.stringify({ 2: 150.6 }))).toBe(2);
+        expect(prove({ 0: 45, 1: 0 })).toBe(0);
+    });
+
+    test('a boss spawned a tier up has that tier taken back off', () => {
+        expect(prove('{"3":12}', den([entry(BOSS, 1)]))).toBe(2);
+        expect(prove('{"0":12}', den([entry(BOSS, 1)]))).toBeNull();
+    });
+
+    test('two tiers, no kills, or nothing readable prove nothing', () => {
+        expect(prove('{"0":45,"2":150.6}')).toBeNull();
+        expect(prove('{}')).toBeNull();
+        expect(prove(undefined)).toBeNull();
+        expect(prove('not json')).toBeNull();
+        expect(provenDungeonTier({ actionHrid: DEN, actionDetailMap: { [DEN]: den() }, monsters: null })).toBeNull();
+        expect(provenDungeonTier({ actionHrid: '/nope', actionDetailMap: { [DEN]: den() }, monsters: [] })).toBeNull();
+    });
+
+    test('a boss found anywhere else proves nothing', () => {
+        const inTable = den();
+        inTable.combatZoneInfo.dungeonInfo.randomSpawnInfoMap[0].spawns.push({ ...entry(BOSS), rate: 1, strength: 1 });
+        expect(prove('{"1":3}', inTable)).toBeNull();
+
+        const earlierWave = den();
+        earlierWave.combatZoneInfo.dungeonInfo.fixedSpawnsMap[5].push(entry(BOSS));
+        expect(prove('{"1":3}', earlierWave)).toBeNull();
+
+        const zone = {
+            combatZoneInfo: {
+                isDungeon: false,
+                fightInfo: { randomSpawnInfo: { spawns: [] }, bossSpawns: [entry(BOSS)] },
+            },
+        };
+        expect(
+            provenDungeonTier({
+                actionHrid: DEN,
+                actionDetailMap: { [DEN]: den(), '/actions/combat/zone': zone },
+                monsters: [{ monsterHrid: BOSS, tierData: '{"1":3}' }],
+            })
+        ).toBeNull();
+    });
+
+    test('two of the boss in the roster, or two bosses that disagree, prove nothing', () => {
+        expect(prove('{"1":3}', den([entry(BOSS), entry(BOSS, 1)]))).toBeNull();
+        const other = '/monsters/manticore';
+        expect(
+            provenDungeonTier({
+                actionHrid: DEN,
+                actionDetailMap: { [DEN]: den([entry(BOSS), entry(other)]) },
+                monsters: [
+                    { monsterHrid: BOSS, tierData: '{"1":3}' },
+                    { monsterHrid: other, tierData: '{"2":3}' },
+                ],
+            })
+        ).toBeNull();
     });
 });
