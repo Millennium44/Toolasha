@@ -244,8 +244,8 @@ describe('presets', () => {
         expect(isPreset('Default')).toBe(true);
         expect(PRESET_LAYOUTS.Default).toBe(PRESET_LAYOUTS.Dashboard);
         expect(
-            presetFile('Default', { rows: [{ key: 'netWorth' }, { key: 'dps' }] }).toolasha.settings.visible
-        ).toMatchObject({ netWorth: true, dps: false });
+            presetFile('Default', { rows: [{ key: 'netWorth' }, { key: 'inventoryValue' }] }).toolasha.settings.visible
+        ).toMatchObject({ netWorth: true, inventoryValue: false });
         expect(offeredLayouts({}).map((entry) => entry.name)).not.toContain('Default');
         // A saved layout of that name is the player's own: it still lists
         expect(offeredLayouts({ Default: { file: {} } }).map((entry) => entry.name)).toContain('Default');
@@ -263,7 +263,7 @@ describe('presets', () => {
         }
     });
 
-    test('Dashboard is the eleven starting tiles, wide ones spanning both columns', () => {
+    test('Dashboard is the fourteen starting tiles, wide ones spanning both columns', () => {
         expect(PRESET_LAYOUTS.Dashboard).toEqual({
             activity: ACTIVITY.NONE,
             order: [
@@ -274,12 +274,15 @@ describe('presets', () => {
                 'combatLevel',
                 'timeToLevel',
                 'experiencePerHour',
+                'dps',
+                'deathsPerHour',
+                'luck',
                 'totalProfit',
                 'consumables',
                 'queueTimeLeft',
                 'noticeLog',
             ],
-            span: { accountView: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
+            span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
         });
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('inventoryValue');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('skillTimeToLevel');
