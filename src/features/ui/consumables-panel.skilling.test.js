@@ -405,6 +405,87 @@ describe('a skill', () => {
     });
 });
 
+describe('the dungeon readiness card', () => {
+    const readinessStub = () =>
+        vi.spyOn(consumablesPanel, '_readinessSection').mockImplementation(() => {
+            const card = document.createElement('div');
+            card.textContent = 'Dungeon readiness card';
+            return card;
+        });
+
+    test('is not drawn under a skill heading, even with a dungeon queued', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        const card = readinessStub();
+        await open();
+        expect(skillingSection()).not.toBeNull();
+        expect(text()).not.toContain('Dungeon readiness card');
+        expect(card).not.toHaveBeenCalled();
+    });
+
+    test('is still drawn in the combat view, pinned or running, and with nothing running', async () => {
+        readinessStub();
+        runCombat();
+        game.latest = combatLatest();
+        await open();
+        expect(text()).toContain('Dungeon readiness card');
+
+        // Pinned to Combat while a skill runs
+        consumablesPanel.hide({ remember: false });
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        consumablesPanel._skillPin = COMBAT;
+        await open();
+        expect(text()).toContain('Dungeon readiness card');
+
+        consumablesPanel.hide({ remember: false });
+        consumablesPanel._skillPin = null;
+        game.currentActions = [];
+        game.latest = null;
+        await open();
+        expect(text()).toContain('Dungeon readiness card');
+    });
+});
+
+describe('the picker dropdown while it is open', () => {
+    test('a redraw while the picker has focus leaves the select in place, and choosing still redraws', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        game.inventory = [stack('/items/gathering_tea', 7)];
+        await open();
+
+        const select = picker();
+        select.focus();
+        expect(document.activeElement).toBe(select);
+
+        // Stock changes: the body would be rebuilt, which closes an open dropdown
+        game.inventory = [stack('/items/gathering_tea', 900)];
+        consumablesPanel._render();
+        expect(picker()).toBe(select);
+
+        // Choosing from it is the one redraw that must go through
+        pick(COMBAT);
+        expect(picker()).not.toBe(select);
+        expect(consumablesPanel._skillPin).toBe(COMBAT);
+    });
+
+    test('once the picker loses focus the next redraw catches up', async () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea')];
+        game.inventory = [stack('/items/gathering_tea', 7)];
+        await open();
+
+        const select = picker();
+        select.focus();
+        game.inventory = [stack('/items/gathering_tea', 900)];
+        consumablesPanel._render();
+        select.blur();
+        consumablesPanel._render();
+        expect(picker()).not.toBe(select);
+        expect(text()).toContain('900');
+    });
+});
+
 describe('the Labyrinth section', () => {
     const labStub = () =>
         vi.spyOn(consumablesPanel, '_labSection').mockImplementation(() => {

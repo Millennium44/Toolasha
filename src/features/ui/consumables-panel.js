@@ -2282,7 +2282,12 @@ class ConsumablesPanel {
         return header;
     }
 
-    _render() {
+    /**
+     * @param {Object} [options]
+     * @param {boolean} [options.force] - Swap the body in even while a dropdown has focus; for the
+     *   redraw that choosing from that dropdown asks for
+     */
+    _render({ force = false } = {}) {
         if (!this.bodyEl) return;
         this.targetBtn.textContent = `Last ${this.target.label}`;
 
@@ -2331,8 +2336,10 @@ class ConsumablesPanel {
         // Before the players, because the readiness card is the pre-run
         // question and the player sections are the mid-run one — and it has to
         // draw when there are no players at all, which is exactly the lobby
+        // Not under a skill: a queued dungeon's card is the combat view's question
+        // and reads as this skill's under its heading, like the Labyrinth list below
         try {
-            const readiness = this._readinessSection(players);
+            const readiness = skilling ? null : this._readinessSection(players);
             if (readiness) scratch.appendChild(readiness);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
@@ -2370,7 +2377,14 @@ class ConsumablesPanel {
         const buyOptions = this._renderInlineBuyWalk();
         if (buyOptions) scratch.appendChild(buyOptions);
 
-        if (scratch.innerHTML !== this.bodyEl.innerHTML) {
+        // Not while a dropdown in the panel has focus: replacing its markup closes the open
+        // list under the pointer. Every view has one now (the skill picker), and the tick
+        // already stands down for the same reason; this covers the redraws that do not come
+        // from the tick (stock, prices and rates arriving). The next redraw after it loses
+        // focus catches up.
+        const active = document.activeElement;
+        const picking = !force && active?.tagName === 'SELECT' && this.bodyEl.contains(active);
+        if (!picking && scratch.innerHTML !== this.bodyEl.innerHTML) {
             this.bodyEl.replaceChildren(...scratch.childNodes);
         }
 
@@ -2764,7 +2778,8 @@ class ConsumablesPanel {
         select.addEventListener('click', (event) => event.stopPropagation());
         select.addEventListener('change', () => {
             onChange(select.value);
-            this._render();
+            // The select still has focus here, and this is the redraw it asked for
+            this._render({ force: true });
         });
         return select;
     }
