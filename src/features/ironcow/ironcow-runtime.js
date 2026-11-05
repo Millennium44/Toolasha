@@ -18,6 +18,8 @@ const runtime = {
     batchSpec: null,
     /** Whether Bells you can buy now also keeps cash back for the next set */
     keepBatchCash: false,
+    /** The character the spec and the switch belong to; the strip ignores them for any other */
+    owner: null,
     /** Opens or closes the panel; replaced once the panel exists */
     toggle: () => {},
 };

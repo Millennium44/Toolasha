@@ -629,6 +629,64 @@ describe('walking a plan', () => {
         });
     });
 
+    describe('how the walk ends', () => {
+        const three = () =>
+            craftingPlanWalk.start(
+                ['a', 'b', 'c'].map((name) => ({
+                    key: `craft:/${name}`,
+                    kind: 'craft',
+                    itemHrid: `/items/${name}`,
+                    itemName: name.toUpperCase(),
+                    shortName: name.toUpperCase(),
+                    actionHrid: `/${name}`,
+                    count: 1,
+                    actions: 1,
+                })),
+                'crafting-plan',
+                { finalNote: 'The new rows wait behind Golem Cave.' }
+            );
+        const press = (actionHrid) =>
+            mocks.wsHandlers.get('actions_updated')({ endCharacterActions: [{ id: `n${actionHrid}`, actionHrid }] });
+
+        test('a full success says complete, with the note the caller asked for', () => {
+            three();
+            press('/a');
+            craftingPlanWalk.next();
+            press('/b');
+            craftingPlanWalk.next();
+            press('/c');
+            expect(stripText()).toBe('Queued ✓ Walk complete. The new rows wait behind Golem Cave.');
+        });
+
+        test('skipped steps are named and said not to be queued', () => {
+            three();
+            craftingPlanWalk.skip();
+            press('/b');
+            craftingPlanWalk.next();
+            craftingPlanWalk.skip();
+            expect(stripText()).toBe(
+                'Walk finished: A and C were skipped, so they are not queued. The new rows wait behind Golem Cave.'
+            );
+            expect(stripText()).not.toContain('Walk complete');
+        });
+
+        test('one skipped step on the last row reads the same way', () => {
+            three();
+            press('/a');
+            craftingPlanWalk.next();
+            press('/b');
+            craftingPlanWalk.next();
+            craftingPlanWalk.skip();
+            expect(stripText()).toContain('Walk finished: C was skipped, so it is not queued.');
+        });
+
+        test('Stop says nothing of completion', () => {
+            three();
+            craftingPlanWalk.stop('');
+            expect(strip()).toBeNull();
+        });
+    });
+
     describe('a queued step waits for the player’s Next', () => {
         const twoSteps = () =>
             craftingPlanWalk.start([

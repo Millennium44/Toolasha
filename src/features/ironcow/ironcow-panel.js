@@ -406,6 +406,10 @@ class IronCowFarmPanel {
         this.maxLostNote = '';
         this.bellsTyped = '';
         this.hoursBeforeMax = null;
+        // Nothing of this character's is left for the strip to read
+        ironCowRuntime.batchSpec = null;
+        ironCowRuntime.keepBatchCash = false;
+        ironCowRuntime.owner = null;
         this._remove();
     }
 
@@ -475,6 +479,9 @@ class IronCowFarmPanel {
         }
         this.loop = snapshot;
         this.pricedAt = snapshot?.computedAt || null;
+        // Published here, after every check above, so the strip knows this character's saved switch and spec even
+        // with the panel closed, and a load that lost a race to a switch publishes nothing
+        this._publishSpec();
         this._render();
     }
 
@@ -1448,6 +1455,8 @@ class IronCowFarmPanel {
     _publishSpec() {
         ironCowRuntime.batchSpec = this._spec();
         ironCowRuntime.keepBatchCash = this.keepBatchCash;
+        // Whose spec it is: the strip never uses another character's
+        ironCowRuntime.owner = dataManager.getCurrentCharacterId();
     }
 
     /**
@@ -1845,7 +1854,7 @@ class IronCowFarmPanel {
             this._status(`Not walked — ${plan.blocked}`);
             return;
         }
-        if (!startQueueWalk(this.loop, plan.missing.batch)) {
+        if (!startQueueWalk(this.loop, plan.missing.batch, { finalNote: plan.notes.join(' ') })) {
             this._status(
                 plan.missing.skipped.length
                     ? `Nothing to walk — ${plan.missing.skipped.join(', ')} already queued.`

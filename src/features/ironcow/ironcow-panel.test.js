@@ -27,7 +27,7 @@ const store = vi.hoisted(() => ({
     keepCash: false,
     keepCashWrites: [],
 }));
-const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
+const walk = vi.hoisted(() => ({ started: [], options: [], succeeds: true }));
 // The game's action queue, as `getCurrentActions` returns it
 const queue = vi.hoisted(() => ({ actions: [], capHours: null, details: {} }));
 // What the queue walk reports; null is "the actions bundle is not there"
@@ -160,8 +160,9 @@ vi.mock('./ironcow-queue-walk.js', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
-        startQueueWalk: (costed, batch) => {
+        startQueueWalk: (costed, batch, options) => {
             walk.started.push(batch);
+            walk.options.push(options);
             return walk.succeeds;
         },
     };
@@ -249,6 +250,7 @@ beforeEach(() => {
     queue.actions = [];
     queue.details = {};
     walk.started = [];
+    walk.options = [];
     walk.succeeds = true;
     coinWalk.walked = null;
 });
@@ -1771,6 +1773,56 @@ describe('the queue helper', () => {
             expect(ironCowFarmPanel._batchFor(16, spent)).toBeNull();
             expect(ironCowFarmPanel.queueMax).toBe(true);
             expect(ironCowFarmPanel.batchHours).not.toBe(16);
+        });
+
+        test('login with the panel closed: the saved switch and a spec reach the strip, and A then B never share them', async () => {
+            loop.result = withHrids();
+            store.snapshot = costedLoop();
+            store.keepCash = true;
+            characterId.current = 'charA';
+            await ironCowFarmPanel.load();
+            expect(ironCowRuntime.keepBatchCash).toBe(true);
+            expect(ironCowRuntime.batchSpec).toMatchObject({ max: false, basis: 'hours' });
+            expect(ironCowRuntime.owner).toBe('charA');
+
+            // the character switches: nothing of A's is left to read
+            ironCowFarmPanel.disable();
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.batchSpec).toBeNull();
+            expect(ironCowRuntime.owner).toBeNull();
+
+            // B has the switch off
+            characterId.current = 'charB';
+            store.keepCash = false;
+            await ironCowFarmPanel.load();
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.owner).toBe('charB');
+        });
+
+        test('a load that loses a race to a switch publishes nothing', async () => {
+            store.snapshot = costedLoop();
+            store.keepCash = true;
+            characterId.current = 'charA';
+            let release;
+            store.snapshotGate = new Promise((resolve) => {
+                release = resolve;
+            });
+            const pending = ironCowFarmPanel.load();
+            ironCowFarmPanel.disable();
+            release();
+            await pending;
+            expect(ironCowRuntime.keepBatchCash).toBe(false);
+            expect(ironCowRuntime.batchSpec).toBeNull();
+            store.snapshotGate = null;
+        });
+
+        test('rows waiting behind a row that never ends are carried into the walk’s final message', async () => {
+            loop.result = withHrids();
+            queue.details['/actions/foraging/star_fruit'] = { name: 'Foraging: Star Fruit' };
+            queue.actions = [row('/actions/foraging/star_fruit', null, { hasMaxCount: false, maxCount: 0 })];
+            await open();
+            buttonNamed('Walk it').click();
+            expect(walk.options[0].finalNote).toContain('wait behind Foraging: Star Fruit');
         });
 
         test('a typed bell target is kept through a redraw and a Walk, not rewritten with the batch’s figure', async () => {

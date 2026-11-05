@@ -111,6 +111,7 @@ function legSteps({
             count,
             actions: 0,
             label: `${verb} all ${itemName} — Repeat ∞, leave the count (about ${formatWithSeparator(count)} actions)`,
+            shortName: verb.charAt(0).toUpperCase() + verb.slice(1),
             unlimited: true,
         };
         if (requiresItemHrid) step.requiresItemHrid = requiresItemHrid;
@@ -129,6 +130,7 @@ function legSteps({
             count: chunk,
             actions: chunk,
             label: `${verb} ${formatWithSeparator(chunk)} × ${itemName}${note ? ` — ${note}` : ''}${repeat}`,
+            shortName: verb.charAt(0).toUpperCase() + verb.slice(1),
             // The walk checks the count the server kept against the count typed
             verifyCount: true,
         };
@@ -262,12 +264,14 @@ export function readQueueSlots(doc = typeof document === 'undefined' ? null : do
  * Walk one balanced batch.
  * @param {Object|null} loop - From `calculateStarfruitLoop`
  * @param {Object|null} batch - From `balanceBatch`
+ * @param {Object} [options]
+ * @param {string} [options.finalNote] - Said in the walk's last message (rows waiting behind one that never ends)
  * @returns {boolean} Whether a walk started
  */
-export function startQueueWalk(loop, batch) {
+export function startQueueWalk(loop, batch, { finalNote = '' } = {}) {
     const steps = buildQueueSteps(loop, batch);
     if (!steps.length) return false;
-    return craftingPlanWalk.start(steps, 'ironcow-queue');
+    return craftingPlanWalk.start(steps, 'ironcow-queue', { finalNote });
 }
 
 export default {

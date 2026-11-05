@@ -571,6 +571,84 @@ describe('the count box on the game’s alchemy form', () => {
     });
 });
 
+describe('the alchemy watcher keeps to one chain and leaves the player alone', () => {
+    const startItem = () => {
+        mocks.inventory[STARFRUIT] = 100;
+        mocks.alchemyResult = { opened: true, selected: true };
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+    };
+
+    test('many items_updated while the item is absent add no timers and refill nothing', () => {
+        mocks.inventory[ESSENCE] = 0;
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+        vi.advanceTimersByTime(1000);
+        const timers = vi.getTimerCount();
+        for (let i = 0; i < 40; i++) mocks.dmHandlers.get('items_updated')();
+        expect(vi.getTimerCount()).toBe(timers);
+        expect(mocks.alchemyOpened).toEqual([]);
+    });
+
+    test('when the item arrives the step looks at once, in a fresh short window, still one chain', () => {
+        mocks.inventory[ESSENCE] = 0;
+        mocks.alchemyResult = { opened: true, selected: true };
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+        vi.advanceTimersByTime(60_000);
+        const timers = vi.getTimerCount();
+        mocks.inventory[ESSENCE] = 500;
+        mocks.dmHandlers.get('items_updated')();
+        expect(mocks.alchemyOpened).toEqual([[ESSENCE, 'coinify']]);
+        expect(vi.getTimerCount()).toBe(timers);
+    });
+
+    test('after the settle window a wrong slot is reported, never undone', () => {
+        startItem();
+        mountPanel(DECOMPOSE_ACTION, STARFRUIT);
+        vi.advanceTimersByTime(12_000);
+        expect(craftingPlanWalk.currentStep().itemSelected).toBe(true);
+        const before = mocks.alchemyOpened.length;
+
+        // the player picks another item themselves
+        mountPanel(DECOMPOSE_ACTION, '/items/holy_milk');
+        vi.advanceTimersByTime(5000);
+        expect(mocks.alchemyOpened.length).toBe(before);
+        expect(craftingPlanWalk.currentStep().itemSelected).toBe(false);
+        expect(craftingPlanWalk.currentStep().slotNote).toBe('the slot shows Foraging Essence');
+    });
+
+    test('having left the alchemy panel after the window, the walk does not navigate back', () => {
+        startItem();
+        mountPanel(DECOMPOSE_ACTION, STARFRUIT);
+        vi.advanceTimersByTime(12_000);
+        const before = mocks.alchemyOpened.length;
+        document.body.innerHTML = '';
+        vi.advanceTimersByTime(10_000);
+        expect(mocks.alchemyOpened.length).toBe(before);
+        expect(mocks.navigatedActions).toEqual([]);
+    });
+});
+
+describe('a count the player chose is left alone', () => {
+    test('the game’s own ∞ toggle on the same box stops the filling and the strip stays truthful', () => {
+        mocks.inventory[STARFRUIT] = 100;
+        mocks.alchemyResult = { opened: true, selected: true };
+        document.body.innerHTML =
+            '<div class="SkillActionDetail_skillActionDetail__a SkillActionDetail_alchemyComponent__b">' +
+            '<div class="SkillActionDetail_itemRequirements__x"><div class="Item_itemContainer__y"><svg><use xlink:href="#star_fruit"></use></svg></div></div>' +
+            '<div class="SkillActionDetail_maxActionCountInput__q"><input maxlength="10" value="∞" /></div></div>';
+        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 1600, coinifyActions: 0 }));
+        vi.advanceTimersByTime(3000);
+        const box = document.querySelector('input');
+        expect(box.value).toBe('1600');
+
+        box.value = '∞';
+        vi.advanceTimersByTime(5000);
+        expect(box.value).toBe('∞');
+        expect(craftingPlanWalk.currentStep().countFilled).toBe(false);
+        expect(document.body.textContent).toContain('left as you set it');
+        expect(document.body.textContent).not.toContain('type 1,600');
+    });
+});
+
 describe('walking it', () => {
     test('opens each action in turn, and only advances on the press', () => {
         mountPanel(FORAGE_ACTION);

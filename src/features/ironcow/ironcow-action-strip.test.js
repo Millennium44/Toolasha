@@ -29,11 +29,13 @@ const game = vi.hoisted(() => ({
     settings: new Map(),
     reads: 0,
     batch: null,
+    charId: 'charA',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentActions: () => game.actions,
+        getCurrentCharacterId: () => game.charId,
         getOfflineHourCap: () => game.cap,
         getCurrentCharacterGameMode: () => game.state?.gameMode ?? null,
         on: (event, fn) => {
@@ -130,7 +132,9 @@ beforeEach(() => {
     game.pricing = { price: 1000, quoted: true };
     game.cap = 20;
     game.batch = null;
+    game.charId = 'charA';
     ironCowRuntime.keepBatchCash = false;
+    ironCowRuntime.owner = null;
     ironCowRuntime.batchSpec = null;
     ironCowRuntime.loop = null;
 });
@@ -166,17 +170,37 @@ describe('cash kept for the next set', () => {
         expect(off).not.toContain('next set');
 
         ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
         const on = text()[0];
         expect(on).toContain('and the next set');
         // 450K + 375K of fees plus the 3M buffer
         expect(on).toContain('keeps 3.8M for the queue');
     });
 
+    test('a spec published for another character is never used: the strip says it does not know', () => {
+        game.state = { coins: 40_000_000, gameMode: 'ironcow', starfruitHeld: 1000, essenceHeld: 0 };
+        game.actions = [action(1, FORAGE)];
+        game.batch = { forageActions: 0, decomposeActions: 1000, coinifyActions: 300 };
+        ironCowRuntime.loop = costed();
+        ironCowRuntime.batchSpec = { max: false, basis: 'hours', hours: 16 };
+        ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
+
+        game.charId = 'charB';
+        const text0 = text()[0];
+        expect(text0).not.toContain('and the next set');
+        expect(text0).toContain('next set not counted: open Iron Bell Farming');
+
+        game.charId = 'charA';
+        expect(text()[0]).toContain('and the next set');
+    });
+
     test('with the switch on but no batch published, the strip is today’s number', () => {
         game.batch = null;
         ironCowRuntime.keepBatchCash = true;
+        ironCowRuntime.owner = 'charA';
         ironCowRuntime.loop = costed();
-        expect(text()[0]).not.toContain('next set');
+        expect(text()[0]).not.toContain('and the next set');
     });
 });
 

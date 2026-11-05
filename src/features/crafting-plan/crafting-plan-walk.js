@@ -87,6 +87,11 @@ const ALCHEMY_ATTEMPTS_PER_RUN = 6;
 const ALCHEMY_ATTEMPTS_TOTAL = 30;
 /** Writes to one count box before the walk stops fighting a box that will not keep the figure */
 const COUNT_WRITES_PER_BOX = 5;
+/**
+ * How long after a step starts (or after its item arrives in the bag) the walk may navigate or click a tab to put the
+ * item right. After that the player is in charge of the panel: a mismatch is reported, never undone.
+ */
+const ALCHEMY_ASSERT_WINDOW_MS = 10_000;
 
 /**
  * How long a step may sit untouched before the walk ends itself.
@@ -265,7 +270,9 @@ function stepLabel(step) {
         step.verifyCount && step.actions > 0
             ? step.countFilled
                 ? ` — count ${formatWithSeparator(step.actions)} filled`
-                : ` — type ${formatWithSeparator(step.actions)} in the count box`
+                : step.playerEdited
+                  ? ` — count box left as you set it (the plan asks for ${formatWithSeparator(step.actions)})`
+                  : ` — type ${formatWithSeparator(step.actions)} in the count box`
             : '';
     if (!step.alchemyType) return `${base}${countNote}${warn}`;
     // Said plainly, because the script never presses a game button: the player's press queues the row.
@@ -280,7 +287,8 @@ function stepLabel(step) {
     } else {
         pressNote = `choose ${step.itemName} in the slot, then press Start`;
     }
-    return `${base}${countNote} — ${pressNote}${warn}`;
+    const slot = step.slotNote ? ` (${step.slotNote})` : '';
+    return `${base}${countNote} — ${pressNote}${slot}${warn}`;
 }
 
 /** The starter name Crafting Plan's own surfaces (the plan's Walk button, the task board's walk) use */
@@ -394,11 +402,13 @@ class CraftingPlanWalk {
     /**
      * Begin walking a set of steps.
      * @param {Array<Object>} steps - From {@link buildWalkSteps}
+     * @param {Object} [options]
+     * @param {string} [options.finalNote] - Said at the end of the walk (for example rows waiting behind one that never ends)
      * @param {string} [starter] - Who started it. Crafting Plan's own surfaces take the default; the Iron Cow
      *   queue walk passes its own name, so turning Crafting Plan off does not end its walk
      * @returns {boolean} Whether a walk started
      */
-    start(steps, starter = CRAFTING_PLAN_STARTER) {
+    start(steps, starter = CRAFTING_PLAN_STARTER, { finalNote = '' } = {}) {
         if (!Array.isArray(steps) || steps.length === 0) return false;
         // Someone wants this walk running: a deferred disable no longer applies
         this._disablePending = false;
@@ -412,6 +422,7 @@ class CraftingPlanWalk {
         this._stepHookFresh = false;
         this.starter = starter;
         this.steps = steps;
+        this.finalNote = finalNote;
         this.index = 0;
         this.active = true;
         this.message = '';
@@ -419,9 +430,32 @@ class CraftingPlanWalk {
         return true;
     }
 
+    /**
+     * What the strip says when the last step is over: "complete" only for a full success. Steps that were skipped are
+     * named and said not to be queued; a count warning and any note the caller asked for stay in view.
+     * @param {string} warn - The last step's count warning, if any
+     * @returns {string}
+     * @private
+     */
+    _endMessage(warn) {
+        const names = [
+            ...new Set(this.steps.filter((step) => step.skipped).map((step) => step.shortName || step.itemName)),
+        ];
+        const lead =
+            names.length === 0
+                ? 'Walk complete.'
+                : `Walk finished: ${names.join(' and ')} ${names.length === 1 ? 'was' : 'were'} skipped, so ` +
+                  `${names.length === 1 ? 'it is' : 'they are'} not queued.`;
+        const queued = this.steps[this.steps.length - 1]?.done ? 'Queued ✓ ' : '';
+        return `${queued}${lead}${warn ? ` ⚠ ${warn}` : ''}${this.finalNote ? ` ${this.finalNote}` : ''}`;
+    }
+
     /** Leave this step undone and move to the next. */
     skip() {
         if (!this.active) return;
+        const step = this.currentStep();
+        // Left undone on purpose: said at the end, because it is not queued
+        if (step && !step.done) step.skipped = true;
         this._advance();
     }
 
@@ -439,6 +473,7 @@ class CraftingPlanWalk {
         this._alchemyTickNow = null;
         this._fillCleanup?.();
         this._fillCleanup = null;
+        this.finalNote = '';
         this.message = message;
         // The hook belonged to the walk that just ended; see its own comment
         this._stepHook = null;
@@ -497,6 +532,7 @@ class CraftingPlanWalk {
                 // navigation; the press that queues the row stays the player's.
                 step.itemSelected = false;
                 step.itemAbsent = getInventoryCount(step.requiresItemHrid) <= 0;
+                step.slotNote = '';
                 step.warn = '';
                 // An item that is not in the bag cannot be offered by the game: only the action is opened, and
                 // the item is chosen as soon as it arrives
@@ -540,38 +576,68 @@ class CraftingPlanWalk {
     _watchAlchemyItem(step, openedAlready) {
         let runAttempts = openedAlready ? 1 : 0;
         let totalAttempts = openedAlready ? 1 : 0;
+        // The short window in which the walk may put the item right: right after the step starts, and again right
+        // after the item arrives in the bag. Outside it the player is in charge of the panel.
+        let assertUntil = Date.now() + ALCHEMY_ASSERT_WINDOW_MS;
         const current = () => this.active && this.steps[this.index] === step && !step.done;
-        const tick = () => {
-            if (!current()) return;
+
+        /** One look at the slot and the tab; may put the item right, only inside the window. @returns {boolean} ready */
+        const look = () => {
             const held = getInventoryCount(step.requiresItemHrid) > 0;
             const tab = readAlchemyTabType();
-            const shows = selectedItemHrid(document) === step.requiresItemHrid;
-            const ready = shows && (tab === null || tab === step.alchemyType);
-            const before = `${step.itemSelected}|${step.itemAbsent}`;
+            const shown = selectedItemHrid(document);
+            const ready = shown === step.requiresItemHrid && (tab === null || tab === step.alchemyType);
+            const before = `${step.itemSelected}|${step.itemAbsent}|${step.slotNote}`;
             if (ready) {
                 step.itemSelected = true;
                 step.itemAbsent = false;
+                step.slotNote = '';
                 runAttempts = 0;
             } else {
-                // It was right and changed, or never was: assert again, a bounded number of times
                 step.itemSelected = false;
                 step.itemAbsent = !held;
-                if (held && runAttempts < ALCHEMY_ATTEMPTS_PER_RUN && totalAttempts < ALCHEMY_ATTEMPTS_TOTAL) {
+                const mayAssert =
+                    held &&
+                    Date.now() <= assertUntil &&
+                    runAttempts < ALCHEMY_ATTEMPTS_PER_RUN &&
+                    totalAttempts < ALCHEMY_ATTEMPTS_TOTAL;
+                if (mayAssert) {
                     runAttempts++;
                     totalAttempts++;
                     navigateToAlchemyItem(step.requiresItemHrid, step.alchemyType);
                     this._selectTab(step);
+                    step.slotNote = '';
+                } else if (held) {
+                    // The player is in charge now: say what the panel shows, and leave it alone
+                    const wrongTab = tab !== null && tab !== step.alchemyType;
+                    const otherItem = shown && shown !== step.requiresItemHrid;
+                    const otherName = otherItem ? dataManager.getItemDetails?.(shown)?.name || 'another item' : '';
+                    step.slotNote = wrongTab
+                        ? `the ${tab} tab is open, not ${step.alchemyType}`
+                        : otherItem
+                          ? `the slot shows ${otherName}`
+                          : shown
+                            ? ''
+                            : 'the alchemy panel is not showing this item';
                 }
             }
-            if (before !== `${step.itemSelected}|${step.itemAbsent}`) this._render();
+            if (before !== `${step.itemSelected}|${step.itemAbsent}|${step.slotNote}`) this._render();
+            return ready;
+        };
+
+        // One chain of timers per step. An items_updated only looks now: it adds no timer and refills no budget.
+        const tick = () => {
+            if (!current()) return;
+            const ready = look();
             this.timerRegistry.scheduleTimeout(tick, ready ? ALCHEMY_WATCH_MS : ALCHEMY_RETRY_MS);
         };
         this._alchemyTickNow = () => {
-            if (current() && !step.itemSelected) {
-                // The item has just arrived in the bag: choose it without waiting for the next beat
-                runAttempts = 0;
-                tick();
+            if (!current() || step.itemSelected) return;
+            // The item has just arrived in the bag: a fresh short window to choose it, nothing more is refilled
+            if (step.itemAbsent && getInventoryCount(step.requiresItemHrid) > 0) {
+                assertUntil = Date.now() + ALCHEMY_ASSERT_WINDOW_MS;
             }
+            look();
         };
         this.timerRegistry.scheduleTimeout(tick, ALCHEMY_SETTLE_MS);
     }
@@ -592,6 +658,8 @@ class CraftingPlanWalk {
         let retries = 0;
         let lastInput = null;
         let writes = 0;
+        // The value in the box when last looked at (after our write): any other change is not ours
+        let observed = null;
         step.countFilled = false;
         step.playerEdited = false;
 
@@ -632,6 +700,15 @@ class CraftingPlanWalk {
                 }
             }
 
+            // The same box showing something the walk did not write — the game's ∞ toggle, a quick button, typing
+            // without an input event — is the player's choice: filling stops for this step
+            if (input && input === lastInput && observed !== null && input.value !== observed) {
+                step.playerEdited = true;
+            }
+            if (input && step.playerEdited) {
+                setFilled(input.value === figure);
+                return;
+            }
             if (input && !step.playerEdited) {
                 // Written through React's own setter, and again whenever the box is a new element (the form
                 // remounted) or no longer shows the figure; then read back: "filled" is only said if it shows it
@@ -641,6 +718,7 @@ class CraftingPlanWalk {
                     setReactInputValue(input, step.actions, { focus: false });
                 }
                 lastInput = input;
+                observed = input.value;
                 setFilled(input.value === figure);
             } else if (!input) {
                 lastInput = null;
@@ -763,7 +841,7 @@ class CraftingPlanWalk {
         this._fillCleanup = null;
         this._clearHighlight();
         if (this.index >= this.steps.length - 1) {
-            this.stop(step.warn ? `Queued ✓ Walk complete. ⚠ ${step.warn}` : 'Queued ✓ Walk complete.');
+            this.stop(this._endMessage(step.warn));
             return;
         }
         this._armIdleTimeout();
@@ -801,7 +879,7 @@ class CraftingPlanWalk {
         this._fillCleanup = null;
         this.index += 1;
         if (this.index >= this.steps.length) {
-            this.stop('Walk complete.');
+            this.stop(this._endMessage(''));
             return;
         }
         this._runStep();

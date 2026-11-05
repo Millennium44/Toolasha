@@ -96,16 +96,22 @@ export function stripLines() {
     // (`nextSetStages` is the one place it is worked out), so the two show the same number
     let budgetWalk = walked;
     let keepsNextSet = false;
+    let nextSetUnknown = false;
     if (ironCowRuntime.keepBatchCash) {
-        const nextSet = nextSetStages(
-            ironCowRuntime.loop,
-            ironCowRuntime.batchSpec,
-            state,
-            dataManager.getCurrentActions?.() || []
-        );
-        if (nextSet?.stages?.length) {
-            budgetWalk = withBatchStages(walked, nextSet.stages);
-            keepsNextSet = budgetWalk !== walked;
+        // The spec belongs to the character the panel published it for: never another one's, and never none
+        if (ironCowRuntime.owner !== dataManager.getCurrentCharacterId?.() || !ironCowRuntime.batchSpec) {
+            nextSetUnknown = true;
+        } else {
+            const nextSet = nextSetStages(
+                ironCowRuntime.loop,
+                ironCowRuntime.batchSpec,
+                state,
+                dataManager.getCurrentActions?.() || []
+            );
+            if (nextSet?.stages?.length) {
+                budgetWalk = withBatchStages(walked, nextSet.stages);
+                keepsNextSet = budgetWalk !== walked;
+            }
         }
     }
     const budget = bellBudget(budgetWalk, state.coins, pricing);
@@ -123,7 +129,8 @@ export function stripLines() {
             text:
                 `Iron Bell: spend now ${approx}${formatWithSeparator(can.bells)} bells ` +
                 `(${formatWithSeparator(can.bags)} ${plural(can.bags, 'bag')}) · keeps ${approx}${coins(reserve)} for the queue` +
-                (keepsNextSet ? ' and the next set' : ''),
+                (keepsNextSet ? ' and the next set' : '') +
+                (nextSetUnknown ? ' (next set not counted: open Iron Bell Farming)' : ''),
             color: can.bells > 0 ? COLORS.good : COLORS.dim,
             title:
                 `Out of your ${coins(state.coins)}. ${kept}${estimated ? ESTIMATE_NOTE : ''}` +
