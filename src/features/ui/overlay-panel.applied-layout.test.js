@@ -286,6 +286,21 @@ describe('the applied layout name survives a reload', () => {
         expect(overlayPanel.appliedLayout).toBeNull();
     });
 
+    test('a character whose applied layout is the retired Default keeps their tiles and the popover opens', async () => {
+        wear(dungeonLayout());
+        overlayPanel._setAppliedLayout('Default');
+        const before = JSON.stringify(overlayPanel.settings.visible);
+
+        expect(() => {
+            overlayPanel._renderPicker();
+        }).not.toThrow();
+        await reload();
+
+        // Nothing reapplied it, so nothing on screen moved, and the name is kept
+        expect(overlayPanel.appliedLayout).toBe('Default');
+        expect(JSON.stringify(overlayPanel.settings.visible)).toBe(before);
+    });
+
     test('a cancelled Reset changes nothing', async () => {
         wear(dungeonLayout());
         await overlayPanel.saveNamedLayout('Dungeon');

@@ -317,6 +317,27 @@ export const ACTIVITY = {
     NONE: 'none',
 };
 
+const DASHBOARD_PRESET = {
+    activity: ACTIVITY.NONE,
+    order: [
+        'netWorth',
+        'coins',
+        'accountView',
+        'buildScore',
+        'combatLevel',
+        'timeToLevel',
+        'experiencePerHour',
+        'totalProfit',
+        'consumables',
+        'queueTimeLeft',
+        'noticeLog',
+    ],
+    span: { accountView: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
+};
+
+/** Presets that resolve by name but are not offered in the Layouts switcher */
+const UNLISTED_PRESETS = new Set(['Default']);
+
 /**
  * The arrangements that ship with the script.
  *
@@ -349,7 +370,6 @@ export const PRESET_LAYOUTS = {
         activity: ACTIVITY.COMBAT,
         // What is happening, then how it is going, then what it is worth
         order: [
-            'combatStatus',
             'battleTimer',
             'dps',
             'deathsPerHour',
@@ -386,18 +406,8 @@ export const PRESET_LAYOUTS = {
         // The combat half, plus the three tiles a run is actually decided by:
         // what it is dropping, whether the sim agrees with what happened, and
         // whether you are about to run out of food
-        order: [
-            'combatStatus',
-            'dps',
-            'deathsPerHour',
-            'manaPerFight',
-            'treasure',
-            'combatSession',
-            'combatRevenue',
-            'replayCheck',
-            'consumables',
-        ],
-        span: { treasure: 2, combatSession: 2, combatRevenue: 2, replayCheck: 2, consumables: 2 },
+        order: ['dps', 'deathsPerHour', 'manaPerFight', 'treasure', 'combatSession', 'combatRevenue', 'consumables'],
+        span: { treasure: 2, combatSession: 2, combatRevenue: 2, consumables: 2 },
     },
     Market: {
         activity: ACTIVITY.MARKET,
@@ -410,57 +420,24 @@ export const PRESET_LAYOUTS = {
         span: { skillBooks: 2, watchlist: 2, equipmentWatch: 2 },
     },
     /**
-     * A fuller starting dashboard that carries the character through every
-     * activity without switching layouts. The Default preset below stays the
-     * original curated arrangement for players who choose it explicitly.
+     * The starting dashboard, for a fresh character and for both Reset buttons.
+     * Eleven tiles that carry a character through every activity without
+     * switching layouts. Mapped to `ACTIVITY.NONE`, which nothing is ever
+     * detected as, so auto-switching never chooses it.
+     *
+     * Two columns: the five wide tiles (account, profit, supplies, queue, log)
+     * take both, and the six narrow ones pair up (worth and coins, build and
+     * combat level, time to level and experience rate). On a one-column panel
+     * every span collapses to one.
      */
-    Dashboard: {
-        activity: ACTIVITY.NONE,
-        order: [
-            'netWorth',
-            'coins',
-            'accountView',
-            'buildScore',
-            'combatLevel',
-            'skillLevel',
-            'timeToLevel',
-            'queueTimeLeft',
-            'combatStatus',
-            'experiencePerHour',
-            'dps',
-            'deathsPerHour',
-            'manaPerFight',
-            'luck',
-            'totalProfit',
-            'consumables',
-            'noticeLog',
-        ],
-        span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2 },
-    },
+    Dashboard: DASHBOARD_PRESET,
     /**
-     * The original compact dashboard, kept as an explicit preset and the
-     * arrangement used by Reset Layout. Fresh characters now start with the
-     * fuller Dashboard preset above. Mapped to `ACTIVITY.NONE`, which nothing is
-     * ever detected as, so auto-switching never chooses it.
+     * The old compact dashboard's name, kept resolvable and no longer offered
+     * (see {@link UNLISTED_PRESETS}). It is the Dashboard itself: a character
+     * whose applied layout or activity mapping says "Default" still applies
+     * something sensible, and a saved layout of the same name still shadows it.
      */
-    Default: {
-        activity: ACTIVITY.NONE,
-        order: [
-            'netWorth',
-            'coins',
-            'inventoryValue',
-            'buildScore',
-            'combatLevel',
-            'combatStatus',
-            'experiencePerHour',
-            'timeToLevel',
-            'dps',
-            'deathsPerHour',
-            'luck',
-            'totalProfit',
-        ],
-        span: { luck: 2, totalProfit: 2 },
-    },
+    Default: DASHBOARD_PRESET,
 };
 
 /**
@@ -468,7 +445,7 @@ export const PRESET_LAYOUTS = {
  * @returns {string[]} Names
  */
 export function presetNames() {
-    return Object.keys(PRESET_LAYOUTS);
+    return Object.keys(PRESET_LAYOUTS).filter((name) => !UNLISTED_PRESETS.has(name));
 }
 
 /**

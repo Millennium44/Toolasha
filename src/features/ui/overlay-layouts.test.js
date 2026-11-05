@@ -238,8 +238,17 @@ describe('the round trip', () => {
 });
 
 describe('presets', () => {
-    test('all six ship, each with an order and an activity', () => {
-        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard', 'Default']);
+    test('five are offered, each with an order and an activity; Default only resolves', () => {
+        expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard']);
+        // Retired from the switcher but still a name a stored layout or mapping can hold
+        expect(isPreset('Default')).toBe(true);
+        expect(PRESET_LAYOUTS.Default).toBe(PRESET_LAYOUTS.Dashboard);
+        expect(
+            presetFile('Default', { rows: [{ key: 'netWorth' }, { key: 'dps' }] }).toolasha.settings.visible
+        ).toMatchObject({ netWorth: true, dps: false });
+        expect(offeredLayouts({}).map((entry) => entry.name)).not.toContain('Default');
+        // A saved layout of that name is the player's own: it still lists
+        expect(offeredLayouts({ Default: { file: {} } }).map((entry) => entry.name)).toContain('Default');
 
         for (const name of presetNames()) {
             expect(PRESET_LAYOUTS[name].order.length).toBeGreaterThan(0);
@@ -254,7 +263,7 @@ describe('presets', () => {
         }
     });
 
-    test('Dashboard is fuller while keeping current-skill progress to one TTL tile', () => {
+    test('Dashboard is the eleven starting tiles, wide ones spanning both columns', () => {
         expect(PRESET_LAYOUTS.Dashboard).toEqual({
             activity: ACTIVITY.NONE,
             order: [
@@ -263,25 +272,32 @@ describe('presets', () => {
                 'accountView',
                 'buildScore',
                 'combatLevel',
-                'skillLevel',
                 'timeToLevel',
-                'queueTimeLeft',
-                'combatStatus',
                 'experiencePerHour',
-                'dps',
-                'deathsPerHour',
-                'manaPerFight',
-                'luck',
                 'totalProfit',
                 'consumables',
+                'queueTimeLeft',
                 'noticeLog',
             ],
-            span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2 },
+            span: { accountView: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
         });
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('inventoryValue');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('skillTimeToLevel');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('combatSession');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('battleTimer');
+    });
+
+    test('the combat and labyrinth presets leave out the status and replay-check tiles', () => {
+        expect(PRESET_LAYOUTS.Combat.order).not.toContain('combatStatus');
+        expect(PRESET_LAYOUTS.Labyrinth.order).not.toContain('combatStatus');
+        expect(PRESET_LAYOUTS.Labyrinth.order).not.toContain('replayCheck');
+        expect(PRESET_LAYOUTS.Labyrinth.span.replayCheck).toBeUndefined();
+        expect(PRESET_LAYOUTS.Labyrinth.order).toContain('consumables');
+    });
+
+    test('a stored mapping to Default still finds something to apply', () => {
+        expect(layoutForActivity(ACTIVITY.COMBAT, { Default: ACTIVITY.COMBAT }, [])).toBe('Default');
+        expect(presetFile('Default').toolasha.settings.order).toEqual(PRESET_LAYOUTS.Dashboard.order);
     });
 
     test('the Skilling preset is the skilling set, and no preset carries the retired tile', () => {
@@ -343,7 +359,7 @@ describe('presets', () => {
         const activities = presetNames().map((name) => PRESET_LAYOUTS[name].activity);
         const active = activities.filter((activity) => activity !== ACTIVITY.NONE);
         expect(new Set(active).size).toBe(active.length);
-        expect(activities.filter((activity) => activity === ACTIVITY.NONE)).toHaveLength(2);
+        expect(activities.filter((activity) => activity === ACTIVITY.NONE)).toHaveLength(1);
     });
 
     test('a preset is a layout file of exactly the shape a saved one has', () => {
