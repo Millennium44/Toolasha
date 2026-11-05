@@ -2167,11 +2167,17 @@ class OverlayPanel {
             const key = normalizeName(this.appliedLayout);
             if (!key) return;
             const map = await loadLayouts();
-            const saved = map[key]?.file || presetFile(key, { rows: registeredRows() });
+            const rows = registeredRows();
+            const saved = map[key]?.file || presetFile(key, { rows });
             if (!saved || !active.isConnected) return;
 
             const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
-            const drifted = layoutHalf(saved) !== layoutHalf(toOPanelConfig(this.settings, null));
+            const current = layoutHalf(toOPanelConfig(this.settings, null));
+            // A preset applied on three columns carries its three-column spans
+            const unchanged =
+                layoutHalf(saved) === current ||
+                (!map[key]?.file && layoutHalf(presetFile(key, { rows, columns: 3 })) === current);
+            const drifted = !unchanged;
             if (drifted) active.textContent = `Showing: ${this.appliedLayout} (edited)`;
         } catch (error) {
             console.error('[OverlayPanel] Comparing the applied layout failed:', error);
@@ -2196,7 +2202,10 @@ class OverlayPanel {
             const key = normalizeName(name);
             // Nothing to build it against: a preset is an order and a set of
             // spans, and is correct at whatever width it lands on
-            const saved = map[key]?.file || presetFile(key, { rows: registeredRows() });
+            // A preset is built for the columns the grid has now, and keeps a
+            // count the player set by hand (a layout they saved does neither)
+            const asPreset = !map[key]?.file && isPreset(key);
+            const saved = map[key]?.file || presetFile(key, { rows: registeredRows(), columns: this._columns() });
             if (!saved) return false;
 
             const read = fromOPanelConfig(saved);
@@ -2210,7 +2219,7 @@ class OverlayPanel {
             const appliedLayoutBefore = this.appliedLayout;
             this._setAppliedLayout(key);
 
-            await this._applyLayout(read, `switch to ${key}`, { appliedLayoutBefore });
+            await this._applyLayout(read, `switch to ${key}`, { appliedLayoutBefore, keepPinnedColumns: asPreset });
             return true;
         } catch (error) {
             console.error('[OverlayPanel] Switching to the saved layout failed:', error);
@@ -2742,14 +2751,15 @@ class OverlayPanel {
         const rest = (this.settings.order || []).filter((key) => !first.includes(key));
 
         this.settings.order = [...first, ...rest];
-        this.settings.span = { ...shipped.span };
-        this.settings.zoom = {};
-        this.settings.textScale = 100;
         // "The arrangement the script ships with" is unpinned — a pin from
         // before Reset would hold the shipped spans to whatever grid was
         // pinned, which for a 1-column pin flattens every span back to one.
         this.settings.columns = 2;
         this.settings.columnsPinned = false;
+        // Unpinned, so the width decides; three columns want the three-column spans
+        this.settings.span = { ...(this._columns() === 3 && shipped.span3 ? shipped.span3 : shipped.span) };
+        this.settings.zoom = {};
+        this.settings.textScale = 100;
 
         clearGeometry(GEOMETRY_KEY);
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;
@@ -2845,10 +2855,12 @@ class OverlayPanel {
      * @param {string} what - What to call this on the Undo button
      * @param {Object} [options]
      * @param {string|null} [options.appliedLayoutBefore] - Active name before a named switch
+     * @param {boolean} [options.keepPinnedColumns] - A preset: a count set by hand stays, since the preset fits any
      * @returns {Promise<void>}
      */
-    async _applyLayout(read, what, { appliedLayoutBefore = this.appliedLayout } = {}) {
+    async _applyLayout(read, what, { appliedLayoutBefore = this.appliedLayout, keepPinnedColumns = false } = {}) {
         this._snapshot(what, appliedLayoutBefore);
+        const heldColumns = keepPinnedColumns && this.settings.columnsPinned === true ? this.settings.columns : null;
 
         // A layout arrives either already in this overlay's own terms — an
         // order and a set of spans — or as pixels, from OPanel or from a file
@@ -2866,7 +2878,10 @@ class OverlayPanel {
         // raises it to the width), not a pin — unless the layout itself was
         // saved with one. A pin from the previous arrangement must not hold a
         // preset to the wrong grid.
-        if (arriving.columnsPinned !== true) this.settings.columnsPinned = false;
+        if (heldColumns !== null) {
+            this.settings.columns = heldColumns;
+            this.settings.columnsPinned = true;
+        } else if (arriving.columnsPinned !== true) this.settings.columnsPinned = false;
 
         this._save();
 

@@ -15,6 +15,7 @@ import {
     COLUMN_MIN,
     GAP,
     MAX_SPAN,
+    THREE_COLUMN_MIN,
 } from './overlay-flow.js';
 
 describe('columnsFor', () => {
@@ -60,6 +61,36 @@ describe('columnsFor', () => {
         expect(twoFits).toBe(444);
         expect(columnsFor(452)).toBe(2);
         expect(452 - twoFits).toBe(8);
+    });
+});
+
+describe('columnsFor, three columns', () => {
+    test('a panel wide enough for three tiles of 200 gets three, below that two', () => {
+        expect(THREE_COLUMN_MIN).toBe(3 * 200 + 2 * GAP);
+        expect(columnsFor(THREE_COLUMN_MIN - 1)).toBe(2);
+        expect(columnsFor(THREE_COLUMN_MIN)).toBe(3);
+        expect(columnsFor(3 * COLUMN_MIN + 2 * GAP - 1)).toBe(3);
+    });
+
+    test('one column, the default two, and four or more are what they were', () => {
+        const old = (width) => Math.min(MAX_SPAN, Math.max(1, Math.floor((width + GAP) / (COLUMN_MIN + GAP))));
+        for (let width = 0; width < 2600; width++) {
+            if (width >= THREE_COLUMN_MIN && old(width) === 2) continue;
+            expect(columnsFor(width)).toBe(old(width));
+        }
+    });
+
+    test('a manual count is never overridden', () => {
+        expect(columnsForLayout(640, 2, { pinned: true })).toBe(2);
+        expect(columnsForLayout(640, 3, { pinned: true })).toBe(3);
+        expect(columnsForLayout(1800, 1, { pinned: true })).toBe(1);
+    });
+
+    test('auto at a narrow, a medium and a wide width', () => {
+        expect(columnsForLayout(380, 2)).toBe(1);
+        expect(columnsForLayout(452, 2)).toBe(2);
+        expect(columnsForLayout(640, 2)).toBe(3);
+        expect(columnsForLayout(2100, 2)).toBe(9);
     });
 });
 

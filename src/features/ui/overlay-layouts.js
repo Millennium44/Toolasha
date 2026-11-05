@@ -336,6 +336,8 @@ const DASHBOARD_PRESET = {
         'noticeLog',
     ],
     span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
+    // Nine figures make three even rows; then luck and profit, supplies, and the queue beside the log
+    span3: { luck: 2, consumables: 3, noticeLog: 2 },
 };
 
 /** Presets that resolve by name but are not offered in the Layouts switcher */
@@ -364,6 +366,12 @@ const UNLISTED_PRESETS = new Set(['Default']);
  * together, and a tile that carries a block rather than a figure — revenue,
  * luck, consumables — takes the full width rather than sharing a line.
  *
+ * `span3` is the same arrangement for a grid of exactly three columns, where a
+ * span of two beside a lone tile would leave a hole. It is applied when the
+ * preset is built (see {@link presetFile}), so what is saved stays an order and
+ * a flat map of spans in the shape every older build reads. Absent means the
+ * flat `span` serves.
+ *
  * `activity` is what the preset answers for when auto-switching is on. A player
  * who maps one of their own layouts to the same activity takes precedence — the
  * preset is the fallback, not the rule.
@@ -383,7 +391,11 @@ export const PRESET_LAYOUTS = {
             'combatSession',
             'consumables',
         ],
-        span: { combatRevenue: 2, luck: 2, combatSession: 2, consumables: 2 },
+        // Treasure takes the second row's width so the five figures do not leave
+        // a lone tile beside a block
+        span: { treasure: 2, combatRevenue: 2, luck: 2, combatSession: 2, consumables: 2 },
+        // Three figures, then mana beside treasure, then each block on its own row
+        span3: { treasure: 2, combatRevenue: 3, luck: 3, combatSession: 3, consumables: 3 },
     },
     Skilling: {
         activity: ACTIVITY.SKILLING,
@@ -403,6 +415,8 @@ export const PRESET_LAYOUTS = {
             'coins',
         ],
         span: { consumables: 2 },
+        // Level, time and rate; profit beside the supplies block; queue beside coins
+        span3: { consumables: 2, coins: 2 },
     },
     Labyrinth: {
         activity: ACTIVITY.LABYRINTH,
@@ -410,7 +424,10 @@ export const PRESET_LAYOUTS = {
         // what it is dropping, whether the sim agrees with what happened, and
         // whether you are about to run out of food
         order: ['dps', 'deathsPerHour', 'manaPerFight', 'treasure', 'combatSession', 'combatRevenue', 'consumables'],
-        span: { treasure: 2, combatSession: 2, combatRevenue: 2, consumables: 2 },
+        // Mana takes its row's width so treasure does not start below a lone tile
+        span: { manaPerFight: 2, treasure: 2, combatSession: 2, combatRevenue: 2, consumables: 2 },
+        // The three figures make a row; each block takes its own
+        span3: { treasure: 3, combatSession: 3, combatRevenue: 3, consumables: 3 },
     },
     Market: {
         activity: ACTIVITY.MARKET,
@@ -421,6 +438,8 @@ export const PRESET_LAYOUTS = {
         // row's behalf.
         order: ['netWorth', 'coins', 'inventoryValue', 'marketListings', 'skillBooks', 'watchlist', 'equipmentWatch'],
         span: { skillBooks: 2, watchlist: 2, equipmentWatch: 2 },
+        // Worth, coins and inventory; listings beside the skill books; one list per row
+        span3: { skillBooks: 2, watchlist: 3, equipmentWatch: 3 },
     },
     /**
      * The starting dashboard, for a fresh character and for both Reset buttons.
@@ -515,9 +534,10 @@ function registryKeys(rows) {
  * @param {string} name - Preset name
  * @param {Object} [options] - How to build it
  * @param {Array<Object>} [options.rows] - A registry snapshot, for tests
+ * @param {number} [options.columns] - The columns the grid has right now; three picks the preset's `span3`
  * @returns {Object|null} A file for `fromOPanelConfig`, or null when there is no such preset
  */
-export function presetFile(name, { rows = null } = {}) {
+export function presetFile(name, { rows = null, columns = 2 } = {}) {
     const preset = PRESET_LAYOUTS[normalizeName(name)];
     if (!preset) return null;
 
@@ -535,7 +555,7 @@ export function presetFile(name, { rows = null } = {}) {
         // Every preset is written for the two columns the default panel gives
         columns: 2,
         order: [...preset.order],
-        span: { ...preset.span },
+        span: { ...(columns === 3 && preset.span3 ? preset.span3 : preset.span) },
         visible,
         zoom: {},
         // Applied locked. A preset is somebody else's arrangement arriving

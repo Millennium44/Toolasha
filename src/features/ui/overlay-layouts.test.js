@@ -283,6 +283,7 @@ describe('presets', () => {
                 'noticeLog',
             ],
             span: { accountView: 2, luck: 2, totalProfit: 2, consumables: 2, queueTimeLeft: 2, noticeLog: 2 },
+            span3: { luck: 2, consumables: 3, noticeLog: 2 },
         });
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('inventoryValue');
         expect(PRESET_LAYOUTS.Dashboard.order).not.toContain('skillTimeToLevel');
@@ -342,6 +343,118 @@ describe('presets', () => {
                 expect(Number.isInteger(columns)).toBe(true);
                 expect(columns).toBeGreaterThanOrEqual(2);
                 expect(columns).toBeLessThanOrEqual(MAX_SPAN);
+            }
+        }
+    });
+
+    /**
+     * Where a sparse row-flow grid (the panel's: no dense packing) puts each tile.
+     * @param {string[]} order - Visible tiles in order
+     * @param {Object} span - Stored spans
+     * @param {number} columns - Grid columns
+     * @returns {string[][]} Rows of keys, and the number of unfilled cells in each row
+     */
+    function layRows(order, span, columns) {
+        const rows = [[]];
+        let used = 0;
+        for (const key of order) {
+            const wide = spanFor(span[key], columns);
+            if (used + wide > columns) {
+                rows.push([]);
+                used = 0;
+            }
+            rows[rows.length - 1].push(key);
+            used += wide;
+        }
+        return rows.map((row) => ({
+            row,
+            gap: columns - row.reduce((sum, key) => sum + spanFor(span[key], columns), 0),
+        }));
+    }
+
+    test('no preset leaves a hole before its last row at 1, 2 or 3 columns', () => {
+        for (const name of presetNames()) {
+            for (const columns of [1, 2, 3]) {
+                const span = presetFile(name, { columns }).toolasha.settings.span;
+                const rows = layRows(PRESET_LAYOUTS[name].order, span, columns);
+                for (const { row, gap } of rows.slice(0, -1))
+                    expect([name, columns, row.join('|'), gap]).toEqual([name, columns, row.join('|'), 0]);
+            }
+        }
+    });
+
+    test('the last row may be short, and every preset lands the rows written down', () => {
+        const rowsOf = (name, columns) =>
+            layRows(PRESET_LAYOUTS[name].order, presetFile(name, { columns }).toolasha.settings.span, columns).map(
+                ({ row }) => row.join('|')
+            );
+        expect(rowsOf('Skilling', 3)).toEqual([
+            'skillLevel|timeToLevel|experiencePerHour',
+            'totalProfit|consumables',
+            'queueTimeLeft|coins',
+        ]);
+        expect(rowsOf('Dashboard', 3)).toEqual([
+            'netWorth|coins|accountView',
+            'buildScore|combatLevel|timeToLevel',
+            'experiencePerHour|dps|deathsPerHour',
+            'luck|totalProfit',
+            'consumables',
+            'queueTimeLeft|noticeLog',
+        ]);
+        expect(rowsOf('Market', 3)).toEqual([
+            'netWorth|coins|inventoryValue',
+            'marketListings|skillBooks',
+            'watchlist',
+            'equipmentWatch',
+        ]);
+        expect(rowsOf('Combat', 3)).toEqual([
+            'battleTimer|dps|deathsPerHour',
+            'manaPerFight|treasure',
+            'combatRevenue',
+            'luck',
+            'combatSession',
+            'consumables',
+        ]);
+        expect(rowsOf('Labyrinth', 3)).toEqual([
+            'dps|deathsPerHour|manaPerFight',
+            'treasure',
+            'combatSession',
+            'combatRevenue',
+            'consumables',
+        ]);
+        expect(rowsOf('Labyrinth', 2)).toEqual([
+            'dps|deathsPerHour',
+            'manaPerFight',
+            'treasure',
+            'combatSession',
+            'combatRevenue',
+            'consumables',
+        ]);
+    });
+
+    test('a preset built for two columns, or for a count it has no map for, is the flat one', () => {
+        for (const name of presetNames()) {
+            for (const columns of [1, 2, 4, 9]) {
+                expect(presetFile(name, { columns }).toolasha.settings.span).toEqual(PRESET_LAYOUTS[name].span);
+            }
+            expect(presetFile(name).toolasha.settings.span).toEqual(PRESET_LAYOUTS[name].span);
+        }
+    });
+
+    test('a preset whose tiles do not fill the last row still has no gap inside it', () => {
+        // Skilling has seven tiles; at two columns the last row is queue and coins, at three coins stretches
+        const two = layRows(PRESET_LAYOUTS.Skilling.order, PRESET_LAYOUTS.Skilling.span, 2);
+        expect(two[two.length - 1].row).toEqual(['queueTimeLeft', 'coins']);
+        const three = layRows(PRESET_LAYOUTS.Skilling.order, PRESET_LAYOUTS.Skilling.span3, 3);
+        expect(three[three.length - 1]).toEqual({ row: ['queueTimeLeft', 'coins'], gap: 0 });
+    });
+
+    test('every span3 entry names a tile of the preset and asks for at most three columns', () => {
+        for (const name of presetNames()) {
+            for (const [key, columns] of Object.entries(PRESET_LAYOUTS[name].span3 || {})) {
+                expect(PRESET_LAYOUTS[name].order).toContain(key);
+                expect(columns).toBeGreaterThanOrEqual(2);
+                expect(columns).toBeLessThanOrEqual(3);
             }
         }
     });
