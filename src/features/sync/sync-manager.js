@@ -336,6 +336,8 @@ class SyncManager {
             this.handoffUnregister = null;
             this.owedTimer = null;
             this.handoffTimer = null;
+            // Its rearm was among the timers just cleared; held, it would stop every later takeover's push
+            this.handoffPushed = false;
             this._startAuto();
             this._watchHandoff();
             this._scheduleOwed();
