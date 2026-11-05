@@ -178,6 +178,8 @@ import * as selectorAudit from '../features/dev/selector-audit.js';
 // about, and is handed out here beside healthStatus because that is where its
 // findings go.
 import * as schemaCanary from '../core/schema-canary.js';
+// Worn-gear figures against the game's own noncombatStats, once per character
+import * as gearStatsCheck from '../core/gear-stats-check.js';
 import { consumablesPanel } from '../features/ui/consumables-panel.js';
 import { combatLevelPanel } from '../features/ui/combat-level-panel.js';
 
@@ -308,6 +310,7 @@ toolashaRoot.UI = {
     pformancePanel,
     healthStatus,
     schemaCanary,
+    gearStatsCheck,
     selectorAudit,
     consumablesPanel,
     combatLevelPanel,
