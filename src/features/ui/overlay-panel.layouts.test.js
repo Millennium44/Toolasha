@@ -450,6 +450,72 @@ describe('saving and switching named layouts', () => {
             saves.mockRestore();
         });
 
+        describe('a panel opened at a width other than the one its spans were written for', () => {
+            let widthSpy;
+            const widthAs = (width) => widthSpy.mockReturnValue(width);
+
+            beforeEach(() => {
+                widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(2040);
+            });
+
+            afterEach(() => {
+                widthSpy.mockRestore();
+            });
+
+            test('applied at nine columns, closed and reopened at two, it has the two-column spans', async () => {
+                await overlayPanel.applyNamedLayout('Dense');
+                expect(overlayPanel.columns).toBe(9);
+                overlayPanel.hide();
+                const written = [];
+                const saves = vi.spyOn(overlayPanel, '_save').mockImplementation(() => {
+                    written.push(JSON.stringify(overlayPanel.settings.span));
+                });
+
+                widthAs(480);
+                overlayPanel.show();
+                await new Promise((resolve) => setTimeout(resolve, 60));
+
+                expect(overlayPanel.columns).toBe(2);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 2));
+                // Whatever else saved (opening it does), the re-fitted spans were never written
+                expect(written).not.toContain(JSON.stringify(overlayPanel.settings.span));
+                saves.mockRestore();
+            });
+
+            test('stored nine-column spans on a three-column page load become three-column spans, unsaved', async () => {
+                await overlayPanel.applyNamedLayout('Dense');
+                overlayPanel.hide();
+                overlayPanel.columns = 0;
+                const written = [];
+                const saves = vi.spyOn(overlayPanel, '_save').mockImplementation(() => {
+                    written.push(JSON.stringify(overlayPanel.settings.span));
+                });
+
+                widthAs(660);
+                overlayPanel.show();
+                await new Promise((resolve) => setTimeout(resolve, 60));
+
+                expect(overlayPanel.columns).toBe(3);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 3));
+                // Whatever else saved (opening it does), the re-fitted spans were never written
+                expect(written).not.toContain(JSON.stringify(overlayPanel.settings.span));
+                saves.mockRestore();
+            });
+
+            test('a hand-edited layout is left alone on reopen', async () => {
+                await overlayPanel.applyNamedLayout('Dense');
+                overlayPanel.settings.span = { ...overlayPanel.settings.span, coins: 3 };
+                const edited = { ...overlayPanel.settings.span };
+                overlayPanel.hide();
+
+                widthAs(480);
+                overlayPanel.show();
+                await new Promise((resolve) => setTimeout(resolve, 60));
+
+                expect(overlayPanel.settings.span).toEqual(edited);
+            });
+        });
+
         test('a window resize that applies the new count first still re-fits the preset', async () => {
             measureAs(660);
             await overlayPanel.applyNamedLayout('Dense');
