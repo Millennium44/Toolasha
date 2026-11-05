@@ -98,6 +98,8 @@ describe('the tile', () => {
         expect(title).toContain('Total cost per day');
         expect(title).toContain('Ask: 14.10M');
         expect(title).toContain('Bid: 13.60M');
+        // Desktop opens a tile on double-click (a single tap only on touch)
+        expect(title).toContain('Double-click to open the Consumables panel.');
     });
 
     test('an unpriced item flags the Ask figure on the tile itself', () => {

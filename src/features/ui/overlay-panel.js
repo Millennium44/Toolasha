@@ -1044,9 +1044,10 @@ class OverlayPanel {
             position: 'fixed',
             top: '120px',
             left: '20px',
-            // Z_HUD, not Z_FLOATING_PANEL: this one is always up, so it has to
-            // sit *below* the game's own interactive UI rather than over the
-            // tabs and buttons it happens to overlap
+            // Z_HUD (101), not Z_FLOATING_PANEL: this one is always up, so it
+            // rests just above the game's cooldown numbers and loot chips (100)
+            // and below its modals (200), rather than in the floating-panel band
+            // that rises over everything while the layout is being arranged
             zIndex: String(config.Z_HUD),
             // Clamped so the first open on a phone is not wider than the screen.
             // Height goes through `panelHeightCap`, which measures the *visible*
