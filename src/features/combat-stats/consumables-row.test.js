@@ -84,6 +84,15 @@ describe('the tile', () => {
         expect(draw().textContent).not.toContain('Total Cost');
     });
 
+    test('the first line wraps so a narrow tile moves the Ask figure down instead of clipping its flag', () => {
+        game.sides = { ask: 14_100_000, bid: 13_600_000, askUnpriced: 2, bidUnpriced: 0 };
+        const first = draw().children[0];
+        expect(first.style.flexWrap).toBe('wrap');
+        const ask = [...first.children].find((span) => span.textContent.startsWith('Ask'));
+        expect(ask.textContent).toBe('Ask 14.10M/day*');
+        expect(ask.style.maxWidth).toBe('100%');
+    });
+
     test('the Bid side and the wording are in the tooltip', () => {
         const title = draw().title;
         expect(title).toContain('Total cost per day');

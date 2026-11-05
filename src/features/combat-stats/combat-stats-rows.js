@@ -642,27 +642,31 @@ registerRow({
         });
 
         const first = document.createElement('div');
-        drawLine(first, [
-            { text: 'You:', color: ROW_COLORS.dim },
-            {
-                text: you
-                    ? `${shortDuration(you.secondsLeft)}${payload.youUnknown ? ' + ?' : ''}`
-                    : payload.youUnknown
-                      ? 'rate unknown'
-                      : '--',
-                color: runOutColor(you),
-            },
-            { text: 'Party:', color: ROW_COLORS.dim },
-            {
-                text: party
-                    ? `${shortDuration(party.secondsLeft)}${payload.partyUnknown ? ' + ?' : ''}`
-                    : payload.partyUnknown
-                      ? 'rate unknown'
-                      : '--',
-                color: runOutColor(party),
-            },
-            askSegment(sides),
-        ]);
+        drawLine(
+            first,
+            [
+                { text: 'You:', color: ROW_COLORS.dim },
+                {
+                    text: you
+                        ? `${shortDuration(you.secondsLeft)}${payload.youUnknown ? ' + ?' : ''}`
+                        : payload.youUnknown
+                          ? 'rate unknown'
+                          : '--',
+                    color: runOutColor(you),
+                },
+                { text: 'Party:', color: ROW_COLORS.dim },
+                {
+                    text: party
+                        ? `${shortDuration(party.secondsLeft)}${payload.partyUnknown ? ' + ?' : ''}`
+                        : payload.partyUnknown
+                          ? 'rate unknown'
+                          : '--',
+                    color: runOutColor(party),
+                },
+                askSegment(sides),
+            ],
+            { wrap: true }
+        );
         container.appendChild(first);
 
         container.appendChild(limitingLine(limiting));
@@ -696,6 +700,7 @@ function askSegment(sides) {
         text: `Ask ${total}/day${partial ? '*' : ''}`,
         color: partial ? ROW_COLORS.gold : ROW_COLORS.neutral,
         push: true,
+        breakable: true,
     };
 }
 
@@ -827,18 +832,23 @@ function renderSkilling(container, skill) {
     });
 
     const first = document.createElement('div');
-    drawLine(first, [
-        { text: 'You:', color: ROW_COLORS.dim },
-        {
-            text: soonest ? `${shortDuration(soonest.secondsLeft)}${unknown ? ' + ?' : ''}` : 'rate unknown',
-            color: runOutColor(soonest),
-        },
-        {
-            text: `Ask ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}`,
-            color: ROW_COLORS.neutral,
-            push: true,
-        },
-    ]);
+    drawLine(
+        first,
+        [
+            { text: 'You:', color: ROW_COLORS.dim },
+            {
+                text: soonest ? `${shortDuration(soonest.secondsLeft)}${unknown ? ' + ?' : ''}` : 'rate unknown',
+                color: runOutColor(soonest),
+            },
+            {
+                text: `Ask ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}`,
+                color: ROW_COLORS.neutral,
+                push: true,
+                breakable: true,
+            },
+        ],
+        { wrap: true }
+    );
     container.appendChild(first);
     container.appendChild(limitingLine(limiting));
 
