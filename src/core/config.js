@@ -100,7 +100,7 @@ class Config {
         this.SCRIPT_COLOR_ALERT = 'red';
 
         // Z-index tiers
-        this.Z_HUD = 50; // In-game HUD overlays — below game interactive UI
+        this.Z_HUD = 101; // In-game HUD overlays — above the game's cooldown numbers and loot chips (100), below its modals (200)
         this.Z_FLOATING_PANEL = 1100; // Persistent panels — above the game's own modals, which sit at 200
         this.Z_POPUP = 9000; // Contextual popups / short-lived overlays
         this.Z_MODAL = 9000; // Full-screen intentional modals
