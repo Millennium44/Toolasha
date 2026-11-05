@@ -207,6 +207,25 @@ const GEOMETRY_KEY = 'overlayPanel';
 const PANEL_ID = 'toolasha-overlay-panel';
 const REFRESH_MS = 1000;
 const DEFAULT_PANEL = { width: 480, height: 320 };
+
+/**
+ * A layout file reduced to what makes it the same layout.
+ *
+ * @param {Object|null} file - A layout file from `toOPanelConfig` or `presetFile`
+ * @param {boolean} [ignoreColumns] - Leave out the column count and its pin. A preset's identity
+ *   is its tiles and its look, not the grid: the count is held by a pin kept across an apply, or
+ *   left behind when the pin is cleared, and neither makes the preset edited.
+ * @returns {string}
+ */
+function layoutIdentity(file, ignoreColumns = false) {
+    const settings = file?.toolasha?.settings;
+    if (!settings) return 'null';
+    if (!ignoreColumns) return JSON.stringify(settings);
+    const { columns, columnsPinned, ...rest } = settings;
+    void columns;
+    void columnsPinned;
+    return JSON.stringify(rest);
+}
 const ZOOM_STEP = 10;
 
 /** Kept clear of the window's edges, so the panel never reaches them */
@@ -979,11 +998,10 @@ class OverlayPanel {
             if (map[key]?.file) return;
 
             const rows = registeredRows();
-            const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
-            const current = layoutHalf(toOPanelConfig(this.settings, null));
+            const current = layoutIdentity(toOPanelConfig(this.settings, null), true);
             let unedited = false;
             for (let at = 1; !unedited && at <= MAX_SPAN; at++)
-                unedited = layoutHalf(presetFile(key, { rows, columns: at })) === current;
+                unedited = layoutIdentity(presetFile(key, { rows, columns: at }), true) === current;
             if (!unedited) return;
 
             const wanted = fromOPanelConfig(presetFile(key, { rows, columns }));
@@ -2247,12 +2265,13 @@ class OverlayPanel {
             const saved = map[key]?.file || presetFile(key, { rows });
             if (!saved || !active.isConnected) return;
 
-            const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
-            const current = layoutHalf(toOPanelConfig(this.settings, null));
+            // A preset's identity leaves out the column count and pin; a saved layout's does not
+            const isPresetNow = !map[key]?.file;
+            const current = layoutIdentity(toOPanelConfig(this.settings, null), isPresetNow);
             // A preset applied on a wider grid carries that grid's spans
-            let unchanged = layoutHalf(saved) === current;
-            for (let columns = 3; !unchanged && !map[key]?.file && columns <= MAX_SPAN; columns++)
-                unchanged = layoutHalf(presetFile(key, { rows, columns })) === current;
+            let unchanged = layoutIdentity(saved, isPresetNow) === current;
+            for (let columns = 1; !unchanged && isPresetNow && columns <= MAX_SPAN; columns++)
+                unchanged = layoutIdentity(presetFile(key, { rows, columns }), true) === current;
             const drifted = !unchanged;
             if (drifted) active.textContent = `Showing: ${this.appliedLayout} (edited)`;
         } catch (error) {

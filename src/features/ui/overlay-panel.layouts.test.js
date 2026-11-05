@@ -573,6 +573,27 @@ describe('saving and switching named layouts', () => {
         expect(line.textContent).toBe('Showing: Dashboard (edited)');
     });
 
+    test('a preset applied under a held pin is not reported as edited, and re-fits once the pin is cleared', async () => {
+        measureAs(2040);
+        overlayPanel.settings.columns = 3;
+        overlayPanel.settings.columnsPinned = true;
+        await overlayPanel.applyNamedLayout('Dense');
+        const line = document.createElement('div');
+        document.body.appendChild(line);
+        line.textContent = 'Showing: Dense';
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Dense');
+
+        // Pressing "auto" clears the pin and leaves the count where it was
+        overlayPanel.settings.columnsPinned = false;
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Dense');
+        overlayPanel._applyColumns();
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        expect(overlayPanel.columns).toBe(9);
+        expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+    });
+
     test('Dense applies its twenty tiles with the nine-column spans, and keeps a count set by hand', async () => {
         measureAs(2040);
         await overlayPanel.applyNamedLayout('Dense');
