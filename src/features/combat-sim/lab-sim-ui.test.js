@@ -3079,6 +3079,25 @@ describe('the ability target grid covers every fight it is being asked about', (
         expect(grid().textContent).not.toContain('Precision (40–44) [');
     });
 
+    test('Next multiple of: the single-fight grid prefills the next multiple, and the several-fight scope refuses the mode', () => {
+        const levelType = ui.panel.querySelector('#mwi-labsim-upgrade-level-type');
+        expect([...levelType.options].map((o) => o.value)).toContain('next_multiple');
+        levelType.value = 'next_multiple';
+        levelType.dispatchEvent(new window.Event('change', { bubbles: true }));
+        const levelBox = ui.panel.querySelector('#mwi-labsim-upgrade-target-level');
+        expect(levelBox.placeholder).toBe('5');
+
+        openGrid();
+        // Fireball 48 -> 50
+        expect(grid().querySelector(`[data-ability-target="${FIREBALL}"]`).value).toBe('50');
+
+        // Several fights: a next multiple would be a different boost per loadout, so the mode is put back
+        setScope('all');
+        expect(levelType.disabled).toBe(true);
+        expect(levelType.value).toBe('increment');
+        expect(levelType.title).toMatch(/next multiple/);
+    });
+
     test('the target opens off the highest level it is held at, so the boost is a boost everywhere', () => {
         setScope('all');
         openGrid();

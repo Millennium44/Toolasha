@@ -1281,6 +1281,117 @@ describe('the panel', () => {
         expect(hours).toBe(42);
     });
 
+    describe('Ability Lv: Next multiple of', () => {
+        const typeSelect = () => ui.panel.querySelector('#mwi-csim-upgrade-level-type');
+        const levelBox = () => ui.panel.querySelector('#mwi-csim-upgrade-target-level');
+        const grid = () => ui.panel.querySelector('#mwi-csim-ability-targets');
+        const targets = () =>
+            Object.fromEntries(
+                [...grid().querySelectorAll('[data-ability-target]')].map((i) => [
+                    i.dataset.abilityTarget.split('/').pop(),
+                    i.value,
+                ])
+            );
+        const pick = (value) => {
+            typeSelect().value = value;
+            typeSelect().dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const levels = [
+            ['fierce_aura', 42],
+            ['frenzy', 61],
+            ['berserk', 66],
+            ['puncture', 70],
+            ['penetrating_strike', 75],
+        ];
+
+        beforeEach(() => {
+            mocks.gameData = {
+                itemDetailMap: {},
+                abilityDetailMap: Object.fromEntries(levels.map(([k]) => [`/abilities/${k}`, { name: k }])),
+            };
+            mocks.editedDTOs = {
+                player1: {
+                    hrid: 'player1',
+                    equipment: {},
+                    abilities: levels.map(([k, level]) => ({ hrid: `/abilities/${k}`, level })),
+                },
+            };
+        });
+
+        afterEach(() => {
+            mocks.gameData = { itemDetailMap: {} };
+            mocks.editedDTOs = null;
+        });
+
+        test('offers the mode, and choosing it shows a step of 5 with its own hint', () => {
+            expect([...typeSelect().options].map((o) => o.value)).toEqual(['increment', 'target', 'next_multiple']);
+            pick('next_multiple');
+            expect(levelBox().value).toBe('5');
+            expect(levelBox().placeholder).toBe('5');
+            expect(levelBox().title).toMatch(/next multiple/);
+            pick('increment');
+            expect(levelBox().placeholder).toBe('+5');
+        });
+
+        test('opening Targets prefills the next multiple of each ability, a full step up from a multiple', () => {
+            pick('next_multiple');
+            ui.panel.querySelector('#mwi-csim-ability-targets-toggle').click();
+
+            expect(targets()).toEqual({
+                fierce_aura: '45',
+                frenzy: '65',
+                berserk: '70',
+                puncture: '75',
+                penetrating_strike: '80',
+            });
+        });
+
+        test('a step of 10, and a blank or zero step (falls back to 5, as +Levels does)', () => {
+            const toggle = ui.panel.querySelector('#mwi-csim-ability-targets-toggle');
+            pick('next_multiple');
+            levelBox().value = '10';
+            toggle.click();
+            expect(targets().puncture).toBe('80');
+            expect(targets().fierce_aura).toBe('50');
+
+            for (const blank of ['', '0']) {
+                levelBox().value = blank;
+                toggle.click(); // closes
+                toggle.click(); // reopens and refills
+                expect(targets().puncture).toBe('75');
+            }
+        });
+
+        test('increment mode is unchanged', () => {
+            ui.panel.querySelector('#mwi-csim-ability-targets-toggle').click();
+            expect(targets().puncture).toBe('75');
+            expect(targets().frenzy).toBe('66');
+        });
+
+        test('an ability at the max is prefilled at the max, so the row skips it', () => {
+            mocks.editedDTOs.player1.abilities = [{ hrid: '/abilities/frenzy', level: 200 }];
+            pick('next_multiple');
+            ui.panel.querySelector('#mwi-csim-ability-targets-toggle').click();
+            expect(targets()).toEqual({ frenzy: '200' });
+        });
+
+        test('the run hands the finder the mode and the step', async () => {
+            selectZone();
+            ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;
+            pick('next_multiple');
+            levelBox().value = '10';
+            let seen = null;
+            mocks.onRun = (params) => {
+                seen = params;
+            };
+
+            await ui._onUpgradeAnalyze();
+
+            expect(seen.abilityLevelType).toBe('next_multiple');
+            expect(seen.abilityTargetLevel).toBe(10);
+        });
+    });
+
     test('an analysis started before the editor is set up still knows which DTO is the live character', async () => {
         selectZone();
         let selfHrid = 'unset';

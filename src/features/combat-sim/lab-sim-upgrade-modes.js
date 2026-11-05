@@ -519,7 +519,7 @@ export function estimateLabUpgradeSims(dimensions, targetCount) {
 }
 
 /**
- * Whether the per-ability "Target Lv" mode can be honoured.
+ * Whether the per-ability "Target Lv" / "Next multiple" modes can be honoured.
  *
  * The multi-fight analysis fixes the ability level rule to a uniform increment,
  * because a target level means something different in each loadout. Saying so
@@ -532,7 +532,7 @@ export function labAbilityLevelTypeAvailability(scopeMode, targetCount) {
     if (targetCount > 1) {
         return {
             enabled: false,
-            reason: 'Across several fights, ability levels are always weighed as a uniform +N boost — a target level would mean a different boost in every loadout.',
+            reason: 'Across several fights, ability levels are always weighed as a uniform +N boost — a target level or a next multiple would mean a different boost in every loadout.',
         };
     }
     return { enabled: true, reason: '' };

@@ -52,6 +52,7 @@ import {
     maxLevel,
     maxGuildShrineLevel,
 } from '../../utils/game-maximums.js';
+import { nextMultipleLevel } from '../../utils/ability-level-step.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
@@ -1030,7 +1031,7 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isS
  * @param {Object} gameData - Game data from buildGameDataPayload()
  * @param {string} [mode='equipment'] - 'equipment' or 'abilities'
  * @param {number} [abilityTargetLevel=0] - Target level or increment for ability upgrades
- * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
+ * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels), 'target' (absolute level) or 'next_multiple' (N is a step)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
  * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, skipSkillingRooms, communityBuffTargetLevel,
@@ -1424,6 +1425,9 @@ export function generateCandidates(
                 let targetLevel;
                 if (abilityTargetsMap) {
                     targetLevel = Math.floor(abilityTargetsMap[ability.hrid] || 0);
+                } else if (abilityLevelType === 'next_multiple') {
+                    // abilityTargetLevel is the step here; one already on a multiple goes up a full step
+                    targetLevel = nextMultipleLevel(ability.level, abilityTargetLevel, maxLevel(gameData));
                 } else if (abilityLevelType === 'target') {
                     targetLevel =
                         abilityTargetLevel > ability.level
