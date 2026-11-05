@@ -34,11 +34,11 @@ A Bestiary route of a day or more now shows as 4d 18:38 rather than 114:38, in t
 
 ### Queue walks wait for your Next press
 
-After a row is queued the walk bar shows "Queued ✓" and waits for Next instead of moving on by itself. Alchemy steps now put the right item in the slot and fill the amount, and the bar can be dragged and remembers where you put it.
+After a row is queued the walk bar shows "Queued ✓" and waits for Next instead of moving on by itself. Alchemy steps now put the right item in the slot and fill the amount, and on desktop the bar can be dragged and remembers where you put it.
 
 ### Iron Bell walk handles bigger stacks
 
-One queue row can now hold up to 2.1 billion actions instead of 100,000, and the walk warns if the game stored a different count than it typed.
+The walk no longer splits a leg at 100,000 actions: it types the whole count, up to 2.1 billion, and warns if the game stored a different count.
 
 ### Combat Sim tunes triggers in its own section
 
