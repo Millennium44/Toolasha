@@ -47,6 +47,7 @@ import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-t
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
     FALLBACK_MAX_HOUSE_ROOM_LEVEL,
+    maxEnhancementLevel,
     maxHouseRoomLevel,
     maxLevel,
     maxGuildShrineLevel,
@@ -149,7 +150,7 @@ export function findMatchingCharmForSkill(
     const targetFocus = `/skills/${skillName}`;
     const enhancementLevel =
         Number.isFinite(charmEnhancement) && charmEnhancement >= 0
-            ? Math.min(20, Math.floor(charmEnhancement))
+            ? Math.min(maxEnhancementLevel(gameData), Math.floor(charmEnhancement))
             : currentCharm?.enhancementLevel || 0;
 
     const currentDetail = currentCharm ? gameData.itemDetailMap[currentCharm.hrid] : null;
