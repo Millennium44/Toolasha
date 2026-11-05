@@ -271,6 +271,8 @@ export function glyph(name, size = 16) {
  *   too long for its tile — a clipped rate wants the tile's tooltip, not a
  *   repeat of itself.
  * @property {boolean} [push] - Push this and everything after it to the right
+ * @property {boolean} [breakable] - May break across lines at spaces when it is wider than
+ *   the tile (only with the line's `wrap` option), so a figure's flag is never the part cut off
  */
 
 /**
@@ -282,8 +284,13 @@ export function glyph(name, size = 16) {
  *
  * @param {HTMLElement} host - Where to draw
  * @param {Segment[]} segments - The line
+ * @param {Object} [options]
+ * @param {boolean} [options.wrap] - Let the line wrap instead of clipping: a piece that does
+ *   not fit moves whole to a second line, right-aligned if it is the pushed one. For a line
+ *   that carries a figure someone buys from, which must never be clipped. The caller's tile
+ *   has to have room for the second line; the tile's other lines give way first.
  */
-export function drawLine(host, segments) {
+export function drawLine(host, segments, { wrap = false } = {}) {
     // Centred, always, whether or not there is an icon on the line. It used to
     // depend: text alone was aligned on its baseline and a line carrying an icon
     // was centred, because an icon has no baseline and against baselined text it
@@ -304,6 +311,7 @@ export function drawLine(host, segments) {
         whiteSpace: 'nowrap',
         overflow: 'hidden',
     });
+    if (wrap) Object.assign(host.style, { flexWrap: 'wrap', columnGap: '5px', rowGap: '0' });
 
     for (const segment of segments) {
         if (!segment) continue;
@@ -330,6 +338,9 @@ export function drawLine(host, segments) {
             // Never allowed to shrink: a number squeezed to "1.2…" reads as a
             // number rather than as a truncation
             span.style.flex = '0 0 auto';
+            if (wrap && segment.breakable) {
+                Object.assign(span.style, { whiteSpace: 'normal', maxWidth: '100%', textAlign: 'right' });
+            }
         }
 
         host.appendChild(span);

@@ -130,6 +130,19 @@ describe('the skilling tile', () => {
         expect(draw().children[0].textContent).toContain('1 unpriced');
     });
 
+    test('the line wraps and the unpriced note can break, so a narrow tile never cuts the flag off', () => {
+        runForaging();
+        game.slots[FORAGING] = [slot('/items/gathering_tea'), slot('/items/efficiency_tea', { slotIndex: 1 })];
+        game.inventory = [stack('/items/gathering_tea', 50), stack('/items/efficiency_tea', 50)];
+        game.prices['/items/gathering_tea'] = { ask: 1000, bid: 900 };
+
+        const first = draw().children[0];
+        expect(first.style.flexWrap).toBe('wrap');
+        const ask = [...first.children].find((span) => span.textContent.includes('unpriced'));
+        expect(ask.style.whiteSpace).toBe('normal');
+        expect(ask.style.maxWidth).toBe('100%');
+    });
+
     test('nothing priced at all shows a dash, never zero', () => {
         runForaging();
         game.slots[FORAGING] = [slot('/items/gathering_tea')];

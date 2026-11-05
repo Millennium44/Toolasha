@@ -57,6 +57,21 @@ describe('shortDuration', () => {
 });
 
 describe('drawLine', () => {
+    test('a line clips by default and wraps only when asked', () => {
+        const clipped = document.createElement('div');
+        drawLine(clipped, [{ text: 'a' }, { text: 'Ask 1M/day*', push: true, breakable: true }]);
+        expect(clipped.style.flexWrap).toBe('');
+        expect(clipped.children[1].style.whiteSpace).not.toBe('normal');
+
+        const wrapped = document.createElement('div');
+        drawLine(wrapped, [{ text: 'a' }, { text: 'Ask 1M/day*', push: true, breakable: true }], { wrap: true });
+        expect(wrapped.style.flexWrap).toBe('wrap');
+        // The figure moves whole to its own right-aligned line rather than being cut
+        expect(wrapped.children[1].style.flex).toContain('0 0 auto');
+        expect(wrapped.children[1].style.marginLeft).toBe('auto');
+        expect(wrapped.children[1].style.maxWidth).toBe('100%');
+    });
+
     test('skips nulls so a segment can be conditional', () => {
         const host = document.createElement('div');
         drawLine(host, [{ text: 'a' }, null, { text: 'b' }]);
