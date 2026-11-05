@@ -1,4 +1,5 @@
 import dataManager from '../core/data-manager.js';
+import { ENHANCEMENT_BONUSES } from './enhancement-steps.js';
 
 /**
  * Enhancement Multiplier System
@@ -25,32 +26,7 @@ export const ENHANCEMENT_MULTIPLIERS = {
     // All other slots: 1× (default)
 };
 
-/**
- * Enhancement bonus table
- * Maps enhancement level to percentage bonus
- */
-export const ENHANCEMENT_BONUSES = {
-    1: 0.02,
-    2: 0.042,
-    3: 0.066,
-    4: 0.092,
-    5: 0.12,
-    6: 0.15,
-    7: 0.182,
-    8: 0.216,
-    9: 0.252,
-    10: 0.29,
-    11: 0.334,
-    12: 0.384,
-    13: 0.44,
-    14: 0.502,
-    15: 0.57,
-    16: 0.644,
-    17: 0.724,
-    18: 0.81,
-    19: 0.902,
-    20: 1.0,
-};
+export { ENHANCEMENT_BONUSES };
 
 /**
  * What one whole base stat is in the game's table.

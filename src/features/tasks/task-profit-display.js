@@ -3578,13 +3578,12 @@ class TaskProfitDisplay {
                 const badgeDetails = itemDetailMap[trinketSlot.itemHrid];
                 if (badgeDetails) {
                     const enhText = trinketSlot.enhancementLevel > 0 ? ` +${trinketSlot.enhancementLevel}` : '';
-                    const baseTaskSpeed = badgeDetails.equipmentDetail?.noncombatStats?.taskSpeed || 0;
-                    const enhBonus = badgeDetails.equipmentDetail?.noncombatEnhancementBonuses?.taskSpeed || 0;
-                    const enhLevel = trinketSlot.enhancementLevel || 0;
+                    const { base: baseTaskSpeed, enhancement: enhTotal } = dataManager.getTaskSpeedParts(
+                        badgeDetails,
+                        trinketSlot.enhancementLevel || 0
+                    );
                     const detailText =
-                        enhBonus > 0
-                            ? ` (${(baseTaskSpeed * 100).toFixed(2)}% + ${(enhBonus * enhLevel * 100).toFixed(2)}%)`
-                            : '';
+                        enhTotal > 0 ? ` (${(baseTaskSpeed * 100).toFixed(2)}% + ${(enhTotal * 100).toFixed(2)}%)` : '';
                     lines.push(
                         `<div style="margin-left: 10px;">- ${badgeDetails.name}${enhText}: +${taskSpeedBonus.toFixed(2)}%${detailText}</div>`
                     );

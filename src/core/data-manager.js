@@ -26,6 +26,7 @@ import {
     mapSize,
 } from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
+import { taskSpeedParts } from '../utils/enhancement-steps.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 import { compareActionQueueOrder, runningCombatAction } from '../utils/combat-actions.js';
 
@@ -3373,6 +3374,20 @@ class DataManager {
     }
 
     /**
+     * Base and enhancement parts of a worn item's task speed, with the game's enhancement table.
+     * @param {Object} itemDetail - Item from itemDetailMap
+     * @param {number} enhancementLevel
+     * @returns {{base: number, enhancement: number}} Fractions (0.15 is 15%)
+     */
+    getTaskSpeedParts(itemDetail, enhancementLevel) {
+        return taskSpeedParts(
+            itemDetail,
+            enhancementLevel,
+            this.initClientData?.enhancementLevelTotalBonusMultiplierTable
+        );
+    }
+
+    /**
      * Get task speed bonus from equipped task badges
      * @returns {number} Task speed percentage (e.g., 15 for 15%)
      */
@@ -3401,14 +3416,9 @@ class DataManager {
             return 0;
         }
 
-        // Calculate enhancement bonus
-        // Note: noncombatEnhancementBonuses already includes slot multiplier (5× for trinket)
-        const enhancementLevel = equippedItem.enhancementLevel || 0;
-        const enhancementBonus = itemDetail.equipmentDetail.noncombatEnhancementBonuses?.taskSpeed || 0;
-        const totalEnhancementBonus = enhancementBonus * enhancementLevel;
-
-        // Total taskSpeed = base + enhancement
-        totalTaskSpeed = (taskSpeed + totalEnhancementBonus) * 100; // Convert to percentage
+        // base + table[level] * bonus, as the game adds it (bonus already includes the 5x trinket slot)
+        const { base, enhancement } = this.getTaskSpeedParts(itemDetail, equippedItem.enhancementLevel || 0);
+        totalTaskSpeed = (base + enhancement) * 100; // Convert to percentage
 
         return totalTaskSpeed;
     }
