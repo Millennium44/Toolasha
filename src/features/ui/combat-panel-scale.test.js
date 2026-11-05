@@ -77,9 +77,15 @@ describe('buildCombatScaleCSS', () => {
     test('the character panel height is opt-in and clamped', () => {
         expect(buildCombatScaleCSS()).not.toContain('vh');
         values.combatScalePanelHeight = 65;
-        expect(buildCombatScaleCSS()).toContain('height: 65vh');
+        expect(buildCombatScaleCSS()).toContain('height: min(65vh, 100%)');
         values.combatScalePanelHeight = 500;
-        expect(buildCombatScaleCSS()).toContain('height: 100vh');
+        expect(buildCombatScaleCSS()).toContain('height: min(100vh, 100%)');
+    });
+
+    test('the character panel never runs past the game area, where its last rows could not be scrolled to', () => {
+        // The panel starts below the header, so a bare 100vh hung about 166 px off-screen, clipped by the game panel
+        values.combatScalePanelHeight = 100;
+        expect(buildCombatScaleCSS()).not.toMatch(/height:\s*100vh/);
     });
 
     test('targets classes by prefix, never by build hash', () => {

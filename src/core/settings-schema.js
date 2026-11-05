@@ -4214,7 +4214,7 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 100,
-                help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window. Set it taller to see more inventory at once, shorter to give the fight room. 0 leaves the height the game picks',
+                help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window, up to all the room the game gives it. Set it shorter to give the fight room. 0 leaves the height the game picks',
             },
             updateCheck: {
                 id: 'updateCheck',
