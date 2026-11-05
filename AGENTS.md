@@ -215,6 +215,11 @@ Every brief to a sub-agent carries these lines:
   checks the bodies.
 - **Use the repo's Vitest** (5.x) through `npx --no-install vitest` or `node_modules/.bin/vitest`, not a
   global install.
+- **The first time code reads a game table or map, paste one real value off the page into the PR and name
+  its scale** (a fraction, a percentage, a step count). A fixture and the code can agree on a scale the
+  game never sends: `enhancementLevelTotalBonusMultiplierTable` counts 2% steps (+20 = 50), was read as
+  a fraction in 3.76.0, and every skilling figure went 100x off. The real table lives in
+  `src/__fixtures__/wire/enhancement-scaling.js`.
 - **Pull with `git pull --rebase`**, never a merge.
 - **A changed settings default applies to new users only.** Never migrate existing users' settings
   unless the maintainer asks. New features may default **on**; default one off only when it is
