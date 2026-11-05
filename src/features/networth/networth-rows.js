@@ -150,7 +150,7 @@ registerRow({
 registerRow({
     key: 'skillBooks',
     empty: 'No books held',
-    name: 'Skill Books',
+    name: 'Next Ability Book',
     defaultSize: { width: 180, height: 30 },
     // Deliberately without a `version()`, unlike the three figure rows above.
     // `abilityPlans` samples the ability experience history on its way past, and

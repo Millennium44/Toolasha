@@ -437,6 +437,7 @@ registerRow({
     name: 'Tick Period',
     empty: 'No tick intervals yet',
     defaultVisible: false,
+    retired: () => !config.getSetting('tickPeriodWatch'),
     defaultSize: { width: 250, height: 30 },
     tileClass: TILE_CLASS.MEASUREMENT,
     onOpen: () => tickPeriodPanel.toggle(),

@@ -449,7 +449,7 @@ marketAPI.on(() => {
 });
 
 /**
- * What the Charm Value tile would compare, without comparing it.
+ * What the Next Charm tile would compare, without comparing it.
  *
  * The charm in the slot decides which family is priced and what the upgrade is
  * measured against, and the feed decides what any of it costs. Read straight off
@@ -466,7 +466,7 @@ function charmVersion() {
 registerRow({
     key: 'charmValue',
     empty: 'No charms held',
-    name: 'Charm Value',
+    name: 'Next Charm',
     defaultSize: { width: 230, height: 30 },
     version: charmVersion,
     render: (container) => {

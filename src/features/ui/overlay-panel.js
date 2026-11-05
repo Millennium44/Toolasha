@@ -92,7 +92,11 @@ import { runningAction } from '../../utils/combat-actions.js';
 import {
     registeredRows,
     resolveRows,
-    moveRow,
+    moveRowWithin,
+    groupFor,
+    isListed,
+    emptyText,
+    ROW_GROUPS,
     emptyPolicyFor,
     compactLabel,
     waitingLine,
@@ -542,6 +546,18 @@ class OverlayPanel {
          * they want this permanently. See `_emptyPolicy`.
          */
         this.justEnabled = new Set();
+
+        /**
+         * Which folds of the row picker are open, by group name.
+         *
+         * On the instance and nowhere else: it is where the player's thumb has
+         * been, not a preference, so it is not stored, synced or exported.
+         * Emptied each time the picker opens (a fold with a tile on starts open,
+         * the rest folded) and filled lazily by the first draw, so a tap that
+         * switches the last tile of a fold off does not fold the fold under the
+         * finger on the redraw that follows.
+         */
+        this.pickerFolds = new Map();
     }
 
     async initialize() {
@@ -1477,6 +1493,7 @@ class OverlayPanel {
     openPicker() {
         if (!this.pickerEl) return;
         this.pickerEl.style.display = '';
+        this.pickerFolds.clear();
         this._renderPicker();
         this._placePicker();
         this._refreshStacking();
@@ -1673,12 +1690,18 @@ class OverlayPanel {
             return;
         }
 
-        // Chips that wrap, rather than one row per line. Fifteen rows as a
-        // vertical list is a panel of scrollbar; as chips it is four lines.
-        const chips = document.createElement('div');
-        Object.assign(chips.style, { display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' });
-        for (const row of resolved) chips.appendChild(this._rowChip(row));
-        this.pickerEl.appendChild(chips);
+        // Chips that wrap, rather than one row per line, folded into groups: a
+        // wall of forty-odd chips is a wall, and a fold with something on in it
+        // is the only one most players ever need open. A retired row is left out
+        // unless it is on, so nobody loses sight of a tile they have.
+        const offered = resolved.filter((row) => isListed(row));
+        const folds = document.createElement('div');
+        Object.assign(folds.style, { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' });
+        for (const group of ROW_GROUPS) {
+            const members = offered.filter((row) => groupFor(row) === group);
+            if (members.length) folds.appendChild(this._pickerGroup(group, members));
+        }
+        this.pickerEl.appendChild(folds);
 
         // Beside the rows it acts on, not down among the layout buttons: this
         // one is about which tiles are on, which is exactly what the chips above
@@ -2159,6 +2182,75 @@ class OverlayPanel {
     }
 
     /**
+     * One fold of the row picker: a header that says how many of its tiles are
+     * on, and the chips under it while it is open.
+     *
+     * The header is a real button at a full-width, thumb-sized height, because
+     * it is what a phone taps and the chips are small. Whether it is open comes
+     * from `pickerFolds`, filled on the first draw after the picker opens (open
+     * when a tile in it is on) and kept across the redraws a chip's checkbox
+     * causes.
+     *
+     * @param {string} group - The fold's name
+     * @param {Array<Object>} members - Its resolved rows, in layout order
+     * @returns {HTMLElement}
+     */
+    _pickerGroup(group, members) {
+        const on = members.filter((row) => row.visible).length;
+        if (!this.pickerFolds.has(group)) this.pickerFolds.set(group, on > 0);
+        const open = this.pickerFolds.get(group);
+
+        const wrap = document.createElement('div');
+        wrap.dataset.overlayGroup = group;
+
+        const header = document.createElement('button');
+        header.type = 'button';
+        header.dataset.overlayGroupHeader = group;
+        header.setAttribute('aria-expanded', String(open));
+        header.title = open ? `Fold ${group}` : `Show the ${group} tiles`;
+        Object.assign(header.style, {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            width: '100%',
+            minHeight: '32px',
+            padding: '4px 8px',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '4px',
+            background: 'rgba(255, 255, 255, 0.06)',
+            color: COLORS.text,
+            cursor: 'pointer',
+            fontSize: '12px',
+            textAlign: 'left',
+        });
+        const arrow = document.createElement('span');
+        arrow.textContent = open ? '▾' : '▸';
+        arrow.style.width = '10px';
+        const title = document.createElement('span');
+        title.textContent = group;
+        title.style.fontWeight = '600';
+        const count = document.createElement('span');
+        count.textContent = `${on} of ${members.length} on`;
+        Object.assign(count.style, { marginLeft: 'auto', color: on ? COLORS.text : COLORS.textDim });
+        header.append(arrow, title, count);
+        header.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.pickerFolds.set(group, !open);
+            this._renderPicker();
+            this._placePicker();
+        });
+        wrap.appendChild(header);
+
+        if (open) {
+            const chips = document.createElement('div');
+            Object.assign(chips.style, { display: 'flex', flexWrap: 'wrap', gap: '5px', padding: '6px 0 2px' });
+            for (const row of members) chips.appendChild(this._rowChip(row));
+            wrap.appendChild(chips);
+        }
+        return wrap;
+    }
+
+    /**
      * One row's on/off chip, with the ordering controls it needs.
      * @param {Object} row - Resolved row
      * @returns {HTMLElement}
@@ -2459,8 +2551,19 @@ class OverlayPanel {
      * @param {number} delta - -1 earlier, 1 later
      */
     _move(key, delta) {
-        const rendered = resolveRows(registeredRows(), this.settings).map((row) => row.key);
-        const nextRendered = moveRow(rendered, key, delta);
+        const resolved = resolveRows(registeredRows(), this.settings);
+        const rendered = resolved.map((row) => row.key);
+        // Past the nearest tile of the same fold that the picker lists. The
+        // layout order runs across every fold, so a plain swap with the next key
+        // would mostly trade places with a chip in another fold, or with a
+        // retired one that is not shown, and the press would do nothing visible
+        const byKey = new Map(resolved.map((row) => [row.key, row]));
+        const group = groupFor(byKey.get(key));
+        const sharesFold = (other) => {
+            const row = byKey.get(other);
+            return row && groupFor(row) === group && isListed(row);
+        };
+        const nextRendered = moveRowWithin(rendered, key, delta, sharesFold);
         if (nextRendered === rendered) return;
 
         const next = reorderRenderedSlots(this.settings.order, rendered, nextRendered);
@@ -3297,8 +3400,8 @@ class OverlayPanel {
 
         const note = document.createElement('div');
         note.textContent = acknowledging
-            ? `${waitingLine(row)} — ${row.empty || `no ${row.name.toLowerCase()} yet`}`
-            : row.empty || `No ${row.name.toLowerCase()} data`;
+            ? `${waitingLine(row)} — ${emptyText(row) || `no ${row.name.toLowerCase()} yet`}`
+            : emptyText(row) || `No ${row.name.toLowerCase()} data`;
         Object.assign(note.style, {
             color: COLORS.textDim,
             ...(acknowledging ? { fontSize: '85%' } : {}),

@@ -644,3 +644,179 @@ describe('resetting to the default tiles', () => {
         expect(overlayPanel.settings.columns).toBe(2);
     });
 });
+
+describe('the picker folds its tiles into groups', () => {
+    /** Offer rows from several groups, with `on` listing the ones switched on */
+    function offerGroups(on) {
+        registry.rows = [];
+        for (const key of ['netWorth', 'coins', 'dps', 'luck', 'skillLevel', 'guildRoster', 'externalTile']) {
+            offerRow({ key, name: key, render: (el) => (el.textContent = key), defaultVisible: false });
+        }
+        overlayPanel.settings.visible = Object.fromEntries(on.map((key) => [key, true]));
+        overlayPanel.settings.order = ['netWorth', 'dps', 'coins', 'luck', 'skillLevel', 'guildRoster', 'externalTile'];
+    }
+
+    const header = (group) => overlayPanel.pickerEl.querySelector(`[data-overlay-group-header="${group}"]`);
+
+    test('a group with a tile on starts open, the rest folded, and each header counts', () => {
+        offerGroups(['coins', 'dps']);
+        openGear();
+
+        expect(header('Wealth').getAttribute('aria-expanded')).toBe('true');
+        expect(header('Wealth').textContent).toContain('1 of 2 on');
+        expect(header('Combat').textContent).toContain('1 of 2 on');
+        expect(header('Skilling').getAttribute('aria-expanded')).toBe('false');
+        expect(header('Skilling').textContent).toContain('0 of 1 on');
+        expect(header('Guild').getAttribute('aria-expanded')).toBe('false');
+        // Folded groups draw no chips; open ones draw all of theirs, on or off
+        expect(chipOrder()).toEqual(['netWorth', 'coins', 'dps', 'luck']);
+    });
+
+    test('a tile nothing names lands in Other and is listed', () => {
+        offerGroups(['externalTile']);
+        openGear();
+
+        expect(header('Other').getAttribute('aria-expanded')).toBe('true');
+        expect(chipOrder()).toEqual(['externalTile']);
+        expect(header('Readouts')).toBeNull();
+    });
+
+    test('a tap folds and unfolds, and the fold survives a chip being ticked', () => {
+        offerGroups(['coins']);
+        openGear();
+
+        header('Combat').click();
+        expect(header('Combat').getAttribute('aria-expanded')).toBe('true');
+        expect(chipOrder()).toEqual(['netWorth', 'coins', 'dps', 'luck']);
+
+        const box = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="dps"] input');
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        expect(header('Combat').getAttribute('aria-expanded')).toBe('true');
+
+        // Switching the last tile of a fold off does not fold it under the finger
+        const coins = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="coins"] input');
+        coins.checked = false;
+        coins.dispatchEvent(new Event('change'));
+        expect(header('Wealth').getAttribute('aria-expanded')).toBe('true');
+
+        header('Wealth').click();
+        expect(header('Wealth').getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('folds start again from what is on each time the picker opens, and are never stored', () => {
+        offerGroups(['coins']);
+        openGear();
+        header('Guild').click();
+        overlayPanel.closePicker();
+        overlayPanel.settings.visible = { guildRoster: true };
+        overlayPanel.openPicker();
+
+        expect(header('Guild').getAttribute('aria-expanded')).toBe('true');
+        expect(header('Wealth').getAttribute('aria-expanded')).toBe('false');
+        expect(JSON.stringify(overlayPanel.settings)).not.toContain('Guild');
+    });
+
+    test('the arrows move past the neighbor in the same group, not the next key in the layout', () => {
+        offerGroups(['netWorth', 'coins']);
+        openGear();
+        expect(chipOrder()).toEqual(['netWorth', 'coins']);
+
+        // dps sits between them in the layout order; a plain swap would trade
+        // places with it and the Wealth chips would not move
+        overlayPanel.pickerEl
+            .querySelector('[data-overlay-row-chip="netWorth"] button[title="Later in the layout order"]')
+            .click();
+
+        expect(overlayPanel.settings.order).toEqual([
+            'dps',
+            'coins',
+            'netWorth',
+            'luck',
+            'skillLevel',
+            'guildRoster',
+            'externalTile',
+        ]);
+        expect(chipOrder()).toEqual(['coins', 'netWorth']);
+    });
+
+    test('the arrows at the edge of a group leave the layout alone', () => {
+        offerGroups(['netWorth', 'coins']);
+        openGear();
+        const before = [...overlayPanel.settings.order];
+
+        overlayPanel.pickerEl
+            .querySelector('[data-overlay-row-chip="netWorth"] button[title="Earlier in the layout order"]')
+            .click();
+
+        expect(overlayPanel.settings.order).toEqual(before);
+    });
+});
+
+describe('retired tiles in the picker', () => {
+    let watching = false;
+
+    beforeEach(() => {
+        registry.rows = [];
+        offerRow({ key: 'skillLevel', name: 'Skill Level', render: () => {}, defaultVisible: false });
+        offerRow({ key: 'skillTimeToLevel', name: 'Skill Time to Level', render: () => {}, retired: true });
+        offerRow({
+            key: 'waveGap',
+            name: 'Wave Gap',
+            render: () => {},
+            defaultVisible: false,
+            retired: () => !watching,
+        });
+        watching = false;
+        overlayPanel.settings.visible = { skillLevel: true, skillTimeToLevel: false };
+        overlayPanel.settings.order = ['skillLevel', 'skillTimeToLevel', 'waveGap'];
+    });
+
+    test('a retired tile that is off is not offered, and one that is on is', () => {
+        openGear();
+        expect(chipOrder()).toEqual(['skillLevel']);
+
+        overlayPanel.closePicker();
+        overlayPanel.settings.visible = { skillLevel: true, skillTimeToLevel: true };
+        overlayPanel.openPicker();
+        expect(chipOrder()).toEqual(['skillLevel', 'skillTimeToLevel']);
+        // ...and it can still be switched off
+        const box = overlayPanel.pickerEl.querySelector('[data-overlay-row-chip="skillTimeToLevel"] input');
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+        expect(overlayPanel.settings.visible.skillTimeToLevel).toBe(false);
+    });
+
+    test('a tile retired only while its setting is off is read when the picker draws', () => {
+        openGear();
+        expect(chipOrder()).toEqual(['skillLevel']);
+
+        watching = true;
+        overlayPanel.closePicker();
+        overlayPanel.openPicker();
+        // Wave Gap is a Readouts tile, folded because nothing in it is on
+        expect(overlayPanel.pickerEl.querySelector('[data-overlay-group-header="Readouts"]')).toBeTruthy();
+    });
+
+    test('the arrows skip a retired neighbor that is not shown', () => {
+        overlayPanel.settings.order = ['skillLevel', 'skillTimeToLevel', 'waveGap'];
+        overlayPanel.settings.visible = { skillLevel: true, skillTimeToLevel: false };
+        openGear();
+        overlayPanel.pickerEl
+            .querySelector('[data-overlay-row-chip="skillLevel"] button[title="Later in the layout order"]')
+            .click();
+        expect(overlayPanel.settings.order).toEqual(['skillLevel', 'skillTimeToLevel', 'waveGap']);
+    });
+
+    test('reset to default tiles switches a retired tile off but keeps it in the saved order list empty-safe', () => {
+        overlayPanel.settings.visible = { skillLevel: true, skillTimeToLevel: true };
+        openGear();
+        overlayPanel._resetTiles();
+
+        expect(overlayPanel.settings.visible).toEqual({});
+        expect(overlayPanel.settings.curatedDefaults).toBe(true);
+        expect(chipOrder()).not.toContain('skillTimeToLevel');
+        // Undo is the way back, and it carries the selection
+        expect(overlayPanel.undoState.visible.skillTimeToLevel).toBe(true);
+    });
+});

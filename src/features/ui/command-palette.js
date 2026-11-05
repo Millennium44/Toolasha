@@ -49,7 +49,7 @@
 import config from '../../core/config.js';
 import { settingsGroups } from '../../core/settings-schema.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
-import { registeredRows } from '../../utils/overlay-rows.js';
+import { registeredRows, listedRows } from '../../utils/overlay-rows.js';
 import { registerCommand, unregisterCommand, registeredCommands } from '../../utils/command-registry.js';
 import { showToast } from '../../utils/toast.js';
 import { clickThroughReact } from '../../utils/react-click.js';
@@ -754,7 +754,8 @@ class CommandPalette {
             commands.push(this._command(group, entry.name, entry.hint, entry.run, '', entry.kind));
         }
 
-        for (const row of registeredRows()) {
+        // A retired row is offered only while it is on, as it is in the picker
+        for (const row of listedRows(overlayPanel.settings, registeredRows())) {
             if (typeof row.onOpen !== 'function') continue;
             commands.push(this._command('Overlay row', row.name, 'Open what this tile summarises', () => row.onOpen()));
         }

@@ -1,4 +1,4 @@
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, vi } from 'vitest';
 
 import {
     registerRow,
@@ -11,6 +11,13 @@ import {
     CURATED_ROWS,
     TILE_CLASS,
     EMPTY_POLICY,
+    ROW_GROUPS,
+    groupFor,
+    isRetired,
+    isListed,
+    listedRows,
+    emptyText,
+    moveRowWithin,
 } from './overlay-rows.js';
 
 const row = (key, defaultVisible = true) => ({ key, name: key, render: () => {}, defaultVisible });
@@ -202,5 +209,114 @@ describe('moveRow', () => {
         const order = ['a', 'b', 'c'];
         moveRow(order, 'a', 1);
         expect(order).toEqual(['a', 'b', 'c']);
+    });
+});
+
+describe('the picker groups', () => {
+    const SHIPPED = {
+        Wealth: ['netWorth', 'coins', 'inventoryValue', 'marketListings', 'watchlist', 'equipmentWatch'],
+        Skilling: ['skillLevel', 'timeToLevel', 'experiencePerHour', 'queueTimeLeft', 'consumables', 'taskTokens'],
+        Combat: ['combatStatus', 'combatLevel', 'dps', 'deathsPerHour', 'totalProfit', 'treasure', 'combatText'],
+        'Account and goals': ['accountView', 'buildScore', 'noticeLog', 'sessionBriefing', 'goalNextStep'],
+        Guild: ['guildTrialsPace', 'guildRoster', 'guildTrialLedger'],
+        Readouts: ['replayCheck', 'predictionCalibration', 'stunPersistence', 'waveGap', 'tickPeriod'],
+    };
+
+    test('every shipped row is filed where the maintainer put it', () => {
+        for (const [group, keys] of Object.entries(SHIPPED)) {
+            for (const key of keys) expect(groupFor({ key })).toBe(group);
+        }
+        expect(groupFor({ key: 'charmValue' })).toBe('Wealth');
+        expect(groupFor({ key: 'skillBooks' })).toBe('Wealth');
+        expect(groupFor({ key: 'houses' })).toBe('Skilling');
+        expect(groupFor({ key: 'ironBellNextStep' })).toBe('Skilling');
+        expect(groupFor({ key: 'enhancementSession' })).toBe('Skilling');
+        expect(groupFor({ key: 'luck' })).toBe('Combat');
+    });
+
+    test('a row nothing names lands in Other, and a row can say for itself', () => {
+        expect(groupFor({ key: 'someExternalTile' })).toBe('Other');
+        expect(groupFor(undefined)).toBe('Other');
+        expect(groupFor({ key: 'someExternalTile', group: 'Guild' })).toBe('Guild');
+        expect(groupFor({ key: 'someExternalTile', group: 'Not a group' })).toBe('Other');
+        expect(ROW_GROUPS[ROW_GROUPS.length - 1]).toBe('Other');
+    });
+});
+
+describe('retired rows', () => {
+    test('a retired row that is off is unlisted; on, it is listed', () => {
+        expect(isListed({ key: 'a', retired: true, visible: false })).toBe(false);
+        expect(isListed({ key: 'a', retired: true, visible: true })).toBe(true);
+        expect(isListed({ key: 'a', visible: false })).toBe(true);
+    });
+
+    test('a predicate is read each time, and one that throws leaves the row listed', () => {
+        let retired = true;
+        const entry = { key: 'a', retired: () => retired, visible: false };
+        expect(isRetired(entry)).toBe(true);
+        retired = false;
+        expect(isRetired(entry)).toBe(false);
+
+        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+        expect(isListed({ key: 'b', retired: () => Reflect.ownKeys(null), visible: false })).toBe(true);
+        quiet.mockRestore();
+    });
+
+    test('registerRow keeps the flag, and a row without one is not retired', () => {
+        registerRow({ key: 'retiredProbe', name: 'Probe', render: () => {}, retired: true });
+        registerRow({ key: 'liveProbe', name: 'Live', render: () => {} });
+        expect(registeredRows().find((r) => r.key === 'retiredProbe').retired).toBe(true);
+        expect(isRetired(registeredRows().find((r) => r.key === 'liveProbe'))).toBe(false);
+    });
+
+    test('listedRows keeps a retired row that the saved settings have on, and resolveRows still returns it', () => {
+        const rowsIn = [
+            { key: 'a', name: 'a', render: () => {}, defaultVisible: true },
+            { key: 'old', name: 'old', render: () => {}, defaultVisible: false, retired: true },
+            { key: 'gone', name: 'gone', render: () => {}, defaultVisible: false, retired: true },
+        ];
+        const saved = { order: ['old', 'a', 'gone'], visible: { old: true } };
+
+        expect(listedRows(saved, rowsIn).map((r) => r.key)).toEqual(['a', 'old']);
+        // The panel's own resolution is untouched: all three still resolve, in order
+        expect(resolveRows(rowsIn, saved).map((r) => [r.key, r.visible])).toEqual([
+            ['old', true],
+            ['a', true],
+            ['gone', false],
+        ]);
+    });
+});
+
+describe('emptyText', () => {
+    test('reads a function each time it is asked, and a plain string as it is', () => {
+        let state = 'one';
+        expect(emptyText({ empty: () => state })).toBe('one');
+        state = 'two';
+        expect(emptyText({ empty: () => state })).toBe('two');
+        expect(emptyText({ empty: 'plain' })).toBe('plain');
+        expect(emptyText({})).toBe('');
+        expect(emptyText({ empty: () => undefined })).toBe('');
+    });
+});
+
+describe('moveRowWithin', () => {
+    const order = ['w1', 'c1', 'w2', 'c2', 'w3'];
+    const wealth = (key) => key.startsWith('w');
+
+    test('moves past the next tile of the same group, skipping the ones between', () => {
+        expect(moveRowWithin(order, 'w1', 1, wealth)).toEqual(['c1', 'w2', 'w1', 'c2', 'w3']);
+        expect(moveRowWithin(order, 'w3', -1, wealth)).toEqual(['w1', 'c1', 'w3', 'w2', 'c2']);
+    });
+
+    test('does nothing at the end of the group, and for a key that is not there', () => {
+        expect(moveRowWithin(order, 'w3', 1, wealth)).toBe(order);
+        expect(moveRowWithin(order, 'w1', -1, wealth)).toBe(order);
+        expect(moveRowWithin(order, 'missing', 1, wealth)).toBe(order);
+    });
+
+    test('never mutates its input', () => {
+        const before = [...order];
+        moveRowWithin(order, 'w1', 1, wealth);
+        expect(order).toEqual(before);
     });
 });

@@ -150,7 +150,7 @@ describe('opening the history chart', () => {
     });
 });
 
-describe('the skill books tile', () => {
+describe('the next ability book tile', () => {
     test('still opens the ability book panel, not the chart', () => {
         game.rows.skillBooks.onOpen();
 
@@ -211,7 +211,7 @@ describe('the figure tiles summarise their own inputs', () => {
         expect(version('coins')).not.toBe('blank');
     });
 
-    test('Skill Books stays without one, because reading it feeds the experience sampler', () => {
+    test('Next Ability Book stays without one, because reading it feeds the experience sampler', () => {
         // `abilityPlans` samples the ability experience history on its way past,
         // and this row is the only thing that calls it regularly. A memo would
         // stop the sampling on every tick it skipped.
@@ -219,7 +219,7 @@ describe('the figure tiles summarise their own inputs', () => {
     });
 });
 
-describe('the skill books tile', () => {
+describe('the next ability book tile', () => {
     /** One cheapest-next-level, priced wherever the test says */
     const best = (shopPriced) => ({
         name: 'Poke',
