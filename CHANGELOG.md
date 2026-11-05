@@ -6643,6 +6643,13 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.76.1](https://github.com/Millennium44/Toolasha/compare/v3.76.0...v3.76.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* enhanced gear no longer inflates skilling figures by reading the game's table as fractions ([019ec82](https://github.com/Millennium44/Toolasha/commit/019ec82d982d33c06e430b0e5857a94a3e4add60))
+
 ## [3.76.0](https://github.com/Millennium44/Toolasha/compare/v3.75.0...v3.76.0) (2026-11-05)
 
 ### Features
