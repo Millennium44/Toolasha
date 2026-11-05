@@ -5961,10 +5961,17 @@ class LabSimUI {
         const isAborted = () => this._skillingAborted || runToken !== this._runStartToken;
         const eta = createEtaTracker();
         try {
-            await task(({ current, total, description }) => {
+            await task(({ current, total, description, fraction }) => {
                 if (isAborted() || !this.panel) return;
                 const fill = this.panel.querySelector('#mwi-labsim-skilling-progress-fill');
                 const text = this.panel.querySelector('#mwi-labsim-skilling-progress-text');
+                if (typeof fraction === 'number') {
+                    // A task that knows its whole-run progress (the plan): the bar follows it, and no ETA is
+                    // shown because its total is not known ahead
+                    if (fill) fill.style.width = `${Math.round(fraction * 100)}%`;
+                    if (text) text.textContent = description;
+                    return;
+                }
                 const { text: remaining } = eta.update(total > 0 ? current / total : 0);
                 if (fill) fill.style.width = `${total > 0 ? Math.round((current / total) * 100) : 100}%`;
                 if (text)
