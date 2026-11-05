@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.76.1 -->
+
 ### Skilling figures back to normal with enhanced gear
 
 3.76.0 counted enhanced gear far too strongly, so skilling rates, exp/hr, profit/hr and queue times read too high or too short, up to 100 times off with +10 gear, and enhancing costs, net worth of items valued by cost, charm rankings, tea and gear advice went wrong with them. All correct again. Records saved while on 3.76.0, such as prediction accuracy, production income and the net worth chart, keep their old figures.
@@ -6645,10 +6647,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.76.1](https://github.com/Millennium44/Toolasha/compare/v3.76.0...v3.76.1) (2026-11-05)
 
-
 ### Bug Fixes
 
-* enhanced gear no longer inflates skilling figures by reading the game's table as fractions ([019ec82](https://github.com/Millennium44/Toolasha/commit/019ec82d982d33c06e430b0e5857a94a3e4add60))
+- enhanced gear no longer inflates skilling figures by reading the game's table as fractions ([019ec82](https://github.com/Millennium44/Toolasha/commit/019ec82d982d33c06e430b0e5857a94a3e4add60))
 
 ## [3.76.0](https://github.com/Millennium44/Toolasha/compare/v3.75.0...v3.76.0) (2026-11-05)
 
