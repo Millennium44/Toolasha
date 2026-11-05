@@ -350,6 +350,88 @@ const DASHBOARD_PRESET = {
     },
 };
 
+/**
+ * The maintainer's own dense overlay: twenty tiles, nine columns. Its widths at
+ * nine columns are the ones in `exact`, except that Treasure takes three rather
+ * than four: four left the row of inventory, treasure and build score one column
+ * short and wrapped Net Worth alone beneath it, and three closes the row.
+ */
+const DENSE_PRESET = {
+    activity: ACTIVITY.NONE,
+    order: [
+        'battleTimer',
+        'experiencePerHour',
+        'deathsPerHour',
+        'combatStatus',
+        'combatRevenue',
+        'timeToLevel',
+        'houses',
+        'totalProfit',
+        'consumables',
+        'equipmentWatch',
+        'coins',
+        'marketListings',
+        'dps',
+        'luck',
+        'watchlist',
+        'skillBooks',
+        'inventoryValue',
+        'treasure',
+        'buildScore',
+        'netWorth',
+    ],
+    // Blocks and the long lists take both columns, figures pair up
+    span: {
+        battleTimer: 2,
+        combatStatus: 2,
+        combatRevenue: 2,
+        timeToLevel: 2,
+        houses: 2,
+        totalProfit: 2,
+        consumables: 2,
+        equipmentWatch: 2,
+        dps: 2,
+        treasure: 2,
+    },
+    // Timer; three figures; revenue; three; supplies beside the list; three; three; inventory beside treasure
+    span3: { battleTimer: 3, combatRevenue: 3, equipmentWatch: 2, treasure: 2, netWorth: 2 },
+    sizes: {
+        battleTimer: 'block',
+        combatRevenue: 'block',
+        timeToLevel: 'block',
+        houses: 'block',
+        totalProfit: 'wide',
+        consumables: 'block',
+        equipmentWatch: 'wide',
+        dps: 'block',
+        treasure: 'block',
+    },
+    exact: {
+        9: {
+            battleTimer: 3,
+            experiencePerHour: 2,
+            deathsPerHour: 2,
+            combatStatus: 2,
+            combatRevenue: 3,
+            timeToLevel: 3,
+            houses: 3,
+            totalProfit: 5,
+            consumables: 4,
+            equipmentWatch: 5,
+            coins: 2,
+            marketListings: 2,
+            dps: 3,
+            luck: 2,
+            watchlist: 2,
+            skillBooks: 2,
+            inventoryValue: 2,
+            treasure: 3,
+            buildScore: 2,
+            netWorth: 2,
+        },
+    },
+};
+
 /** Presets that resolve by name but are not offered in the Layouts switcher */
 const UNLISTED_PRESETS = new Set(['Default']);
 
@@ -476,6 +558,8 @@ export const PRESET_LAYOUTS = {
      * every span collapses to one.
      */
     Dashboard: DASHBOARD_PRESET,
+    /** The maintainer's dense overlay: every tile on one screen, never auto-chosen (`ACTIVITY.NONE`) */
+    Dense: DENSE_PRESET,
     /**
      * The old compact dashboard's name, kept resolvable and no longer offered
      * (see {@link UNLISTED_PRESETS}). It is the Dashboard itself: a character
