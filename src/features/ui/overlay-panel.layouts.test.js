@@ -76,7 +76,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => dialog.a
 
 const { registerRow } = await import('../../utils/overlay-rows.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
-const { loadLayouts, layoutNames } = await import('./overlay-layouts.js');
+const { loadLayouts, layoutNames, presetSpans } = await import('./overlay-layouts.js');
 const { toOPanelConfig, fromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /** An arrangement worth telling apart from another one. @returns {Object} */
@@ -350,6 +350,81 @@ describe('saving and switching named layouts', () => {
         line.textContent = 'Showing: Market';
         await overlayPanel._markAppliedLayoutDrift(line);
         expect(line.textContent).toBe('Showing: Market');
+    });
+
+    test('a preset follows the width from two columns through three and four to nine', async () => {
+        const steps = [
+            [480, 2],
+            [640, 3],
+            [1000, 4],
+            [2040, 9],
+        ];
+        for (const [width, columns] of steps) {
+            measureAs(width);
+            await overlayPanel.applyNamedLayout('Combat');
+            expect(overlayPanel.columns).toBe(columns);
+            expect(overlayPanel.settings.span).toEqual(presetSpans('Combat', columns));
+            expect(overlayPanel.settings.columnsPinned).toBe(false);
+        }
+        // Wider panels give the blocks more than the two-column spans did
+        expect(overlayPanel.settings.span.consumables).toBeGreaterThan(2);
+    });
+
+    test('a hand-set column count of six or nine is kept and the preset is built for it', async () => {
+        measureAs(380);
+        for (const columns of [6, 9]) {
+            overlayPanel.settings.columns = columns;
+            overlayPanel.settings.columnsPinned = true;
+            await overlayPanel.applyNamedLayout('Market');
+            expect(overlayPanel.settings.columns).toBe(columns);
+            expect(overlayPanel.settings.columnsPinned).toBe(true);
+            expect(overlayPanel.columns).toBe(columns);
+            expect(overlayPanel.settings.span).toEqual(presetSpans('Market', columns));
+        }
+    });
+
+    test('a phone gets one column and the spans clamp, as before', async () => {
+        measureAs(200);
+        await overlayPanel.applyNamedLayout('Skilling');
+        expect(overlayPanel.columns).toBe(1);
+        expect(overlayPanel.settings.span).toEqual({ consumables: 2 });
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
+    test('a saved layout named like a preset keeps its own spans on a wide panel', async () => {
+        measureAs(2040);
+        wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+        await overlayPanel.saveNamedLayout('Combat');
+        await overlayPanel.applyNamedLayout('Combat');
+        expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+    });
+
+    test('an exported wide preset re-imports with the same spans, flat and numeric', async () => {
+        measureAs(2040);
+        await overlayPanel.applyNamedLayout('Market');
+        const exported = JSON.parse(JSON.stringify(toOPanelConfig(overlayPanel.settings, null)));
+        const read = fromOPanelConfig(exported);
+
+        expect(read.settings.span).toEqual(presetSpans('Market', 9));
+        for (const wide of Object.values(read.settings.span)) expect(Number.isInteger(wide)).toBe(true);
+    });
+
+    test('a preset applied on a wide grid is not reported as edited, now or on a narrower panel', async () => {
+        measureAs(2040);
+        await overlayPanel.applyNamedLayout('Dashboard');
+        const line = document.createElement('div');
+        document.body.appendChild(line);
+        line.textContent = 'Showing: Dashboard';
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Dashboard');
+
+        measureAs(900);
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Dashboard');
+
+        overlayPanel.settings.span = { ...overlayPanel.settings.span, coins: 4 };
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Dashboard (edited)');
     });
 
     test('a switch can be taken back', async () => {

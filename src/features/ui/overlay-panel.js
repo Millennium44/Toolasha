@@ -118,6 +118,7 @@ import {
     PRESET_LAYOUTS,
     offeredLayouts,
     presetFile,
+    presetSpans,
     isPreset,
     freshSwitchState,
     decideAutoSwitch,
@@ -2173,10 +2174,10 @@ class OverlayPanel {
 
             const layoutHalf = (file) => JSON.stringify(file?.toolasha?.settings ?? null);
             const current = layoutHalf(toOPanelConfig(this.settings, null));
-            // A preset applied on three columns carries its three-column spans
-            const unchanged =
-                layoutHalf(saved) === current ||
-                (!map[key]?.file && layoutHalf(presetFile(key, { rows, columns: 3 })) === current);
+            // A preset applied on a wider grid carries that grid's spans
+            let unchanged = layoutHalf(saved) === current;
+            for (let columns = 3; !unchanged && !map[key]?.file && columns <= MAX_SPAN; columns++)
+                unchanged = layoutHalf(presetFile(key, { rows, columns })) === current;
             const drifted = !unchanged;
             if (drifted) active.textContent = `Showing: ${this.appliedLayout} (edited)`;
         } catch (error) {
@@ -2756,8 +2757,8 @@ class OverlayPanel {
         // pinned, which for a 1-column pin flattens every span back to one.
         this.settings.columns = 2;
         this.settings.columnsPinned = false;
-        // Unpinned, so the width decides; three columns want the three-column spans
-        this.settings.span = { ...(this._columns() === 3 && shipped.span3 ? shipped.span3 : shipped.span) };
+        // Unpinned, so the width decides; wider grids want their own spans
+        this.settings.span = presetSpans('Dashboard', this._columns());
         this.settings.zoom = {};
         this.settings.textScale = 100;
 
