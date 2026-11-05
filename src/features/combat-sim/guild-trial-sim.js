@@ -36,6 +36,7 @@ import {
     MAX_TRIAL_INPUT_BYTES,
 } from '../guild/guild-trial-simulation-inputs.js';
 import { TrialAssignPlanner } from './guild-trial-assign-ui.js';
+import { maxGuildBuildingLevel } from '../../utils/game-maximums.js';
 
 const BUTTON_CLASS = 'toolasha-guild-trial-sim-button';
 const EXTRA_BUFFS = [
@@ -127,7 +128,7 @@ const PAYOUT_BUILDINGS = { hall: 'buildershall', treasury: 'treasury' };
 
 function clampBuildingLevel(value) {
     const level = Math.floor(Number(value));
-    return Number.isFinite(level) ? Math.max(0, Math.min(20, level)) : 0;
+    return Number.isFinite(level) ? Math.max(0, Math.min(maxGuildBuildingLevel(), level)) : 0;
 }
 
 /** A payout building's level from a `guildBuildingLevelMap`, 0 when the guild has not built it. */
@@ -1023,7 +1024,7 @@ export class GuildTrialSim {
             (v) => {
                 this.hallLevel = clampBuildingLevel(v);
             },
-            { min: 0, max: 20, disabled: busy }
+            { min: 0, max: maxGuildBuildingLevel(), disabled: busy }
         );
         const treasuryInput = field(
             payout,
@@ -1032,7 +1033,7 @@ export class GuildTrialSim {
             (v) => {
                 this.treasuryLevel = clampBuildingLevel(v);
             },
-            { min: 0, max: 20, disabled: busy }
+            { min: 0, max: maxGuildBuildingLevel(), disabled: busy }
         );
         hallInput.addEventListener('change', () => this.panel?.render());
         treasuryInput.addEventListener('change', () => this.panel?.render());

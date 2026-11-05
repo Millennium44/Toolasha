@@ -20,6 +20,7 @@ import * as phoneCompactButtons from '../utils/phone-compact-buttons.js';
 import * as timerRegistry from '../utils/timer-registry.js';
 import * as bonusRevenueCalculator from '../utils/bonus-revenue-calculator.js';
 import * as enhancementMultipliers from '../utils/enhancement-multipliers.js';
+import * as gameMaximums from '../utils/game-maximums.js';
 import * as experienceParser from '../utils/experience-parser.js';
 import * as marketListings from '../utils/market-listings.js';
 import * as actionCalculator from '../utils/action-calculator.js';
@@ -225,6 +226,7 @@ toolashaRoot.Utils = {
     timerRegistry,
     bonusRevenueCalculator,
     enhancementMultipliers,
+    gameMaximums,
     experienceParser,
     marketListings,
     actionCalculator,

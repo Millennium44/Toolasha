@@ -45,6 +45,12 @@ import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
+import {
+    FALLBACK_MAX_HOUSE_ROOM_LEVEL,
+    maxHouseRoomLevel,
+    maxLevel,
+    maxGuildShrineLevel,
+} from '../../utils/game-maximums.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
@@ -71,8 +77,8 @@ const MAIN_HAND_SLOT = '/equipment_types/main_hand';
 const OFF_HAND_SLOT = '/equipment_types/off_hand';
 const TWO_HAND_SLOT = '/equipment_types/two_hand';
 
-/** Highest level a house room can reach */
-export const MAX_HOUSE_LEVEL = 8;
+/** Highest level a house room can reach, until the room data says otherwise */
+export const MAX_HOUSE_LEVEL = FALLBACK_MAX_HOUSE_ROOM_LEVEL;
 
 /**
  * Highest level any guild shrine buff reaches, for the input that asks for one.
@@ -90,11 +96,7 @@ export const MAX_GUILD_SHRINE_LEVEL = 20;
  * @returns {number}
  */
 export function getGuildShrineMaxLevel() {
-    const map = dataManager.getInitClientData?.()?.guildShrineDetailMap;
-    const levels = Object.values(map && typeof map === 'object' ? map : {})
-        .map((detail) => Math.floor(Number(detail?.maxLevel)))
-        .filter((level) => Number.isFinite(level) && level > 0);
-    return levels.length > 0 ? Math.max(...levels) : MAX_GUILD_SHRINE_LEVEL;
+    return maxGuildShrineLevel();
 }
 
 /**
@@ -1430,7 +1432,7 @@ export function generateCandidates(
                     const increment = abilityTargetLevel > 0 ? abilityTargetLevel : 5;
                     targetLevel = ability.level + increment;
                 }
-                targetLevel = Math.min(targetLevel, 200);
+                targetLevel = Math.min(targetLevel, maxLevel(gameData));
                 if (targetLevel > ability.level) {
                     candidates.push({
                         slot: `ability_${slotIdx}`,
@@ -1506,7 +1508,9 @@ export function generateCandidates(
         for (const skill of COMBAT_LEVEL_SKILLS) {
             if (excludedSkills.has(skill.key)) continue;
             const currentLevel = Math.max(1, Math.floor(playerDTO[skill.key] || 1));
-            const upgradeLevel = targets ? Math.min(200, Math.floor(targets[skill.key] || 0)) : currentLevel + boost;
+            const upgradeLevel = targets
+                ? Math.min(maxLevel(gameData), Math.floor(targets[skill.key] || 0))
+                : currentLevel + boost;
             if (upgradeLevel <= currentLevel) continue;
             candidates.push({
                 type: 'combat_level',
@@ -1825,7 +1829,7 @@ export function describeHouseScan(playerDTO, gameData, options = {}) {
         if (!isRelevant(roomDetail)) continue;
         combatRelevant++;
         const level = Math.max(0, Math.floor(Number(playerDTO?.houseRooms?.[roomHrid]) || 0));
-        if (level < MAX_HOUSE_LEVEL) belowCap++;
+        if (level < maxHouseRoomLevel()) belowCap++;
     }
 
     return { rooms: Object.keys(roomMap).length, withBuffs, combatRelevant, belowCap };
@@ -1845,7 +1849,7 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
     const roomMap = gameData?.houseRoomDetailMap;
     if (!roomMap) return [];
 
-    const target = Math.min(MAX_HOUSE_LEVEL, Math.max(0, Math.floor(Number(targetLevel) || 0)));
+    const target = Math.min(maxHouseRoomLevel(), Math.max(0, Math.floor(Number(targetLevel) || 0)));
     const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
     const isRelevant = houseRoomPredicate(options);
 
@@ -1854,13 +1858,13 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
         if (!isRelevant(roomDetail)) continue;
 
         const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
-        if (currentLevel >= MAX_HOUSE_LEVEL) continue;
+        if (currentLevel >= maxHouseRoomLevel()) continue;
 
         // Per-room target wins; then the uniform target; otherwise one level up.
         // With per-room targets open, a room left blank is deliberately skipped.
         let upgradeLevel;
         if (explicit) {
-            upgradeLevel = Math.min(MAX_HOUSE_LEVEL, Math.floor(Number(explicit[roomHrid]) || 0));
+            upgradeLevel = Math.min(maxHouseRoomLevel(), Math.floor(Number(explicit[roomHrid]) || 0));
         } else {
             upgradeLevel = target > 0 ? target : currentLevel + 1;
         }
@@ -5386,7 +5390,8 @@ export function primaryLevelsAlongside(
     const currentLevel = Math.max(1, Math.floor(playerDTO?.[skillKey] || 1));
     const reached = currentXpOf(primary, currentLevel) + xpGained;
     let upgradeLevel = currentLevel;
-    while (upgradeLevel < 200 && Number.isFinite(table[upgradeLevel + 1]) && table[upgradeLevel + 1] <= reached) {
+    const levelCap = maxLevel(gameData);
+    while (upgradeLevel < levelCap && Number.isFinite(table[upgradeLevel + 1]) && table[upgradeLevel + 1] <= reached) {
         upgradeLevel++;
     }
 

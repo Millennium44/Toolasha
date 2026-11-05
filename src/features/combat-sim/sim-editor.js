@@ -42,6 +42,7 @@ import { addStyles } from '../../utils/dom.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -1775,7 +1776,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
             html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">+</span>`;
-            html += `<input type="number" min="0" max="20" value="${equip.enhancementLevel}"
+            html += `<input type="number" min="0" max="${maxEnhancementLevel()}" value="${equip.enhancementLevel}"
                 data-enhance-slot="${slotType}"
                 style="width:3.5em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
@@ -1821,7 +1822,7 @@ export class SimEditor {
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
             html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
             html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">Lv</span>`;
-            html += `<input type="number" min="1" max="200" value="${ability.level}"
+            html += `<input type="number" min="1" max="${maxLevel()}" value="${ability.level}"
                 data-ability-idx="${i}"
                 style="width:4em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
@@ -2810,7 +2811,7 @@ export class SimEditor {
         for (const skill of skills) {
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
             html += `<span style="color:#888; width:70px;">${skill.label}</span>`;
-            html += `<input type="number" min="1" max="200" value="${dto[skill.key]}"
+            html += `<input type="number" min="1" max="${maxLevel()}" value="${dto[skill.key]}"
                 data-skill="${skill.key}"
                 style="width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
@@ -2841,7 +2842,7 @@ export class SimEditor {
             const level = dto.houseRooms[hrid] || 0;
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
             html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}</span>`;
-            html += `<input type="number" min="0" max="8" value="${level}"
+            html += `<input type="number" min="0" max="${maxHouseRoomLevel()}" value="${level}"
                 data-house-hrid="${hrid}"
                 style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
@@ -3220,7 +3221,7 @@ export class SimEditor {
         editorArea.querySelectorAll('[data-enhance-slot]').forEach((input) => {
             input.addEventListener('change', () => {
                 const slotType = input.dataset.enhanceSlot;
-                const val = Math.min(20, Math.max(0, parseInt(input.value) || 0));
+                const val = Math.min(maxEnhancementLevel(), Math.max(0, parseInt(input.value) || 0));
                 input.value = val;
                 if (dto.equipment[slotType]) {
                     dto.equipment[slotType].enhancementLevel = val;

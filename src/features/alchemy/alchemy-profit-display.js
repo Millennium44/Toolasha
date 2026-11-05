@@ -21,6 +21,7 @@ import { describeShopValue } from '../../utils/alchemy-shop-value.js';
 import { CAPE_BASE_VALUE_SETTING, describeAssumedCape } from '../../utils/untradable-cape.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 import { appendMeasuredRate } from './alchemy-measured-rate.js';
 import {
     getCatalystWhatIf,
@@ -1873,7 +1874,7 @@ class AlchemyProfitDisplay {
                     id="mwi-alchemy-target-level-input"
                     value="${initialTargetLevel}"
                     min="${nextLevel}"
-                    max="200"
+                    max="${maxLevel()}"
                     style="
                         width: 50px;
                         padding: 2px 4px;
@@ -1905,7 +1906,7 @@ class AlchemyProfitDisplay {
             const updateTargetLevel = (fillRepeat = false) => {
                 const targetLevelValue = parseInt(targetLevelInput.value);
                 this._alchemyTargetLevel = targetLevelValue;
-                if (targetLevelValue > currentLevel && targetLevelValue <= 200) {
+                if (targetLevelValue > currentLevel && targetLevelValue <= maxLevel()) {
                     const result = calculateMultiLevelProgress(
                         currentLevel,
                         currentXP,

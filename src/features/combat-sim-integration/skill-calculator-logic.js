@@ -3,6 +3,8 @@
  * Calculation functions for skill progression and combat level
  */
 
+import { maxLevel } from '../../utils/game-maximums.js';
+
 /**
  * Calculate time required to reach target level
  * @param {number} currentExp - Current experience
@@ -76,7 +78,8 @@ export function calculateLevelsAfterDays(skills, expRates, days, levelExpTable) 
 
         // Find level from exp table
         let level = 1;
-        while (level < 200 && levelExpTable[level + 1] <= finalExp) {
+        const levelCap = maxLevel({ levelExperienceTable: levelExpTable });
+        while (level < levelCap && levelExpTable[level + 1] <= finalExp) {
             level++;
         }
 
@@ -152,7 +155,8 @@ function formatTime(days, hours, minutes) {
  */
 export function getLevelFromExp(exp, levelExpTable) {
     let level = 1;
-    while (level < 200 && levelExpTable[level + 1] <= exp) {
+    const levelCap = maxLevel({ levelExperienceTable: levelExpTable });
+    while (level < levelCap && levelExpTable[level + 1] <= exp) {
         level++;
     }
     return level;

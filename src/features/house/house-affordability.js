@@ -33,9 +33,8 @@ import { getItemPrice } from '../../utils/market-data.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { roomSkill } from '../../utils/room-skills.js';
 import { GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
+import { maxHouseRoomLevel } from '../../utils/game-maximums.js';
 
-/** The game's cap; a room at this level has nothing left to buy */
-const MAX_ROOM_LEVEL = 8;
 const PANEL_ID = 'toolasha-houses-panel';
 /** Where this panel's size and position are remembered */
 const GEOMETRY_KEY = 'housesPanel';
@@ -181,7 +180,7 @@ export async function loadUntrackedRooms() {
  * @returns {number} Cost of the next level, or 0 when there is none
  */
 export function nextLevelCost(houseRoomHrid, currentLevel) {
-    if (currentLevel >= MAX_ROOM_LEVEL) return 0;
+    if (currentLevel >= maxHouseRoomLevel()) return 0;
 
     const toNext = calculateHouseBuildCost(houseRoomHrid, currentLevel + 1);
     const toHere = calculateHouseBuildCost(houseRoomHrid, currentLevel);
@@ -253,7 +252,7 @@ export function roomUpgrades(houseRooms, coins) {
     const rooms = Object.keys(roomDetails).map((hrid) => {
         const level = (houseRooms || {})[hrid]?.level || 0;
         const cost = nextLevelCost(hrid, level);
-        const maxed = level >= MAX_ROOM_LEVEL;
+        const maxed = level >= maxHouseRoomLevel();
 
         return {
             hrid,

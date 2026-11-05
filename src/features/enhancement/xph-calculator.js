@@ -27,6 +27,7 @@ import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js
 import { yieldToEventLoop } from '../../utils/background-work.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { ensurePhoneCompactButtonStyles } from '../../utils/phone-compact-buttons.js';
+import { maxEnhancementLevel } from '../../utils/game-maximums.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -391,9 +392,9 @@ class XPHCalculator {
 
         controls.innerHTML = `
             <label style="color:#888; font-size:12px;">Max level</label>
-            <input id="mwi-xph-maxlevel" type="number" min="1" max="20" value="${defaultMax}" style="${inputStyle}">
+            <input id="mwi-xph-maxlevel" type="number" min="1" max="${maxEnhancementLevel()}" value="${defaultMax}" style="${inputStyle}">
             <label style="color:#888; font-size:12px; margin-left:6px;">Protect from</label>
-            <input id="mwi-xph-protect" type="number" min="0" max="19" value="${defaultProtect}" style="${inputStyle}">
+            <input id="mwi-xph-protect" type="number" min="0" max="${maxEnhancementLevel() - 1}" value="${defaultProtect}" style="${inputStyle}">
             <button id="mwi-xph-run" style="
                 margin-left: auto;
                 background: ${BUTTON_LOOK.primary.rest};
@@ -419,7 +420,7 @@ class XPHCalculator {
                     border-radius:4px; padding:3px 8px; font-size:12px;">
                 <datalist id="mwi-xph-item-list"></datalist>
                 <label style="color:#888; font-size:12px;">to +</label>
-                <input id="mwi-xph-item-target" type="number" min="1" max="20" value="${defaultMax}" style="${inputStyle}">
+                <input id="mwi-xph-item-target" type="number" min="1" max="${maxEnhancementLevel()}" value="${defaultMax}" style="${inputStyle}">
                 <button id="mwi-xph-item-route" style="
                     background: ${BUTTON_LOOK.primary.rest}; color: ${GAME_COLORS.text}; border: none;
                     border-radius: var(--radius-sm, 0.25rem); padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;">Route</button>
@@ -537,7 +538,7 @@ class XPHCalculator {
 
         const target = Math.max(
             1,
-            Math.min(20, parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1)
+            Math.min(maxEnhancementLevel(), parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1)
         );
         let data = null;
         try {
@@ -586,7 +587,10 @@ class XPHCalculator {
     }
 
     _run() {
-        const maxLevel = Math.min(20, Math.max(1, parseInt(this.panel.querySelector('#mwi-xph-maxlevel').value) || 6));
+        const maxLevel = Math.min(
+            maxEnhancementLevel(),
+            Math.max(1, parseInt(this.panel.querySelector('#mwi-xph-maxlevel').value) || 6)
+        );
         const protectFrom = Math.min(
             maxLevel - 1,
             Math.max(0, parseInt(this.panel.querySelector('#mwi-xph-protect').value) || 0)

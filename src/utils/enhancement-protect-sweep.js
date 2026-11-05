@@ -19,6 +19,7 @@
  */
 
 import { calculateEnhancement, costStats, costPercentiles } from './enhancement-calculator.js';
+import { maxEnhancementLevel } from './game-maximums.js';
 
 /** The protection that is not a protect-from item: it guarantees the attempt instead */
 export const PHILOSOPHERS_MIRROR_HRID = '/items/philosophers_mirror';
@@ -435,7 +436,7 @@ export function sweepProtectFrom({
     wisdomDecimal = 0,
     calculate = calculateEnhancement,
 }) {
-    const target = Math.max(1, Math.min(20, Math.floor(Number(targetLevel) || 0)));
+    const target = Math.max(1, Math.min(maxEnhancementLevel(), Math.floor(Number(targetLevel) || 0)));
     const start = Math.max(0, Math.min(target - 1, Math.floor(Number(startLevel) || 0)));
     const materials = Math.max(0, Number(materialCostPerAttempt) || 0);
     const fixed = Math.max(0, Number(fixedCost) || 0);

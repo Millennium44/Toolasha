@@ -31,6 +31,7 @@ import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, dataManager as sharedDataManager } from '../../utils/bundle-bridge.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_FRAME, styleGameButton } from '../../utils/game-look.js';
+import { maxEnhancementLevel, maxLevel } from '../../utils/game-maximums.js';
 
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
@@ -530,7 +531,7 @@ class SkillingSimulatorUI {
         const levelInput = document.createElement('input');
         levelInput.type = 'number';
         levelInput.min = '0';
-        levelInput.max = '20';
+        levelInput.max = String(maxEnhancementLevel());
         levelInput.value = String(this.alchemyItemOverride?.enhancementLevel || 0);
         levelInput.title = 'Enhancement level (ignored for Transmute)';
         levelInput.style.cssText = `${selectCss} width: 44px; flex-shrink: 0; cursor: text;`;
@@ -597,7 +598,7 @@ class SkillingSimulatorUI {
         const levelInput = document.createElement('input');
         levelInput.type = 'number';
         levelInput.min = '1';
-        levelInput.max = '200';
+        levelInput.max = String(maxLevel());
         levelInput.value = String(this.currentLevel);
         levelInput.style.cssText = inputCss + ' width: 64px;';
         levelRow.appendChild(levelInput);
@@ -659,7 +660,7 @@ class SkillingSimulatorUI {
         });
 
         levelInput.addEventListener('change', () => {
-            this.currentLevel = Math.max(1, Math.min(200, parseInt(levelInput.value, 10) || 1));
+            this.currentLevel = Math.max(1, Math.min(maxLevel(), parseInt(levelInput.value, 10) || 1));
             levelInput.value = String(this.currentLevel);
             resetActions();
         });
@@ -769,7 +770,7 @@ class SkillingSimulatorUI {
         const enhInput = document.createElement('input');
         enhInput.type = 'number';
         enhInput.min = '0';
-        enhInput.max = '20';
+        enhInput.max = String(maxEnhancementLevel());
         enhInput.value = String(currentEnh);
         enhInput.style.cssText = `
             width: 40px; padding: 3px 4px; font-size: 11px; text-align: center;

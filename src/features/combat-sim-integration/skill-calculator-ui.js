@@ -5,6 +5,7 @@
 
 import { calculateTimeToLevel, calculateLevelsAfterDays, getLevelFromExp } from './skill-calculator-logic.js';
 import { parseGameNumber } from '../../utils/number-parser.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 
 /**
  * Create the skill calculator UI
@@ -65,7 +66,7 @@ export function createCalculatorUI(container, characterSkills, expRates, levelEx
         input.type = 'number';
         input.value = skillData[skillName].currentLevel + 1;
         input.min = skillData[skillName].currentLevel + 1;
-        input.max = 200;
+        input.max = maxLevel();
         input.style.cssText =
             'width: 60px; padding: 4px; background: #2a2a2a; color: white; border: 1px solid #555; border-radius: 3px;';
         input.dataset.skill = skillName;

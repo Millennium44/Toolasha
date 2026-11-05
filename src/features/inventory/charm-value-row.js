@@ -51,6 +51,7 @@ import {
     shopPrice,
     upgradeValue,
 } from '../../utils/charm-value.js';
+import { maxEnhancementLevel } from '../../utils/game-maximums.js';
 
 /**
  * Where the game keeps the equipped charm.
@@ -61,9 +62,6 @@ import {
  * Grandmaster Melee Charm was sitting in it.
  */
 const CHARM_SLOT = '/item_locations/charm';
-
-/** The enhancement levels the game allows, which is what the market is scanned over */
-const MAX_ENHANCEMENT = 20;
 
 /**
  * What every charm is, for the purpose of enhancement scaling.
@@ -168,7 +166,7 @@ export function familyRows() {
     const rows = [];
     for (const itemHrid of family) {
         let sold = false;
-        for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+        for (let level = 0; level <= maxEnhancementLevel(); level++) {
             const ask = getItemPrices(itemHrid, level)?.ask;
             if (!(ask > 0)) continue;
 
@@ -390,7 +388,7 @@ function drawGuide(body) {
     // Derived from the game's own curve rather than a copied table, so an update
     // to enhancement scaling moves this with every figure below it
     const levels = [];
-    for (let level = 0; level <= MAX_ENHANCEMENT; level++) {
+    for (let level = 0; level <= maxEnhancementLevel(); level++) {
         levels.push(`+${level}: ${getEnhancementMultiplier(CHARM_DETAILS, level).toFixed(2)}x`);
     }
     chips(levels);

@@ -13,6 +13,7 @@ import domObserver from '../../core/dom-observer.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { booksToLevel } from '../../utils/ability-books.js';
+import { maxLevel } from '../../utils/game-maximums.js';
 import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
 import { openTesterShopPage, setShopFilter } from '../../utils/tester-shop-nav.js';
 
@@ -199,7 +200,8 @@ class AbilityBookCalculator {
         // 200 is the level cap: an ability already there has no "next level" to
         // buy towards, and the arithmetic below returns null for it (the
         // experience table has nothing past 200) rather than a books count
-        const atMaxLevel = currentLevel >= 200;
+        const levelCap = maxLevel();
+        const atMaxLevel = currentLevel >= levelCap;
         const targetLevel = currentLevel + 1;
 
         // Calculate initial books needed
@@ -284,7 +286,7 @@ class AbilityBookCalculator {
                     type="number"
                     value="${targetLevel}"
                     min="${currentLevel + 1}"
-                    max="200"
+                    max="${levelCap}"
                     style="width: 60px; padding: 4px; background: #2a2a2a; color: white; border: 1px solid #555; border-radius: 3px;"
                 >
             </div>
@@ -307,7 +309,7 @@ class AbilityBookCalculator {
         const updateDisplay = () => {
             const target = parseInt(input.value);
 
-            if (target > currentLevel && target <= 200) {
+            if (target > currentLevel && target <= levelCap) {
                 const books = this.calculateBooksNeeded(currentLevel, currentXp, target, xpPerBook);
                 currentBooks = books;
                 display.innerHTML = `

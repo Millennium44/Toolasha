@@ -56,6 +56,7 @@
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { createCuratedRecord, mergeMaps } from './persisted-record.js';
+import { FALLBACK_MAX_HOUSE_ROOM_LEVEL, maxHouseRoomLevel } from './game-maximums.js';
 
 /** The one record the whole feature is stored in, per character */
 const STORAGE_KEY = 'equipmentSavings';
@@ -276,7 +277,7 @@ export function abilityBookHrid(abilityHrid) {
 }
 
 /** The level the game stops a house room at, and so the highest a goal can ask for */
-export const MAX_HOUSE_ROOM_LEVEL = 8;
+export const MAX_HOUSE_ROOM_LEVEL = FALLBACK_MAX_HOUSE_ROOM_LEVEL;
 
 /** A name out of an hrid, for when nothing better was supplied */
 const prettyName = (hrid) =>
@@ -552,7 +553,7 @@ export async function loadSavingsRecord() {
         rooms = {};
         for (const [houseRoomHrid, goal] of Object.entries(rest.houses || {})) {
             if (!houseRoomHrid || !goal || typeof goal !== 'object') continue;
-            rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, MAX_HOUSE_ROOM_LEVEL);
+            rooms[houseRoomHrid] = normalizeGoal(houseRoomHrid, goal, maxHouseRoomLevel());
         }
         delete rest.houses;
 
@@ -681,7 +682,7 @@ export async function addHouseGoal({ houseRoomHrid, targetLevel, cost, label } =
     rooms[houseRoomHrid] = normalizeGoal(
         houseRoomHrid,
         { targetLevel, cost, label, updatedAt: Date.now() },
-        MAX_HOUSE_ROOM_LEVEL
+        maxHouseRoomLevel()
     );
     await write();
 }

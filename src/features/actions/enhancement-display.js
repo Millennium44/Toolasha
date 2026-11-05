@@ -39,6 +39,7 @@ import {
     releaseEnhancementMobileStyles,
     placeCalculator,
 } from './enhancement-mobile-layout.js';
+import { maxEnhancementLevel } from '../../utils/game-maximums.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -643,7 +644,7 @@ export function getProtectFromLevelFromUI(panel) {
     const input = findEnhancingInput(panel, 'protectFrom');
     if (input && input.value) {
         const value = parseInt(input.value, 10);
-        if (!Number.isNaN(value)) return Math.max(0, Math.min(20, value)); // Clamp 0-20
+        if (!Number.isNaN(value)) return Math.max(0, Math.min(maxEnhancementLevel(), value));
     }
 
     return 0; // Default to never protect
@@ -652,7 +653,7 @@ export function getProtectFromLevelFromUI(panel) {
 /**
  * Get Target Level from UI input
  * @param {HTMLElement} panel - Enhancing panel
- * @returns {number|null} Target level 1-20, or null when the input is absent or empty
+ * @returns {number|null} Target level 1 up to the enhancement cap, or null when the input is absent or empty
  */
 export function getTargetLevelFromUI(panel) {
     // Found by the panel's structure as well as its English label: a translated client has no
@@ -661,7 +662,7 @@ export function getTargetLevelFromUI(panel) {
     if (!input || !input.value) return null;
     const value = parseInt(input.value, 10);
     if (Number.isNaN(value)) return null;
-    return Math.max(1, Math.min(20, value));
+    return Math.max(1, Math.min(maxEnhancementLevel(), value));
 }
 
 /**
