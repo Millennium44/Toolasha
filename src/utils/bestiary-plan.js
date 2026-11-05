@@ -33,8 +33,9 @@
 import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { getSettingDefinition } from '../core/settings-schema.js';
-import { pointsFromCount, nextPointCount } from './bestiary.js';
+import { pointsFromCount, nextPointCount, creditsPerKill } from './bestiary.js';
 import { padFightCount } from './fight-confidence.js';
+import { expectedSpawnsPerClear } from './spawn-expectation.js';
 
 /** A guard against a pathological input looping forever */
 const MAX_STEPS = 20_000;
@@ -207,6 +208,23 @@ function middle(values) {
 }
 
 /**
+ * The tier a stored run was recorded at, or null when it has none.
+ *
+ * Runs saved before the tracker stored tiers, and chat backfills of a dungeon
+ * that was not running, hold `tier: null`, and `Number(null)` is 0: comparing
+ * through a bare `Number()` files every one of them under T0.
+ *
+ * @param {Object} run - A stored dungeon run
+ * @returns {number|null}
+ */
+export function runTierOf(run) {
+    const raw = run?.tier;
+    if (raw === null || raw === undefined || raw === '') return null;
+    const tier = Number(raw);
+    return Number.isInteger(tier) && tier >= 0 ? tier : null;
+}
+
+/**
  * Restate a dungeon's simulated credit rates at the clear time you actually get.
  *
  * The simulator clears a dungeon at the pace of a party that never hesitates
@@ -262,7 +280,7 @@ export function rescaleDungeonRates({
     const simSeconds = Number.isFinite(given) && given > 0 ? given : 3600 / simClears;
 
     const all = (Array.isArray(runs) ? runs : []).filter(Boolean);
-    const sameTier = Number.isInteger(tier) ? all.filter((run) => Number(run.tier) === tier) : [];
+    const sameTier = Number.isInteger(tier) ? all.filter((run) => runTierOf(run) === tier) : [];
     const tierDurations = sameTier.map(runDurationMs).filter((ms) => ms !== null);
 
     let source = 'sim';
@@ -279,6 +297,69 @@ export function rescaleDungeonRates({
     const scaled = {};
     for (const [hrid, perHour] of Object.entries(rates)) scaled[hrid] = perHour * stretch;
     return { creditsPerHour: scaled, clearsPerHour: simClears * stretch, clearSeconds, source, runs: sampled };
+}
+
+/**
+ * A dungeon's definition from the game data.
+ * @param {string} actionHrid - The dungeon action
+ * @returns {Object|null} `combatZoneInfo.dungeonInfo`, null when it cannot be read
+ */
+function dungeonInfoFor(actionHrid) {
+    try {
+        return dataManager.getActionDetails?.(actionHrid)?.combatZoneInfo?.dungeonInfo || null;
+    } catch (error) {
+        console.error('[BestiaryPlan] Reading a dungeon definition failed:', error);
+        return null;
+    }
+}
+
+/**
+ * A dungeon's credit rates from your own clear time and the dungeon's definition,
+ * for a dungeon the simulator could not clear cleanly.
+ *
+ * {@link rescaleDungeonRates} cannot serve that case: it stretches the sim's
+ * rates, and a sim that wipes has no clean clear to stretch from, while its kill
+ * rates are of failed attempts that never reached the later waves or the boss.
+ * So nothing is taken from the simulation here. Kills per clear are what the
+ * spawn tables say a clear contains ({@link expectedSpawnsPerClear}), clears per
+ * hour are your median clear at this tier, and a kill is credited at the tier the
+ * monster actually has, the dungeon's plus the spawn's own, split by the party.
+ *
+ * It counts your clears and nothing else, so it assumes every attempt clears:
+ * the run history holds clears unless the player opted in to recording attempts.
+ *
+ * @param {Object} input
+ * @param {Array<Object>} input.runs - This dungeon's runs, already narrowed to this party
+ * @param {number} input.tier - The tier being planned
+ * @param {number} input.partySize - Players sharing each kill
+ * @param {string} [input.actionHrid] - The dungeon, to read its definition from the game data
+ * @param {Object} [input.dungeonInfo] - The definition itself; read from `actionHrid` when omitted
+ * @returns {{creditsPerHour: Object, clearsPerHour: number, clearSeconds: number, runs: number}|null}
+ *   Null when no run at this tier has a duration, or the definition gives no credits
+ */
+export function dungeonRatesFromRuns({ runs = [], tier = null, partySize = 1, actionHrid = null, dungeonInfo = null }) {
+    if (!Number.isInteger(tier)) return null;
+    const durations = (Array.isArray(runs) ? runs : [])
+        .filter((run) => run && runTierOf(run) === tier)
+        .map(runDurationMs)
+        .filter((ms) => ms !== null);
+    if (!durations.length) return null;
+
+    const clearSeconds = middle(durations) / 1000;
+    if (!(clearSeconds > 0)) return null;
+    const clearsPerHour = 3600 / clearSeconds;
+
+    const spawns = expectedSpawnsPerClear(dungeonInfo || dungeonInfoFor(actionHrid));
+    const rates = {};
+    for (const [hrid, bySpawnTier] of Object.entries(spawns)) {
+        let credits = 0;
+        for (const [spawnTier, count] of Object.entries(bySpawnTier)) {
+            credits += count * creditsPerKill({ difficultyTier: tier + Number(spawnTier), partySize });
+        }
+        if (credits > 0) rates[hrid] = credits * clearsPerHour;
+    }
+    if (!Object.keys(rates).length) return null;
+    return { creditsPerHour: rates, clearsPerHour, clearSeconds, runs: durations.length };
 }
 
 /**
@@ -474,7 +555,7 @@ function padSegmentFights(segments, zonesByHrid, options) {
  *
  * @param {Object} input
  * @param {Array<{zoneHrid: string, name?: string, creditsPerHour: Object, creditsPerKill?: number,
- *   encountersPerHour?: number, isDungeon?: boolean, note?: string, score?: number}>} input.zones -
+ *   encountersPerHour?: number, isDungeon?: boolean, note?: string, paceLabel?: string, score?: number}>} input.zones -
  *   Candidate zones with their simulated Bestiary credits per hour by monster (and, when known, fights per
  *   hour, so a
  *   stay can be quoted in fights as well as time); earlier zones win ties. `score` is an optional relative
@@ -600,6 +681,7 @@ export function planBestiaryRoute({
                 partial,
                 isDungeon: Boolean(zone.isDungeon),
                 note: zone.note || null,
+                paceLabel: zone.paceLabel || null,
                 viaScore,
                 monsters: result.monsters.map((m) => ({ ...m })),
             });
@@ -682,6 +764,7 @@ export function planBestiaryRoute({
                 points: toTarget === null ? 0 : target,
                 encounters: toTarget === null ? null : fightsFor(zone, toTarget),
                 hours: toTarget,
+                ...(zone.paceLabel ? { paceLabel: zone.paceLabel } : {}),
             };
         }
     } else {
@@ -693,6 +776,7 @@ export function planBestiaryRoute({
                     name: zone.name || zone.zoneHrid,
                     points,
                     encounters: fightsFor(zone, budget),
+                    ...(zone.paceLabel ? { paceLabel: zone.paceLabel } : {}),
                 };
             }
         }
@@ -775,6 +859,7 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
               (plan.unreachable ? ` (${goal} not reachable)` : '')
             : `Bestiary plan — ${formatPlanHours(plan.hours, { unit: true })}, ${plan.totalPoints} points`,
     ];
+    const labeled = (name, paceLabel) => (paceLabel ? `${name} [${paceLabel}]` : name);
     plan.segments.forEach((segment, index) => {
         const crossings = segment.monsters
             .filter((m) => m.reached)
@@ -793,7 +878,7 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
                 ? ''
                 : ` (≈${Math.round(segment.encounters)} ${segment.isDungeon ? 'clears' : 'fights'})`;
         lines.push(
-            `${index + 1}. ${segment.name} — ${formatPlanHours(segment.hours)}${fights} — +${segment.points}` +
+            `${index + 1}. ${labeled(segment.name, segment.paceLabel)} — ${formatPlanHours(segment.hours)}${fights} — +${segment.points}` +
                 (detail ? ` — ${detail}` : '')
         );
     });
@@ -801,11 +886,13 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
         lines.push(
             plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                 ? `Best single zone: none reaches ${goal}`
-                : `Best single zone: ${plan.bestSingle.name} — reaches ${totals ? goal : plan.targetPoints} in ` +
+                : `Best single zone: ${labeled(plan.bestSingle.name, plan.bestSingle.paceLabel)} — reaches ${totals ? goal : plan.targetPoints} in ` +
                       formatPlanHours(plan.bestSingle.hours, { unit: true })
         );
     } else if (plan.bestSingle) {
-        lines.push(`Best single zone: ${plan.bestSingle.name} — ${plan.bestSingle.points} points`);
+        lines.push(
+            `Best single zone: ${labeled(plan.bestSingle.name, plan.bestSingle.paceLabel)} — ${plan.bestSingle.points} points`
+        );
     }
     return lines.join('\n');
 }

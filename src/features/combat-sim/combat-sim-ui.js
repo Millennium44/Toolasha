@@ -93,6 +93,8 @@ import {
 import {
     planBestiaryRoute,
     rescaleDungeonRates,
+    dungeonRatesFromRuns,
+    runTierOf,
     formatPlanHours,
     formatPlanText,
     parseBestiaryZoneKey,
@@ -1640,6 +1642,9 @@ export function bestiaryPlanDetailItems(row, cols) {
     return items;
 }
 
+/** Fewer runs than this is what the Dungeon ROI board calls low confidence (`MEDIUM_CONFIDENCE_RUNS`) */
+const FEW_RUNS = 5;
+
 /**
  * One results-table row as a Bestiary planner zone, at the rates it should be
  * planned at.
@@ -1647,11 +1652,17 @@ export function bestiaryPlanDetailItems(row, cols) {
  * An ordinary zone is planned at the rates the sim reported. A dungeon is
  * restated at the clear time your runs at that tier measured (see
  * `rescaleDungeonRates`), and its "fights" are clears — completions, never the
- * waves the sim counts as encounters. A dungeon the sim never completed has
- * kill rates (from the attempts that failed) but no clear rate at all, so it
- * quotes no clear count rather than quoting its waves as clears.
+ * waves the sim counts as encounters.
  *
- * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace.
+ * A dungeon the sim could not clear cleanly has no clean clear to stretch and
+ * kill rates from failed attempts. With your own clears at that tier it is
+ * planned from those and the dungeon's spawn tables (`dungeonRatesFromRuns`).
+ * Without them it keeps the sim's rates and says they are that, and with no
+ * completion at all it quotes no clear count rather than its waves as clears.
+ *
+ * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace, at
+ * the row's own tier. A run recorded with no tier could be any tier, so it sets
+ * nothing, and the note counts what was left out.
  *
  * @param {Object} row - A results-table row (`_creditsPerHour`, `_creditsPerKill`, `_dungeon`, …)
  * @param {Array<Object>} [runs] - The dungeon run history, every dungeon
@@ -1690,50 +1701,72 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     const failed = Number(row._dungeon.failed) || 0;
     const cleanSeconds = Number(row._dungeon.cleanClearSeconds);
     const hasClean = Number.isFinite(cleanSeconds) && cleanSeconds > 0;
+    const partySize = row._partySize ?? who.partySize ?? 1;
+    const mine = (runs || []).filter(
+        (run) =>
+            (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) &&
+            runMatchesSimParty(run, { ...who, partySize })
+    );
+    const unknownTier = mine.filter((run) => runTierOf(run) === null).length;
+    const unknownNote = unknownTier
+        ? `${unknownTier} run${unknownTier === 1 ? '' : 's'} of unknown tier not used`
+        : null;
+    const finish = (fields) => withNote(withNote({ ...zone, isDungeon: true, ...fields }, unknownNote), partySizeNote);
+
     // A run that wiped and never managed two clears in a row has no clean clear
     // to set its pace by, and hours-per-completion would charge the wipes to
-    // the clears — so it keeps the sim's own pace rather than guessing one
+    // the clears — so it is never stretched. Your own clears can still plan it.
     const pacable = hasClean || failed === 0;
+    if (!pacable || !(completions > 0)) {
+        const measured = dungeonRatesFromRuns({ runs: mine, tier: row.tier, partySize, actionHrid: row.zoneHrid });
+        if (measured) {
+            const count = `${measured.runs} run${measured.runs === 1 ? '' : 's'}`;
+            return finish({
+                creditsPerHour: measured.creditsPerHour,
+                encountersPerHour: measured.clearsPerHour,
+                note:
+                    `measured (${count}${measured.runs < FEW_RUNS ? ', few runs' : ''}) — kills per clear from ` +
+                    `the dungeon's spawn tables, because the sim never cleared it cleanly; assumes every attempt clears`,
+                paceLabel: `your ${count}`,
+            });
+        }
+    }
+
     const scaled = rescaleDungeonRates({
         creditsPerHour: row._creditsPerHour,
         simClearsPerHour: simHours > 0 ? completions / simHours : 0,
         simClearSeconds: hasClean ? cleanSeconds : null,
-        runs: pacable
-            ? (runs || []).filter(
-                  (run) =>
-                      (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) &&
-                      runMatchesSimParty(run, { ...who, partySize: row._partySize ?? who.partySize ?? 1 })
-              )
-            : [],
+        runs: pacable ? mine : [],
         tier: row.tier,
     });
     if (!scaled) {
+        const usedNone =
+            mine.filter((run) => runTierOf(run) === row.tier).length > 0
+                ? 'your runs here could not be used (no duration, or no spawn table to read)'
+                : 'no clears of yours at this tier with this party';
         // Waves are not clears: with no completion there is nothing to quote
-        return withNote(
-            {
-                ...zone,
-                encountersPerHour: null,
-                isDungeon: true,
-                note: completions > 0 ? null : 'never cleared in the sim — its kills are from failed runs',
-            },
-            partySizeNote
-        );
+        return finish({
+            encountersPerHour: null,
+            note: completions > 0 ? null : `never cleared in the sim — its kills are from failed runs; ${usedNone}`,
+            paceLabel: completions > 0 ? null : 'sim, failed runs',
+        });
     }
-    return withNote(
-        {
-            ...zone,
+    const runCount = `${scaled.runs} run${scaled.runs === 1 ? '' : 's'}`;
+    if (scaled.source === 'measured') {
+        return finish({
             creditsPerHour: scaled.creditsPerHour,
-            // A dungeon's "fights" are clears, which is also what the plan
-            // table calls them
+            // A dungeon's "fights" are clears, which is also what the plan table calls them
             encountersPerHour: scaled.clearsPerHour,
-            isDungeon: true,
-            note:
-                scaled.source === 'measured'
-                    ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                    : 'sim clear time',
-        },
-        partySizeNote
-    );
+            note: `measured (${runCount})`,
+            paceLabel: `your ${runCount}`,
+        });
+    }
+    return finish({
+        creditsPerHour: scaled.creditsPerHour,
+        encountersPerHour: scaled.clearsPerHour,
+        note: pacable ? 'sim clear time' : 'sim clear time, wipes included — its kills include failed runs',
+        paceLabel: pacable ? null : 'sim, wipes',
+    });
 }
 
 /**
@@ -5878,7 +5911,7 @@ class CombatSimUI {
                     // changes nothing — and it never filtered the plan.
                     this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
-                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier measured, where there are any. Takes effect on the next All Zones run.">
+                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim cannot clear cleanly is planned from those runs and its spawn tables; with none it stays a sim estimate from failed attempts, and the row says so. Runs recorded with no tier are not used. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
                     Include dungeons
                 </label>`
@@ -6139,6 +6172,8 @@ class CombatSimUI {
         const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
         // A dungeon's stay is quoted in clears — "≈3 fights" for three trips
         // through a fortress would be nonsense
+        const paceTag = (label) =>
+            `<span style="color:${label.startsWith('sim') ? '#ffb74d' : '#81c995'}; font-size:9px;">${esc(label)}</span>`;
         const fightsCell = (segment) =>
             segment.encounters === null || segment.encounters === undefined
                 ? '—'
@@ -6184,6 +6219,8 @@ class CombatSimUI {
                 const scoreMark = segment.viaScore
                     ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'
                     : '';
+                // Whether this dungeon's rates are your runs or the sim's, on the row itself
+                const paceMark = segment.paceLabel ? ` ${paceTag(segment.paceLabel)}` : '';
                 // Open this step's zone at its exact tier and fill the count
                 // this row displays — never recomputed at click time, so the
                 // number the player agreed to is the number that gets typed.
@@ -6215,7 +6252,7 @@ class CombatSimUI {
                 return (
                     `<tr${rowAttrs}>` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
-                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${openBtn}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${paceMark}${openBtn}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
                     `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
@@ -6240,6 +6277,7 @@ class CombatSimUI {
             plan.bestSingle && this._allZonesDetailRows?.has(plan.bestSingle.zoneHrid)
                 ? `<span class="mwi-csim-plan-single" data-key="${esc(plan.bestSingle.zoneHrid)}" tabindex="0" role="button" aria-expanded="${singleOpen}" title="Show this zone's sim results" style="cursor:pointer; text-decoration:underline dotted;">${esc(plan.bestSingle.name)}</span>`
                 : esc(plan.bestSingle?.name || '');
+        const singleMark = plan.bestSingle?.paceLabel ? ` ${paceTag(plan.bestSingle.paceLabel)}` : '';
         let single;
         if (!plan.bestSingle) {
             single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';
@@ -6247,10 +6285,10 @@ class CombatSimUI {
             single =
                 plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                     ? `no single zone reaches ${goal}`
-                    : `best single zone ${singleName} reaches ${goal} in ` +
+                    : `best single zone ${singleName}${singleMark} reaches ${goal} in ` +
                       `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours, { unit: true })}</span>`;
         } else {
-            single = `best single zone ${singleName}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
+            single = `best single zone ${singleName}${singleMark}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
         }
         const shortfall = plan.unreachable
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +

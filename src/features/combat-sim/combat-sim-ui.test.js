@@ -336,6 +336,7 @@ vi.mock('../../core/data-manager.js', () => ({
         // party member's) must never fall through to this for a room it lacks
         getHouseRoomLevel: (hrid) => mocks.houseRoomLevels?.[hrid] || 0,
         getCharacterMonsters: () => mocks.monsters,
+        getActionDetails: (hrid) => mocks.actionDetails?.[hrid] ?? null,
         // Kept so a test can fire an event the panel listens for
         on: (event, handler) => {
             mocks.dataListeners = mocks.dataListeners || new Map();
@@ -10133,7 +10134,7 @@ describe('dungeons in the all-zones run and in the plan', () => {
         const cells = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
             [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
         );
-        expect(cells[0][1]).toBe('[D] Den T1▶');
+        expect(cells[0][1]).toBe('[D] Den T1 your 2 runs▶');
         expect(cells[0][2]).toBe('1:00');
         // Three clears an hour, your pace — not the simulator's six — and the
         // stay is quoted in clears rather than fights. Four rather than three
@@ -10432,11 +10433,203 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
 
         const rows = planRows();
         expect(rows).toHaveLength(1);
-        expect(rows[0][1]).toBe('[D] Pirate Cove T1');
+        expect(rows[0][1]).toBe('[D] Pirate Cove T1 sim, failed runs');
         expect(rows[0][3]).toBe('—');
         expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(0);
         const nameCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[1];
         expect(nameCell.getAttribute('title')).toContain('never cleared in the sim');
+    });
+
+    describe('a dungeon the sim could not clear, against your own runs', () => {
+        const JACK = '/monsters/jackalope';
+        const MARK = '/monsters/brine_marksman';
+        // The game's shape: fixed rosters by wave, tables by key. 98 waves in the real one; 4 here
+        const coveDetails = {
+            combatZoneInfo: {
+                isDungeon: true,
+                dungeonInfo: {
+                    maxWaves: 4,
+                    fixedSpawnsMap: { 4: [{ combatMonsterHrid: JACK, difficultyTier: 0 }] },
+                    randomSpawnInfoMap: {
+                        0: {
+                            maxSpawnCount: 1,
+                            maxTotalStrength: 100,
+                            spawns: [{ combatMonsterHrid: MARK, difficultyTier: 0, rate: 1, strength: 10 }],
+                        },
+                    },
+                },
+            },
+        };
+        const coveRow = (dungeon = {}, extra = {}) => ({
+            zone: '[D] Pirate Cove',
+            zoneHrid: COVE,
+            tier: 1,
+            encounters: 98,
+            score: 1,
+            _creditsPerHour: { [MARK]: 2.5 },
+            _creditsPerKill: 1,
+            _partySize: 2,
+            _dungeon: {
+                completions: 0,
+                failed: 60,
+                cleanClearSeconds: null,
+                simHours: 24,
+                name: 'Pirate Cove',
+                ...dungeon,
+            },
+            ...extra,
+        });
+        const who = { characterId: 'char1', characterName: 'Me' };
+        const run = (over = {}) => ({
+            dungeonName: 'Pirate Cove',
+            tier: 1,
+            duration: 1_800_000,
+            recordedBy: 'char1',
+            team: ['Al', 'Me'],
+            ...over,
+        });
+
+        beforeEach(() => {
+            mocks.actionDetails = { [COVE]: coveDetails };
+        });
+        afterEach(() => {
+            mocks.actionDetails = null;
+        });
+
+        test('never clears, with runs: your clear time and the spawn tables, and it says so', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow(), [run(), run(), run({ duration: 3_600_000 })], who);
+            // Thirty minutes a clear is two an hour, three marksmen and a boss a clear,
+            // each kill at T1 for two players worth one credit
+            expect(zone.encountersPerHour).toBeCloseTo(2, 9);
+            expect(zone.creditsPerHour[MARK]).toBeCloseTo(6, 9);
+            expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
+            expect(zone.isDungeon).toBe(true);
+            expect(zone.paceLabel).toBe('your 3 runs');
+            expect(zone.note).toContain('measured (3 runs, few runs)');
+            expect(zone.note).toContain('spawn tables');
+            expect(zone.note).toContain('assumes every attempt clears');
+        });
+
+        test('wipes with no clean clear, with runs: the same, even with a few completions', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow({ completions: 3 }), [run()], who);
+            expect(zone.creditsPerHour[JACK]).toBeCloseTo(2, 9);
+            expect(zone.paceLabel).toBe('your 1 run');
+        });
+
+        test('five runs is no longer called few', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow(), [run(), run(), run(), run(), run()], who);
+            expect(zone.note).toContain('measured (5 runs)');
+        });
+
+        test('wipes with a clean clear: still stretched from the sim, as before', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow({ completions: 24, cleanClearSeconds: 900 }), [run()], who);
+            // A 15-minute clean clear against your 30 halves the rates
+            expect(zone.creditsPerHour[MARK]).toBeCloseTo(1.25, 9);
+            expect(zone.creditsPerHour[JACK]).toBeUndefined();
+            expect(zone.note).toBe('measured (1 run)');
+        });
+
+        test('clears cleanly with runs, and with none', () => {
+            const clean = { completions: 24, failed: 0, cleanClearSeconds: 3600 };
+            const withRuns = bestiaryPlanZoneForRow(coveRow(clean), [run()], who);
+            expect(withRuns.creditsPerHour[MARK]).toBeCloseTo(5, 9);
+            expect(withRuns.note).toBe('measured (1 run)');
+            const without = bestiaryPlanZoneForRow(coveRow(clean), [], who);
+            expect(without.creditsPerHour[MARK]).toBeCloseTo(2.5, 9);
+            expect(without.note).toBe('sim clear time');
+            expect(without.paceLabel).toBeNull();
+        });
+
+        test('wipes with some completions and no runs: the sim, labeled as including wipes', () => {
+            const zone = bestiaryPlanZoneForRow(coveRow({ completions: 3 }), [], who);
+            expect(zone.note).toContain('wipes included');
+            expect(zone.paceLabel).toBe('sim, wipes');
+        });
+
+        test.each([
+            ['no runs', [], 'no clears of yours at this tier'],
+            ['runs only at another tier', [run({ tier: 0 }), run({ tier: 2 })], 'no clears of yours at this tier'],
+            ['runs by another party size', [run({ team: ['Me'] }), run({ team: ['Al', 'Bo', 'Me'] })], 'no clears'],
+            ['another character', [run({ recordedBy: 'char2' })], 'no clears of yours at this tier'],
+            ['a run with no duration', [run({ duration: 0 }), run({ duration: undefined })], 'could not be used'],
+        ])('never clears with %s: a labeled sim estimate, no clear count', (_label, runs, reason) => {
+            const zone = bestiaryPlanZoneForRow(coveRow(), runs, who);
+            expect(zone.creditsPerHour).toEqual({ [MARK]: 2.5 });
+            expect(zone.encountersPerHour).toBeNull();
+            expect(zone.note).toContain('never cleared in the sim');
+            expect(zone.note).toContain(reason);
+            expect(zone.paceLabel).toBe('sim, failed runs');
+        });
+
+        test('never clears, runs, but no spawn table to read: never a made-up figure', () => {
+            mocks.actionDetails = {};
+            const zone = bestiaryPlanZoneForRow(coveRow(), [run()], who);
+            expect(zone.encountersPerHour).toBeNull();
+            expect(zone.note).toContain('could not be used');
+            expect(zone.paceLabel).toBe('sim, failed runs');
+        });
+
+        test('no credit data at all: nothing the plan could draw from', () => {
+            mocks.actionDetails = {};
+            const zone = bestiaryPlanZoneForRow(coveRow({}, { _creditsPerHour: {} }), [run()], who);
+            expect(Object.keys(zone.creditsPerHour)).toHaveLength(0);
+            expect(zone.encountersPerHour).toBeNull();
+        });
+
+        test('runs of unknown tier set nothing, at T0 too, and the note counts them', () => {
+            const unknown = [run({ tier: null }), run({ tier: null }), run({ tier: null, duration: 60_000 })];
+            const never = bestiaryPlanZoneForRow(coveRow(), unknown, who);
+            expect(never.paceLabel).toBe('sim, failed runs');
+            expect(never.note).toContain('3 runs of unknown tier not used');
+
+            const cleanT0 = coveRow({ completions: 24, failed: 0, cleanClearSeconds: 3600 }, { tier: 0 });
+            const zone = bestiaryPlanZoneForRow(cleanT0, unknown, who);
+            expect(zone.creditsPerHour[MARK]).toBeCloseTo(2.5, 9);
+            expect(zone.note).toContain('sim clear time');
+            expect(zone.note).toContain('3 runs of unknown tier not used');
+        });
+
+        test('another party’s unknown-tier runs are not counted, and a clear at the tier stands beside them', () => {
+            const zone = bestiaryPlanZoneForRow(
+                coveRow(),
+                [run(), run({ tier: null }), run({ tier: null, team: ['Me'] })],
+                who
+            );
+            expect(zone.paceLabel).toBe('your 1 run');
+            expect(zone.note).toContain('1 run of unknown tier not used');
+        });
+
+        test('the plan row, its Fights, the copied text and the table column all read your runs', async () => {
+            mocks.dungeonRuns = [run({ team: ['Me'] }), run({ team: ['Me'] })];
+            await ui._displayAllZonesResults([coveT1()], 24, gameData);
+            click('#mwi-csim-bestiary-plan-btn');
+
+            const rows = planRows();
+            expect(rows[0][1]).toContain('[D] Pirate Cove T1');
+            expect(rows[0][1]).toContain('your 2 runs');
+            // Fills the count it shows: clears, not waves and not a dash
+            expect(rows[0][3]).toMatch(/clears$/);
+            expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(1);
+            const nameCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[1];
+            expect(nameCell.getAttribute('title')).toContain('measured (2 runs');
+            expect(ui._bestiaryPlanText()).toContain('[your 2 runs]');
+
+            const cell = bestiaryCell('Pirate Cove');
+            expect(cell.getAttribute('title')).toContain('Dungeon pace: measured (2 runs');
+            // Solo at T1 and two clears an hour: a marksman's three a clear are worth 2 each,
+            // twelve credits an hour, and the boss four, whichever reaches its threshold first
+            expect(ui._bestiaryPlanZones[0].creditsPerHour[MARK]).toBeCloseTo(12, 9);
+            expect(ui._bestiaryPlanZones[0].creditsPerHour[JACK]).toBeCloseTo(4, 9);
+        });
+
+        test('with no runs the row says it is a sim estimate from failed runs', async () => {
+            await ui._displayAllZonesResults([coveT1()], 24, gameData);
+            click('#mwi-csim-bestiary-plan-btn');
+            const rows = planRows();
+            expect(rows[0][1]).toContain('sim, failed runs');
+            expect(rows[0][3]).toBe('—');
+            expect(ui._bestiaryPlanText()).toContain('[sim, failed runs]');
+        });
     });
 
     test('a Dungeons run does not offer the Include dungeons switch it would ignore', async () => {

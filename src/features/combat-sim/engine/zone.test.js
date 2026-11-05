@@ -9,6 +9,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 import { setGameData } from './game-data.js';
 import { clearSimRng, random, randomSpawn, seedSimRng } from './rng.js';
 import Zone from './zone.js';
+import { expectedSpawnsPerClear } from '../../../utils/spawn-expectation.js';
 
 const ZONE_HRID = '/actions/combat/test_zone';
 
@@ -568,5 +569,89 @@ describe('dungeon waves', () => {
         expect(mean).toBeLessThan(1.2);
         // A heavy first draw ends the wave before anything is added at all.
         expect(sizes.some((size) => size === 0)).toBe(true);
+    });
+});
+
+describe('a whole clear against the exact spawn expectation', () => {
+    const HRID = '/actions/combat/test_dungeon';
+    const names = ['rat', 'frog', 'crab', 'bear', 'boss_a', 'boss_b', 'imp'].map((name) => `/monsters/${name}`);
+    const [RAT, FROG, CRAB, BEAR, BOSS_A, BOSS_B, IMP] = names;
+    const row = (hrid, rate, strength, difficultyTier = 0) => ({
+        combatMonsterHrid: hrid,
+        difficultyTier,
+        rate,
+        strength,
+    });
+
+    // Shaped like Chimerical Den: three tables, a fixed wave every fifth, every
+    // non-zero key on a fixed wave. Several slots, a strength cap that ends waves
+    // early, duplicates in a roster, a monster in both a fixed wave and a table,
+    // and one monster on two rows at different spawn tiers.
+    const dungeonInfo = () => {
+        const fixedSpawnsMap = {};
+        for (let wave = 5; wave <= 50; wave += 5) {
+            fixedSpawnsMap[String(wave)] = [
+                { combatMonsterHrid: BOSS_A, difficultyTier: 0 },
+                { combatMonsterHrid: IMP, difficultyTier: 0 },
+                { combatMonsterHrid: IMP, difficultyTier: 0 },
+            ];
+        }
+        fixedSpawnsMap['50'] = [{ combatMonsterHrid: BOSS_B, difficultyTier: 1 }];
+        return {
+            maxWaves: 50,
+            fixedSpawnsMap,
+            randomSpawnInfoMap: {
+                0: { maxSpawnCount: 4, maxTotalStrength: 150, spawns: [row(RAT, 2, 40), row(FROG, 1, 65)] },
+                10: {
+                    maxSpawnCount: 4,
+                    maxTotalStrength: 180,
+                    spawns: [row(FROG, 1, 50), row(CRAB, 1, 70), row(IMP, 1, 40)],
+                },
+                30: {
+                    maxSpawnCount: 5,
+                    maxTotalStrength: 230,
+                    spawns: [row(CRAB, 1, 45), row(BEAR, 2, 60), row(BEAR, 1, 60, 1)],
+                },
+            },
+        };
+    };
+
+    afterEach(() => clearSimRng());
+
+    test('kills per clear from the tables match the real Zone, by monster and by tier', () => {
+        const info = dungeonInfo();
+        setGameData({
+            actionDetailMap: {
+                [HRID]: { buffs: null, combatZoneInfo: { isDungeon: true, fightInfo: null, dungeonInfo: info } },
+            },
+            combatMonsterDetailMap: Object.fromEntries(names.map((hrid) => [hrid, { enrageTime: 0, abilities: [] }])),
+        });
+        seedSimRng(20261104);
+        const zone = new Zone(HRID, 2);
+        const CLEARS = 1500;
+        const tally = {};
+        for (let wave = 0; wave < CLEARS * info.maxWaves; wave++) {
+            for (const monster of zone.getNextWave()) {
+                const key = `${monster.hrid}|${monster.difficultyTier}`;
+                tally[key] = (tally[key] || 0) + 1;
+            }
+        }
+
+        const exact = expectedSpawnsPerClear(info);
+        const flat = {};
+        for (const [hrid, byTier] of Object.entries(exact)) {
+            // The engine's monster tier is the dungeon's plus the spawn's own
+            for (const [tier, count] of Object.entries(byTier)) flat[`${hrid}|${Number(tier) + 2}`] = count;
+        }
+        expect(Object.keys(flat).sort()).toEqual(Object.keys(tally).sort());
+        for (const [key, count] of Object.entries(flat)) {
+            // Drawn counts vary by at most about their square root, per clear
+            const tolerance = 5 * Math.sqrt(count / CLEARS);
+            expect(Math.abs(tally[key] / CLEARS - count), key).toBeLessThan(Math.max(tolerance, 1e-9));
+        }
+        // Written-down waves come out exact, not as an estimate
+        expect(exact[BOSS_A][0]).toBe(9);
+        expect(exact[BOSS_B][1]).toBe(1);
+        expect(flat[`${BOSS_B}|3`]).toBe(1);
     });
 });
