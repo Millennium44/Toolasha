@@ -170,6 +170,18 @@ class Config {
          */
         this._loadGeneration = 0;
 
+        /**
+         * The device-wide settings as last read, kept while the map cannot answer for them.
+         *
+         * They belong to no character, so a character switch has no reason to forget them, but
+         * `clearSettingsCache()` empties the map whole. For that window every reader got the schema default:
+         * sync read no token, the "settings" scope and no passphrase. Null whenever the map itself answers.
+         */
+        this._heldSharedSettings = null;
+
+        /** Whether the device-wide settings answered now are the stored ones. See areSharedSettingsKnown(). */
+        this._sharedSettingsKnown = false;
+
         // Feature toggles with metadata for future UI
         this.features = {
             // Market Features
@@ -625,6 +637,15 @@ class Config {
             return;
         }
 
+        // A character's map loaded around a device-wide read that failed holds defaults (or an old
+        // per-character copy) for those settings, so what was read last goes on answering for them.
+        if (settingsStorage.lastLoadReadable !== false && settingsStorage.lastSharedReadable !== false) {
+            this._heldSharedSettings = null;
+            this._sharedSettingsKnown = true;
+        } else {
+            this._holdSharedSettings(previousMap);
+        }
+
         if (settingsStorage.lastLoadReadable === false) {
             // The store could not be read, so what came back is schema defaults
             // standing in for the user's settings. Keep the map in hand when it
@@ -699,6 +720,7 @@ class Config {
         // is still current; invalidate it now so it cannot refill the cache
         // with the departing character's map during that gap.
         this._loadGeneration++;
+        this._holdSharedSettings(this.settingsMap);
         this.settingsMap = {};
         // The keys named a map that no longer exists. Keeping them would aim the
         // next save at the ARRIVING character's store (this fires on
@@ -708,6 +730,55 @@ class Config {
         this._dirtyKeys = new Set();
         this.characterSettingsLoaded = false;
         this._armReloadWatchdog();
+    }
+
+    /**
+     * Keep the device-wide settings of a map about to be replaced, for as long as nothing better can answer.
+     *
+     * An entry already held stays: a burst of switches clears an empty map, and a map that came from a failed
+     * read holds defaults there. A setter removes the entry it writes, so that map's value is taken for it.
+     * Nothing is kept until the settings have been read once, as defaults are not a value worth keeping.
+     * @param {Object} map - The map being replaced
+     * @returns {void}
+     * @private
+     */
+    _holdSharedSettings(map) {
+        if (!this._sharedSettingsKnown) return;
+        const held = this._heldSharedSettings ?? Object.create(null);
+        for (const id of settingsStorage.sharedSettingIds?.() ?? []) {
+            if (!held[id] && map[id]) held[id] = map[id];
+        }
+        this._heldSharedSettings = held;
+    }
+
+    /**
+     * Whether the device-wide settings answered now are the stored ones, rather than schema defaults
+     * or an old per-character copy. False until they have been read, and after a read that failed with nothing
+     * earlier to fall back on. Sync must not act on a guess: a default scope uploads less, and a default
+     * passphrase uploads in the clear.
+     * @returns {boolean} True when `getSetting` gives the real value for a device-wide setting
+     */
+    areSharedSettingsKnown() {
+        return this._sharedSettingsKnown;
+    }
+
+    /**
+     * A setting's stored entry, as `getSetting` would read it. For a reader that copies whole entries:
+     * `settingsMap` has no device-wide entries while a switch has it empty.
+     * @param {string} key - Setting key
+     * @returns {Object|undefined} Its entry, if there is one in hand
+     */
+    getSettingEntry(key) {
+        return this._heldSharedSettings?.[key] ?? this.settingsMap[key];
+    }
+
+    /**
+     * Whether the settings map is empty, waiting for the load that refills it: the character-switch window.
+     * Device-wide settings still read correctly in it; a character's own settings read as schema defaults.
+     * @returns {boolean} True between `clearSettingsCache()` and the load that follows it
+     */
+    isSettingsReloading() {
+        return Object.keys(this.settingsMap).length === 0;
     }
 
     /**
@@ -876,7 +947,7 @@ class Config {
         if (key in this._pendingValues) return this._pendingValues[key];
 
         // Check loaded settings first
-        const setting = this.settingsMap[key];
+        const setting = this._heldSharedSettings?.[key] ?? this.settingsMap[key];
         if (setting) {
             if (Object.hasOwn(setting, 'isTrue')) {
                 return setting.isTrue ?? defaultValue;
@@ -987,7 +1058,7 @@ class Config {
     getSettingValue(key, defaultValue = null) {
         if (key in this._pendingValues) return this._pendingValues[key];
 
-        const setting = this.settingsMap[key];
+        const setting = this._heldSharedSettings?.[key] ?? this.settingsMap[key];
         if (!setting) {
             return defaultValue;
         }
@@ -1056,6 +1127,7 @@ class Config {
         const setting = this.settingsMap[key];
         if (setting) {
             this._writeSettingField(setting, value);
+            if (this._heldSharedSettings) delete this._heldSharedSettings[key];
             this._markDirty(key);
             this.saveSettings();
 
@@ -1085,6 +1157,7 @@ class Config {
         if (this._deferWriteDuringReload('setSettingValue', key, value)) return;
         if (this.settingsMap[key]) {
             this._writeSettingField(this.settingsMap[key], value);
+            if (this._heldSharedSettings) delete this._heldSharedSettings[key];
             this._markDirty(key);
             this.saveSettings();
 
@@ -1342,6 +1415,8 @@ class Config {
      */
     async resetToDefaults() {
         this.settingsMap = settingsStorage.buildDefaults();
+        this._heldSharedSettings = null;
+        this._sharedSettingsKnown = true;
         // Says so explicitly: this map is not a snapshot with a few edits on it,
         // it is every setting deliberately put back to its default, so it must
         // land whole rather than through the dirty-key merge. Anything the dirty

@@ -550,6 +550,8 @@ export async function buildPayloadJSON(scope = 'settings') {
         '"stores":{',
     ];
 
+    // Each store is in hand once read, so handing the page a frame inside one cannot change what it holds
+    const slice = createSlicer();
     let first = true;
     let foreignKeys = 0;
     let foreignBytes = 0;
@@ -559,7 +561,7 @@ export async function buildPayloadJSON(scope = 'settings') {
         foreignKeys += partition.foreignKeys;
         foreignBytes += partition.foreignBytes;
         const safe = storeName === SETTINGS_STORE ? redactSettingsStore(partition.owned) : partition.owned;
-        parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(safe)}`);
+        parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${await stringifyEntries(safe, slice)}`);
         first = false;
     }
 
@@ -581,6 +583,23 @@ export async function buildPayloadJSON(scope = 'settings') {
 
     parts.push('}}');
     return parts.join('');
+}
+
+/**
+ * `JSON.stringify` of a store's entries, one key at a time, so a large store is not one long task.
+ * The same text: a value JSON leaves out of an object (undefined, a function) is left out here.
+ * @param {Object} entries - A store's entries
+ * @param {() => Promise<void>} slice - The build's clock
+ * @returns {Promise<string>} The JSON text
+ */
+async function stringifyEntries(entries, slice) {
+    const pieces = [];
+    for (const [key, value] of Object.entries(entries)) {
+        const text = JSON.stringify(value);
+        if (text !== undefined) pieces.push(`${JSON.stringify(key)}:${text}`);
+        await slice();
+    }
+    return `{${pieces.join(',')}}`;
 }
 
 /** How long a pull's comparison loops run before handing the page a frame */
@@ -1669,6 +1688,27 @@ function baselineFrom(gist, local) {
  * @returns {boolean} True when the push should merge the gist into its upload first
  */
 export function registeredKeysDiverge(localText, baseline) {
+    return runSteps(registeredKeysDivergeSteps(localText, baseline));
+}
+
+/**
+ * {@link registeredKeysDiverge}, handing the page a frame between keys. The text is a string in hand, so
+ * nothing written meanwhile can change the answer; a write counts toward the next push (see `sync-dirty.js`).
+ * @param {string} localText - This device's payload
+ * @param {Record<string, string|{gist: string, local: string|null}>|null} baseline - Hashes at the last exchange
+ * @returns {Promise<boolean>} True when the push should merge the gist into its upload first
+ */
+export function registeredKeysDivergeSliced(localText, baseline) {
+    return runStepsSliced(registeredKeysDivergeSteps(localText, baseline));
+}
+
+/**
+ * The body of {@link registeredKeysDiverge}, yielding between keys.
+ * @param {string} localText - This device's payload
+ * @param {Record<string, string|{gist: string, local: string|null}>|null} baseline - Hashes at the last exchange
+ * @returns {Generator<void, boolean>} Steps; returns the answer
+ */
+function* registeredKeysDivergeSteps(localText, baseline) {
     let stores;
     try {
         stores = JSON.parse(localText)?.stores || {};
@@ -1681,6 +1721,7 @@ export function registeredKeysDiverge(localText, baseline) {
         for (const [key, value] of Object.entries(entries)) {
             if (!mergeForKey(storeName, key)) continue;
             if (!hasBaseline) return true;
+            yield;
             const was = readBaselineEntry(baseline[baselineId(storeName, key)]);
             if (was && valueHash(value) !== was.gist) return true;
         }
@@ -2436,14 +2477,35 @@ function stableStringify(value) {
  * @returns {string} Hex digest
  */
 export function hashPayload(text) {
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < text.length; index += 1) {
+    return hashDigest(hashRange(text, 0, text.length, FNV_OFFSET_BASIS));
+}
+
+/** FNV-1a's starting value */
+const FNV_OFFSET_BASIS = 0x811c9dc5;
+
+/** How many characters of a payload are hashed between looks at the clock */
+const HASH_RANGE_CHARS = 1 << 20;
+
+/**
+ * Carry a hash over part of a text.
+ * @param {string} text - The text
+ * @param {number} from - First index
+ * @param {number} to - Index to stop before
+ * @param {number} start - The hash so far
+ * @returns {number} The hash after this part
+ */
+function hashRange(text, from, to, start) {
+    let hash = start;
+    for (let index = from; index < to; index += 1) {
         hash ^= text.charCodeAt(index);
         // FNV prime, via shifts so the multiply stays in 32-bit range
         hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
     }
-    return hash.toString(16).padStart(8, '0');
+    return hash;
 }
+
+/** A hash as its hex digest */
+const hashDigest = (hash) => hash.toString(16).padStart(8, '0');
 
 /**
  * Hash a payload by its CONTENT, ignoring the `exportedAt` stamp.
@@ -2460,6 +2522,22 @@ export function hashPayload(text) {
  */
 export function contentHash(text) {
     return hashPayload(String(text).replace(/"exportedAt":"[^"]*",/, ''));
+}
+
+/**
+ * {@link contentHash}, handing the page a frame as it goes: the same digest. A string cannot change under it.
+ * @param {string} text - Payload text as produced by `buildPayloadJSON()`
+ * @returns {Promise<string>} Hash of the payload with its `exportedAt` removed
+ */
+export async function contentHashSliced(text) {
+    const body = String(text).replace(/"exportedAt":"[^"]*",/, '');
+    const slice = createSlicer();
+    let hash = FNV_OFFSET_BASIS;
+    for (let from = 0; from < body.length; from += HASH_RANGE_CHARS) {
+        hash = hashRange(body, from, Math.min(from + HASH_RANGE_CHARS, body.length), hash);
+        await slice();
+    }
+    return hashDigest(hash);
 }
 
 /**

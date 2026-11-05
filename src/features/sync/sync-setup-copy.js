@@ -32,7 +32,7 @@ export const SYNC_SETTING_IDS = Object.keys(settingsGroups.sync?.settings ?? {})
 export function syncSetupEntries() {
     const entries = {};
     for (const id of SYNC_SETTING_IDS) {
-        const entry = config.settingsMap?.[id];
+        const entry = config.getSettingEntry?.(id) ?? config.settingsMap?.[id];
         if (entry && typeof entry === 'object') entries[id] = { ...entry };
     }
     return entries;

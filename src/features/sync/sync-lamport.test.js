@@ -85,6 +85,8 @@ const withSlicedPayload = vi.hoisted(() => (mod) => ({
     mergeForUploadSliced: async (...args) => mod.mergeForUpload(...args),
     wholeKeyHashesSliced: async (...args) => mod.wholeKeyHashes(...args),
     exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
+    registeredKeysDivergeSliced: async (...args) => mod.registeredKeysDiverge(...args),
+    contentHashSliced: async (...args) => mod.contentHash(...args),
 }));
 vi.mock('./sync-payload.js', () => {
     const mod = {
