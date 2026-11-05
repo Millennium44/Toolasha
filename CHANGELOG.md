@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Overlay presets use three columns on a wide panel
+
+On a panel wide enough for three tiles, the overlay now uses three columns, and each preset packs its tiles into full rows there. Applying a preset also keeps a column count you set by hand instead of resetting it.
+
 ### Task badge speed counts enhancement correctly
 
 An enhanced Task Badge's speed was counted at about half its value at +20 (45% where the game gives 90%), so task times and ratings read slower than they are. It now matches the game.

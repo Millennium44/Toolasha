@@ -394,8 +394,10 @@ export const PRESET_LAYOUTS = {
         // Treasure takes the second row's width so the five figures do not leave
         // a lone tile beside a block
         span: { treasure: 2, combatRevenue: 2, luck: 2, combatSession: 2, consumables: 2 },
-        // Three figures, then mana beside treasure, then each block on its own row
-        span3: { treasure: 2, combatRevenue: 3, luck: 3, combatSession: 3, consumables: 3 },
+        // Three figures, then mana beside treasure, revenue beside luck, and the
+        // session beside the supplies block: four full rows, none of them a lone
+        // block stretched across the width
+        span3: { treasure: 2, combatRevenue: 2, consumables: 2 },
     },
     Skilling: {
         activity: ACTIVITY.SKILLING,
@@ -426,8 +428,9 @@ export const PRESET_LAYOUTS = {
         order: ['dps', 'deathsPerHour', 'manaPerFight', 'treasure', 'combatSession', 'combatRevenue', 'consumables'],
         // Mana takes its row's width so treasure does not start below a lone tile
         span: { manaPerFight: 2, treasure: 2, combatSession: 2, combatRevenue: 2, consumables: 2 },
-        // The three figures make a row; each block takes its own
-        span3: { treasure: 3, combatSession: 3, combatRevenue: 3, consumables: 3 },
+        // The three figures make a row, then treasure beside the session; revenue
+        // and the supplies block each take their own
+        span3: { treasure: 2, combatRevenue: 3, consumables: 3 },
     },
     Market: {
         activity: ACTIVITY.MARKET,
