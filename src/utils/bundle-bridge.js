@@ -239,6 +239,30 @@ export function philoCalculator() {
     return toolashaRoot()?.Market?.philoCalculator || null;
 }
 
+/**
+ * The gathering profit calculator (`calculateGatheringProfit`): the market
+ * bundle's module, not a copy with caches of its own.
+ *
+ * Checked for the function it is asked for, so a key holding something other
+ * than the module is refused here rather than called and thrown on, which would
+ * show only in the split build.
+ *
+ * @returns {Object|null} The module namespace, or null when it is absent or lacks the calculator
+ */
+export function gatheringProfit() {
+    const module = toolashaRoot()?.Market?.gatheringProfit;
+    return typeof module?.calculateGatheringProfit === 'function' ? module : null;
+}
+
+/**
+ * The production profit calculator (`calculateProductionProfit`), as above.
+ * @returns {Object|null} The module namespace, or null when it is absent or lacks the calculator
+ */
+export function productionProfit() {
+    const module = toolashaRoot()?.Market?.productionProfit;
+    return typeof module?.calculateProductionProfit === 'function' ? module : null;
+}
+
 // ---------------------------------------------------------------------------
 // Actions bundle singletons
 // ---------------------------------------------------------------------------
@@ -579,6 +603,22 @@ export function consumablesPanel() {
  */
 export function overlayPanel() {
     return toolashaRoot()?.UI?.overlayPanel || null;
+}
+
+/**
+ * The Time to Level row's module, for the one measurement window it keeps.
+ *
+ * The rolling skill-experience history lives in that module (ui bundle). A tile
+ * in another bundle that wants the rate Time to Level divides by reads it here;
+ * a copy imported into its own bundle would keep a window of its own, fed only
+ * by its own tile, and quote a different number.
+ *
+ * @returns {Object|null} The module namespace (`runningSkillReading`), or null
+ *   when the ui bundle is absent or the key does not carry the reader
+ */
+export function skillTtlRow() {
+    const module = toolashaRoot()?.UI?.skillTtlRow;
+    return typeof module?.runningSkillReading === 'function' ? module : null;
 }
 
 /**
