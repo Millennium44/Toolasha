@@ -17,6 +17,9 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     dmHandlers: {},
     actions: [],
+    actionDetails: {},
+    characterId: 'char1',
+    skillReading: null,
     profitView: null,
     forecasts: [],
     partySummary: null,
@@ -27,6 +30,8 @@ const game = vi.hoisted(() => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentActions: () => game.actions,
+        getActionDetails: (hrid) => game.actionDetails[hrid],
+        getCurrentCharacterId: () => game.characterId,
         on: (event, handler) => {
             game.dmHandlers[event] = handler;
         },
@@ -71,6 +76,9 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     deathsPanel: () => null,
     partyLootPanel: () => null,
     consumablesPanel: () => null,
+    skillTtlRow: () => (game.skillReading === undefined ? null : { runningSkillReading: () => game.skillReading }),
+    gatheringProfit: () => null,
+    productionProfit: () => null,
 }));
 
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => null }));

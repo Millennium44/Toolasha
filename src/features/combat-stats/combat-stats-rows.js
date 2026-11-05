@@ -51,8 +51,10 @@ import {
     deathsPanel,
     partyLootPanel,
     consumablesPanel,
+    skillTtlRow,
 } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { runningSkillingProfit, skillingProfitVersion } from './skilling-profit-estimate.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
 const CACHE_MS = 4000;
@@ -302,19 +304,56 @@ registerRow({
     onOpen: () => profitPanel()?.toggle(),
 });
 
+/**
+ * The running skilling action's experience rate, from the same rolling window
+ * Time to Level divides by, so the two agree to the digit.
+ *
+ * @returns {{name: string, xpPerHour: number|null}|null} Null when no skilling action is
+ *   running (or the ui bundle that keeps the window is not up), which leaves the tile on its
+ *   combat reading; `xpPerHour` is null until two readings exist
+ */
+function skillingReading() {
+    try {
+        return skillTtlRow()?.runningSkillReading() ?? null;
+    } catch (error) {
+        console.error('[CombatStatsRows] Reading the running skill failed:', error);
+        return null;
+    }
+}
+
 registerRow({
     key: 'experiencePerHour',
-    empty: 'No experience yet',
+    // Worded for what the tile is waiting on: a skill reading takes two samples,
+    // a combat figure takes a fight
+    empty: () => (skillingReading() ? 'Measuring experience rate…' : 'No experience yet'),
     name: 'Experience/hr',
     defaultSize: { width: 180, height: 30 },
     // The whole tile is one rounded figure and a fixed title, so the rounded
     // figure is the whole input. It only moves when the collector's cache is
-    // rebuilt, which `currentStats` is what asks for.
+    // rebuilt, which `currentStats` is what asks for. While a skilling action
+    // runs it is the running skill's rounded rate instead, with the skill's name.
     version: () => {
+        const skilling = skillingReading();
+        if (skilling) return `skill|${skilling.name}|${skilling.xpPerHour ? Math.round(skilling.xpPerHour) : 'blank'}`;
         const stats = currentStats();
         return stats?.expPerHour ? String(Math.round(stats.expPerHour)) : 'blank';
     },
     render: (container) => {
+        // A skilling action running: that skill's rate, not the last fight's
+        const skilling = skillingReading();
+        if (skilling) {
+            if (!skilling.xpPerHour) return blank(container);
+
+            row(container, [
+                { text: `${formatWithSeparator(Math.round(skilling.xpPerHour))} exp/hr`, color: ROW_COLORS.good },
+                { text: skilling.name, color: ROW_COLORS.dim, ellipsis: true, push: true },
+            ]);
+            container.title =
+                `${skilling.name} experience per hour, over the last ten minutes.\n` +
+                'The rate Time to Level divides by.\nDouble-click for the per-skill breakdown and combat level.';
+            return;
+        }
+
         const stats = currentStats();
         if (!stats?.expPerHour) return blank(container);
 
@@ -397,6 +436,43 @@ registerRow({
 });
 
 /**
+ * Draw the estimate for the running skilling action.
+ *
+ * Only a worked-out figure is drawn as a figure. A partial one (some price
+ * missing) says so on the tile as well as in the tooltip, and a loss reads as a
+ * loss; while the estimate is being worked out, or when this kind of action has
+ * none, the tile draws nothing and the row's placeholder says which.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} skilling - From `runningSkillingProfit`, not idle
+ */
+function drawSkillingProfit(container, skilling) {
+    if (skilling.state !== 'ready') return blank(container);
+
+    const { profitPerHour, hasMissingPrices, pricingMode } = skilling.estimate;
+    row(container, [
+        { text: skilling.actionName, color: ROW_COLORS.dim, ellipsis: true },
+        {
+            text: `${formatLargeNumber(Math.round(profitPerHour))}/hr`,
+            color: profitPerHour >= 0 ? ROW_COLORS.good : ROW_COLORS.bad,
+            push: true,
+        },
+        {
+            text: hasMissingPrices ? 'est. · partial' : 'est.',
+            color: hasMissingPrices ? ROW_COLORS.gold : ROW_COLORS.dim,
+        },
+    ]);
+    container.title =
+        `${skilling.actionName}: an estimate of ${formatLargeNumber(Math.round(profitPerHour))} coins per hour at your ` +
+        `current gear, tea and market (${pricingMode} pricing), not tracked loot.` +
+        (profitPerHour < 0 ? '\nThis action costs more than it earns at current prices.' : '') +
+        (hasMissingPrices
+            ? '\nSome inputs or outputs have no market price, so this figure leaves them out and is not the whole.'
+            : '') +
+        '\nA combat run shows its tracked loot here instead.\nDouble-click for Party Loot.';
+}
+
+/**
  * What the run has actually banked, and what that comes to per day.
  *
  * Combat Revenue answers the daily rate; this answers "so far". The two disagree
@@ -405,7 +481,14 @@ registerRow({
  */
 registerRow({
     key: 'totalProfit',
-    empty: 'No loot tracked yet',
+    // Worded for what the tile is waiting on while a skilling action runs: an
+    // estimate being worked out, or an action the calculators do not cover
+    empty: () => {
+        const skilling = runningSkillingProfit();
+        if (skilling.state === 'pending') return 'Estimating profit…';
+        if (skilling.state === 'none') return `No profit estimate for ${skilling.skillName}`;
+        return 'No loot tracked yet';
+    },
     name: 'Total Profit',
     // Taller by default than it was: a party of five needs five lines, and a
     // tile sized for one clips the rest
@@ -414,6 +497,10 @@ registerRow({
     // per-day figure — all three rounded the way the tile rounds them — plus the
     // luck notes that make up the tooltip. Nothing else reaches the tile.
     version: () => {
+        // A skilling action running: the estimate for it, not the last fight
+        const skilling = runningSkillingProfit();
+        if (skilling.state !== 'idle') return skillingProfitVersion(skilling);
+
         const party = partyStats();
         if (!party.length) return 'blank';
 
@@ -431,6 +518,12 @@ registerRow({
         return `${lines.join('|')}#${luckNotes.join('~')}`;
     },
     render: (container) => {
+        // A skilling action running: what that action is estimated to earn per
+        // hour, marked as an estimate. A fight running, or nothing running, is
+        // the tracked loot below.
+        const skilling = runningSkillingProfit();
+        if (skilling.state !== 'idle') return drawSkillingProfit(container, skilling);
+
         const party = partyStats();
         if (!party.length) return blank(container);
 
