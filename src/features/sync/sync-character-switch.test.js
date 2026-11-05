@@ -344,6 +344,21 @@ describe('an automatic push asked for during the window', () => {
         expect(pull.mock.calls[0][2]).toBe(true);
     });
 
+    test('what is owed survives a teardown and re-initialise, should sync ever be stopped by the switch', async () => {
+        const window = await enterWindow();
+        await syncManager.push({ silent: true, unattended: true });
+        syncManager.cleanup();
+        await leaveWindow(window);
+        expect(scheduled).toEqual([]);
+
+        await syncManager.initialize();
+        expect(scheduled).toHaveLength(1);
+        await runOwed();
+
+        expect(github.writes).toHaveLength(1);
+        expect(toasts).toEqual([]);
+    });
+
     test('sync turned off while it waits does not run', async () => {
         const window = await enterWindow();
         await syncManager.push({ silent: true, unattended: true });
