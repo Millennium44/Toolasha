@@ -171,18 +171,50 @@ describe('walking only what is missing', () => {
         expect(out.blocked).toContain('stall');
     });
 
-    test('a decompose queued with no fruit, and a coinify queued ahead of any essence, are refused', () => {
-        expect(reduce([row('/actions/alchemy/decompose', FRUIT, { maxCount: 1000 })], 0, 0).blocked).toContain(
-            'would stall'
-        );
-        expect(reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 480 })], 0, 0).blocked).toContain(
-            'Coinify is queued for 480'
-        );
+    test('a starved row with nothing behind it to feed it stalls with or without the walk: a warning, not a refusal', () => {
+        const noFruit = reduce([row('/actions/alchemy/decompose', FRUIT, { maxCount: 1000 })], 0, 0);
+        expect(noFruit.blocked).toBeNull();
+        expect(noFruit.notes[0]).toContain('Decompose is queued for 1,000');
+        expect(noFruit.notes[0]).toContain('stalls there until more arrives');
+
+        const noEssence = reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 480 })], 0, 0, {
+            coinifyActions: 480,
+        });
+        expect(noEssence.blocked).toBeNull();
+        expect(noEssence.notes[0]).toContain('Coinify is queued for 480');
     });
 
-    test('a row that never ends blocks the walk behind it, and says so', () => {
-        const out = reduce([row(items.forageActionHrid, null, { hasMaxCount: false, maxCount: 0 })], 2000, 0);
-        expect(out.blocked).toBe('Forage repeats forever, so nothing queued behind it would run.');
+    test('refused only when the walk itself would leave the starved row idle: its feeder would sit behind it', () => {
+        // a starved coinify with a decompose to be added behind it
+        const out = reduce([row('/actions/alchemy/coinify', ESSENCE, { maxCount: 480 })], 2000, 0, {
+            decomposeActions: 1000,
+            coinifyActions: 480,
+        });
+        expect(out.blocked).toContain('queued behind it');
+        expect(out.blocked).toContain('stall there for good');
+    });
+
+    test('a row that never ends is a warning naming it by its display name, and the legs behind it are not credited', () => {
+        const queued = queuedLegCounts(
+            [row(items.forageActionHrid, null, { hasMaxCount: false, maxCount: 0, ordinal: 1 })],
+            items,
+            { ...stock(2000, 0), labelOf: () => 'Golem Cave' }
+        );
+        const out = reduceBatchByQueue(batch, queued, LOOP);
+        expect(out.blocked).toBeNull();
+        expect(out.waitingBehind).toBe('Golem Cave');
+        expect(out.notes).toEqual(['The new rows wait behind Golem Cave, which repeats forever, until you stop it.']);
+        expect(out.skipped).toEqual([]);
+        expect(out.batch.decomposeActions).toBe(1000);
+    });
+
+    test('with no display name to give it is a generic phrase, never the hrid tail', () => {
+        const queued = queuedLegCounts(
+            [row('/actions/combat/golem_cave', null, { hasMaxCount: false, maxCount: 0 })],
+            items,
+            stock(0)
+        );
+        expect(queued.endless).toBe('An action with no count');
     });
 
     test('with everything covered there is nothing to walk and nothing to block', () => {

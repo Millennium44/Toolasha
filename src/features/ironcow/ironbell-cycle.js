@@ -223,12 +223,17 @@ export function summarizeCycle(walked, { coins, loopItems, bellPrice = null, off
  * @param {Object|null} [stock.loop] - From `calculateStarfruitLoop` (bulk sizes, yields)
  * @param {number} [stock.fruitHeld] - Star Fruit held (net of what another plan reserved)
  * @param {number} [stock.essenceHeld] - Essence held (net of reservations)
+ * @param {((action: Object) => string|null)|null} [stock.labelOf] - The action's display name, for `endless`
  * @returns {{forage: {count: number, performed: number}, decompose: {count: number, performed: number},
  *   coinify: {count: number, performed: number}, endless: string|null, starved: Array<Object>,
  *   fruitAfter: number, essenceAfter: number}} `count` is what the rows ask for, `performed` what will
  *   run; `endless` names the first row with no count; `starved` lists `{leg, count, performed}`
  */
-export function queuedLegCounts(actions, loopItems, { loop = null, fruitHeld = 0, essenceHeld = 0 } = {}) {
+export function queuedLegCounts(
+    actions,
+    loopItems,
+    { loop = null, fruitHeld = 0, essenceHeld = 0, labelOf = null } = {}
+) {
     const legs = {
         forage: { count: 0, performed: 0 },
         decompose: { count: 0, performed: 0 },
@@ -251,11 +256,8 @@ export function queuedLegCounts(actions, loopItems, { loop = null, fruitHeld = 0
         // starved. Any other row with no count (a gather, a fight) has no limit and never hands on.
         const materialLimited = !action.hasMaxCount && (leg === 'decompose' || leg === 'coinify');
         if (!action.hasMaxCount && !materialLimited) {
-            endless = leg
-                ? LEG_NAMES[leg]
-                : String(action.actionHrid || 'An action')
-                      .split('/')
-                      .pop();
+            // Said by the action's display name (never an hrid): the caller knows how the game names it
+            endless = labelOf?.(action) || (leg ? LEG_NAMES[leg] : 'An action with no count');
             break;
         }
         if (!leg) continue;
@@ -293,9 +295,9 @@ const LEG_NAMES = { forage: 'Forage', decompose: 'Decompose', coinify: 'Coinify'
  * allow: the fruit left after the queued rows plus the new forage, and the essence left plus the new
  * decompose. The batch itself is not changed, only the copy the walk is built from.
  *
- * The walk is refused (`blocked`, with the reason) when it would leave a queue that looks complete but
- * stalls: a queued row that asks for more than it can perform, or a row with no count that the new rows
- * would sit behind.
+ * The walk is refused (`blocked`, with the reason) only when it would itself leave a queue that looks complete
+ * but idles for good: a starved queued row whose missing input the new rows would make from behind it. A row with
+ * no count that the new rows sit behind is a warning (`waitingBehind`, `notes`), not a refusal.
  *
  * @param {Object|null} batch - Counts as `forageActions` / `decomposeActions` / `coinifyActions`
  * @param {ReturnType<typeof queuedLegCounts>} queued - From {@link queuedLegCounts}
@@ -342,16 +344,30 @@ export function reduceBatchByQueue(batch, queued, loop = null) {
     }
 
     let blocked = null;
+    const notes = [];
     const anythingToWalk = reduced.forageActions + reduced.decomposeActions + reduced.coinifyActions > 0;
-    if (queued?.starved?.length) {
-        const { leg, count, performed } = queued.starved[0];
-        blocked =
+    // A starved queued row stalls the queue with or without this walk. The walk is refused only when it would
+    // itself leave that row idle for good: the row's missing input would be made by a row added BEHIND it, which
+    // can never run until the starved row does.
+    const feeders = { decompose: reduced.forageActions > 0, coinify: reduced.decomposeActions > 0 };
+    for (const { leg, count, performed } of queued?.starved || []) {
+        const message =
             `${LEG_NAMES[leg]} is queued for ${formatWithSeparator(count)} but the stock ahead of it covers only ` +
-            `${formatWithSeparator(performed)}, so the queue would stall there.`;
-    } else if (queued?.endless && anythingToWalk) {
-        blocked = `${queued.endless} repeats forever, so nothing queued behind it would run.`;
+            `${formatWithSeparator(performed)}`;
+        if (feeders[leg] && !blocked) {
+            blocked = `${message}, and what would feed it is queued behind it, so the queue would stall there for good.`;
+        } else if (!feeders[leg]) {
+            notes.push(`${message}, so it stalls there until more arrives; rows added behind it wait.`);
+        }
     }
-    return { batch: reduced, skipped, partial, blocked };
+    // A row with no count and no material limit never hands on: the new rows wait behind it until it is stopped.
+    // A warning, not a refusal; the rows are queued and run when it is stopped.
+    let waitingBehind = null;
+    if (queued?.endless && anythingToWalk) {
+        waitingBehind = queued.endless;
+        notes.push(`The new rows wait behind ${queued.endless}, which repeats forever, until you stop it.`);
+    }
+    return { batch: reduced, skipped, partial, blocked, waitingBehind, notes };
 }
 
 /**

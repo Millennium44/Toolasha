@@ -599,9 +599,9 @@ describe('what the queue is credited with agrees with what the engine will run',
 
         expect(legOf(walked, COINIFY)[0]?.count ?? 0).toBe(0);
         expect(queued.coinify.performed).toBe(0);
-        expect(reduceBatchByQueue({ coinifyActions: 480 }, queued, loop).blocked).toContain(
-            'Coinify is queued for 480'
-        );
+        const out = reduceBatchByQueue({ coinifyActions: 480 }, queued, loop);
+        expect(out.blocked).toBeNull();
+        expect(out.notes[0]).toContain('Coinify is queued for 480');
     });
 
     test('Repeat ∞ decompose then coinify run to their materials: the maintainer’s queue shape', () => {

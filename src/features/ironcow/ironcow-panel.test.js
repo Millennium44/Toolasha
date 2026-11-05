@@ -29,7 +29,7 @@ const store = vi.hoisted(() => ({
 }));
 const walk = vi.hoisted(() => ({ started: [], succeeds: true }));
 // The game's action queue, as `getCurrentActions` returns it
-const queue = vi.hoisted(() => ({ actions: [], capHours: null }));
+const queue = vi.hoisted(() => ({ actions: [], capHours: null, details: {} }));
 // What the queue walk reports; null is "the actions bundle is not there"
 const coinWalk = vi.hoisted(() => ({ walked: null }));
 // Mutable so the character-switch race test can move the active character
@@ -57,6 +57,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterId: () => characterId.current,
         getCurrentActions: () => queue.actions,
         getOfflineHourCap: () => queue.capHours,
+        getActionDetails: (hrid) => queue.details[hrid] ?? null,
         on: (event, fn) => {
             if (!events.listeners.has(event)) events.listeners.set(event, new Set());
             events.listeners.get(event).add(fn);
@@ -246,6 +247,7 @@ beforeEach(() => {
     store.keepCash = false;
     store.keepCashWrites = [];
     queue.actions = [];
+    queue.details = {};
     walk.started = [];
     walk.succeeds = true;
     coinWalk.walked = null;
@@ -1342,14 +1344,47 @@ describe('the queue helper', () => {
                 expect(walk.started).toHaveLength(0);
             });
 
-            test('a row with no count and no material limit blocks the walk and says it never ends', async () => {
+            test('a row with no count and no material limit is a warning: the walk stays pressable and names the row', async () => {
                 loop.result = withHrids();
+                queue.details['/actions/foraging/star_fruit'] = { name: 'Foraging: Star Fruit' };
                 queue.actions = [queued('/actions/foraging/star_fruit', null, { hasMaxCount: false, maxCount: 0 })];
                 await open();
 
-                expect(buttonNamed('Walk it').disabled).toBe(true);
-                expect(text()).toContain('Forage repeats forever, so nothing queued behind it would run.');
-                expect(text()).not.toContain('Forage already queued');
+                const go = buttonNamed('Walk it');
+                expect(go.disabled).toBe(false);
+                expect(go.textContent).toBe('Walk it — 3 presses');
+                expect(text()).toContain(
+                    'The new rows wait behind Foraging: Star Fruit, which repeats forever, until you stop it.'
+                );
+                expect(text()).not.toContain('already queued');
+                expect(text()).not.toContain('star_fruit repeats');
+                go.click();
+                expect(walk.started).toHaveLength(1);
+                expect(walk.started[0]).toMatchObject({
+                    forageActions: 1600,
+                    decomposeActions: 1600,
+                    coinifyActions: 480,
+                });
+            });
+
+            test('behind a combat row that never ends: truthful gold line, queue end and reserve', async () => {
+                loop.result = withHrids();
+                plan.state = character({ coins: 1_000 });
+                queue.details['/actions/combat/golem_cave'] = { name: 'Golem Cave' };
+                queue.actions = [queued('/actions/combat/golem_cave', null, { hasMaxCount: false, maxCount: 0 })];
+                coinWalk.walked = { stages: [], stoppedAt: 'Golem Cave' };
+                store.keepCash = true;
+                await open();
+                await ironCowFarmPanel.load();
+
+                expect(text()).toContain(
+                    'The batch waits behind Golem Cave, so its gold is not needed until that is stopped.'
+                );
+                expect(text()).not.toContain('short by');
+                expect(text()).toContain('The queue repeats Golem Cave forever, so it never runs out.');
+                expect(text()).toContain('The next set waits behind Golem Cave, so no cash is held for it yet.');
+                expect(buttonNamed('Walk it').disabled).toBe(false);
+                expect(text()).not.toContain('golem_cave');
             });
 
             test('more rows than the game has free slots is refused, naming the shortfall', async () => {
@@ -1801,7 +1836,7 @@ describe('the queue helper', () => {
 
             expect(text()).not.toContain('short by');
             expect(buttonNamed('Largest I can run')).toBeUndefined();
-            expect(text()).toContain('repeats forever');
+            expect(text()).toContain('which repeats forever, until you stop it');
         });
 
         test('Largest refuses when the queue cannot be read, as the bell budget does', async () => {

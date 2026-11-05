@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     navigatedActions: [],
     currentActions: [],
     alchemyOpened: [],
+    inventory: {},
     alchemyResult: { opened: false, selected: false },
     tabsSelected: [],
 }));
@@ -45,11 +46,12 @@ vi.mock('../../core/data-manager.js', () => ({
         on: (event, handler) => mocks.dmHandlers.set(event, handler),
         off: (event) => mocks.dmHandlers.delete(event),
         getCurrentActions: () => mocks.currentActions,
+        getItemDetails: (hrid) => ({ name: hrid === '/items/star_fruit' ? 'Star Fruit' : 'Foraging Essence' }),
     },
 }));
 
 vi.mock('../../utils/house-cost-calculator.js', () => ({
-    getInventoryCount: () => 0,
+    getInventoryCount: (hrid) => mocks.inventory[hrid] ?? 0,
 }));
 
 vi.mock('../../utils/item-navigation.js', () => ({
@@ -144,12 +146,19 @@ function pressed(actionHrid, primaryItemHash = '', stored = undefined) {
     mocks.wsHandlers.get('actions_updated')?.({ endCharacterActions: [row] });
 }
 
+/** The press, then the player's own press on Next */
+function pressedThenNext(...args) {
+    pressed(...args);
+    craftingPlanWalk.next();
+}
+
 beforeEach(() => {
     vi.useFakeTimers();
     mocks.settings = {};
     mocks.navigatedActions = [];
     mocks.currentActions = [];
     mocks.alchemyOpened = [];
+    mocks.inventory = {};
     mocks.alchemyResult = { opened: false, selected: false };
     mocks.tabsSelected = [];
     document.body.innerHTML = '';
@@ -266,27 +275,42 @@ describe('a week-sized leg over the cap splits into repeats', () => {
 
         // First repeat pressed: the walk moves to the second repeat of the same
         // action, not to decompose.
-        pressed(FORAGE_ACTION);
+        pressedThenNext(FORAGE_ACTION);
         expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, FORAGE_ACTION]);
         mountPanel(FORAGE_ACTION);
         vi.advanceTimersByTime(200);
         expect(document.querySelector('input').value).toBe('10');
 
         // Second press ends the leg — nothing left to walk.
-        pressed(FORAGE_ACTION);
+        pressedThenNext(FORAGE_ACTION);
         expect(craftingPlanWalk.currentStep()).toBeNull();
     });
 });
 
 describe('the count the server kept, and opening Alchemy on the item', () => {
-    test('a server that stores less than was typed stops the walk with a plain warning', () => {
+    const nextButton = () => document.querySelector('[data-role="next"]');
+
+    test('a server that stores less than was typed shows a warning on the Queued step, and it ends the last one', () => {
         mountPanel(FORAGE_ACTION);
         startQueueWalk(loop(), batch({ forageActions: 5000, decomposeActions: 0, coinifyActions: 0 }));
         pressed(FORAGE_ACTION, '', 3000);
 
+        // It was the last step: the walk ends done, with the warning still on screen
         expect(craftingPlanWalk.currentStep()).toBeNull();
         expect(document.body.textContent).toContain('The game queued 3,000 instead of the 5,000 typed');
         expect(document.body.textContent).toContain('the queue is short');
+    });
+
+    test('on a step that is not the last, the warning stays on the Queued state beside Next', () => {
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch({ forageActions: 5000 }));
+        pressed(FORAGE_ACTION, '', 3000);
+
+        expect(craftingPlanWalk.currentStep().key).toBe('ironbell:forage');
+        expect(document.body.textContent).toContain('Queued ✓');
+        expect(document.body.textContent).toContain('The game queued 3,000 instead of the 5,000 typed');
+        expect(nextButton().hidden).toBe(false);
+        expect(mocks.navigatedActions).toEqual([FORAGE_ACTION]);
     });
 
     test('a count above the old 100,000 step arrives as typed in one row', () => {
@@ -300,9 +324,12 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
     });
 
     test('a Max alchemy step is checked for being Repeat ∞, not for a count', () => {
+        mocks.inventory[STARFRUIT] = 100;
+        mocks.inventory[ESSENCE] = 100;
         startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
-        // decompose ∞ first
         pressed(DECOMPOSE_ACTION, `${DECOMPOSE_ACTION}::${STARFRUIT}`);
+        expect(craftingPlanWalk.currentStep().actionHrid).toBe(DECOMPOSE_ACTION);
+        craftingPlanWalk.next();
         expect(craftingPlanWalk.currentStep().actionHrid).toBe(COINIFY_ACTION);
         // a coinify that came back with a count is flagged
         pressed(COINIFY_ACTION, `${COINIFY_ACTION}::${ESSENCE}`, 480);
@@ -311,6 +338,7 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
     });
 
     test('nothing is typed into the count box of an ∞ step', () => {
+        mocks.inventory[STARFRUIT] = 100;
         mountPanel(DECOMPOSE_ACTION, STARFRUIT);
         const before = document.querySelector('input').value;
         startQueueWalk(loop(), batch({ forageActions: 0, max: {} }));
@@ -318,22 +346,115 @@ describe('the count the server kept, and opening Alchemy on the item', () => {
         expect(document.querySelector('input').value).toBe(before);
     });
 
-    test('an alchemy step opens the panel through the game’s handler with the item chosen, and says the press is theirs', () => {
-        mocks.alchemyResult = { opened: true, selected: true };
-        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+    describe('the item in the alchemy slot', () => {
+        test('says "in the slot" only once the slot was read showing the item', () => {
+            mocks.inventory[STARFRUIT] = 100;
+            mocks.alchemyResult = { opened: true, selected: true };
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
 
-        expect(mocks.alchemyOpened).toEqual([[STARFRUIT, 'decompose']]);
-        expect(mocks.navigatedActions).toEqual([]);
-        expect(document.body.textContent).toContain('is chosen for you; the Start press is yours');
+            expect(mocks.alchemyOpened[0]).toEqual([STARFRUIT, 'decompose']);
+            expect(mocks.navigatedActions).toEqual([]);
+            // the handler was called, but the slot has not been read yet: no claim
+            expect(document.body.textContent).toContain('choose Star Fruit in the slot');
+            expect(document.body.textContent).not.toContain('is in the slot');
+
+            mountPanel(DECOMPOSE_ACTION, STARFRUIT);
+            vi.advanceTimersByTime(700);
+            expect(document.body.textContent).toContain('Star Fruit is in the slot; the Start press is yours');
+        });
+
+        test('reads the slot through xlink:href too', () => {
+            mocks.inventory[STARFRUIT] = 100;
+            mocks.alchemyResult = { opened: true, selected: true };
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+            document.body.innerHTML =
+                '<div class="SkillActionDetail_itemRequirements__x"><div class="Item_itemContainer__y">' +
+                '<svg><use xlink:href="#star_fruit"></use></svg></div></div>';
+            vi.advanceTimersByTime(700);
+            expect(document.body.textContent).not.toContain('choose Star Fruit');
+            expect(craftingPlanWalk.currentStep().itemSelected).toBe(true);
+        });
+
+        test('the handler is asserted again, bounded, while the slot shows the wrong item', () => {
+            mocks.inventory[STARFRUIT] = 100;
+            mocks.alchemyResult = { opened: true, selected: true };
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+            mountPanel(DECOMPOSE_ACTION, '/items/holy_milk');
+
+            vi.advanceTimersByTime(20_000);
+            expect(mocks.alchemyOpened.length).toBeGreaterThan(1);
+            expect(mocks.alchemyOpened.length).toBeLessThanOrEqual(7);
+            expect(craftingPlanWalk.currentStep().itemSelected).toBe(false);
+        });
+
+        test('if the game changes the slot back while the step waits, it is chosen again', () => {
+            mocks.inventory[STARFRUIT] = 100;
+            mocks.alchemyResult = { opened: true, selected: true };
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 0 }));
+            mountPanel(DECOMPOSE_ACTION, STARFRUIT);
+            vi.advanceTimersByTime(1200);
+            expect(craftingPlanWalk.currentStep().itemSelected).toBe(true);
+            const before = mocks.alchemyOpened.length;
+
+            mountPanel(DECOMPOSE_ACTION, '/items/holy_milk');
+            vi.advanceTimersByTime(2500);
+            expect(craftingPlanWalk.currentStep().itemSelected).toBe(false);
+            expect(mocks.alchemyOpened.length).toBeGreaterThan(before);
+        });
+
+        test('an item that is not in the bag is not claimed: it says so, offers Skip, and picks it as it arrives', () => {
+            mocks.inventory[ESSENCE] = 0;
+            mocks.alchemyResult = { opened: true, selected: true };
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+
+            // the action is opened, but the handler is not asked for an item the game cannot offer
+            expect(mocks.alchemyOpened).toEqual([]);
+            expect(mocks.navigatedActions).toEqual([COINIFY_ACTION]);
+            expect(document.body.textContent).toContain('Foraging Essence is not in your bag yet');
+            expect(document.body.textContent).toContain('Skip');
+            expect(document.body.textContent).not.toContain('is in the slot');
+
+            // the essence arrives while a decompose runs
+            mocks.inventory[ESSENCE] = 500;
+            mocks.dmHandlers.get('items_updated')();
+            expect(mocks.alchemyOpened).toEqual([[ESSENCE, 'coinify']]);
+            mountPanel(COINIFY_ACTION, ESSENCE);
+            vi.advanceTimersByTime(1500);
+            expect(document.body.textContent).toContain('Foraging Essence is in the slot');
+        });
+
+        test('a row for the wrong item does not count, and the strip says what was queued instead', () => {
+            mocks.inventory[ESSENCE] = 500;
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+            pressed(COINIFY_ACTION, `${COINIFY_ACTION}::${STARFRUIT}`);
+
+            expect(craftingPlanWalk.currentStep().done).toBe(false);
+            expect(document.body.textContent).toContain('was queued instead of Foraging Essence');
+            expect(nextButton().hidden).toBe(true);
+        });
+
+        test('Skip is offered on a step still waiting for its item', () => {
+            mocks.inventory[ESSENCE] = 0;
+            startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 100, coinifyActions: 40 }));
+            craftingPlanWalk.skip();
+            expect(craftingPlanWalk.currentStep().actionHrid).toBe(COINIFY_ACTION);
+        });
     });
 
-    test('when the game cannot choose the item (not in the bag), it falls back to opening the action and says so', () => {
-        mocks.alchemyResult = { opened: true, selected: false };
-        startQueueWalk(loop(), batch({ forageActions: 0, decomposeActions: 0, coinifyActions: 40 }));
+    test('a step is Queued ✓ with a Next button after the press; the next step opens only on Next', () => {
+        mocks.inventory[STARFRUIT] = 100;
+        mocks.inventory[ESSENCE] = 100;
+        mountPanel(FORAGE_ACTION);
+        startQueueWalk(loop(), batch());
+        pressed(FORAGE_ACTION);
+        expect(mocks.navigatedActions).toEqual([FORAGE_ACTION]);
+        expect(document.body.textContent).toContain('Queued ✓');
 
-        expect(mocks.alchemyOpened).toEqual([[ESSENCE, 'coinify']]);
-        expect(document.body.textContent).toContain('the game cannot until it is in your bag');
-        expect(document.body.textContent).toContain('then press Start');
+        craftingPlanWalk.next();
+        craftingPlanWalk.next();
+        expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, DECOMPOSE_ACTION]);
+        expect(mocks.alchemyOpened).toHaveLength(1);
+        expect(craftingPlanWalk.currentStep().actionHrid).toBe(DECOMPOSE_ACTION);
     });
 });
 
@@ -343,14 +464,14 @@ describe('walking it', () => {
         expect(startQueueWalk(loop(), batch())).toBe(true);
         expect(mocks.navigatedActions).toEqual([FORAGE_ACTION]);
 
-        pressed(FORAGE_ACTION);
+        pressedThenNext(FORAGE_ACTION);
         expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, DECOMPOSE_ACTION]);
 
         // The queue answering a decompose of something else is not this step
-        pressed(DECOMPOSE_ACTION, '/items/holy_milk');
+        pressedThenNext(DECOMPOSE_ACTION, '/items/holy_milk');
         expect(mocks.navigatedActions).toHaveLength(2);
 
-        pressed(DECOMPOSE_ACTION, `${DECOMPOSE_ACTION}::${STARFRUIT}`);
+        pressedThenNext(DECOMPOSE_ACTION, `${DECOMPOSE_ACTION}::${STARFRUIT}`);
         expect(mocks.navigatedActions).toEqual([FORAGE_ACTION, DECOMPOSE_ACTION, COINIFY_ACTION]);
     });
 
@@ -365,7 +486,7 @@ describe('walking it', () => {
     test('types nothing into an alchemy panel until the right item is in the slot', () => {
         mountPanel(FORAGE_ACTION);
         startQueueWalk(loop(), batch());
-        pressed(FORAGE_ACTION);
+        pressedThenNext(FORAGE_ACTION);
 
         // The player is on decompose, but with the wrong item selected
         const input = mountPanel(DECOMPOSE_ACTION, '/items/holy_milk');

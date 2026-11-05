@@ -1179,6 +1179,15 @@ class IronCowFarmPanel {
         ];
         if (this.keepBatchCash) {
             lines.push(this._nextSetLine(nextSet, nextSetKept, can, own.can));
+            if (walked?.stoppedAt && nextSet?.stages?.length) {
+                lines.push(
+                    span(`The next set waits behind ${walked.stoppedAt}, so no cash is held for it yet.`, {
+                        display: 'block',
+                        color: COLORS.textDim,
+                        fontSize: '11px',
+                    })
+                );
+            }
         }
         lines.push(keepSwitch);
         return lines;
@@ -1552,7 +1561,8 @@ class IronCowFarmPanel {
             // A walk that would leave the queue short or stalled is not offered; the reason stays on screen
             refs.walk.disabled = Boolean(plan.blocked);
             refs.walk.style.opacity = plan.blocked ? '0.5' : '';
-            if (refs.walkNote) refs.walkNote.textContent = plan.blocked || '';
+            // A refusal, or the warnings that leave the button pressable (rows waiting behind a row that never ends)
+            if (refs.walkNote) refs.walkNote.textContent = plan.blocked || plan.notes.join(' ');
         }
         // The cash held back for the batch follows the batch, here and in the strip
         this._publishSpec();
@@ -1701,8 +1711,15 @@ class IronCowFarmPanel {
         if (!check.known) {
             return [span('Gold needed: unknown — the decompose fee has no price yet.', { ...dim, color: COLORS.warn })];
         }
-        // Behind a row that never ends nothing runs, and the walk note says so; no gold is needed for it
-        if (check.neverRuns) return [];
+        // Behind a row that never ends nothing runs until it is stopped, so no gold is needed for the batch yet
+        if (check.neverRuns) {
+            return [
+                span(
+                    `The batch waits behind ${check.walked.stoppedAt}, so its gold is not needed until that is stopped.`,
+                    dim
+                ),
+            ];
+        }
         const heldText = check.held === null ? 'your gold could not be read' : `you hold ${coins(check.held)}`;
         const onTop =
             check.queueNeed > 0 && check.need > 0
@@ -1833,6 +1850,8 @@ class IronCowFarmPanel {
                     ? `Nothing to walk — ${plan.missing.skipped.join(', ')} already queued.`
                     : 'Nothing to walk — cost the loop first.'
             );
+        } else if (plan.notes.length) {
+            this._status(plan.notes.join(' '));
         }
     }
 
@@ -1840,7 +1859,7 @@ class IronCowFarmPanel {
      * What a walk of this batch would do given the queue as it stands: the legs it adds, the rows that
      * takes against the free queue slots, and why it is refused, if it is.
      * @param {Object} batch - From `_batchFor`
-     * @returns {{missing: Object, rows: number, slots: Object|null, blocked: string|null}}
+     * @returns {{missing: Object, rows: number, slots: Object|null, blocked: string|null, notes: Array<string>}}
      * @private
      */
     _walkPlan(batch) {
@@ -1855,7 +1874,7 @@ class IronCowFarmPanel {
                 `${slots.free === 1 ? 'is' : 'are'} free (${slots.used}/${slots.total} used), so a leg would be ` +
                 'left unqueued. Free some rows and walk again.';
         }
-        return { missing, rows, slots, blocked };
+        return { missing, rows, slots, blocked, notes: missing.notes || [] };
     }
 
     /**
@@ -1878,8 +1897,24 @@ class IronCowFarmPanel {
             loop: this.loop,
             fruitHeld: state?.starfruitHeld || 0,
             essenceHeld: state?.essenceHeld || 0,
+            labelOf: (action) => this._actionLabel(action),
         });
         return { ...reduceBatchByQueue(batch, queued, this.loop), queued };
+    }
+
+    /**
+     * How the game names a queued action, for messages: its display name, with the alchemy item after it. Never
+     * an hrid; null when the game data cannot say.
+     * @param {Object} action - A queued action
+     * @returns {string|null}
+     * @private
+     */
+    _actionLabel(action) {
+        const name = dataManager.getActionDetails?.(action?.actionHrid)?.name;
+        if (!name) return null;
+        const itemHrid = String(action.primaryItemHash || '').split('::')[2];
+        const itemName = itemHrid ? dataManager.getItemDetails?.(itemHrid)?.name : null;
+        return itemName ? `${name}: ${itemName}` : name;
     }
 
     /**

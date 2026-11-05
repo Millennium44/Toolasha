@@ -34,6 +34,7 @@ import webSocketHook from '../../core/websocket.js';
 import { getInventoryCount } from '../../utils/house-cost-calculator.js';
 import { navigateToAction, navigateToAlchemyItem } from '../../utils/item-navigation.js';
 import { selectAlchemyTab } from '../../utils/alchemy-navigation.js';
+import { readAlchemyTabType } from '../alchemy/alchemy-tabs.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { findActionInput, resolveDetailPanel } from '../../utils/action-panel-helper.js';
@@ -63,6 +64,18 @@ const NAV_RETRY_LIMIT = 15;
  * person to put an item in a slot. The idle timeout below is what ends it.
  */
 const ITEM_WAIT_POLL_MS = 500;
+
+/**
+ * How the alchemy item is held in the slot. The game's item-menu handler sets its override for one tick only, and
+ * the game re-picks the slot itself when a row starts running or the tab changes, so the slot is read back and the
+ * handler re-asserted a bounded number of times rather than trusted once.
+ */
+const ALCHEMY_SETTLE_MS = 600;
+const ALCHEMY_RETRY_MS = 700;
+const ALCHEMY_WATCH_MS = 1000;
+/** Re-assertions in a row before the walk leaves the choice to the player, and in total for one step */
+const ALCHEMY_ATTEMPTS_PER_RUN = 6;
+const ALCHEMY_ATTEMPTS_TOTAL = 30;
 
 /**
  * How long a step may sit untouched before the walk ends itself.
@@ -233,12 +246,23 @@ function selectedItemHrid(panel) {
 function stepLabel(step) {
     const verb = step.kind === 'craft' ? 'craft' : 'buy';
     const base = step.label || `${verb} ${formatWithSeparator(step.count)} ${step.itemName}`;
-    if (!step.alchemyType) return base;
-    // Said plainly, because the script never presses a game button: the player's press queues the row
-    const pressNote = step.itemSelected
-        ? `${step.itemName} is chosen for you; the Start press is yours`
-        : `choose ${step.itemName} in the slot (the game cannot until it is in your bag), then press Start`;
-    return `${base} — ${pressNote}`;
+    const warn = step.warn ? ` ⚠ ${step.warn}` : '';
+    // A step that has been queued has nothing left to press: it says so, and keeps any warning in view
+    if (step.done) return `${step.kind === 'craft' ? 'Queued' : 'Done'} ✓ ${base}${warn}`;
+    if (!step.alchemyType) return `${base}${warn}`;
+    // Said plainly, because the script never presses a game button: the player's press queues the row.
+    // "In the slot" only when the slot was read showing the item.
+    let pressNote;
+    if (step.itemSelected) {
+        pressNote = `${step.itemName} is in the slot; the Start press is yours`;
+    } else if (step.itemAbsent) {
+        pressNote =
+            `${step.itemName} is not in your bag yet, so the game cannot offer it. It is chosen for you as soon as ` +
+            'it arrives; Skip to leave this for later';
+    } else {
+        pressNote = `choose ${step.itemName} in the slot, then press Start`;
+    }
+    return `${base} — ${pressNote}${warn}`;
 }
 
 /** The starter name Crafting Plan's own surfaces (the plan's Walk button, the task board's walk) use */
@@ -394,6 +418,7 @@ class CraftingPlanWalk {
         this.index = 0;
         this.buyTarget = 0;
         this.queuedBefore = new Set();
+        this._alchemyTickNow = null;
         this.message = message;
         // The hook belonged to the walk that just ended; see its own comment
         this._stepHook = null;
@@ -422,6 +447,10 @@ class CraftingPlanWalk {
             return;
         }
 
+        // A step starts unfinished and unwarned, whatever a previous walk of the same object left behind
+        step.done = false;
+        step.warn = '';
+
         // The seam: everything that must happen before the player is put in
         // front of this step's button happens here, once, ahead of the
         // navigation — a materials reservation above all.
@@ -446,14 +475,16 @@ class CraftingPlanWalk {
                 // Alchemy is one action for every item: the game's own item-menu handler opens it with the item
                 // already in the slot (when it is in the bag), and the tab is then chosen by position. Both are
                 // navigation; the press that queues the row stays the player's.
-                const result = navigateToAlchemyItem(step.requiresItemHrid, step.alchemyType);
-                opened = result.opened;
-                step.itemSelected = result.selected;
-                if (opened) {
-                    selectAlchemyTab(step.alchemyType, this.timerRegistry.scheduleTimeout, () => {
-                        return this.active && this.steps[this.index] === step;
-                    });
+                step.itemSelected = false;
+                step.itemAbsent = getInventoryCount(step.requiresItemHrid) <= 0;
+                step.warn = '';
+                // An item that is not in the bag cannot be offered by the game: only the action is opened, and
+                // the item is chosen as soon as it arrives
+                if (!step.itemAbsent) {
+                    opened = navigateToAlchemyItem(step.requiresItemHrid, step.alchemyType).opened;
+                    if (opened) this._selectTab(step);
                 }
+                this._watchAlchemyItem(step, opened);
             }
             if (!opened && !navigateToAction(step.actionHrid)) {
                 this.stop('The game could not be opened on the next step.');
@@ -464,6 +495,65 @@ class CraftingPlanWalk {
 
         this._armIdleTimeout();
         this._render();
+    }
+
+    /** Choose the step's alchemy tab by position, for as long as the step is the current one. @private */
+    _selectTab(step) {
+        selectAlchemyTab(step.alchemyType, this.timerRegistry.scheduleTimeout, () => {
+            return this.active && this.steps[this.index] === step;
+        });
+    }
+
+    /**
+     * Keep the right item in the alchemy slot for as long as the step waits.
+     *
+     * The slot is read back (`href` and `xlink:href`), and the step says "in the slot" only when it was read
+     * showing the item. The handler is re-asserted, bounded, when the slot or the tab is not right, and again if it
+     * changes while the step waits (the game re-picks the slot when a row starts running). An item that is not in
+     * the bag cannot be offered, so nothing is asserted until it arrives, and then it is chosen at once.
+     * Navigation only: nothing is pressed.
+     *
+     * @param {Object} step
+     * @param {boolean} openedAlready - The first assertion was made by `_runStep`
+     * @private
+     */
+    _watchAlchemyItem(step, openedAlready) {
+        let runAttempts = openedAlready ? 1 : 0;
+        let totalAttempts = openedAlready ? 1 : 0;
+        const current = () => this.active && this.steps[this.index] === step && !step.done;
+        const tick = () => {
+            if (!current()) return;
+            const held = getInventoryCount(step.requiresItemHrid) > 0;
+            const tab = readAlchemyTabType();
+            const shows = selectedItemHrid(document) === step.requiresItemHrid;
+            const ready = shows && (tab === null || tab === step.alchemyType);
+            const before = `${step.itemSelected}|${step.itemAbsent}`;
+            if (ready) {
+                step.itemSelected = true;
+                step.itemAbsent = false;
+                runAttempts = 0;
+            } else {
+                // It was right and changed, or never was: assert again, a bounded number of times
+                step.itemSelected = false;
+                step.itemAbsent = !held;
+                if (held && runAttempts < ALCHEMY_ATTEMPTS_PER_RUN && totalAttempts < ALCHEMY_ATTEMPTS_TOTAL) {
+                    runAttempts++;
+                    totalAttempts++;
+                    navigateToAlchemyItem(step.requiresItemHrid, step.alchemyType);
+                    this._selectTab(step);
+                }
+            }
+            if (before !== `${step.itemSelected}|${step.itemAbsent}`) this._render();
+            this.timerRegistry.scheduleTimeout(tick, ready ? ALCHEMY_WATCH_MS : ALCHEMY_RETRY_MS);
+        };
+        this._alchemyTickNow = () => {
+            if (current() && !step.itemSelected) {
+                // The item has just arrived in the bag: choose it without waiting for the next beat
+                runAttempts = 0;
+                tick();
+            }
+        };
+        this.timerRegistry.scheduleTimeout(tick, ALCHEMY_SETTLE_MS);
     }
 
     /**
@@ -542,7 +632,7 @@ class CraftingPlanWalk {
      */
     _onActionsUpdated(data) {
         const step = this.currentStep();
-        if (!step || step.kind !== 'craft') return;
+        if (!step || step.kind !== 'craft' || step.done) return;
         const rows = data?.endCharacterActions;
         if (!Array.isArray(rows)) return;
         const isThisStep = (row) =>
@@ -552,29 +642,71 @@ class CraftingPlanWalk {
             // alone does not say this step was the one pressed.
             (!step.requiresItemHrid || row.primaryItemHash?.includes(step.requiresItemHrid));
         const added = rows.find(isThisStep);
-        if (!added) return;
+        if (!added) {
+            // A row for this action but another item is not this step's press; say what happened
+            const other = rows.find(
+                (row) =>
+                    row?.actionHrid === step.actionHrid &&
+                    !this.queuedBefore.has(row.id) &&
+                    step.requiresItemHrid &&
+                    row.primaryItemHash
+            );
+            if (other) {
+                const hrid = String(other.primaryItemHash).split('::')[2];
+                const name = (hrid && dataManager.getItemDetails?.(hrid)?.name) || 'another item';
+                step.warn = `${name} was queued instead of ${step.itemName}; it does not count for this step`;
+                this._render();
+            }
+            return;
+        }
         // A step that asks for it is checked against what the server kept: a server cap would otherwise
         // leave the queue quietly short of what was typed
         if (step.unlimited) {
             // A Repeat ∞ step is checked for what it is: no count on the row
             if (added.hasMaxCount) {
-                this.stop(
-                    `⚠ ${stepLabel(step)} was queued with a count of ${formatWithSeparator(Number(added.maxCount))} ` +
-                        'instead of Repeat ∞, so it will stop short. Walk it again to queue the rest.'
-                );
-                return;
+                step.warn =
+                    `It was queued with a count of ${formatWithSeparator(Number(added.maxCount))} instead of ` +
+                    'Repeat ∞, so it will stop short. Walk it again to queue the rest';
             }
         } else if (step.verifyCount) {
             const stored = added.hasMaxCount ? Number(added.maxCount) : null;
             if (stored !== step.count) {
                 const kept = stored === null ? 'with no count' : `${formatWithSeparator(stored)}`;
-                this.stop(
-                    `⚠ The game queued ${kept} instead of the ${formatWithSeparator(step.count)} typed for ` +
-                        `${stepLabel(step)}, so the queue is short. Walk it again to queue the rest.`
-                );
-                return;
+                step.warn =
+                    `The game queued ${kept} instead of the ${formatWithSeparator(step.count)} typed, so the ` +
+                    'queue is short. Walk it again to queue the rest';
             }
         }
+        this._finishStep(step);
+    }
+
+    /**
+     * A step has been queued (or bought). The walk does NOT move on: the next step opens, selects and fills only
+     * when the player presses Next, so one press of theirs is one thing the game does. The last step ends the
+     * walk in a Done state. Any count warning stays on the finished step rather than being lost.
+     * @param {Object} step
+     * @private
+     */
+    _finishStep(step) {
+        step.done = true;
+        this.timerRegistry.clearAll();
+        this._alchemyTickNow = null;
+        this._clearHighlight();
+        if (this.index >= this.steps.length - 1) {
+            this.stop(step.warn ? `Queued ✓ Walk complete. ⚠ ${step.warn}` : 'Queued ✓ Walk complete.');
+            return;
+        }
+        this._armIdleTimeout();
+        this._render();
+    }
+
+    /**
+     * The player's press on Next: open the following step. Ignored unless the current step is finished, so a
+     * double press cannot skip one (the second press finds an unfinished step).
+     */
+    next() {
+        if (!this.active) return;
+        if (!this.currentStep()?.done) return;
         this._advance();
     }
 
@@ -586,9 +718,10 @@ class CraftingPlanWalk {
      */
     _onItemsUpdated() {
         const step = this.currentStep();
-        if (!step || step.kind !== 'buy') return;
+        if (step?.alchemyType && step.itemAbsent) this._alchemyTickNow?.();
+        if (!step || step.kind !== 'buy' || step.done) return;
         if (getInventoryCount(step.itemHrid) < this.buyTarget) return;
-        this._advance();
+        this._finishStep(step);
     }
 
     /** @private */
@@ -641,6 +774,11 @@ class CraftingPlanWalk {
         label.style.cssText = 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
         strip.appendChild(label);
 
+        const next = this._stripButton('Next', () => this.next());
+        next.dataset.role = 'next';
+        next.hidden = true;
+        strip.appendChild(next);
+
         const skip = this._stripButton('Skip', () => this.skip());
         skip.dataset.role = 'skip';
         strip.appendChild(skip);
@@ -682,6 +820,7 @@ class CraftingPlanWalk {
             const strip = this._strip();
             strip.querySelector('[data-role="label"]').textContent = this.message;
             strip.querySelector('[data-role="skip"]').hidden = true;
+            strip.querySelector('[data-role="next"]').hidden = true;
             strip.querySelector('[data-role="stop"]').textContent = 'Dismiss';
             return;
         }
@@ -691,6 +830,7 @@ class CraftingPlanWalk {
         strip.querySelector('[data-role="label"]').textContent =
             `Step ${this.index + 1} of ${this.steps.length}: ${stepLabel(step)}`;
         strip.querySelector('[data-role="skip"]').hidden = false;
+        strip.querySelector('[data-role="next"]').hidden = !step.done;
         strip.querySelector('[data-role="stop"]').textContent = 'Stop';
         this._highlight(step.key);
     }
