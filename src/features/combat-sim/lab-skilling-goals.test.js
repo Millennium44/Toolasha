@@ -1330,4 +1330,42 @@ describe('a plan that falls short retries with every candidate', () => {
         expect(result.aborted).toBe(true);
         expect(retrying).toBe(false);
     });
+
+    const fractions = (events) => events.map((e) => e.fraction);
+    const neverDecreases = (list) => list.every((v, i) => i === 0 || v >= list[i - 1]);
+
+    test('the bar only moves forward across ranking, steps, level measuring and the retry', async () => {
+        const events = [];
+        const { result } = await run(thirteen(), 0.99, {
+            onProgress: (e) => events.push(e),
+            measureMax: async () => ({ cleared: true, maxLevel: 10 }),
+        });
+
+        const list = fractions(events);
+        expect(events.some((e) => e.description.includes('every candidate'))).toBe(true);
+        expect(list.length).toBeGreaterThan(30);
+        expect(neverDecreases(list)).toBe(true);
+        expect(list.every((v) => v >= 0 && v < 1)).toBe(true);
+        expect(list.at(-1)).toBeGreaterThan(list[0]);
+        expect(result.reached).toBe(false);
+        // The detail is in the words: which step, how far through the candidates
+        expect(events.some((e) => /^Step 2, trying 3 of 11: /.test(e.description))).toBe(true);
+    });
+
+    test('the bar only moves forward when the retry reaches the goal and the improve pass runs', async () => {
+        const events = [];
+        await run(thirteen(), 0.75, { onProgress: (e) => events.push(e) });
+
+        expect(neverDecreases(fractions(events))).toBe(true);
+        expect(fractions(events).every((v) => v < 1)).toBe(true);
+    });
+
+    test('the bar only moves forward up to a Stop', async () => {
+        const events = [];
+        let polls = 0;
+        await run(thirteen(), 0.99, { onProgress: (e) => events.push(e), abortSignal: () => ++polls > 60 });
+
+        expect(events.length).toBeGreaterThan(10);
+        expect(neverDecreases(fractions(events))).toBe(true);
+    });
 });

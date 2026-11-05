@@ -754,18 +754,21 @@ export const PLAN_IMPROVE_SIM_BUDGET = 120;
  * @param {string|null} [params.targetSkill]
  * @param {number} [params.candidateCap=PLAN_CANDIDATE_CAP]
  * @param {Function} [params.abortSignal]
- * @param {function({current: number, total: number, description: string}): void} [params.onProgress]
+ * @param {function({current: number, total: number, description: string, fraction: number}): void} [params.onProgress]
+ *   `fraction` is the whole plan's progress (0-1): it only moves forward, ending below 1 until the plan
+ *   returns; `current` and `total` are the detail within the current step
  * @param {function(SkillingSetup): Promise<Object>} [params.measureMax] - Room-level search of a setup
  * @param {function(): Promise<void>} [params.yieldFn]
  * @returns {Promise<Object>} `{ steps, reached, aborted, baselineRate, finalRate, totals, poolSize, sims,
  *   improved, improveSims }`
  */
 export async function planSkillingGoal(params) {
-    const shared = { sims: 0 };
+    const shared = { sims: 0, high: 0, emit: params.onProgress || null };
     const first = await planPass(params, shared, params.candidateCap ?? PLAN_CANDIDATE_CAP, null, false);
     // Only a plan that came up short retries, and only when the cap left priced rows out: a cap that
     // hid the one candidate that reaches the goal would otherwise report "not reachable" wrongly
     if (first.result.aborted || first.result.reached || !first.trimmed) return first.result;
+    shared.floor = shared.high;
     const second = await planPass(params, shared, Infinity, first.reuse, true);
     return second.result;
 }
@@ -774,7 +777,8 @@ export async function planSkillingGoal(params) {
  * One planning run over at most `cap` priced candidates.
  *
  * @param {Object} params - The `planSkillingGoal` params
- * @param {{sims: number}} shared - Simulation count, carried across a retry so the total adds up
+ * @param {Object} shared - Simulation count, carried across a retry so the total adds up, and the
+ *   progress high-water mark so the bar never moves back
  * @param {number} cap - Priced rows to weigh
  * @param {{baseline: Object, eligible: Array<Object>, goalDelta: Map}|null} reuse - A prior run's baseline
  *   and goal-level ranking, so a retry does not pay for them again
@@ -790,10 +794,25 @@ async function planPass(params, shared, cap, reuse, retry) {
         goalRate,
         targetSkill = null,
         abortSignal = null,
-        onProgress = null,
         measureMax = null,
         yieldFn = defaultYield,
     } = params;
+
+    // The first run owns the bar up to 60%, the retry the rest up to 95%. Within a run: ranking is the
+    // first tenth; then the larger of the share of the way from the baseline to the goal and a step
+    // curve that slows without ever finishing, since how many steps it takes is not known ahead
+    const lo = retry ? Math.max(shared.floor || 0, 0.6) : 0;
+    const hi = retry ? 0.95 : 0.6;
+    const report = (inner, event) => {
+        if (!shared.emit) return;
+        shared.high = Math.max(shared.high, lo + (hi - lo) * Math.min(1, Math.max(0, inner)));
+        shared.emit({ ...event, fraction: shared.high });
+    };
+    const stepInner = (stepsDone, withinStep) => {
+        const walked = goalRate > baselineRate ? (current.clearRate - baselineRate) / (goalRate - baselineRate) : 1;
+        const curve = 1 - 1 / (1 + 0.15 * (stepsDone + withinStep));
+        return 0.1 + 0.88 * Math.min(1, Math.max(0, walked, curve));
+    };
 
     const run = (setup) => {
         shared.sims++;
@@ -824,10 +843,10 @@ async function planPass(params, shared, cap, reuse, retry) {
                 break;
             }
             await yieldFn();
-            onProgress?.({
+            report(0.1 * (i / eligible.length), {
                 current: i,
                 total: eligible.length,
-                description: `Ranking at the goal: ${eligible[i].candidate.description || 'upgrade'}`,
+                description: `Ranking at the goal, ${i + 1} of ${eligible.length}: ${eligible[i].candidate.description || 'upgrade'}`,
             });
             const alone = run(applySkillingCandidate(baseSetup, eligible[i].candidate, targetSkill));
             goalDelta.set(eligible[i], alone.clearRate - baselineRate);
@@ -856,10 +875,10 @@ async function planPass(params, shared, cap, reuse, retry) {
             }
             await yieldFn();
             const row = remaining[i];
-            onProgress?.({
+            report(stepInner(steps.length, i / remaining.length), {
                 current: i,
                 total: remaining.length,
-                description: `Step ${steps.length + 1}: ${retry ? 'every candidate, ' : ''}${row.candidate?.description || 'upgrade'}`,
+                description: `Step ${steps.length + 1}, ${retry ? 'every candidate, ' : ''}trying ${i + 1} of ${remaining.length}: ${row.candidate?.description || 'upgrade'}`,
             });
             const trialSetup = applySkillingCandidate(setup, row.candidate, targetSkill);
             const result = run(trialSetup);
@@ -888,6 +907,11 @@ async function planPass(params, shared, cap, reuse, retry) {
             floor: null,
         };
         if (measureMax) {
+            report(stepInner(steps.length + 1, 0), {
+                current: remaining.length,
+                total: remaining.length,
+                description: `Step ${steps.length + 1}: measuring its max room level`,
+            });
             const found = await measureMax(setup);
             if (found?.aborted) aborted = true;
             else if (found?.cleared) {
@@ -907,6 +931,11 @@ async function planPass(params, shared, cap, reuse, retry) {
             chosen: applied,
             unchosen: pool.filter((row) => !applied.includes(row)),
             reaches: (set) => {
+                report(0.98, {
+                    current: 1,
+                    total: 1,
+                    description: 'Looking for a cheaper set that still reaches the goal',
+                });
                 const setupOf = set.reduce(
                     (acc, row) => applySkillingCandidate(acc, row.candidate, targetSkill),
                     baseSetup
@@ -943,6 +972,11 @@ async function planPass(params, shared, cap, reuse, retry) {
                 };
                 before = current.clearRate;
                 if (measureMax) {
+                    report(0.98, {
+                        current: 1,
+                        total: 1,
+                        description: `Measuring the cheaper set, step ${steps.length + 1}`,
+                    });
                     const found = await measureMax(walk);
                     if (found?.aborted) aborted = true;
                     else if (found?.cleared) {
