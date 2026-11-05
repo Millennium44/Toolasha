@@ -220,3 +220,59 @@ describe('sessions recorded before the first-batch fixes', () => {
         expect(group.combos[0].preFixSessions).toBe(1);
     });
 });
+
+describe('stamps made while 3.76.0 was live (#809)', () => {
+    const inside = Date.parse('2026-11-05T15:00:00Z');
+    const bad = (fields) => ({ ...session(fields), predictedAt: inside });
+
+    test('are left out of the pool, the verdict and the combos, and counted apart', () => {
+        // A bad stamp of 0.99 would read this honest 60% sample as "sim too high"
+        const summary = summarizeKind('transmute', [
+            bad({ id: 'b', predictedRate: 0.99, attempts: 1000, successes: 600 }),
+            session({ id: 'g', predictedRate: 0.6, attempts: 200, successes: 120 }),
+        ]);
+        expect(summary.sessions).toBe(2);
+        expect(summary.stampedSessions).toBe(1);
+        expect(summary.scaleBugSessions).toBe(1);
+        expect(summary.unstamped).toBe(0);
+        expect(summary.attempts).toBe(200);
+        expect(summary.predicted).toBeCloseTo(0.6);
+        expect(summary.verdict).toBe('consistent');
+        expect(summary.combos).toHaveLength(1);
+    });
+
+    test('counts a stamp just outside the window, an unstamped session and an unplaceable stamp time', () => {
+        const summary = summarizeKind('transmute', [
+            { ...session({ id: 'before' }), predictedAt: Date.parse('2026-11-05T13:23:41Z') },
+            { ...session({ id: 'after' }), predictedAt: Date.parse('2026-11-05T17:02:37Z') },
+            { ...session({ id: 'null' }), predictedAt: null },
+            { ...session({ id: 'unstamped' }), predictedRate: null, predictedAt: inside },
+        ]);
+        expect(summary.stampedSessions).toBe(3);
+        expect(summary.scaleBugSessions).toBe(0);
+        expect(summary.unstamped).toBe(1);
+        expect(summary.attempts).toBe(600);
+    });
+
+    test('leave no data, not a zero or an error, when they are the only sessions', () => {
+        const summary = summarizeKind('transmute', [bad({ id: 'a' }), bad({ id: 'b' })]);
+        expect(summary.attempts).toBe(0);
+        expect(summary.predicted).toBeNull();
+        expect(summary.observed).toBeNull();
+        expect(summary.verdict).toBe('too few attempts');
+        expect(summary.combos).toEqual([]);
+
+        const all = summarizeAlchemyCalibration({ transmute: [bad({ id: 'a' })], decompose: [], coinify: [] });
+        expect(all.kinds).toEqual([]);
+        expect(all.attempts).toBe(0);
+    });
+
+    test('do not hide a kind that also has good sessions, and kinds stay separate', () => {
+        const all = summarizeAlchemyCalibration({
+            transmute: [bad({ id: 'a' })],
+            decompose: [session({ id: 'd' })],
+            coinify: [],
+        });
+        expect(all.kinds.map((k) => k.kind)).toEqual(['decompose']);
+    });
+});

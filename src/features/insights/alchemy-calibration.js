@@ -54,6 +54,7 @@
 
 import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import { isPreFixSession } from '../alchemy/alchemy-tracker-version.js';
+import { isBadEnhancementScaleAlchemySession } from '../../utils/enhancement-scale-bug.js';
 
 /**
  * Attempts a rate needs before the sample can contradict a prediction.
@@ -204,8 +205,11 @@ function pool(sessions) {
  */
 export function summarizeKind(kind, sessions, options = {}) {
     const all = (sessions || []).filter(Boolean);
-    const stamped = all.filter(isStamped);
-    const unstamped = all.length - stamped.length;
+    // A rate stamped by 3.76.0 (enhanced gear ~50x too strong, #808) is neither judged nor "unstamped":
+    // the session stays stored and in `sessions`, and is simply not a prediction worth testing against
+    const scaleBug = all.filter((session) => isStamped(session) && isBadEnhancementScaleAlchemySession(session));
+    const stamped = all.filter((session) => isStamped(session) && !isBadEnhancementScaleAlchemySession(session));
+    const unstamped = all.length - stamped.length - scaleBug.length;
 
     const totals = pool(stamped);
     const check = compareSuccessRate(totals.successes, totals.attempts, totals.predicted, options);
@@ -244,6 +248,7 @@ export function summarizeKind(kind, sessions, options = {}) {
         sessions: all.length,
         stampedSessions: stamped.length,
         unstamped,
+        scaleBugSessions: scaleBug.length,
         ...totals,
         ...check,
         text: verdictText(check),
@@ -260,7 +265,8 @@ export function summarizeKind(kind, sessions, options = {}) {
  */
 export function summarizeAlchemyCalibration(sessionsByKind, options = {}) {
     const kinds = ALCHEMY_KINDS.map((kind) => summarizeKind(kind, sessionsByKind?.[kind] || [], options)).filter(
-        (group) => group.sessions > 0
+        // A kind whose only sessions are 3.76.0's has nothing to show, as one with no sessions has not
+        (group) => group.sessions - group.scaleBugSessions > 0
     );
 
     return {
