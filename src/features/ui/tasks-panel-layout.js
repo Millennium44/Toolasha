@@ -67,7 +67,23 @@ ${CLOSED} > :not(${SLOTS}):not(${TIMER}):not(#${TOOLS_ID}) {
     display: none !important;
 }
 `;
+// The same order on a wider screen, with nothing folded: the count, Upgrade Capacity, Sort Tasks, the
+// reroll walk and its merged walk button, Claim Reward, then the other tools, the timer and the header icons.
+const WIDE_BAR = `${INFO}:not([${FOLD}])`;
+const WIDE_CSS = `
+${WIDE_BAR} { align-items: center; column-gap: 6px; }
+${WIDE_BAR} > ${SLOTS} { display: contents !important; }
+${WIDE_BAR} > ${SLOTS} > * { order: 20; }
+${WIDE_BAR} > ${SLOTS} > ${UPGRADE} { order: 1; }
+${WIDE_BAR} > ${SLOTS} > [data-mwi-task-sort] { order: 2; }
+${WIDE_BAR} #${WALK_CHIP_ID} { order: 3; flex: 0 0 auto !important; margin-left: 0 !important; }
+${WIDE_BAR} #${MERGED_WALK_ID} { order: 4; flex: 0 0 auto; }
+${WIDE_BAR} #${CLAIM_ID} { order: 5; }
+${WIDE_BAR} > ${TIMER} { order: 21; margin-left: auto; }
+${WIDE_BAR} > :not(${SLOTS}):not(${TIMER}):not(#${WALK_CHIP_ID}):not(#${MERGED_WALK_ID}) { order: 22; }
+`;
 const CSS = `
+${WIDE_CSS}
 ${ACTIVE} { min-width: 0 !important; max-width: 100% !important; }
 ${ACTIVE} [${LAYER}="owner"], ${ACTIVE} [${LAYER}="wrapper"], ${ACTIVE} [${LAYER}="root"] {
     min-width: 0 !important; max-width: 100% !important; width: 100% !important;

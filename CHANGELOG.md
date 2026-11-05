@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task Board bar order on desktop
+
+The desktop Task Board bar now matches the phone: the task count, Upgrade Capacity and Sort Tasks in the game's order, with the reroll walk right after them.
+
 ### Plan to goal weighs every upgrade before giving up
 
 A Lab skilling plan that falls short now reruns over all helpful upgrades instead of only the 12 best by price, so a goal is not called unreachable when a lower-ranked upgrade could reach it.

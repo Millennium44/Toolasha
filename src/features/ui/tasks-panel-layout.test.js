@@ -180,6 +180,25 @@ test('navigation and cleanup disconnect observers, remove markers, and leave no 
     expect(second.panel.hasAttribute('data-toolasha-tasks-layout-narrow')).toBe(false);
 });
 
+test('a wide bar follows the game order with the walk after Sort Tasks, and moves no node', () => {
+    const { panel } = fixture();
+    const slots = panel.querySelector('[class*="TasksPanel_taskSlotCount"]');
+    const before = Array.from(slots.children);
+    const sort = document.createElement('button');
+    sort.setAttribute('data-mwi-task-sort', '');
+    slots.appendChild(sort);
+    const walk = document.createElement('div');
+    walk.id = 'mwi-task-reroll-walk-chip';
+    panel.querySelector('[class*="TasksPanel_taskBoardInfo"]').prepend(walk);
+    feature.initialize();
+    expect(getComputedStyle(slots).display).toBe('contents');
+    const order = (node) => Number(getComputedStyle(node).order);
+    expect(order(sort)).toBeLessThan(order(walk));
+    expect(order(walk)).toBeLessThan(order(slots.querySelector('#mwi-claim-proxy-btn')) + 1);
+    expect(Array.from(slots.children).slice(0, before.length)).toEqual(before);
+    feature.cleanup();
+});
+
 test('wraps the fixed-height native board header and existing injected controls without moving them', () => {
     const { panel } = fixture();
     const header = panel.querySelector('[class*="TasksPanel_taskBoardInfo"]');
