@@ -41,6 +41,7 @@ import config from '../../core/config.js';
 import connectionState from '../../core/connection-state.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import webSocketHook from '../../core/websocket.js';
 import { GAME } from '../../utils/selectors.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -312,6 +313,8 @@ class SyncManager {
         this.owedTimer = null;
         /** Timer for the next look at the connection banner, or null */
         this.handoffTimer = null;
+        /** How many looks the banner has had since the last sign of a takeover */
+        this.handoffLook = 0;
         /** Stops the settings-loaded listener */
         this.settingsLoadedOff = null;
     }
@@ -2599,37 +2602,64 @@ class SyncManager {
      * the banner goes away (a reconnect), so a flickering connection does not
      * hammer the gist.
      *
+     * A takeover is heard from the connection, not from the banner's arrival: the game turns the banner on
+     * by adding its class to an element already on the page, which an observer of added nodes never sees, and
+     * the class can come a second or two later. The observer stays for the banner that does arrive as a new
+     * element, as when the game page mounts again.
+     *
      * An in-page character switch shows the same banner on its way to the next
      * socket, and a switch never starts a push: see `_switchSeemsUnderWay`.
      * @private
      */
     _watchHandoff() {
         if (!config.getSetting('sync_onSwitch', false) || !this.isConfigured()) return;
-        this.handoffUnregister = domObserver.onClass('SyncHandoff', 'GamePage_connectionMessage', () => {
-            if (this.handoffPushed || this.handoffTimer !== null) return;
-            if (!document.querySelector(GAME.CONNECTION_MESSAGE)) return;
-            this._lookAtHandoff(1);
+        const startLooking = () => {
+            if (this.handoffPushed) return;
+            // A fresh sign earns a fresh count, on any look already pending
+            this.handoffLook = 0;
+            if (this.handoffTimer === null) this._lookAtHandoff();
+        };
+        const onDisconnected = (data) => {
+            // This script's own recovery close reconnects by itself, and is not a takeover
+            if (webSocketHook.wasClosedByToolasha?.(data?.socket ?? data?.event?.target)) return;
+            startLooking();
+        };
+        const offBanner = domObserver.onClass('SyncHandoff', 'GamePage_connectionMessage', () => {
+            if (document.querySelector(GAME.CONNECTION_MESSAGE)) startLooking();
         });
+        connectionState.on('disconnected', onDisconnected);
+        this.handoffUnregister = () => {
+            offBanner?.();
+            connectionState.off('disconnected', onDisconnected);
+        };
     }
 
     /**
-     * Give the banner a moment, then decide. Gone means a reconnect or a switch that finished, which owes
-     * nothing. Still there with a switch seeming under way, it is looked at again rather than dropped: a
-     * takeover landing during a switch keeps its banner once the switch's signs have cleared.
-     * @param {number} look - Which look this is
+     * Give the banner a moment, then decide. Not there yet while the connection is still down, it is waited
+     * for, a bounded number of looks. Gone once the connection is back means a reconnect or a switch that
+     * finished, which owes nothing. There with a switch seeming under way, it is looked at again rather than
+     * dropped: a takeover landing during a switch keeps its banner once the switch's signs have cleared.
      * @private
      */
-    _lookAtHandoff(look) {
+    _lookAtHandoff() {
         this.handoffTimer = this.timers.scheduleTimeout(() => {
             this.handoffTimer = null;
-            if (this.handoffPushed || !document.querySelector(GAME.CONNECTION_MESSAGE)) return;
+            if (this.handoffPushed) return;
+            this.handoffLook += 1;
+            const look = this.handoffLook;
+            if (!document.querySelector(GAME.CONNECTION_MESSAGE)) {
+                if (connectionState.getState() === 'disconnected' && look < HANDOFF_MAX_LOOKS) this._lookAtHandoff();
+                return;
+            }
             if (this._switchSeemsUnderWay()) {
-                if (look < HANDOFF_MAX_LOOKS) this._lookAtHandoff(look + 1);
+                traceSync('handoff-held-for-switch', { look });
+                if (look < HANDOFF_MAX_LOOKS) this._lookAtHandoff();
                 return;
             }
             // Checked when it runs: the setting can be turned off after the watcher started
             if (!config.getSetting('sync_onSwitch', false)) return;
             this.handoffPushed = true;
+            traceSync('handoff-push', { look });
             this.push({ silent: true, unattended: true });
             // Rearm when the banner clears — checked lazily on the next appearance
             const rearm = setInterval(() => {
@@ -2809,6 +2839,7 @@ class SyncManager {
         // nothing to add — the next tick re-checks. A manual operation must
         // be reported, not run outside the lock: a 409 retry merely replays a
         // stale whole-gist snapshot and cannot protect the other tab's update.
+        traceSync('skipped-another-tab', { silent });
         if (silent) return { ok: true, skipped: true, reason: 'another-tab' };
         showToast('Sync is running in another tab. Try again when it finishes.', { kind: 'warn' });
         return { ok: false, reason: 'another-tab' };
