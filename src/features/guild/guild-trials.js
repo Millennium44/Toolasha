@@ -151,6 +151,7 @@ import guildTrialRecorder, {
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import trialHistory from './trial-history.js';
 import guildTrialBossDebuffsUI from './guild-trial-boss-debuffs-ui.js';
+import guildTrialUnitGrid from './guild-trial-unit-grid.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
@@ -3246,6 +3247,7 @@ class GuildTrials {
         // not on the next sample
         this.unregister.push(config.onSettingChange('guildTrialSim', () => this._render(findTrialsRoot())));
         guildTrialBossDebuffsUI.initialize();
+        guildTrialUnitGrid.initialize();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
@@ -7048,6 +7050,7 @@ class GuildTrials {
         trialHistory.stop();
         guildTrialDamage.cleanup();
         guildTrialBossDebuffsUI.cleanup();
+        guildTrialUnitGrid.cleanup();
         guildTrialSkilling.cleanup();
         guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();

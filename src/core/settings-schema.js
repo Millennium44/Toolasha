@@ -4356,6 +4356,16 @@ export const settingsGroups = {
                     'debuffing ability is seen to hit, for the duration the game data gives it; a stun is shown ' +
                     'for as long as the stream says the boss is stunned.',
             },
+            guildTrialPackUnits: {
+                id: 'guildTrialPackUnits',
+                label: 'Guild trial fight: pack party units into fewer rows',
+                type: 'checkbox',
+                default: true,
+                help:
+                    "Lays the trial fight's party tiles out as a tight grid beside the big card instead of the " +
+                    "game's tall wrapped columns, so all of them fit in fewer rows. Normal party fights are " +
+                    'untouched, and narrow phone screens keep the game layout.',
+            },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
                 label: 'Guild Trials: Record a trial automatically when one starts',

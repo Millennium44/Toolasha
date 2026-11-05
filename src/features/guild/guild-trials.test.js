@@ -248,6 +248,9 @@ vi.mock('./guild-trial-skilling.js', () => ({
 vi.mock('./guild-trial-boss-debuffs-ui.js', () => ({
     default: { initialize: vi.fn(), cleanup: vi.fn() },
 }));
+vi.mock('./guild-trial-unit-grid.js', () => ({
+    default: { initialize: vi.fn(), cleanup: vi.fn() },
+}));
 vi.mock('./guild-trial-scoreboard.js', () => ({
     default: {
         toggle: () => {
