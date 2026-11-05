@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tall character panel no longer cuts off its last rows
+
+The "Character panel: Height" setting could push the panel's bottom off-screen with no way to scroll to it, hiding your last loadouts or inventory rows. It now stops at the bottom of the game's area.
+
 ### Collection plan says when it hit its step limit
 
 When the points plan stops at its 300-step limit with more available, it now says so instead of "Only +N points found".
