@@ -673,6 +673,24 @@ describe('resetting to the default tiles', () => {
         expect(overlayPanel.settings.order).toEqual(['dps', 'luck', 'houses']);
     });
 
+    test('Reset layout picks spans for the width the reset produces, not the old one', async () => {
+        openGear();
+        // The scroller is as wide as the panel, which Reset sets back to the default width
+        Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', {
+            configurable: true,
+            get: () => parseFloat(overlayPanel.panel.style.width) || 2040,
+        });
+        overlayPanel.panel.style.width = '2040px';
+        overlayPanel._applyColumns();
+        expect(overlayPanel.columns).toBeGreaterThan(4);
+
+        dialog.answer = 'reset';
+        await overlayPanel._resetLayout();
+
+        expect(overlayPanel.columns).toBe(2);
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Dashboard.span);
+    });
+
     test('Reset layout also unpins columns, so the shipped spans are not flattened', async () => {
         // A pin left over from a narrow window — columns stepped down to 1 and
         // held there — used to survive Reset. The Default preset's spans came
