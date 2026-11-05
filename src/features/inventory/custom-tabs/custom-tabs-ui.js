@@ -88,6 +88,8 @@ let cancelDetachedNativeRestore = null;
 
 /** Game's own Inventory grids, inside the same Inventory_items container the Toolasha tab drives */
 export const NATIVE_GAP_SEL = '[class*="Inventory_items"] [class*="Inventory_itemGrid"]';
+/** The game's tab panels that hold the inventory grids (they sit inside Inventory_items, so no other panel matches) */
+export const NATIVE_PANEL_SEL = '[class*="Inventory_items"] [class*="TabPanel_tabPanel"]';
 
 /**
  * Stylesheet injected while the feature is on; exported so tests can apply it to a fixture.
@@ -1259,7 +1261,13 @@ export default class CustomTabsUI {
         if (!this._styleEl) return;
         this._styleEl.textContent = `${PANEL_CSS}
 /* native Inventory item spacing */
-${NATIVE_GAP_SEL} { gap: ${gap}px; }`;
+${NATIVE_GAP_SEL} { gap: ${gap}px; }${
+            gap < 4
+                ? `
+/* below the game's 4 px the panel's 2 px side padding costs a column (7 instead of 8) */
+${NATIVE_PANEL_SEL} { padding-left: 0; padding-right: 0; }`
+                : ''
+        }`;
     }
 
     _activatePanel() {
