@@ -2544,7 +2544,7 @@ export const settingsGroups = {
                 min: 0,
                 max: 20,
                 step: 1,
-                help: 'Pixel gap between item tiles on the Toolasha tab.',
+                help: "Pixel gap between item tiles, on the Toolasha tab and in the game's own Inventory view. 4 matches the game.",
             },
             inventoryTabs_loadoutIncludeConsumables: {
                 id: 'inventoryTabs_loadoutIncludeConsumables',

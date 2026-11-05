@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item spacing covers the game's Inventory view
+
+The Custom Inventory Tabs item spacing setting now also sets the gap in the game's own Inventory view, not only the Toolasha tab. The default matches the game, so nothing changes unless you've set it.
+
 ### Overlay presets fill wide panels
 
 Presets now use three columns once the panel is wide enough, fill every row at any wider count, and re-fit when you resize the panel. Applying a preset keeps a column count you set by hand.

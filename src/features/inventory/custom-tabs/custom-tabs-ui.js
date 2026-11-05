@@ -86,6 +86,9 @@ let cancelDetachedNativeRestore = null;
 // CSS
 // ---------------------------------------------------------------------------
 
+/** Game's own Inventory grids, inside the same Inventory_items container the Toolasha tab drives */
+export const NATIVE_GAP_SEL = '[class*="Inventory_items"] [class*="Inventory_itemGrid"]';
+
 /**
  * Stylesheet injected while the feature is on; exported so tests can apply it to a fixture.
  * @type {string}
@@ -765,6 +768,7 @@ export default class CustomTabsUI {
         this._styleEl = document.createElement('style');
         this._styleEl.textContent = PANEL_CSS;
         document.head.appendChild(this._styleEl);
+        this._syncNativeGapStyle();
 
         // Also fires for the inventory's own strip (post-2026-09 DOM), which is when a stored
         // native tab choice can first be handed back — and, with the view already open, when the
@@ -814,6 +818,7 @@ export default class CustomTabsUI {
         // Live setting change for tile gap
         const unregisterTileGap = config.onSettingChange('inventoryTabs_tileGap', () => {
             if (this._isActive) this._applyTileGap();
+            this._syncNativeGapStyle();
         });
         this._unregisterHandlers.push(unregisterTileGap);
 
@@ -1239,6 +1244,22 @@ export default class CustomTabsUI {
         const el = container || this._invContainer;
         if (!el) return;
         el.style.gap = `${config.getSettingValue('inventoryTabs_tileGap', 4)}px`;
+    }
+
+    /**
+     * Apply the item spacing setting to the game's own Inventory view as well. One rule appended to
+     * the feature's stylesheet (removed with it in cleanup()) rather than inline styles, so a React re-render of the grids cannot drop it. Scoped
+     * under Inventory_items, the same container the Toolasha tab drives, so another grid sharing
+     * the Inventory_itemGrid class outside it is untouched. The Toolasha tab flattens these grids
+     * (display: contents), so the rule has no effect there.
+     */
+    _syncNativeGapStyle() {
+        const raw = Number(config.getSettingValue('inventoryTabs_tileGap', 4));
+        const gap = Number.isFinite(raw) ? Math.min(20, Math.max(0, Math.round(raw))) : 4;
+        if (!this._styleEl) return;
+        this._styleEl.textContent = `${PANEL_CSS}
+/* native Inventory item spacing */
+${NATIVE_GAP_SEL} { gap: ${gap}px; }`;
     }
 
     _activatePanel() {
