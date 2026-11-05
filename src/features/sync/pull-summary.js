@@ -27,7 +27,7 @@
  * The summary lives in memory for the session and nowhere else. It is a
  * diagnostic about one operation, not a record of the account, and it belongs to
  * the device rather than the character — a switch clears it (see
- * `sync-manager.js#initialize`).
+ * `sync-manager.js#_noteCharacter`).
  */
 
 /**
