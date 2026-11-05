@@ -34,6 +34,8 @@ vi.mock('../../core/config.js', () => ({
     default: { getSettingValue: (key, fallback) => game.settings[key] ?? fallback },
 }));
 vi.mock('../../utils/bundle-bridge.js', () => ({
+    marketUndercutAlerts: () => null,
+    guildMemberSkills: () => null,
     gatheringProfit: () => (game.bridgeUp ? { calculateGatheringProfit: (...args) => game.gather(...args) } : null),
     productionProfit: () => (game.bridgeUp ? { calculateProductionProfit: (...args) => game.produce(...args) } : null),
 }));
