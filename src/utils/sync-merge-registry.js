@@ -61,8 +61,9 @@
  * than a local apply. A merge that caps or prunes by this device's live
  * settings must keep everything then — the gist is every device's copy, and
  * one device's retention choice is not the others'. Such a merge declares
- * `wantsContext`, and it reaches no other merge. Constant, build-wide caps fold
- * identically everywhere and need not ask.
+ * `wantsContext`, and it reaches no other merge. A cap that is the same on every
+ * device of one build folds identically, but during a rollout devices on different builds have different
+ * constants, so a cap must never remove what only a newer build keeps: prefer none, or ask.
  */
 
 /**

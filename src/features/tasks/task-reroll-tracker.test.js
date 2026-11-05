@@ -89,7 +89,7 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
-const { default: tracker, mergeLiveMap } = await import('./task-reroll-tracker.js');
+const { default: tracker, mergeLiveMap, HISTORY_CAP } = await import('./task-reroll-tracker.js');
 const { default: dataManager } = await import('../../core/data-manager.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
@@ -505,15 +505,49 @@ describe('the stored records survive a read that cannot be made', () => {
     });
 
     test('the history stays capped after a fold', async () => {
-        const many = Array.from({ length: 500 }, (_, i) => ({ taskId: i + 1, retiredAt: i + 1 }));
+        const many = Array.from({ length: HISTORY_CAP }, (_, i) => ({ taskId: i + 1, retiredAt: i + 1 }));
         spend().set('taskRerollHistory_market123', many);
 
-        await tracker.appendToHistory([{ taskId: 9001, retiredAt: 9001 }]);
+        await tracker.appendToHistory([{ taskId: 90001, retiredAt: 90001 }]);
 
         const saved = spend().get('taskRerollHistory_market123');
-        expect(saved).toHaveLength(500);
-        expect(saved.at(-1).taskId).toBe(9001);
+        expect(saved).toHaveLength(HISTORY_CAP);
+        expect(saved.at(-1).taskId).toBe(90001);
         expect(saved[0].taskId).toBe(2);
+    });
+
+    test('eight weeks of a heavy rerolling day (twenty tasks retired a day) fit without losing a row', async () => {
+        // The completion tracker keeps eight weeks of claims; a history shorter than that leaves the oldest
+        // claims with no spend to net against
+        expect(HISTORY_CAP).toBeGreaterThanOrEqual(8 * 7 * 20);
+        const rows = Array.from({ length: 8 * 7 * 20 }, (_, i) => ({
+            taskId: i + 1,
+            retiredAt: i + 1,
+            goldSpent: 10000,
+        }));
+        spend().set('taskRerollHistory_market123', rows.slice(0, -1));
+
+        await tracker.appendToHistory([rows.at(-1)]);
+
+        const saved = spend().get('taskRerollHistory_market123');
+        expect(saved).toHaveLength(rows.length);
+        expect(saved[0].taskId).toBe(1);
+    });
+
+    test('an exact-cap list plus a duplicate of an old row keeps its length and its newest rows', async () => {
+        const full = Array.from({ length: HISTORY_CAP }, (_, i) => ({ taskId: i + 1, retiredAt: i + 1, goldSpent: 1 }));
+        spend().set('taskRerollHistory_market123', full);
+
+        await tracker.appendToHistory([{ taskId: 1, retiredAt: 1, goldSpent: 5 }]);
+
+        const saved = spend().get('taskRerollHistory_market123');
+        expect(saved).toHaveLength(HISTORY_CAP);
+        expect(saved[0]).toMatchObject({ taskId: 1, goldSpent: 5 });
+    });
+
+    test('an empty history takes its first row', async () => {
+        await tracker.appendToHistory([{ taskId: 1, retiredAt: 1 }]);
+        expect(spend().get('taskRerollHistory_market123')).toHaveLength(1);
     });
 });
 

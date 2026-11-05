@@ -64,6 +64,8 @@ const {
     loadGoals,
     saveGoals,
     addGoal,
+    tryAddGoal,
+    MAX_GOALS,
     removeGoal,
     loadSnapshot,
     saveSnapshot,
@@ -260,6 +262,60 @@ describe('the combat gear record', () => {
     });
 });
 
+describe('a full goal list', () => {
+    const gold = (index) => ({ id: `g${index}`, type: 'gold', amount: 1_000 + index, createdAt: index });
+    const fill = (count) => saveGoals(Array.from({ length: count }, (_, index) => gold(index)));
+
+    test('the bound is a hundred', () => {
+        // Planning alone is cheap (about 0.03 ms a skill goal, goal-planner.bench.test.js), but with
+        // inventory reservations on each goal also writes one, serially; that is what a long list pays for
+        expect(MAX_GOALS).toBe(100);
+    });
+
+    test('the goal that fills the list is added, and says so', async () => {
+        await fill(MAX_GOALS - 1);
+        const result = await tryAddGoal({ type: 'gold', amount: 999_999 });
+        expect(result.outcome).toBe('added');
+        expect(result.goals).toHaveLength(MAX_GOALS);
+    });
+
+    test('the next one is refused, says the list is full, and leaves every goal in place', async () => {
+        await fill(MAX_GOALS);
+        const result = await tryAddGoal({ type: 'gold', amount: 999_999 });
+        expect(result.outcome).toBe('full');
+        expect(result.goals).toHaveLength(MAX_GOALS);
+        expect((await loadGoals()).map((entry) => entry.id)).toEqual(
+            Array.from({ length: MAX_GOALS }, (_, index) => `g${index}`)
+        );
+    });
+
+    test('addGoal still answers with the list alone', async () => {
+        await fill(MAX_GOALS);
+        const goals = await addGoal({ type: 'gold', amount: 999_999 });
+        expect(Array.isArray(goals)).toBe(true);
+        expect(goals).toHaveLength(MAX_GOALS);
+    });
+
+    test('a repeat of a goal already there is a duplicate even on a full list, not "full"', async () => {
+        await fill(MAX_GOALS);
+        const result = await tryAddGoal({ type: 'gold', amount: 1_000 });
+        expect(result.outcome).toBe('duplicate');
+    });
+
+    test('a form that makes no goal, and an empty list, are told apart from a full one', async () => {
+        expect((await tryAddGoal({ type: 'nonsense' })).outcome).toBe('invalid');
+        expect((await tryAddGoal({ type: 'gold', amount: 5 })).outcome).toBe('added');
+    });
+
+    test('a list a sync pull grew past the bound is saved whole and still refuses a new goal', async () => {
+        await saveGoals(Array.from({ length: MAX_GOALS + 7 }, (_, index) => gold(index)));
+        expect(await loadGoals()).toHaveLength(MAX_GOALS + 7);
+        expect((await tryAddGoal({ type: 'gold', amount: 999_999 })).outcome).toBe('full');
+        const after = await removeGoal('g0');
+        expect(after).toHaveLength(MAX_GOALS + 6);
+    });
+});
+
 describe('the goal list and a store that cannot be read', () => {
     const goalsKey = () => `${GOALS_KEY}_market123`;
     const ids = (goals) => goals.map((goal) => goal.id);
@@ -406,37 +462,35 @@ describe('merging two devices goal lists', () => {
         expect(mergeGoalLists(undefined, undefined)).toEqual([]);
     });
 
-    test('the union is capped, keeping the goals that have been on the list longest', () => {
+    test('the union keeps every goal either device was asked for, oldest first', () => {
         const local = Array.from({ length: 30 }, (_, index) => goal(`local-${index}`, index));
         const incoming = Array.from({ length: 30 }, (_, index) => goal(`remote-${index}`, 1000 + index));
 
         const merged = mergeGoalLists(local, incoming);
 
-        expect(merged).toHaveLength(40);
+        expect(merged).toHaveLength(60);
         expect(merged.slice(0, 30).map((entry) => entry.id)).toEqual(local.map((entry) => entry.id));
     });
 
-    test('the cap keeps the oldest goals whichever device is holding the list', () => {
-        // The cap was applied to the union in local-then-incoming order, so the
-        // tail it cut was exactly the goals only the other device had — however
-        // old they were. A device already at the cap therefore discarded every
-        // goal the pull brought, and merging the same two lists the other way
-        // round kept a different set. Both sides are capped at MAX_GOALS by
-        // `saveGoals`, so "local is full" is the ordinary case, not an edge one.
-        const full = Array.from({ length: 40 }, (_, index) => goal(`recent-${index}`, 2000 + index));
-        const ancient = [goal('ancient', 1)];
+    test('two devices that both filled their lists lose no goal in either merge direction', () => {
+        // Each device is capped by `addGoal` at MAX_GOALS, so "local is full" is the ordinary case. The union
+        // used to be cut back to MAX_GOALS, which discarded the newest goals of whoever pulled — goals somebody
+        // asked for, gone from both stores after the write
+        const a = Array.from({ length: MAX_GOALS }, (_, index) => goal(`a-${index}`, 2 * index));
+        const b = Array.from({ length: MAX_GOALS }, (_, index) => goal(`b-${index}`, 2 * index + 1));
 
-        expect(mergeGoalLists(full, ancient).map((entry) => entry.id)).toContain('ancient');
-        expect(mergeGoalLists(ancient, full).map((entry) => entry.id)).toContain('ancient');
+        const forwards = mergeGoalLists(a, b);
+        const backwards = mergeGoalLists(b, a);
 
-        // And the two directions agree on which forty survive
-        const forwards = mergeGoalLists(full, ancient)
-            .map((entry) => entry.id)
-            .sort();
-        const backwards = mergeGoalLists(ancient, full)
-            .map((entry) => entry.id)
-            .sort();
-        expect(forwards).toEqual(backwards);
+        expect(forwards).toHaveLength(2 * MAX_GOALS);
+        expect(forwards.map((entry) => entry.id)).toEqual(backwards.map((entry) => entry.id));
+        expect(new Set(forwards.map((entry) => entry.id)).size).toBe(2 * MAX_GOALS);
+    });
+
+    test('a goal on both devices counts once, at exactly the bound', () => {
+        const full = Array.from({ length: MAX_GOALS }, (_, index) => goal(`g-${index}`, index));
+        expect(mergeGoalLists(full, full)).toHaveLength(MAX_GOALS);
+        expect(mergeGoalLists(full, [goal('extra', 5000)])).toHaveLength(MAX_GOALS + 1);
     });
 
     test('a goal deleted on one device comes back — no tombstones, documented', () => {
