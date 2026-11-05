@@ -54,6 +54,8 @@ import {
     skillTtlRow,
 } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
+import { SELL_TAX_EXCLUDED_TOOLTIP } from '../../utils/profit-constants.js';
+import { sellTaxMarker } from '../../utils/sell-tax-marker.js';
 import { runningSkillingProfit, skillingProfitVersion } from './skilling-profit-estimate.js';
 
 /** Long enough that a busy loot map is not repriced every tick */
@@ -452,7 +454,7 @@ registerRow({
 function drawSkillingProfit(container, skilling) {
     if (skilling.state !== 'ready') return blank(container);
 
-    const { profitPerHour, hasMissingPrices, pricingMode } = skilling.estimate;
+    const { profitPerHour, hasMissingPrices, excludeSellTax, pricingMode } = skilling.estimate;
     row(container, [
         { text: skilling.actionName, color: ROW_COLORS.dim, ellipsis: true },
         {
@@ -461,8 +463,8 @@ function drawSkillingProfit(container, skilling) {
             push: true,
         },
         {
-            text: hasMissingPrices ? 'est. · partial' : 'est.',
-            color: hasMissingPrices ? ROW_COLORS.gold : ROW_COLORS.dim,
+            text: `${hasMissingPrices ? 'est. · partial' : 'est.'}${sellTaxMarker(excludeSellTax)}`,
+            color: hasMissingPrices || excludeSellTax ? ROW_COLORS.gold : ROW_COLORS.dim,
         },
     ]);
     container.title =
@@ -472,6 +474,7 @@ function drawSkillingProfit(container, skilling) {
         (hasMissingPrices
             ? '\nSome inputs or outputs have no market price, so this figure leaves them out and is not the whole.'
             : '') +
+        (excludeSellTax ? `\n${SELL_TAX_EXCLUDED_TOOLTIP}` : '') +
         '\nA combat run shows its tracked loot here instead.\nDouble-click for Party Loot.';
 }
 

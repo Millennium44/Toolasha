@@ -239,6 +239,12 @@ const ALLOWLIST = new Map([
         'stateless skilling tea forecast; game state is read at call time from shared core',
     ],
     [
+        'src/utils/sell-tax-marker.js',
+        // Three pure string helpers and a setting name, with no state. Imported by the
+        // actions bundle's tiles and the combat bundle's Total Profit tile.
+        'stateless sell-tax marker strings',
+    ],
+    [
         'src/utils/action-type-order.js',
         // Sorts action type hrids by the game's own sortIndex, read at call time
         // from the shared data manager; nothing is cached here. Imported by the
