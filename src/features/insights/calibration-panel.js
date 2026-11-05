@@ -29,6 +29,10 @@ import { decomposeHistoryTracker } from '../alchemy/decompose-history-tracker.js
 import { coinifyHistoryTracker } from '../alchemy/coinify-history-tracker.js';
 import { summarizeAlchemyCalibration, verdictText } from './alchemy-calibration.js';
 import {
+    withoutBadEnhancementScaleRecords,
+    withoutBadEnhancementScaleObservations,
+} from '../../utils/enhancement-scale-bug.js';
+import {
     summarizeCalibration,
     dailySeries,
     deviationPercent,
@@ -83,7 +87,7 @@ function perHour(value) {
  * @returns {Array<Object>|null}
  */
 function records() {
-    const cached = predictionCalibration.getCachedRecords();
+    const cached = withoutBadEnhancementScaleRecords(predictionCalibration.getCachedRecords());
     if (cached === null) {
         // Fire and forget: the panel redraws on its own timer, and by then the
         // read has landed. Blocking a draw on IndexedDB is what leaves a panel
@@ -98,7 +102,7 @@ function records() {
  * @returns {Array<Object>|null}
  */
 function enhancementRecords() {
-    const cached = enhancementCalibration.getCachedRecords();
+    const cached = withoutBadEnhancementScaleObservations(enhancementCalibration.getCachedRecords());
     if (cached === null) enhancementCalibration.getRecords();
     return cached;
 }

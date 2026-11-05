@@ -32,6 +32,7 @@ import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { summarizeCalibration, DEFAULT_MIN_SAMPLES } from '../features/insights/calibration-math.js';
 import { entriesOf } from './cleared-record.js';
+import { isBadEnhancementScaleRecord } from './enhancement-scale-bug.js';
 
 /** The setting that switches the badges off */
 export const BADGE_SETTING = 'insights_calibrationBadges';
@@ -325,6 +326,8 @@ export function getCalibrationGroup(actionType, { actionHrid = null, difficultyT
             record.actionType === type &&
             Number.isFinite(record.t) &&
             record.t >= cutoff &&
+            // Forecast on 3.76.0, which scaled enhanced gear ~50x too strongly (#808): kept in the ledger, not counted
+            !isBadEnhancementScaleRecord(record) &&
             (!gearMatched || record.fingerprintMatch === true) &&
             (actionHrid === null || record.actionHrid === actionHrid) &&
             (difficultyTier === null || (record.difficultyTier ?? 0) === difficultyTier)

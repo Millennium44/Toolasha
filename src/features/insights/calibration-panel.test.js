@@ -578,3 +578,118 @@ describe('the combat card’s verdicts', () => {
         expect(text()).not.toContain('the gear it never saw');
     });
 });
+
+describe('records forecast by 3.76.0 (#809)', () => {
+    const bad = (actionType, actual, hoursAgo) => ({
+        ...pair(actionType, 1_000_000, actual, hoursAgo),
+        id: `bad-${actionType}-${hoursAgo}`,
+        v: '3.76.0',
+    });
+    const good = (actionType, actual, hoursAgo, v = '3.76.1') => ({
+        ...pair(actionType, 1_000_000, actual, hoursAgo),
+        id: `good-${actionType}-${hoursAgo}`,
+        v,
+    });
+
+    test('are left out of the panel counts, the overall figure and the recent list', () => {
+        store.records = [
+            ...Array.from({ length: 5 }, (_, i) => bad('milking', 100_000, i + 1)),
+            ...Array.from({ length: 3 }, (_, i) => good('milking', 990_000, i + 10)),
+            good('milking', 990_000, 20, '3.75.4'),
+            { ...good('milking', 990_000, 21), v: undefined, id: 'no-version' },
+        ];
+        calibrationPanel.show({ remember: false });
+        expect(text()).not.toContain('could not be drawn');
+        expect(text()).toContain('Overall (5 runs)');
+        expect(text()).not.toContain('-90');
+        // The ledger itself is untouched
+        expect(store.records).toHaveLength(10);
+    });
+
+    test('leave the panel saying nothing measured when they are all there is', () => {
+        store.records = Array.from({ length: 6 }, (_, i) => bad('milking', 100_000, i + 1));
+        calibrationPanel.show({ remember: false });
+        expect(text()).toContain('No finished runs measured yet');
+        expect(text()).not.toContain('could not be drawn');
+    });
+
+    test('are left out of the overlay tile, which blanks when only they exist', () => {
+        registerCalibrationRow();
+        const container = document.createElement('div');
+        store.records = Array.from({ length: 6 }, (_, i) => bad('milking', 100_000, i + 1));
+        store.rows[0].render(container);
+        expect(container.textContent.trim()).toBe('');
+
+        store.records = [...store.records, ...Array.from({ length: 6 }, (_, i) => good('cooking', 990_000, i + 1))];
+        const tile = document.createElement('div');
+        store.rows[0].render(tile);
+        expect(tile.textContent).toContain('Cooking');
+        expect(tile.textContent).not.toContain('Milking');
+    });
+
+    test('keep a 3.76.0 combat pair', () => {
+        store.records = Array.from({ length: 6 }, (_, i) => ({
+            ...bad('combat', 500_000, i + 1),
+            fingerprintMatch: true,
+        }));
+        calibrationPanel.show({ remember: false });
+        expect(text()).toContain('Overall (6 runs)');
+    });
+});
+
+describe('enhancement observations from the 3.76.0 window (#809)', () => {
+    const observation = (id, iso) => ({
+        id,
+        t: Date.parse(iso),
+        itemHrid: '/items/enhancers_bottoms',
+        itemName: "Enhancer's Bottoms",
+        targetLevel: 10,
+        protectFrom: 0,
+        expectedAttempts: 40,
+        observedAttempts: 55,
+        tailProbability: 0.3,
+    });
+
+    test('are left out of the Enhancing card count, and a card with none left is not drawn', () => {
+        store.enhancing = [
+            observation('in-1', '2026-11-05T14:00:00Z'),
+            observation('in-2', '2026-11-05T17:02:36Z'),
+            observation('before', '2026-11-05T13:23:41Z'),
+            observation('after', '2026-11-05T17:02:37Z'),
+        ];
+        calibrationPanel.show({ remember: false });
+        expect(text()).toContain('Enhancing (2 runs)');
+        expect(text()).not.toContain('could not be drawn');
+        calibrationPanel.hide({ remember: false });
+
+        store.enhancing = [observation('in-1', '2026-11-05T14:00:00Z')];
+        calibrationPanel.show({ remember: false });
+        expect(text()).toContain('No finished runs measured yet');
+        expect(text()).not.toContain('Enhancing (');
+        expect(store.enhancing).toHaveLength(1);
+    });
+});
+
+describe('alchemy sessions stamped during the 3.76.0 window (#809)', () => {
+    test('are not drawn as a card', async () => {
+        const inside = Date.parse('2026-11-05T15:00:00Z');
+        store.alchemy.transmute = [
+            {
+                id: 'bad',
+                startTime: inside,
+                inputItemHrid: '/items/gem',
+                predictedRate: 0.99,
+                predictedAt: inside,
+                predictedCatalystHrid: null,
+                totalAttempts: 1000,
+                totalSuccesses: 600,
+            },
+        ];
+        vi.setSystemTime(now + 3_600_000);
+        calibrationPanel.show({ remember: false });
+        await vi.advanceTimersByTimeAsync(1);
+        calibrationPanel.render();
+        expect(text()).not.toContain('Transmute success');
+        expect(text()).toContain('No finished runs measured yet');
+    });
+});

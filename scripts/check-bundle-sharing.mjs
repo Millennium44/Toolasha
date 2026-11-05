@@ -112,6 +112,12 @@ const ALLOWLIST = new Map([
         'stateless table and arithmetic; no module state to share',
     ],
     [
+        'src/utils/enhancement-scale-bug.js',
+        // Constants and pure predicates over a stored record; no imports, no module state. The badge
+        // (actions/ui) and the calibration panel (ui) each filter their own read of the ledger.
+        'stateless version/time-window predicates for records written by 3.76.0; no module state to share',
+    ],
+    [
         'src/utils/price-change.js',
         // One pure predicate, no imports and no module state: whether a market notification moved a
         // price. The price listeners in several bundles (inventory, net worth, EV, house, shop) ask it.

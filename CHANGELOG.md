@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task badge speed counts enhancement correctly
+
+An enhanced Task Badge's speed was counted at about half its value at +20 (45% where the game gives 90%), so task times and ratings read slower than they are. It now matches the game.
+
+### Dungeon ROI board food matches the party
+
+The dungeon ROI board now prices food and XP from runs with the same party size as each row, so a solo row no longer takes its food bill from party runs or the other way round.
+
+### Prediction accuracy leaves out 3.76.0's figures
+
+Prediction accuracy badges and panels skip forecasts saved during 3.76.0's few hours, so correct predictions no longer show a false "ran hot" from them.
+
 ### Overlay picker keeps its place
 
 Switching layouts or ticking a tile in the overlay's tile picker no longer scrolls it back to the top.

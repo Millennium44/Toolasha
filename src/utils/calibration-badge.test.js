@@ -295,3 +295,53 @@ describe('calibrationBadgeFor', () => {
         expect(calibrationBadgeFor('milking')).toBeNull();
     });
 });
+
+describe('3.76.0 pairs (#809)', () => {
+    const stamped = (list, v) => list.map((r) => ({ ...r, v }));
+
+    it('does not let a correct forecast show a ran-hot badge off 3.76.0 pairs', async () => {
+        // Ten 3.76.0 pairs that read the forecast 90% hot, plus six 3.76.1 pairs that were on target
+        store.ledger = [
+            ...stamped(runs('/actions/milking/cow', 10, 0.1), '3.76.0'),
+            ...stamped(runs('/actions/milking/cow', 6, 1.0, Date.now() - 5 * DAY), '3.76.1').map((r) => ({
+                ...r,
+                id: `g${r.id}`,
+            })),
+        ];
+        await loadCalibrationBadges();
+        const badge = calibrationBadgeFor('milking', { actionHrid: '/actions/milking/cow' });
+        expect(badge.text).toBe('on target (6 runs)');
+        expect(badge.samples).toBe(6);
+    });
+
+    it('counts 3.75.x, unversioned and dev-build pairs', async () => {
+        store.ledger = [
+            ...stamped(runs('/actions/milking/cow', 2, 0.8), '3.75.2'),
+            ...runs('/actions/milking/cow', 2, 0.8, Date.now() - 10 * DAY),
+            ...stamped(runs('/actions/milking/cow', 2, 0.8, Date.now() - 9 * DAY), null),
+            ...stamped(runs('/actions/milking/cow', 2, 0.8, Date.now() - 8 * DAY), '3.76.0.20261105150000'),
+        ].map((r, i) => ({ ...r, id: `k${i}` }));
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('milking', { actionHrid: '/actions/milking/cow' }).samples).toBe(8);
+    });
+
+    it('shows no badge, not an error or a zero, when the only pairs are 3.76.0', async () => {
+        store.ledger = stamped(runs('/actions/milking/cow', 12, 0.1), '3.76.0');
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('milking', { actionHrid: '/actions/milking/cow' })).toBeNull();
+        expect(calibrationBadgeFor('milking')).toBeNull();
+    });
+
+    it('keeps a 3.76.0 combat pair, which never read the broken table', async () => {
+        const zone = '/actions/combat/fly';
+        store.ledger = stamped(runs(zone, 6, 0.7), '3.76.0').map((r) => ({
+            ...r,
+            difficultyTier: 0,
+            fingerprintMatch: true,
+        }));
+        await loadCalibrationBadges();
+        expect(calibrationBadgeFor('combat', { actionHrid: zone, difficultyTier: 0, exact: true }).text).toBe(
+            '−30% over 6 runs'
+        );
+    });
+});
