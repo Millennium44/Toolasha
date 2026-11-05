@@ -47,6 +47,23 @@ export function parseItemHash(itemHash) {
 }
 
 /**
+ * Enhancement level of the upgrade stack a production action consumes.
+ *
+ * The action names its upgrade stack in `primaryItemHash`. A hash naming some other item (or
+ * none) leaves the +0 stack, which is what an action without a selection draws. The same rule
+ * the Actions panel applies when it prices an upgrade craft.
+ *
+ * @param {string|undefined} upgradeItemHrid - The recipe's `upgradeItemHrid`
+ * @param {{primaryItemHash?: string}|null} action - The character's queued action
+ * @returns {number} Enhancement level, 0 when no stack is selected
+ */
+export function upgradeStackLevel(upgradeItemHrid, action) {
+    if (!upgradeItemHrid || !action?.primaryItemHash) return 0;
+    const { itemHrid, level } = parseItemHash(action.primaryItemHash);
+    return itemHrid === upgradeItemHrid && Number.isFinite(level) && level > 0 ? level : 0;
+}
+
+/**
  * The game's hash for one stack of an item.
  *
  * The client keys its item map by exactly this tuple

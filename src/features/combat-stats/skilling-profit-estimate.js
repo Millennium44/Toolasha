@@ -30,6 +30,7 @@ import { gatheringProfit, productionProfit } from '../../utils/bundle-bridge.js'
 import { runningSkillingAction } from '../../utils/combat-actions.js';
 import { GATHERING_TYPES, ALL_SKILL_TYPES } from '../../utils/profit-constants.js';
 import { skillName } from '../../utils/skill-progress.js';
+import { upgradeStackLevel } from '../../utils/item-hash.js';
 
 /** How long a worked-out figure is held before it is asked for again */
 const MEMO_MS = 15000;
@@ -58,12 +59,13 @@ dataManager.on('character_switching', () => {
  * Everything that changes the figure, as one string.
  * @param {string|number|null} characterId - Who is playing
  * @param {string} actionHrid - The running action
+ * @param {number} upgradeLevel - Enhancement level of the upgrade stack the action draws
  * @returns {string}
  */
-function keyFor(characterId, actionHrid) {
+function keyFor(characterId, actionHrid, upgradeLevel) {
     const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
     const excludeSellTax = config.getSettingValue('profitCalc_excludeSellTax', false) ? 'notax' : 'tax';
-    return `${characterId ?? ''}|${actionHrid}|${pricingMode}|${excludeSellTax}`;
+    return `${characterId ?? ''}|${actionHrid}|${upgradeLevel}|${pricingMode}|${excludeSellTax}`;
 }
 
 /**
@@ -71,18 +73,20 @@ function keyFor(characterId, actionHrid) {
  *
  * @param {string} actionHrid - e.g. `/actions/foraging/star_fruit`
  * @param {string} type - e.g. `/action_types/foraging`
+ * @param {number} upgradeLevel - Enhancement level of the upgrade stack, as the Actions panel prices it
  * @returns {Promise<Object|null>} The calculator's profit data, or null when this action has no estimate
  */
-async function calculate(actionHrid, type) {
+async function calculate(actionHrid, type, upgradeLevel) {
     const module = GATHERING_TYPES.includes(type) ? gatheringProfit() : productionProfit();
     if (!module) return null;
     const data = GATHERING_TYPES.includes(type)
         ? await module.calculateGatheringProfit(actionHrid)
-        : await module.calculateProductionProfit(actionHrid);
+        : await module.calculateProductionProfit(actionHrid, { upgradeItemLevel: upgradeLevel });
     if (!data || !Number.isFinite(data.profitPerHour)) return null;
     return {
         profitPerHour: data.profitPerHour,
         hasMissingPrices: Boolean(data.hasMissingPrices),
+        upgradeLevel,
         pricingMode: data.pricingMode || config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
     };
 }
@@ -94,16 +98,17 @@ async function calculate(actionHrid, type) {
  * @param {string} type - Its action type
  * @param {string} key - The key it is being worked out for
  * @param {string|number|null} characterId - Who it is being worked out for
+ * @param {number} upgradeLevel - Enhancement level of the upgrade stack
  * @returns {Promise<void>}
  */
-async function request(actionHrid, type, key, characterId) {
+async function request(actionHrid, type, key, characterId, upgradeLevel) {
     const ticket = { key };
     inflight = ticket;
 
     let estimate = null;
     let failed = false;
     try {
-        estimate = await calculate(actionHrid, type);
+        estimate = await calculate(actionHrid, type, upgradeLevel);
     } catch (error) {
         console.error('[SkillingProfit] Estimating the running action failed:', error);
         failed = true;
@@ -134,7 +139,12 @@ export function runningSkillingProfit() {
     if (!running) return { state: 'idle' };
 
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
-    const key = keyFor(characterId, running.actionHrid);
+    // An upgrade craft (a +N stack as input) is priced at that level, as the Actions panel does
+    const upgradeLevel = upgradeStackLevel(
+        dataManager.getActionDetails?.(running.actionHrid)?.upgradeItemHrid,
+        running.action
+    );
+    const key = keyFor(characterId, running.actionHrid, upgradeLevel);
     const named = {
         actionName: dataManager.getActionDetails?.(running.actionHrid)?.name || skillName(running.actionHrid),
         skillName: skillName(running.skillHrid),
@@ -145,7 +155,7 @@ export function runningSkillingProfit() {
     // Types the calculators do not cover (Enhancing, Alchemy) are settled here
     // without a call; request() settles the rest in the background
     if (!ALL_SKILL_TYPES.includes(running.type)) return { state: 'none', failed: false, ...named };
-    if (!fresh && inflight?.key !== key) void request(running.actionHrid, running.type, key, characterId);
+    if (!fresh && inflight?.key !== key) void request(running.actionHrid, running.type, key, characterId, upgradeLevel);
 
     if (!held) return { state: 'pending', ...named };
     if (!held.estimate) return { state: 'none', failed: held.failed, ...named };
@@ -162,8 +172,8 @@ export function runningSkillingProfit() {
  */
 export function skillingProfitVersion(reading) {
     if (reading.state === 'ready') {
-        const { profitPerHour, hasMissingPrices, pricingMode } = reading.estimate;
-        return `skill|${reading.actionName}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${pricingMode}`;
+        const { profitPerHour, hasMissingPrices, pricingMode, upgradeLevel } = reading.estimate;
+        return `skill|${reading.actionName}|+${upgradeLevel || 0}|${Math.round(profitPerHour)}|${hasMissingPrices ? 1 : 0}|${pricingMode}`;
     }
     return `skill|${reading.actionName}|${reading.state}${reading.failed ? '!' : ''}`;
 }

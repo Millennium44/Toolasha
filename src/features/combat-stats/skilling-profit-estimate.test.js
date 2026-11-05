@@ -108,7 +108,34 @@ describe('which actions get an estimate', () => {
         game.handlers.character_switching();
         run(CRAFTING, '/action_types/crafting', 'Wooden Bow');
         runningSkillingProfit();
-        expect(game.produce).toHaveBeenCalledWith(CRAFTING);
+        expect(game.produce).toHaveBeenCalledWith(CRAFTING, { upgradeItemLevel: 0 });
+        await settle();
+    });
+
+    test('an upgrade craft is priced at the +N stack its primaryItemHash names, and a different level is a different answer', async () => {
+        const UPGRADE = '/items/wooden_bow';
+        game.details[CRAFTING] = { type: '/action_types/crafting', name: 'Bow', upgradeItemHrid: UPGRADE };
+        const queue = (hash) => {
+            game.actions = [{ actionHrid: CRAFTING, isDone: false, ordinal: 0, primaryItemHash: hash }];
+        };
+        queue(`1::/item_locations/inventory::${UPGRADE}::5`);
+        runningSkillingProfit();
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 5 });
+        await settle();
+        const five = runningSkillingProfit();
+        expect(five).toMatchObject({ state: 'ready' });
+
+        // Another level must not be served the +5 answer
+        queue(`1::/item_locations/inventory::${UPGRADE}::7`);
+        expect(runningSkillingProfit().state).toBe('pending');
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 7 });
+        await settle();
+        expect(skillingProfitVersion(runningSkillingProfit())).not.toBe(skillingProfitVersion(five));
+
+        // A hash naming some other item leaves the +0 stack
+        queue('1::/item_locations/inventory::/items/other::9');
+        runningSkillingProfit();
+        expect(game.produce).toHaveBeenLastCalledWith(CRAFTING, { upgradeItemLevel: 0 });
         await settle();
     });
 
