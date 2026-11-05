@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Plan to goal weighs every upgrade before giving up
+
+A Lab skilling plan that falls short now reruns over all helpful upgrades instead of only the 12 best by price, so a goal is not called unreachable when a lower-ranked upgrade could reach it.
+
 ### Bestiary credits follow each monster's real tier
 
 Combat Sim credited every kill at the zone's tier, undercounting monsters that spawn above it: most Chimerical Den monsters are worth five credits at T0, not one. Bestiary points, plan times and threshold alert estimates now use the monster's own tier, so many dungeons read faster than before.
