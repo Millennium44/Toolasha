@@ -99,7 +99,11 @@ vi.mock('./custom-tabs-data.js', async (importOriginal) => ({
     loadConfig: async () => ({ tabs: [] }),
 }));
 
-const { default: CustomTabsUI, NATIVE_GAP_SEL: RULE_SEL } = await import('./custom-tabs-ui.js');
+const {
+    default: CustomTabsUI,
+    NATIVE_GAP_SEL: RULE_SEL,
+    NATIVE_PANEL_SEL: PANEL_SEL,
+} = await import('./custom-tabs-ui.js');
 
 const gapSheet = () => {
     const el = document.head.querySelector('style');
@@ -156,5 +160,33 @@ describe('item spacing on the native Inventory view', () => {
         change(10);
         ui._applyTileGap(host);
         expect(host.style.gap).toBe('10px');
+    });
+
+    const css = () => document.head.querySelector('style').textContent;
+
+    test('below 4 the inventory tab panels lose their side padding; at 4 and above the rule is absent', () => {
+        expect(css()).not.toContain(PANEL_SEL);
+        change(3);
+        expect(css()).toContain(`${PANEL_SEL} { padding-left: 0; padding-right: 0; }`);
+        change(0);
+        expect(css()).toContain(PANEL_SEL);
+        change(4);
+        expect(css()).not.toContain(PANEL_SEL);
+        change(10);
+        expect(css()).not.toContain(PANEL_SEL);
+    });
+
+    test('the panel rule reaches panels inside Inventory_items only', () => {
+        document.body.innerHTML =
+            '<div class="Inventory_items__x"><div class="TabPanel_tabPanel__a" id="in"></div></div>' +
+            '<div class="Equipment_x"><div class="TabPanel_tabPanel__b" id="out"></div></div>';
+        expect(document.querySelector('#in').matches(PANEL_SEL)).toBe(true);
+        expect(document.querySelector('#out').matches(PANEL_SEL)).toBe(false);
+    });
+
+    test('feature off removes the panel rule too', () => {
+        change(0);
+        ui.cleanup();
+        expect(document.head.querySelectorAll('style').length).toBe(0);
     });
 });
