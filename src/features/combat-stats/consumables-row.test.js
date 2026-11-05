@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ outlook: null, items: {} }));
+const game = vi.hoisted(() => ({ outlook: null, items: {}, sides: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -37,7 +37,7 @@ vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: () => [],
     firstToRunOut: () => null,
     drinkRatePerDay: () => 0,
-    costPerDaySides: () => ({ ask: 14_100_000, bid: 13_600_000, askUnpriced: 0, bidUnpriced: 0 }),
+    costPerDaySides: () => game.sides,
     partyOutlook: () => game.outlook,
 }));
 
@@ -53,6 +53,7 @@ const draw = () => {
 };
 
 beforeEach(() => {
+    game.sides = { ask: 14_100_000, bid: 13_600_000, askUnpriced: 0, bidUnpriced: 0 };
     game.items = { '/items/purples_gift': { name: "Purple's Gift" } };
     game.outlook = {
         you: { itemHrid: '/items/purples_gift', held: 3170, rateKnown: true, secondsLeft: 165_000 },
@@ -73,11 +74,28 @@ describe('the tile', () => {
         expect(draw().textContent).not.toContain('3.17K');
     });
 
-    test('and the day’s cost is on the tile, both sides of the book', () => {
-        const text = draw().textContent;
-        expect(text).toContain('Total Cost/Day:');
-        expect(text).toContain('Ask:');
-        expect(text).toContain('Bid:');
+    test('the tile is two lines: the Ask day cost on the first, the limiting item on the second', () => {
+        const lines = draw().children;
+        expect(lines).toHaveLength(2);
+        expect(lines[0].textContent).toContain('You:');
+        expect(lines[0].textContent).toContain('Party:');
+        expect(lines[0].textContent).toContain('Ask 14.10M/day');
+        expect(lines[1].textContent).toContain("Purple's Gift");
+        expect(draw().textContent).not.toContain('Total Cost');
+    });
+
+    test('the Bid side and the wording are in the tooltip', () => {
+        const title = draw().title;
+        expect(title).toContain('Total cost per day');
+        expect(title).toContain('Ask: 14.10M');
+        expect(title).toContain('Bid: 13.60M');
+    });
+
+    test('an unpriced item flags the Ask figure on the tile itself', () => {
+        expect(draw().textContent).not.toContain('*');
+        game.sides = { ask: 14_100_000, bid: 13_600_000, askUnpriced: 2, bidUnpriced: 0 };
+        expect(draw().textContent).toContain('Ask 14.10M/day*');
+        expect(draw().title).toContain('Ask: 14.10M (2 unpriced)');
     });
 
     test('an item the game data has never heard of still reads as something', () => {
