@@ -32,6 +32,19 @@
  */
 export const COLUMN_MIN = 220;
 
+/**
+ * The narrowest canvas that gets three columns instead of two.
+ *
+ * Under the {@link COLUMN_MIN} law three columns need 668 pixels, which a panel
+ * dragged a little wider than the default sits well short of, so it stays on two
+ * very wide tiles. Three tiles read well from about 200 pixels each: twelve of
+ * the row providers declare exactly that as their `defaultSize.width`, and the
+ * others (180 to 250) are the ones that already wrap a word at 220. 3 * 200 plus
+ * two gaps is 608. Only the band between this and 668 moves; one column, two
+ * columns below this, and four and more are exactly what they were.
+ */
+export const THREE_COLUMN_MIN = 608;
+
 /** The gap between tiles, horizontally and vertically */
 export const GAP = 4;
 
@@ -80,6 +93,7 @@ export function clampZoom(zoom) {
 export function columnsFor(width) {
     if (!(width > 0)) return 1;
     const fits = Math.floor((width + GAP) / (COLUMN_MIN + GAP));
+    if (fits === 2 && width >= THREE_COLUMN_MIN) return 3;
     return Math.min(MAX_SPAN, Math.max(1, fits));
 }
 

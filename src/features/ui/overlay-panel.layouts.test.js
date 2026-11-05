@@ -77,6 +77,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => dialog.a
 const { registerRow } = await import('../../utils/overlay-rows.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
 const { loadLayouts, layoutNames } = await import('./overlay-layouts.js');
+const { toOPanelConfig, fromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /** An arrangement worth telling apart from another one. @returns {Object} */
 function dungeonLayout() {
@@ -255,6 +256,100 @@ describe('saving and switching named layouts', () => {
         await overlayPanel.applyNamedLayout('Loose');
 
         expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
+    /** Make the panel measure as this wide. @param {number} width - Scroller width in pixels */
+    function measureAs(width) {
+        Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { configurable: true, value: width });
+    }
+
+    test('a preset applied on a three-column panel arrives with its three-column spans', async () => {
+        measureAs(640);
+        await overlayPanel.applyNamedLayout('Skilling');
+        expect(overlayPanel.columns).toBe(3);
+        expect(overlayPanel.settings.span).toEqual({ consumables: 2, coins: 2 });
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
+    test('the same preset on a narrow and a medium panel keeps the flat spans', async () => {
+        measureAs(380);
+        await overlayPanel.applyNamedLayout('Skilling');
+        expect(overlayPanel.settings.span).toEqual({ consumables: 2 });
+        measureAs(480);
+        await overlayPanel.applyNamedLayout('Skilling');
+        expect(overlayPanel.settings.span).toEqual({ consumables: 2 });
+    });
+
+    test('a column count set by hand survives a preset switch, and the preset fits it', async () => {
+        measureAs(900);
+        overlayPanel.settings.columns = 2;
+        overlayPanel.settings.columnsPinned = true;
+
+        await overlayPanel.applyNamedLayout('Dashboard');
+
+        expect(overlayPanel.settings.columns).toBe(2);
+        expect(overlayPanel.settings.columnsPinned).toBe(true);
+        expect(overlayPanel.columns).toBe(2);
+        expect(overlayPanel.settings.span.accountView).toBe(2);
+
+        overlayPanel.settings.columns = 3;
+        await overlayPanel.applyNamedLayout('Market');
+        expect(overlayPanel.settings.columns).toBe(3);
+        expect(overlayPanel.settings.columnsPinned).toBe(true);
+        expect(overlayPanel.settings.span).toEqual({ skillBooks: 2, watchlist: 3, equipmentWatch: 3 });
+    });
+
+    test('a preset switch taken back restores a hand-set count too', async () => {
+        overlayPanel.settings.columns = 3;
+        overlayPanel.settings.columnsPinned = true;
+        await overlayPanel.applyNamedLayout('Combat');
+        overlayPanel._undo();
+        expect(overlayPanel.settings.columns).toBe(3);
+        expect(overlayPanel.settings.columnsPinned).toBe(true);
+    });
+
+    test("a layout of the player's own still releases a hand-set count, and keeps old-shape spans", async () => {
+        wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+        await overlayPanel.saveNamedLayout('Mine');
+        overlayPanel.settings.columns = 3;
+        overlayPanel.settings.columnsPinned = true;
+
+        await overlayPanel.applyNamedLayout('Mine');
+
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+        expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+    });
+
+    test('a saved layout named like a preset shadows it, with its own spans and pin rules', async () => {
+        measureAs(640);
+        wear({ ...dungeonLayout(), columns: 2, columnsPinned: false });
+        await overlayPanel.saveNamedLayout('Skilling');
+        overlayPanel.settings.columns = 3;
+        overlayPanel.settings.columnsPinned = true;
+
+        await overlayPanel.applyNamedLayout('Skilling');
+
+        expect(overlayPanel.settings.span).toEqual({ luck: 2 });
+        expect(overlayPanel.settings.columnsPinned).toBe(false);
+    });
+
+    test('an exported three-column preset re-imports with the same spans', async () => {
+        measureAs(640);
+        await overlayPanel.applyNamedLayout('Market');
+        const exported = toOPanelConfig(overlayPanel.settings, null);
+        const read = fromOPanelConfig(JSON.parse(JSON.stringify(exported)));
+
+        expect(read.settings.span).toEqual({ skillBooks: 2, watchlist: 3, equipmentWatch: 3 });
+    });
+
+    test('a preset applied three-column is not reported as edited', async () => {
+        measureAs(640);
+        await overlayPanel.applyNamedLayout('Market');
+        const line = document.createElement('div');
+        document.body.appendChild(line);
+        line.textContent = 'Showing: Market';
+        await overlayPanel._markAppliedLayoutDrift(line);
+        expect(line.textContent).toBe('Showing: Market');
     });
 
     test('a switch can be taken back', async () => {
