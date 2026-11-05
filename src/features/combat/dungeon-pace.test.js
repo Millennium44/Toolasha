@@ -169,14 +169,27 @@ describe('the split-time profile', () => {
         expect(historyCumulativeProfile([chatRun('Chimerical Den', 500_000)], den)).toBeNull();
     });
 
-    test('a stated tier keeps that tier and untiered runs, and drops the rest', () => {
+    test('a stated tier keeps that tier only, and leaves out the rest and any untiered run', () => {
         const runs = [
             trackedRun('Chimerical Den', waves(10_000), 2),
             trackedRun('Chimerical Den', waves(30_000), 0),
             trackedRun('Chimerical Den', waves(12_000)),
         ];
         const profile = historyCumulativeProfile(runs, { ...den, tier: 2 });
-        expect(profile[1]).toBe(11_000); // the T0 run is excluded
+        expect(profile[1]).toBe(10_000);
+    });
+
+    test('untiered runs set the profile only with nothing tiered, and a tier with no runs has none', () => {
+        const untiered = [trackedRun('Chimerical Den', waves(12_000))];
+        expect(historyCumulativeProfile(untiered, { ...den, tier: 2 })[1]).toBe(12_000);
+        // Another dungeon's tiers say nothing about this one's history
+        const elsewhere = [...untiered, trackedRun('Pirate Cove', waves(1_000), 2)];
+        expect(historyCumulativeProfile(elsewhere, { ...den, tier: 2 })[1]).toBe(12_000);
+
+        const otherTier = [...untiered, trackedRun('Chimerical Den', waves(30_000), 0)];
+        expect(historyCumulativeProfile(otherTier, { ...den, tier: 2 })).toBeNull();
+        // No tier asked for: every run of the dungeon, as before
+        expect(historyCumulativeProfile(otherTier, { ...den, tier: null })[1]).toBe(21_000);
     });
 
     test('no usable identity is no profile', () => {
@@ -396,5 +409,54 @@ describe('the average window and the reset marker', () => {
         expect(historyCumulativeProfile(slowThenFast, { ...identity, windowSize: 0, baselines: {} })).toBe(
             historyCumulativeProfile(slowThenFast, identity)
         );
+    });
+});
+
+describe('runs with no tier beside tiered ones', () => {
+    const NAME = 'Chimerical Den';
+    const MINUTE = 60_000;
+    const at = (day, tier, duration = 600_000) => ({
+        dungeonName: NAME,
+        tier,
+        duration,
+        timestamp: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z`,
+    });
+
+    test('the window counts only the runs that speak for the tier', () => {
+        // The newest two are untiered: left out before the window, so they use no slot
+        const runs = [at(1, 2, 500_000), at(2, 2, 700_000), at(3, null, 100_000), at(4, null, 100_000)];
+        const wave = (windowSize) =>
+            historyAvgWaveMs(runs, { dungeonName: NAME, tier: 2, maxWaves: MAX_WAVES, windowSize });
+        expect(wave(2)).toBe(12_000);
+        expect(wave(1)).toBe(14_000);
+    });
+
+    test('the average: mixed, only untiered, only tiered, and a tier with no runs', () => {
+        const avg = (runs, tier) => historyAvgWaveMs(runs, { dungeonName: NAME, tier, maxWaves: MAX_WAVES });
+        expect(avg([at(1, 2, 500_000), at(2, null, 100_000)], 2)).toBe(10_000);
+        expect(avg([at(1, null, 500_000), at(2, null, 700_000)], 2)).toBe(12_000);
+        expect(avg([at(1, 2, 500_000), at(2, 2, 700_000)], 2)).toBe(12_000);
+        expect(avg([at(1, 0, 500_000), at(2, null, 100_000)], 2)).toBeNull();
+    });
+
+    test('the recovery bound: the same rule, and the tier with no runs takes the 45-minute fallback', () => {
+        const bound = (runs, tier) => plausibleMaxRunMs(runs, { dungeonName: NAME, tier });
+        const tiered = [at(1, 2, 10 * MINUTE), at(2, 2, 10 * MINUTE), at(3, 2, 10 * MINUTE)];
+        const untiered = [at(4, null, 2 * MINUTE)];
+        expect(bound(tiered, 2)).toBe(10 * MINUTE * RECOVERY_DURATION_SLACK);
+        expect(bound([...tiered, ...untiered], 2)).toBe(10 * MINUTE * RECOVERY_DURATION_SLACK);
+        expect(bound(untiered, 2)).toBe(2 * MINUTE * RECOVERY_DURATION_SLACK);
+        expect(bound([at(1, 0, 2 * MINUTE), ...untiered], 2)).toBeNull();
+        // A T2 clear no longer fails against a bound from runs that may be T0
+        expect(
+            assessRecoveredStart({
+                impliedElapsedMs: 30 * MINUTE,
+                currentWave: 40,
+                maxWaves: MAX_WAVES,
+                runs: [at(1, 0, 5 * MINUTE), ...untiered],
+                dungeonName: NAME,
+                tier: 2,
+            }).credible
+        ).toBe(true);
     });
 });

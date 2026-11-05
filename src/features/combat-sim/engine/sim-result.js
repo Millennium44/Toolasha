@@ -44,6 +44,13 @@ export function lootStateKey(dropRate, rareFind, dropQuantity) {
 class SimResult {
     constructor(zone, numberOfPlayers) {
         this.deaths = {};
+        /**
+         * Monster kills by the tier each monster actually had: monster hrid → tier
+         * → kills. A spawn's own `difficultyTier` is added to the zone's when it is
+         * built (`zone.js`), so one zone tier holds monsters of several tiers, and
+         * a kill's Bestiary credit follows the monster's (`bestiary.js`).
+         */
+        this.monsterKillsByTier = {};
         this.experienceGained = {};
         this.encounters = 0;
         this.attacks = {};
@@ -143,6 +150,12 @@ class SimResult {
         }
 
         this.deaths[unit.hrid] += 1;
+
+        if (!unit.isPlayer) {
+            const tier = Number(unit.difficultyTier) || 0;
+            const byTier = (this.monsterKillsByTier[unit.hrid] ??= {});
+            byTier[tier] = (byTier[tier] || 0) + 1;
+        }
     }
 
     /**
@@ -247,6 +260,8 @@ class SimResult {
         if (this.deaths[unit.hrid] > 0) {
             this.deaths[unit.hrid] -= 1;
         }
+        const tier = Number(unit.difficultyTier) || 0;
+        if (this.monsterKillsByTier[unit.hrid]?.[tier] > 0) this.monsterKillsByTier[unit.hrid][tier] -= 1;
         this.removeLootStates(unit);
 
         // The death also closed this unit's alive window and counted it. Reopen

@@ -82,8 +82,10 @@ import {
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatRatePerHour, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
+import { shortCount, exactTitleAttr } from './short-count.js';
 import {
     monsterCreditsPerHour,
+    monsterCreditsPerKill,
     countsByMonster,
     zoneBestiaryOutlook,
     resolvePartySize,
@@ -93,10 +95,15 @@ import {
 import {
     planBestiaryRoute,
     rescaleDungeonRates,
+    dungeonRatesFromRuns,
+    clearTimeShare,
+    provenDungeonTier,
+    runTierOf,
     formatPlanHours,
     formatPlanText,
     parseBestiaryZoneKey,
 } from '../../utils/bestiary-plan.js';
+import { isClearRun, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { getBestiaryTarget, setBestiaryTarget, requestBestiary } from '../../utils/bestiary-target.js';
 import { getKeyUnitCost } from '../../utils/key-cost.js';
@@ -1556,10 +1563,7 @@ export function runMatchesSimParty(
           ? run.teamKey.split(',')
           : null;
 
-    const mine = run.recordedBy
-        ? characterId != null && String(run.recordedBy) === String(characterId)
-        : Boolean(characterName) && Boolean(team?.includes(characterName));
-    if (!mine) return false;
+    if (!runIsCharacters(run, { characterId, characterName })) return false;
 
     const size = Math.max(1, Math.floor(Number(partySize) || 1));
     if (!team || team.length !== size) return false;
@@ -1568,6 +1572,53 @@ export function runMatchesSimParty(
         if ([...team].sort().join(',') !== want) return false;
     }
     return true;
+}
+
+/**
+ * Whether a stored run is this character's own, by any party: its `recordedBy`
+ * stamp, or for a legacy run with none, this character's name on its roster.
+ *
+ * @param {Object} run - A stored run
+ * @param {{characterId: string|null, characterName: string|null}} who - The character
+ * @returns {boolean}
+ */
+function runIsCharacters(run, { characterId = null, characterName = null } = {}) {
+    if (run?.recordedBy) return characterId != null && String(run.recordedBy) === String(characterId);
+    const team = Array.isArray(run?.team)
+        ? run.team.map(String)
+        : typeof run?.teamKey === 'string' && run.teamKey
+          ? run.teamKey.split(',')
+          : null;
+    return Boolean(characterName) && Boolean(team?.includes(characterName));
+}
+
+/**
+ * The tier the Bestiary proves for this character's runs recorded with none, or
+ * null. Fails closed: the reading must postdate every such clear, since a later
+ * clear could be at another tier, and no recorded clear at any party may disagree.
+ *
+ * @param {Object} input
+ * @param {string} input.actionHrid - The dungeon
+ * @param {Array<Object>} input.clears - This character's clears of it, every party
+ * @param {Array<Object>|null} input.monsters - The Bestiary reading
+ * @param {number|null} input.monstersAt - When it was read, epoch milliseconds
+ * @returns {number|null}
+ */
+function provenTierForClears({ actionHrid, clears, monsters, monstersAt }) {
+    const readAt = Number(monstersAt);
+    if (!(readAt > 0)) return null;
+    const proven = provenDungeonTier({ actionHrid, monsters });
+    if (proven === null) return null;
+    for (const run of clears) {
+        const tier = runTierOf(run);
+        if (tier !== null) {
+            if (tier !== proven) return null;
+            continue;
+        }
+        const end = new Date(run?.timestamp).getTime() + (Number(run?.duration ?? run?.totalTime) || 0);
+        if (!Number.isFinite(end) || end > readAt) return null;
+    }
+    return proven;
 }
 
 /**
@@ -1641,6 +1692,12 @@ export function bestiaryPlanDetailItems(row, cols) {
     return items;
 }
 
+/** Fewer runs than this is what the Dungeon ROI board calls low confidence (`MEDIUM_CONFIDENCE_RUNS`) */
+const FEW_RUNS = 5;
+
+/** From this share of the sim's attempts wiping, your clears alone are not taken at face value */
+const HIGH_WIPE_SHARE = 0.25;
+
 /**
  * One results-table row as a Bestiary planner zone, at the rates it should be
  * planned at.
@@ -1648,11 +1705,19 @@ export function bestiaryPlanDetailItems(row, cols) {
  * An ordinary zone is planned at the rates the sim reported. A dungeon is
  * restated at the clear time your runs at that tier measured (see
  * `rescaleDungeonRates`), and its "fights" are clears — completions, never the
- * waves the sim counts as encounters. A dungeon the sim never completed has
- * kill rates (from the attempts that failed) but no clear rate at all, so it
- * quotes no clear count rather than quoting its waves as clears.
+ * waves the sim counts as encounters.
  *
- * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace.
+ * A dungeon the sim wipes in or never finished has kill rates from attempts that
+ * did not clear, and perhaps no clean clear to stretch. With your own clears at that tier it is planned from
+ * those and the dungeon's spawn tables (`dungeonRatesFromRuns`). Without them it
+ * keeps the sim's rates and says they are that, and with no completion at all it
+ * quotes no clear count rather than its waves as clears.
+ *
+ * Only runs {@link runMatchesSimParty} accepts for `who` set a dungeon's pace, at
+ * the row's own tier. A run recorded with no tier could be any tier, so it sets
+ * nothing, and the note counts what was left out, unless the Bestiary proves the
+ * tier of every clear (`provenTierForClears`, `who.monsters`). Nothing is stored.
+ * Failed attempts at the tier and party charge the clear rate, where recorded.
  *
  * @param {Object} row - A results-table row (`_creditsPerHour`, `_creditsPerKill`, `_dungeon`, …)
  * @param {Array<Object>} [runs] - The dungeon run history, every dungeon
@@ -1672,6 +1737,7 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
         // bodies with — see bestiary-plan.js's padSegmentFights. A dungeon's
         // rescaled rates are struck at this same rate.
         creditsPerKill: row._creditsPerKill,
+        creditsPerKillByMonster: row._creditsPerKillByMonster,
         encountersPerHour: row.encounters,
         // Only used to break near-ties in bestiary pace — see
         // planBestiaryRoute's tolerancePercent
@@ -1691,50 +1757,135 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     const failed = Number(row._dungeon.failed) || 0;
     const cleanSeconds = Number(row._dungeon.cleanClearSeconds);
     const hasClean = Number.isFinite(cleanSeconds) && cleanSeconds > 0;
-    // A run that wiped and never managed two clears in a row has no clean clear
-    // to set its pace by, and hours-per-completion would charge the wipes to
-    // the clears — so it keeps the sim's own pace rather than guessing one
+    const partySize = row._partySize ?? who.partySize ?? 1;
+    const partyMatches = (run) => runMatchesSimParty(run, { ...who, partySize });
+    const history = (runs || []).filter(
+        (run) =>
+            (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) && runIsCharacters(run, who)
+    );
+    const clearsAnyParty = history.filter(isClearRun);
+    const mine = clearsAnyParty.filter(partyMatches);
+    const failedAttempts = history.filter(
+        (run) => run?.result === RUN_RESULT_FAIL && runTierOf(run) === row.tier && partyMatches(run)
+    );
+    const unknownTier = mine.filter((run) => runTierOf(run) === null).length;
+    const runWord = (count) => `${count} run${count === 1 ? '' : 's'}`;
+
+    // A run with no recorded tier sets no pace, unless the Bestiary proves which
+    // tier every clear was
+    const provenTier = unknownTier
+        ? provenTierForClears({
+              actionHrid: row.zoneHrid,
+              clears: clearsAnyParty,
+              monsters: who.monsters,
+              monstersAt: who.monstersAt,
+          })
+        : null;
+    const useProven = provenTier !== null && provenTier === row.tier;
+    const paceRuns = useProven
+        ? mine.map((run) => (runTierOf(run) === null ? { ...run, tier: provenTier } : run))
+        : mine;
+    const tierNote = useProven
+        ? `${runWord(unknownTier)} with no recorded tier counted as T${provenTier}: your Bestiary has this dungeon's ` +
+          `final boss at that tier only`
+        : provenTier === null && unknownTier
+          ? `${runWord(unknownTier)} of unknown tier not used`
+          : null;
+    const finish = (fields) => withNote(withNote({ ...zone, isDungeon: true, ...fields }, tierNote), partySizeNote);
+
+    // Your own clear time counts clears only, so recorded failures cost their share
+    const fails = failedAttempts.length;
+    const clearsHere = paceRuns.filter((run) => runTierOf(run) === row.tier);
+    const atShare = (rates, share) =>
+        Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, rate * share]));
+    const wipesCounted = fails ? `${fails} wipe${fails === 1 ? '' : 's'} counted` : null;
+    const shareNote = (share) =>
+        fails
+            ? `${fails} recorded failed attempt${fails === 1 ? '' : 's'} at this tier and party counted by the time ` +
+              `they took: ${Math.round(share * 100)}% of your time here goes to clears, and their kills are not counted`
+            : null;
+    const yours = (count, suffix = null) =>
+        [`your ${runWord(count)}`, useProven ? 'tier from Bestiary' : null, suffix].filter(Boolean).join(', ');
+
+    // A sim that wiped charges its failed attempts to the clears, in its pace and
+    // in its kills per clear, and with no clean clear it has no pace at all. Your
+    // own clears at this tier plan it from the spawn tables instead.
     const pacable = hasClean || failed === 0;
+    if (failed > 0 || !(completions > 0)) {
+        const measured = dungeonRatesFromRuns({
+            runs: paceRuns,
+            tier: row.tier,
+            partySize,
+            actionHrid: row.zoneHrid,
+        });
+        if (measured) {
+            const clearShare = clearTimeShare(clearsHere, failedAttempts, measured.clearSeconds);
+            const why =
+                failed === 0
+                    ? 'the sim never finished a run'
+                    : hasClean
+                      ? 'the sim wipes here'
+                      : 'the sim never cleared it cleanly';
+            const few = measured.runs < FEW_RUNS;
+            const wipeShare = failed / (failed + completions);
+            // With no failures on record nothing charges for them, which a few runs
+            // or a sim that mostly wipes cannot take on trust: 1 clear and 20 wipes
+            // a day in the sim against one 20-minute clear of yours plans 72 clears.
+            const noWipes = !fails && (few || wipeShare >= HIGH_WIPE_SHARE);
+            return finish({
+                creditsPerHour: atShare(measured.creditsPerHour, clearShare),
+                creditsPerKillByMonster: measured.creditsPerKillByMonster,
+                encountersPerHour: measured.clearsPerHour * clearShare,
+                note:
+                    `measured (${runWord(measured.runs)}${few ? ', few runs' : ''}) — kills per clear from the ` +
+                    `dungeon's spawn tables, because ${why}; ${shareNote(clearShare) || 'assumes every attempt clears'}`,
+                paceLabel: yours(measured.runs, noWipes ? 'no wipes counted' : wipesCounted),
+                paceWarn: noWipes || (few && fails > 0),
+            });
+        }
+    }
+
     const scaled = rescaleDungeonRates({
         creditsPerHour: row._creditsPerHour,
         simClearsPerHour: simHours > 0 ? completions / simHours : 0,
         simClearSeconds: hasClean ? cleanSeconds : null,
-        runs: pacable
-            ? (runs || []).filter(
-                  (run) =>
-                      (run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid) &&
-                      runMatchesSimParty(run, { ...who, partySize: row._partySize ?? who.partySize ?? 1 })
-              )
-            : [],
+        runs: pacable ? paceRuns : [],
         tier: row.tier,
     });
     if (!scaled) {
+        const usedNone =
+            paceRuns.filter((run) => runTierOf(run) === row.tier).length > 0
+                ? 'your runs here could not be used (no duration, or no spawn table to read)'
+                : 'no clears of yours at this tier with this party';
+        const simSays =
+            failed > 0
+                ? 'never cleared in the sim — its kills are from failed runs'
+                : 'never finished a run in the simulated time — its kills are from an unfinished run';
         // Waves are not clears: with no completion there is nothing to quote
-        return withNote(
-            {
-                ...zone,
-                encountersPerHour: null,
-                isDungeon: true,
-                note: completions > 0 ? null : 'never cleared in the sim — its kills are from failed runs',
-            },
-            partySizeNote
-        );
+        return finish({
+            encountersPerHour: null,
+            note: completions > 0 ? null : `${simSays}; ${usedNone}`,
+            paceLabel: completions > 0 ? null : failed > 0 ? 'sim, failed runs' : 'sim, unfinished',
+            paceWarn: !(completions > 0),
+        });
     }
-    return withNote(
-        {
-            ...zone,
-            creditsPerHour: scaled.creditsPerHour,
-            // A dungeon's "fights" are clears, which is also what the plan
-            // table calls them
-            encountersPerHour: scaled.clearsPerHour,
-            isDungeon: true,
-            note:
-                scaled.source === 'measured'
-                    ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
-                    : 'sim clear time',
-        },
-        partySizeNote
-    );
+    if (scaled.source === 'measured') {
+        const clearShare = clearTimeShare(clearsHere, failedAttempts, scaled.clearSeconds);
+        return finish({
+            creditsPerHour: atShare(scaled.creditsPerHour, clearShare),
+            // A dungeon's "fights" are clears, which is also what the plan table calls them
+            encountersPerHour: scaled.clearsPerHour * clearShare,
+            note: [`measured (${runWord(scaled.runs)})`, shareNote(clearShare)].filter(Boolean).join('; '),
+            paceLabel: yours(scaled.runs, wipesCounted),
+        });
+    }
+    return finish({
+        creditsPerHour: scaled.creditsPerHour,
+        encountersPerHour: scaled.clearsPerHour,
+        note: failed > 0 ? 'sim clear time, wipes included — its kills include failed runs' : 'sim clear time',
+        paceLabel: failed > 0 ? 'sim, wipes' : null,
+        paceWarn: failed > 0,
+    });
 }
 
 /**
@@ -5174,6 +5325,7 @@ class CombatSimUI {
                     _bestiary: bestiary,
                     _creditsPerHour: creditsPerHour,
                     _creditsPerKill: perKillCredits,
+                    _creditsPerKillByMonster: monsterCreditsPerKill(sim, { partySize: resolvedPartySize }),
                     // Not expected to ever be true — see the comment above
                     // `rawPartySize` — but the plan says so rather than
                     // quoting a party's kills as a solo player's if it is
@@ -5442,6 +5594,7 @@ class CombatSimUI {
                     .map((col) => {
                         const val = row[col.key];
                         let display;
+                        let exactTitle = '';
                         let style = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
 
                         if (col.key === 'zone') {
@@ -5543,6 +5696,7 @@ class CombatSimUI {
                             // The Score is a placing out of 100, not a quantity
                             // of anything, so it is never abbreviated
                             display = col.key === 'score' ? String(val ?? 0) : formatKMB(Math.round(val));
+                            if (col.key !== 'score') exactTitle = exactTitleAttr(val);
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
 
                             // A volume-bounded figure is never shown silently
@@ -5586,7 +5740,7 @@ class CombatSimUI {
                             }
                         }
 
-                        return `<td style="${style}">${display}</td>`;
+                        return `<td style="${style}"${exactTitle}>${display}</td>`;
                     })
                     .join('');
                 // Striping rather than a rule under every row: sixty-six rows of
@@ -5716,7 +5870,8 @@ class CombatSimUI {
         let runs = [];
         if (rows.some((row) => row._dungeon)) {
             try {
-                runs = (await dungeonTrackerStorage()?.getAllRuns()) || [];
+                // Failed attempts too, where recorded: they charge the clear rate
+                runs = (await dungeonTrackerStorage()?.getAllRuns({ includeAttempts: true })) || [];
             } catch (error) {
                 console.error('[CombatSimUI] Reading the dungeon run history for the plan failed:', error);
             }
@@ -5728,6 +5883,8 @@ class CombatSimUI {
             characterId: dataManager.getCurrentCharacterId?.() ?? null,
             characterName: dataManager.getCurrentCharacterName?.() ?? null,
             roster,
+            monsters: dataManager.getCharacterMonsters?.() ?? null,
+            monstersAt: dataManager.getCharacterMonstersAt?.() ?? null,
         };
         return rows.map((row) => bestiaryPlanZoneForRow(row, runs, who));
     }
@@ -5893,7 +6050,7 @@ class CombatSimUI {
                     // changes nothing — and it never filtered the plan.
                     this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
-                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier measured, where there are any. Takes effect on the next All Zones run.">
+                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables, less any failed attempts you have recorded; a row marked no wipes counted has none on record to charge. With no runs it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
                     Include dungeons
                 </label>`
@@ -6154,6 +6311,8 @@ class CombatSimUI {
         const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
         // A dungeon's stay is quoted in clears — "≈3 fights" for three trips
         // through a fortress would be nonsense
+        const paceTag = (label, warn) =>
+            `<span style="color:${warn ? '#ffb74d' : '#81c995'}; font-size:9px;">${esc(label)}</span>`;
         const fightsCell = (segment) =>
             segment.encounters === null || segment.encounters === undefined
                 ? '—'
@@ -6199,6 +6358,8 @@ class CombatSimUI {
                 const scoreMark = segment.viaScore
                     ? ' <span style="color:#8ab4f8;" aria-hidden="true">&#9733;</span>'
                     : '';
+                // Whether this dungeon's rates are your runs or the sim's, on the row itself
+                const paceMark = segment.paceLabel ? ` ${paceTag(segment.paceLabel, segment.paceWarn)}` : '';
                 // Open this step's zone at its exact tier and fill the count
                 // this row displays — never recomputed at click time, so the
                 // number the player agreed to is the number that gets typed.
@@ -6230,7 +6391,7 @@ class CombatSimUI {
                 return (
                     `<tr${rowAttrs}>` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
-                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${openBtn}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitleAttr}>${esc(segment.name)}${scoreMark}${paceMark}${openBtn}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
                     `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
@@ -6255,6 +6416,9 @@ class CombatSimUI {
             plan.bestSingle && this._allZonesDetailRows?.has(plan.bestSingle.zoneHrid)
                 ? `<span class="mwi-csim-plan-single" data-key="${esc(plan.bestSingle.zoneHrid)}" tabindex="0" role="button" aria-expanded="${singleOpen}" title="Show this zone's sim results" style="cursor:pointer; text-decoration:underline dotted;">${esc(plan.bestSingle.name)}</span>`
                 : esc(plan.bestSingle?.name || '');
+        const singleMark = plan.bestSingle?.paceLabel
+            ? ` ${paceTag(plan.bestSingle.paceLabel, plan.bestSingle.paceWarn)}`
+            : '';
         let single;
         if (!plan.bestSingle) {
             single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';
@@ -6262,10 +6426,10 @@ class CombatSimUI {
             single =
                 plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
                     ? `no single zone reaches ${goal}`
-                    : `best single zone ${singleName} reaches ${goal} in ` +
+                    : `best single zone ${singleName}${singleMark} reaches ${goal} in ` +
                       `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours, { unit: true })}</span>`;
         } else {
-            single = `best single zone ${singleName}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
+            single = `best single zone ${singleName}${singleMark}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
         }
         const shortfall = plan.unreachable
             ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
@@ -6872,6 +7036,7 @@ class CombatSimUI {
                 const cells = cols
                     .map((col) => {
                         let display = '';
+                        let exactTitle = '';
                         let highlight = false;
                         const cellStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
 
@@ -6884,17 +7049,20 @@ class CombatSimUI {
                             highlight = row.itemsPerHour === bestItemsPerHour;
                         } else if (col.key === 'profitPerHour') {
                             display = formatKMB(row.profitPerHour);
+                            exactTitle = exactTitleAttr(row.profitPerHour);
                             highlight = row.profitPerHour === bestProfitPerHour && row.profitPerHour > 0;
                         } else if (col.key === 'costPerHour') {
                             display = row.costPerHour > 0 ? formatKMB(row.costPerHour) : '—';
+                            if (row.costPerHour > 0) exactTitle = exactTitleAttr(row.costPerHour);
                             highlight = lowestCostPerHour !== null && row.costPerHour === lowestCostPerHour;
                         } else if (col.key === 'costPerDrop') {
                             display = row.costPerDrop > 0 ? formatKMB(row.costPerDrop) : '—';
+                            if (row.costPerDrop > 0) exactTitle = exactTitleAttr(row.costPerDrop);
                             highlight = lowestCostPerDrop !== null && row.costPerDrop === lowestCostPerDrop;
                         }
 
                         const color = highlight ? '#4caf50' : '#ccc';
-                        return `<td style="${cellStyle} color:${color};">${display}</td>`;
+                        return `<td style="${cellStyle} color:${color};"${exactTitle}>${display}</td>`;
                     })
                     .join('');
                 return `<tr style="border-bottom:1px solid ${GAME_COLORS.raised};">${cells}</tr>`;
@@ -8256,7 +8424,7 @@ class CombatSimUI {
         html += `<div style="${headingStyle}">Overview</div>`;
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Encounters/hr</span>`;
-        html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(encountersPerHr))}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span>`;
+        html += `<span style="${valueStyle}"${exactTitleAttr(encountersPerHr)}>${shortCount(encountersPerHr)}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span>`;
         html += '</div>';
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Deaths/hr</span>`;
@@ -8338,7 +8506,7 @@ class CombatSimUI {
             const dpsLabel = numberOfPlayers > 1 ? 'Party DPS' : 'DPS';
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">${dpsLabel}</span>`;
-            html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(partyDps))}${this._formatDelta(partyDps, prevPartyDps)}</span>`;
+            html += `<span style="${valueStyle}"${exactTitleAttr(partyDps)}>${shortCount(partyDps)}${this._formatDelta(partyDps, prevPartyDps)}</span>`;
             html += '</div>';
 
             if (numberOfPlayers > 1) {
@@ -8350,7 +8518,7 @@ class CombatSimUI {
                     }
                     html += `<div style="${rowStyle}">`;
                     html += `<span style="color:#888; padding-left:12px;">${name}</span>`;
-                    html += `<span style="${valueStyle}">${formatWithSeparator(Math.round(playerDps))}${this._formatDelta(playerDps, prevPlayerDps)}</span>`;
+                    html += `<span style="${valueStyle}"${exactTitleAttr(playerDps)}>${shortCount(playerDps)}${this._formatDelta(playerDps, prevPlayerDps)}</span>`;
                     html += '</div>';
                 }
             }
@@ -8371,7 +8539,7 @@ class CombatSimUI {
             html += '</div>';
             html += `<div style="${rowStyle}">`;
             html += `<span style="${labelStyle}">Total completed / failed</span>`;
-            html += `<span style="${valueStyle}">${formatWithSeparator(simResult.dungeonsCompleted)} / ${formatWithSeparator(simResult.dungeonsFailed)}</span>`;
+            html += `<span style="${valueStyle}">${shortCount(simResult.dungeonsCompleted)} / ${shortCount(simResult.dungeonsFailed)}</span>`;
             html += '</div>';
             if (simResult.dungeonsCompleted > 0) {
                 const formatClear = (ns) => {
@@ -8454,7 +8622,7 @@ class CombatSimUI {
                 const skillLabel = skill.charAt(0).toUpperCase() + skill.slice(1);
                 html += `<div style="${rowStyle}">`;
                 html += `<span style="${labelStyle}">${skillLabel}</span>`;
-                html += `<span style="${valueStyle}">${formatWithSeparator(perHr)}${this._formatDelta(perHr, prevVal)}</span>`;
+                html += `<span style="${valueStyle}"${exactTitleAttr(perHr)}>${shortCount(perHr)}${this._formatDelta(perHr, prevVal)}</span>`;
                 html += '</div>';
             }
             // Total XP/hr row
@@ -8462,7 +8630,7 @@ class CombatSimUI {
             const prevTotalXpPerHr = summaryPrevXpPerHr;
             html += `<div style="display:flex; justify-content:space-between; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px;">`;
             html += `<span style="color:#aaa; font-weight:700;">Total</span>`;
-            html += `<span style="${valueStyle}">${formatWithSeparator(totalXpPerHr)}${this._formatDelta(totalXpPerHr, prevTotalXpPerHr)}</span>`;
+            html += `<span style="${valueStyle}"${exactTitleAttr(totalXpPerHr)}>${shortCount(totalXpPerHr)}${this._formatDelta(totalXpPerHr, prevTotalXpPerHr)}</span>`;
             html += '</div>';
             html += '</div>';
         }
@@ -8533,11 +8701,10 @@ class CombatSimUI {
                     const itemDetails = dataManager.getItemDetails(drop.itemHrid);
                     const name = itemDetails?.name || drop.itemHrid.split('/').pop();
 
-                    const perHrStr = perHr >= 1 ? formatWithSeparator(Math.round(perHr)) : perHr.toFixed(2);
+                    const perHrStr = perHr >= 1 ? shortCount(perHr) : perHr.toFixed(2);
                     const perDay = perHr * 24;
-                    const perDayStr = perDay >= 1 ? formatWithSeparator(Math.round(perDay)) : perDay.toFixed(2);
-                    const totalStr =
-                        drop.total >= 1 ? formatWithSeparator(Math.round(drop.total)) : drop.total.toFixed(2);
+                    const perDayStr = perDay >= 1 ? shortCount(perDay) : perDay.toFixed(2);
+                    const totalStr = drop.total >= 1 ? shortCount(drop.total) : drop.total.toFixed(2);
 
                     const goldPerHr = perHr * drop.unitValue;
                     dropGoldPerHr += goldPerHr;
@@ -8550,12 +8717,12 @@ class CombatSimUI {
 
                     html += `<div style="${dropRowStyle}">`;
                     html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-                    html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
-                    html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
-                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldHrStr}</span>`;
-                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldDayStr}</span>`;
-                    html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
-                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}">${goldTotalStr}</span>`;
+                    html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
+                    html += `<span style="${valueStyle} ${colNum}"${perDay >= 1 ? exactTitleAttr(perDay) : ''}>${perDayStr}</span>`;
+                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}"${drop.unitValue > 0 ? exactTitleAttr(goldPerHr) : ''}>${goldHrStr}</span>`;
+                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}"${drop.unitValue > 0 ? exactTitleAttr(goldPerHr * 24) : ''}>${goldDayStr}</span>`;
+                    html += `<span style="${valueStyle} ${colNum}"${drop.total >= 1 ? exactTitleAttr(drop.total) : ''}>${totalStr}</span>`;
+                    html += `<span style="color:${goldColor}; font-weight:600; ${colGold}"${drop.unitValue > 0 ? exactTitleAttr(drop.totalGold) : ''}>${goldTotalStr}</span>`;
                     html += '</div>';
                 }
                 // Totals row
@@ -8572,10 +8739,10 @@ class CombatSimUI {
                         : '';
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr))}<br>${revDelta}</span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldPerHr * 24))}<br>${revDayDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr)}>${formatKMB(Math.round(dropGoldPerHr))}<br>${revDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr * 24)}>${formatKMB(Math.round(dropGoldPerHr * 24))}<br>${revDayDelta}</span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}">${formatKMB(Math.round(dropGoldTotal))}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldTotal)}>${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
                 html += '</div>';
             }
@@ -8623,9 +8790,9 @@ class CombatSimUI {
                 const itemDetails = dataManager.getItemDetails(cons.itemHrid);
                 const name = itemDetails?.name || cons.itemHrid.split('/').pop();
 
-                const perHrStr = formatWithSeparator(Math.round(perHr));
-                const perDayStr = formatWithSeparator(Math.round(perHr * 24));
-                const totalStr = formatWithSeparator(Math.round(cons.total));
+                const perHrStr = shortCount(perHr);
+                const perDayStr = shortCount(perHr * 24);
+                const totalStr = shortCount(cons.total);
 
                 const costPerHr = perHr * cons.unitCost;
                 consumableGoldPerHr += costPerHr;
@@ -8638,12 +8805,12 @@ class CombatSimUI {
 
                 html += `<div style="${costRowStyle}">`;
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costHrStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costDayStr}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costTotalStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr)}>${perHrStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${cons.unitCost > 0 ? exactTitleAttr(costPerHr) : ''}>${costHrStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${cons.unitCost > 0 ? exactTitleAttr(costPerHr * 24) : ''}>${costDayStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(cons.total)}>${totalStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${cons.unitCost > 0 ? exactTitleAttr(cons.totalCost) : ''}>${costTotalStr}</span>`;
                 html += '</div>';
             }
             // Totals row
@@ -8660,10 +8827,10 @@ class CombatSimUI {
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr))}<br>${expDelta}</span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldPerHr * 24))}<br>${expDayDelta}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(consumableGoldPerHr)}>${formatKMB(Math.round(consumableGoldPerHr))}<br>${expDelta}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(consumableGoldPerHr * 24)}>${formatKMB(Math.round(consumableGoldPerHr * 24))}<br>${expDayDelta}</span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(consumableGoldTotal))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(consumableGoldTotal)}>${formatKMB(Math.round(consumableGoldTotal))}</span>`;
             html += '</div>';
             html += '</div>';
         }
@@ -8689,9 +8856,9 @@ class CombatSimUI {
 
             for (const key of dungeonKeyCosts) {
                 const perHr = key.count / hours;
-                const perHrStr = perHr >= 1 ? formatWithSeparator(Math.round(perHr)) : perHr.toFixed(2);
-                const perDayStr = formatWithSeparator(Math.round(perHr * 24));
-                const totalStr = key.count >= 1 ? formatWithSeparator(Math.round(key.count)) : key.count.toFixed(2);
+                const perHrStr = perHr >= 1 ? shortCount(perHr) : perHr.toFixed(2);
+                const perDayStr = shortCount(perHr * 24);
+                const totalStr = key.count >= 1 ? shortCount(key.count) : key.count.toFixed(2);
 
                 const costPerHr = perHr * key.unitCost;
                 const costHrStr = key.unitCost > 0 ? formatKMB(Math.round(costPerHr)) : '—';
@@ -8701,12 +8868,12 @@ class CombatSimUI {
 
                 html += `<div style="${costRowStyle}">`;
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${key.name}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${perHrStr}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${perDayStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costHrStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costDayStr}</span>`;
-                html += `<span style="${valueStyle} ${colNum}">${totalStr}</span>`;
-                html += `<span style="color:${cColor}; font-weight:600; ${colGold}">${costTotalStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${key.unitCost > 0 ? exactTitleAttr(costPerHr) : ''}>${costHrStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${key.unitCost > 0 ? exactTitleAttr(costPerHr * 24) : ''}>${costDayStr}</span>`;
+                html += `<span style="${valueStyle} ${colNum}"${key.count >= 1 ? exactTitleAttr(key.count) : ''}>${totalStr}</span>`;
+                html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${key.unitCost > 0 ? exactTitleAttr(key.totalCost) : ''}>${costTotalStr}</span>`;
                 html += '</div>';
             }
 
@@ -8715,10 +8882,10 @@ class CombatSimUI {
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Key Costs</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostPerHr))}</span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostPerHr * 24))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(keyCostPerHr)}>${formatKMB(Math.round(keyCostPerHr))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(keyCostPerHr * 24)}>${formatKMB(Math.round(keyCostPerHr * 24))}</span>`;
             html += `<span style="${colNum}"></span>`;
-            html += `<span style="color:${costColor}; font-weight:700; ${colGold}">${formatKMB(Math.round(keyCostTotal))}</span>`;
+            html += `<span style="color:${costColor}; font-weight:700; ${colGold}"${exactTitleAttr(keyCostTotal)}>${formatKMB(Math.round(keyCostTotal))}</span>`;
             html += '</div>';
             html += '</div>';
         }
@@ -8766,10 +8933,10 @@ class CombatSimUI {
             prevProfit !== null && prevProfit !== undefined
                 ? this._formatDelta(netProfitPerDay, prevProfit * 24, true, true)
                 : '';
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}<br>${profitDelta}</span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}<br>${profitDayDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerHr)}>${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}<br>${profitDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerDay)}>${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}<br>${profitDayDelta}</span>`;
         html += `<span style="${netColNum}"></span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}">${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitTotal)}>${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
         html += '</div>';
 
@@ -9098,14 +9265,15 @@ class CombatSimUI {
         tiles.push(
             tile(
                 'Profit/day',
-                `${profitSign}${formatKMB(Math.abs(Math.round(profitPerDay)))}${profitDelta}`,
+                `<span${exactTitleAttr(profitPerDay)}>${profitSign}${formatKMB(Math.abs(Math.round(profitPerDay)))}</span>${profitDelta}`,
                 profitColor
             )
         );
         tiles.push(
             tile(
                 'XP/hr',
-                `${formatKMB(Math.round(xpPerHr))}` + this._formatDelta(xpPerHr, prevXpPerHr ?? null, true, true)
+                `<span${exactTitleAttr(xpPerHr)}>${formatKMB(Math.round(xpPerHr))}</span>` +
+                    this._formatDelta(xpPerHr, prevXpPerHr ?? null, true, true)
             )
         );
 
@@ -9120,7 +9288,7 @@ class CombatSimUI {
             tiles.push(
                 tile(
                     'Kills/hr',
-                    formatWithSeparator(Math.round(encountersPerHr)) +
+                    `<span${exactTitleAttr(encountersPerHr)}>${shortCount(encountersPerHr)}</span>` +
                         this._formatDelta(encountersPerHr, prevEncountersPerHr ?? null)
                 )
             );
@@ -9130,7 +9298,7 @@ class CombatSimUI {
             tiles.push(
                 tile(
                     numberOfPlayers > 1 ? 'Party DPS' : 'DPS',
-                    formatWithSeparator(Math.round(dps)) + this._formatDelta(dps, prevDps ?? null)
+                    `<span${exactTitleAttr(dps)}>${shortCount(dps)}</span>` + this._formatDelta(dps, prevDps ?? null)
                 )
             );
         }
@@ -9248,7 +9416,8 @@ class CombatSimUI {
         const rowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
         const colNum = 'flex:0; white-space:nowrap; min-width:70px; text-align:right;';
         const perHour = (amount) => (hours > 0 ? amount / hours : 0);
-        const fmt = (value) => (value >= 1 ? formatWithSeparator(Math.round(value)) : value.toFixed(2));
+        const fmt = (value) => (value >= 1 ? shortCount(value) : value.toFixed(2));
+        const exact = (value) => (value >= 1 ? exactTitleAttr(value) : '');
 
         const headline = sections
             .map((section) => `${section.label} ${formatKMB(Math.round(perHour(section.total)))}/hr`)
@@ -9272,15 +9441,15 @@ class CombatSimUI {
             for (const row of section.rows) {
                 html += `<div style="${rowStyle}">`;
                 html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>`;
-                html += `<span style="color:${section.color}; font-weight:600; ${colNum}">${fmt(perHour(row.amount))}</span>`;
-                html += `<span style="color:#e0e0e0; font-weight:600; ${colNum}">${fmt(row.amount)}</span>`;
+                html += `<span style="color:${section.color}; font-weight:600; ${colNum}"${exact(perHour(row.amount))}>${fmt(perHour(row.amount))}</span>`;
+                html += `<span style="color:#e0e0e0; font-weight:600; ${colNum}"${exact(row.amount)}>${fmt(row.amount)}</span>`;
                 html += '</div>';
             }
 
             html += `<div style="display:flex; align-items:center; padding:3px 0 0; font-size:12px; border-top:1px solid #333; margin-top:3px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total</span>`;
-            html += `<span style="color:${section.color}; font-weight:700; ${colNum}">${fmt(perHour(section.total))}</span>`;
-            html += `<span style="color:#e0e0e0; font-weight:700; ${colNum}">${fmt(section.total)}</span>`;
+            html += `<span style="color:${section.color}; font-weight:700; ${colNum}"${exact(perHour(section.total))}>${fmt(perHour(section.total))}</span>`;
+            html += `<span style="color:#e0e0e0; font-weight:700; ${colNum}"${exact(section.total)}>${fmt(section.total)}</span>`;
             html += '</div>';
         }
 
@@ -9650,22 +9819,30 @@ class CombatSimUI {
             baseLabel.short +
             '</td>';
         html +=
-            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-            (baseM ? formatWithSeparator(Math.round(baseM.encountersPerHr)) : '—') +
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+            (baseM ? exactTitleAttr(baseM.encountersPerHr) : '') +
+            '>' +
+            (baseM ? shortCount(baseM.encountersPerHr) : '—') +
             '</td>';
         html +=
-            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-            (baseM ? formatWithSeparator(Math.round(baseM.dps)) : '—') +
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+            (baseM ? exactTitleAttr(baseM.dps) : '') +
+            '>' +
+            (baseM ? shortCount(baseM.dps) : '—') +
             '</td>';
         html +=
             '<td style="text-align:right; padding:2px 4px; color:' +
             baseProfitColor +
-            ';">' +
+            ';"' +
+            (baseM ? exactTitleAttr(baseM.profitPerHr) : '') +
+            '>' +
             (baseM ? formatKMB(Math.round(baseM.profitPerHr)) : '—') +
             '</td>';
         html +=
-            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-            (baseM ? formatWithSeparator(Math.round(baseM.totalXpPerHr)) : '—') +
+            '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+            (baseM ? exactTitleAttr(baseM.totalXpPerHr) : '') +
+            '>' +
+            (baseM ? shortCount(baseM.totalXpPerHr) : '—') +
             '</td>';
         if (hasDungeon) {
             html +=
@@ -9701,25 +9878,33 @@ class CombatSimUI {
                 rowLabel.short +
                 '</td>';
             html +=
-                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-                (m ? formatWithSeparator(Math.round(m.encountersPerHr)) : '—') +
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+                (m ? exactTitleAttr(m.encountersPerHr) : '') +
+                '>' +
+                (m ? shortCount(m.encountersPerHr) : '—') +
                 ephDelta +
                 '</td>';
             html +=
-                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-                (m ? formatWithSeparator(Math.round(m.dps)) : '—') +
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+                (m ? exactTitleAttr(m.dps) : '') +
+                '>' +
+                (m ? shortCount(m.dps) : '—') +
                 dpsDelta +
                 '</td>';
             html +=
                 '<td style="text-align:right; padding:2px 4px; color:' +
                 profitColor +
-                ';">' +
+                ';"' +
+                (m ? exactTitleAttr(m.profitPerHr) : '') +
+                '>' +
                 (m ? formatKMB(Math.round(m.profitPerHr)) : '—') +
                 profitDelta +
                 '</td>';
             html +=
-                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;">' +
-                (m ? formatWithSeparator(Math.round(m.totalXpPerHr)) : '—') +
+                '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
+                (m ? exactTitleAttr(m.totalXpPerHr) : '') +
+                '>' +
+                (m ? shortCount(m.totalXpPerHr) : '—') +
                 xpDelta +
                 '</td>';
             if (hasDungeon) {
@@ -9805,9 +9990,11 @@ class CombatSimUI {
             // the figure it annotates does not use
             formatted = delta.toFixed(decimals);
         } else {
-            formatted = useKMB ? formatKMB(Math.round(delta)) : formatWithSeparator(Math.round(delta));
+            formatted = useKMB ? formatKMB(Math.round(delta)) : shortCount(delta);
         }
-        return ` <span style="color:${color}; font-size:11px;">(${sign}${formatted})</span>`;
+        // The exact change stays on hover where the short form hides digits
+        const exact = decimals > 0 ? '' : exactTitleAttr(delta);
+        return ` <span style="color:${color}; font-size:11px;"${exact}>(${sign}${formatted})</span>`;
     }
 
     /**

@@ -58,6 +58,11 @@ describe('median and confidence', () => {
         expect(median([])).toBeNull();
     });
 
+    test('runs of unknown tier are never more than low', () => {
+        expect(confidenceTag(315, false, { tierKnown: false }).label).toBe('low');
+        expect(confidenceTag(0, true, { tierKnown: false }).label).toBe('sim');
+    });
+
     test('confidence steps with run count and falls back to sim or none', () => {
         expect(confidenceTag(25, false).label).toBe('high');
         expect(confidenceTag(5, false).label).toBe('medium');
@@ -370,6 +375,61 @@ describe('buildDungeonRoiRows', () => {
         expect(cove0.costGap).toBe('keys');
         expect(cove0.netPerRun).toBeNull();
         expect(cove0.netPerHour).toBeNull();
+    });
+
+    test('Clear is the median of the party the row prices, and everything built on it follows', () => {
+        const four = (name) => ['Me', 'A', 'B', name];
+        const mixed = [
+            ...Array.from({ length: 3 }, () => run('Pirate Cove', 0, 300_000, ['Me'])),
+            ...Array.from({ length: 5 }, (_, i) => run('Pirate Cove', 0, 600_000 + i, four(`C${i}`))),
+        ];
+        const one = (input) =>
+            buildDungeonRoiRows({ dungeons, runs: mixed, snapshot, pricing, ...input }).find(
+                (row) => row.key === `${COVE}::T0`
+            );
+        const row = one({});
+        expect(row.partySize).toBe(4);
+        expect(row.runs).toBe(8);
+        expect(row.clearRuns).toBe(5);
+        expect(row.clearSeconds).toBeCloseTo(600.002, 6);
+        expect(row.runsPerHour).toBeCloseTo(3600 / 600.002, 6);
+        expect(row.confidence.label).toBe('medium');
+        expect(row.wavesPerMinute).toBeCloseTo(row.maxWaves / (600.002 / 60), 6);
+        if (Number.isFinite(row.netPerHour)) expect(row.netPerHour).toBeCloseTo(row.netPerRun * row.runsPerHour);
+
+        // A party filter means what it always did
+        const solo = one({ filters: { partySize: 1 } });
+        expect(solo.clearSeconds).toBe(300);
+        expect(solo.clearRuns).toBe(3);
+        expect(solo.confidence.label).toBe('low');
+    });
+
+    test('a T? row with many runs of mixed parties is low, and its Clear is the commonest party', () => {
+        const mixed = [
+            ...Array.from({ length: 30 }, () => run('Chimerical Den', null, 600_000, ['Me', 'A'])),
+            ...Array.from({ length: 10 }, () => run('Chimerical Den', null, 1_800_000, ['Me'])),
+        ];
+        const row = buildDungeonRoiRows({ dungeons, runs: mixed, snapshot, pricing }).find(
+            (entry) => entry.key === `${DEN}::T?`
+        );
+        expect(row.runs).toBe(40);
+        expect(row.clearRuns).toBe(30);
+        expect(row.clearSeconds).toBe(600);
+        expect(row.partySize).toBe(2);
+        expect(row.confidence.label).toBe('low');
+    });
+
+    test('runs of the priced party with no duration leave Clear to the sim, never another party', () => {
+        const mixed = [
+            ...Array.from({ length: 3 }, () => run('Pirate Cove', 0, 0, ['Me', 'A'])),
+            run('Pirate Cove', 0, 300_000, ['Me']),
+        ];
+        const row = buildDungeonRoiRows({ dungeons, runs: mixed, snapshot, pricing }).find(
+            (entry) => entry.key === `${COVE}::T0`
+        );
+        expect(row.clearRuns).toBe(0);
+        expect(row.clearSource).toBe('sim');
+        expect(row.confidence.label).toBe('sim');
     });
 
     test('a fully priced row still reports its net', () => {

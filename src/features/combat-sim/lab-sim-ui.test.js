@@ -4709,8 +4709,8 @@ describe('the Skilling tab’s room levels, goal planner and Sim together', () =
             clearInput().value = '100';
             await ui._onSkillingPlan();
 
-            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toContain(
-                'Not reachable with these candidates'
+            expect(goalResults().querySelector('[data-plan-verdict]').textContent).toMatch(
+                /Not reachable (even weighing all \d+ candidates?|with these candidates)/
             );
         });
 

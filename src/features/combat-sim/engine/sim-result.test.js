@@ -111,3 +111,19 @@ describe('player pools', () => {
         expect(result.playerPools).toEqual({ player1: { maxHitpoints: 1500, maxManapoints: 800 } });
     });
 });
+
+describe('kills by the tier the monster had', () => {
+    test('one hrid at two tiers is counted apart, a revive takes back its own, and players are left out', () => {
+        const result = new SimResult(zone, 1);
+        result.addDeath({ hrid: '/monsters/griffin', difficultyTier: 2 });
+        result.addDeath({ hrid: '/monsters/griffin', difficultyTier: 3 });
+        result.addDeath({ hrid: '/monsters/griffin', difficultyTier: 3 });
+        result.addDeath(player);
+        expect(result.monsterKillsByTier).toEqual({ '/monsters/griffin': { 2: 1, 3: 2 } });
+        expect(result.deaths['/monsters/griffin']).toBe(3);
+
+        result.undoDeath({ hrid: '/monsters/griffin', difficultyTier: 3 }, 0);
+        expect(result.monsterKillsByTier['/monsters/griffin']).toEqual({ 2: 1, 3: 1 });
+        expect(result.deaths['/monsters/griffin']).toBe(2);
+    });
+});

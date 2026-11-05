@@ -388,6 +388,11 @@ function mergeSimResults(results) {
         for (const [hrid, count] of Object.entries(r.deaths)) {
             merged.deaths[hrid] = (merged.deaths[hrid] || 0) + count;
         }
+        for (const [hrid, byTier] of Object.entries(r.monsterKillsByTier || {})) {
+            merged.monsterKillsByTier ??= {};
+            const into = (merged.monsterKillsByTier[hrid] ??= {});
+            for (const [tier, count] of Object.entries(byTier)) into[tier] = (into[tier] || 0) + count;
+        }
 
         // Kill-time loot stats (per player → per monster → per stat tuple) and
         // dungeon completions by drop quantity (per player → per quantity):

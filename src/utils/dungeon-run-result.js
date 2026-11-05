@@ -104,3 +104,25 @@ export function summarizeAttempts(runs) {
         timePerClearMs: clears > 0 ? Math.floor(totalMs / clears) : 0,
     };
 }
+
+/**
+ * The runs of a dungeon that speak for one tier.
+ *
+ * A run recorded with no tier could be any tier, so it counts only when nothing
+ * in the dungeon's history has a tier at all. With tiered runs present, a tier with
+ * none of its own gets no runs, rather than ones that may be another tier's: no
+ * figure is better than a T2 run judged against T0 clears. With no tier asked for,
+ * every run of the dungeon counts.
+ *
+ * @param {Array<Object>} runs - Stored runs
+ * @param {Object} match - Which runs count
+ * @param {string} match.dungeonName - The dungeon
+ * @param {number|null} [match.tier] - The tier, where known
+ * @returns {Array<Object>} Matching runs, in the order they arrived
+ */
+export function runsForDungeonTier(runs, { dungeonName, tier = null } = {}) {
+    const ofDungeon = (runs || []).filter((run) => run && run.dungeonName === dungeonName);
+    if (tier === null || tier === undefined) return ofDungeon;
+    const tiered = ofDungeon.filter((run) => run.tier !== null && run.tier !== undefined);
+    return tiered.length ? tiered.filter((run) => run.tier === tier) : ofDungeon;
+}

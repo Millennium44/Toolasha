@@ -41,7 +41,7 @@ const COLUMNS = [
     {
         key: 'clearSeconds',
         label: 'Clear',
-        title: 'Median clear time of recorded runs; "sim" when from the combat sim.',
+        title: 'Median clear time of recorded runs with the party this row prices; "sim" when from the combat sim.',
     },
     { key: 'wavesPerMinute', label: 'Waves/min', title: 'Dungeon waves per minute at that clear time.' },
     {
@@ -67,7 +67,11 @@ const COLUMNS = [
     { key: 'netPerRun', label: 'Net/run', title: 'Rewards minus keys and consumables, per completion.' },
     { key: 'netPerHour', label: 'Gold/hr', title: 'Net per run at the clear time shown.' },
     { key: 'xpPerHour', label: 'XP/hr', title: 'Combat XP per hour: measured from session history, else sim.' },
-    { key: 'confidence', label: 'Conf.', title: 'high ≥ 20 runs, medium ≥ 5, low ≥ 1, sim = no runs but simulated.' },
+    {
+        key: 'confidence',
+        label: 'Conf.',
+        title: 'From the runs behind Clear: high ≥ 20, medium ≥ 5, low ≥ 1, sim = no timed runs but simulated. T? is never above low.',
+    },
 ];
 
 /**
@@ -611,10 +615,13 @@ class DungeonRoiBoardUI {
         cell(row.clearSeconds ? clock(row.clearSeconds) : '—', {
             title:
                 row.clearSource === 'measured'
-                    ? `Median of ${row.runs} recorded run${row.runs === 1 ? '' : 's'}`
+                    ? `Median of ${row.clearRuns} recorded run${row.clearRuns === 1 ? '' : 's'} with a party of ${row.partySize}` +
+                      (row.clearRuns < row.runs ? `, of ${row.runs} on this row` : '')
                     : row.clearSource === 'sim'
                       ? 'Simulated clear time from the last All Zones run'
-                      : 'No runs and no simulation for this tier',
+                      : row.runs > 0
+                        ? 'These runs recorded no clear time, and there is no simulation for this tier'
+                        : 'No runs and no simulation for this tier',
             mark: row.clearSource === 'sim' ? 'sim' : null,
         });
         cell(row.wavesPerMinute ? row.wavesPerMinute.toFixed(1) : '—', {

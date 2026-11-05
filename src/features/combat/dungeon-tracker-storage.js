@@ -229,6 +229,27 @@ function canonicalTombstoneIdentity(id, at) {
 }
 
 /**
+ * One run's copy with what only its other copy knows: the tier, dungeon and wave
+ * times a chat-backfilled copy lacks and a live-tracked one holds, the same fill
+ * `saveTeamRun` makes when one device sees a run twice. Anything the copy already
+ * holds stands.
+ *
+ * @param {Object} kept - The copy being kept
+ * @param {Object} other - The other copy of that run
+ * @returns {Object} `kept` itself when the other adds nothing, else a filled copy
+ */
+function fillMissingRunFields(kept, other) {
+    const fill = {};
+    if (kept.tier == null && Number.isInteger(other.tier)) fill.tier = other.tier;
+    if (!kept.dungeonHrid && other.dungeonHrid) fill.dungeonHrid = other.dungeonHrid;
+    if (!kept.waveTimes && Array.isArray(other.waveTimes) && other.waveTimes.length > 0) {
+        fill.waveTimes = [...other.waveTimes];
+        fill.avgWaveTime = Number.isFinite(other.avgWaveTime) ? other.avgWaveTime : null;
+    }
+    return Object.keys(fill).length ? { ...kept, ...fill } : kept;
+}
+
+/**
  * Fold the stored list into the in-memory one.
  *
  * `allRuns` is one key for the whole account, so two tabs — or two characters
@@ -236,8 +257,9 @@ function canonicalTombstoneIdentity(id, at) {
  * tab loaded; writing it back whole erases everything the other tab recorded
  * since. Runs are matched on the triple that identifies them (team, timestamp,
  * duration), memory wins on a tie because it may have been amended in place
- * (a tier filled in), and anything this session deleted stays deleted rather
- * than being carried back in from a copy written before the delete.
+ * (a tier filled in), though a field only the other copy holds is still taken
+ * from it, and anything this session deleted stays deleted rather than being
+ * carried back in from a copy written before the delete.
  *
  * @param {Array<Object>} memory - The in-memory list, newest first
  * @param {Array<Object>} stored - What storage holds right now
@@ -247,12 +269,17 @@ function canonicalTombstoneIdentity(id, at) {
  */
 export function mergeRuns(memory, stored, deleted) {
     const merged = Array.isArray(memory) ? [...memory] : [];
-    const seen = new Set(merged.map(runIdentity));
+    const seen = new Map(merged.map((run, index) => [runIdentity(run), index]));
     for (const run of Array.isArray(stored) ? stored : []) {
         if (!run) continue;
         const id = runIdentity(run);
-        if (seen.has(id) || deleted?.has(id)) continue;
-        seen.add(id);
+        if (seen.has(id)) {
+            const index = seen.get(id);
+            merged[index] = fillMissingRunFields(merged[index], run);
+            continue;
+        }
+        if (deleted?.has(id)) continue;
+        seen.set(id, merged.length);
         merged.push(run);
     }
     const at = (run) => {

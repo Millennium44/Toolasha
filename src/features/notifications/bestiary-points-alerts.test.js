@@ -8,6 +8,7 @@
  * It must never ask the game for the Bestiary.
  */
 
+import { buildNewBattle } from '../../__fixtures__/wire/new-battle.js';
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getSettingDefinition } from '../../core/settings-schema.js';
 
@@ -197,6 +198,38 @@ describe('bestiary points alerts', () => {
         wave(['fly'], 1);
         await kill(); // tier 2 solo: three credits
         expect(alerts.estimatedCounts()['/monsters/fly']).toBe(12.5);
+    });
+
+    test('a kill credits the tier new_battle gives the monster, never below the running action', async () => {
+        await reading({ fly: 0 });
+        await alerts.initialize();
+        const fight = (difficultyTier) => {
+            game.battleId = ++game.nextBattleId;
+            game.wire.new_battle(
+                {
+                    battleId: game.battleId,
+                    monsters: [{ hrid: '/monsters/fly', difficultyTier, currentHitpoints: 100 }],
+                    players: [{ name: 'p0' }],
+                },
+                ACTIVE
+            );
+        };
+
+        fighting(0);
+        fight(4); // spawn tier 4 at T0: five credits, as Chimerical Den's rats
+        await kill();
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(5);
+
+        fighting(2);
+        fight(0); // A field lower than the action is not believed: three credits
+        await kill();
+        expect(alerts.estimatedCounts()['/monsters/fly']).toBe(8);
+    });
+
+    test('the captured new_battle states a tier on every monster', () => {
+        const monsters = buildNewBattle().monsters;
+        expect(monsters.length).toBeGreaterThan(0);
+        expect(monsters.every((monster) => Number.isInteger(monster.difficultyTier))).toBe(true);
     });
 
     test('a crossing on an estimate fires once, says it is about', async () => {

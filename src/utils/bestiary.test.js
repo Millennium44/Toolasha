@@ -7,6 +7,7 @@ import {
     monsterCreditsPerHour,
     countsByMonster,
     zoneBestiaryOutlook,
+    monsterCreditsPerKill,
     totalBestiaryPoints,
 } from './bestiary.js';
 
@@ -229,5 +230,29 @@ describe('a kill is not a credit', () => {
         expect(resolvePartySize(undefined, 4)).toBe(4);
         expect(resolvePartySize(null, null)).toBe(1);
         expect(resolvePartySize(0, 0)).toBe(1);
+    });
+});
+
+describe('credits at the tier the monster had', () => {
+    const BOSS = '/monsters/griffin';
+
+    test('a spawn above the zone tier earns its own tier, split by the party', () => {
+        // Ten kills in a T0 run of a spawn tier 4 monster, as Chimerical Den's rats are: 5 credits each, not 1
+        const sim = { deaths: { [BOSS]: 10, player1: 3 }, monsterKillsByTier: { [BOSS]: { 4: 10 } } };
+        expect(monsterCreditsPerHour(sim, 2, { difficultyTier: 0, partySize: 2 })).toEqual({ [BOSS]: 12.5 });
+        expect(monsterCreditsPerKill(sim, { partySize: 2 })).toEqual({ [BOSS]: 2.5 });
+    });
+
+    test('kills at two tiers add up and average', () => {
+        const sim = { deaths: { [BOSS]: 4 }, monsterKillsByTier: { [BOSS]: { 0: 3, 2: 1 } } };
+        expect(monsterCreditsPerHour(sim, 1)[BOSS]).toBe(6);
+        expect(monsterCreditsPerKill(sim)[BOSS]).toBe(1.5);
+    });
+
+    test('a result that does not state tiers keeps the zone tier', () => {
+        const sim = { deaths: { [BOSS]: 10 } };
+        expect(monsterCreditsPerHour(sim, 1, { difficultyTier: 2 })[BOSS]).toBe(30);
+        expect(monsterCreditsPerKill(sim)).toEqual({});
+        expect(monsterCreditsPerHour({ deaths: { [BOSS]: 4 }, monsterKillsByTier: { [BOSS]: {} } }, 1)[BOSS]).toBe(4);
     });
 });

@@ -40,9 +40,8 @@
  * dungeon's top band 2/7 of waves come from a lower table. Passing a single
  * `randomSpawnInfoMap` entry here therefore answers "given the wave came from
  * this table", not "given the wave is at this depth" — a caller that wants the
- * latter has to mix the map's entries at those weights itself. Both callers
- * today (`combat-drop-model.js`, `expected-kills.js`) bail out on dungeons
- * before they get here, so nothing depends on the mixture yet.
+ * latter has to mix the map's entries at those weights itself, which
+ * {@link expectedSpawnsPerClear} does for a whole dungeon.
  *
  * @param {Object} randomSpawnInfo - `combatZoneInfo.fightInfo.randomSpawnInfo`, or an
  *   entry of a dungeon's `randomSpawnInfoMap`: `{ spawns, maxSpawnCount, maxTotalStrength }`
@@ -117,4 +116,102 @@ export function expectedSpawnsOverWaves(randomSpawnInfo, waveCount) {
         total[hrid] = count * waveCount;
     }
     return total;
+}
+
+/**
+ * Chance a dungeon wave is drawn from any one eligible table below the highest,
+ * capped at an equal share. A copy of `LOWER_TABLE_RATE` in
+ * `combat-sim/engine/zone.js`, whose note holds the measurement: a util may not
+ * reach into a feature bundle. `zone.test.js` runs the real `Zone` against this
+ * mixture, so the two cannot drift apart unnoticed.
+ */
+const LOWER_TABLE_RATE = 1 / 7;
+
+/**
+ * How many of each monster one whole clear of a dungeon spawns, which on a clear
+ * is how many of them die: a wave only ends when all of it is down.
+ *
+ * Solved exactly, wave by wave, the way `Zone.getNextWave` draws them: a wave on
+ * `fixedSpawnsMap` is that roster and nothing else; any other wave comes whole
+ * from one table of `randomSpawnInfoMap`, each eligible lower table with
+ * {@link LOWER_TABLE_RATE} and the highest eligible with the rest.
+ *
+ * A dungeon tier does not change these tables. A spawn's own `difficultyTier`
+ * is kept apart in the answer because the game adds it to the dungeon's tier,
+ * so its kills are worth more Bestiary credit.
+ *
+ * @param {Object} dungeonInfo - `combatZoneInfo.dungeonInfo`:
+ *   `{ maxWaves, fixedSpawnsMap, randomSpawnInfoMap }`
+ * @returns {Object<string, Object<number, number>>} Monster hrid → the spawn's own
+ *   tier → expected count per clear. Empty when the data cannot answer.
+ */
+export function expectedSpawnsPerClear(dungeonInfo) {
+    const out = {};
+    const maxWaves = Math.floor(Number(dungeonInfo?.maxWaves)) || 0;
+    if (maxWaves <= 0) return out;
+
+    const add = (hrid, spawnTier, count) => {
+        if (!hrid || !(count > 0)) return;
+        if (!out[hrid]) out[hrid] = {};
+        const tier = Number(spawnTier) || 0;
+        out[hrid][tier] = (out[hrid][tier] || 0) + count;
+    };
+
+    const fixedMap = dungeonInfo.fixedSpawnsMap || {};
+    const randomMap = dungeonInfo.randomSpawnInfoMap;
+    const waveKeys =
+        randomMap && typeof randomMap === 'object'
+            ? Object.keys(randomMap)
+                  .map(Number)
+                  .sort((a, b) => a - b)
+            : [];
+
+    // One table's expectation, split by monster and spawn tier. Two rows for one
+    // monster at different tiers are different draws, so each row is solved under
+    // its own key and split back apart after.
+    const SEPARATOR = '|';
+    const perTable = new Map();
+    const tableExpectation = (key) => {
+        if (perTable.has(key)) return perTable.get(key);
+        const table = randomMap[key];
+        const expected = expectedSpawnsPerWave({
+            ...table,
+            spawns: (table?.spawns || []).map((spawn) => ({
+                ...spawn,
+                combatMonsterHrid: `${spawn.combatMonsterHrid || spawn.hrid}${SEPARATOR}${spawn.difficultyTier || 0}`,
+            })),
+        });
+        perTable.set(key, expected);
+        return expected;
+    };
+    const addTable = (key, weight) => {
+        // A table with no spawn list falls back to the first, as the engine does
+        const usable = randomMap[key]?.spawns ? key : waveKeys[0];
+        if (!randomMap[usable]?.spawns) return;
+        for (const [drawn, count] of Object.entries(tableExpectation(usable))) {
+            const cut = drawn.lastIndexOf(SEPARATOR);
+            add(drawn.slice(0, cut), drawn.slice(cut + 1), count * weight);
+        }
+    };
+
+    for (let wave = 1; wave <= maxWaves; wave++) {
+        const fixed = fixedMap[String(wave)];
+        if (fixed) {
+            for (const monster of fixed) add(monster?.combatMonsterHrid, monster?.difficultyTier, 1);
+            continue;
+        }
+        if (!waveKeys.length) continue;
+
+        const eligible = waveKeys.filter((key) => wave >= key);
+        if (!eligible.length) {
+            addTable(waveKeys[0], 1);
+            continue;
+        }
+        const rate = Math.min(LOWER_TABLE_RATE, 1 / eligible.length);
+        const lowerCount = eligible.length - 1;
+        eligible.slice(0, lowerCount).forEach((key) => addTable(key, rate));
+        addTable(eligible[lowerCount], 1 - rate * lowerCount);
+    }
+
+    return out;
 }

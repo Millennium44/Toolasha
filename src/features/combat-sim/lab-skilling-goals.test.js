@@ -538,7 +538,7 @@ describe('planning to a goal', () => {
         expect(result.reached).toBe(false);
         expect(result.finalRate).toBeCloseTo(0.58, 10);
         const html = renderPlanHtml(result, { goalText: '99% clear' });
-        expect(html).toContain('Not reachable with these candidates (best reached 58.0%)');
+        expect(html).toContain('Not reachable even weighing all 1 candidate (best reached 58.0%)');
     });
 
     test('reports the goal and its total when it is met', async () => {
@@ -605,7 +605,7 @@ describe('planning to a goal', () => {
                 upgradeLevel: 1,
             });
         });
-        const result = await plan(rows, 0.99, { candidateCap: 5, baseSetup: setup });
+        const result = await plan(rows, 0.54, { candidateCap: 5, baseSetup: setup });
 
         expect(result.poolSize).toBe(5);
         // One baseline, one ranking sim per row, then at most five trials a step over five steps
@@ -1201,5 +1201,230 @@ describe('a jewelry swap offered once per kit is one purchase', () => {
         expect(merged.clearRateDelta).toBeCloseTo(0.04, 10);
         // Bought once, two different necklaces sold back
         expect(merged.cost).toBe(800);
+    });
+});
+
+describe('a plan that falls short retries with every candidate', () => {
+    const slot = (i) => `/equipment_types/slot_${i}`;
+    const BONUS = { '/items/small': 0.01, '/items/big': 0.3 };
+    const setupOf = (n) => ({
+        dto: {
+            equipment: Object.fromEntries(
+                Array.from({ length: n }, (_, i) => [slot(i), { hrid: '/items/none', enhancementLevel: 0 }])
+            ),
+        },
+        skillEquipmentMap: {},
+    });
+    const bonusEvaluate = (setup, level) => {
+        const levelValue = typeof level === 'object' ? Math.max(...Object.values(level)) : level;
+        const gear = Object.values(setup.dto.equipment).reduce((sum, w) => sum + (BONUS[w.hrid] || 0), 0);
+        return { clearRate: Math.min(1, Math.max(0, 1 - levelValue / 100 + gear)), xpPerRoom: 0 };
+    };
+    const item = (hrid, i, cost, delta) =>
+        gearRow(hrid, slot(i), cost, delta, { currentHrid: '/items/none', description: `${hrid} ${i}` });
+    /** Twelve cheap small upgrades, then one dear big one that ranks 13th by gold per point. */
+    const thirteen = () => [
+        ...Array.from({ length: 12 }, (_, i) => item('/items/small', i, 10, 0.01)),
+        item('/items/big', 12, 100_000, 0.3),
+    ];
+    const run = async (rows, goalRate, extra = {}) => {
+        const calls = { n: 0 };
+        const result = await planSkillingGoal({
+            baseSetup: setupOf(Math.max(rows.length, 1)),
+            rows,
+            evaluate: (...args) => {
+                calls.n++;
+                return bonusEvaluate(...args);
+            },
+            goalRoomLevel: 50,
+            goalRate,
+            yieldFn: async () => {},
+            ...extra,
+        });
+        return { result, calls };
+    };
+
+    test('a goal only the 13th-ranked candidate reaches is reached', async () => {
+        const { result, calls } = await run(thirteen(), 0.75);
+
+        expect(result.reached).toBe(true);
+        expect(result.aborted).toBe(false);
+        expect(result.poolSize).toBe(13);
+        expect(result.steps.map((s) => s.row.cost)).toEqual([100_000]);
+        expect(result.totals.gold).toBe(100_000);
+        // Every simulation is counted once, across both runs
+        expect(result.sims).toBe(calls.n);
+    });
+
+    test('a goal nothing reaches says so after weighing all of them', async () => {
+        const { result } = await run(thirteen(), 0.99);
+
+        expect(result.reached).toBe(false);
+        expect(result.poolSize).toBe(13);
+        const html = renderPlanHtml(result, { goalText: '99%' });
+        expect(html).toContain('Not reachable even weighing all 13 candidates');
+    });
+
+    test('a goal reachable within the first twelve does not retry', async () => {
+        const { result, calls } = await run(thirteen(), 0.55);
+
+        expect(result.reached).toBe(true);
+        expect(result.poolSize).toBe(12);
+        expect(result.sims).toBe(calls.n);
+        expect(result.steps.every((s) => s.row.cost === 10)).toBe(true);
+    });
+
+    test('with no more than twelve candidates there is nothing to retry', async () => {
+        const rows = Array.from({ length: 5 }, (_, i) => item('/items/small', i, 10, 0.01));
+        const { result } = await run(rows, 0.99);
+        const uncapped = await run(rows, 0.99, { candidateCap: 100 });
+
+        expect(result.reached).toBe(false);
+        expect(result.poolSize).toBe(5);
+        expect(result.sims).toBe(uncapped.result.sims);
+    });
+
+    test('empty rows give a plain not-reachable with no retry', async () => {
+        const { result, calls } = await run([], 0.9);
+
+        expect(result.reached).toBe(false);
+        expect(result.poolSize).toBe(0);
+        expect(calls.n).toBe(1);
+        expect(renderPlanHtml(result, { goalText: 'x' })).toContain('Not reachable with these candidates');
+    });
+
+    test('the retry does not redo the ranking, and progress never passes its total', async () => {
+        const events = [];
+        const { result } = await run(thirteen(), 0.99, { onProgress: (e) => events.push(e) });
+
+        expect(events.some((e) => e.description.includes('every candidate'))).toBe(true);
+        expect(events.every((e) => e.current < e.total)).toBe(true);
+        expect(events.filter((e) => e.description.startsWith('Ranking at the goal'))).toHaveLength(13);
+        expect(result.sims).toBeGreaterThan(14);
+    });
+
+    test('a Stop during the retry reports a stopped search', async () => {
+        let retrying = false;
+        const { result } = await run(thirteen(), 0.99, {
+            onProgress: (e) => {
+                if (e.description.includes('every candidate')) retrying = true;
+            },
+            abortSignal: () => retrying,
+        });
+
+        expect(result.aborted).toBe(true);
+        expect(result.reached).toBe(false);
+        expect(renderPlanHtml(result, { goalText: 'x' })).toContain('Stopped early');
+    });
+
+    test('a Stop in the first run does not start a retry', async () => {
+        let retrying = false;
+        let polls = 0;
+        const { result } = await run(thirteen(), 0.99, {
+            onProgress: (e) => {
+                if (e.description.includes('every candidate')) retrying = true;
+            },
+            abortSignal: () => ++polls > 20,
+        });
+
+        expect(result.aborted).toBe(true);
+        expect(retrying).toBe(false);
+    });
+
+    const fractions = (events) => events.map((e) => e.fraction);
+    const neverDecreases = (list) => list.every((v, i) => i === 0 || v >= list[i - 1]);
+
+    test('the bar only moves forward across ranking, steps, level measuring and the retry', async () => {
+        const events = [];
+        const { result } = await run(thirteen(), 0.99, {
+            onProgress: (e) => events.push(e),
+            measureMax: async () => ({ cleared: true, maxLevel: 10 }),
+        });
+
+        const list = fractions(events);
+        expect(events.some((e) => e.description.includes('every candidate'))).toBe(true);
+        expect(list.length).toBeGreaterThan(30);
+        expect(neverDecreases(list)).toBe(true);
+        expect(list.every((v) => v >= 0 && v < 1)).toBe(true);
+        expect(list.at(-1)).toBeGreaterThan(list[0]);
+        expect(result.reached).toBe(false);
+        // The detail is in the words: which step, how far through the candidates
+        expect(events.some((e) => /^Step 2, trying 3 of 11: /.test(e.description))).toBe(true);
+    });
+
+    test('the bar only moves forward when the retry reaches the goal and the improve pass runs', async () => {
+        const events = [];
+        await run(thirteen(), 0.75, { onProgress: (e) => events.push(e) });
+
+        expect(neverDecreases(fractions(events))).toBe(true);
+        expect(fractions(events).every((v) => v < 1)).toBe(true);
+    });
+
+    test('the bar only moves forward up to a Stop', async () => {
+        const events = [];
+        let polls = 0;
+        await run(thirteen(), 0.99, { onProgress: (e) => events.push(e), abortSignal: () => ++polls > 60 });
+
+        expect(events.length).toBeGreaterThan(10);
+        expect(neverDecreases(fractions(events))).toBe(true);
+    });
+
+    describe('when the full pool does worse than the capped run', () => {
+        // Capped at two, A+B reaches 70%. With C in the pool, C (a cheap pick on top of A) takes B's slot
+        // and the greedy ends at A+C, 65%
+        const RATES = { '': 0.5, a: 0.55, b: 0.54, c: 0.501, ab: 0.7, ac: 0.65 };
+        const worn = (setup) =>
+            ['a', 'b', 'c']
+                .filter((k) => Object.values(setup.dto.equipment).some((w) => w.hrid === `/items/${k}`))
+                .join('');
+        const rows = () => [
+            item('/items/a', 0, 10, 0.05),
+            item('/items/b', 1, 10, 0.04),
+            item('/items/c', 1, 1, 0.001),
+        ];
+        const go = async (extra = {}) => {
+            const calls = { n: 0 };
+            const result = await planSkillingGoal({
+                baseSetup: setupOf(2),
+                rows: rows(),
+                evaluate: (setup) => {
+                    calls.n++;
+                    return { clearRate: RATES[worn(setup)] ?? 0, xpPerRoom: 0 };
+                },
+                goalRoomLevel: 50,
+                goalRate: 0.9,
+                candidateCap: 2,
+                yieldFn: async () => {},
+                ...extra,
+            });
+            return { result, calls };
+        };
+
+        test('the better plan is returned, with the verdict naming the whole pool and the combined sims', async () => {
+            const { result, calls } = await go();
+
+            expect(result.reached).toBe(false);
+            expect(result.finalRate).toBeCloseTo(0.7, 10);
+            expect(result.steps.map((s) => s.row.candidate.upgradeHrid)).toEqual(['/items/a', '/items/b']);
+            expect(result.poolSize).toBe(2);
+            expect(result.sims).toBe(calls.n);
+            const html = renderPlanHtml(result, { goalText: '90%' });
+            expect(html).toContain('Not reachable even weighing all 3 candidates (best reached 70.0%)');
+        });
+
+        test('a Stop in the retry keeps the abort and returns the better partial plan', async () => {
+            let seen = false;
+            const { result } = await go({
+                onProgress: (e) => {
+                    if (e.description.startsWith('Step 2, every candidate')) seen = true;
+                },
+                abortSignal: () => seen,
+            });
+
+            expect(result.aborted).toBe(true);
+            expect(result.finalRate).toBeCloseTo(0.7, 10);
+            expect(result.steps).toHaveLength(2);
+            expect(renderPlanHtml(result, { goalText: '90%' })).toContain('Stopped early at 70.0% after 2 steps');
+        });
     });
 });
