@@ -35,7 +35,10 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../../utils/script-version.js', () => ({ scriptVersion: () => state.version }));
-vi.mock('../../utils/bundle-bridge.js', () => ({ toolashaRoot: () => state.root }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    toolashaRoot: () => state.root,
+}));
 vi.mock('../../utils/toast.js', () => ({
     showToast: (message, options) => {
         const toast = { message, options, dismissed: false };
