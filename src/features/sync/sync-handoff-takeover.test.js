@@ -286,6 +286,26 @@ describe('the listener', () => {
         expect(push).toHaveBeenCalledTimes(1);
     });
 
+    test('a restart after a takeover push leaves the next takeover able to push', async () => {
+        const restart = state.listeners.sync_onSwitch[0];
+        socketCloses();
+        bannerOn();
+        await advance(SETTLE);
+        expect(push).toHaveBeenCalledTimes(1);
+
+        // The restart clears the timers, the 30 s rearm among them
+        restart();
+        bannerOff();
+        await advance(31 * 1000);
+        emitSocket('open', {});
+        connectionState.setConnected('init_character_data');
+
+        socketCloses();
+        bannerOn();
+        await advance(SETTLE);
+        expect(push).toHaveBeenCalledTimes(2);
+    });
+
     test('with the setting off, no listener at all', async () => {
         syncManager.cleanup();
         state.settings.sync_onSwitch = false;
