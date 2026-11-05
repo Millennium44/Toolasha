@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Panels stay out of the way when the game disconnects
+
+Toolasha's panels and overlay no longer draw over the game's Disconnected message, for example after the character was opened in another tab. They come back as they were on reconnect or reload.
+
 ### Sim upgrade finders can aim abilities at the next 5
 
 Ability Lv in the Combat and Lab Sims gains "Next mult. of": with 5, Puncture 70 tries 75 and Frenzy 61 tries 65. Ticking another candidate box in the Combat Sim also no longer resets the mode and number you chose.
