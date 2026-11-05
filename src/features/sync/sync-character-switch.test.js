@@ -772,7 +772,7 @@ describe('the connection banner', () => {
             fire = callback;
             return () => {};
         });
-        syncManager.handoffUnregister = null;
+        syncManager.handoffUnregister?.();
         syncManager._watchHandoff();
     }
 
