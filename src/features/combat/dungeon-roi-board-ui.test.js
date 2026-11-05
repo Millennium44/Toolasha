@@ -372,6 +372,41 @@ describe('drawing', () => {
         expect(den0.firstChild.title).toContain('Party of 3 (from the filter)');
     });
 
+    test('the Clear hover says which runs it covers', async () => {
+        const party = ['Me', 'A'];
+        state.runs = [
+            run('Chimerical Den', 0, 600_000, party),
+            run('Chimerical Den', 0, 600_000, party),
+            run('Chimerical Den', 0, 1_800_000),
+            run('Chimerical Den', null, 600_000, party),
+        ];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+        const rowFor = (label) =>
+            [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) => tr.firstChild.textContent.includes(label));
+        expect(rowFor('Den T0').children[2].title).toBe(
+            'Median of 2 recorded runs with a party of 2, of 3 on this row'
+        );
+        expect(rowFor('Den T0').children[2].textContent).toBe('10:00');
+        expect(rowFor('Den T?').children[2].title).toBe('Median of 1 recorded run with a party of 2');
+    });
+
+    test('runs that recorded no clear time are not called no runs', async () => {
+        state.runs = [run('Chimerical Den', 0, 0)];
+        const board = new DungeonRoiBoardUI({ filterCharacter: 'mine' });
+        const container = panel();
+        await board.render(container);
+        const row = [...container.querySelectorAll('.mwi-dt-roi-row')].find((tr) =>
+            tr.firstChild.textContent.includes('Den T0')
+        );
+        expect(row.children[1].textContent).toBe('1');
+        expect(row.children[2].title).toBe(
+            'These runs recorded no clear time, and there is no simulation for this tier'
+        );
+        expect(row.children[2].title).not.toContain('No runs');
+    });
+
     test('measured consumables are priced off the market ask for a normal character', async () => {
         state.runs = [run('Chimerical Den', 0, 600_000)]; // clear 10:00 → 6 runs/hr
         state.sessions = [sessionWithConsumable(6)]; // 6 donuts/hr @ ask 200 = 1200/hr

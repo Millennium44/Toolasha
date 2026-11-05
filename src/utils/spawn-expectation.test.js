@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { expectedSpawnsPerWave, expectedSpawnsOverWaves } from './spawn-expectation.js';
+import { expectedSpawnsPerWave, expectedSpawnsOverWaves, expectedSpawnsPerClear } from './spawn-expectation.js';
 
 /** A spawn table entry, in the shape the game's data uses */
 const spawn = (name, rate, strength) => ({ combatMonsterHrid: `/monsters/${name}`, rate, strength });
@@ -84,5 +84,68 @@ describe('expectedSpawnsOverWaves', () => {
         const table = { spawns: [spawn('a', 1, 1)], maxSpawnCount: 1, maxTotalStrength: 5 };
         expect(expectedSpawnsOverWaves(table, undefined)).toEqual({});
         expect(expectedSpawnsOverWaves(table, -3)).toEqual({});
+    });
+});
+
+describe('expectedSpawnsPerClear', () => {
+    const entry = (name, difficultyTier = 0) => ({ combatMonsterHrid: `/monsters/${name}`, difficultyTier });
+    const one = (name) => ({ spawns: [spawn(name, 1, 1)], maxSpawnCount: 1, maxTotalStrength: 5 });
+
+    test('a dungeon of fixed waves is the rosters added up, duplicates and spawn tiers kept', () => {
+        const info = {
+            maxWaves: 3,
+            fixedSpawnsMap: {
+                1: [entry('a'), entry('a')],
+                2: [entry('a', 1)],
+                3: [entry('boss', 2)],
+                4: [entry('never')],
+            },
+            randomSpawnInfoMap: null,
+        };
+        expect(expectedSpawnsPerClear(info)).toEqual({
+            '/monsters/a': { 0: 2, 1: 1 },
+            '/monsters/boss': { 2: 1 },
+        });
+    });
+
+    test('a wave above a key draws that table, with 1/7 for each table below it', () => {
+        const info = {
+            maxWaves: 3,
+            fixedSpawnsMap: {},
+            randomSpawnInfoMap: { 0: one('low'), 2: one('mid'), 3: one('top') },
+        };
+        const out = expectedSpawnsPerClear(info);
+        // Wave 1: low only. Wave 2: 1/7 low, 6/7 mid. Wave 3: 1/7 low, 1/7 mid, 5/7 top.
+        expect(out['/monsters/low'][0]).toBeCloseTo(1 + 2 / 7, 12);
+        expect(out['/monsters/mid'][0]).toBeCloseTo(1, 12);
+        expect(out['/monsters/top'][0]).toBeCloseTo(5 / 7, 12);
+    });
+
+    test('a fixed wave replaces the draw, and an empty roster is an empty wave', () => {
+        const info = {
+            maxWaves: 2,
+            fixedSpawnsMap: { 1: [], 2: [entry('boss')] },
+            randomSpawnInfoMap: { 0: one('low') },
+        };
+        expect(expectedSpawnsPerClear(info)).toEqual({ '/monsters/boss': { 0: 1 } });
+    });
+
+    test('a wave below every key falls back to the first table, and a broken table to the first too', () => {
+        const below = { maxWaves: 1, fixedSpawnsMap: {}, randomSpawnInfoMap: { 5: one('late') } };
+        expect(expectedSpawnsPerClear(below)['/monsters/late'][0]).toBe(1);
+        const broken = {
+            maxWaves: 2,
+            fixedSpawnsMap: {},
+            randomSpawnInfoMap: { 0: one('low'), 2: { maxSpawnCount: 1 } },
+        };
+        expect(expectedSpawnsPerClear(broken)['/monsters/low'][0]).toBeCloseTo(2, 12);
+    });
+
+    test('nothing to read gives nothing, never a guess', () => {
+        expect(expectedSpawnsPerClear(null)).toEqual({});
+        expect(expectedSpawnsPerClear({})).toEqual({});
+        expect(expectedSpawnsPerClear({ maxWaves: 0, fixedSpawnsMap: { 1: [entry('a')] } })).toEqual({});
+        expect(expectedSpawnsPerClear({ maxWaves: 5, fixedSpawnsMap: {}, randomSpawnInfoMap: {} })).toEqual({});
+        expect(expectedSpawnsPerClear({ maxWaves: 5, randomSpawnInfoMap: null })).toEqual({});
     });
 });

@@ -6,6 +6,30 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary credits follow each monster's real tier
+
+Combat Sim credited every kill at the zone's tier, undercounting monsters that spawn above it: most Chimerical Den monsters are worth five credits at T0, not one. Bestiary points, plan times and threshold alert estimates now use the monster's own tier, so many dungeons read faster than before.
+
+### Bestiary plan uses your own clears when the sim wipes
+
+A dungeon the sim wipes in is now planned from your median clear time at that tier and party and the dungeon's spawn tables, including later waves and bosses that failed runs never reached. Each row says whether it used your runs or a sim estimate, and an orange "no wipes counted" warns when too little backs that up.
+
+### Bestiary plan counts your recorded failed attempts
+
+If you record failed dungeon runs, the plan lowers that dungeon's clear rate by your failures at that tier and party, and says so on the row.
+
+### Untiered dungeon runs stop counting as T0
+
+Runs recorded with no tier were setting the T0 clear time, so T0 plan rows and Bestiary figures may change. The plan uses them only when your Bestiary shows the dungeon's final boss at one tier, and the pace chip and readiness time only for a dungeon with no tiered history.
+
+### Dungeon ROI board's Clear matches the party it prices
+
+With all parties shown, Clear was a median across every party size, which also moved Net and Gold/hr. It now covers only the party the row prices, the hover says how many runs that is, and a T? row's confidence is never above low.
+
+### Dungeon backfill no longer guesses a tier
+
+Runs read from chat now stay T? instead of taking the tier of whatever dungeon was running. A live run still records its tier, and a tier recorded on one device now survives syncing.
+
 ### Tall character panel no longer cuts off its last rows
 
 The "Character panel: Height" setting could push the panel's bottom off-screen with no way to scroll to it, hiding your last loadouts or inventory rows. It now stops at the bottom of the game's area.

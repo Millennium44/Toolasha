@@ -9,6 +9,10 @@ import { describe, test, expect, afterEach } from 'vitest';
 import { setGameData } from './game-data.js';
 import { clearSimRng, random, randomSpawn, seedSimRng } from './rng.js';
 import Zone from './zone.js';
+import SimResult from './sim-result.js';
+import { expectedSpawnsPerClear } from '../../../utils/spawn-expectation.js';
+import { monsterCreditsPerHour, monsterCreditsPerKill } from '../../../utils/bestiary.js';
+import { dungeonRatesFromRuns } from '../../../utils/bestiary-plan.js';
 
 const ZONE_HRID = '/actions/combat/test_zone';
 
@@ -568,5 +572,131 @@ describe('dungeon waves', () => {
         expect(mean).toBeLessThan(1.2);
         // A heavy first draw ends the wave before anything is added at all.
         expect(sizes.some((size) => size === 0)).toBe(true);
+    });
+});
+
+describe('a whole clear against the exact spawn expectation', () => {
+    const HRID = '/actions/combat/test_dungeon';
+    const names = ['rat', 'butterjerry', 'jackalope', 'bear', 'boss_a', 'griffin', 'imp'].map(
+        (name) => `/monsters/${name}`
+    );
+    const [RAT, BUTTERJERRY, JACKALOPE, BEAR, BOSS_A, GRIFFIN, IMP] = names;
+    const row = (hrid, rate, strength, difficultyTier = 0) => ({
+        combatMonsterHrid: hrid,
+        difficultyTier,
+        rate,
+        strength,
+    });
+
+    // Shaped like Chimerical Den as read from the game: 50 waves, a fixed wave every
+    // fifth, random keys 0/10/30, and the tiers it really gives these monsters: rat at
+    // spawn tier 4, butterjerry and jackalope at 0, griffin at 0 on wave 50. The rates
+    // and strengths, and bear and imp, are this fixture's own. Several slots, a strength cap that ends waves
+    // early, duplicates in a roster, a monster in both a fixed wave and a table,
+    // and one monster on two rows at different spawn tiers.
+    const dungeonInfo = () => {
+        const fixedSpawnsMap = {};
+        for (let wave = 5; wave <= 50; wave += 5) {
+            fixedSpawnsMap[String(wave)] = [
+                { combatMonsterHrid: BOSS_A, difficultyTier: 0 },
+                { combatMonsterHrid: IMP, difficultyTier: 0 },
+                { combatMonsterHrid: IMP, difficultyTier: 0 },
+            ];
+        }
+        fixedSpawnsMap['50'] = [{ combatMonsterHrid: GRIFFIN, difficultyTier: 0 }];
+        return {
+            maxWaves: 50,
+            fixedSpawnsMap,
+            randomSpawnInfoMap: {
+                0: { maxSpawnCount: 4, maxTotalStrength: 150, spawns: [row(RAT, 2, 40, 4), row(BUTTERJERRY, 1, 65)] },
+                10: {
+                    maxSpawnCount: 4,
+                    maxTotalStrength: 180,
+                    spawns: [row(BUTTERJERRY, 1, 50), row(JACKALOPE, 1, 70), row(IMP, 1, 40)],
+                },
+                30: {
+                    maxSpawnCount: 5,
+                    maxTotalStrength: 230,
+                    spawns: [row(JACKALOPE, 1, 45), row(BEAR, 2, 60), row(BEAR, 1, 60, 4)],
+                },
+            },
+        };
+    };
+
+    afterEach(() => clearSimRng());
+
+    test('kills per clear from the tables match the real Zone, by monster and by tier', () => {
+        const info = dungeonInfo();
+        setGameData({
+            actionDetailMap: {
+                [HRID]: { buffs: null, combatZoneInfo: { isDungeon: true, fightInfo: null, dungeonInfo: info } },
+            },
+            combatMonsterDetailMap: Object.fromEntries(names.map((hrid) => [hrid, { enrageTime: 0, abilities: [] }])),
+        });
+        seedSimRng(20261104);
+        const zone = new Zone(HRID, 2);
+        const CLEARS = 1500;
+        const tally = {};
+        for (let wave = 0; wave < CLEARS * info.maxWaves; wave++) {
+            for (const monster of zone.getNextWave()) {
+                const key = `${monster.hrid}|${monster.difficultyTier}`;
+                tally[key] = (tally[key] || 0) + 1;
+            }
+        }
+
+        const exact = expectedSpawnsPerClear(info);
+        const flat = {};
+        for (const [hrid, byTier] of Object.entries(exact)) {
+            // The engine's monster tier is the dungeon's plus the spawn's own
+            for (const [tier, count] of Object.entries(byTier)) flat[`${hrid}|${Number(tier) + 2}`] = count;
+        }
+        expect(Object.keys(flat).sort()).toEqual(Object.keys(tally).sort());
+        for (const [key, count] of Object.entries(flat)) {
+            // Drawn counts vary by at most about their square root, per clear
+            const tolerance = 5 * Math.sqrt(count / CLEARS);
+            expect(Math.abs(tally[key] / CLEARS - count), key).toBeLessThan(Math.max(tolerance, 1e-9));
+        }
+        // Written-down waves come out exact, not as an estimate
+        expect(exact[BOSS_A][0]).toBe(9);
+        expect(exact[GRIFFIN][0]).toBe(1);
+        expect(flat[`${GRIFFIN}|2`]).toBe(1);
+        expect(Object.keys(exact[RAT])).toEqual(['4']);
+    });
+
+    test('credits from a simulated clear agree with the spawn-table path, spawn tiers included', () => {
+        const info = dungeonInfo();
+        setGameData({
+            actionDetailMap: {
+                [HRID]: { buffs: null, combatZoneInfo: { isDungeon: true, fightInfo: null, dungeonInfo: info } },
+            },
+            combatMonsterDetailMap: Object.fromEntries(names.map((hrid) => [hrid, { enrageTime: 0, abilities: [] }])),
+        });
+        seedSimRng(20261105);
+        const zone = new Zone(HRID, 1);
+        const result = new SimResult({ hrid: HRID, difficultyTier: 1 }, 2);
+        const CLEARS = 1500;
+        for (let wave = 0; wave < CLEARS * info.maxWaves; wave++) {
+            for (const monster of zone.getNextWave()) result.addDeath(monster);
+        }
+
+        // One clear an hour on both sides
+        const options = { difficultyTier: 1, partySize: 2 };
+        const simulated = monsterCreditsPerHour(result, CLEARS, options);
+        const planned = dungeonRatesFromRuns({
+            runs: [{ tier: 1, duration: 3_600_000 }],
+            tier: 1,
+            partySize: 2,
+            dungeonInfo: info,
+        });
+        expect(Object.keys(simulated).sort()).toEqual(Object.keys(planned.creditsPerHour).sort());
+        for (const [hrid, rate] of Object.entries(planned.creditsPerHour)) {
+            expect(Math.abs(simulated[hrid] - rate) / rate, hrid).toBeLessThan(0.05);
+        }
+        // Griffin at spawn tier 0 is a T1 kill: 2/2. A rat at spawn tier 4 is T5: 6/2, not 2/2
+        expect(simulated[GRIFFIN]).toBeCloseTo(1, 9);
+        expect(monsterCreditsPerKill(result, options)[RAT]).toBeCloseTo(3, 9);
+        expect(planned.creditsPerKillByMonster[RAT]).toBeCloseTo(3, 9);
+        // Bear spawns on two rows, 2:1 at the zone's tier: 2/3 x 1 + 1/3 x 3 credits a kill
+        expect(planned.creditsPerKillByMonster[BEAR]).toBeCloseTo(5 / 3, 9);
     });
 });

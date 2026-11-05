@@ -625,6 +625,25 @@ describe('keeping a simulation worker warm', () => {
         expect(merged.dungeonQtyStates.player1).toEqual({ 0: 3, 0.1: 5 });
     });
 
+    test('kills by monster tier from every chunk sum, even where the first chunk has none', async () => {
+        const { built } = stubWorkerPool({ deferred: true });
+        const pending = runSimulation({
+            gameData: gameDataPayload(),
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 100,
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        built.forEach((worker, i) =>
+            worker.respond({
+                ...EMPTY_SIM_RESULT,
+                ...(i === 0 ? {} : { monsterKillsByTier: { '/monsters/fly': { 0: i, 1: 2 } } }),
+            })
+        );
+        const merged = await pending;
+        expect(merged.monsterKillsByTier['/monsters/fly']).toEqual({ 0: 1 + 2 + 3, 1: 6 });
+    });
+
     test('and the next run borrows one of the four back', async () => {
         const { built } = stubWorkerPool();
 

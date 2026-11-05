@@ -1,5 +1,14 @@
 import { describe, test, expect } from 'vitest';
-import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from './bestiary-plan.js';
+import {
+    planBestiaryRoute,
+    rescaleDungeonRates,
+    dungeonRatesFromRuns,
+    runTierOf,
+    provenDungeonTier,
+    clearTimeShare,
+    formatPlanHours,
+    formatPlanText,
+} from './bestiary-plan.js';
 import { pointsFromCount, monsterCreditsPerHour, resolvePartySize } from './bestiary.js';
 import { fightsForKillConfidence } from './fight-confidence.js';
 
@@ -904,5 +913,318 @@ describe('the route is planned in credits, not bodies', () => {
         // Nothing recorded: the fallback of 2 is what answers
         const fallback = toNextPoint({ difficultyTier: 0, partySize: resolvePartySize(null, 2) });
         expect(fallback.hoursUsed / solo.hoursUsed).toBeCloseTo(2, 9);
+    });
+});
+
+describe('a run recorded with no tier', () => {
+    const sim = { '/monsters/goblin': 60 };
+
+    test('is not a T0 run: null is not zero', () => {
+        expect(runTierOf({ tier: null })).toBeNull();
+        expect(runTierOf({})).toBeNull();
+        expect(runTierOf({ tier: 0 })).toBe(0);
+        expect(runTierOf({ tier: 2 })).toBe(2);
+
+        const scaled = rescaleDungeonRates({
+            creditsPerHour: sim,
+            simClearsPerHour: 6,
+            runs: [
+                { tier: null, duration: 60_000 },
+                { tier: null, duration: 60_000 },
+            ],
+            tier: 0,
+        });
+        expect(scaled.source).toBe('sim');
+        expect(scaled.creditsPerHour['/monsters/goblin']).toBeCloseTo(60, 9);
+    });
+
+    test('never paces the spawn-table path either', () => {
+        const dungeonInfo = {
+            maxWaves: 1,
+            fixedSpawnsMap: { 1: [{ combatMonsterHrid: '/monsters/boss', difficultyTier: 0 }] },
+        };
+        expect(dungeonRatesFromRuns({ runs: [{ tier: null, duration: 600_000 }], tier: 0, dungeonInfo })).toBeNull();
+    });
+});
+
+describe('dungeon rates from your own clears and the spawn tables', () => {
+    const BOSS = '/monsters/boss';
+    const RAT = '/monsters/rat';
+    const dungeonInfo = {
+        maxWaves: 3,
+        fixedSpawnsMap: {
+            2: [
+                { combatMonsterHrid: RAT, difficultyTier: 0 },
+                { combatMonsterHrid: RAT, difficultyTier: 0 },
+            ],
+            3: [{ combatMonsterHrid: BOSS, difficultyTier: 1 }],
+        },
+        randomSpawnInfoMap: {
+            0: {
+                maxSpawnCount: 3,
+                maxTotalStrength: 100,
+                spawns: [{ combatMonsterHrid: RAT, difficultyTier: 0, rate: 1, strength: 10 }],
+            },
+        },
+    };
+    // Ten, twenty and forty-minute clears: the median is twenty, three clears an hour
+    const runs = [
+        { tier: 2, duration: 600_000 },
+        { tier: 2, duration: 1_200_000 },
+        { tier: 2, totalTime: 2_400_000 },
+    ];
+
+    test('credits a clear at tier and party, times clears an hour at the median', () => {
+        const rates = dungeonRatesFromRuns({ runs, tier: 2, partySize: 2, dungeonInfo });
+        expect(rates.runs).toBe(3);
+        expect(rates.clearSeconds).toBe(1200);
+        expect(rates.clearsPerHour).toBeCloseTo(3, 9);
+        // Five rats a clear at T2 for two players: 5 x 3/2, three times an hour
+        expect(rates.creditsPerHour[RAT]).toBeCloseTo(22.5, 9);
+        // The boss spawns a tier up, so at T2 it is a T3 kill: 1 x 4/2, three times an hour
+        expect(rates.creditsPerHour[BOSS]).toBeCloseTo(6, 9);
+    });
+
+    test('a boss a failed run never reached is planned, and a written-down kill takes no variance padding', () => {
+        const rates = dungeonRatesFromRuns({ runs, tier: 2, dungeonInfo });
+        const quote = (fixedOnly) =>
+            planBestiaryRoute({
+                zones: [
+                    {
+                        zoneHrid: 'den|T2',
+                        creditsPerHour: rates.creditsPerHour,
+                        encountersPerHour: rates.clearsPerHour,
+                        creditsPerKill: 3,
+                    },
+                ],
+                counts: { [RAT]: 1_000_000, [BOSS]: 80 },
+                hours: 100,
+                targetPoints: 1,
+                confidencePercent: 90,
+                bufferPercent: 0,
+                isBossMonster: () => false,
+                spawnShape: () => ({ slotsPerFight: 3, fixedOnly }),
+            }).segments[0];
+
+        const fixed = quote(new Set([BOSS]));
+        expect(fixed.monsters.find((m) => m.monsterHrid === BOSS).reached).toBe(true);
+        // 20 credits at 4 a clear is exactly five clears
+        expect(fixed.encountersUnpadded).toBeCloseTo(5, 9);
+        expect(fixed.encounters).toBe(5);
+        // Null because nothing bound: five clears were needed and five were quoted
+        expect(fixed.fightPadding).toBeNull();
+        expect(quote(new Set()).encounters).toBeGreaterThan(fixed.encounters);
+    });
+
+    test('another tier, no duration, an empty list or no definition: no rates, never a guess', () => {
+        expect(dungeonRatesFromRuns({ runs, tier: 1, dungeonInfo })).toBeNull();
+        expect(
+            dungeonRatesFromRuns({ runs: [{ tier: 2 }, { tier: 2, duration: 0 }], tier: 2, dungeonInfo })
+        ).toBeNull();
+        expect(dungeonRatesFromRuns({ runs: [], tier: 2, dungeonInfo })).toBeNull();
+        expect(dungeonRatesFromRuns({ runs, tier: null, dungeonInfo })).toBeNull();
+        expect(dungeonRatesFromRuns({ runs, tier: 2, dungeonInfo: { maxWaves: 0 } })).toBeNull();
+        expect(dungeonRatesFromRuns({ runs, tier: 2 })).toBeNull();
+    });
+
+    test('the run behind the rate is named in copied text, on the stop and on the best single zone', () => {
+        const plan = planBestiaryRoute({
+            zones: [
+                {
+                    zoneHrid: 'den|T0',
+                    name: '[D] Den T0',
+                    creditsPerHour: { [RAT]: 10 },
+                    encountersPerHour: 2,
+                    isDungeon: true,
+                    paceLabel: 'your 3 runs',
+                },
+            ],
+            counts: {},
+            hours: 1,
+            confidencePercent: 0,
+            bufferPercent: 0,
+            isBossMonster: () => false,
+            spawnShape: () => null,
+        });
+        const text = formatPlanText(plan);
+        expect(text).toContain('1. [D] Den T0 [your 3 runs] — ');
+        expect(text).toContain('Best single zone: [D] Den T0 [your 3 runs] — ');
+    });
+});
+
+describe('padding a zone whose monsters differ in tier', () => {
+    test('each monster converts to bodies at its own credit, not one figure for the zone', () => {
+        const quote = (creditsPerKillByMonster) =>
+            planBestiaryRoute({
+                zones: [
+                    {
+                        zoneHrid: 'den|T0',
+                        creditsPerHour: { '/monsters/rat': 20 },
+                        encountersPerHour: 1,
+                        creditsPerKill: 1,
+                        creditsPerKillByMonster,
+                    },
+                ],
+                counts: { '/monsters/rat': 9000 },
+                targetPoints: 1,
+                confidencePercent: 90,
+                bufferPercent: 0,
+                isBossMonster: () => false,
+                spawnShape: () => ({ slotsPerFight: 40, fixedOnly: new Set() }),
+            }).segments[0].encounters;
+        // Twenty credits a clear is ten bodies worth two each: fewer draws, so wider
+        // proportional variance, than twenty bodies worth one
+        expect(quote({ '/monsters/rat': 2 })).toBeGreaterThan(quote(undefined));
+    });
+});
+
+describe('the tier the Bestiary proves', () => {
+    const DEN = '/actions/combat/chimerical_den';
+    const BOSS = '/monsters/griffin';
+    const entry = (combatMonsterHrid, difficultyTier = 0) => ({ combatMonsterHrid, difficultyTier });
+    const den = (finalRoster = [entry(BOSS)]) => ({
+        combatZoneInfo: {
+            isDungeon: true,
+            dungeonInfo: {
+                keyItemHrid: '/items/chimerical_entry_key',
+                rewardDropTable: [],
+                maxWaves: 50,
+                fixedSpawnsMap: { 5: [entry('/monsters/jackalope')], 50: finalRoster },
+                randomSpawnInfoMap: {
+                    0: {
+                        maxSpawnCount: 4,
+                        maxTotalStrength: 250,
+                        spawns: [{ ...entry('/monsters/rat', 1), rate: 1, strength: 40 }],
+                    },
+                },
+            },
+        },
+    });
+    const prove = (tierData, details = den()) =>
+        provenDungeonTier({
+            actionHrid: DEN,
+            actionDetailMap: { [DEN]: details },
+            monsters: [{ monsterHrid: BOSS, count: 1, tierData }],
+        });
+
+    test('credits at one tier prove it, read from the JSON string the game sends', () => {
+        expect(prove(JSON.stringify({ 2: 150.6 }))).toBe(2);
+        expect(prove({ 0: 45, 1: 0 })).toBe(0);
+    });
+
+    test('a boss spawned a tier up has that tier taken back off', () => {
+        expect(prove('{"3":12}', den([entry(BOSS, 1)]))).toBe(2);
+        expect(prove('{"0":12}', den([entry(BOSS, 1)]))).toBeNull();
+    });
+
+    test('two tiers, no kills, or nothing readable prove nothing', () => {
+        expect(prove('{"0":45,"2":150.6}')).toBeNull();
+        expect(prove('{}')).toBeNull();
+        expect(prove(undefined)).toBeNull();
+        expect(prove('not json')).toBeNull();
+        expect(provenDungeonTier({ actionHrid: DEN, actionDetailMap: { [DEN]: den() }, monsters: null })).toBeNull();
+        expect(provenDungeonTier({ actionHrid: '/nope', actionDetailMap: { [DEN]: den() }, monsters: [] })).toBeNull();
+    });
+
+    test('a boss found anywhere else proves nothing', () => {
+        const inTable = den();
+        inTable.combatZoneInfo.dungeonInfo.randomSpawnInfoMap[0].spawns.push({ ...entry(BOSS), rate: 1, strength: 1 });
+        expect(prove('{"1":3}', inTable)).toBeNull();
+
+        const earlierWave = den();
+        earlierWave.combatZoneInfo.dungeonInfo.fixedSpawnsMap[5].push(entry(BOSS));
+        expect(prove('{"1":3}', earlierWave)).toBeNull();
+
+        const zone = {
+            combatZoneInfo: {
+                isDungeon: false,
+                fightInfo: { randomSpawnInfo: { spawns: [] }, bossSpawns: [entry(BOSS)] },
+            },
+        };
+        expect(
+            provenDungeonTier({
+                actionHrid: DEN,
+                actionDetailMap: { [DEN]: den(), '/actions/combat/zone': zone },
+                monsters: [{ monsterHrid: BOSS, tierData: '{"1":3}' }],
+            })
+        ).toBeNull();
+    });
+
+    test('a qualifying boss that cannot be read refuses the proof, even beside one that can', () => {
+        const other = '/monsters/manticore';
+        const actionDetailMap = { [DEN]: den([entry(BOSS), entry(other)]) };
+        const good = { monsterHrid: BOSS, tierData: '{"1":3}' };
+        for (const monsters of [
+            [good],
+            [good, { monsterHrid: other }],
+            [good, { monsterHrid: other, tierData: 'not json' }],
+            [good, { monsterHrid: other, tierData: '{}' }],
+        ]) {
+            expect(provenDungeonTier({ actionHrid: DEN, actionDetailMap, monsters })).toBeNull();
+        }
+    });
+
+    test('two of the boss in the roster, or two bosses that disagree, prove nothing', () => {
+        expect(prove('{"1":3}', den([entry(BOSS), entry(BOSS, 1)]))).toBeNull();
+        const other = '/monsters/manticore';
+        expect(
+            provenDungeonTier({
+                actionHrid: DEN,
+                actionDetailMap: { [DEN]: den([entry(BOSS), entry(other)]) },
+                monsters: [
+                    { monsterHrid: BOSS, tierData: '{"1":3}' },
+                    { monsterHrid: other, tierData: '{"2":3}' },
+                ],
+            })
+        ).toBeNull();
+    });
+});
+
+describe('the share of your time that goes to clears', () => {
+    const CLEAR = 1800;
+    const at = (day, duration) => ({
+        timestamp: `2026-10-${String(day).padStart(2, '0')}T00:00:00Z`,
+        ...(duration === undefined ? {} : { duration }),
+    });
+
+    test('three 30-minute clears and a 1-minute failure lose one minute in 91, not a quarter', () => {
+        const share = clearTimeShare([at(3), at(4), at(5)], [at(2, 60_000)], CLEAR);
+        expect(share).toBeCloseTo(90 / 91, 12);
+        expect((3600 / CLEAR) * share).toBeCloseTo(180 / 91, 12); // about 1.98 clears an hour
+    });
+
+    test('a failure with no duration, or an unusable one, is charged one clear', () => {
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2, 0)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([at(3)], [at(2), at(2, 900_000)], CLEAR)).toBeCloseTo(1800 / (1800 + 1800 + 900), 12);
+    });
+
+    test('no failures on record leaves the rate alone', () => {
+        expect(clearTimeShare([at(1)], [], CLEAR)).toBe(1);
+        expect(clearTimeShare([], [], CLEAR)).toBe(1);
+    });
+
+    test('failures older than the first clear in the window all count', () => {
+        const share = clearTimeShare([at(8), at(9)], [at(1, 600_000), at(2, 600_000)], CLEAR);
+        expect(share).toBeCloseTo(3600 / (3600 + 1200), 12);
+    });
+
+    test('clears from before the first recorded failure do not dilute it', () => {
+        const old = Array.from({ length: 300 }, () => at(1));
+        const share = clearTimeShare([...old, at(6), at(7)], [at(5, 1_800_000), at(6, 1_800_000)], CLEAR);
+        expect(share).toBeCloseTo(0.5, 12);
+    });
+
+    test('with no clear since the failures, every clear counts, and with no clears at all nothing does', () => {
+        expect(clearTimeShare([at(1), at(2), at(3)], [at(9)], CLEAR)).toBeCloseTo(0.75, 12);
+        expect(clearTimeShare([], [at(9)], CLEAR)).toBe(0);
+    });
+
+    test('a clear with no date is kept rather than guessed away', () => {
+        expect(clearTimeShare([{}], [at(9)], CLEAR)).toBeCloseTo(0.5, 12);
+    });
+
+    test('with no clear time to weigh against, a failure is one more clear', () => {
+        expect(clearTimeShare([at(3), at(4), at(5)], [at(2, 60_000)], 0)).toBeCloseTo(0.75, 12);
     });
 });

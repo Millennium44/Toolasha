@@ -40,6 +40,7 @@
  */
 
 import { levelGapDebuff } from './dungeon-level-gap.js';
+import { runsForDungeonTier } from './dungeon-run-result.js';
 
 /** Why a member's supplies could not be read */
 export const UNKNOWN_CONSUMABLES = 'not in party data';
@@ -219,18 +220,14 @@ export function runsCovered(secondsLeft, runSeconds) {
  * @param {Array<Object>} runs - Stored runs (`{dungeonName, tier, duration}`, ms)
  * @param {Object} [match] - Which runs count
  * @param {string} [match.dungeonName] - The dungeon
- * @param {number|null} [match.tier] - Its tier; runs with no tier recorded still count
+ * @param {number|null} [match.tier] - Its tier; see `runsForDungeonTier` for runs with none recorded
  * @returns {{seconds: number, samples: number}|null} Null without usable history
  */
 export function typicalRunSeconds(runs, { dungeonName, tier = null } = {}) {
     if (!dungeonName || dungeonName === 'Unknown') return null;
 
     const durations = [];
-    for (const run of runs || []) {
-        if (!run || run.dungeonName !== dungeonName) continue;
-        if (tier !== null && tier !== undefined && run.tier !== null && run.tier !== undefined && run.tier !== tier) {
-            continue;
-        }
+    for (const run of runsForDungeonTier(runs, { dungeonName, tier })) {
         const ms = Number(run.duration ?? run.totalTime);
         if (Number.isFinite(ms) && ms > 0) durations.push(ms);
     }

@@ -11,10 +11,13 @@
  * count is its wave average — every saved run finished, or it would not have
  * been saved.
  *
- * Stored runs recorded from chat carry no tier, so the history is matched on
- * dungeon name, and a run whose tier *is* stated only counts when it matches.
+ * Stored runs recorded from chat carry no tier, so they count only for a dungeon
+ * with no tiered history at all; otherwise only the live run's own tier does
+ * (`runsForDungeonTier`).
  * No history means no chip — a pace against nothing is not a pace.
  */
+
+import { runsForDungeonTier } from '../../utils/dungeon-run-result.js';
 
 /** Below this many completed waves the live average is one wave's luck */
 export const MIN_WAVES_FOR_PACE = 3;
@@ -121,23 +124,15 @@ export function limitToAverageWindow(runs, { windowSize = 0, baselines = null } 
  * The stored runs of one dungeon, already narrowed by the average's limits.
  *
  * Dungeon and tier first, then the window - so "the last N runs" counts runs
- * of *this* dungeon, as the chat line's window does, rather than the last N
- * runs of anything.
+ * of *this* dungeon and tier, as the chat line's window does, rather than the
+ * last N runs of anything.
  *
  * @param {Array<Object>} runs - Stored runs, already narrowed to the character
  * @param {Object} current - The live run's identity and the average's limits
  * @returns {Array<Object>} Matching runs, in the order they arrived
  */
 function runsForAverage(runs, { dungeonName, tier, windowSize, baselines }) {
-    const matching = [];
-    for (const run of runs || []) {
-        if (!run || run.dungeonName !== dungeonName) continue;
-        if (tier !== null && tier !== undefined && run.tier !== null && run.tier !== undefined && run.tier !== tier) {
-            continue;
-        }
-        matching.push(run);
-    }
-    return limitToAverageWindow(matching, { windowSize, baselines });
+    return limitToAverageWindow(runsForDungeonTier(runs, { dungeonName, tier }), { windowSize, baselines });
 }
 
 /**
@@ -429,11 +424,7 @@ export function plausibleMaxRunMs(runs, { dungeonName, tier } = {}) {
 
     const serverTimed = [];
     const wallClocked = [];
-    for (const run of runs || []) {
-        if (!run || run.dungeonName !== dungeonName) continue;
-        if (tier !== null && tier !== undefined && run.tier !== null && run.tier !== undefined && run.tier !== tier) {
-            continue;
-        }
+    for (const run of runsForDungeonTier(runs, { dungeonName, tier })) {
         if (isRecoveredRun(run)) continue;
         const duration = Number(run.duration ?? run.totalTime);
         if (!Number.isFinite(duration) || duration <= 0) continue;

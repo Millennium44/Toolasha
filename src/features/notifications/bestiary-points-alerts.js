@@ -10,12 +10,13 @@
  * request on a timer is a server call the player did not make. A real reading is the baseline.
  * Between readings the counts are *estimated* from kills the combat stream already shows:
  *
- * - `new_battle` names the wave: `monsters` keyed by slot, each with its `hrid` and
- *   `currentHitpoints`, and `players` (the party size).
+ * - `new_battle` names the wave: `monsters` keyed by slot, each with its `hrid`,
+ *   `difficultyTier` and `currentHitpoints`, and `players` (the party size).
  * - `battle_updated` carries `mMap`, a delta of `{cHP}` per slot. A slot whose `cHP` reaches 0
  *   while it was alive is one kill.
- * - A kill credits `creditsPerKill({difficultyTier, partySize})` (tier from the running combat
- *   action, as the sim and the Bestiary planner do), added to that monster's last real count.
+ * - A kill credits `creditsPerKill({difficultyTier, partySize})` at the monster's own tier, which
+ *   is the zone's plus its spawn row's, and never below the running combat action's, added to that
+ *   monster's last real count.
  *
  * A real reading replaces the estimate entirely, so drift never outlives one reading. Guild trial
  * monsters (`/monsters/trial_*`) are not tier-weighted at all (see `bestiary.js`), so they are
@@ -246,7 +247,12 @@ class BestiaryPointsAlerts {
             const hrid = unit?.hrid ?? unit?.combatMonsterHrid;
             if (typeof hrid !== 'string') continue;
             const hp = Number(unit?.currentHitpoints ?? unit?.combatDetails?.currentHitpoints);
-            this.slots.set(slot, { hrid, alive: !(Number.isFinite(hp) && hp <= 0) });
+            const tier = Number(unit?.difficultyTier);
+            this.slots.set(slot, {
+                hrid,
+                alive: !(Number.isFinite(hp) && hp <= 0),
+                tier: Number.isInteger(tier) ? tier : 0,
+            });
         }
         this.partySize = Math.max(1, unitEntries(data?.players).length);
     }
@@ -269,7 +275,10 @@ class BestiaryPointsAlerts {
             if (!Number.isFinite(hp) || hp > 0) continue;
             known.alive = false;
             if (!action || known.hrid.startsWith(TRIAL_MONSTER_PREFIX)) continue;
-            const credit = creditsPerKill({ difficultyTier: action.difficultyTier || 0, partySize: this.partySize });
+            const credit = creditsPerKill({
+                difficultyTier: Math.max(known.tier || 0, action.difficultyTier || 0),
+                partySize: this.partySize,
+            });
             this.credits[known.hrid] = (this.credits[known.hrid] || 0) + credit;
             killed = true;
         }

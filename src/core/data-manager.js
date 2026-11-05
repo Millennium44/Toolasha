@@ -3186,6 +3186,14 @@ class DataManager {
     }
 
     /**
+     * When the Bestiary was last fetched.
+     * @returns {number|null} Epoch milliseconds, null before the first reading
+     */
+    getCharacterMonstersAt() {
+        return this.characterMonstersAt || null;
+    }
+
+    /**
      * The Collections log as last fetched: one row per collected item with its count.
      * @returns {Array<{characterID?: number, itemHrid: string, count: number, enhancementData?: string}>|null}
      *   Null until the Achievements → Collections tab has loaded it this session
