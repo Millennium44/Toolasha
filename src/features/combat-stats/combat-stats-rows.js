@@ -33,7 +33,14 @@ import {
 } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrices } from '../../utils/market-data.js';
-import { forecastAll, costPerDaySides, partyOutlook, drinkRatePerDay } from '../../utils/consumable-forecast.js';
+import {
+    forecastAll,
+    firstToRunOut,
+    costPerDaySides,
+    partyOutlook,
+    drinkRatePerDay,
+} from '../../utils/consumable-forecast.js';
+import { isSkillingActionType, runningActionTypeHrid, skillingConsumables } from '../../utils/skilling-consumables.js';
 import { currentTarget, loadTarget } from '../../utils/consumable-target.js';
 import combatStatsDataCollector from './combat-stats-data-collector.js';
 import { calculatePlayerStats, describeLuckAdjustment } from './combat-stats-calculator.js';
@@ -479,7 +486,7 @@ registerRow({
  */
 registerRow({
     key: 'consumables',
-    empty: 'Nothing slotted',
+    empty: 'No teas or food slotted',
     name: 'Consumables',
     // Each market side has its own line so unpriced-item counts fit.
     defaultSize: { width: 240, height: 92 },
@@ -491,6 +498,11 @@ registerRow({
     // because an icon drawn before the game has loaded the sheet is a spacer
     // that has to be replaced when the sheet turns up.
     version: () => {
+        // A skill running: the same builder the panel draws from, so the tile
+        // redraws when the activity, the teas or the rounded time changes
+        const skill = skillingPayload();
+        if (skill) return skill.view.forecasts.length ? skillingVersion(skill) : 'skilling-blank';
+
         const payload = consumablesPayload();
         if (!payload) return 'blank';
 
@@ -515,6 +527,9 @@ registerRow({
     },
     render: (container) => {
         container.removeAttribute('title');
+        const skill = skillingPayload();
+        if (skill) return skill.view.forecasts.length ? renderSkilling(container, skill) : blank(container);
+
         const payload = consumablesPayload();
         if (!payload) return blank(container);
 
@@ -557,36 +572,7 @@ registerRow({
         if (partyName) first.title = `${partyName} runs out first in the party.`;
         container.appendChild(first);
 
-        // The item that stops you: how many are left, then its icon, then its
-        // name — CRack's order, and the reason for it is the count. It is a
-        // stock figure rather than a sum of money, and "3.17K remaining" is a
-        // worse answer than "3,170" to the only question being asked, which is
-        // whether to top up now. Clicking any of the three opens the
-        // marketplace, which is where you go next when the answer is "soon".
-        const second = document.createElement('div');
-        Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
-
-        const count = document.createElement('span');
-        count.textContent = limiting.rateKnown ? formatWithSeparator(limiting.held) : '?';
-        count.style.color = runOutColor(limiting);
-        count.style.fontWeight = 'bold';
-
-        const icon = itemIcon(limiting.itemHrid, 16);
-
-        const name = document.createElement('span');
-        name.textContent = limiting.rateKnown
-            ? itemNameOf(limiting.itemHrid)
-            : `${itemNameOf(limiting.itemHrid)} · rate unknown`;
-        Object.assign(name.style, {
-            color: ROW_COLORS.dim,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-        });
-
-        for (const part of [count, icon, name]) linkToMarketplace(part, limiting.itemHrid, navigateToMarketplace);
-        second.append(count, icon, name);
-        container.appendChild(second);
+        container.appendChild(limitingLine(limiting));
 
         // The label above its figures rather than beside them, as CRack has it.
         // On a tile this narrow the two never fitted on one line anyway — they
@@ -625,6 +611,157 @@ registerRow({
     // which loads after this one
     onOpen: () => consumablesPanel()?.toggle(),
 });
+
+/**
+ * The item that stops you: how many are left, then its icon, then its name —
+ * CRack's order, and the reason for it is the count. It is a stock figure rather
+ * than a sum of money, and "3.17K remaining" is a worse answer than "3,170" to
+ * the only question being asked, which is whether to top up now. Clicking any
+ * of the three opens the marketplace, which is where you go next when the
+ * answer is "soon".
+ *
+ * @param {Object} limiting - A forecast entry
+ * @returns {HTMLElement}
+ */
+function limitingLine(limiting) {
+    const second = document.createElement('div');
+    Object.assign(second.style, { display: 'flex', alignItems: 'center', gap: '5px', overflow: 'hidden' });
+
+    const count = document.createElement('span');
+    count.textContent = limiting.rateKnown ? formatWithSeparator(limiting.held) : '?';
+    count.style.color = runOutColor(limiting);
+    count.style.fontWeight = 'bold';
+
+    const icon = itemIcon(limiting.itemHrid, 16);
+
+    const name = document.createElement('span');
+    name.textContent = limiting.rateKnown
+        ? itemNameOf(limiting.itemHrid)
+        : `${itemNameOf(limiting.itemHrid)} · rate unknown`;
+    Object.assign(name.style, {
+        color: ROW_COLORS.dim,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+    });
+
+    for (const part of [count, icon, name]) linkToMarketplace(part, limiting.itemHrid, navigateToMarketplace);
+    second.append(count, icon, name);
+    return second;
+}
+
+/**
+ * What the Consumables tile draws while a skill is running: the slotted teas,
+ * from the builder the panel uses. Null in combat, with nothing running, or
+ * while a labyrinth or special action runs, so those keep the tile as it was.
+ *
+ * Only your own teas: a skill has no party figure, and the tile says nothing of
+ * one.
+ *
+ * @returns {{type: string, view: Object, soonest: Object|null, limiting: Object|null,
+ *   unknown: number, sides: Object}|null}
+ */
+function skillingPayload() {
+    const type = runningActionTypeHrid();
+    if (!isSkillingActionType(type)) return null;
+
+    const view = skillingConsumables(type);
+    const forecasts = view.forecasts;
+    const soonest = firstToRunOut(forecasts);
+    return {
+        type,
+        view,
+        soonest,
+        limiting: soonest || forecasts.find((entry) => !entry.rateKnown) || forecasts[0] || null,
+        unknown: forecasts.filter((entry) => !entry.rateKnown).length,
+        sides: costPerDaySides(forecasts),
+    };
+}
+
+/**
+ * A day's cost at one side, as a per-day figure with its caveats beside it.
+ * @param {number|null} amount - Cost per day at this side
+ * @param {number} unpriced - Teas with no quote at this side
+ * @param {number} unknown - Teas without a rate
+ * @returns {string} e.g. `412K/day (1 unpriced)`; `—/day` when nothing could be priced
+ */
+function skillingCostText(amount, unpriced, unknown) {
+    const total = amount === null ? '—' : formatLargeNumber(Math.round(amount));
+    const notes = [unpriced ? `${unpriced} unpriced` : '', unknown ? `${unknown} rate unknown` : ''].filter(Boolean);
+    return `${total}/day${notes.length ? ` (${notes.join(', ')})` : ''}`;
+}
+
+/**
+ * Every input the skilling tile draws, at the precision it draws it.
+ * @param {Object} skill - From `skillingPayload`
+ * @returns {string}
+ */
+function skillingVersion(skill) {
+    const { type, view, soonest, limiting, unknown, sides } = skill;
+    return [
+        'skilling',
+        type,
+        view.forecasts.map((entry) => entry.itemHrid).join(','),
+        soonest ? `${shortDuration(soonest.secondsLeft)}@${runOutColor(soonest)}` : '--',
+        unknown,
+        limiting.itemHrid,
+        limiting.held,
+        runOutColor(limiting),
+        sides.ask === null ? 'unknown' : Math.round(sides.ask),
+        sides.bid === null ? 'unknown' : Math.round(sides.bid),
+        sides.askUnpriced || 0,
+        sides.bidUnpriced || 0,
+        sides.askUnknown || 0,
+        sides.bidUnknown || 0,
+        spriteUrl('items'),
+    ].join('|');
+}
+
+/**
+ * The skilling tile: how long your slotted teas last while the skill keeps
+ * running, a day of them at the Ask price (the first side this tile lists, and
+ * what buying costs), and the tea that runs out first. Two lines.
+ *
+ * @param {HTMLElement} container - The tile
+ * @param {Object} skill - From `skillingPayload`
+ */
+function renderSkilling(container, skill) {
+    const { view, soonest, limiting, unknown, sides } = skill;
+
+    container.replaceChildren();
+    Object.assign(container.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        alignItems: 'stretch',
+        textAlign: 'left',
+        lineHeight: '1.3',
+        overflow: 'hidden',
+    });
+
+    const first = document.createElement('div');
+    drawLine(first, [
+        { text: 'You:', color: ROW_COLORS.dim },
+        {
+            text: soonest ? `${shortDuration(soonest.secondsLeft)}${unknown ? ' + ?' : ''}` : 'rate unknown',
+            color: runOutColor(soonest),
+        },
+        {
+            text: `Ask ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}`,
+            color: ROW_COLORS.neutral,
+            push: true,
+        },
+    ]);
+    container.appendChild(first);
+    container.appendChild(limitingLine(limiting));
+
+    container.title =
+        `${view.label} teas: how long your slotted teas last while ${view.label} keeps running, ` +
+        `and what a day of them costs at the Ask price. Both assume it runs continuously.\n` +
+        `Ask: ${skillingCostText(sides.ask, sides.askUnpriced, sides.askUnknown)}\n` +
+        `Bid: ${skillingCostText(sides.bid, sides.bidUnpriced, sides.bidUnknown)}\n` +
+        'Click to open the Consumables panel.';
+}
 
 /**
  * Whether the character is fighting, doing something else, or idle.

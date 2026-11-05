@@ -230,6 +230,15 @@ const ALLOWLIST = new Map([
         'stateless running-action selectors; no module state to share',
     ],
     [
+        'src/utils/skilling-consumables.js',
+        // Pure functions over game state read at call time from shared core
+        // (drink slots, inventory, the character's concentration) and shared
+        // utils; nothing is cached here. Imported by the Consumables panel (ui)
+        // and the overlay's Consumables tile (combat), and every copy answers
+        // the same forecast for the same character.
+        'stateless skilling tea forecast; game state is read at call time from shared core',
+    ],
+    [
         'src/utils/calendar-days.js',
         // Pure date arithmetic (calendar-day windows that step across DST);
         // no module state. Imported by the task statistics (ui) and the task

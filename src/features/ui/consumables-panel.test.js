@@ -960,24 +960,30 @@ describe('a restock shows at once', () => {
             await settled();
 
             expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
-            expect(consumablesPanel.bodyEl.querySelector('select').value).toBe('Combat Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])').value).toBe(
+                'Combat Donut'
+            );
 
-            let loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            let loadoutSelect = consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])');
             loadoutSelect.value = 'All Skills';
             loadoutSelect.dispatchEvent(new Event('change'));
 
             expect(consumablesPanel.bodyEl.textContent).toContain('No food or drinks in this loadout.');
             expect(consumablesPanel.bodyEl.textContent).not.toContain('Blueberry Donut');
             expect(consumablesPanel.bodyEl.textContent).not.toContain('HeldItemPer day');
-            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('All Skills');
+            expect(consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])')?.value).toBe(
+                'All Skills'
+            );
             expect(consumablesPanel._buyQueues.find((queue) => queue.label === 'Idle plan')).toBeUndefined();
 
-            loadoutSelect = consumablesPanel.bodyEl.querySelector('select');
+            loadoutSelect = consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])');
             loadoutSelect.value = 'Combat Donut';
             loadoutSelect.dispatchEvent(new Event('change'));
 
             expect(consumablesPanel.bodyEl.textContent).toContain('Blueberry Donut');
-            expect(consumablesPanel.bodyEl.querySelector('select')?.value).toBe('Combat Donut');
+            expect(consumablesPanel.bodyEl.querySelector('select:not([data-skill-action-type])')?.value).toBe(
+                'Combat Donut'
+            );
         } finally {
             consumablesPanel.hide({ remember: false });
             consumablesPanel._idleLoadoutName = previousLoadoutPin;

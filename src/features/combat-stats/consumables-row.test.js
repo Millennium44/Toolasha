@@ -35,6 +35,7 @@ vi.mock('./combat-stats-calculator.js', () => ({
 }));
 vi.mock('../../utils/consumable-forecast.js', () => ({
     forecastAll: () => [],
+    firstToRunOut: () => null,
     drinkRatePerDay: () => 0,
     costPerDaySides: () => ({ ask: 14_100_000, bid: 13_600_000, askUnpriced: 0, bidUnpriced: 0 }),
     partyOutlook: () => game.outlook,

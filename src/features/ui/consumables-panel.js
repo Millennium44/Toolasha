@@ -67,6 +67,14 @@ import {
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
 import {
+    COMBAT_ACTION_TYPE,
+    actionTypeLabel,
+    isSkillingActionType,
+    runningActionTypeHrid,
+    skillingActionTypes,
+    skillingConsumables,
+} from '../../utils/skilling-consumables.js';
+import {
     buildReadiness,
     keyReadiness,
     memberLimit,
@@ -345,6 +353,12 @@ class ConsumablesPanel {
          */
         this._idlePinsGeneration = 0;
         /**
+         * The action type the panel is pointed at, or null to follow whatever is
+         * running. Session-only, never stored: it names a skill this character
+         * may not train, so it is dropped with the idle pins on a switch.
+         */
+        this._skillPin = null;
+        /**
          * Whose `_labFightAttempts` pool is in hand.
          *
          * The pool is read lazily on the first rush-floor draw and nothing
@@ -538,6 +552,9 @@ class ConsumablesPanel {
      */
     async reloadIdlePins() {
         const started = (this._idlePinsGeneration += 1);
+        // Synchronously, before the first await: the arriving character is not
+        // looking at the departing character's skill
+        this._skillPin = null;
         try {
             const loadoutName = await readScoped('consumablesIdleLoadout', 'settings', null, DISCARD_LEGACY);
             if (started !== this._idlePinsGeneration) return; // A newer switch already started its own read
@@ -2271,8 +2288,23 @@ class ConsumablesPanel {
         this._buyQueues = [];
         const players = this._players();
 
+        // Which action type this draws: a skill's teas, or (combat, and nothing
+        // running with no pin) the fight the panel has always shown
+        const running = runningActionTypeHrid();
+        const shownType = this._shownActionType(running);
+        const skilling = isSkillingActionType(shownType) ? shownType : null;
+        scratch.appendChild(this._skillPicker(shownType, running));
+
         const settings = this._renderInlineBuySettings();
         if (settings) scratch.appendChild(settings);
+
+        if (skilling) {
+            try {
+                scratch.appendChild(this._skillingSection(skilling));
+            } catch (error) {
+                console.error('[ConsumablesPanel] Building the skilling section failed:', error);
+            }
+        }
 
         // Before the players, because the readiness card is the pre-run
         // question and the player sections are the mid-run one — and it has to
@@ -2284,7 +2316,9 @@ class ConsumablesPanel {
             console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
         }
 
-        if (!players.length) {
+        // A skill's view carries no fight figures: a combat player's food and
+        // drinks must not sit under a Foraging heading
+        if (!skilling && !players.length) {
             // Nothing measured because nothing is being fought — but what the
             // next fight will drink is already decided by the default loadout,
             // and what it will eat by the last sim. Plan from those instead of
@@ -2300,7 +2334,7 @@ class ConsumablesPanel {
             }
         }
 
-        for (const player of players) scratch.appendChild(this._playerSection(player));
+        if (!skilling) for (const player of players) scratch.appendChild(this._playerSection(player));
 
         try {
             const lab = this._labSection();
@@ -2317,6 +2351,176 @@ class ConsumablesPanel {
         }
 
         this._syncBuyWidget();
+    }
+
+    /**
+     * The action types the picker offers: every skill with drink slots, combat,
+     * and the running one even when the game has stated no slots for it.
+     * @param {string|null} running - The running action type
+     * @returns {string[]}
+     */
+    _pickerTypes(running) {
+        const types = new Set(skillingActionTypes());
+        types.add(COMBAT_ACTION_TYPE);
+        if (running) types.add(running);
+        return [...types].sort((a, b) => actionTypeLabel(a).localeCompare(actionTypeLabel(b)));
+    }
+
+    /**
+     * The action type on screen: the pin when it is still on offer, else the
+     * running one, else null (the combat view, as before).
+     * @param {string|null} running - The running action type
+     * @returns {string|null}
+     */
+    _shownActionType(running) {
+        if (this._skillPin && this._pickerTypes(running).includes(this._skillPin)) return this._skillPin;
+        return running || null;
+    }
+
+    /**
+     * The action-type picker and what is running, worded as the Buff Board's.
+     * @param {string|null} shown - The action type on screen
+     * @param {string|null} running - The action type being worked on
+     * @returns {HTMLElement}
+     */
+    _skillPicker(shown, running) {
+        const wrap = document.createElement('div');
+        wrap.dataset.skillPicker = 'true';
+        Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '3px', marginBottom: '10px' });
+
+        const pinned = this._skillPin && this._pickerTypes(running).includes(this._skillPin) ? this._skillPin : '';
+        const options = [
+            { value: '', label: 'Whatever I am doing' },
+            ...this._pickerTypes(running).map((hrid) => ({
+                value: hrid,
+                label: hrid === running ? `${actionTypeLabel(hrid)} (running)` : actionTypeLabel(hrid),
+            })),
+        ];
+        const select = this._idleSelect(
+            options,
+            pinned,
+            'Which action type the consumables below are for. Skills show their slotted teas; Combat shows the fight.',
+            (value) => {
+                this._skillPin = value || null;
+            }
+        );
+        select.dataset.skillActionType = 'true';
+        select.style.maxWidth = '220px';
+        wrap.appendChild(select);
+
+        const caption = document.createElement('div');
+        caption.style.color = COLORS.textDim;
+        caption.style.fontSize = '11px';
+        caption.textContent = running
+            ? `Running: ${actionTypeLabel(running)}${shown && shown !== running ? ` — showing ${actionTypeLabel(shown)}` : ''}`
+            : shown
+              ? `Nothing running — showing ${actionTypeLabel(shown)}`
+              : 'Nothing running.';
+        wrap.appendChild(caption);
+        return wrap;
+    }
+
+    /**
+     * A skill's slotted teas, drawn like a player's section.
+     *
+     * Own character only. Per-day and what-to-buy figures assume the skill runs
+     * continuously, and the section says so.
+     *
+     * @param {string} actionTypeHrid - e.g. `/action_types/foraging`
+     * @returns {HTMLElement}
+     */
+    _skillingSection(actionTypeHrid) {
+        const view = skillingConsumables(actionTypeHrid);
+        const section = document.createElement('div');
+        section.dataset.skillingSection = actionTypeHrid;
+        section.style.marginBottom = '12px';
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, {
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: '8px',
+            borderBottom: `1px solid ${COLORS.border}`,
+            paddingBottom: '3px',
+            marginBottom: '5px',
+        });
+        const name = document.createElement('span');
+        name.textContent = `${view.label} teas`;
+        name.style.fontWeight = 'bold';
+        name.style.color = COLORS.dataAccent;
+        heading.appendChild(name);
+        section.appendChild(heading);
+
+        const note = (text) => {
+            const element = document.createElement('div');
+            element.textContent = text;
+            Object.assign(element.style, { color: COLORS.textDim, padding: '3px 0' });
+            return element;
+        };
+
+        if (!view.ready) {
+            section.appendChild(note('Waiting for your character data to load.'));
+            return section;
+        }
+        if (!view.forecasts.length) {
+            section.appendChild(
+                note(
+                    `No teas are slotted for ${view.label}. Slot one on the ${view.label} action panel ` +
+                        'and its stock, daily cost and shortfall will be tracked here.'
+                )
+            );
+            return section;
+        }
+
+        const forecasts = view.forecasts;
+        const soonest = firstToRunOut(forecasts);
+        const sides = costPerDaySides(forecasts);
+        const need = refillAll(forecasts, this.target.seconds);
+        const shortfall = forecasts
+            .map((entry) => ({
+                ...refillFor(entry, this.target.seconds),
+                itemHrid: entry.itemHrid,
+                name: entry.name,
+                secondsLeft: entry.secondsLeft,
+            }))
+            .filter((item) => item.count > 0);
+        this._registerBuyQueue(`${view.label} teas`, shortfall);
+
+        const stops = document.createElement('span');
+        stops.style.marginLeft = 'auto';
+        const unknownRates = forecasts.filter((entry) => !entry.rateKnown).length;
+        if (view.frozen) {
+            // A skill that is not running consumes nothing, and its timers do not move
+            stops.textContent = `not running — frozen, ${formatWithSeparator(view.held)} held`;
+            stops.style.color = COLORS.textDim;
+        } else if (soonest) {
+            stops.textContent = unknownRates
+                ? `known: stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name} · ${unknownRates} rate unknown`
+                : `stops in ${shortDuration(soonest.secondsLeft)} · ${soonest.name}`;
+            stops.style.color = unknownRates
+                ? COLORS.textDim
+                : soonest.secondsLeft < this.target.seconds
+                  ? ROW_COLORS.bad
+                  : ROW_COLORS.good;
+        } else {
+            stops.textContent = `rate unknown for ${unknownRates} item${unknownRates === 1 ? '' : 's'}`;
+            stops.style.color = COLORS.textDim;
+        }
+        heading.appendChild(stops);
+
+        section.appendChild(
+            note(
+                `Drink concentration ${(view.concentration * 100).toFixed(1).replace(/\.0$/, '')}%` +
+                    (view.concentrationSource === 'character' ? '' : ` (from ${view.label} gear)`) +
+                    `. Per-day and Buy figures assume ${view.label} runs continuously` +
+                    (view.frozen ? `; it is not running, so "Lasts" counts ${view.label} time, not clock time.` : '.')
+            )
+        );
+
+        section.appendChild(this._columnHeadings());
+        for (const entry of forecasts) section.appendChild(this._entryRow(entry, entry === soonest));
+        section.appendChild(this._footer(sides, need, shortfall));
+        return section;
     }
 
     /**
