@@ -2839,8 +2839,6 @@ class OverlayPanel {
         // pinned, which for a 1-column pin flattens every span back to one.
         this.settings.columns = 2;
         this.settings.columnsPinned = false;
-        // Unpinned, so the width decides; wider grids want their own spans
-        this.settings.span = presetSpans('Dashboard', this._columns());
         this.settings.zoom = {};
         this.settings.textScale = 100;
 
@@ -2851,6 +2849,9 @@ class OverlayPanel {
         // The design size is a desktop's; on a phone it is wider than the screen
         this._clampToViewport();
         this._applyColumns();
+        // Unpinned, so the width decides, and it is the width Reset just gave the panel (measured
+        // before the resize it was the old, possibly 9-column, width)
+        this.settings.span = presetSpans('Dashboard', this._columns());
 
         this._save();
         this._renderBody();
