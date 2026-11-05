@@ -239,6 +239,13 @@ const ALLOWLIST = new Map([
         'stateless skilling tea forecast; game state is read at call time from shared core',
     ],
     [
+        'src/utils/action-type-order.js',
+        // Sorts action type hrids by the game's own sortIndex, read at call time
+        // from the shared data manager; nothing is cached here. Imported by the
+        // actions, combat and ui pickers, and every copy sorts alike.
+        'stateless action type sorter; sort index is read at call time from shared core',
+    ],
+    [
         'src/utils/calendar-days.js',
         // Pure date arithmetic (calendar-day windows that step across DST);
         // no module state. Imported by the task statistics (ui) and the task
