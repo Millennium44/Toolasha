@@ -30,6 +30,11 @@ export default defineConfig({
         // game (and sometimes several concurrent agent suites) share the same
         // machine, and a full-width worker pool starves the foreground tab.
         maxWorkers: '50%',
+        // Worker threads, not child processes: starting a process per test file is what the suite
+        // spent its time on under Windows. Measured 2026-11-06 on 16 cores at 8 workers: forks 5m36s,
+        // threads 2m12s (three full runs, all passing). More fork workers barely helped (16: 5m19s).
+        // Each file still gets a fresh module graph (isolate stays on); only the worker is reused.
+        pool: 'threads',
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
