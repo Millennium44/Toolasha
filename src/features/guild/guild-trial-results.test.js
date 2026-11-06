@@ -331,7 +331,7 @@ describe('trialResultsHistory', () => {
         expect(trialHistoryCells(rows[0])).toMatch(/^T4 · T2 · best T4/);
     });
 
-    test('a test-server piece an older build cut at the weekly reset is labelled by its cycle end, not "Last week"', () => {
+    test('a test-server piece an older build cut at the weekly reset is labelled by the day its trial ran, not "Last week"', () => {
         game.testServer = true;
         // The daily boundaries are cycleFrom values a day apart; the piece was archived 3 h after one boundary,
         // with no cycleFrom, so its cycle ended at the next boundary
@@ -347,12 +347,11 @@ describe('trialResultsHistory', () => {
         const { cycles } = trialResultsHistory(results, { now });
         const labels = cycles.map((c) => c.label);
         expect(labels.some((label) => /last week/i.test(label))).toBe(false);
-        const end = new Date(boundary + DAY).toLocaleString('en-US', {
-            weekday: 'short',
-            hour: 'numeric',
-            minute: '2-digit',
-        });
-        expect(labels).toContain(end);
+        const fmt = (ms) =>
+            new Date(ms).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        // Columns are named by when the trial ran: the piece's trial began at the boundary; the cycle that ended at
+        // the boundary began a day before it
+        expect(labels).toEqual([fmt(boundary), fmt(boundary - DAY)]);
     });
 
     test('more cycles than fit inline say how many more there are', () => {

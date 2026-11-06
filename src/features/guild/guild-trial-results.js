@@ -66,6 +66,7 @@ import { isTestServer } from '../../utils/game-server.js';
 
 /** A test-server trial cycle: one a day */
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Finished cycles kept on live, where a cycle is a week: a year of them */
@@ -865,13 +866,21 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
         const began = starts.filter((start) => start <= archivedAt && archivedAt - start < DAY_MS);
         return began.length ? Math.max(...began) + DAY_MS : null;
     };
+    // On the test server a column is named by when its trial RAN (its start), not when the cycle ended: a cycle
+    // that ran Thursday ends Friday at 3 PM, and "Fri" read as today's trial. The start is the boundary before the
+    // end — the previous cycle's end, when known (a clock change makes it 23 or 25 h), else a day earlier
+    const startOf = (end) => {
+        const before = starts.filter((start) => start < end && end - start <= DAY_MS + HOUR_MS);
+        return before.length ? Math.max(...before) : end - DAY_MS;
+    };
     const cycles = [...cycleMap.values()]
         .sort((a, b) => (a.order[0] !== b.order[0] ? b.order[0] - a.order[0] : b.order[1] - a.order[1]))
         .map((cycle) => {
-            const pieceEnd = cycle.cycleFrom === null ? endOfPiece(cycle.archivedAt) : null;
+            const end = cycle.cycleFrom ?? endOfPiece(cycle.archivedAt);
+            const ran = isTestServer() && Number.isFinite(end) ? startOf(end) : null;
             return {
                 key: cycle.key,
-                label: pieceEnd === null ? cycleLabel(cycle, now) : cycleLabel({ ...cycle, cycleFrom: pieceEnd }, now),
+                label: ran === null ? cycleLabel(cycle, now) : cycleLabel({ ...cycle, cycleFrom: ran }, now),
             };
         });
 
