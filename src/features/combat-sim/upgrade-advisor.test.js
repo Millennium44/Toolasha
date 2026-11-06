@@ -981,6 +981,89 @@ describe('generateCandidates ability_level next_multiple', () => {
     });
 });
 
+describe('generateCandidates ability_level steps', () => {
+    const gen = (levels, size, type, steps, targets = null) => {
+        const gameData = buildGameData();
+        gameData.abilityDetailMap = Object.fromEntries(
+            ['frenzy', 'puncture'].map((k) => [`/abilities/${k}`, { name: k[0].toUpperCase() + k.slice(1) }])
+        );
+        const player = {
+            equipment: {},
+            abilities: levels.map((e) => (e ? { hrid: `/abilities/${e[0]}`, level: e[1] } : null)),
+        };
+        return generateCandidates(
+            player,
+            gameData,
+            'ability_level',
+            size,
+            type,
+            false,
+            null,
+            targets,
+            0,
+            null,
+            null,
+            0,
+            {
+                abilitySteps: steps,
+            }
+        );
+    };
+    const lv = (c) => c.map((x) => x.upgradeLevel);
+
+    test('steps 1, absent, blank, zero, negative and NaN give exactly the single row of today', () => {
+        for (const steps of [1, undefined, null, 0, -2, NaN, '']) {
+            expect(lv(gen([['puncture', 70]], 5, 'increment', steps))).toEqual([75]);
+            expect(lv(gen([['puncture', 62]], 5, 'next_multiple', steps))).toEqual([65]);
+        }
+    });
+
+    test('increment: +5, +10, +15 each labelled with its own level', () => {
+        const c = gen([['puncture', 70]], 5, 'increment', 3);
+        expect(lv(c)).toEqual([75, 80, 85]);
+        expect(c[2].description).toBe('Puncture Lv70 → Lv85');
+        expect(new Set(c.map((x) => x.slot))).toEqual(new Set(['ability_0']));
+    });
+
+    test('next_multiple: the next three multiples from 62, and a full step up from a multiple', () => {
+        expect(lv(gen([['puncture', 62]], 5, 'next_multiple', 3))).toEqual([65, 70, 75]);
+        expect(lv(gen([['puncture', 70]], 5, 'next_multiple', 3))).toEqual([75, 80, 85]);
+    });
+
+    test('steps never pass the max level; an ability at the max gets none', () => {
+        expect(lv(gen([['puncture', 190]], 5, 'increment', 5))).toEqual([195, 200]);
+        expect(lv(gen([['puncture', 195]], 10, 'increment', 3))).toEqual([200]);
+        expect(lv(gen([['puncture', 198]], 5, 'next_multiple', 3))).toEqual([200]);
+        expect(gen([['puncture', 200]], 5, 'increment', 3)).toEqual([]);
+        expect(gen([['puncture', 200]], 5, 'next_multiple', 3)).toEqual([]);
+    });
+
+    test('steps are capped at 5 and truncated', () => {
+        expect(lv(gen([['puncture', 10]], 5, 'increment', 99))).toEqual([15, 20, 25, 30, 35]);
+        expect(lv(gen([['puncture', 10]], 5, 'increment', 2.9))).toEqual([15, 20]);
+    });
+
+    test('target mode and open Targets ignore steps; two slots each get their own rows', () => {
+        expect(lv(gen([['puncture', 66]], 80, 'target', 3))).toEqual([80]);
+        expect(lv(gen([['puncture', 66]], 5, 'increment', 3, { '/abilities/puncture': 90 }))).toEqual([90]);
+        const c = gen(
+            [
+                ['frenzy', 61],
+                ['puncture', 70],
+            ],
+            5,
+            'increment',
+            2
+        );
+        expect(c.map((x) => [x.slot, x.upgradeLevel])).toEqual([
+            ['ability_0', 66],
+            ['ability_0', 71],
+            ['ability_1', 75],
+            ['ability_1', 80],
+        ]);
+    });
+});
+
 describe('findMatchingCharmForSkill', () => {
     const CHARM = '/equipment_types/charm';
     function charmGameData() {

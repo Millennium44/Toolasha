@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'vitest';
-import { nextMultipleLevel, abilityLevelBoxHints, DEFAULT_LEVEL_STEP } from './ability-level-step.js';
+import {
+    nextMultipleLevel,
+    abilityLevelBoxHints,
+    DEFAULT_LEVEL_STEP,
+    abilityStepLevels,
+    normalizeLevelSteps,
+} from './ability-level-step.js';
 
 describe('nextMultipleLevel', () => {
     test('rounds up to the next multiple, a full step from a multiple', () => {
@@ -30,5 +36,24 @@ describe('abilityLevelBoxHints', () => {
         expect(abilityLevelBoxHints('increment').placeholder).toBe('+5');
         expect(abilityLevelBoxHints('target').value).toBe('');
         expect(abilityLevelBoxHints('next_multiple')).toMatchObject({ value: '5', placeholder: '5' });
+    });
+});
+
+describe('abilityStepLevels', () => {
+    test('one step is the single legacy level, clamped to the cap', () => {
+        expect(abilityStepLevels(70, 'increment', 5, 1, 200)).toEqual([75]);
+        expect(abilityStepLevels(198, 'increment', 5, 1, 200)).toEqual([200]);
+        expect(abilityStepLevels(62, 'next_multiple', 5, 1, 200)).toEqual([65]);
+    });
+    test('several steps stride on, and stop at the cap', () => {
+        expect(abilityStepLevels(62, 'next_multiple', 5, 3, 200)).toEqual([65, 70, 75]);
+        expect(abilityStepLevels(70, 'increment', 5, 3, 200)).toEqual([75, 80, 85]);
+        expect(abilityStepLevels(190, 'increment', 5, 5, 200)).toEqual([195, 200]);
+        expect(abilityStepLevels(200, 'increment', 5, 3, 200)).toEqual([]);
+    });
+    test('normalizeLevelSteps', () => {
+        expect([0, -1, NaN, '', undefined, null, 1.9, 5, 6, '3'].map(normalizeLevelSteps)).toEqual([
+            1, 1, 1, 1, 1, 1, 1, 5, 5, 3,
+        ]);
     });
 });

@@ -1395,6 +1395,38 @@ describe('the panel', () => {
             expect(targets()).toEqual({ frenzy: '200' });
         });
 
+        test('Steps box: shown for +Levels and Next mult. of, hidden for Target Lv, reset with the mode, and handed to the run', async () => {
+            const steps = () => ui.panel.querySelector('#mwi-csim-upgrade-steps');
+            const group = () => ui.panel.querySelector('#mwi-csim-upgrade-steps-group');
+            expect(steps().value).toBe('1');
+            expect(group().title).toMatch(/one more simulation per ability/);
+            pick('target');
+            expect(group().style.display).toBe('none');
+            pick('next_multiple');
+            expect(group().style.display).not.toBe('none');
+
+            steps().value = '9';
+            steps().dispatchEvent(new Event('change', { bubbles: true }));
+            expect(steps().value).toBe('5');
+            steps().value = '0';
+            steps().dispatchEvent(new Event('change', { bubbles: true }));
+            expect(steps().value).toBe('1');
+
+            selectZone();
+            ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;
+            steps().value = '3';
+            let seen = null;
+            mocks.onRun = (params) => {
+                seen = params;
+            };
+            await ui._onUpgradeAnalyze();
+            expect(seen.abilitySteps).toBe(3);
+
+            pick('target');
+            await ui._onUpgradeAnalyze();
+            expect(seen.abilitySteps).toBe(1);
+        });
+
         test('the run hands the finder the mode and the step', async () => {
             selectZone();
             ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;

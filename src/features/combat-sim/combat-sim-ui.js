@@ -123,7 +123,13 @@ import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { sharedProfileSummary } from '../../utils/shared-profile-status.js';
 import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/game-maximums.js';
-import { nextMultipleLevel, abilityLevelBoxHints } from '../../utils/ability-level-step.js';
+import {
+    nextMultipleLevel,
+    abilityLevelBoxHints,
+    normalizeLevelSteps,
+    MAX_LEVEL_STEPS,
+    LEVEL_STEPS_TITLE,
+} from '../../utils/ability-level-step.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -3220,6 +3226,12 @@ const MODE_OPTIONS = {
             <input id="mwi-csim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" placeholder="+5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Number of levels to add to each ability">
+            <label id="mwi-csim-upgrade-steps-group" title="${LEVEL_STEPS_TITLE}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="mwi-csim-upgrade-steps" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${LEVEL_STEPS_TITLE}">
+            </label>
             <button id="mwi-csim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`;
     },
@@ -4335,6 +4347,10 @@ class CombatSimUI {
             input.value = hints.value;
             input.placeholder = hints.placeholder;
             input.title = hints.title;
+            this._syncStepsBox();
+        });
+        this.panel.querySelector('#mwi-csim-upgrade-steps').addEventListener('change', (e) => {
+            e.target.value = String(normalizeLevelSteps(e.target.value));
         });
         this.panel.querySelector('#mwi-csim-upgrade-target-level').addEventListener('change', (e) => {
             const val = parseInt(e.target.value);
@@ -5077,6 +5093,7 @@ class CombatSimUI {
         this._wireCsvButton(button, stem, build);
 
         bar.appendChild(button);
+
         container.insertBefore(bar, container.firstChild);
     }
 
@@ -10598,6 +10615,19 @@ class CombatSimUI {
         input.value = hints.value;
         input.placeholder = hints.placeholder;
         input.title = hints.title;
+        const steps = this.panel.querySelector('#mwi-csim-upgrade-steps');
+        if (steps) steps.value = '1';
+        this._syncStepsBox();
+    }
+
+    /**
+     * The Steps box applies to +Levels and Next mult. of, not to an absolute Target Lv.
+     * @private
+     */
+    _syncStepsBox() {
+        const group = this.panel.querySelector('#mwi-csim-upgrade-steps-group');
+        const type = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value;
+        if (group) group.style.display = type === 'target' ? 'none' : 'inline-flex';
     }
 
     /**
@@ -10658,6 +10688,7 @@ class CombatSimUI {
             levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
         }
         levelType.style.display = isLevelMode ? '' : 'none';
+        this._syncStepsBox();
         levelInput.title =
             isLevelMode && isCombatLevelMode
                 ? 'Levels added to each ability and each combat skill'
@@ -11235,6 +11266,11 @@ class CombatSimUI {
             maxLevel(),
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
+        // Steps only mean something to the uniform +Levels and Next-multiple candidates
+        const abilitySteps =
+            upgradeModes.includes('ability_level') && abilityLevelType !== 'target'
+                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-upgrade-steps')?.value)
+                : 1;
         let charmTier = null;
         let charmEnhancement = null;
         if (upgradeModes.includes('combat_level')) {
@@ -11398,6 +11434,7 @@ class CombatSimUI {
                     optimizeFood: upgradeModes.includes('food'),
                     abilityLevelType,
                     abilityTargetLevel,
+                    abilitySteps,
                     skipBackSlot,
                     combatLevelTargets,
                     abilityTargets,

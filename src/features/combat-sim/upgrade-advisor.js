@@ -52,7 +52,7 @@ import {
     maxLevel,
     maxGuildShrineLevel,
 } from '../../utils/game-maximums.js';
-import { nextMultipleLevel } from '../../utils/ability-level-step.js';
+import { abilityStepLevels } from '../../utils/ability-level-step.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
@@ -1034,7 +1034,7 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates, isS
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels), 'target' (absolute level) or 'next_multiple' (N is a step)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
- * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, skipSkillingRooms, communityBuffTargetLevel,
+ * @param {Object} [options] - `{ abilitySteps, auraSwapsOnly, houseWinRateOnly, skipSkillingRooms, communityBuffTargetLevel,
  *   guildShrineTargets, isSelf }`. `houseWinRateOnly` narrows the house set to rooms that can move
  *   a fight's outcome, for an analysis ranked on win rate alone; `skipSkillingRooms` applies that
  *   same narrower set to the ordinary advisor; `communityBuffTargetLevel` buys several buff levels
@@ -1422,32 +1422,40 @@ export function generateCandidates(
                 // Level upgrade candidate. Per-ability targets (when set)
                 // replace the uniform increment/target — abilities without an
                 // entry or at/below their current level are skipped
-                let targetLevel;
+                // The uniform +Levels and Next-multiple modes can offer several
+                // levels per ability (the Steps box); the others offer one
+                let targetLevels;
                 if (abilityTargetsMap) {
-                    targetLevel = Math.floor(abilityTargetsMap[ability.hrid] || 0);
-                } else if (abilityLevelType === 'next_multiple') {
-                    // abilityTargetLevel is the step here; one already on a multiple goes up a full step
-                    targetLevel = nextMultipleLevel(ability.level, abilityTargetLevel, maxLevel(gameData));
+                    targetLevels = [Math.floor(abilityTargetsMap[ability.hrid] || 0)];
                 } else if (abilityLevelType === 'target') {
-                    targetLevel =
+                    targetLevels = [
                         abilityTargetLevel > ability.level
                             ? abilityTargetLevel
-                            : getNextAbilityBreakpoint(ability.level);
+                            : getNextAbilityBreakpoint(ability.level),
+                    ];
                 } else {
-                    const increment = abilityTargetLevel > 0 ? abilityTargetLevel : 5;
-                    targetLevel = ability.level + increment;
+                    // For next_multiple abilityTargetLevel is the multiple; one already on one goes up a full step
+                    targetLevels = abilityStepLevels(
+                        ability.level,
+                        abilityLevelType === 'next_multiple' ? 'next_multiple' : 'increment',
+                        abilityTargetLevel,
+                        options.abilitySteps,
+                        maxLevel(gameData)
+                    );
                 }
-                targetLevel = Math.min(targetLevel, maxLevel(gameData));
-                if (targetLevel > ability.level) {
-                    candidates.push({
-                        slot: `ability_${slotIdx}`,
-                        currentHrid: ability.hrid,
-                        currentLevel: ability.level,
-                        upgradeHrid: ability.hrid,
-                        upgradeLevel: targetLevel,
-                        description: `${abilityName} Lv${ability.level} → Lv${targetLevel}`,
-                        type: 'ability_level',
-                    });
+                for (const rawLevel of targetLevels) {
+                    const targetLevel = Math.min(rawLevel, maxLevel(gameData));
+                    if (targetLevel > ability.level) {
+                        candidates.push({
+                            slot: `ability_${slotIdx}`,
+                            currentHrid: ability.hrid,
+                            currentLevel: ability.level,
+                            upgradeHrid: ability.hrid,
+                            upgradeLevel: targetLevel,
+                            description: `${abilityName} Lv${ability.level} → Lv${targetLevel}`,
+                            type: 'ability_level',
+                        });
+                    }
                 }
             } else {
                 // Swap candidates: other compatible abilities not already equipped.
@@ -4673,7 +4681,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 /**
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
- *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
+ *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, abilitySteps (levels offered per ability in the
+ *   +Levels and Next-multiple modes, default 1), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
@@ -4697,6 +4706,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         upgradeMode,
         abilityLevelType,
         abilityTargetLevel,
+        abilitySteps = 1,
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
@@ -4752,7 +4762,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
