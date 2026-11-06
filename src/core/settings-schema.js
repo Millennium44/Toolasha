@@ -1055,6 +1055,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            inventoryTooltipBeside: {
+                id: 'inventoryTooltipBeside',
+                label: 'Keep inventory tooltips off the hovered item',
+                type: 'checkbox',
+                default: true,
+                help: "When an inventory item's tooltip is too tall to fit above or below the item, it opens to the left or right of the item, whichever has more room, instead of covering it. Tooltips that fit above or below stay where the game puts them. Off on phones.",
+            },
             shop_maxBuyButton: {
                 id: 'shop_maxBuyButton',
                 label: "Shop: Add 'Max' buy buttons",

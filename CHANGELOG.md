@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltips no longer cover the item
+
+When an inventory item's tooltip is too tall to fit above or below the item, it now opens to the left or right of the item, whichever side has more room, instead of covering it. Tooltips that already fit above or below stay where the game puts them. Turn it off with "Keep inventory tooltips off the hovered item".
+
 ### Ability books count as Current Assets for new players
 
 "Count ability books as inventory" now starts on for new players, so unread books show under Current Assets. Existing players keep their current split and the update popup offers the switch once. Total net worth is the same either way.
