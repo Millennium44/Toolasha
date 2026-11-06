@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade details drop the "cached rooms" line
+
+The upgrade details no longer show "would stale N cached rooms, M within 2pp of their bar", which was about the Labyrinth sim's saved results and not something to act on.
+
 ### Loadout slot tooltips use the slot's enhancement level
 
 Hovering gear in the Loadouts panel now reads the item at the level the loadout uses (your highest owned with "Use highest enhancement level", otherwise the saved level), so a +20 piece shows its +20 name, stats, price and enhancement path instead of the plain item's figures. When no +20 price is known, the game's Market Price line is hidden rather than showing the plain item's.
