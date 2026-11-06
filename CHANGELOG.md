@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Philo calculator shows input cost per stone and fills its panel
+
+A new Input Cost/Philo column multiplies Items/Philo by the item's cost, so you can set what the inputs for one stone cost beside the philo price. The table now runs edge to edge inside the panel, and the panel uses 95% of the window on wide screens instead of stopping at 1900 pixels.
+
 ### Combat Sim keeps up with your level-ups
 
 Your own row in the Combat and Lab sims now picks up ability, skill and gear enhancement level-ups as they happen, instead of waiting for Reset to Me. Any level you typed in by hand stays as you set it, and other players' rows are left alone.

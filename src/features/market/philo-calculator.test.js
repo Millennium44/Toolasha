@@ -244,6 +244,16 @@ beforeEach(() => {
     calc.loadDefaultPrices();
 });
 
+describe('input cost per philo', () => {
+    test('is the items used up per stone times the item cost, net of the copies that come back', () => {
+        const row = calc.calculateRow(WIDGET_HRID, widget());
+        expect(row.itemsPerPhilo).toBeGreaterThan(0);
+        expect(row.inputCostPerPhilo).toBeCloseTo(row.itemsPerPhilo * row.cost, 6);
+        // Cheaper than every transmute's full charge, since returned copies go back in
+        expect(row.inputCostPerPhilo).toBeLessThan(row.transmuteCost * row.actionsPerPhilo);
+    });
+});
+
 describe('revenue', () => {
     test('every sold drop pays market tax; the self-return does not', () => {
         const row = calc.calculateRow(WIDGET_HRID, widget());
@@ -1194,6 +1204,7 @@ describe('untradable items with no price', () => {
             'costPerHour',
             'ev',
             'revenuePerHour',
+            'inputCostPerPhilo',
         ]) {
             expect(row[key]).toBeNull();
         }

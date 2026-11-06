@@ -104,6 +104,11 @@ const TABLE_COLUMNS = [
     { key: 'actionsPerPhilo', label: 'Acts/Philo' },
     { key: 'itemsPerPhilo', label: 'Items/Philo' },
     {
+        key: 'inputCostPerPhilo',
+        label: 'Input Cost/Philo',
+        title: 'Items/Philo × the item cost: what the items used up for one stone cost, to set beside the philo price. Catalyst, tea and coin fees are not in it.',
+    },
+    {
         key: 'profitPerPhiloInstant',
         label: 'Profit/Philo (instant | patient)',
         title: 'Left: stones sold into standing bids. Right: stones listed and waited out at ask. Sorts on instant.',
@@ -1145,6 +1150,8 @@ class PhiloCalculator {
             itemsPerAction,
             actionsPerPhilo,
             itemsPerPhilo,
+            // Net of the copies that come back, so it reads directly against the philo price
+            inputCostPerPhilo: costDerived(itemsPerPhilo * itemCost),
             profitPerPhilo: costDerived(profitPerPhilo),
             profitPerPhiloInstant: costDerived(profitPerPhiloInstant),
             profitPerPhiloPatient: costDerived(profitPerPhiloPatient),
@@ -1279,12 +1286,11 @@ class PhiloCalculator {
             color: ${GAME_COLORS.text};
             border-radius: ${GAME_FRAME.borderRadius};
             width: 95%;
-            /* The table carries fifteen columns; 1200px clipped the last two
+            /* The table carries eighteen columns; 1200px clipped the last two
                (Time/Philo and Profit/Hr) on a wide screen while leaving the
-               viewport unused. Grow to whatever the table needs up to the
-               viewport, and keep the 95% floor so a narrow window still gets
-               its margins. */
-            max-width: min(1900px, 95vw);
+               viewport unused, and a 1900px cap left empty space on wider
+               screens. Use 95% of the window at every width. */
+            max-width: 95vw;
             max-height: 90vh;
             display: flex;
             flex-direction: column;
@@ -1328,7 +1334,7 @@ class PhiloCalculator {
         tableContainer.style.cssText = `
             overflow: auto;
             flex: 1;
-            padding: 0 20px 20px;
+            padding: 0 0 20px;
         `;
 
         dialog.appendChild(header);
@@ -2048,6 +2054,15 @@ class PhiloCalculator {
         }
 
         table.appendChild(tbody);
+
+        // The table runs edge to edge so its rows and header band fill the panel; the outer columns keep
+        // the 20px inset the controls above use, so the text still lines up with them
+        for (const tableRow of table.rows) {
+            const cells = tableRow.cells;
+            if (!cells.length) continue;
+            cells[0].style.paddingLeft = '20px';
+            cells[cells.length - 1].style.paddingRight = '20px';
+        }
 
         container.innerHTML = '';
         container.appendChild(table);
