@@ -1,7 +1,8 @@
 /**
- * Shared rules for the upgrade finders' "Next multiple of" ability-level mode.
- * Used by the upgrade advisor (candidate generation) and by both sims' per-ability
- * Targets prefill, so the three can never disagree about what an ability goes to.
+ * Shared rules for the upgrade finders' level steps: the "+Levels" and "Next multiple of" modes and the
+ * Steps box. Used by the upgrade advisor (ability levels, combat skill levels, house rooms, guild shrines,
+ * equipment enhancement) and by both sims' per-ability Targets prefill, so they can never disagree about
+ * what a level goes to.
  */
 
 /** Step used when the box is blank, zero, negative or not a number — the same default "+Levels" falls back to. */
@@ -39,7 +40,7 @@ export function normalizeLevelSteps(steps) {
 }
 
 /**
- * Every level one ability is offered at in the "+Levels" and "Next multiple of" modes.
+ * Every level one ability (or combat skill) is offered at in the "+Levels" and "Next multiple of" modes.
  * One step is the single level those modes have always offered; more steps add the next
  * levels on the same stride (+5, +10, +15 or 65, 70, 75). The first level is clamped to
  * `cap` as ever, later ones stop once the cap has been reached, so nothing past it is offered.
@@ -51,7 +52,7 @@ export function normalizeLevelSteps(steps) {
  * @param {number} [cap=Infinity] - Highest level the game allows
  * @returns {number[]} Ascending target levels, all above `level` and at most `cap`
  */
-export function abilityStepLevels(level, type, size, steps, cap = Infinity) {
+export function stepLevels(level, type, size, steps, cap = Infinity) {
     let stride;
     let first;
     if (type === 'next_multiple') {
@@ -72,26 +73,71 @@ export function abilityStepLevels(level, type, size, steps, cap = Infinity) {
     return out;
 }
 
-/** Help text for the Steps box. */
-export const LEVEL_STEPS_TITLE =
-    `How many levels to try per ability (1 to ${MAX_LEVEL_STEPS}): +5 with 3 steps tries +5, +10 and +15. ` +
-    'Each step is one more simulation per ability, so the search takes longer.';
+/** The ability finder's name for {@link stepLevels}, kept for its callers. */
+export const abilityStepLevels = stepLevels;
 
 /**
- * What the shared level box should show for each "Ability Lv" mode.
+ * The levels one step at a time above `level`: +1, +2, ... +steps, stopping at `cap`. The House and Guild
+ * Shrine Steps box: one step is the single "one level up" those sets have always offered.
+ *
+ * @param {number} level - Current level
+ * @param {number} steps - How many levels to offer (see normalizeLevelSteps)
+ * @param {number} [cap=Infinity] - Highest level the game allows
+ * @returns {number[]} Ascending target levels, all above `level` and at most `cap`
+ */
+export function singleStepLevels(level, steps, cap = Infinity) {
+    const current = Math.max(0, Math.floor(Number(level)) || 0);
+    const out = [];
+    for (let i = 1; i <= normalizeLevelSteps(steps); i++) {
+        if (current + i > cap) break;
+        out.push(current + i);
+    }
+    return out;
+}
+
+/**
+ * Help text for a Steps box.
+ * @param {string} [noun='ability'] - What one row is about ('ability', 'combat skill')
+ * @param {string} [extra=''] - Anything else the box should say, appended
+ * @returns {string}
+ */
+export function levelStepsTitle(noun = 'ability', extra = '') {
+    return (
+        `How many levels to try per ${noun} (1 to ${MAX_LEVEL_STEPS}): +5 with 3 steps tries +5, +10 and +15. ` +
+        `Each step is one more simulation per ${noun}, so the search takes longer.` +
+        (extra ? ` ${extra}` : '')
+    );
+}
+
+/** Help text for the Ability Lv Steps box. */
+export const LEVEL_STEPS_TITLE = levelStepsTitle('ability');
+
+/**
+ * What a level box should show for each "+Levels / Target Lv / Next mult. of" mode.
  * @param {string} type - 'increment' | 'target' | 'next_multiple'
+ * @param {string} [noun='ability'] - What the box levels ('ability', 'combat skill')
  * @returns {{value: string, placeholder: string, title: string}}
  */
-export function abilityLevelBoxHints(type) {
+export function levelBoxHints(type, noun = 'ability') {
+    const plural = noun.endsWith('y') ? `${noun.slice(0, -1)}ies` : `${noun}s`;
     if (type === 'target') {
-        return { value: '', placeholder: 'e.g. 80', title: 'Absolute target level for all abilities' };
+        return { value: '', placeholder: 'e.g. 80', title: `Absolute target level for all ${plural}` };
     }
     if (type === 'next_multiple') {
         return {
             value: String(DEFAULT_LEVEL_STEP),
             placeholder: String(DEFAULT_LEVEL_STEP),
-            title: 'Step size: each ability goes to the next multiple of this above its level (70 goes to 75, not 70)',
+            title: `Step size: each ${noun} goes to the next multiple of this above its level (70 goes to 75, not 70)`,
         };
     }
-    return { value: String(DEFAULT_LEVEL_STEP), placeholder: '+5', title: 'Number of levels to add to each ability' };
+    return { value: String(DEFAULT_LEVEL_STEP), placeholder: '+5', title: `Number of levels to add to each ${noun}` };
+}
+
+/**
+ * What the Ability Lv level box should show for each mode.
+ * @param {string} type - 'increment' | 'target' | 'next_multiple'
+ * @returns {{value: string, placeholder: string, title: string}}
+ */
+export function abilityLevelBoxHints(type) {
+    return levelBoxHints(type, 'ability');
 }

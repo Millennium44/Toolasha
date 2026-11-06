@@ -5,6 +5,11 @@ import {
     DEFAULT_LEVEL_STEP,
     abilityStepLevels,
     normalizeLevelSteps,
+    stepLevels,
+    singleStepLevels,
+    levelStepsTitle,
+    levelBoxHints,
+    LEVEL_STEPS_TITLE,
 } from './ability-level-step.js';
 
 describe('nextMultipleLevel', () => {
@@ -55,5 +60,29 @@ describe('abilityStepLevels', () => {
         expect([0, -1, NaN, '', undefined, null, 1.9, 5, 6, '3'].map(normalizeLevelSteps)).toEqual([
             1, 1, 1, 1, 1, 1, 1, 5, 5, 3,
         ]);
+    });
+});
+
+describe('the shared step rules beyond abilities', () => {
+    test('stepLevels is the ability rule under its general name', () => {
+        expect(stepLevels).toBe(abilityStepLevels);
+        expect(stepLevels(50, 'increment', 5, 3, 200)).toEqual([55, 60, 65]);
+    });
+
+    test('singleStepLevels: +1 per step, capped, nothing at the cap, one step is one level up', () => {
+        expect(singleStepLevels(3, 1, 8)).toEqual([4]);
+        expect(singleStepLevels(3, 3, 8)).toEqual([4, 5, 6]);
+        expect(singleStepLevels(6, 5, 8)).toEqual([7, 8]);
+        expect(singleStepLevels(8, 3, 8)).toEqual([]);
+        expect(singleStepLevels(0, 99, 20)).toEqual([1, 2, 3, 4, 5]);
+        for (const blank of [0, '', null, undefined, NaN]) expect(singleStepLevels(3, blank, 8)).toEqual([4]);
+    });
+
+    test('levelStepsTitle and levelBoxHints name what they level', () => {
+        expect(LEVEL_STEPS_TITLE).toBe(levelStepsTitle('ability'));
+        expect(levelStepsTitle('combat skill', 'More.')).toMatch(/per combat skill.*More\.$/);
+        expect(levelBoxHints('increment', 'combat skill').title).toBe('Number of levels to add to each combat skill');
+        expect(levelBoxHints('target', 'ability').title).toBe('Absolute target level for all abilities');
+        expect(abilityLevelBoxHints('next_multiple')).toEqual(levelBoxHints('next_multiple', 'ability'));
     });
 });

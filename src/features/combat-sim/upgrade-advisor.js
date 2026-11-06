@@ -52,7 +52,7 @@ import {
     maxLevel,
     maxGuildShrineLevel,
 } from '../../utils/game-maximums.js';
-import { abilityStepLevels } from '../../utils/ability-level-step.js';
+import { abilityStepLevels, stepLevels } from '../../utils/ability-level-step.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
@@ -1510,9 +1510,18 @@ export function generateCandidates(
 
     if (mode === 'combat_level') {
         // Simulate boosted combat skill levels to rank which skill is most
-        // effective to level next. Uniform boost of +N (abilityTargetLevel
-        // carries N) or explicit per-skill target levels when provided.
-        const boost = Math.max(1, Math.floor(abilityTargetLevel) || 5);
+        // effective to level next. Uniform "+N" or "Next multiple of N" with the
+        // Steps box (the Combat Lv chip's own controls, `options.combatLevelType`,
+        // `combatLevelBoost`, `combatLevelSteps`), or explicit per-skill target
+        // levels when provided, which override the mode and Steps as the ability
+        // Targets grid does. A caller that sends no Combat Lv mode gets what this
+        // set always offered: +abilityTargetLevel (5 when unset), one step.
+        const levelCap = maxLevel(gameData);
+        const levelType = options?.combatLevelType === 'next_multiple' ? 'next_multiple' : 'increment';
+        const boost =
+            options?.combatLevelBoost !== undefined
+                ? Math.floor(Number(options.combatLevelBoost)) || 0
+                : Math.max(1, Math.floor(abilityTargetLevel) || 5);
         const targets =
             combatLevelTargets && typeof combatLevelTargets === 'object' && Object.keys(combatLevelTargets).length > 0
                 ? combatLevelTargets
@@ -1521,19 +1530,22 @@ export function generateCandidates(
         for (const skill of COMBAT_LEVEL_SKILLS) {
             if (excludedSkills.has(skill.key)) continue;
             const currentLevel = Math.max(1, Math.floor(playerDTO[skill.key] || 1));
-            const upgradeLevel = targets
-                ? Math.min(maxLevel(gameData), Math.floor(targets[skill.key] || 0))
-                : currentLevel + boost;
-            if (upgradeLevel <= currentLevel) continue;
-            candidates.push({
-                type: 'combat_level',
-                slot: `combat_level|${skill.key}`,
-                skillKey: skill.key,
-                currentLevel,
-                upgradeLevel,
-                levelBoost: upgradeLevel - currentLevel,
-                description: `${skill.label} ${currentLevel} → ${upgradeLevel}`,
-            });
+            // Every level is capped at the game's max: a skill already there offers nothing
+            const upgradeLevels = targets
+                ? [Math.min(levelCap, Math.floor(targets[skill.key] || 0))]
+                : stepLevels(currentLevel, levelType, boost, options?.combatLevelSteps, levelCap);
+            for (const upgradeLevel of upgradeLevels) {
+                if (upgradeLevel <= currentLevel) continue;
+                candidates.push({
+                    type: 'combat_level',
+                    slot: `combat_level|${skill.key}`,
+                    skillKey: skill.key,
+                    currentLevel,
+                    upgradeLevel,
+                    levelBoost: upgradeLevel - currentLevel,
+                    description: `${skill.label} ${currentLevel} → ${upgradeLevel}`,
+                });
+            }
         }
     }
 
@@ -4682,7 +4694,9 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
  *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, abilitySteps (levels offered per ability in the
- *   +Levels and Next-multiple modes, default 1), skipBackSlot, combatLevelTargets, charmTier,
+ *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
+ *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
+ *   combatLevelSteps (levels offered per combat skill, default 1), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
@@ -4707,6 +4721,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityLevelType,
         abilityTargetLevel,
         abilitySteps = 1,
+        combatLevelType = 'increment',
+        combatLevelBoost,
+        combatLevelSteps = 1,
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
@@ -4762,7 +4779,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
