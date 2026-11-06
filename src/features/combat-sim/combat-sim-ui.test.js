@@ -7531,6 +7531,16 @@ describe('resolveSimParty: what a run simulates once Solo enters the picture', (
         expect(result.soloApplied).toBe(false);
     });
 
+    test('hands the run a copy, so a level-up the editor follows mid-run does not reach it', () => {
+        const live = { player1: { hrid: 'player1', abilities: [{ hrid: '/abilities/berserk', level: 66 }] } };
+        const editor = fakeEditor({ playerInfo: playerInfo.slice(0, 1), selfHrid: 'player1', soloMode: false });
+
+        const result = resolveSimParty(editor, live);
+        live.player1.abilities[0].level = 70;
+
+        expect(result.playerDTOs[0].abilities[0].level).toBe(66);
+    });
+
     test('on: narrows to the player whose tab is open in the editor, not necessarily self', () => {
         const editor = fakeEditor({ playerInfo, selfHrid: 'player1', activeEditPlayer: 'player2', soloMode: true });
 

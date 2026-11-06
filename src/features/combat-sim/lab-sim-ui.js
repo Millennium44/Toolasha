@@ -5031,7 +5031,8 @@ class LabSimUI {
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                playerDTOs = Object.values(editedDTOs);
+                // A copy: the editor follows the game's level-ups in place, and the analysis keeps its starting build
+                playerDTOs = structuredClone(Object.values(editedDTOs));
                 selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();

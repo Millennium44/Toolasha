@@ -1399,7 +1399,8 @@ export function gearFingerprint(playerDTOs) {
  *   profileStatus: Array, soloApplied: boolean}}
  */
 export function resolveSimParty(editor, editedDTOs, { solo } = {}) {
-    const allDTOs = Object.values(editedDTOs || {});
+    // A copy: the editor follows the game's level-ups in place, and a run must keep the build it started with
+    const allDTOs = structuredClone(Object.values(editedDTOs || {}));
     const playerInfo = editor?.getPlayerInfo() || [];
     const trueSelfHrid = editor?.getSelfHrid() || null;
     const missingMembers = editor?.getMissingMembers() || [];
@@ -1410,7 +1411,7 @@ export function resolveSimParty(editor, editedDTOs, { solo } = {}) {
 
     if (soloWanted && allDTOs.length > 1) {
         const soloHrid = editor.getActiveEditPlayer?.() || trueSelfHrid || allDTOs[0].hrid;
-        const soloDTO = editedDTOs[soloHrid];
+        const soloDTO = allDTOs.find((dto) => dto?.hrid === soloHrid);
         if (soloDTO) {
             return {
                 // A copy with the level-gap penalty cleared: the adapter stamps
@@ -11335,7 +11336,9 @@ class CombatSimUI {
         try {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
-                playerDTOs = Object.values(editedDTOs);
+                // A copy: the editor follows the game's level-ups in place, and every candidate must be measured
+                // against the build the run started with
+                playerDTOs = structuredClone(Object.values(editedDTOs));
                 selfHrid = this._editor.getSelfHrid() ?? null;
             } else {
                 const result = await buildAllPlayerDTOs();
