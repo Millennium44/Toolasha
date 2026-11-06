@@ -42,7 +42,21 @@ import { GAME_COLORS, GAME_FRAME, styleGameButton } from '../../utils/game-look.
 import { ensurePhoneCompactButtonStyles } from '../../utils/phone-compact-buttons.js';
 
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
-const PRIME_CATALYST_ADDITIVE_BONUS = 0.25; // 25% additive boost
+const TRANSMUTE_CATALYST_HRID = '/items/catalyst_of_transmutation';
+/**
+ * The catalysts a setup can slot. The success bonus of each is read from the alchemy calculator
+ * (catalystSuccessBonus: a fraction, 0.25 = +25 points inside the additive success sum), which is where
+ * the rest of Toolasha takes it from; the game data does not carry it.
+ */
+const SETUP_CATALYSTS = {
+    none: { hrid: null, label: null },
+    transmute: { hrid: TRANSMUTE_CATALYST_HRID, label: 'Transmute' },
+    prime: { hrid: PRIME_CATALYST_HRID, label: 'Prime' },
+};
+const CATALYST_MODES = ['auto', 'none', 'transmute', 'prime'];
+const TEA_MODES = ['auto', 'off', 'on'];
+/** Profit/hr gaps smaller than this (relative) are a tie, and a tie goes to the setup with fewer consumables */
+const SETUP_TIE_EPSILON = 1e-9;
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
 const CATALYTIC_TEA_HRID = '/items/catalytic_tea';
 const CATALYTIC_TEA_BUFF_TYPE = '/buff_types/alchemy_success';
@@ -93,6 +107,12 @@ const KEEP_PHILO_COLUMNS = new Set(['ev', 'profitPerPhiloInstant', 'profitMargin
  */
 const TABLE_COLUMNS = [
     { key: 'name', label: 'Item', align: 'left' },
+    {
+        key: 'setup',
+        label: 'Setup',
+        align: 'left',
+        title: 'The catalyst and tea this row is costed with. On Auto it is whichever earns the most per hour for this item; hover a cell for every candidate.',
+    },
     { key: 'cost', label: 'Cost' },
     { key: 'philoChance', label: 'Philo %' },
     { key: 'returnChance', label: 'Return %' },
@@ -133,6 +153,7 @@ const BLANK = '\u2014';
 export function formatRowValue(key, row) {
     const value = row[key];
     if (key === 'name') return value;
+    if (key === 'setup') return value ?? BLANK;
     if ((key === 'profitPerPhiloInstant' ? row.profitPerPhiloInstant : value) == null) return BLANK;
     switch (key) {
         case 'profitPerPhiloInstant':
@@ -219,9 +240,13 @@ class PhiloCalculator {
         this.philoPrice = 0;
         this.philoBid = 0;
         this.philoAsk = 0;
+        // Prime Catalyst price (the "Catalyst Price" box) and the Catalyst of Transmutation's
         this.catalystPrice = 0;
-        this.useCatalyst = true;
-        this.useCatalyticTea = false;
+        this.transmuteCatalystPrice = 0;
+        // Which catalyst / tea each row is costed with: 'auto' lets every row pick its own best,
+        // anything else forces that one on the whole table
+        this.catalystMode = 'auto';
+        this.teaMode = 'auto';
         this.catalyticTeaRatioBoost = 0;
         this.drinkConcentrationLevel = null; // 0-20; null = not saved yet (auto-detect from gear)
         this.hideNegativeProfitItems = true;
@@ -238,6 +263,7 @@ class PhiloCalculator {
         this.itemCostOverrides = {};
         this._manualPhiloPrice = false;
         this._manualCatalystPrice = false;
+        this._manualTransmuteCatalystPrice = false;
         this._escHandler = null;
         // Bumped by every openModal() and by disable(), so an opening that an
         // await outlived knows it is no longer the one wanted
@@ -248,6 +274,30 @@ class PhiloCalculator {
         // Per-pass caches, cleared on every recalculation
         this._actionStatsCache = new Map();
         this._bonusRevenueCache = new Map();
+    }
+
+    /**
+     * Legacy switch, kept so older callers and saves read the same way: "Prime Catalyst forced on".
+     * @returns {boolean} True when the table is forced to the Prime Catalyst
+     */
+    get useCatalyst() {
+        return this.catalystMode === 'prime';
+    }
+
+    set useCatalyst(value) {
+        this.catalystMode = value ? 'prime' : 'none';
+    }
+
+    /**
+     * Legacy switch: "Catalytic Tea forced on".
+     * @returns {boolean} True when the table is forced to use the tea
+     */
+    get useCatalyticTea() {
+        return this.teaMode === 'on';
+    }
+
+    set useCatalyticTea(value) {
+        this.teaMode = value ? 'on' : 'off';
     }
 
     /**
@@ -434,14 +484,40 @@ class PhiloCalculator {
         }
 
         if (!this._manualCatalystPrice) {
-            const catalystPriceData = ironCowBook(PRIME_CATALYST_HRID) ?? marketAPI.getPrice(PRIME_CATALYST_HRID, 0);
-            const buyType = this.getPriceType('buy');
-            const otherType = buyType === 'ask' ? 'bid' : 'ask';
-            const preferred = catalystPriceData?.[buyType];
-            const other = catalystPriceData?.[otherType];
-            const [price, basis] = preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherType] : [0, null];
-            this.catalystPrice = this.patientQuote(price, 'buy', basis, catalystPriceData, PRIME_CATALYST_HRID);
+            this.catalystPrice = this.quoteCatalyst(PRIME_CATALYST_HRID);
         }
+        if (!this._manualTransmuteCatalystPrice) {
+            this.transmuteCatalystPrice = this.quoteCatalyst(TRANSMUTE_CATALYST_HRID);
+        }
+    }
+
+    /**
+     * A catalyst's market price on the table's buy side (the other side when that one is empty).
+     * @param {string} hrid - Catalyst item HRID
+     * @returns {number} Coins, 0 when nothing quotes it
+     */
+    quoteCatalyst(hrid) {
+        const catalystPriceData = ironCowBook(hrid) ?? marketAPI.getPrice(hrid, 0);
+        const buyType = this.getPriceType('buy');
+        const otherType = buyType === 'ask' ? 'bid' : 'ask';
+        const preferred = catalystPriceData?.[buyType];
+        const other = catalystPriceData?.[otherType];
+        const [price, basis] = preferred > 0 ? [preferred, buyType] : other > 0 ? [other, otherType] : [0, null];
+        return this.patientQuote(price, 'buy', basis, catalystPriceData, hrid);
+    }
+
+    /**
+     * What one catalyst costs, or null when nothing prices it: no quote and no price typed in.
+     * An unpriced catalyst is never free; a typed 0 ("I own them") is a price.
+     * @param {'none'|'transmute'|'prime'} key - Catalyst choice
+     * @returns {number|null} Coins per catalyst
+     */
+    catalystPriceFor(key) {
+        if (key === 'none') return 0;
+        const prime = key === 'prime';
+        const price = prime ? this.catalystPrice : this.transmuteCatalystPrice;
+        const manual = prime ? this._manualCatalystPrice : this._manualTransmuteCatalystPrice;
+        return price > 0 || manual ? price || 0 : null;
     }
 
     /**
@@ -476,8 +552,12 @@ class PhiloCalculator {
      */
     settingsSnapshot() {
         return {
-            useCatalyst: this.useCatalyst,
-            useCatalyticTea: this.useCatalyticTea,
+            catalystMode: this.catalystMode,
+            teaMode: this.teaMode,
+            // The old two-switch shape, written alongside so a build that predates the modes reads a
+            // sensible table: the forced setup where there is one, its old default (Prime, no tea) on Auto
+            useCatalyst: this.catalystMode === 'auto' ? true : this.catalystMode === 'prime',
+            useCatalyticTea: this.teaMode === 'on',
             drinkConcentrationLevel: this.drinkConcentrationLevel,
             hideNegativeProfitItems: this.hideNegativeProfitItems,
             filterText: this.filterText,
@@ -498,8 +578,8 @@ class PhiloCalculator {
      */
     /** The calculator's per-character options at their constructor defaults */
     resetSettingsToDefaults() {
-        this.useCatalyst = true;
-        this.useCatalyticTea = false;
+        this.catalystMode = 'auto';
+        this.teaMode = 'auto';
         this.drinkConcentrationLevel = null;
         this.hideNegativeProfitItems = true;
         this.filterText = '';
@@ -529,8 +609,21 @@ class PhiloCalculator {
             if (!readable) settingsRecord.set(previous);
             const saved = readable ? settingsRecord.get() : null;
             if (saved && Object.keys(saved).length > 0) {
-                this.useCatalyst = saved.useCatalyst !== false;
-                this.useCatalyticTea = saved.useCatalyticTea || false;
+                // A save from before the modes holds only the two switches: it keeps behaving as it did
+                // (the matching forced setup). Only a player who never saved a choice starts on Auto
+                // (the record always carries an empty itemCostOverrides, so "saved" alone says nothing).
+                const oldSwitches =
+                    typeof saved.useCatalyst === 'boolean' || typeof saved.useCatalyticTea === 'boolean';
+                if (CATALYST_MODES.includes(saved.catalystMode)) {
+                    this.catalystMode = saved.catalystMode;
+                } else if (oldSwitches) {
+                    this.catalystMode = saved.useCatalyst === false ? 'none' : 'prime';
+                }
+                if (TEA_MODES.includes(saved.teaMode)) {
+                    this.teaMode = saved.teaMode;
+                } else if (oldSwitches) {
+                    this.teaMode = saved.useCatalyticTea === true ? 'on' : 'off';
+                }
                 // ?? not || — an explicitly saved +0 must not fall back to auto-detect
                 this.drinkConcentrationLevel = saved.drinkConcentrationLevel ?? null;
                 this.hideNegativeProfitItems = saved.hideNegativeProfitItems !== false;
@@ -728,15 +821,15 @@ class PhiloCalculator {
     }
 
     /**
-     * Catalytic tea cost charged against a single action. Teas are consumed on
-     * a clock, not per action, so the hourly burn is divided by the action rate
-     * the same way calculateTeaCostsPerHour is consumed elsewhere.
+     * Catalytic tea cost charged against a single action, and whether the market prices it. Teas are
+     * consumed on a clock, not per action, so the hourly burn is divided by the action rate the same
+     * way calculateTeaCostsPerHour is consumed elsewhere.
      * @param {number} actionsPerHour - Effective actions per hour (with efficiency)
-     * @returns {number} Coins per action
+     * @returns {{perAction: number, missing: boolean}} Coins per action; missing when the tea has no price
      */
-    getTeaCostPerAction(actionsPerHour) {
-        if (!this.useCatalyticTea || !(actionsPerHour > 0)) {
-            return 0;
+    getTeaCost(actionsPerHour) {
+        if (!(actionsPerHour > 0)) {
+            return { perAction: 0, missing: false };
         }
 
         try {
@@ -754,10 +847,10 @@ class PhiloCalculator {
                     return resolved.missing ? null : resolved.price;
                 },
             });
-            return teaCosts.totalCostPerHour / actionsPerHour;
+            return { perAction: teaCosts.totalCostPerHour / actionsPerHour, missing: teaCosts.hasMissingPrices };
         } catch (error) {
             console.error('[PhiloCalculator] Failed to calculate tea cost:', error);
-            return 0;
+            return { perAction: 0, missing: true };
         }
     }
 
@@ -967,7 +1060,35 @@ class PhiloCalculator {
     }
 
     /**
-     * Calculate all columns for a single item
+     * The setups a row may be costed with, cheapest first (fewest consumables; the order is the tie-break).
+     * A forced catalyst or tea narrows its half to that one choice; Auto leaves all of them.
+     * @returns {Array<{catalyst: string, tea: boolean}>} Candidate setups
+     */
+    candidateSetups() {
+        const catalysts = this.catalystMode === 'auto' ? ['none', 'transmute', 'prime'] : [this.catalystMode];
+        const teas = this.teaMode === 'auto' ? [false, true] : [this.teaMode === 'on'];
+        const setups = [];
+        for (const tea of teas) {
+            for (const catalyst of catalysts) setups.push({ catalyst, tea });
+        }
+        const consumables = (s) => (s.catalyst === 'none' ? 0 : 1) + (s.tea ? 1 : 0);
+        return setups.sort((a, b) => consumables(a) - consumables(b));
+    }
+
+    /**
+     * Short text for a setup: "Prime + Tea", "Transmute", "None".
+     * @param {string} catalyst - 'none' | 'transmute' | 'prime'
+     * @param {boolean} tea - Whether the Catalytic Tea is drunk
+     * @returns {string} Label
+     */
+    setupLabel(catalyst, tea) {
+        const parts = [SETUP_CATALYSTS[catalyst]?.label, tea ? 'Tea' : null].filter(Boolean);
+        return parts.length ? parts.join(' + ') : 'None';
+    }
+
+    /**
+     * Calculate all columns for a single item, costed with the best setup (catalyst x tea) for it, or
+     * with the one setup the player forced.
      * @param {string} itemHrid - Item HRID
      * @param {Object} itemDetails - Item detail object
      * @returns {Object|null} Row data or null if price unavailable
@@ -981,34 +1102,10 @@ class PhiloCalculator {
         if (!philoDrop) return null;
 
         const itemLevel = itemDetails.itemLevel || 1;
-
-        // Calculate additive bonuses. The under-level penalty is a negative
-        // term in the same sum, matching the game's success formula:
-        // min(1, base × (1 + catalyst + levelPenalty + tea))
         const levelPenalty = this.getLevelPenalty(itemLevel);
-        let totalBonus = levelPenalty;
-
-        // Catalytic tea bonus
-        if (this.useCatalyticTea && this.catalyticTeaRatioBoost > 0) {
-            const drinkConcentration = this.getDrinkConcentrationForLevel(this.drinkConcentrationLevel);
-            totalBonus += this.catalyticTeaRatioBoost * (1 + drinkConcentration);
-        }
-
-        // Prime catalyst bonus (additive, not multiplicative)
-        if (this.useCatalyst) {
-            totalBonus += PRIME_CATALYST_ADDITIVE_BONUS;
-        }
-
-        const successRate = Math.max(0, Math.min(1.0, baseTransmuteRate * (1 + totalBonus)));
-        if (!(successRate > 0)) return null; // Under-levelled into never succeeding
         const bulkMultiplier = alchemy.bulkMultiplier || 1;
-
         const philoDropRate = philoDrop.dropRate;
         const avgPhiloCount = (philoDrop.minCount + philoDrop.maxCount) / 2;
-        // Philos actually produced per action — bulk transmutes roll the whole
-        // drop table at bulk scale, the same scale the input cost is charged at
-        const philosPerAction = successRate * philoDropRate * avgPhiloCount * bulkMultiplier;
-        if (!(philosPerAction > 0)) return null;
 
         const costBasis = this.resolveItemCost(itemHrid, itemDetails);
         if (!costBasis) return null;
@@ -1017,10 +1114,6 @@ class PhiloCalculator {
         // is shown: it would read as a free item
         const needsPrice = costBasis.needsPrice === true;
         const itemCost = needsPrice ? 0 : costBasis.itemCost;
-        const costDerived = (value) => (needsPrice ? null : value);
-
-        // Catalyst cost per action (consumed only on success)
-        const catalystCostPerAction = this.useCatalyst ? successRate * this.catalystPrice : 0;
 
         // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
         const coinCost = getAlchemyCoinCost(itemDetails, 'transmute');
@@ -1028,24 +1121,15 @@ class PhiloCalculator {
         // Real action time and efficiency from game data
         const { actionTime, efficiency, estimated } = this.getActionStats(itemLevel);
         const actionsPerHour = calculateActionsPerHour(actionTime) * (1 + efficiency);
-        const teaCostPerAction = this.getTeaCostPerAction(actionsPerHour);
-
-        // Total cost per transmute action
-        const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost + teaCostPerAction;
 
         const bonusRevenuePerAction = this.getBonusRevenuePerAction(itemHrid);
 
-        /**
-         * Expected revenue of one action when every sellable drop is liquidated
-         * on the given book side. Sold drops pay market tax; the self-return
-         * does not, because it goes straight back into the transmuter.
-         * @param {string} sellType - 'bid' (instant) or 'ask' (patient)
-         * @returns {number} Coins per action
-         */
+        // Everything below the setup is the same whichever catalyst and tea the row uses: the value of one
+        // successful transmute's drops on each book side. Only the success rate scales it.
         // Per book side: a drop with an ask and no bid leaves only the instant column a floor
         const unpricedBySide = { bid: new Set(), ask: new Set() };
-        const expectedValueFor = (sellType) => {
-            let ev = 0;
+        const valuePerSuccessFor = (sellType) => {
+            let value = 0;
             for (const drop of alchemy.transmuteDropTable) {
                 let dropValue;
                 if (drop.itemHrid === itemHrid) {
@@ -1077,94 +1161,180 @@ class PhiloCalculator {
                 }
 
                 const avgCount = (drop.minCount + drop.maxCount) / 2;
-                ev += successRate * drop.dropRate * avgCount * bulkMultiplier * dropValue;
+                value += drop.dropRate * avgCount * bulkMultiplier * dropValue;
             }
-            return ev + bonusRevenuePerAction;
+            return value;
         };
+        const valuePerSuccessInstant = valuePerSuccessFor('bid');
+        const valuePerSuccessPatient = valuePerSuccessFor('ask');
+        const sellsInstant = this.getPriceType('sell') === 'bid';
 
-        const evInstant = expectedValueFor('bid');
-        const evPatient = expectedValueFor('ask');
-        const evPerAction = this.getPriceType('sell') === 'bid' ? evInstant : evPatient;
-
-        // Profit per action (EV now includes philo value)
-        const profitPerAction = evPerAction - totalCostPerAction;
-
-        // Actions and items needed per philo
-        const actionsPerPhilo = 1 / philosPerAction;
-
-        // Net items consumed per action (input minus expected self-returns),
-        // both sides at bulk scale
+        // Net items consumed per action (input minus expected self-returns), both sides at bulk scale
         const selfDrop = alchemy.transmuteDropTable.find((d) => d.itemHrid === itemHrid);
         const selfDropRate = selfDrop ? selfDrop.dropRate : 0;
         const avgSelfCount = selfDrop ? (selfDrop.minCount + selfDrop.maxCount) / 2 : 0;
-        const returnChancePerAction = successRate * selfDropRate;
-        const itemsPerAction = bulkMultiplier * (1 - returnChancePerAction * avgSelfCount);
-
-        // Items needed per philo (net items consumed × actions needed)
-        const itemsPerPhilo = actionsPerPhilo * itemsPerAction;
-
-        // Profit per philo obtained, at both liquidation speeds
-        const profitPerPhilo = profitPerAction * actionsPerPhilo;
-        const profitPerPhiloInstant = (evInstant - totalCostPerAction) * actionsPerPhilo;
-        const profitPerPhiloPatient = (evPatient - totalCostPerAction) * actionsPerPhilo;
-
-        // Profit margin
-        const profitMargin = profitPerAction / totalCostPerAction;
-
-        // Time per philo (efficiency buys extra actions, not shorter ones)
-        const timePerPhiloSeconds = actionsPerHour > 0 ? (actionsPerPhilo / actionsPerHour) * SECONDS_PER_HOUR : 0;
-
-        const profitPerHour = profitPerAction * actionsPerHour;
-
-        // Revenue and cost per hour
-        const revenuePerHour = evPerAction * actionsPerHour;
-        const costPerHour = totalCostPerAction * actionsPerHour;
 
         // Revenue includes the self-return, valued at the item's cost: blank only when it has one
         const selfValued = (value) => (needsPrice && selfDropRate > 0 ? null : value);
 
+        const drinkConcentration = this.getDrinkConcentrationForLevel(this.drinkConcentrationLevel);
+        // The tea's price does not depend on the row's setup, so it is looked up once, and only if a candidate drinks
+        let teaCost = null;
+
+        /**
+         * The row as one setup would produce it.
+         * @param {{catalyst: string, tea: boolean}} setup - Catalyst and tea
+         * @returns {Object|null} { row, profit, unpriced: [labels with no price] }, null when it never succeeds
+         */
+        const buildFor = ({ catalyst, tea }) => {
+            // Calculate additive bonuses. The under-level penalty is a negative
+            // term in the same sum, matching the game's success formula:
+            // min(1, base × (1 + catalyst + levelPenalty + tea))
+            let totalBonus = levelPenalty;
+            if (tea && this.catalyticTeaRatioBoost > 0) {
+                totalBonus += this.catalyticTeaRatioBoost * (1 + drinkConcentration);
+            }
+            const catalystHrid = SETUP_CATALYSTS[catalyst].hrid;
+            if (catalystHrid) {
+                totalBonus += alchemyProfitCalculator.catalystSuccessBonus(catalystHrid);
+            }
+
+            const successRate = Math.max(0, Math.min(1.0, baseTransmuteRate * (1 + totalBonus)));
+            if (!(successRate > 0)) return null; // Under-levelled into never succeeding
+
+            // Philos actually produced per action — bulk transmutes roll the whole
+            // drop table at bulk scale, the same scale the input cost is charged at
+            const philosPerAction = successRate * philoDropRate * avgPhiloCount * bulkMultiplier;
+            if (!(philosPerAction > 0)) return null;
+
+            // A catalyst or tea nothing prices is never treated as free: it blanks the cost figures of a row
+            // that was forced to it, and Auto does not consider it at all
+            const unpriced = [];
+            const catalystUnitPrice = this.catalystPriceFor(catalyst);
+            if (catalystUnitPrice === null) unpriced.push(this.setupLabel(catalyst, false));
+            if (tea) {
+                teaCost ??= this.getTeaCost(actionsPerHour);
+                if (teaCost.missing) unpriced.push('Tea');
+            }
+            const blank = needsPrice || unpriced.length > 0;
+            const costDerived = (value) => (blank ? null : value);
+
+            // Catalyst cost per action (consumed only on success)
+            const catalystCostPerAction = successRate * (catalystUnitPrice ?? 0);
+            // Teas are drunk on a clock, so the hourly burn is spread over this row's actions per hour
+            const teaCostPerAction = tea ? teaCost.perAction : 0;
+
+            // Total cost per transmute action
+            const totalCostPerAction = itemCost * bulkMultiplier + catalystCostPerAction + coinCost + teaCostPerAction;
+
+            const evInstant = successRate * valuePerSuccessInstant + bonusRevenuePerAction;
+            const evPatient = successRate * valuePerSuccessPatient + bonusRevenuePerAction;
+            const evPerAction = sellsInstant ? evInstant : evPatient;
+
+            // Profit per action (EV now includes philo value)
+            const profitPerAction = evPerAction - totalCostPerAction;
+
+            // Actions and items needed per philo
+            const actionsPerPhilo = 1 / philosPerAction;
+
+            const returnChancePerAction = successRate * selfDropRate;
+            const itemsPerAction = bulkMultiplier * (1 - returnChancePerAction * avgSelfCount);
+
+            // Items needed per philo (net items consumed × actions needed)
+            const itemsPerPhilo = actionsPerPhilo * itemsPerAction;
+
+            // Profit per philo obtained, at both liquidation speeds
+            const profitPerPhilo = profitPerAction * actionsPerPhilo;
+            const profitPerPhiloInstant = (evInstant - totalCostPerAction) * actionsPerPhilo;
+            const profitPerPhiloPatient = (evPatient - totalCostPerAction) * actionsPerPhilo;
+
+            // Profit margin
+            const profitMargin = profitPerAction / totalCostPerAction;
+
+            // Time per philo (efficiency buys extra actions, not shorter ones)
+            const timePerPhiloSeconds = actionsPerHour > 0 ? (actionsPerPhilo / actionsPerHour) * SECONDS_PER_HOUR : 0;
+
+            const profitPerHour = profitPerAction * actionsPerHour;
+
+            // Revenue and cost per hour
+            const revenuePerHour = evPerAction * actionsPerHour;
+            const costPerHour = totalCostPerAction * actionsPerHour;
+
+            const row = {
+                itemHrid,
+                name: this.getItemName(itemHrid),
+                cost: needsPrice ? null : itemCost,
+                needsPrice,
+                // Drops nothing could price on the side the shown figures use: left out of the revenue, so the row is a
+                // floor. The paired Instant | Patient cell marks each of its halves by its own side
+                unpricedOutputs: [...unpricedBySide[sellsInstant ? 'bid' : 'ask']],
+                unpricedOutputsInstant: [...unpricedBySide.bid],
+                unpricedOutputsPatient: [...unpricedBySide.ask],
+                costSource,
+                costFallbackLevel: fallbackLevel,
+                // Displayed as the game shows them: conditional on a successful transmute
+                philoChance: philoDropRate,
+                returnChance: selfDropRate,
+                transmuteChance: baseTransmuteRate,
+                effectiveTransmuteChance: successRate,
+                levelPenalty,
+                transmuteCost: costDerived(totalCostPerAction),
+                teaCostPerAction,
+                bonusRevenuePerAction,
+                ev: selfValued(evPerAction),
+                evInstant: selfValued(evInstant),
+                evPatient: selfValued(evPatient),
+                itemsPerAction,
+                actionsPerPhilo,
+                itemsPerPhilo,
+                // Net of the copies that come back, so it reads directly against the philo price
+                inputCostPerPhilo: costDerived(itemsPerPhilo * itemCost),
+                profitPerPhilo: costDerived(profitPerPhilo),
+                profitPerPhiloInstant: costDerived(profitPerPhiloInstant),
+                profitPerPhiloPatient: costDerived(profitPerPhiloPatient),
+                profitMargin: costDerived(profitMargin),
+                actionTime,
+                efficiency,
+                actionTimeEstimated: estimated,
+                actionsPerHour,
+                timePerPhiloSeconds,
+                profitPerHour: costDerived(profitPerHour),
+                revenuePerHour: selfValued(revenuePerHour),
+                costPerHour: costDerived(costPerHour),
+                pricingMode: this.resolvePricingMode(),
+            };
+            return { row, profit: row.profitPerHour, unpriced, catalyst, tea };
+        };
+
+        const candidates = this.candidateSetups().map(buildFor).filter(Boolean);
+        if (candidates.length === 0) return null;
+
+        // Only setups that can be priced compete; if the player forced an unpriced one, it is all there is
+        const priced = candidates.filter((c) => c.unpriced.length === 0);
+        const pool = priced.length > 0 ? priced : candidates;
+        // Candidates arrive cheapest first, so a later one must beat the best so far by more than a tie
+        let best = pool[0];
+        for (const candidate of pool.slice(1)) {
+            if (best.profit == null || candidate.profit == null) continue;
+            if (candidate.profit > best.profit + SETUP_TIE_EPSILON * Math.max(1, Math.abs(best.profit))) {
+                best = candidate;
+            }
+        }
+
         return {
-            itemHrid,
-            name: this.getItemName(itemHrid),
-            cost: costDerived(itemCost),
-            needsPrice,
-            // Drops nothing could price on the side the shown figures use: left out of the revenue, so the row is a
-            // floor. The paired Instant | Patient cell marks each of its halves by its own side
-            unpricedOutputs: [...unpricedBySide[this.getPriceType('sell') === 'bid' ? 'bid' : 'ask']],
-            unpricedOutputsInstant: [...unpricedBySide.bid],
-            unpricedOutputsPatient: [...unpricedBySide.ask],
-            costSource,
-            costFallbackLevel: fallbackLevel,
-            // Displayed as the game shows them: conditional on a successful transmute
-            philoChance: philoDropRate,
-            returnChance: selfDropRate,
-            transmuteChance: baseTransmuteRate,
-            effectiveTransmuteChance: successRate,
-            levelPenalty,
-            transmuteCost: costDerived(totalCostPerAction),
-            teaCostPerAction,
-            bonusRevenuePerAction,
-            ev: selfValued(evPerAction),
-            evInstant: selfValued(evInstant),
-            evPatient: selfValued(evPatient),
-            itemsPerAction,
-            actionsPerPhilo,
-            itemsPerPhilo,
-            // Net of the copies that come back, so it reads directly against the philo price
-            inputCostPerPhilo: costDerived(itemsPerPhilo * itemCost),
-            profitPerPhilo: costDerived(profitPerPhilo),
-            profitPerPhiloInstant: costDerived(profitPerPhiloInstant),
-            profitPerPhiloPatient: costDerived(profitPerPhiloPatient),
-            profitMargin: costDerived(profitMargin),
-            actionTime,
-            efficiency,
-            actionTimeEstimated: estimated,
-            actionsPerHour,
-            timePerPhiloSeconds,
-            profitPerHour: costDerived(profitPerHour),
-            revenuePerHour: selfValued(revenuePerHour),
-            costPerHour: costDerived(costPerHour),
-            pricingMode: this.resolvePricingMode(),
+            ...best.row,
+            // Short text of what the row was costed with; a dash while the item itself has no price
+            setup: needsPrice ? null : this.setupLabel(best.catalyst, best.tea),
+            setupChoice: { catalyst: best.catalyst, tea: best.tea },
+            setupForced: this.catalystMode !== 'auto' || this.teaMode !== 'auto',
+            // Every setup considered and what it earned per hour (null: no price for it, or for the item)
+            setupCandidates: candidates.map((c) => ({
+                label: this.setupLabel(c.catalyst, c.tea),
+                profitPerHour: c.profit,
+                unpriced: c.unpriced,
+                chosen: c === best,
+            })),
+            setupUnpriced: best.unpriced,
         };
     }
 
@@ -1405,74 +1575,129 @@ class PhiloCalculator {
         });
         philoLabel.appendChild(philoInput);
 
-        // Catalyst price input
-        const catLabel = document.createElement('label');
-        catLabel.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
-        catLabel.textContent = 'Catalyst Price: ';
-        const catInput = document.createElement('input');
-        catInput.type = 'text';
-        catInput.className = 'philo-calc-price-input';
-        catInput.value = this.catalystPrice.toLocaleString();
-        catInput.style.cssText = `
-            width: 130px;
-            padding: 4px 8px;
-            background: #1a1a1a;
-            color: #fff;
-            border: 1px solid #555;
-            border-radius: 4px;
-            font-size: 13px;
-        `;
-        catInput.addEventListener('change', () => {
-            const parsed = parseInt(catInput.value.replaceAll(',', '').replaceAll('.', ''), 10);
-            if (!isNaN(parsed)) {
-                this.catalystPrice = parsed;
+        // Catalyst price inputs: the Prime Catalyst's, then the Catalyst of Transmutation's
+        const makeCatalystPriceLabel = (text, title, read, write) => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
+            label.textContent = text;
+            label.title = title;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'philo-calc-price-input';
+            input.value = read().toLocaleString();
+            input.style.cssText = `
+                width: 110px;
+                padding: 4px 8px;
+                background: #1a1a1a;
+                color: #fff;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 13px;
+            `;
+            input.addEventListener('change', () => {
+                const parsed = parseInt(input.value.replaceAll(',', '').replaceAll('.', ''), 10);
+                if (!isNaN(parsed)) {
+                    write(parsed);
+                    this.recalculate();
+                }
+            });
+            label.appendChild(input);
+            return label;
+        };
+        const catLabel = makeCatalystPriceLabel(
+            'Prime: ',
+            'Prime Catalyst price per catalyst. Overrides the market quote.',
+            () => this.catalystPrice,
+            (value) => {
+                this.catalystPrice = value;
                 this._manualCatalystPrice = true;
-                this.recalculate();
             }
-        });
-        catLabel.appendChild(catInput);
+        );
+        const transmuteCatLabel = makeCatalystPriceLabel(
+            'Transmutation: ',
+            'Catalyst of Transmutation price per catalyst. Overrides the market quote.',
+            () => this.transmuteCatalystPrice,
+            (value) => {
+                this.transmuteCatalystPrice = value;
+                this._manualTransmuteCatalystPrice = true;
+            }
+        );
 
-        // Use catalyst checkbox
-        const checkLabel = document.createElement('label');
-        checkLabel.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = this.useCatalyst;
-        checkbox.style.cursor = 'pointer';
-        checkbox.addEventListener('change', () => {
-            this.useCatalyst = checkbox.checked;
-            this.recalculate();
-            this.saveSettings();
-        });
-        checkLabel.appendChild(checkbox);
-        checkLabel.appendChild(document.createTextNode('Use Prime Catalyst'));
+        // Setup selects: Auto lets every row pick its own best catalyst / tea; the rest force one on the table
+        const makeSetupSelect = (text, title, options, current, onChange) => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
+            label.textContent = text;
+            label.title = title;
+            const select = document.createElement('select');
+            select.classList.add('toolasha-select');
+            select.style.cssText = `
+                padding: 4px 8px;
+                background: #1a1a1a;
+                color: #fff;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 13px;
+            `;
+            for (const [value, optionText] of options) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = optionText;
+                option.selected = value === current;
+                select.appendChild(option);
+            }
+            select.addEventListener('change', () => {
+                onChange(select.value);
+                this.recalculate();
+                this.saveSettings();
+            });
+            label.appendChild(select);
+            return label;
+        };
+        const catalystSelect = makeSetupSelect(
+            'Catalyst: ',
+            'Auto picks, for each item, the catalyst that earns the most per hour (a catalyst with no price is never ' +
+                'picked). The others force one catalyst on every row.',
+            [
+                ['auto', 'Auto (best per item)'],
+                ['none', 'None'],
+                ['transmute', 'Transmutation'],
+                ['prime', 'Prime'],
+            ],
+            this.catalystMode,
+            (value) => {
+                this.catalystMode = CATALYST_MODES.includes(value) ? value : 'auto';
+            }
+        );
 
         container.appendChild(philoLabel);
         container.appendChild(catLabel);
-        container.appendChild(checkLabel);
+        container.appendChild(transmuteCatLabel);
+        container.appendChild(catalystSelect);
         container.appendChild(this.createPricingModeControl());
-
-        // Catalytic Tea checkbox
-        const teaCheckLabel = document.createElement('label');
-        teaCheckLabel.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer;';
-        const teaCheckbox = document.createElement('input');
-        teaCheckbox.type = 'checkbox';
-        teaCheckbox.checked = this.useCatalyticTea;
-        teaCheckbox.style.cursor = 'pointer';
-        teaCheckbox.addEventListener('change', () => {
-            this.useCatalyticTea = teaCheckbox.checked;
-            this.recalculate();
-            this.saveSettings();
-        });
-        teaCheckLabel.appendChild(teaCheckbox);
 
         // Display base ratioBoost if available
         const boostText =
             this.catalyticTeaRatioBoost > 0
                 ? ` (${formatPercentage(this.catalyticTeaRatioBoost, 1)})`
                 : ' (unavailable)';
-        teaCheckLabel.appendChild(document.createTextNode(`Catalytic Tea${boostText}`));
-        container.appendChild(teaCheckLabel);
+        container.appendChild(
+            makeSetupSelect(
+                'Catalytic Tea: ',
+                'Auto drinks the tea only on the items where it earns more per hour than it costs. On / Off force ' +
+                    'it for every row.' +
+                    (this.catalyticTeaRatioBoost > 0 ? '' : ' The tea’s bonus is unavailable in the game data.'),
+                [
+                    ['auto', `Auto${boostText}`],
+                    ['off', 'Off'],
+                    ['on', `On${boostText}`],
+                ],
+                this.teaMode,
+                (value) => {
+                    this.teaMode = TEA_MODES.includes(value) ? value : 'auto';
+                }
+            )
+        );
 
         // Drink Concentration Dropdown
         const drinkLabel = document.createElement('label');
@@ -1699,6 +1924,7 @@ class PhiloCalculator {
         if (!inputs) return;
         if (inputs[0]) inputs[0].value = this.philoPrice.toLocaleString();
         if (inputs[1]) inputs[1].value = this.catalystPrice.toLocaleString();
+        if (inputs[2]) inputs[2].value = this.transmuteCatalystPrice.toLocaleString();
     }
 
     /**
@@ -1707,6 +1933,29 @@ class PhiloCalculator {
     recalculate() {
         this.calculateAllRows();
         this.renderTable();
+    }
+
+    /**
+     * Tooltip of a Setup cell: what every candidate setup earns per hour, so the player sees how close the
+     * others were.
+     * @param {Object} row - Row data
+     * @returns {string} Multi-line text
+     */
+    setupTitle(row) {
+        const lines = [row.setupForced ? 'Forced setup. Profit/hr of each candidate:' : 'Best of, by Profit/hr:'];
+        for (const candidate of row.setupCandidates || []) {
+            const figure =
+                candidate.profitPerHour == null
+                    ? candidate.unpriced.length > 0
+                        ? `no price for ${candidate.unpriced.join(' + ')}`
+                        : BLANK
+                    : formatLargeNumber(Math.round(candidate.profitPerHour));
+            lines.push(`${candidate.chosen ? '▶ ' : '   '}${candidate.label}: ${figure}`);
+        }
+        if (row.setupUnpriced?.length > 0) {
+            lines.push(`${row.setupUnpriced.join(' + ')} has no price: type one in above to cost this setup.`);
+        }
+        return lines.join('\n');
     }
 
     /**
@@ -2007,6 +2256,10 @@ class PhiloCalculator {
                             navigateToMarketplace(row.itemHrid, 0);
                             this.closeModal();
                         });
+                        break;
+                    case 'setup':
+                        td.textContent = value;
+                        td.title = this.setupTitle(row);
                         break;
                     case 'cost':
                         this.renderCostCell(td, row);
