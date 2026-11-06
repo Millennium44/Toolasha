@@ -32,6 +32,7 @@ import tooltipObserver from '../core/tooltip-observer.js';
 import * as dualInstallGuard from '../core/dual-install-guard.js';
 import performanceMonitor, { installIntervalTracing } from '../utils/performance-monitor.js';
 import * as gmTraffic from '../utils/gm-traffic.js';
+import * as loadoutTooltipEdits from '../utils/loadout-tooltip-edits.js';
 import * as startupMode from '../core/startup-mode.js';
 
 // API modules
@@ -78,6 +79,7 @@ toolashaRoot.Core = {
     performanceMonitor,
     installIntervalTracing,
     gmTraffic,
+    loadoutTooltipEdits,
     startupMode,
 };
 

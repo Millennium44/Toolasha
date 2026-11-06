@@ -65,6 +65,9 @@ const coreExternalGlobals = new Map([
     // settings mirror write through it, and the ui bundle's sync client and
     // PFormance panel read it. A copy each would be several partial tallies.
     [normalize(join(__dirname, 'src/utils/gm-traffic.js')), 'Toolasha.Core.gmTraffic'],
+    // The edits made to a loadout tooltip's game lines: the core tooltip observer restores what the market
+    // bundle wrote, so both must hold the same record.
+    [normalize(join(__dirname, 'src/utils/loadout-tooltip-edits.js')), 'Toolasha.Core.loadoutTooltipEdits'],
     // A market path, but the core bundle's marketAPI is what calls show()/hide()
     // on it — with a copy each, the initialized one never showed and the showing
     // one was never initialized (two alert containers, one observer-less).

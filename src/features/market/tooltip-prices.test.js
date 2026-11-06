@@ -1077,6 +1077,29 @@ describe('a Loadouts-panel slot whose tooltip name carries no +N', () => {
         expect(el.querySelector('.mwi-loadout-marks')?.textContent).toBe('In loadouts: Boss Gear');
     });
 
+    test('the game name is written with the slot level once, even when the popper is delivered twice', async () => {
+        characterState.data = loadoutData();
+        mountPanel().dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        const el = slotTooltip();
+        observerState.handler(el);
+        await settle();
+        await tooltipPrices.handleTooltip(el);
+        expect(el.querySelector('div[class*="ItemTooltipText_name"]').textContent).toBe('Griffin Bulwark +8');
+    });
+
+    test('a popper reused outside the panel gets the game name back', async () => {
+        characterState.data = loadoutData();
+        mountPanel().dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        const el = slotTooltip();
+        observerState.handler(el);
+        await settle();
+        document.body.innerHTML = `<div class="Inventory_items__i"><div class="Item_item__a">${SPRITE}</div></div>`;
+        document.querySelector('.Item_item__a svg').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        await tooltipPrices.handleTooltip(el);
+        expect(el.querySelector('div[class*="ItemTooltipText_name"]').textContent).toBe('Griffin Bulwark');
+        expect(el.dataset.pricesProcessedItem).toBe('Griffin Bulwark');
+    });
+
     test('the same tooltip outside the panel stays at +0', async () => {
         characterState.data = loadoutData();
         document.body.innerHTML = `<div class="Inventory_items__i"><div class="Item_item__a">${SPRITE}</div></div>`;
