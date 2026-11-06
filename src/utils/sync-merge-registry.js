@@ -82,6 +82,8 @@
  *   that replaces the gist can cut entries the gist holds. Only such a registration can report a trim
  * @property {boolean} liveSafe - The record's readers and writers re-read storage and fold it under what they
  *   hold, so a pulled copy is adopted without a reload and the write latch leaves its keys open
+ * @property {((local: *, folded: *) => boolean)|null} sameAs - Whether a fold that differs from the local copy
+ *   in text changes nothing the player holds (see `registerSyncMerge`)
  * @property {((key: string, value: *) => Record<string, *>|null)|null} split - For a retired key whose
  *   owner moves its entries into other keys on first read: the keys and values it would move them into
  */
@@ -141,6 +143,11 @@ export function scopedKeyMatcher(base) {
  *   into other keys and then deletes: given the key and a value, the keys (each owned by a registered merge) and
  *   values the migration would write, or null when it cannot say. Sync then carries those instead of the retired
  *   key wherever this device does not hold it, so a pull does not write back a key the next read deletes again
+ * @param {(local: *, folded: *) => boolean} [options.sameAs] - Whether a pull's fold of this record changes
+ *   nothing a player holds, though its text differs from the local copy (defaults and empty fields the fold adds,
+ *   view state it takes from the download). A pull whose fold is the same leaves the key out of the write, so it
+ *   neither latches it nor asks for a reload. Judge conservatively: a wrong "same" drops news, a wrong
+ *   "different" costs a reload prompt
  * @returns {() => void} Unregister, mostly for tests
  */
 export function registerSyncMerge({
@@ -157,6 +164,7 @@ export function registerSyncMerge({
     capsLocally = false,
     liveSafe = false,
     split,
+    sameAs,
 }) {
     if (!store) throw new Error('[SyncMergeRegistry] registerSyncMerge needs a store');
     if (typeof merge !== 'function') throw new Error('[SyncMergeRegistry] registerSyncMerge needs a merge()');
@@ -203,6 +211,7 @@ export function registerSyncMerge({
         capsLocally: capsLocally === true,
         liveSafe: liveSafe === true,
         split: typeof split === 'function' ? split : null,
+        sameAs: typeof sameAs === 'function' ? sameAs : null,
         claim,
     };
 
