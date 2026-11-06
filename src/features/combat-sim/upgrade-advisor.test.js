@@ -1064,6 +1064,72 @@ describe('generateCandidates ability_level steps', () => {
     });
 });
 
+describe('generateCandidates combat_level steps', () => {
+    const gen = (levels, options, abilityTargetLevel = 0, targets = null) =>
+        generateCandidates(
+            { equipment: {}, ...levels },
+            buildGameData(),
+            'combat_level',
+            abilityTargetLevel,
+            'increment',
+            false,
+            targets,
+            null,
+            0,
+            null,
+            null,
+            0,
+            options
+        );
+    const rows = (c, key = 'staminaLevel') => c.filter((x) => x.skillKey === key).map((x) => x.upgradeLevel);
+
+    test('no Combat Lv mode sent: +abilityTargetLevel (5 when unset), one row, as always', () => {
+        expect(rows(gen({ staminaLevel: 50 }, {}, 0))).toEqual([55]);
+        expect(rows(gen({ staminaLevel: 50 }, {}, 10))).toEqual([60]);
+    });
+
+    test('its own +N box replaces the borrowed ability number; steps add +N, +2N, +3N', () => {
+        expect(rows(gen({ staminaLevel: 50 }, { combatLevelBoost: 3 }, 10))).toEqual([53]);
+        const c = gen({ staminaLevel: 50 }, { combatLevelBoost: 5, combatLevelSteps: 3 });
+        expect(rows(c)).toEqual([55, 60, 65]);
+        expect(c.filter((x) => x.skillKey === 'staminaLevel').map((x) => x.description)).toEqual([
+            'Stamina 50 → 55',
+            'Stamina 50 → 60',
+            'Stamina 50 → 65',
+        ]);
+        expect(c.find((x) => x.upgradeLevel === 65).levelBoost).toBe(15);
+    });
+
+    test('next multiple: 62 goes to 65, 70, 75; one already on a multiple goes a full step up', () => {
+        const opts = { combatLevelType: 'next_multiple', combatLevelBoost: 5, combatLevelSteps: 3 };
+        expect(rows(gen({ staminaLevel: 62 }, opts))).toEqual([65, 70, 75]);
+        expect(rows(gen({ staminaLevel: 70 }, opts))).toEqual([75, 80, 85]);
+        expect(rows(gen({ staminaLevel: 62 }, { combatLevelType: 'next_multiple', combatLevelBoost: 10 }))).toEqual([
+            70,
+        ]);
+    });
+
+    test('capped at the max level from game data; a skill at the max offers nothing', () => {
+        expect(rows(gen({ staminaLevel: 198 }, { combatLevelBoost: 5, combatLevelSteps: 3 }))).toEqual([200]);
+        expect(rows(gen({ staminaLevel: 199 }, { combatLevelBoost: 5 }))).toEqual([200]);
+        expect(rows(gen({ staminaLevel: 200 }, { combatLevelBoost: 5, combatLevelSteps: 3 }))).toEqual([]);
+        expect(rows(gen({ staminaLevel: 200 }, {}, 5))).toEqual([]);
+    });
+
+    test('an open Targets grid replaces the mode and the steps with one row per skill', () => {
+        const c = gen({ staminaLevel: 50, attackLevel: 60 }, { combatLevelBoost: 5, combatLevelSteps: 3 }, 0, {
+            staminaLevel: 58,
+        });
+        expect(c.map((x) => [x.skillKey, x.upgradeLevel])).toEqual([['staminaLevel', 58]]);
+    });
+
+    test('steps are capped at 5', () => {
+        expect(rows(gen({ staminaLevel: 10 }, { combatLevelBoost: 1, combatLevelSteps: 99 }))).toEqual([
+            11, 12, 13, 14, 15,
+        ]);
+    });
+});
+
 describe('findMatchingCharmForSkill', () => {
     const CHARM = '/equipment_types/charm';
     function charmGameData() {

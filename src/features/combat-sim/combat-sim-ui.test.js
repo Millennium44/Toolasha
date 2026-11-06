@@ -1444,6 +1444,88 @@ describe('the panel', () => {
         });
     });
 
+    describe('Combat Lv: its own mode, number and Steps', () => {
+        const q = (id) => ui.panel.querySelector(id);
+        const combatBox = () => q('[data-upgrade-mode="combat_level"]');
+        const abilityBox = () => q('[data-upgrade-mode="ability_level"]');
+
+        afterEach(() => {
+            combatBox().checked = false;
+            ui._onUpgradeModesChanged();
+            mocks.editedDTOs = null;
+        });
+
+        test('the chip carries the mode select, the number and Steps; the Ability Lv box is no longer borrowed', async () => {
+            abilityBox().checked = false;
+            combatBox().checked = true;
+            ui._onUpgradeModesChanged();
+            expect([...q('#mwi-csim-combat-level-type').options].map((o) => o.value)).toEqual([
+                'increment',
+                'next_multiple',
+            ]);
+            expect(q('#mwi-csim-combat-level-boost').value).toBe('5');
+            expect(q('#mwi-csim-combat-level-steps').value).toBe('1');
+            expect(q('#mwi-csim-combat-level-steps-group').title).toMatch(/per combat skill/);
+            // The Ability Lv group stays hidden with Ability Lv off
+            expect(q('#mwi-csim-upgrade-level-group').style.display).toBe('none');
+
+            selectZone();
+            q('#mwi-csim-upgrade-target-level').value = '20';
+            q('#mwi-csim-combat-level-type').value = 'next_multiple';
+            q('#mwi-csim-combat-level-type').dispatchEvent(new Event('change', { bubbles: true }));
+            q('#mwi-csim-combat-level-boost').value = '10';
+            q('#mwi-csim-combat-level-steps').value = '9';
+            q('#mwi-csim-combat-level-steps').dispatchEvent(new Event('change', { bubbles: true }));
+            expect(q('#mwi-csim-combat-level-steps').value).toBe('5');
+            let seen = null;
+            mocks.onRun = (params) => {
+                seen = params;
+            };
+            await ui._onUpgradeAnalyze();
+            expect(seen).toMatchObject({ combatLevelType: 'next_multiple', combatLevelBoost: 10, combatLevelSteps: 5 });
+            // The ability number is the ability's own again, not raised to 5 for Combat Lv
+            q('#mwi-csim-upgrade-target-level').value = '';
+            await ui._onUpgradeAnalyze();
+            expect(seen.abilityTargetLevel).toBe(0);
+            // A blank Combat Lv number reads as 5, as +Levels always has
+            q('#mwi-csim-combat-level-boost').value = '';
+            await ui._onUpgradeAnalyze();
+            expect(seen.combatLevelBoost).toBe(5);
+        });
+
+        test('ticking another set keeps the mode; turning Combat Lv on again resets to +5, one step', () => {
+            combatBox().checked = true;
+            ui._onUpgradeModesChanged();
+            q('#mwi-csim-combat-level-type').value = 'next_multiple';
+            q('#mwi-csim-combat-level-steps').value = '3';
+            const house = q('[data-upgrade-mode="house"]');
+            house.checked = !house.checked;
+            ui._onUpgradeModesChanged();
+            house.checked = !house.checked;
+            expect(q('#mwi-csim-combat-level-type').value).toBe('next_multiple');
+            expect(q('#mwi-csim-combat-level-steps').value).toBe('3');
+            combatBox().checked = false;
+            ui._onUpgradeModesChanged();
+            combatBox().checked = true;
+            ui._onUpgradeModesChanged();
+            expect(q('#mwi-csim-combat-level-type').value).toBe('increment');
+            expect(q('#mwi-csim-combat-level-steps').value).toBe('1');
+        });
+
+        test('the Targets grid prefills from the chip: next multiple of 10, capped at the max', () => {
+            mocks.editedDTOs = { player1: { hrid: 'player1', equipment: {}, staminaLevel: 62, attackLevel: 200 } };
+            combatBox().checked = true;
+            ui._onUpgradeModesChanged();
+            q('#mwi-csim-combat-level-type').value = 'next_multiple';
+            q('#mwi-csim-combat-level-boost').value = '10';
+            q('#mwi-csim-upgrade-target-level').value = '40';
+            q('#mwi-csim-combat-targets-toggle').click();
+            expect(q('[data-combat-target="staminaLevel"]').value).toBe('70');
+            expect(q('[data-combat-target="attackLevel"]').value).toBe('200');
+            q('#mwi-csim-combat-targets-toggle').click();
+        });
+    });
+
     test('an analysis started before the editor is set up still knows which DTO is the live character', async () => {
         selectZone();
         let selfHrid = 'unset';

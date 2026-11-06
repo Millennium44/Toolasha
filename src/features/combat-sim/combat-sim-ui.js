@@ -119,9 +119,12 @@ import { maxLevel, maxEnhancementLevel, maxHouseRoomLevel } from '../../utils/ga
 import {
     nextMultipleLevel,
     abilityLevelBoxHints,
+    levelBoxHints,
     normalizeLevelSteps,
+    stepLevels,
     MAX_LEVEL_STEPS,
     LEVEL_STEPS_TITLE,
+    levelStepsTitle,
 } from '../../utils/ability-level-step.js';
 import {
     buildGameDataPayload,
@@ -3179,6 +3182,13 @@ function sortRowsBy(rows, keyOf, asc) {
     });
 }
 
+/** Help text for the Combat Lv Steps box: each step there is three simulations, not one */
+const COMBAT_LEVEL_STEPS_TITLE = levelStepsTitle(
+    'combat skill',
+    'A combat skill row is up to three simulations (the level, its leveling time, and the weapon skill gained ' +
+        'alongside). The Targets grid, while open, replaces the steps with one level per skill.'
+);
+
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
     'background:' +
@@ -3243,6 +3253,19 @@ const MODE_OPTIONS = {
         return `
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
+            <select class="toolasha-select" id="mwi-csim-combat-level-type" title="How far to raise each combat skill" style="${CHIP_INPUT_STYLE}">
+                <option value="increment">+Levels</option>
+                <option value="next_multiple">Next mult. of</option>
+            </select>
+            <input id="mwi-csim-combat-level-boost" type="number" min="1" max="${maxLevel()}" value="5" placeholder="+5" style="
+                width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Number of levels to add to each combat skill">
+            <label id="mwi-csim-combat-level-steps-group" title="${COMBAT_LEVEL_STEPS_TITLE}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="mwi-csim-combat-level-steps" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${COMBAT_LEVEL_STEPS_TITLE}">
+            </label>
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;"><label style="color:#888; font-size:12px;">Charm</label>
             <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select></span>
             <input id="mwi-csim-charm-enh" type="number" min="0" max="${maxEnhancementLevel()}" placeholder="+" style="
@@ -4345,6 +4368,21 @@ class CombatSimUI {
         });
         this.panel.querySelector('#mwi-csim-upgrade-steps').addEventListener('change', (e) => {
             e.target.value = String(normalizeLevelSteps(e.target.value));
+        });
+        this.panel.querySelector('#mwi-csim-combat-level-type')?.addEventListener('change', (e) => {
+            const input = this.panel.querySelector('#mwi-csim-combat-level-boost');
+            const hints = levelBoxHints(e.target.value, 'combat skill');
+            input.value = hints.value;
+            input.placeholder = hints.placeholder;
+            input.title = hints.title;
+        });
+        this.panel.querySelector('#mwi-csim-combat-level-steps')?.addEventListener('change', (e) => {
+            e.target.value = String(normalizeLevelSteps(e.target.value));
+        });
+        this.panel.querySelector('#mwi-csim-combat-level-boost')?.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value);
+            if (val > maxLevel()) e.target.value = maxLevel();
+            if (val < 1 && e.target.value !== '') e.target.value = 1;
         });
         this.panel.querySelector('#mwi-csim-upgrade-target-level').addEventListener('change', (e) => {
             const val = parseInt(e.target.value);
@@ -10518,7 +10556,8 @@ class CombatSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const boost = parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 5;
+        const boost = parseInt(this.panel.querySelector('#mwi-csim-combat-level-boost')?.value) || 5;
+        const levelType = this.panel.querySelector('#mwi-csim-combat-level-type')?.value || 'increment';
 
         // Hide skills the weapon style can't train (matches candidate filtering)
         const gameData = buildGameDataPayload();
@@ -10533,7 +10572,8 @@ class CombatSimUI {
                 return;
             }
             const current = Math.max(1, Math.floor(dto?.[input.dataset.combatTarget] || 1));
-            input.value = Math.min(maxLevel(), current + boost);
+            // The first level the chip's mode would offer, as the advisor reads it (a skill at the max stays there)
+            input.value = stepLevels(current, levelType, boost, 1, maxLevel())[0] ?? Math.min(maxLevel(), current);
         });
     }
 
@@ -10631,6 +10671,23 @@ class CombatSimUI {
     }
 
     /**
+     * Put the Combat Lv chip's mode, number and Steps back to +5, one step: what a fresh panel shows.
+     * @private
+     */
+    _setDefaultCombatLevelControls() {
+        const typeSelect = this.panel.querySelector('#mwi-csim-combat-level-type');
+        const input = this.panel.querySelector('#mwi-csim-combat-level-boost');
+        if (!input) return;
+        if (typeSelect) typeSelect.value = 'increment';
+        const hints = levelBoxHints('increment', 'combat skill');
+        input.value = hints.value;
+        input.placeholder = hints.placeholder;
+        input.title = hints.title;
+        const steps = this.panel.querySelector('#mwi-csim-combat-level-steps');
+        if (steps) steps.value = '1';
+    }
+
+    /**
      * The Steps box applies to +Levels and Next mult. of, not to an absolute Target Lv.
      * @private
      */
@@ -10672,8 +10729,6 @@ class CombatSimUI {
         const shrineBox = this.panel.querySelector('#mwi-csim-shrine-target-level');
         if (shrineBox) shrineBox.max = String(getGuildShrineMaxLevel());
         const modes = new Set(this._getUpgradeModes());
-        const levelType = this.panel.querySelector('#mwi-csim-upgrade-level-type');
-        const levelInput = this.panel.querySelector('#mwi-csim-upgrade-target-level');
 
         const isLevelMode = modes.has('ability_level');
         const isCombatLevelMode = modes.has('combat_level');
@@ -10691,30 +10746,18 @@ class CombatSimUI {
             group.style.display = modes.has(group.getAttribute('data-mode-options')) ? 'inline-flex' : 'none';
         });
 
-        // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
-        // since one number drives both; show that chip's options in either case
-        const levelGroup = this.panel.querySelector('#mwi-csim-upgrade-level-group');
-        if (levelGroup) {
-            levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
-        }
-        levelType.style.display = isLevelMode ? '' : 'none';
+        // Combat Lv has its own +Levels / Next mult. of box and Steps in its chip, so the Ability Lv box
+        // levels abilities only
         this._syncStepsBox();
-        levelInput.title =
-            isLevelMode && isCombatLevelMode
-                ? 'Levels added to each ability and each combat skill'
-                : isCombatLevelMode
-                  ? 'Levels added to each combat skill'
-                  : 'Number of levels to add to each ability';
-        if (isCombatLevelMode && !parseInt(levelInput.value)) {
-            levelInput.value = '5';
-            levelInput.placeholder = '+5';
-        }
 
         if (isCombatLevelMode) {
             this._populateCharmSelect();
+            // Only when Combat Lv is turned on, as Ability Lv does: ticking another set keeps the mode and number
+            if (!this._combatLevelModeOn) this._setDefaultCombatLevelControls();
         } else {
             this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
         }
+        this._combatLevelModeOn = isCombatLevelMode;
 
         // Per-ability targets only apply to ability-level candidates
         const abilityTargetsToggle = this.panel.querySelector('#mwi-csim-ability-targets-toggle');
@@ -11272,7 +11315,7 @@ class CombatSimUI {
         // Trigger tuning is its own run (the Tune triggers section); Analyze never runs it
         const upgradeModes = this._getUpgradeModes();
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
-        let abilityTargetLevel = Math.min(
+        const abilityTargetLevel = Math.min(
             maxLevel(),
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
@@ -11283,8 +11326,20 @@ class CombatSimUI {
                 : 1;
         let charmTier = null;
         let charmEnhancement = null;
+        // The Combat Lv chip's own mode, number (blank means 5, as +Levels has always read it) and Steps
+        let combatLevelType = 'increment';
+        let combatLevelBoost = 5;
+        let combatLevelSteps = 1;
         if (upgradeModes.includes('combat_level')) {
-            if (!abilityTargetLevel) abilityTargetLevel = 5;
+            combatLevelType =
+                this.panel.querySelector('#mwi-csim-combat-level-type')?.value === 'next_multiple'
+                    ? 'next_multiple'
+                    : 'increment';
+            combatLevelBoost = Math.min(
+                maxLevel(),
+                parseInt(this.panel.querySelector('#mwi-csim-combat-level-boost')?.value) || 5
+            );
+            combatLevelSteps = normalizeLevelSteps(this.panel.querySelector('#mwi-csim-combat-level-steps')?.value);
             charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
             const enhRaw = this.panel.querySelector('#mwi-csim-charm-enh')?.value;
             charmEnhancement =
@@ -11447,6 +11502,9 @@ class CombatSimUI {
                     abilityLevelType,
                     abilityTargetLevel,
                     abilitySteps,
+                    combatLevelType,
+                    combatLevelBoost,
+                    combatLevelSteps,
                     skipBackSlot,
                     combatLevelTargets,
                     abilityTargets,
