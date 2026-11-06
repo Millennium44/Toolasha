@@ -1091,6 +1091,12 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                 const probedText = stableStringify(probed.value);
                 if (stableStringify(entries[key]) === probedText) {
                     same.add(id);
+                } else if (registration.sameAs?.(probed.value, entries[key])) {
+                    // A fold that only added defaults or took view state from the download: this device's copy
+                    // stays as it is, so the key is neither written nor latched. Set to the copy held, like the
+                    // settled case above, in case a later rule puts the key back in the write
+                    entries[key] = probed.value;
+                    same.add(id);
                 }
                 (refolds[storeName] ||= {})[key] = refoldAgainstStored(() => probedText, fold, incoming);
             } catch (error) {

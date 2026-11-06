@@ -6,6 +6,7 @@
 
 import { createCuratedRecord } from '../../../utils/persisted-record.js';
 import { registerSyncMerge } from '../../../utils/sync-merge-registry.js';
+import { stableStringify } from '../../../utils/stable-stringify.js';
 
 const STORAGE_KEY = 'inventoryTabs_config';
 const STORE = 'settings';
@@ -715,6 +716,39 @@ function pruneTombstones(config, now = Date.now()) {
 }
 
 /**
+ * A config as the player holds it, for comparing two copies: the shape `loadConfig` imposes (defaults filled,
+ * every tab with `items` and `children`), the empty tombstone maps `mergeConfigs` deletes left out, and the
+ * selected tab left out too - which tab is open is where this device was looking, not a tab, an item or a
+ * deletion, and a fold takes the download's selection whenever this device has none.
+ * @param {Object} config
+ * @returns {string} Canonical text
+ */
+function tabContentOf(config) {
+    const { selectedTabId: _view, ...rest } = {
+        ...defaultConfig(),
+        ...(config && typeof config === 'object' ? config : {}),
+    };
+    const out = { ...rest, tabs: normalizeTabs(rest.tabs) };
+    for (const field of ['removed', 'removedItems', 'clearedAll']) {
+        const value = out[field];
+        if (value && typeof value === 'object' && Object.keys(value).length === 0) delete out[field];
+    }
+    return stableStringify(out);
+}
+
+/**
+ * Whether a fold of the pulled config leaves every tab, item, deletion record and order this device holds as it
+ * is. Strict on everything but the two view-state/shape points above: a different stamp, name, color, open state,
+ * item order, tombstone or an extra field is a difference and is written.
+ * @param {Object} local - The copy this device stores
+ * @param {Object} folded - What the pull's fold produced
+ * @returns {boolean}
+ */
+function sameTabContent(local, folded) {
+    return tabContentOf(local) === tabContentOf(folded);
+}
+
+/**
  * A pull folds the gist's config into the one on disk instead of replacing it.
  *
  * The key is character-scoped with the id FIRST (`<charId>_inventoryTabs_config`),
@@ -737,6 +771,8 @@ registerSyncMerge({
     // A pull is the one fold where local must not be erased by a tie
     merge: (local, incoming) => mergeConfigs(local, incoming),
     localWinsOnPull: true,
+    // A fold that reorders nothing and adds no tab, item or tombstone is not news, however the stored text differs
+    sameAs: sameTabContent,
     label: 'Custom inventory tabs',
     // Deliberately NOT live-safe: a pull latches this key and asks for a reload. Every save writes the held config
     // whole (the curated record trusts memory), so an edit landing between a restore releasing its hold and the
