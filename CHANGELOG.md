@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Philo calculator picks the best catalyst and tea per item
 
-On Auto, each row tries no catalyst, Catalyst of Transmutation and Prime Catalyst, with and without Catalytic Tea, and keeps the setup that earns the most per hour; a new Setup column shows the pick and how close the others came. You can still force one setup for the whole table, and your current choice is kept.
+On Auto, each row tries no catalyst, Catalyst of Transmutation and Prime Catalyst, with and without Catalytic Tea, and keeps the setup that earns the most per hour; a new Setup column shows the pick and how close the others came. If you never changed the old Prime and tea checkboxes you start on Auto; a choice you did make is kept, and you can still force one setup for the whole table.
 
 ### Philo calculator shows input cost per stone and fills its panel
 
