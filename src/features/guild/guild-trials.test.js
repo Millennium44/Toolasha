@@ -9667,6 +9667,18 @@ describe('the game’s list of the cycle’s trials is saved with the record', (
             expect(again.history[0].scheduled).toEqual(held.history[0].scheduled);
             expect(guildTrials._fileIntoPayloadWeek(again, Date.now())).toBe(again);
         });
+
+        test('on the test server the rollover kept the cycle on the record, so the payload is filed there', () => {
+            game.testServer = true;
+            try {
+                const carried = { ...straddle(null), history: [] };
+                const filed = guildTrials._fileIntoPayloadWeek(carried, Date.now());
+                expect(Object.keys(filed.tiles).sort()).toEqual(['skilling::alchemy', 'skilling::brewing']);
+                expect(filed.history).toEqual([]);
+            } finally {
+                game.testServer = false;
+            }
+        });
     });
 });
 

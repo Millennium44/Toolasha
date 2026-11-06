@@ -456,6 +456,30 @@ function capHistory(history) {
 /** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
 const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
 
+/** How long a test-server cycle runs, start to start: one a day */
+const TEST_CYCLE_SPAN_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a week's rollover leaves the record's tiles in place rather than archiving them.
+ *
+ * On live the weekly reset is the cycle boundary. The test server runs a cycle a day, and its weekly
+ * reset falls inside one: archiving there cut the running cycle in two, a piece with no `cycleFrom`
+ * ("Last week") and the rest archived again when the next cycle began. So on the test server tiles
+ * stamped within a cycle of the rollover stay with the record. Older tiles cannot be a running cycle's
+ * and are archived as before, so a record left untouched for days is not folded into the next cycle.
+ *
+ * @param {Object} record - A record of an earlier week
+ * @param {number} weekStart - The week being started, ms
+ * @returns {boolean}
+ */
+function carriesOverRollover(record, weekStart) {
+    if (!isTestServer()) return false;
+    const tiles = Object.values(record?.tiles || {});
+    if (!tiles.length) return false;
+    const newest = tiles.reduce((most, tile) => Math.max(most, newestTileStamp(tile)), 0);
+    return newest >= weekStart - TEST_CYCLE_SPAN_MS;
+}
+
 /** The reason stamped on a week's tiles archived by {@link rollRecordToWeek} */
 export const WEEK_ROLLOVER_REASON = 'the week rolled over';
 
@@ -473,7 +497,8 @@ export const WEEK_ROLLOVER_REASON = 'the week rolled over';
  * that states more of it. The history cap ({@link MAX_ARCHIVED_CYCLES}) holds.
  *
  * The test server's earlier-cycle stamp (`cycleStart`) is the earlier week's
- * and is not carried.
+ * and is not carried — except where the running cycle is carried whole
+ * ({@link carriesOverRollover}): there the record goes on as it is, under the new week.
  *
  * @param {Object} record - A record of an earlier week (not mutated)
  * @param {number} weekStart - The week to start, in ms
@@ -486,6 +511,16 @@ export const WEEK_ROLLOVER_REASON = 'the week rolled over';
 export function rollRecordToWeek(record, weekStart, { guildId = null, guildName = null, accuracy = null } = {}) {
     if (!record || !Number.isFinite(record.weekStart) || !Number.isFinite(weekStart) || record.weekStart >= weekStart) {
         return record;
+    }
+    if (carriesOverRollover(record, weekStart)) {
+        // The running cycle goes on: its tiles, lists and cycle start stay on the record, and
+        // `archiveEarlierCycles` archives it whole when the next cycle starts, under its own `cycleFrom`
+        return {
+            ...record,
+            weekStart,
+            guildId: record.guildId ?? guildId ?? null,
+            guildName: record.guildName ?? guildName ?? null,
+        };
     }
     const archived = archiveCycle(record, WEEK_ROLLOVER_REASON, weekStart, { accuracy });
     return {

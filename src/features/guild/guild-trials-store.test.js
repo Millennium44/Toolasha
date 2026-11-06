@@ -2648,3 +2648,119 @@ describe('trial results — each trial’s tier kept after its week leaves the a
         expect(bytes / rolled.trialResults.length).toBeLessThan(400);
     });
 });
+
+describe('the weekly reset inside a test-server cycle', () => {
+    const HOUR = 3_600_000;
+    const WEEK_MS = 7 * 24 * HOUR;
+    const lastWeek = thisWeek - WEEK_MS;
+    // The daily cycle began three hours before the weekly reset and finished before it
+    const cycleBegan = thisWeek - 3 * HOUR;
+    const nextCycle = thisWeek + 21 * HOUR;
+    const alchemy = (tier, points, at) => ({
+        name: 'Alchemy',
+        kind: 'skilling',
+        level: 100 + tier * 10,
+        tier,
+        points,
+        pointsByTier: { [tier]: points },
+        completed: true,
+        tierReadAt: at,
+        samples: [{ t: at - 60_000, readings: [{ current: 30, max: 100 }] }],
+        tiers: [],
+        tierSeenAt: { [tier]: at - 120_000 },
+    });
+    const running = (at = cycleBegan + 90 * 60_000) => ({
+        weekStart: lastWeek,
+        tiles: { 'skilling::alchemy': alchemy(12, 1300, at) },
+        guildId: 'g1',
+        guildName: 'Milky Way',
+        history: [],
+        trialResults: [],
+        cycleStart: cycleBegan,
+        cycleStartAt: cycleBegan + 60_000,
+    });
+    // The next cycle's skilling hour, ten minutes in, as the guild payload states it
+    const nextHour = () =>
+        parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/brewing': {
+                            highestTier: 1,
+                            budgetRemainingMs: 50 * 60_000,
+                            tierStartedAtMs: nextCycle + 10 * 60_000,
+                            highestTierReachedAtMs: nextCycle + 10 * 60_000,
+                            done: false,
+                        },
+                    },
+                },
+                combat: { status: '', parties: null },
+            })
+        );
+
+    test('the rollover keeps the running cycle whole; it is archived once, at its end, with its cycleFrom', () => {
+        game.testServer = true;
+        const rolled = rollRecordToWeek(running(), thisWeek);
+        expect(rolled.weekStart).toBe(thisWeek);
+        expect(rolled.history).toEqual([]);
+        expect(rolled.tiles['skilling::alchemy'].tier).toBe(12);
+        expect(rolled.cycleStart).toBe(cycleBegan);
+
+        const ended = archiveEarlierCycles(rolled, nextHour(), { offset: 0, at: nextCycle + 16 * 60_000 });
+        expect(ended.history).toHaveLength(1);
+        expect(ended.history[0]).toMatchObject({ weekStart: thisWeek, cycleFrom: nextCycle });
+        const results = trialResultsOf(ended);
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({ trial: 'alchemy', cardTier: 12, cycleFrom: nextCycle });
+
+        // The next weekly reset carries nothing of it again, and files it under no second key
+        const later = rollRecordToWeek({ ...ended, tiles: {} }, thisWeek + WEEK_MS);
+        expect(trialResultsOf(later)).toHaveLength(1);
+        expect(later.history).toHaveLength(1);
+    });
+
+    test('a record untouched for over a cycle is no running cycle, and is archived at the rollover as before', () => {
+        game.testServer = true;
+        const rolled = rollRecordToWeek(running(thisWeek - 30 * HOUR), thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+        expect(rolled.history[0].cycleFrom).toBeUndefined();
+    });
+
+    test('live is unchanged: the weekly reset is the cycle boundary', () => {
+        const rolled = rollRecordToWeek(running(), thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+        expect(trialResultsOf(rolled)[0]).toMatchObject({ trial: 'alchemy', cardTier: 12, cycleFrom: null });
+    });
+
+    test('a copy still on last week folds into the carried cycle, not into a second archive', () => {
+        game.testServer = true;
+        const tab = rollRecordToWeek(running(), thisWeek);
+        const folded = mergeTrialRecords(tab, running(cycleBegan + 100 * 60_000));
+        expect(folded.weekStart).toBe(thisWeek);
+        expect(folded.history).toEqual([]);
+        expect(folded.tiles['skilling::alchemy'].tier).toBe(12);
+    });
+
+    test('a split piece an older build stored stays as it was, beside the whole cycle', () => {
+        game.testServer = true;
+        // An older build's rollover piece, synced in: never rewritten, never hidden
+        const piece = {
+            archivedAt: thisWeek,
+            reason: 'the week rolled over',
+            weekStart: lastWeek,
+            tiles: { 'skilling::alchemy': alchemy(12, 1300, cycleBegan + 90 * 60_000) },
+        };
+        const folded = mergeTrialRecords(rollRecordToWeek(running(), thisWeek), {
+            weekStart: thisWeek,
+            tiles: {},
+            guildId: 'g1',
+            guildName: 'Milky Way',
+            history: [piece],
+        });
+        expect(folded.history).toEqual([piece]);
+        expect(folded.tiles['skilling::alchemy'].tier).toBe(12);
+    });
+});

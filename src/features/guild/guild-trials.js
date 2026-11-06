@@ -4235,6 +4235,9 @@ class GuildTrials {
         const week = this._payloadWeek(now);
         if (!record || week === null || week === record.weekStart) return this._recordServerTiers(record, now);
         if (week > record.weekStart) return record;
+        // The test server's rollover leaves the running cycle on the record (`rollRecordToWeek`), so the record
+        // is the cycle the payload's hour belongs to
+        if (isTestServer()) return this._recordServerTiers(record, now);
 
         const history = Array.isArray(record.history) ? record.history : [];
         const index = history.findIndex(
