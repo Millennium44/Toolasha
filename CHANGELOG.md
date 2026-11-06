@@ -6,6 +6,30 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tab follow setting applies at once
+
+Changing "Follow a newer Toolasha version loaded in another tab" away from Ask now acts straight away on a newer version the tab already heard about, instead of waiting for the tab to be hidden and shown again.
+
+### Goal planner replans quickly with reservations on
+
+With inventory reservations switched on, a replan now saves every goal's claim in one write instead of one per goal, so a long goal list no longer takes minutes to settle.
+
+### Party Loot run picker shows dates
+
+Runs not from today now show their date beside the time, so saved runs from different days can be told apart.
+
+### A backup restore can't be undone by a background save
+
+A change saved while a restore or sync pull was writing could land over the restored value if the tab was hidden at that moment. Those saves now wait until the restore finishes. The Philo calculator also stops opening if you switch characters while it loads, so it can't save one character's settings over another's.
+
+### Labyrinth estimate uses the room's real deadline
+
+On auto runs, the live clear chance now counts attempts left to the server's room deadline instead of assuming a fixed room length.
+
+### Performance panel records stalls in Firefox
+
+Firefox doesn't report long tasks, so the Performance panel listed no freezes there. It now measures them with a timer, marked with ~ as estimates.
+
 ### Sync asks for a reload only when your tabs changed
 
 A sync pull no longer shows "reload advised" for your custom inventory tabs when the other device's tabs are the same as yours. Which tab you have selected now stays this device's own.
