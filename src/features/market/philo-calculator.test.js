@@ -168,6 +168,9 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 vi.mock('./alchemy-profit-calculator.js', () => ({
     default: {
         calculateTransmuteProfit: () => ({ dropRevenues: mocks.bonusDrops }),
+        // The real method's values: the type-specific catalyst is +0.15, the Prime Catalyst +0.25 (fractions)
+        catalystSuccessBonus: (hrid) =>
+            hrid === '/items/prime_catalyst' ? 0.25 : hrid === '/items/catalyst_of_transmutation' ? 0.15 : 0,
         // Mirrors the real getUnderLevelPenalty's formula against mocks.skills, so this
         // suite still drives the under-level scenarios without pulling in the full calculator.
         getUnderLevelPenalty: (itemLevel) => {
@@ -301,6 +304,8 @@ describe('success rate', () => {
         mocks.skills = [{ skillHrid: '/skills/alchemy', level: 25 }];
         calc.useCatalyst = true;
         calc.catalystPrice = 0;
+        // Typed in: "I own them" is a price; an unpriced catalyst would blank the cost figures
+        calc._manualCatalystPrice = true;
 
         expect(calc.calculateRow(WIDGET_HRID, widget()).effectiveTransmuteChance).toBeCloseTo(
             0.5 * (1 + 0.25 - 0.45),
@@ -1478,5 +1483,368 @@ describe('drops nothing quotes', () => {
         const stones = sold.effectiveTransmuteChance * 0.01 * 1;
         expect(kept.evInstant - sold.evInstant).toBeCloseTo(stones * 4_000_000 * MARKET_TAX, 6);
         expect(kept.evInstant).toBeGreaterThan(sold.evInstant);
+    });
+});
+
+describe('automatic catalyst and tea setup per row', () => {
+    const PRIME = '/items/prime_catalyst';
+    const TRANSMUTE = '/items/catalyst_of_transmutation';
+    const CAPE_HRID = '/items/test_cape';
+
+    /** The widget with its stone chance swapped: a rich item pays well per success, a poor one barely */
+    const withStone = (dropRate, extra = {}) =>
+        widget({
+            transmuteDropTable: [
+                { itemHrid: PHILO_HRID, dropRate, minCount: 1, maxCount: 1 },
+                { itemHrid: WIDGET_HRID, dropRate: 0.5, minCount: 1, maxCount: 1 },
+                { itemHrid: OTHER_HRID, dropRate: 0.25, minCount: 2, maxCount: 2 },
+            ],
+            ...extra,
+        });
+    const RICH = () => withStone(0.01);
+    const POOR = () => withStone(0.000001);
+
+    /** A calculator on the default Auto modes with the catalytic tea worth +10 points (a fraction: 0.1) */
+    function fresh(modes = {}) {
+        const c = new PhiloCalculator();
+        c.drinkConcentrationLevel = 0;
+        c.catalyticTeaRatioBoost = 0.1;
+        Object.assign(c, modes);
+        c.loadDefaultPrices();
+        return c;
+    }
+    const profit = (c, details) => c.calculateRow(WIDGET_HRID, details).profitPerHour;
+    /** Profit/hr of a row forced to one setup */
+    const forcedProfit = (catalyst, tea, details) => profit(fresh({ catalystMode: catalyst, teaMode: tea }), details);
+    const ALL = [
+        ['none', 'off'],
+        ['transmute', 'off'],
+        ['prime', 'off'],
+        ['none', 'on'],
+        ['transmute', 'on'],
+        ['prime', 'on'],
+    ];
+
+    beforeEach(() => {
+        mocks.prices[`${PRIME}+0`] = { ask: 3000, bid: 2500 };
+        mocks.prices[`${TRANSMUTE}+0`] = { ask: 2000, bid: 1800 };
+    });
+
+    test('a new calculator starts on Auto, and reads the Transmutation catalyst from the market', () => {
+        const c = fresh();
+        expect(c.catalystMode).toBe('auto');
+        expect(c.teaMode).toBe('auto');
+        expect(c.catalystPrice).toBe(3000);
+        expect(c.transmuteCatalystPrice).toBe(2000);
+    });
+
+    test('the Catalyst of Transmutation is +15 points, the Prime +25, in the same additive sum', () => {
+        const rate = (catalyst) =>
+            fresh({ catalystMode: catalyst, teaMode: 'off' }).calculateRow(WIDGET_HRID, widget())
+                .effectiveTransmuteChance;
+        expect(rate('none')).toBeCloseTo(0.5, 10);
+        expect(rate('transmute')).toBeCloseTo(0.5 * 1.15, 10);
+        expect(rate('prime')).toBeCloseTo(0.5 * 1.25, 10);
+    });
+
+    test('Auto picks Prime on a rich item and no catalyst on a poor one', () => {
+        const c = fresh({ teaMode: 'off' });
+        expect(c.calculateRow(WIDGET_HRID, RICH()).setup).toBe('Prime');
+        expect(c.calculateRow(WIDGET_HRID, POOR()).setup).toBe('None');
+    });
+
+    test('Auto takes the cheaper Transmutation catalyst where Prime costs more than it adds', () => {
+        mocks.prices[`${PRIME}+0`] = { ask: 20_000, bid: 19_000 };
+        const row = fresh({ teaMode: 'off' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).toBe('Transmute');
+    });
+
+    test('the tea helps one item and not another', () => {
+        // Tea at 50,000: 12 drinks an hour over 675 actions is ~889 coins an action
+        mocks.prices[`${TEA_HRID}+0`] = { ask: 50_000, bid: 40_000 };
+        const c = fresh({ catalystMode: 'none' });
+        const rich = c.calculateRow(WIDGET_HRID, RICH());
+        const poor = c.calculateRow(WIDGET_HRID, POOR());
+        expect(rich.setup).toBe('Tea');
+        expect(rich.teaCostPerAction).toBeGreaterThan(800);
+        expect(poor.setup).toBe('None');
+        expect(poor.teaCostPerAction).toBe(0);
+    });
+
+    test('tea cost is per action at the row actions per hour, and the success sum carries the tea', () => {
+        mocks.prices[`${TEA_HRID}+0`] = { ask: 500, bid: 400 };
+        const row = fresh({ catalystMode: 'none', teaMode: 'on' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.teaCostPerAction).toBeCloseTo((500 * 12) / row.actionsPerHour, 6);
+        expect(row.effectiveTransmuteChance).toBeCloseTo(0.5 * 1.1, 10);
+    });
+
+    test('every row reads as the best of the six setups it could have been', () => {
+        const bulk = widget({ bulkMultiplier: 10 });
+        const selfHeavy = withStone(0.01);
+        selfHeavy.alchemyDetail.transmuteDropTable[1] = {
+            itemHrid: WIDGET_HRID,
+            dropRate: 0.9,
+            minCount: 1,
+            maxCount: 1,
+        };
+        const sure = widget({ transmuteSuccessRate: 1 });
+        mocks.prices[`${TEA_HRID}+0`] = { ask: 5000, bid: 4000 };
+        for (const details of [RICH(), POOR(), bulk, selfHeavy, sure]) {
+            const auto = profit(fresh(), details);
+            const best = Math.max(...ALL.map(([catalyst, tea]) => forcedProfit(catalyst, tea, details)));
+            expect(auto).toBeCloseTo(best, 6);
+        }
+    });
+
+    test('a tie goes to the setup with fewer consumables', () => {
+        // A 100% item cannot be lifted; catalysts and tea you already own (typed 0) change nothing, so only the
+        // count of consumables is left to decide
+        const c = fresh();
+        c.catalystPrice = 0;
+        c.transmuteCatalystPrice = 0;
+        c._manualCatalystPrice = true;
+        c._manualTransmuteCatalystPrice = true;
+        const row = c.calculateRow(WIDGET_HRID, widget({ transmuteSuccessRate: 1 }));
+        expect(row.setup).toBe('None');
+    });
+
+    test('a success rate already at 100% never takes a catalyst that only costs', () => {
+        const row = fresh().calculateRow(WIDGET_HRID, widget({ transmuteSuccessRate: 1 }));
+        expect(row.setup).toBe('None');
+        expect(row.effectiveTransmuteChance).toBe(1);
+        expect(row.transmuteCost).toBeCloseTo(1000 + 50, 6);
+    });
+
+    test('a bonus that overshoots the cap is wasted: the cheaper catalyst that reaches 100% wins', () => {
+        // 0.87 x 1.15 and 0.87 x 1.25 both clear 1
+        const row = fresh({ teaMode: 'off' }).calculateRow(
+            WIDGET_HRID,
+            withStone(0.01, { transmuteSuccessRate: 0.87 })
+        );
+        expect(row.effectiveTransmuteChance).toBe(1);
+        expect(row.setup).toBe('Transmute');
+    });
+
+    test('the level penalty stays in the sum: a low level makes a catalyst worth more, not free', () => {
+        mocks.skills = [{ skillHrid: '/skills/alchemy', level: 25 }];
+        const row = fresh({ teaMode: 'off' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).not.toBe('None');
+        const bonus = row.setup === 'Prime' ? 0.25 : 0.15;
+        expect(row.effectiveTransmuteChance).toBeCloseTo(0.5 * (1 + bonus - 0.45), 10);
+    });
+
+    test('the catalyst is charged on success only, at the chosen setup success rate', () => {
+        const row = fresh({ catalystMode: 'prime', teaMode: 'off' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.transmuteCost).toBeCloseTo(1000 + 50 + 0.625 * 3000, 6);
+    });
+
+    test('catalyst buy side follows the pricing mode', () => {
+        const instant = fresh({ catalystMode: 'transmute', teaMode: 'off' });
+        expect(instant.transmuteCatalystPrice).toBe(2000);
+        const patient = fresh({ catalystMode: 'transmute', teaMode: 'off', pricingMode: 'optimistic' });
+        expect(patient.transmuteCatalystPrice).toBe(1800);
+        // Patient buy: the widget itself is bought at its 800 bid too
+        expect(patient.calculateRow(WIDGET_HRID, widget()).transmuteCost).toBeCloseTo(800 + 50 + 0.575 * 1800, 6);
+    });
+
+    test('a Prime Catalyst nothing prices is never chosen', () => {
+        delete mocks.prices[`${PRIME}+0`];
+        const c = fresh({ teaMode: 'off' });
+        expect(c.catalystPriceFor('prime')).toBeNull();
+        const row = c.calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).toBe('Transmute');
+        expect(row.setupCandidates.find((s) => s.label === 'Prime').profitPerHour).toBeNull();
+    });
+
+    test('no catalyst priced at all: the row uses none, with figures', () => {
+        delete mocks.prices[`${PRIME}+0`];
+        delete mocks.prices[`${TRANSMUTE}+0`];
+        const row = fresh({ teaMode: 'off' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).toBe('None');
+        expect(row.profitPerHour).not.toBeNull();
+        expect(row.transmuteCost).toBeCloseTo(1000 + 50, 6);
+    });
+
+    test('a tea nothing prices is not a candidate', () => {
+        delete mocks.prices[`${TEA_HRID}+0`];
+        const row = fresh({ catalystMode: 'none' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).toBe('None');
+        expect(row.profitPerHour).not.toBeNull();
+    });
+
+    test('forced to a catalyst nothing prices: cost figures are blank, never computed from 0', () => {
+        delete mocks.prices[`${PRIME}+0`];
+        const row = fresh({ catalystMode: 'prime', teaMode: 'off' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setup).toBe('Prime');
+        expect(row.setupUnpriced).toEqual(['Prime']);
+        for (const key of ['transmuteCost', 'profitPerHour', 'profitPerPhiloInstant', 'costPerHour', 'profitMargin']) {
+            expect(row[key]).toBeNull();
+        }
+        expect(row.effectiveTransmuteChance).toBeCloseTo(0.625, 10);
+    });
+
+    test('forced to a tea nothing prices: cost figures are blank', () => {
+        delete mocks.prices[`${TEA_HRID}+0`];
+        const row = fresh({ catalystMode: 'none', teaMode: 'on' }).calculateRow(WIDGET_HRID, RICH());
+        expect(row.setupUnpriced).toEqual(['Tea']);
+        expect(row.profitPerHour).toBeNull();
+    });
+
+    test('an unpriced item: cost-derived figures are null and Setup is a dash', () => {
+        mocks.itemDetails[CAPE_HRID] = { equipmentDetail: { type: '/equipment_types/back' } };
+        mocks.capeMode = 'mirror';
+        const details = RICH();
+        details.alchemyDetail.transmuteDropTable[1] = { itemHrid: CAPE_HRID, dropRate: 0.5, minCount: 1, maxCount: 1 };
+        delete details.isTradable;
+        const row = fresh().calculateRow(CAPE_HRID, details);
+        expect(row.needsPrice).toBe(true);
+        expect(row.setup).toBeNull();
+        expect(row.profitPerHour).toBeNull();
+        expect(row.transmuteCost).toBeNull();
+        expect(formatRowValue('setup', row)).toBe('—');
+    });
+
+    test('a fixed mode forces that setup on every row', () => {
+        const c = fresh({ catalystMode: 'prime', teaMode: 'on' });
+        for (const details of [RICH(), POOR()]) {
+            const row = c.calculateRow(WIDGET_HRID, details);
+            expect(row.setup).toBe('Prime + Tea');
+            expect(row.setupForced).toBe(true);
+        }
+        expect(fresh().calculateRow(WIDGET_HRID, RICH()).setupForced).toBe(false);
+    });
+
+    test('fixing only the catalyst leaves the tea on Auto, and the other way round', () => {
+        mocks.prices[`${TEA_HRID}+0`] = { ask: 50_000, bid: 40_000 };
+        expect(fresh({ catalystMode: 'prime' }).calculateRow(WIDGET_HRID, RICH()).setup).toMatch(/^Prime/);
+        expect(fresh({ catalystMode: 'none', teaMode: 'on' }).calculateRow(WIDGET_HRID, POOR()).setup).toBe('Tea');
+    });
+
+    test('the other columns are the chosen setup, and the tooltip shows every candidate', () => {
+        const c = fresh({ teaMode: 'off' });
+        const row = c.calculateRow(WIDGET_HRID, RICH());
+        const same = fresh({ catalystMode: row.setupChoice.catalyst, teaMode: 'off' }).calculateRow(
+            WIDGET_HRID,
+            RICH()
+        );
+        expect(row.transmuteCost).toBeCloseTo(same.transmuteCost, 9);
+        expect(row.effectiveTransmuteChance).toBeCloseTo(same.effectiveTransmuteChance, 12);
+        expect(row.profitPerPhiloInstant).toBeCloseTo(same.profitPerPhiloInstant, 6);
+        expect(row.setupCandidates).toHaveLength(3);
+        const title = c.setupTitle(row);
+        expect(title).toContain('None');
+        expect(title).toContain('Transmute');
+        expect(title).toContain('▶ Prime');
+    });
+
+    test('Auto lists six candidates', () => {
+        mocks.prices[`${TEA_HRID}+0`] = { ask: 500, bid: 400 };
+        expect(fresh().calculateRow(WIDGET_HRID, RICH()).setupCandidates).toHaveLength(6);
+    });
+
+    test('six setups per item over 125 items stay cheap', () => {
+        const c = fresh();
+        const details = RICH();
+        const start = performance.now();
+        for (let pass = 0; pass < 10; pass++) {
+            c._actionStatsCache.clear();
+            for (let i = 0; i < 125; i++) c.calculateRow(WIDGET_HRID, details);
+        }
+        const perRefresh = (performance.now() - start) / 10;
+        console.log(`[philo timing] 125 rows x 6 setups: ${perRefresh.toFixed(2)} ms per refresh`);
+        expect(perRefresh).toBeLessThan(500);
+    });
+
+    test('the Setup column is in the copied table', async () => {
+        const writeText = vi.fn(async () => {});
+        vi.stubGlobal('navigator', { clipboard: { writeText } });
+        const c = fresh({ teaMode: 'off' });
+        c.rows = [c.calculateRow(WIDGET_HRID, RICH())];
+        c.hideNegativeProfitItems = false;
+        await c.copyTableAsText();
+        vi.unstubAllGlobals();
+        const lines = writeText.mock.calls[0][0].split('\n');
+        const header = lines[0].split('\t');
+        expect(header).toContain('Setup');
+        expect(lines[1].split('\t')[header.indexOf('Setup')]).toBe('Prime');
+    });
+
+    describe('saved settings', () => {
+        const KEY = 'philoCalculatorSettings_char1';
+        const stored = () => storageMock.storeFor('settings').get(KEY);
+        const seed = (value) => storageMock.storeFor('settings').set(KEY, value);
+
+        beforeEach(() => {
+            storageMock.reset();
+            mocks.characterId = 'char1';
+        });
+
+        test('no saved settings: Auto', async () => {
+            // A character with nothing stored (the record keeps the previous character's values in memory otherwise)
+            mocks.characterId = 'charNeverSaved';
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['auto', 'auto']);
+        });
+
+        test('an old save with the two switches keeps behaving as it did', async () => {
+            seed({ useCatalyst: true, useCatalyticTea: false });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['prime', 'off']);
+
+            seed({ useCatalyst: false, useCatalyticTea: true });
+            const d = new PhiloCalculator();
+            await d.loadSettings();
+            expect([d.catalystMode, d.teaMode]).toEqual(['none', 'on']);
+        });
+
+        test('a save that never recorded a catalyst choice starts on Auto', async () => {
+            mocks.characterId = 'charOtherFilter';
+            seed({ filterText: 'x' });
+            storageMock.storeFor('settings').set('philoCalculatorSettings_charOtherFilter', { filterText: 'x' });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect(c.filterText).toBe('x');
+            expect([c.catalystMode, c.teaMode]).toEqual(['auto', 'auto']);
+        });
+
+        test('an old save with only the catalyst switch keeps it, and the tea stays off as it was', async () => {
+            seed({ useCatalyst: false });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['none', 'off']);
+        });
+
+        test('the new modes round-trip, and the old switches are written alongside', async () => {
+            const c = new PhiloCalculator();
+            c.catalystMode = 'transmute';
+            c.teaMode = 'on';
+            await c.saveSettings();
+            expect(stored()).toMatchObject({
+                catalystMode: 'transmute',
+                teaMode: 'on',
+                useCatalyst: false,
+                useCatalyticTea: true,
+            });
+            const d = new PhiloCalculator();
+            await d.loadSettings();
+            expect([d.catalystMode, d.teaMode]).toEqual(['transmute', 'on']);
+
+            c.catalystMode = 'auto';
+            c.teaMode = 'auto';
+            await c.saveSettings();
+            expect(stored()).toMatchObject({ catalystMode: 'auto', teaMode: 'auto', useCatalyst: true });
+            const e = new PhiloCalculator();
+            await e.loadSettings();
+            expect([e.catalystMode, e.teaMode]).toEqual(['auto', 'auto']);
+        });
+
+        test('an unrecognized stored mode falls back to the old switches', async () => {
+            seed({ catalystMode: 'bogus', teaMode: 7, useCatalyst: false, useCatalyticTea: false });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['none', 'off']);
+        });
     });
 });
