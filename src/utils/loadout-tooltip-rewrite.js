@@ -121,10 +121,18 @@ function rewriteStats(popper, nodes, equipmentDetail, level, title) {
     for (const node of nodes) {
         const m = node.data.match(NUMBER_AT_END);
         if (!m) continue;
+        // The game draws Amount, Sell Price and Market Price as one text node straight in a row of its text block;
+        // the stat lines sit deeper, in the equipment section. A number at the top of a row is a quantity or a
+        // price, never a stat, whatever it happens to equal (Celestial Shears' 1.05 speed against "Amount: 1").
+        // Signs do not tell them apart: flat stats show unsigned ("Armor: 51.84").
+        if (rowOf(node) === node.parentElement) continue;
         const [, prefix, sign, digits, percent, tail] = m;
         const shown = Number(digits.replace(/,/g, '')) * (sign === '-' ? -1 : 1);
-        const tolerance = 0.5 * 10 ** -(digits.split('.')[1] || '').length + 1e-9;
         const scale = percent ? 100 : 1;
+        // A figure is rounded to the digits shown, so it matches within half its last digit; a whole number has to
+        // match outright, so a stat of 1.05 never passes for a "1"
+        const decimals = (digits.split('.')[1] || '').length;
+        const tolerance = decimals > 0 || percent ? 0.5 * 10 ** -decimals + 1e-9 : 1e-9;
         const hits = stats.filter((s) => Math.abs(s.base * scale - shown) <= tolerance);
         // Several stats can show the same number (Enchanted Gloves: two lines of 10%). That is no guess when they all
         // scale to the same figure; when they would differ the row is left as drawn

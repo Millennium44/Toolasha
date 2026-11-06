@@ -5,7 +5,7 @@
  * (counts 2% steps: +20 reads 50).
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { ENHANCEMENT_TABLE } from '../__fixtures__/wire/enhancement-scaling.js';
+import { ENHANCEMENT_TABLE, FIXTURE_ITEMS } from '../__fixtures__/wire/enhancement-scaling.js';
 
 const game = vi.hoisted(() => ({ items: {}, prices: {} }));
 
@@ -90,6 +90,43 @@ describe('loadout level in the game lines', () => {
         const el = popper('Enchanted Gloves', ['Enhancing Speed: +10%', 'Alchemy Efficiency: +10.0%']);
         applyLoadoutLevelToGameLines(el, info(el, 10), GLOVES);
         expect(stats(el)).toEqual(['Enhancing Speed: +12.9%', 'Alchemy Efficiency: +12.9%']);
+    });
+
+    test('a quantity at the top of a row is never taken for a stat (Celestial Shears: speed 1.05 vs Amount: 1)', () => {
+        const SHEARS = '/items/celestial_shears';
+        game.items[SHEARS] = FIXTURE_ITEMS[SHEARS];
+        const el = document.createElement('div');
+        el.className = 'MuiTooltip-popper';
+        // The game's own layout (captured on the test server): unclassed rows straight inside the text block
+        el.innerHTML = `<div class="MuiTooltip-tooltip"><div class="ItemTooltipText_itemTooltipText__zFq3A">
+            <div class="ItemTooltipText_name__n">Celestial Shears</div><div>Amount: 1</div>
+            <div>Sell Price: 1</div><div><div>Foraging Speed: <span>+105%</span></div></div></div></div>`;
+        document.body.appendChild(el);
+        applyLoadoutLevelToGameLines(el, info(el), SHEARS);
+        const rows = [...el.querySelector('[class*="ItemTooltipText_itemTooltipText"]').children].map(
+            (r) => r.textContent
+        );
+        expect(rows).toContain('Amount: 1');
+        expect(rows).toContain('Sell Price: 1');
+        // 1.05 + 50 steps x 0.021 = 2.1
+        expect(rows).toContain('Foraging Speed: +210%');
+        el.remove();
+    });
+
+    test('an unsigned flat stat in the game layout still scales (the game shows "Armor: 51.84" with no sign)', () => {
+        const el = document.createElement('div');
+        el.className = 'MuiTooltip-popper';
+        el.innerHTML = `<div class="MuiTooltip-tooltip"><div class="ItemTooltipText_itemTooltipText__zFq3A">
+            <div class="ItemTooltipText_name__n">Test Shield</div><div>Amount: 8</div>
+            <div><div><span>Armor: </span><span>8</span></div></div></div></div>`;
+        document.body.appendChild(el);
+        applyLoadoutLevelToGameLines(el, info(el), SHIELD);
+        const rows = [...el.querySelector('[class*="ItemTooltipText_itemTooltipText"]').children].map(
+            (r) => r.textContent
+        );
+        expect(rows).toContain('Amount: 8');
+        expect(rows).toContain('Armor: 16');
+        el.remove();
     });
 
     test('a flat stat scales, keeps its format, and a stat with no bonus is left as drawn', () => {
