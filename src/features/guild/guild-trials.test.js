@@ -3535,6 +3535,42 @@ describe('the panel, end to end', () => {
             );
         });
 
+        test('every other trial row is shaded, the first is not, and the header and sums never are', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [
+                    archivedWeek({
+                        weekStart: weekAgo(1),
+                        tiles: {
+                            'skilling::alchemy': alchemy(5, 600),
+                            'skilling::brewing': { ...alchemy(6, 700), name: 'Brewing' },
+                            'skilling::cooking': { ...alchemy(7, 800), name: 'Cooking' },
+                        },
+                    }),
+                ],
+            };
+            fire(root);
+            const shade = (node) => node.style.background || node.style.backgroundColor;
+            const rows = [...document.querySelectorAll('[data-mwi-block="trial-history"] [data-history-row]')];
+            expect(rows.map((row) => row.children[0].textContent)).toEqual(['Alchemy', 'Brewing', 'Cooking']);
+            expect(rows.map((row) => Boolean(shade(row)))).toEqual([false, true, false]);
+            expect(shade(rows[1])).toMatch(/rgba\(255, ?255, ?255, ?0\.04\)/);
+            const block = document.querySelector('[data-mwi-block="trial-history"]');
+            const header = [...block.children].find((node) => node.style.display === 'grid');
+            expect(header.hasAttribute('data-history-row')).toBe(false);
+            expect(shade(header)).toBeFalsy();
+            expect(shade(document.querySelector('[data-history-summary="Guild Points"]'))).toBeFalsy();
+            // The hover rule reaches this block's rows and nothing else
+            const style = document.querySelector('[data-mwi-block="trial-history"] style');
+            expect(style.textContent).toMatch(/^\[data-mwi-block="trial-history"\] \[data-history-row\]:hover/);
+
+            // A redraw stripes by the new order
+            fire(root);
+            const again = [...document.querySelectorAll('[data-mwi-block="trial-history"] [data-history-row]')];
+            expect(again.map((row) => Boolean(shade(row)))).toEqual([false, true, false]);
+        });
+
         /** A summary row of the Trial history table, by its label */
         const summaryCells = (label) => {
             const row = document.querySelector(`[data-history-summary="${label}"]`);

@@ -353,6 +353,12 @@ function foldHeading(key, label, title, collapsed, inline = false) {
     );
 }
 
+/** The shade on every other Trial history row, faint on the game's dark panel */
+const TRIAL_HISTORY_STRIPE = 'rgba(255,255,255,0.04)';
+
+/** A Trial history row under the pointer, a step stronger than the stripe */
+const TRIAL_HISTORY_HOVER = 'rgba(255,255,255,0.08)';
+
 /** Cycles the Trial history table has a column for; earlier ones are in each row's hover */
 const TRIAL_HISTORY_COLUMNS = 5;
 
@@ -6109,10 +6115,20 @@ class GuildTrials {
         const html = [
             heading,
             ...(collapsed ? [] : [header]),
-            ...(collapsed ? [] : rows).map((row) => {
+            // Every other trial row is shaded, by its place in this render, so a row reads across the columns;
+            // the hover rule is scoped to this block's own rows
+            ...(collapsed
+                ? []
+                : [
+                      '<style>[data-mwi-block="trial-history"] [data-history-row]:hover' +
+                          `{background:${TRIAL_HISTORY_HOVER} !important;}</style>`,
+                  ]),
+            ...(collapsed ? [] : rows).map((row, rowIndex) => {
                 const detail = trialHistoryDetail(row);
+                const stripe = rowIndex % 2 === 1 ? ` background:${TRIAL_HISTORY_STRIPE};` : '';
                 return (
-                    `<div style="${grid}" title="${escapeAttr(detail)}">` +
+                    `<div data-history-row="${rowIndex}" style="${grid} border-radius:2px;${stripe}" ` +
+                    `title="${escapeAttr(detail)}">` +
                     `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(row.name)}</span>` +
                     shown
                         .map((cycle, index) => {
