@@ -5,7 +5,7 @@
  * servers, so the suite runs on them with no gate to force. `src/utils/server-gate.js`
  * only holds the test-server helper for staging a future change.
  */
-import { vi } from 'vitest';
+import { afterAll, vi } from 'vitest';
 
 /**
  * happy-dom's MutationObserver stops delivering after a garbage collection.
@@ -58,4 +58,80 @@ if (typeof MutationObserver !== 'undefined' && typeof WeakRef !== 'undefined') {
         pinsByObserver.get(this)?.clear();
         return nativeDisconnect.call(this);
     };
+}
+
+/**
+ * Timers a test file leaves running are cleared when the file ends.
+ *
+ * The suite runs on worker threads (vitest.config.js), and a thread outlives the
+ * file it ran. A file that never cancels a real timer (a settings-panel retry
+ * loop, a rAF-based font fit) used to die with its child process; on a thread
+ * the timer fires after the file's DOM environment is gone and Vitest reports
+ * "document is not defined" / "requestAnimationFrame is not defined" as an
+ * unhandled error against whichever file happens to be running. Under load that
+ * failed whole gates runs with every test passing.
+ *
+ * Tracking wraps the real timer functions only. Fake timers replace them while a
+ * test uses them and put the wrapper back after, so nothing else changes.
+ */
+{
+    // On a thread this file runs once per test file against the same globals, so the wrappers are
+    // installed once (marked) and only the pending set is per-file state, shared through a global.
+    const STATE = Symbol.for('toolasha.test.pendingTimers');
+    const state = (globalThis[STATE] ??= { pending: new Set() });
+    state.pending = new Set();
+    const wrap = (name, track) => {
+        const current = globalThis[name];
+        if (typeof current !== 'function' || current[STATE]) return;
+        const wrapped = track(current);
+        wrapped[STATE] = current;
+        globalThis[name] = wrapped;
+    };
+    wrap(
+        'setTimeout',
+        (real) =>
+            function setTimeout(fn, ms, ...args) {
+                const pending = state.pending;
+                let handle;
+                const run = typeof fn === 'function' ? (...a) => (pending.delete(handle), fn(...a)) : fn;
+                handle = real(run, ms, ...args);
+                pending.add(handle);
+                return handle;
+            }
+    );
+    wrap(
+        'setInterval',
+        (real) =>
+            function setInterval(fn, ms, ...args) {
+                const handle = real(fn, ms, ...args);
+                state.pending.add(handle);
+                return handle;
+            }
+    );
+    wrap(
+        'clearTimeout',
+        (real) =>
+            function clearTimeout(handle) {
+                state.pending.delete(handle);
+                return real(handle);
+            }
+    );
+    wrap(
+        'clearInterval',
+        (real) =>
+            function clearInterval(handle) {
+                state.pending.delete(handle);
+                return real(handle);
+            }
+    );
+
+    afterAll(() => {
+        const realClearTimeout = globalThis.clearTimeout[STATE] ?? globalThis.clearTimeout;
+        const realClearInterval = globalThis.clearInterval[STATE] ?? globalThis.clearInterval;
+        for (const handle of state.pending) {
+            realClearTimeout(handle);
+            realClearInterval(handle);
+        }
+        state.pending.clear();
+    });
 }
