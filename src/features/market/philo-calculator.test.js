@@ -997,6 +997,114 @@ describe('a character switch or a newer load inside a settings read', () => {
     });
 });
 
+// Issue #789: openModal() awaits the settings read, and used to draw the modal
+// whatever happened inside it — after a teardown, or for the character who had
+// just left, whose values the first edit then saved under the arriving one's key.
+describe('opening the modal across its settings read', () => {
+    const KEY = (id) => `philoCalculatorSettings_${id}`;
+    const DRAWN = new Error('drew the modal');
+
+    /** A calculator whose drawing is replaced by a marker, so a test sees whether it got that far */
+    function opener() {
+        const fresh = new PhiloCalculator();
+        vi.spyOn(fresh, 'loadDefaultPrices').mockImplementation(() => {});
+        vi.spyOn(fresh, 'calculateAllRows').mockImplementation(() => {
+            throw DRAWN;
+        });
+        vi.spyOn(fresh, 'saveSettings');
+        return fresh;
+    }
+
+    beforeEach(() => {
+        storageMock.reset();
+        mocks.characterId = 'char1';
+    });
+
+    test('a character switch during the read opens nothing and saves nothing', async () => {
+        storageMock.storeFor('settings').set(KEY('char1'), { filterText: 'A' });
+        storageMock.storeFor('settings').set(KEY('char2'), { filterText: 'B' });
+        const fresh = opener();
+
+        const release = storageMock.hold(KEY('char1'));
+        const opening = fresh.openModal();
+        await Promise.resolve();
+        mocks.characterId = 'char2';
+        release();
+        await opening;
+
+        expect(fresh.loadDefaultPrices).not.toHaveBeenCalled();
+        expect(fresh.modal).toBeNull();
+        expect(fresh.saveSettings).not.toHaveBeenCalled();
+        expect(storageMock.storeFor('settings').get(KEY('char2'))).toEqual({ filterText: 'B' });
+    });
+
+    test('a disable() during the read opens nothing', async () => {
+        const fresh = opener();
+
+        const release = storageMock.hold(KEY('char1'));
+        const opening = fresh.openModal();
+        await Promise.resolve();
+        fresh.disable();
+        release();
+        await opening;
+
+        expect(fresh.loadDefaultPrices).not.toHaveBeenCalled();
+        expect(fresh.modal).toBeNull();
+    });
+
+    test('a disable() and re-initialize for the same character during the read still opens nothing', async () => {
+        const fresh = opener();
+
+        const release = storageMock.hold(KEY('char1'));
+        const opening = fresh.openModal();
+        await Promise.resolve();
+        fresh.disable();
+        fresh.isInitialized = true;
+        release();
+        await opening;
+
+        expect(fresh.loadDefaultPrices).not.toHaveBeenCalled();
+    });
+
+    test('a second opening during the read leaves only the second to draw', async () => {
+        const fresh = opener();
+
+        const release = storageMock.hold(KEY('char1'));
+        const first = fresh.openModal();
+        await Promise.resolve();
+        const second = fresh.openModal();
+        release();
+        await first;
+        await expect(second).rejects.toBe(DRAWN);
+
+        expect(fresh.loadDefaultPrices).toHaveBeenCalledTimes(1);
+    });
+
+    test('an undisturbed read goes on to draw', async () => {
+        storageMock.storeFor('settings').set(KEY('char1'), { filterText: 'A' });
+        const fresh = opener();
+
+        await expect(fresh.openModal()).rejects.toBe(DRAWN);
+        expect(fresh.filterText).toBe('A');
+        expect(fresh.loadDefaultPrices).toHaveBeenCalledTimes(1);
+    });
+
+    test('a read that cannot be made for the same character still draws with the values in hand', async () => {
+        const fresh = opener();
+        fresh.filterText = 'held';
+        await fresh.loadSettings();
+        fresh.filterText = 'held';
+
+        const release = storageMock.hold(KEY('char1'), false);
+        const opening = fresh.openModal();
+        await Promise.resolve();
+        release();
+
+        await expect(opening).rejects.toBe(DRAWN);
+        expect(fresh.filterText).toBe('held');
+    });
+});
+
 describe('copy table as text', () => {
     const columns = [
         { key: 'name', label: 'Item' },

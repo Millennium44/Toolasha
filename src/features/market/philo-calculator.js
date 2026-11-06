@@ -234,6 +234,9 @@ class PhiloCalculator {
         this._manualPhiloPrice = false;
         this._manualCatalystPrice = false;
         this._escHandler = null;
+        // Bumped by every openModal() and by disable(), so an opening that an
+        // await outlived knows it is no longer the one wanted
+        this._openGeneration = 0;
 
         // Cached row data
         this.rows = [];
@@ -273,6 +276,8 @@ class PhiloCalculator {
      * Disable / cleanup the feature
      */
     disable() {
+        // An openModal() still waiting on its settings read stands down
+        this._openGeneration += 1;
         try {
             unregisterCommand('Philo Gamba');
             this.closeModal();
@@ -1217,8 +1222,19 @@ class PhiloCalculator {
     async openModal() {
         this.closeModal();
 
+        // Who the modal is being opened for, and which opening this is. The
+        // settings read below is an await, and a character switch (which tears
+        // the feature down), a disable(), or a second open can all land inside
+        // it. Drawing anyway would show the departed character's values, and
+        // the first edit would save them under the arriving character's key.
+        const who = dataManager.getCurrentCharacterId?.() || null;
+        const opening = ++this._openGeneration;
+        const stillCurrent = () =>
+            opening === this._openGeneration && (dataManager.getCurrentCharacterId?.() || null) === who;
+
         // Load saved settings first
         await this.loadSettings();
+        if (!stillCurrent()) return;
 
         this.loadDefaultPrices();
         this.catalyticTeaRatioBoost = this.calculateCatalyticTeaRatioBoost();
