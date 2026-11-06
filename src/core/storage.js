@@ -2739,9 +2739,22 @@ class Storage {
      * @param {{countFailures?: boolean}} [options] - `countFailures: false` leaves the give-up budget
      *   (`MAX_FLUSH_ATTEMPTS`) alone: a failed write stays queued without counting, so a caller that
      *   flushes on a user's press (a backup) cannot be what drops a value
+     * @param {{bypassRestoreHold?: boolean}} [options] - `bypassRestoreHold` flushes even while a restore is
+     *   running; only `beginRestore`'s own drain and the page-teardown flush pass it
      * @returns {Promise<void>}
      */
-    async flushAll({ awaitInFlight = true, countFailures = true } = {}) {
+    async flushAll({ awaitInFlight = true, countFailures = true, bypassRestoreHold = false } = {}) {
+        // Held, not dropped, while a restore is running — the same hold a
+        // debounce timer that fires in the window takes (see `_debouncedSave`).
+        // Everything queued now was queued after `beginRestore`'s drain (or
+        // failed in it), so it is pre-restore state for any key the restore is
+        // about to write or has written and not yet latched: landing it here
+        // (a hidden tab, a character switch, a version-sync reload) put the old
+        // value back over the restored one, and took the entry out of the queue
+        // where `finishRestore` would have dropped it. Every entry stays queued;
+        // `finishRestore` drops the latched ones and `endRestore` lands the rest.
+        if (this._restoreInProgress && !bypassRestoreHold) return;
+
         // Clear all timers first
         for (const timer of this.saveDebounceTimers.values()) {
             if (timer) {
@@ -2984,7 +2997,12 @@ class Storage {
         // first moved the snapshot past the close, so one write in flight (or
         // wedged on a held store) cost every other queued write on a page
         // being destroyed.
-        const flush = this.flushAll({ awaitInFlight: false }).catch((error) => {
+        //
+        // Past a restore's hold too: the page is ending, so a held write that is
+        // not landed now is lost, and most of them are to stores the restore
+        // never touches. The restore itself is being cut off at this point and
+        // never reaches its latch either way.
+        const flush = this.flushAll({ awaitInFlight: false, bypassRestoreHold: true }).catch((error) => {
             console.error('[Storage] Flush during page teardown failed:', error);
         });
 
@@ -3240,7 +3258,7 @@ class Storage {
         try {
             // Only the outermost restore owns the initial drain. A nested
             // import is already inside the same quiesced window.
-            if (this._restoreDepth === 1) await this.flushAll();
+            if (this._restoreDepth === 1) await this.flushAll({ bypassRestoreHold: true });
         } catch (error) {
             this._restoreDepth -= 1;
             this._restoreInProgress = this._restoreDepth > 0;
