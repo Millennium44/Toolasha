@@ -4358,13 +4358,14 @@ export const settingsGroups = {
             },
             guildTrialPackUnits: {
                 id: 'guildTrialPackUnits',
-                label: 'Guild trials: lay out the players that wrap under your card in rows',
+                label: 'Guild trials: keep party players in a fixed order and wrap extras under your card',
                 type: 'checkbox',
                 default: true,
                 help:
-                    'When more players are in the trial party than fit beside your card, the game stacks the extra ' +
-                    'ones in a tall narrow column under it. This lays those out in rows instead. Players beside ' +
-                    'your card, and normal party fights, are left as the game draws them.',
+                    'The game reshuffles the trial party at some tier changes, so players jump around. This keeps ' +
+                    'each one in the same place: in a combat trial grouped by signed-up role (tank, support, ' +
+                    'damage dealer, then no role), then by name; in a skilling trial by name. Players that do not ' +
+                    'fit beside your card go in rows under it. Normal party fights are left as the game draws them.',
             },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
