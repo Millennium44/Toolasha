@@ -4,7 +4,7 @@ import { findLoadOrderViolations, libraryLoadOrder, loadTimeReferences } from '.
 describe('bundle load-order check', () => {
     test('reads the library order from the @require lines', () => {
         const header = [
-            '// @require      https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.js',
+            '// @require      https://cdn.jsdelivr.net/npm/chart.js@4.6.1/dist/chart.umd.js',
             '// @require      https://x/dist/libraries/toolasha-core.js',
             '// @require      https://x/dist/libraries/toolasha-actions.js',
             '// @require      https://x/dist/libraries/toolasha-combat.js',
