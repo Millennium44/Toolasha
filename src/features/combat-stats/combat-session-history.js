@@ -619,9 +619,22 @@ export function combineSessions(sessions) {
  */
 export function describeSession(session, formatDuration = (s) => `${Math.round(s / 60)}m`) {
     const started = session?.combatStartTime ? new Date(session.combatStartTime) : null;
-    const when = started
-        ? started.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-        : 'Unknown time';
+    let when = 'Unknown time';
+    if (started && !Number.isNaN(started.getTime())) {
+        const time = started.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const now = new Date();
+        const today = started.toDateString() === now.toDateString();
+        // A time alone is ambiguous across fifty saved runs, so anything not from today carries its date
+        // (and the year, once it is from another one)
+        const date = today
+            ? ''
+            : started.toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  ...(started.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }),
+              });
+        when = date ? `${date} ${time}` : time;
+    }
 
     // Clamped for runs archived before durations were clamped at the source —
     // a clock-skewed short run stored a small negative, which read as "(—)"
