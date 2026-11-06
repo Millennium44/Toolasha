@@ -54,6 +54,7 @@ import { matchTrialHrid } from './guild-trials-scrape.js';
 import {
     FOREIGN_CYCLE_REASON,
     cardClearedTier,
+    clearedTier,
     cycleEndLabel,
     describeCycleAge,
     payloadPoints,
@@ -263,27 +264,33 @@ function atLastTier(tier) {
 }
 
 /**
- * The game's own "+64%" off a tile's finished card, when it was read beside the level of the tier the card
- * finished on.
+ * The trial's end percent into the next tier, as the game states it, for the tier the result reports.
  *
- * The finished card states the level and the percent into the next tier together (`Lv.280 +64%`); the store
- * keeps only a figure read once the trial was over (see `recordTileSample`), so this is the game's end figure and
- * never a running one. It only counts for the tier it was read at: a figure read at Lv.280 (T19) says nothing
- * about a card that finished T20, and is never filed against it. Nothing else stands in for it: with no figure
- * the result carries no percent.
+ * The guild payload's `nextTierProgress` of the finished party first (`serverProgress`, 0.6471 → 64): it is
+ * the exact figure and arrives whatever tab is open. Failing that, the finished card's "+64%" beside its level
+ * (`levelProgress`). Both are kept only once the trial is over (`recordServerTiers`, `recordTileSample`), so
+ * this is the end figure and never a running one; nothing else stands in. Each counts only for the tier it was
+ * read at — a payload's `highestTier`, a card's level — and only when that is the tier the result reports
+ * ({@link clearedTier}), so a percent is never shown against another tier. The last tier has none.
  *
  * @param {Object} tile - An archived tile
- * @param {number|null} cardTier - The tier the card finished on, from {@link cardClearedTier}
- * @returns {{pct: number, at: number|null}|null} A whole percent 0-99 and when it was read, or null when the
- *   finished card stated none for that tier
+ * @returns {{pct: number, tier: number, at: number|null}|null} Null when the trial's end percent was not seen
  */
-export function cardLevelProgress(tile, cardTier) {
-    const figure = tile?.levelProgress;
-    if (!figure || typeof figure !== 'object') return null;
-    if (!Number.isFinite(cardTier) || atLastTier(cardTier)) return null;
-    if (!Number.isInteger(figure.pct) || figure.pct < 0 || figure.pct > 99) return null;
-    if (tierFromLevel(figure.level) !== cardTier) return null;
-    return { pct: figure.pct, at: Number.isFinite(figure.at) ? figure.at : null };
+export function endProgress(tile) {
+    const tier = clearedTier(tile);
+    if (!Number.isFinite(tier) || atLastTier(tier)) return null;
+    const whole = (pct) => Number.isInteger(pct) && pct >= 0 && pct <= 99;
+    const at = (value) => (Number.isFinite(value) ? value : null);
+
+    const server = tile?.serverProgress;
+    if (server && typeof server === 'object' && whole(server.pct) && server.tier === tier) {
+        return { pct: server.pct, tier, at: at(server.at) };
+    }
+    const card = tile?.levelProgress;
+    if (card && typeof card === 'object' && whole(card.pct) && tierFromLevel(card.level) === tier) {
+        return { pct: card.pct, tier, at: at(card.at) };
+    }
+    return null;
 }
 
 /**
@@ -311,8 +318,8 @@ export function resultsFromCycle(cycle) {
         // nothing banked, not finished and no payload statement states nothing
         // (the untouched zero Past weeks prints as "—"). A finished T0 is a result
         if (cardTier === 0 && !(tile.points > 0) && !tile.completed && serverTier === null) continue;
-        // The finished card's own figure, and nothing else: no bar reading stands in for it
-        const figure = cardLevelProgress(tile, cardTier);
+        // The game's own end percent, and nothing else: no bar reading stands in for it
+        const figure = endProgress(tile);
         results.push({
             weekStart,
             cycleFrom,
@@ -328,7 +335,11 @@ export function resultsFromCycle(cycle) {
             // Additive: an entry from a build before these existed has none of them, which reads as unknown. A new
             // name rather than `progress`, which older builds filled from bar readings: what is shown is this alone
             ...(figure
-                ? { cardProgress: figure.pct, ...(figure.at === null ? {} : { cardProgressAt: figure.at }) }
+                ? {
+                      endProgress: figure.pct,
+                      endProgressTier: figure.tier,
+                      ...(figure.at === null ? {} : { endProgressAt: figure.at }),
+                  }
                 : {}),
             ...clearsField(encodeClears(tile.tierSeenAt)),
             ...mergeTrialFacts(tile, null),
@@ -401,21 +412,22 @@ function mergeResult(held, other) {
         .map((result) => result.progress);
     if (progresses.length) rest.progress = Math.max(...progresses);
     else delete rest.progress;
-    // The finished card's figure at the card's tier: the newest read of the copies, never a stale one over a fresh
+    // The trial's end percent, with the tier it was read for: the newest read of the copies, never a stale one
+    // over a fresh one nor the higher percent. Its tier travels with it, so it is never re-attached to another
     const figures = [held, other].filter(
         (result) =>
-            result.cardTier === card.cardTier &&
-            Number.isInteger(result.cardProgress) &&
-            result.cardProgress >= 0 &&
-            result.cardProgress <= 99
+            Number.isInteger(result.endProgress) &&
+            result.endProgress >= 0 &&
+            result.endProgress <= 99 &&
+            Number.isInteger(result.endProgressTier)
     );
-    delete rest.cardProgress;
-    delete rest.cardProgressAt;
+    for (const field of ['endProgress', 'endProgressTier', 'endProgressAt']) delete rest[field];
     if (figures.length) {
-        const readAt = (result) => (Number.isFinite(result.cardProgressAt) ? result.cardProgressAt : -1);
+        const readAt = (result) => (Number.isFinite(result.endProgressAt) ? result.endProgressAt : -1);
         const newest = figures.reduce((best, result) => (readAt(result) > readAt(best) ? result : best));
-        rest.cardProgress = newest.cardProgress;
-        if (Number.isFinite(newest.cardProgressAt)) rest.cardProgressAt = newest.cardProgressAt;
+        rest.endProgress = newest.endProgress;
+        rest.endProgressTier = newest.endProgressTier;
+        if (Number.isFinite(newest.endProgressAt)) rest.endProgressAt = newest.endProgressAt;
     }
     for (const field of ['endedAt', 'endReason', 'signupLevels', 'signupLevelsAt', 'clears']) delete rest[field];
     // The payload's figure only stands while the card has not outrun it, the rule `payloadPoints` applies
@@ -867,12 +879,11 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                     return empty;
                 }
                 const tier = resultTier(result);
-                // The percent is the finished card's own, of the card's own tier; a tier only the payload stated has
-                // none, and neither does the last tier. An older entry's `progress` was the last bar reading, not the
-                // game's end figure, and is kept stored but not shown
+                // The game's end percent, shown only against the tier it was read for; the last tier has none. An
+                // older entry's `progress` was the last bar reading, not the game's end figure: kept stored, not shown
                 const progress =
-                    Number.isInteger(result.cardProgress) && result.cardTier === tier && !atLastTier(tier)
-                        ? result.cardProgress
+                    Number.isInteger(result.endProgress) && result.endProgressTier === tier && !atLastTier(tier)
+                        ? result.endProgress
                         : null;
                 return {
                     key: cycle.key,
@@ -1001,7 +1012,7 @@ export function trialHistoryDetail(row) {
     });
     return [
         `${row?.name ?? 'Trial'} — tier and progress reached each finished cycle, newest first.`,
-        '"T15 63%" is tier 15 cleared and 63% of the way through the next; the last tier, T21, has no next and shows the tier alone, as does a cycle whose finished card this client never read.',
+        '"T15 63%" is tier 15 cleared and 63% of the way through the next; the last tier, T21, has no next and shows the tier alone, as does a cycle whose end percent this client never saw.',
         '"—" is a cycle this client has not tracked (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
         'A blank cell is a cycle the game’s own list says the trial did not run in.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',

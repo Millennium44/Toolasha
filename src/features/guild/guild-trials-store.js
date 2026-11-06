@@ -821,6 +821,7 @@ function tileStamps(tile) {
         tile?.runSeenAt,
         tile?.signupLevelsAt,
         tile?.levelProgress?.at,
+        tile?.serverProgress?.at,
     ]
         .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
         .map(Number);
@@ -930,6 +931,7 @@ function currentCyclePart(tile, from) {
         ...(watched ? { runSeenAt: tile.runSeenAt } : {}),
         ...(signedUp ? { signupLevels: tile.signupLevels, signupLevelsAt: tile.signupLevelsAt } : {}),
         ...(since(tile.levelProgress?.at) ? { levelProgress: tile.levelProgress } : {}),
+        ...(since(tile.serverProgress?.at) ? { serverProgress: tile.serverProgress } : {}),
     };
 }
 
@@ -967,6 +969,7 @@ function earlierCyclePart(tile, from) {
     }
     if (stampedSince(tile.runSeenAt, from)) delete part.runSeenAt;
     if (stampedSince(tile.levelProgress?.at, from)) delete part.levelProgress;
+    if (stampedSince(tile.serverProgress?.at, from)) delete part.serverProgress;
     if (stampedSince(tile.signupLevelsAt, from)) {
         for (const field of ['signupLevels', 'signupLevelsAt']) delete part[field];
     }
@@ -1469,6 +1472,7 @@ export function recordTileSample(record, tile, at, characterId = null) {
         ),
         // Written by `recordServerTiers` only; a card sample says nothing about them
         ...latestServerTier(existing, null),
+        ...latestServerProgress(existing, null),
         // …nor about how the trial ended or who signed up: carried through, not rebuilt
         ...mergeTrialFacts(existing, null),
         samples: samples.slice(-MAX_SAMPLES),
@@ -1516,6 +1520,9 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {{name: string, kind: string}|null} [stated.create] - Start the tile when the record has none
  * @param {number|null} [stated.points] - The payload's Guild Points for the trial (`serverPoints`). Written
  *   with a tier, or alone onto a tile that already carries this cycle's tier statement; never starts a tile
+ * @param {{tier: number, nextTierProgress: number}|null} [stated.endProgress] - A finished party's `highestTier`
+ *   and `nextTierProgress` (a fraction), the caller having checked `done`: kept as `serverProgress`, the trial's
+ *   end percent, never for the last tier. Stamped `seenAt`, else `at`; the newest kept
  * @returns {Object} The record, unchanged when there was nothing to write
  */
 export function recordServerTiers(
@@ -1531,6 +1538,7 @@ export function recordServerTiers(
         deadlineAt = null,
         signupLevels = null,
         points = null,
+        endProgress = null,
     } = {}
 ) {
     if (!record || !Number.isFinite(at)) return record;
@@ -1568,8 +1576,14 @@ export function recordServerTiers(
     const runSeenAt = runningNow && seenAt - lastSeen >= RUN_SEEN_REFRESH_MS ? seenAt : null;
     const staleEnd = runningNow && Number.isFinite(existing.endedAt) && seenAt > existing.endedAt;
     const signedUp = signupFacts(existing, signupLevels, Number.isFinite(seenAt) ? seenAt : at);
+    const stated = serverProgressOf(endProgress, Number.isFinite(seenAt) ? seenAt : at);
+    const progress = stated ? latestServerProgress(existing, { serverProgress: stated }) : {};
+    const progressChanged =
+        Boolean(progress.serverProgress) &&
+        JSON.stringify(progress.serverProgress) !== JSON.stringify(existing.serverProgress ?? null);
     if (
         record.tiles?.[key] &&
+        !progressChanged &&
         !changed &&
         !ended &&
         runSeenAt === null &&
@@ -1597,9 +1611,24 @@ export function recordServerTiers(
                 ...(ended || {}),
                 ...(signedUp || {}),
                 ...(pointsStated ? { serverPoints: points } : {}),
+                ...(progressChanged ? progress : {}),
             },
         },
     };
+}
+
+/**
+ * A finished party's end percent as stored: `{tier, pct, at}`, the whole percent floored as the card prints it.
+ * @param {{tier: number, nextTierProgress: number}|null} endProgress - The party's `highestTier` and fraction
+ * @param {number} at - When it was read, client ms
+ * @returns {{tier: number, pct: number, at: number}|null} Null for the last tier or anything malformed
+ */
+function serverProgressOf(endProgress, at) {
+    const tier = endProgress?.tier;
+    const fraction = endProgress?.nextTierProgress;
+    if (!Number.isInteger(tier) || tier < 0 || tier >= TRIAL_MAX_TIER || !Number.isFinite(at)) return null;
+    if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction >= 1) return null;
+    return { tier, pct: Math.min(99, Math.floor(fraction * 100)), at };
 }
 
 /**
@@ -1813,11 +1842,30 @@ function isLevelProgress(value) {
 }
 
 /**
- * The newer of two tiles' card figures (`Lv.280 +64%`), omitted when neither has a whole one.
- *
- * Newest read wins, never the higher percent: the figure belongs to the level it was read beside, and a later read
- * is the card as it is now. A tie keeps the first side's.
- *
+ * The newer of two tiles' end percents from the guild payload (`serverProgress`), omitted when neither has a whole
+ * one. Newest read wins, never the higher percent; the tier travels with the percent.
+ * @param {Object|null} a - One side's tile
+ * @param {Object|null} b - The other side's tile
+ * @returns {{serverProgress?: {tier: number, pct: number, at: number}}} Spreadable
+ */
+function latestServerProgress(a, b) {
+    const whole = (value) =>
+        Boolean(value) &&
+        typeof value === 'object' &&
+        Number.isInteger(value.tier) &&
+        Number.isInteger(value.pct) &&
+        value.pct >= 0 &&
+        value.pct <= 99 &&
+        Number.isFinite(value.at);
+    const figures = [a?.serverProgress, b?.serverProgress].filter(whole);
+    if (!figures.length) return {};
+    const newest = figures.reduce((best, figure) => (figure.at > best.at ? figure : best));
+    return { serverProgress: { tier: newest.tier, pct: newest.pct, at: newest.at } };
+}
+
+/**
+ * The newer of two tiles' card figures (`Lv.280 +64%`), omitted when neither has a whole one; see
+ * {@link latestServerProgress} for the payload's figure, merged the same way.
  * @param {Object|null} a - One side's tile
  * @param {Object|null} b - The other side's tile
  * @returns {{levelProgress?: {level: number, pct: number, at: number}}} Spreadable
@@ -1891,10 +1939,11 @@ function foldArchivedCycle(kept, other) {
         const server = latestServerTier(held, tile);
         const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
         const facts = mergeTrialFacts(held, tile);
-        const figure = latestLevelProgress(held, tile);
+        const figure = { ...latestLevelProgress(held, tile), ...latestServerProgress(held, tile) };
         const same =
             JSON.stringify(mergeTrialFacts(held, null)) === JSON.stringify(facts) &&
-            JSON.stringify(latestLevelProgress(held, null)) === JSON.stringify(figure) &&
+            JSON.stringify({ ...latestLevelProgress(held, null), ...latestServerProgress(held, null) }) ===
+                JSON.stringify(figure) &&
             held.serverTier === server.serverTier &&
             held.serverTierAt === server.serverTierAt &&
             Boolean(held.serverDone) === Boolean(server.serverDone) &&
@@ -2102,6 +2151,8 @@ export function mergeTrialRecords(base, incoming) {
             ...latestTierReadAt(existing, tile),
             // The game's "+64%" by its own read time, never an older read over a newer
             ...latestLevelProgress(existing, tile),
+            // …and the payload's end percent the same way
+            ...latestServerProgress(existing, tile),
             // The newer statement of the guild payload, all three fields together
             ...latestServerTier(existing, tile),
             samples,

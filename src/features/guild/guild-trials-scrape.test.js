@@ -1120,6 +1120,28 @@ describe('the card’s own percent into the next tier', () => {
         expect(read(card('Milking', 'Lv.130'))[0]).toMatchObject({ level: 130, levelProgress: null });
     });
 
+    test('the game’s Completed status element marks the card finished, in any language', () => {
+        // As the live card nests it: the summary in the tile's top half, the status in its bottom half, so the
+        // nearest GuildPanel_tile* above the summary does not hold it
+        document.body.innerHTML =
+            '<div class="GuildPanel_trialsContent__a"><div class="GuildPanel_trialTile__t">' +
+            '<div class="GuildPanel_tileTop__u"><div class="GuildPanel_tileName__d">Enhancing</div>' +
+            '<div class="GuildPanel_tileSummary__c">Lv.280 +64%<span class="mwi-trial-tier">T19</span></div></div>' +
+            '<div class="GuildPanel_tileBottom__v"><div class="GuildPanel_tileStatusCompleted__w">已完成</div></div>' +
+            '</div></div>';
+        const [tile] = readTrialTiles(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+        expect(tile).toMatchObject({
+            name: 'Enhancing',
+            level: 280,
+            completed: true,
+            levelProgress: { level: 280, pct: 64 },
+        });
+        // The same card running has no status element and is not finished
+        document.querySelector('[class*="GuildPanel_tileStatusCompleted"]').remove();
+        const [running] = readTrialTiles(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+        expect(running.completed).toBe(false);
+    });
+
     test('parsing: the percent must follow the level directly, whole, below 100', () => {
         expect(parseTrialLevelProgress('Lv.280 +64%')).toEqual({ level: 280, pct: 64 });
         expect(parseTrialLevelProgress('Lv. 210+5.9 %')).toEqual({ level: 210, pct: 5 });

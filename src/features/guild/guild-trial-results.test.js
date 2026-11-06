@@ -19,7 +19,7 @@ vi.mock('../../utils/game-server.js', async (importOriginal) => ({
 
 import {
     MAX_RESULT_CYCLES_TEST,
-    cardLevelProgress,
+    endProgress,
     MAX_RESULT_WEEKS,
     historyRowFor,
     mergeResults,
@@ -377,56 +377,74 @@ describe('trialResultsHistory', () => {
     });
 });
 
-describe('the finished card’s own percent', () => {
+describe('the trial’s end percent', () => {
     // A combat bar of 20 left of 100 would read 80%; the finished card itself said 64%
     const bar80 = [{ t: 1000, readings: [{ current: 20, max: 100 }] }];
-    const figure = (level, pct, at = 2000) => ({ levelProgress: { level, pct, at } });
+    const card = (level, pct, at = 2000) => ({ levelProgress: { level, pct, at } });
+    const payload = (tier, pct, at = 3000) => ({ serverProgress: { tier, pct, at } });
+    const filed = (tile) => resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0];
 
-    test('the card’s figure is filed when it was read at the finished tier', () => {
-        const [result] = resultsFromCycle(
-            cycle(weeksAgo(1), { a: badger(19, 9000, { samples: bar80, ...figure(280, 64) }) })
-        );
-        expect(result).toMatchObject({ cardTier: 19, cardProgress: 64, cardProgressAt: 2000 });
+    test('the payload’s figure for the reported tier is filed first, over the card’s', () => {
+        const result = filed(badger(19, 9000, { samples: bar80, ...card(280, 60), ...payload(19, 64) }));
+        expect(result).toMatchObject({ cardTier: 19, endProgress: 64, endProgressTier: 19, endProgressAt: 3000 });
         expect(result).not.toHaveProperty('progress');
         const { rows } = trialResultsHistory([result], { now });
         expect(trialHistoryCells(rows[0])).toContain('T19 64%');
     });
 
-    test('bar readings and no card figure: no percent at all', () => {
-        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: badger(19, 9000, { samples: bar80 }) }));
-        expect(result).not.toHaveProperty('cardProgress');
+    test('a trial nobody saw a card of is filed off the payload alone', () => {
+        const tile = { ...alchemyServerOnly(19, 1000), ...payload(19, 64) };
+        const result = filed(tile);
+        expect(result).toMatchObject({ cardTier: null, serverTier: 19, endProgress: 64, endProgressTier: 19 });
+        const { rows } = trialResultsHistory([result], { now });
+        expect(rows[0].weeks[0]).toMatchObject({ tier: 19, progress: 64 });
+    });
+
+    test('with no payload figure, the finished card’s is filed', () => {
+        expect(filed(badger(19, 9000, { samples: bar80, ...card(280, 64) }))).toMatchObject({
+            endProgress: 64,
+            endProgressTier: 19,
+            endProgressAt: 2000,
+        });
+    });
+
+    test('bar readings and no figure: no percent at all', () => {
+        const result = filed(badger(19, 9000, { samples: bar80 }));
+        expect(result).not.toHaveProperty('endProgress');
         expect(result).not.toHaveProperty('progress');
     });
 
-    test('a figure read at another level is no figure for the finished tier', () => {
-        // Read at Lv.280 (T19), then the card finished T20 with no percent beside it
-        const tile = badger(20, 9000, { samples: bar80, ...figure(280, 64) });
-        expect(cardLevelProgress(tile, 20)).toBeNull();
-        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: tile }));
-        expect(result.cardTier).toBe(20);
-        expect(result).not.toHaveProperty('cardProgress');
-        expect(result).not.toHaveProperty('progress');
+    test('a figure read at another tier is no figure for the reported one', () => {
+        // Card read at Lv.280 (T19), payload stated T18; the card finished T20
+        const tile = badger(20, 9000, { samples: bar80, ...card(280, 64), ...payload(18, 30) });
+        expect(endProgress(tile)).toBeNull();
+        expect(filed(tile)).not.toHaveProperty('endProgress');
+        // The payload stated a higher tier than the card: the result reports that one, and the card's figure is not it
+        const ahead = { ...badger(19, 9000, card(280, 64)), serverTier: 20, serverTierAt: 5 };
+        expect(endProgress(ahead)).toBeNull();
+        expect(endProgress({ ...ahead, ...payload(20, 12) })).toMatchObject({ pct: 12, tier: 20 });
     });
 
     test('the last tier takes no figure, whatever is stored', () => {
-        const tile = badger(21, 9000, { samples: [], ...figure(300, 40) });
-        expect(cardLevelProgress(tile, 21)).toBeNull();
-        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).not.toHaveProperty('cardProgress');
+        const tile = badger(21, 9000, { samples: [], ...card(300, 40), ...payload(21, 40) });
+        expect(endProgress(tile)).toBeNull();
+        expect(filed(tile)).not.toHaveProperty('endProgress');
     });
 
     test('a malformed figure is ignored', () => {
-        expect(cardLevelProgress(badger(19, 9000, figure(280, 64.5)), 19)).toBeNull();
-        expect(cardLevelProgress(badger(19, 9000, figure(280, 120)), 19)).toBeNull();
-        expect(cardLevelProgress(badger(19, 9000, { levelProgress: 'x' }), 19)).toBeNull();
+        expect(endProgress(badger(19, 9000, card(280, 64.5)))).toBeNull();
+        expect(endProgress(badger(19, 9000, card(280, 120)))).toBeNull();
+        expect(endProgress(badger(19, 9000, { levelProgress: 'x', serverProgress: 7 }))).toBeNull();
+        expect(endProgress(badger(19, 9000, payload(19, -1)))).toBeNull();
     });
 
-    test('an older entry’s bar-derived percent stays stored but is not shown; the card’s is', () => {
+    test('an older entry’s bar-derived percent stays stored but is not shown', () => {
         const stored = (week, tier, extra) => ({
             ...resultsFromCycle(cycle(weeksAgo(week), { a: badger(tier, 9000) }))[0],
             ...extra,
         });
         const legacy = stored(2, 20, { progress: 58 });
-        const legacyTop = stored(1, 21, { progress: 99, cardProgress: 99 });
+        const legacyTop = stored(1, 21, { progress: 99, endProgress: 99, endProgressTier: 21 });
         const { rows } = trialResultsHistory([legacy, legacyTop], { now });
         expect(rows[0].weeks.map((week) => week.progress)).toEqual([null, null]);
         expect(rows[0].best).toMatchObject({ tier: 21, progress: null });
@@ -437,18 +455,21 @@ describe('the finished card’s own percent', () => {
         expect(mergeResults([legacy])[0].progress).toBe(58);
     });
 
-    test('two copies of one result keep the newer card read, never the higher percent', () => {
-        const base = resultsFromCycle(cycle(weeksAgo(1), { a: badger(19, 9000) }))[0];
-        const older = { ...base, cardProgress: 90, cardProgressAt: 1000 };
-        const newer = { ...base, cardProgress: 64, cardProgressAt: 5000 };
-        expect(mergeResults([older], [newer])[0]).toMatchObject({ cardProgress: 64, cardProgressAt: 5000 });
-        expect(mergeResults([newer], [older])[0]).toMatchObject({ cardProgress: 64, cardProgressAt: 5000 });
+    test('two copies of one result keep the newer read, never the higher percent, and its tier with it', () => {
+        const base = filed(badger(19, 9000));
+        const older = { ...base, endProgress: 90, endProgressTier: 19, endProgressAt: 1000 };
+        const newer = { ...base, endProgress: 64, endProgressTier: 19, endProgressAt: 5000 };
+        const kept = { endProgress: 64, endProgressTier: 19, endProgressAt: 5000 };
+        expect(mergeResults([older], [newer])[0]).toMatchObject(kept);
+        expect(mergeResults([newer], [older])[0]).toMatchObject(kept);
         // A copy without a figure (an older build's) keeps the other's
-        expect(mergeResults([base], [newer])[0]).toMatchObject({ cardProgress: 64 });
-        expect(mergeResults([newer], [base])[0]).toMatchObject({ cardProgress: 64 });
-        // A figure of another tier than the kept card's is dropped, never re-attached
-        const higher = { ...resultsFromCycle(cycle(weeksAgo(1), { a: badger(20, 9500) }))[0] };
-        expect(mergeResults([newer], [higher])[0]).toMatchObject({ cardTier: 20 });
-        expect(mergeResults([newer], [higher])[0]).not.toHaveProperty('cardProgress');
+        expect(mergeResults([base], [newer])[0]).toMatchObject(kept);
+        expect(mergeResults([newer], [base])[0]).toMatchObject(kept);
+        // The kept card reports T20: the T19 figure travels with its tier and is not shown against T20
+        const higher = filed(badger(20, 9500));
+        const merged = mergeResults([newer], [higher])[0];
+        expect(merged).toMatchObject({ cardTier: 20, endProgressTier: 19 });
+        const { rows } = trialResultsHistory([merged], { now });
+        expect(rows[0].weeks[0]).toMatchObject({ tier: 20, progress: null });
     });
 });

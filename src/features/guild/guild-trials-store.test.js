@@ -2799,7 +2799,7 @@ describe('the card’s own percent into the next tier', () => {
         expect(running.tiles[KEY]).not.toHaveProperty('levelProgress');
         // …and the archived result has no percent
         const archived = archiveCycle(running, 'the week rolled over', now + 3_600_000);
-        expect(archived.trialResults[0]).not.toHaveProperty('cardProgress');
+        expect(archived.trialResults[0]).not.toHaveProperty('endProgress');
         expect(archived.trialResults[0]).not.toHaveProperty('progress');
     });
 
@@ -2843,11 +2843,7 @@ describe('the card’s own percent into the next tier', () => {
         let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
         record = recordTileSample(record, carded(280, { level: 280, pct: 64 }, true), now + 60_000);
         const archived = archiveCycle(record, 'the week rolled over', now + 3_600_000);
-        expect(archived.trialResults[0]).toMatchObject({
-            cardTier: 19,
-            cardProgress: 64,
-            cardProgressAt: now + 60_000,
-        });
+        expect(archived.trialResults[0]).toMatchObject({ cardTier: 19, endProgress: 64, endProgressAt: now + 60_000 });
     });
 
     test('a card read is kept with its level and when it was read; a read without one leaves it alone', () => {
@@ -2929,5 +2925,91 @@ describe('the card’s own percent into the next tier', () => {
             expect(merged.history).toHaveLength(1);
             expect(merged.history[0].tiles[KEY].levelProgress).toEqual(fresh);
         }
+    });
+});
+
+describe('the guild payload’s end percent', () => {
+    const KEY = 'skilling::enhancing';
+    const held = () => ({
+        name: 'Enhancing',
+        kind: 'skilling',
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+        serverTier: 19,
+        serverTierAt: now,
+    });
+    const record = () => ({ ...emptyRecord(thisWeek), tiles: { [KEY]: held() } });
+
+    test('a finished party’s fraction is kept as a whole percent for the tier it banked', () => {
+        // The live Enhancing party: highestTier 19, nextTierProgress 0.6471, the card's "+64%"
+        const next = recordServerTiers(record(), KEY, {
+            bankedTier: 19,
+            done: true,
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        expect(next.tiles[KEY]).toMatchObject({
+            serverDone: true,
+            serverProgress: { tier: 19, pct: 64, at: now + 1000 },
+        });
+    });
+
+    test('the last tier and a malformed fraction keep nothing', () => {
+        for (const endProgress of [
+            { tier: 21, nextTierProgress: 0.5 },
+            { tier: 19, nextTierProgress: 1 },
+            { tier: 19, nextTierProgress: null },
+            null,
+        ]) {
+            const next = recordServerTiers(record(), KEY, {
+                bankedTier: 19,
+                done: true,
+                at: now,
+                seenAt: now,
+                endProgress,
+            });
+            expect(next.tiles[KEY]).not.toHaveProperty('serverProgress');
+        }
+    });
+
+    test('alone it writes only the figure, and the same figure twice changes nothing', () => {
+        const once = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        expect(once.tiles[KEY]).toEqual({ ...held(), serverProgress: { tier: 19, pct: 64, at: now + 1000 } });
+        // An older read never replaces a newer one
+        const older = recordServerTiers(once, KEY, {
+            at: now,
+            seenAt: now,
+            endProgress: { tier: 19, nextTierProgress: 0.9 },
+        });
+        expect(older).toBe(once);
+    });
+
+    test('a card sample carries it through, and the merge keeps the newest from either side', () => {
+        const a = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.9 },
+        });
+        const b = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 5000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        const sampled = recordTileSample(
+            b,
+            { name: 'Enhancing', kind: 'skilling', tier: 19, points: 2700, readings: [] },
+            now + 9000
+        );
+        expect(sampled.tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(a, b).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(b, a).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(record(), b).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
     });
 });

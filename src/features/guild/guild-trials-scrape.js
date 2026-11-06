@@ -942,7 +942,7 @@ export function readTrialTiles(root) {
             element: tile,
             name,
             level,
-            completed: lines.some((candidate) => COMPLETED_PATTERN.test(candidate)),
+            completed: lines.some((candidate) => COMPLETED_PATTERN.test(candidate)) || cardStatusCompleted(tile),
             tier: statedTier ?? (level === null ? null : tierFromLevel(level)),
             levelProgress,
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
@@ -957,6 +957,23 @@ export function readTrialTiles(root) {
     }
 
     return tiles;
+}
+
+/**
+ * Whether a card's status element is the game's Completed one, by class rather than by its words.
+ *
+ * The finished Trials-tab card draws `div.GuildPanel_tileStatusCompleted` ("Completed") in its
+ * `GuildPanel_tileBottom`, which can sit outside the element {@link cardFor} settles on — the nearest
+ * `GuildPanel_tile*` above the summary — so the whole `GuildPanel_trialTile` is asked when there is one. A class
+ * holds in a player's own language where the word does not.
+ *
+ * @param {Element} tile - The card, from {@link cardFor}
+ * @returns {boolean}
+ */
+function cardStatusCompleted(tile) {
+    const selector = '[class*="GuildPanel_tileStatusCompleted"]';
+    const whole = tile?.closest?.('[class*="GuildPanel_trialTile"]') || tile;
+    return Boolean(whole?.matches?.(selector) || whole?.querySelector?.(selector));
 }
 
 /**

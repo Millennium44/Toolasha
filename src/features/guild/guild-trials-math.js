@@ -288,6 +288,12 @@ export function parseCurrentTrialsData(raw) {
                 tierStartedAtMs: finite(party.tierStartedAtMs),
                 highestTierReachedAtMs: finite(party.highestTierReachedAtMs),
                 done: party.done === true,
+                // How far into the next tier the party got, a fraction 0-1 (0.6471 is the card's "+64%"). The
+                // last tier's parties carry none
+                nextTierProgress:
+                    finite(party.nextTierProgress) !== null && party.nextTierProgress >= 0 && party.nextTierProgress < 1
+                        ? party.nextTierProgress
+                        : null,
                 points: finite(pointsMap[key]) !== null && pointsMap[key] > 0 ? pointsMap[key] : null,
             };
         }

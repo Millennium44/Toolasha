@@ -3997,33 +3997,21 @@ class GuildTrials {
                     );
                     let key = joined?.[0] ?? null;
                     let create = null;
+                    const cardDone = Boolean(joined?.[1]?.completed);
                     if (!joined) {
                         const trial = trialFromHrid(partyKey);
                         if (!trial || trial.kind !== kind) continue;
                         key = tileKey(trial);
                         create = { name: trial.name, kind: trial.kind };
-                    } else if (joined[1]?.completed) {
+                    } else if (cardDone && !finished) {
                         continue;
                     }
-                    if (finished) {
-                        // Only onto a tile this cycle's tier statement is already on, and fresh
-                        // within the cycle: a completed payload outlives its cycle
-                        const stampedAt = joined?.[1]?.serverTierAt;
-                        if (!joined || !Number.isFinite(stampedAt) || now - stampedAt > 2 * TRIAL_ACTIVE_MS) continue;
-                        next = recordServerTiers(next, key, { points: party.points, at: stampedAt });
-                        continue;
-                    }
-
-                    // No offset means no stamp was ever readable, and then there
-                    // are no clears to place either
-                    const clears = {};
-                    if (offset !== null) {
-                        for (const [tier, serverAt] of Object.entries(
-                            this.serverTierClears?.[kind]?.[partyKey] || {}
-                        )) {
-                            clears[tier] = serverAt + offset;
-                        }
-                    }
+                    // A finished party's end percent, the game's own figure for the history (0.6471 → the card's
+                    // "+64%"), for the tier it banked. Never a running party's: that is progress, not the result
+                    const endProgress =
+                        party.done && Number.isFinite(party.highestTier) && Number.isFinite(party.nextTierProgress)
+                            ? { tier: party.highestTier, nextTierProgress: party.nextTierProgress }
+                            : null;
                     // The party's own bank time, as its `tierSeenAt` stamp is: a
                     // message arrives whenever *any* party banks, so its receipt is
                     // another party's clear as often as this one's
@@ -4038,6 +4026,45 @@ class GuildTrials {
                         Number.isFinite(party.budgetRemainingMs)
                             ? party.tierStartedAtMs + party.budgetRemainingMs + offset
                             : null;
+                    if (finished) {
+                        // Only onto a tile this cycle's tier statement is already on, and fresh
+                        // within the cycle: a completed payload outlives its cycle
+                        const stampedAt = joined?.[1]?.serverTierAt;
+                        if (!joined || !Number.isFinite(stampedAt) || now - stampedAt > 2 * TRIAL_ACTIVE_MS) continue;
+                        if (cardDone) {
+                            // A completed card is left as it is, all but the end percent the card cannot outrank
+                            next = recordServerTiers(next, key, { at: stampedAt, seenAt: held.at, endProgress });
+                            continue;
+                        }
+                        if (!party.done) {
+                            next = recordServerTiers(next, key, { points: party.points, at: stampedAt });
+                            continue;
+                        }
+                        // The party's last statement. A trial that runs to the clock goes done in the
+                        // same message that flips the kind to completed, so this is the only place its
+                        // done, its final tier and its end are ever stated
+                        next = recordServerTiers(next, key, {
+                            bankedTier: party.highestTier,
+                            done: true,
+                            at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : stampedAt,
+                            seenAt: held.at,
+                            deadlineAt,
+                            points: party.points,
+                            endProgress,
+                        });
+                        continue;
+                    }
+
+                    // No offset means no stamp was ever readable, and then there
+                    // are no clears to place either
+                    const clears = {};
+                    if (offset !== null) {
+                        for (const [tier, serverAt] of Object.entries(
+                            this.serverTierClears?.[kind]?.[partyKey] || {}
+                        )) {
+                            clears[tier] = serverAt + offset;
+                        }
+                    }
                     next = recordServerTiers(next, key, {
                         bankedTier: party.highestTier,
                         done: party.done,
@@ -4049,6 +4076,7 @@ class GuildTrials {
                         // Null while the sign-up sheet or level map has not been loaded: unknown, not empty
                         signupLevels: this._signupLevelsFor(partyKey, kind, record.guildId ?? this._guildId()),
                         points: party.points,
+                        endProgress,
                     });
                 }
             }

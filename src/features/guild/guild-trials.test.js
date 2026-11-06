@@ -9025,6 +9025,68 @@ describe('how a trial ended and who signed up, kept with the panel shut', () => 
         expect(done.tiles[key].endedAt).toBe(deadline + SKEW + TRIP);
     });
 
+    describe('the message that flips the kind to completed', () => {
+        // As the live payload ends a trial that ran to the clock: every party goes done in the same message that
+        // turns `skilling.status` to "completed", with its end fraction (0.6471 is the card's "+64%")
+        const completedMessage = (party) => {
+            const payload = JSON.parse(CURRENT_TRIALS_DATA_SKILLING);
+            payload.skilling.status = 'completed';
+            payload.skilling.parties[HRID] = { ...milking, ...party };
+            return { guild: { id: 'g-own', currentTrialsData: JSON.stringify(payload) } };
+        };
+        const finalParty = {
+            highestTier: 8,
+            done: true,
+            nextTierProgress: 0.6471,
+            tierStartedAtMs: deadline - 10 * 60_000,
+            highestTierReachedAtMs: deadline - 10 * 60_000,
+            budgetRemainingMs: 0,
+        };
+        const watchedToTheEnd = (base = record()) => {
+            hear(message({}), newestStamp);
+            let running = file(base);
+            hear(message({ tierStartedAtMs: newestStamp, highestTierReachedAtMs: newestStamp }), deadline - 5 * 60_000);
+            running = file(running);
+            hear(completedMessage(finalParty), deadline);
+            return { running, done: file(running) };
+        };
+
+        test('states the party done, its final tier, its end and its end percent', () => {
+            const { done } = watchedToTheEnd();
+            expect(done.tiles[key]).toMatchObject({
+                serverTier: 8,
+                serverDone: true,
+                endReason: 'clock',
+                serverProgress: { tier: 8, pct: 64, at: deadline + SKEW + TRIP },
+            });
+        });
+
+        test('a running party’s fraction is never kept', () => {
+            hear(message({ nextTierProgress: 0.7 }), newestStamp);
+            const running = file(record());
+            expect(running.tiles[key].serverDone).toBe(false);
+            expect(running.tiles[key]).not.toHaveProperty('serverProgress');
+        });
+
+        test('a card already read Completed takes only the end percent', () => {
+            hear(message({}), newestStamp);
+            const running = file(record());
+            const carded = { ...running, tiles: { [key]: { ...running.tiles[key], completed: true } } };
+            hear(completedMessage(finalParty), deadline);
+            const done = file(carded);
+            expect(done.tiles[key]).toEqual({
+                ...carded.tiles[key],
+                serverProgress: { tier: 8, pct: 64, at: deadline + SKEW + TRIP },
+            });
+        });
+
+        test('a completed payload with no fresh statement on the tile writes nothing', () => {
+            hear(completedMessage(finalParty), deadline);
+            const untouched = record();
+            expect(file(untouched)).toBe(untouched);
+        });
+    });
+
     test('a party seen finishing with the clock still running stopped early, the cause not stated', () => {
         const done = runThenFinish({ serverAt: deadline - 20 * 60_000 });
         expect(done.tiles[key].endReason).toBe('early');
