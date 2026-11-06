@@ -143,6 +143,13 @@ export const PANEL_CSS = `
     order: -1;
     flex: 0 0 100%;
     max-width: 100%;
+    /* The flattened view makes Inventory_items itself the scroller, strip included; the
+       game's own tabs scroll only the panel under the strip. Pinned, the strip stays in
+       reach on a long layout as it does there. Opaque, so tiles pass under it unseen. */
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: rgb(19, 20, 25);
 }
 .toolasha-ct-active [data-mwi-toolasha-inv-strip] [class*="MuiTabs-indicator"] {
     display: none;

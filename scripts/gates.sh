@@ -22,7 +22,20 @@ step 'Prettier (CI globs)'
 npx prettier --check "src/**/*.js" "*.config.js" "**/*.md"
 
 step 'Tests'
-node_modules/.bin/vitest run 2>&1 | tail -4
+# Only the failures and the summary. A bare `tail` lost both once Vitest began
+# ending its output with an isolate hint: a failed run showed nothing to act on.
+# The filter's exit status is ignored and Vitest's own is kept, so a failure still stops the gates.
+tests_log=$(mktemp)
+set +e
+node_modules/.bin/vitest run >"$tests_log" 2>&1
+tests_status=$?
+set -e
+grep -E '^ *(FAIL|×) |^ *(Test Files|Tests) ' "$tests_log" || true
+if [ "$tests_status" -ne 0 ]; then
+    echo "Tests failed (exit $tests_status); full log: $tests_log"
+    exit "$tests_status"
+fi
+rm -f "$tests_log"
 
 step 'Build: dev standalone'
 BUILD_TARGET=dev-standalone npx rollup -c 2>&1 | tail -1
