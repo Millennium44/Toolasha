@@ -48,7 +48,7 @@ import webSocketHook from '../../core/websocket.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 // Stateless functions, so the production bundle split can hold a copy on this
 // side: both read the same storage the collector writes
-import { sessionKey, loadSessions } from '../combat-stats/combat-session-history.js';
+import { sessionKey, loadSessions, sessionsRevision } from '../combat-stats/combat-session-history.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { predictionCalibration, MIN_DURATION_SEC } from './prediction-calibration.js';
 import { loadAllZonesSnapshot } from '../../utils/all-zones-snapshot.js';
@@ -73,6 +73,9 @@ class CombatCalibration {
         this.currentKey = null;
         /** Serialises the async handler against itself */
         this.queue = Promise.resolve();
+        /** The archive as last read, and the {@link sessionsRevision} it was read at */
+        this.archiveCache = null;
+        this.archiveRevision = null;
     }
 
     /**
@@ -193,7 +196,7 @@ class CombatCalibration {
         const finished = [...this.pending.keys()].filter((key) => key !== this.currentKey);
         if (!finished.length) return;
 
-        const archived = await loadSessions();
+        const archived = await this._archive();
         for (const key of finished) {
             const session = archived.find((entry) => entry.key === key);
             if (!session) continue;
@@ -202,6 +205,27 @@ class CombatCalibration {
             this.pending.delete(key);
             await this._record(key, context, session);
         }
+    }
+
+    /**
+     * The archived sessions, re-read only when the archive may have changed.
+     *
+     * A key can stay pending a long while (its archive entry never comes, or
+     * comes late), and every battle used to re-read the whole archive for it.
+     * The revision moves with the character and with every write to the
+     * archive, so an unchanged one means the last read is still the archive.
+     * It is taken BEFORE the read: a write landing during the read moves it on,
+     * and the next battle reads again.
+     *
+     * @returns {Promise<Array<Object>>}
+     */
+    async _archive() {
+        const revision = sessionsRevision();
+        if (this.archiveCache && this.archiveRevision === revision) return this.archiveCache;
+        const archived = await loadSessions();
+        this.archiveCache = archived;
+        this.archiveRevision = revision;
+        return archived;
     }
 
     /**
@@ -269,6 +293,8 @@ class CombatCalibration {
         this.unregisterHandlers = [];
         this.pending.clear();
         this.currentKey = null;
+        this.archiveCache = null;
+        this.archiveRevision = null;
         this.initialized = false;
     }
 }
