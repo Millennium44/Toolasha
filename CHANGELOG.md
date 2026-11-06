@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync asks for a reload only when your tabs changed
+
+A sync pull no longer shows "reload advised" for your custom inventory tabs when the other device's tabs are the same as yours. Which tab you have selected now stays this device's own.
+
 <!-- shipped in 3.77.0 -->
 
 ### Combat Sim tries several ability levels at once
