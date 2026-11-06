@@ -46,6 +46,13 @@ jobs:
             - name: Stamp the release into the changelog
               run: npm run changelog:stamp
 
+            # A PR merged with a merge commit is listed twice: once for its own
+            # commit and once for the merge commit, which carries the PR title.
+            # GreasyFork shows this section as the version's changelog, so the
+            # repeat is dropped from the release being cut (never older ones).
+            - name: Drop repeated release-note bullets
+              run: npm run changelog:dedupe
+
             - name: Run formatting
               run: npm run format
 
