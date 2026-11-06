@@ -153,12 +153,23 @@ function rewriteStats(popper, nodes, equipmentDetail, level, title) {
  */
 function rewriteMarketPrice(popper, nodes, skip, itemHrid, level, title) {
     const plain = getItemPrices(itemHrid, 0);
-    for (const node of nodes) {
-        if (skip.has(node)) continue;
+    const priced = nodes.filter((node) => {
+        if (skip.has(node)) return false;
         const m = node.data.match(NUMBER_AT_END);
-        if (!m || m[4] || m[2] === '-') continue;
+        return Boolean(m) && !m[4] && m[2] !== '-';
+    });
+    // The row the game labels Market Price, when the label is one we know. Matching a number first let the Sell Price
+    // row win when Toolasha's +0 price is the vendor price (an Iron Cow valuing at vendor): it then rewrote or hid the
+    // vendor line and left the market one alone
+    const labelled = priced.filter((node) => MARKET_PRICE_LABEL.test(rowText(node)));
+    // Otherwise (another language) the row showing Toolasha's +0 price, never the one showing the vendor price
+    const vendorPrice = dataManager.getItemDetails?.(itemHrid)?.sellPrice;
+    const candidates = labelled.length > 0 ? labelled : priced;
+    for (const node of candidates) {
+        const m = node.data.match(NUMBER_AT_END);
         const [, prefix, , digits, , tail] = m;
         const shown = Number(digits.replace(/,/g, ''));
+        if (labelled.length === 0 && vendorPrice > 0 && shown === vendorPrice) continue;
         let side = null;
         for (const candidate of ['ask', 'bid', 'average']) {
             if (plain && plain[candidate] > 0 && Math.round(plain[candidate]) === shown) {
@@ -166,7 +177,7 @@ function rewriteMarketPrice(popper, nodes, skip, itemHrid, level, title) {
                 break;
             }
         }
-        if (!side && !MARKET_PRICE_LABEL.test(rowText(node))) continue;
+        if (!side && labelled.length === 0) continue;
         const value = getItemPrices(itemHrid, level)?.[side || 'ask'];
         if (value > 0) {
             setText(popper, node, `${prefix}${formatLike(Math.round(value), digits)}${tail}`, title);

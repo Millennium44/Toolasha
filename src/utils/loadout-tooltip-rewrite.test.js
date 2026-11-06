@@ -129,6 +129,40 @@ describe('loadout level in the game lines', () => {
         el.remove();
     });
 
+    const vendorTooltip = (marketLabel) => {
+        const el = document.createElement('div');
+        el.className = 'MuiTooltip-popper';
+        el.innerHTML = `<div class="MuiTooltip-tooltip"><div class="ItemTooltipText_itemTooltipText__zFq3A">
+            <div class="ItemTooltipText_name__n">Enchanted Gloves</div><div>Amount: 1</div>
+            <div>Sell Price: 200,000</div><div>${marketLabel}: 8,328,000,000</div></div></div>`;
+        document.body.appendChild(el);
+        return el;
+    };
+    const rowsOf = (el) =>
+        [...el.querySelector('[class*="ItemTooltipText_itemTooltipText"]').children].map(
+            (r) => (r.style.display === 'none' ? '[hidden] ' : '') + r.textContent
+        );
+
+    test('an Iron Cow valuing at vendor price: the Market Price row is rewritten, never the Sell Price row', () => {
+        // Toolasha's +0 price is the vendor price on every side, the same figure the Sell Price row shows
+        game.items[GLOVES].sellPrice = 200000;
+        game.prices[`${GLOVES}:0`] = { ask: 200000, bid: 200000, average: 200000 };
+        const el = vendorTooltip('Market Price');
+        applyLoadoutLevelToGameLines(el, info(el), GLOVES);
+        expect(rowsOf(el)).toContain('Sell Price: 200,000');
+        expect(rowsOf(el)).toContain('Market Price: 28,000,000,000');
+        el.remove();
+    });
+
+    test('with an unknown label, the row showing the vendor price is never taken for the market row', () => {
+        game.items[GLOVES].sellPrice = 200000;
+        game.prices[`${GLOVES}:0`] = { ask: 200000, bid: 200000, average: 200000 };
+        const el = vendorTooltip('Marktpreis');
+        applyLoadoutLevelToGameLines(el, info(el), GLOVES);
+        expect(rowsOf(el)).toContain('Sell Price: 200,000');
+        el.remove();
+    });
+
     test('a flat stat scales, keeps its format, and a stat with no bonus is left as drawn', () => {
         const el = popper('Test Shield', ['Armor: 8', 'Water Resistance: 12.5'], 'Market Price: 100');
         applyLoadoutLevelToGameLines(el, info(el), SHIELD);
