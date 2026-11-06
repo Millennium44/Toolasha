@@ -4358,13 +4358,13 @@ export const settingsGroups = {
             },
             guildTrialPackUnits: {
                 id: 'guildTrialPackUnits',
-                label: 'Guild trial fight: pack party units into fewer rows',
+                label: 'Guild trials: lay out the players that wrap under your card in rows',
                 type: 'checkbox',
                 default: true,
                 help:
-                    "Lays the trial fight's party tiles out as a tight grid beside the big card instead of the " +
-                    "game's tall wrapped columns, so all of them fit in fewer rows. Normal party fights are " +
-                    'untouched, and narrow phone screens keep the game layout.',
+                    'When more players are in the trial party than fit beside your card, the game stacks the extra ' +
+                    'ones in a tall narrow column under it. This lays those out in rows instead. Players beside ' +
+                    'your card, and normal party fights, are left as the game draws them.',
             },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',

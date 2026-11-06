@@ -19,96 +19,184 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-const {
-    default: feature,
-    SETTING,
-    STYLE_MARK,
-    AREA_SEL,
-    GRID_CSS,
-    PHONE_MIN_WIDTH,
-} = await import('./guild-trial-unit-grid.js');
+const { default: feature, SETTING, FLAT_MARK } = await import('./guild-trial-unit-grid.js');
 
-const sheets = () => document.head.querySelectorAll(`style[${STYLE_MARK}]`);
+const COMBAT = (extra = '') => `<div class="BattlePanel_guildPartyArea__a"><div class="MiniUnitGrid_miniUnitGrid__b">
+  <div class="CombatUnit_combatUnit__c" id="card"></div>
+  <div class="MiniUnitGrid_miniUnitColumn__e" id="beside"><div class="MiniUnit_miniUnit__f" id="t1"></div></div>
+  <div class="MiniUnitGrid_miniUnitColumn__e" id="below"><div class="MiniUnit_miniUnit__f" id="t2"></div></div>
+  ${extra}</div></div>`;
 
-/** The game's trial fight: a self card and columns of three minis */
-const TRIAL = `<div class="BattlePanel_guildPartyArea__a"><div class="MiniUnitGrid_miniUnitGrid__b">
-  <div class="CombatUnit_combatUnit__c" id="self"><div class="CombatUnit_name__d">Me</div></div>
-  <div class="MiniUnitGrid_miniUnitColumn__e" id="col">
-    <div class="MiniUnit_miniUnit__f"><div class="MiniUnit_name__g">Bo</div></div>
-    <div class="MiniUnit_miniUnit__f"><div class="MiniUnit_name__g">Dee</div></div>
-  </div></div></div>`;
+const SKILLING = `<div class="SkillingInstancePanel_playerArea__a"><div class="MiniUnitGrid_miniUnitGrid__b">
+  <div class="SkillingInstancePanel_skillingUnit__c" id="card"></div>
+  <div class="MiniUnitGrid_miniUnitColumn__e" id="below"><div class="MiniUnit_miniUnit__f" id="t2"></div></div>
+  </div></div>`;
 
-/** A normal party fight: same grid classes, different container */
 const NORMAL = `<div class="BattlePanel_playersArea__z"><div class="MiniUnitGrid_miniUnitGrid__b">
-  <div class="MiniUnitGrid_miniUnitColumn__e"><div class="MiniUnit_miniUnit__f"></div></div></div></div>`;
+  <div class="CombatUnit_combatUnit__c" id="ncard"></div>
+  <div class="MiniUnitGrid_miniUnitColumn__e" id="ncol"><div class="MiniUnit_miniUnit__f" id="nt"></div></div></div></div>`;
+
+/** happy-dom has no layout: give elements a top / bottom */
+const rect = (el, top, bottom = top + 48) => {
+    el.getBoundingClientRect = () => ({ top, bottom, left: 0, right: 0, width: 0, height: bottom - top });
+};
+const $ = (id) => document.getElementById(id);
+const flush = () => new Promise((r) => requestAnimationFrame(() => r()));
+const tick = async () => {
+    await Promise.resolve();
+    await flush();
+};
+
+/** card bottom 150; t1 beside (top 0), t2 below (top 154) */
+const layout = () => {
+    rect($('card'), 0, 150);
+    if ($('t1')) rect($('t1'), 0);
+    rect($('t2'), 154);
+    if ($('nt')) {
+        rect($('ncard'), 0, 150);
+        rect($('nt'), 200);
+    }
+};
 
 describe('guild trial unit grid', () => {
     beforeEach(() => {
-        document.head.innerHTML = '';
         document.body.innerHTML = '';
         game.settings = {};
         game.listeners = [];
     });
     afterEach(() => feature.cleanup());
 
-    test('default on: the rule is present', () => {
+    test('columns beside the card are untouched, columns below are flattened', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
         feature.initialize();
-        expect(sheets().length).toBe(1);
-        expect(sheets()[0].textContent).toBe(GRID_CSS);
-        expect(GRID_CSS).toContain('display: contents');
-        expect(GRID_CSS).toContain('span 3');
-        expect(GRID_CSS).toContain(`min-width: ${PHONE_MIN_WIDTH}px`);
+        await flush();
+        expect($('beside').style.display).toBe('');
+        expect($('beside').hasAttribute(FLAT_MARK)).toBe(false);
+        expect($('below').style.display).toBe('contents');
+        expect($('below').hasAttribute(FLAT_MARK)).toBe(true);
     });
 
-    test('setting off: no style; turning it on and off follows live, without duplicates', () => {
+    test('a column exactly at the card bottom counts as below', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        rect($('t2'), 149);
+        feature.initialize();
+        await flush();
+        expect($('below').style.display).toBe('contents');
+    });
+
+    test('a flattened column that moves back up is restored', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        feature.initialize();
+        await flush();
+        rect($('t2'), 10);
+        window.dispatchEvent(new Event('resize'));
+        await flush();
+        expect($('below').style.display).toBe('');
+        expect($('below').hasAttribute(FLAT_MARK)).toBe(false);
+    });
+
+    test('players joining re-runs it via the observer', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        feature.initialize();
+        await flush();
+        const col = document.createElement('div');
+        col.className = 'MiniUnitGrid_miniUnitColumn__e';
+        col.id = 'new';
+        col.innerHTML = '<div class="MiniUnit_miniUnit__f" id="t3"></div>';
+        document.querySelector('[class*="MiniUnitGrid_miniUnitGrid"]').appendChild(col);
+        rect($('t3'), 210);
+        await tick();
+        await flush();
+        expect($('new').style.display).toBe('contents');
+    });
+
+    test('the skilling trial area is handled too', async () => {
+        document.body.innerHTML = SKILLING;
+        layout();
+        feature.initialize();
+        await flush();
+        expect($('below').style.display).toBe('contents');
+    });
+
+    test('a normal party area is never touched', async () => {
+        document.body.innerHTML = COMBAT() + NORMAL;
+        layout();
+        feature.initialize();
+        await flush();
+        expect($('ncol').style.display).toBe('');
+        expect($('ncol').hasAttribute(FLAT_MARK)).toBe(false);
+    });
+
+    test('no card: nothing is done', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        $('card').remove();
+        feature.initialize();
+        await flush();
+        expect($('below').style.display).toBe('');
+    });
+
+    test('a column the game styled itself is not overwritten or restored', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        $('below').style.display = 'flex';
+        feature.initialize();
+        await flush();
+        expect($('below').style.display).toBe('flex');
+        expect($('below').hasAttribute(FLAT_MARK)).toBe(false);
+        rect($('t2'), 10);
+        window.dispatchEvent(new Event('resize'));
+        await flush();
+        expect($('below').style.display).toBe('flex');
+    });
+
+    test('setting off restores only flattened columns and stops observing; on redoes it', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
+        $('beside').style.display = 'flex';
+        feature.initialize();
+        await flush();
+        const listener = game.listeners.find((l) => l.key === SETTING);
+        listener.fn(false);
+        expect($('below').style.display).toBe('');
+        expect($('below').hasAttribute(FLAT_MARK)).toBe(false);
+        expect($('beside').style.display).toBe('flex');
+        // nothing re-flattens while off
+        window.dispatchEvent(new Event('resize'));
+        await flush();
+        expect($('below').style.display).toBe('');
+        listener.fn(true);
+        await flush();
+        expect($('below').style.display).toBe('contents');
+    });
+
+    test('default off at start does nothing', async () => {
         game.settings[SETTING] = false;
+        document.body.innerHTML = COMBAT();
+        layout();
         feature.initialize();
-        expect(sheets().length).toBe(0);
-        for (const l of game.listeners.filter((x) => x.key === SETTING)) l.fn(true);
-        for (const l of game.listeners.filter((x) => x.key === SETTING)) l.fn(true);
-        expect(sheets().length).toBe(1);
-        for (const l of game.listeners.filter((x) => x.key === SETTING)) l.fn(false);
-        expect(sheets().length).toBe(0);
+        await flush();
+        expect($('below').style.display).toBe('');
     });
 
-    test('cleanup removes the style and the listener; re-initialize redoes it', () => {
+    test('cleanup restores, removes the listener and the observer; re-initialize works', async () => {
+        document.body.innerHTML = COMBAT();
+        layout();
         feature.initialize();
+        await flush();
+        const spy = vi.spyOn(window, 'removeEventListener');
         feature.cleanup();
-        expect(sheets().length).toBe(0);
+        expect(spy).toHaveBeenCalledWith('resize', expect.any(Function));
+        spy.mockRestore();
+        expect($('below').style.display).toBe('');
         expect(game.listeners.length).toBe(0);
         feature.initialize();
-        expect(sheets().length).toBe(1);
-    });
-
-    test('every rule is scoped under the trial party area; a normal party grid is not matched', () => {
-        const rules = GRID_CSS.split('\n').filter((l) => l.includes(AREA_SEL));
-        expect(rules.length).toBe(3);
-        for (const line of GRID_CSS.split('\n').filter((l) => l.includes('{') && !l.startsWith('@media'))) {
-            expect(line.startsWith(AREA_SEL)).toBe(true);
-        }
-        document.body.innerHTML = TRIAL + NORMAL;
-        const col = (root) => root.querySelector('[class*="MiniUnitGrid_miniUnitColumn"]');
-        expect(
-            col(document.querySelector('[class*="guildPartyArea"]')).matches(
-                `${AREA_SEL} [class*="MiniUnitGrid_miniUnitColumn"]`
-            )
-        ).toBe(true);
-        const normalCol = col(document.querySelector('[class*="playersArea"]'));
-        expect(normalCol.matches(`${AREA_SEL} [class*="MiniUnitGrid_miniUnitColumn"]`)).toBe(false);
-        expect(normalCol.closest(AREA_SEL)).toBeNull();
-    });
-
-    test('readers that walk the area still find every unit with the rule applied', () => {
-        feature.initialize();
-        document.body.innerHTML = TRIAL;
-        const area = document.querySelector(AREA_SEL);
-        expect(area.querySelectorAll('[class*="MiniUnit_miniUnit"]').length).toBe(2);
-        expect(area.querySelectorAll('[class*="CombatUnit_combatUnit"], [class*="MiniUnit_miniUnit"]').length).toBe(3);
-        expect([...area.querySelectorAll('[class*="MiniUnit_name"]')].map((n) => n.textContent)).toEqual(['Bo', 'Dee']);
-        // a badge attached to the tile reads its parent as the tile, not the column
-        const tile = area.querySelector('[class*="MiniUnit_miniUnit"]');
-        const badge = document.createElement('span');
-        tile.appendChild(badge);
-        expect(badge.parentElement).toBe(tile);
+        await flush();
+        expect($('below').style.display).toBe('contents');
+        expect(game.listeners.length).toBe(1);
     });
 });
