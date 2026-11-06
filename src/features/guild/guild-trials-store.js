@@ -820,6 +820,7 @@ function tileStamps(tile) {
         tile?.endedAt,
         tile?.runSeenAt,
         tile?.signupLevelsAt,
+        tile?.levelProgress?.at,
     ]
         .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
         .map(Number);
@@ -928,6 +929,7 @@ function currentCyclePart(tile, from) {
         ...(ended ? { endedAt: tile.endedAt, ...(tile.endReason ? { endReason: tile.endReason } : {}) } : {}),
         ...(watched ? { runSeenAt: tile.runSeenAt } : {}),
         ...(signedUp ? { signupLevels: tile.signupLevels, signupLevelsAt: tile.signupLevelsAt } : {}),
+        ...(since(tile.levelProgress?.at) ? { levelProgress: tile.levelProgress } : {}),
     };
 }
 
@@ -964,6 +966,7 @@ function earlierCyclePart(tile, from) {
         for (const field of ['endedAt', 'endReason']) delete part[field];
     }
     if (stampedSince(tile.runSeenAt, from)) delete part.runSeenAt;
+    if (stampedSince(tile.levelProgress?.at, from)) delete part.levelProgress;
     if (stampedSince(tile.signupLevelsAt, from)) {
         for (const field of ['signupLevels', 'signupLevelsAt']) delete part[field];
     }
@@ -1455,6 +1458,14 @@ export function recordTileSample(record, tile, at, characterId = null) {
         tierReadAt: Number.isFinite(tile?.tier)
             ? Math.max(at, Number.isFinite(existing.tierReadAt) ? existing.tierReadAt : at)
             : existing.tierReadAt,
+        // The game's "+64%" beside the card's level, the newest read kept; a card that shows no percent says
+        // nothing and leaves the last one alone
+        ...latestLevelProgress(
+            existing,
+            tile?.levelProgress
+                ? { levelProgress: { level: tile.levelProgress.level, pct: tile.levelProgress.pct, at } }
+                : null
+        ),
         // Written by `recordServerTiers` only; a card sample says nothing about them
         ...latestServerTier(existing, null),
         // …nor about how the trial ended or who signed up: carried through, not rebuilt
@@ -1770,6 +1781,40 @@ function latestRunSeenAt(a, b) {
 }
 
 /**
+ * Whether a stored card figure is whole: a level, a whole percent 0-99 and when it was read.
+ * @param {*} value - A tile's `levelProgress`
+ * @returns {boolean}
+ */
+function isLevelProgress(value) {
+    return (
+        Boolean(value) &&
+        typeof value === 'object' &&
+        Number.isFinite(value.level) &&
+        Number.isInteger(value.pct) &&
+        value.pct >= 0 &&
+        value.pct <= 99 &&
+        Number.isFinite(value.at)
+    );
+}
+
+/**
+ * The newer of two tiles' card figures (`Lv.280 +64%`), omitted when neither has a whole one.
+ *
+ * Newest read wins, never the higher percent: the figure belongs to the level it was read beside, and a later read
+ * is the card as it is now. A tie keeps the first side's.
+ *
+ * @param {Object|null} a - One side's tile
+ * @param {Object|null} b - The other side's tile
+ * @returns {{levelProgress?: {level: number, pct: number, at: number}}} Spreadable
+ */
+function latestLevelProgress(a, b) {
+    const figures = [a?.levelProgress, b?.levelProgress].filter(isLevelProgress);
+    if (!figures.length) return {};
+    const newest = figures.reduce((best, figure) => (figure.at > best.at ? figure : best));
+    return { levelProgress: { level: newest.level, pct: newest.pct, at: newest.at } };
+}
+
+/**
  * The later of two tiles' guild-payload statements, omitted when neither has one.
  * @param {Object} a - One side's tile
  * @param {Object} b - The other side's tile
@@ -1831,15 +1876,17 @@ function foldArchivedCycle(kept, other) {
         const server = latestServerTier(held, tile);
         const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
         const facts = mergeTrialFacts(held, tile);
+        const figure = latestLevelProgress(held, tile);
         const same =
             JSON.stringify(mergeTrialFacts(held, null)) === JSON.stringify(facts) &&
+            JSON.stringify(latestLevelProgress(held, null)) === JSON.stringify(figure) &&
             held.serverTier === server.serverTier &&
             held.serverTierAt === server.serverTierAt &&
             Boolean(held.serverDone) === Boolean(server.serverDone) &&
             held.serverPoints === server.serverPoints &&
             JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
         if (same) continue;
-        tiles[key] = { ...held, ...server, tierSeenAt, ...facts };
+        tiles[key] = { ...held, ...server, tierSeenAt, ...facts, ...figure };
         changed = true;
     }
     return changed ? { ...kept, tiles } : kept;
@@ -2038,6 +2085,8 @@ export function mergeTrialRecords(base, incoming) {
             ...latestRunSeenAt(existing, tile),
             // Latest wins: either side reading the badge is the card being watched
             ...latestTierReadAt(existing, tile),
+            // The game's "+64%" by its own read time, never an older read over a newer
+            ...latestLevelProgress(existing, tile),
             // The newer statement of the guild payload, all three fields together
             ...latestServerTier(existing, tile),
             samples,

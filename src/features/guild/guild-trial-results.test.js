@@ -19,6 +19,7 @@ vi.mock('../../utils/game-server.js', async (importOriginal) => ({
 
 import {
     MAX_RESULT_CYCLES_TEST,
+    cardLevelProgress,
     MAX_RESULT_WEEKS,
     historyRowFor,
     mergeResults,
@@ -452,5 +453,47 @@ describe('tileProgressPercent', () => {
         expect(rows[0].best).toMatchObject({ tier: 21, progress: null });
         expect(trialHistoryCells(rows[0])).toBe('T21 · T20 58% · best T21 (last week)');
         expect(trialHistoryDetail(rows[0])).not.toContain('99%');
+    });
+});
+
+describe('the card’s own percent', () => {
+    // A combat bar of 20 left of 100 reads 80%; the card itself said 64%
+    const bar80 = [{ t: 1000, readings: [{ current: 20, max: 100 }] }];
+    const figure = (level, pct, at = 2000) => ({ levelProgress: { level, pct, at } });
+
+    test('the card’s figure is filed over the last bar reading when it was read at the finished tier', () => {
+        const [result] = resultsFromCycle(
+            cycle(weeksAgo(1), { a: badger(19, 9000, { samples: bar80, ...figure(280, 64) }) })
+        );
+        expect(result).toMatchObject({ cardTier: 19, progress: 64 });
+    });
+
+    test('a figure read at another level falls back to the bar reading', () => {
+        // Read at Lv.280 (T19), then the card went on to finish T20 with no percent beside it
+        const tile = badger(20, 9000, { samples: bar80, ...figure(280, 64) });
+        expect(cardLevelProgress(tile, 20)).toBeNull();
+        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: tile }));
+        expect(result).toMatchObject({ cardTier: 20, progress: 80 });
+        // …and with no bar to fall back on, no percent at all — never the T19 figure on T20
+        const [bare] = resultsFromCycle(cycle(weeksAgo(1), { a: { ...tile, samples: [] } }));
+        expect(bare).not.toHaveProperty('progress');
+    });
+
+    test('the last tier takes no figure, whatever is stored', () => {
+        const tile = badger(21, 9000, { samples: [], ...figure(300, 40) });
+        expect(cardLevelProgress(tile, 21)).toBeNull();
+        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).not.toHaveProperty('progress');
+    });
+
+    test('a malformed figure is ignored', () => {
+        expect(cardLevelProgress(badger(19, 9000, figure(280, 64.5)), 19)).toBeNull();
+        expect(cardLevelProgress(badger(19, 9000, figure(280, 120)), 19)).toBeNull();
+        expect(cardLevelProgress(badger(19, 9000, { levelProgress: 'x' }), 19)).toBeNull();
+    });
+
+    test('a tile from before the figure was kept reads exactly as it did', () => {
+        const tile = badger(19, 9000, { samples: bar80 });
+        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).toMatchObject({ cardTier: 19, progress: 80 });
+        expect(resultsFromCycle(cycle(weeksAgo(1), { a: { ...tile, samples: [] } }))[0]).not.toHaveProperty('progress');
     });
 });

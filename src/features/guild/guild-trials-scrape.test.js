@@ -32,6 +32,7 @@ import {
     parseBarReadings,
     parseClockMs,
     parseTrialLevel,
+    parseTrialLevelProgress,
     parseTrialTier,
     parseWordyDurationMs,
     readTrialTiles,
@@ -1088,5 +1089,49 @@ describe('locale-grouped captures', () => {
             scope.appendChild(panel);
             expect(findTrialsRoot(scope)).toBe(panel);
         });
+    });
+});
+
+describe('the card’s own percent into the next tier', () => {
+    // As the live Trials tab draws a finished skilling card: the game's "Lv.280 +64%" text node, then the tier
+    // badge this script appends inside the same summary element
+    const card = (name, summary) =>
+        '<div class="GuildPanel_tile__b">' +
+        `<div class="GuildPanel_tileName__d">${name}</div>` +
+        `<div class="GuildPanel_tileSummary__c">${summary}<span class="mwi-trial-tier">T19</span></div>` +
+        '<div>1,664 pts</div></div>';
+    const read = (...cards) => {
+        document.body.innerHTML = `<div class="GuildPanel_trialsContent__a">${cards.join('')}</div>`;
+        return readTrialTiles(document.querySelector('[class*="GuildPanel_trialsContent"]'));
+    };
+
+    test('a finished card reads its level and the game’s percent together', () => {
+        const [tile] = read(card('Milking', 'Lv.280 +64%'));
+        expect(tile).toMatchObject({ name: 'Milking', level: 280, tier: 19, levelProgress: { level: 280, pct: 64 } });
+        // The percent is no bar: the Trials tab still reads as the setup tab
+        expect(tile.readings).toEqual([]);
+        expect(isTrialsSetupTab(document.querySelector('[class*="GuildPanel_trialsContent"]'))).toBe(true);
+    });
+
+    test('the top level carries no percent, and a level with no "+%" states none', () => {
+        expect(read(card('Milking', 'Lv.300'))[0]).toMatchObject({ level: 300, tier: 21, levelProgress: null });
+        // Even a percent drawn beside Lv.300 is refused: T21 has no next tier
+        expect(read(card('Milking', 'Lv.300 +12%'))[0].levelProgress).toBeNull();
+        expect(read(card('Milking', 'Lv.130'))[0]).toMatchObject({ level: 130, levelProgress: null });
+    });
+
+    test('parsing: the percent must follow the level directly, whole, below 100', () => {
+        expect(parseTrialLevelProgress('Lv.280 +64%')).toEqual({ level: 280, pct: 64 });
+        expect(parseTrialLevelProgress('Lv. 210+5.9 %')).toEqual({ level: 210, pct: 5 });
+        // The level marker is matched as `TRIAL_LEVEL_RE` matches it, beside a localized name and a full-width sign
+        expect(parseTrialLevelProgress('挤奶 Lv.280 +64％')).toEqual({ level: 280, pct: 64 });
+        expect(parseTrialLevelProgress('Lv.130')).toBeNull();
+        expect(parseTrialLevelProgress('Lv.130 Success Rate +5%')).toBeNull();
+        expect(parseTrialLevelProgress('Lv.300 +1%')).toBeNull();
+        expect(parseTrialLevelProgress('Lv.280 +100%')).toBeNull();
+        expect(parseTrialLevelProgress('Lv.90 +10%')).toBeNull();
+        expect(parseTrialLevelProgress(null)).toBeNull();
+        // The level reader is unchanged by the percent beside it
+        expect(parseTrialLevel('Lv.280 +64%')).toBe(280);
     });
 });

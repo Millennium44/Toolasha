@@ -2774,3 +2774,97 @@ describe('the weekly reset inside a test-server cycle', () => {
         expect(folded.tiles['skilling::alchemy'].tier).toBe(12);
     });
 });
+
+describe('the card’s own percent into the next tier', () => {
+    const KEY = 'skilling::milking';
+    const carded = (level, levelProgress = null) => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level,
+        tier: level >= 100 ? (level - 100) / 10 + 1 : null,
+        points: 2700,
+        readings: [],
+        levelProgress,
+    });
+
+    test('a card read is kept with its level and when it was read; a read without one leaves it alone', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 64 }), now);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now });
+        // A later read with no percent beside the level states nothing: the figure stays, with its own level
+        record = recordTileSample(record, carded(290), now + 60_000);
+        expect(record.tiles[KEY]).toMatchObject({ level: 290, levelProgress: { level: 280, pct: 64, at: now } });
+        // A newer figure replaces it
+        record = recordTileSample(record, carded(290, { level: 290, pct: 7 }), now + 120_000);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 290, pct: 7, at: now + 120_000 });
+    });
+
+    test('a card with no percent writes no figure at all', () => {
+        const record = recordTileSample(emptyRecord(thisWeek), carded(300), now);
+        expect(record.tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('the merge keeps the newest read, from either side, never the higher percent', () => {
+        const older = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 90 }), now);
+        const newer = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 64 }), now + 5000);
+        expect(mergeTrialRecords(older, newer).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(newer, older).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        // A side from a build before the figure keeps the other side's
+        const legacy = recordTileSample(emptyRecord(thisWeek), carded(280), now + 9000);
+        expect(mergeTrialRecords(legacy, newer).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(newer, legacy).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(legacy, legacy).tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('two copies of one archived cycle keep the newer figure', () => {
+        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+        const archived = (levelProgress) => ({
+            archivedAt: thisWeek,
+            reason: 'the week rolled over',
+            weekStart: lastWeek,
+            tiles: {
+                [KEY]: {
+                    name: 'Milking',
+                    kind: 'skilling',
+                    level: 280,
+                    tier: 19,
+                    points: 2700,
+                    completed: true,
+                    samples: [],
+                    tiers: [],
+                    pointsByTier: { 19: 2700 },
+                    tierSeenAt: {},
+                    ...(levelProgress ? { levelProgress } : {}),
+                },
+            },
+        });
+        const side = (levelProgress) => ({ ...emptyRecord(thisWeek), history: [archived(levelProgress)] });
+        const old = { level: 280, pct: 90, at: lastWeek + 1000 };
+        const fresh = { level: 280, pct: 64, at: lastWeek + 5000 };
+        for (const [a, b] of [
+            [side(old), side(fresh)],
+            [side(fresh), side(old)],
+            [side(null), side(fresh)],
+            [side(fresh), side(null)],
+        ]) {
+            const merged = mergeTrialRecords(a, b);
+            expect(merged.history).toHaveLength(1);
+            expect(merged.history[0].tiles[KEY].levelProgress).toEqual(fresh);
+        }
+    });
+});

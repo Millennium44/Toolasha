@@ -47,6 +47,7 @@ import {
     TRIAL_ACTIVE_MS,
     TRIAL_BUDGET_MS,
     TRIAL_MAX_TIER,
+    tierFromLevel,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { matchTrialHrid } from './guild-trials-scrape.js';
@@ -295,6 +296,25 @@ export function tileProgressPercent(tile) {
 }
 
 /**
+ * The game's own "+64%" off a tile's card, when it was read beside the level of the tier the card finished on.
+ *
+ * The card states the level and the percent into the next tier together (`Lv.280 +64%`), so the figure is the
+ * game's rather than the last bar Toolasha happened to read. It only counts for the tier it was read at: a figure
+ * read at Lv.280 (T19) says nothing about a card that went on to finish T20, and is never filed against it.
+ *
+ * @param {Object} tile - An archived tile
+ * @param {number|null} cardTier - The tier the card finished on, from {@link cardClearedTier}
+ * @returns {number|null} 0-99, or null when the card stated none for that tier
+ */
+export function cardLevelProgress(tile, cardTier) {
+    const figure = tile?.levelProgress;
+    if (!figure || typeof figure !== 'object') return null;
+    if (!Number.isFinite(cardTier) || atLastTier(cardTier)) return null;
+    if (!Number.isInteger(figure.pct) || figure.pct < 0 || figure.pct > 99) return null;
+    return tierFromLevel(figure.level) === cardTier ? figure.pct : null;
+}
+
+/**
  * The results one archived cycle states.
  * @param {Object} cycle - An archived cycle from `record.history`
  * @returns {Array<Object>} One entry per trial that stated a result; none for a foreign cycle
@@ -319,7 +339,8 @@ export function resultsFromCycle(cycle) {
         // nothing banked, not finished and no payload statement states nothing
         // (the untouched zero Past weeks prints as "—"). A finished T0 is a result
         if (cardTier === 0 && !(tile.points > 0) && !tile.completed && serverTier === null) continue;
-        const progress = tileProgressPercent(tile);
+        // The card's own figure first; the last bar reading, with its guards, when the card stated none for this tier
+        const progress = cardLevelProgress(tile, cardTier) ?? tileProgressPercent(tile);
         results.push({
             weekStart,
             cycleFrom,
