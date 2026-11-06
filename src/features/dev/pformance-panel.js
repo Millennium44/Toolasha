@@ -510,6 +510,7 @@ class PFormancePanel {
             .reverse()
             .map((stall) => ({
                 stallMs: stall.duration,
+                estimated: Boolean(stall.estimated),
                 at: stall.sinceBoot,
                 who:
                     (stall.suspects?.length
@@ -1278,7 +1279,8 @@ class PFormancePanel {
             } else if (title === 'Main-thread Stalls') {
                 row.appendChild(this._cell(entry.who, 'left'));
                 row.appendChild(this._cell((entry.at / 1000).toFixed(1) + 's', 'right'));
-                const stallCell = this._cell(String(entry.stallMs), 'right');
+                const stallCell = this._cell((entry.estimated ? '~' : '') + String(entry.stallMs), 'right');
+                if (entry.estimated) stallCell.title = 'Estimated from a late timer (this browser has no longtask API)';
                 if (entry.stallMs >= 100) stallCell.style.color = COLORS.danger;
                 row.appendChild(stallCell);
             } else {

@@ -41,6 +41,10 @@ const PANEL_PENDING_MAX_MS = 120000;
 const PANEL_SAMPLES_MAX = 50;
 const ASYNC_RUNS_MAX = 100;
 
+/** Heartbeat fallback (browsers without `longtask`, i.e. Firefox): tick spacing and the lateness that counts */
+const STALL_HEARTBEAT_MS = 100;
+const STALL_HEARTBEAT_MIN_LATE_MS = 50;
+
 const STALL_OURS_COVERAGE = 0.8;
 const STALL_NOT_OURS_COVERAGE = 0.2;
 
@@ -371,6 +375,9 @@ class PerformanceMonitor {
         this.enabled = false;
         this._onVisibilityChange = () => {
             this._tabVisible = !document.hidden;
+            // Timers are throttled while hidden: restart the heartbeat's
+            // baseline so the background gap is not read as one long stall
+            if (this._tabVisible) this._stallBeatAt = monotonicNow();
         };
         this._tabVisible = true;
         if (typeof document !== 'undefined') {
@@ -794,9 +801,20 @@ class PerformanceMonitor {
      * Runs while the pformance panel has measuring on, like the rolling stats.
      */
     startStallWatch() {
-        if (this.stallObserver || typeof PerformanceObserver === 'undefined') return;
+        if (this.stallObserver || this._stallBeatTimer) return;
         this.stalls = this.stalls || [];
         this.worstStallMs = this.worstStallMs || 0;
+        const supported =
+            typeof PerformanceObserver !== 'undefined' &&
+            Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+            PerformanceObserver.supportedEntryTypes.includes('longtask');
+        if (!supported) {
+            // No longtask support (Firefox): estimate stalls from how late a
+            // short timer fires. Registering the observer anyway only logs
+            // "unsupported entryTypes" to the console.
+            this._startStallHeartbeat();
+            return;
+        }
         try {
             this.stallObserver = new PerformanceObserver((list) => {
                 for (const entry of list.getEntries()) this._recordStall(entry);
@@ -805,6 +823,28 @@ class PerformanceMonitor {
         } catch {
             this.stallObserver = null;
         }
+    }
+
+    /**
+     * The longtask-less stall detector: a timer that notices when it fires late.
+     * A block of D ms on the main thread delays the tick by about D ms, so
+     * lateness over 50ms is recorded as a stall (flagged `estimated`). Nothing
+     * is recorded while the tab is hidden, where the browser throttles timers.
+     * @private
+     */
+    _startStallHeartbeat() {
+        this._stallBeatAt = monotonicNow();
+        this._stallBeatTimer = setInterval(() => {
+            const now = monotonicNow();
+            const last = this._stallBeatAt;
+            this._stallBeatAt = now;
+            if (typeof document !== 'undefined' && document.hidden) return;
+            if (!this._tabVisible) return;
+            const late = now - last - STALL_HEARTBEAT_MS;
+            if (late <= STALL_HEARTBEAT_MIN_LATE_MS) return;
+            // The block began when the tick should have fired
+            this._recordStall({ startTime: last + STALL_HEARTBEAT_MS, duration: late }, true);
+        }, STALL_HEARTBEAT_MS);
     }
 
     /**
@@ -819,8 +859,9 @@ class PerformanceMonitor {
      * trimmed, so the worst line cannot understate the session.
      *
      * @param {PerformanceEntry} entry - The longtask
+     * @param {boolean} [estimated] - True when inferred from a late timer, not a longtask entry
      */
-    _recordStall(entry) {
+    _recordStall(entry, estimated = false) {
         const duration = Math.round(entry.duration);
         const attribution = this._attributionFor(entry);
         this.stalls.push({
@@ -835,6 +876,7 @@ class PerformanceMonitor {
             recentEvents: this._eventsFor(entry),
             // Async work pending across the stall, which coverage cannot count
             inFlight: this._inFlightFor(entry),
+            ...(estimated ? { estimated: true } : {}),
         });
         if (duration > this.worstStallMs) this.worstStallMs = duration;
         if (this.stalls.length > 200) this.stalls.shift();
@@ -844,6 +886,8 @@ class PerformanceMonitor {
     stopStallWatch() {
         this.stallObserver?.disconnect();
         this.stallObserver = null;
+        if (this._stallBeatTimer) clearInterval(this._stallBeatTimer);
+        this._stallBeatTimer = null;
     }
 
     /**
