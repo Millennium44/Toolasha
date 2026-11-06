@@ -165,6 +165,9 @@ class TabVersionSync {
             this._closeChannel();
         } else {
             this._openChannel();
+            // A newer build already heard under the old mode: act on it under the new one. The reload still
+            // goes through _reloadWhenSafe (flush, pending-write guard, countdown generation).
+            this._evaluate();
         }
     }
 

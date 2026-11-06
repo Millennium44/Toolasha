@@ -433,3 +433,81 @@ describe('endings', () => {
         expect(state.toasts[0].dismissed).toBe(true);
     });
 });
+
+describe('mode changed after a newer build was heard', () => {
+    function switchMode(mode) {
+        state.settings = { tabVersionSync: mode };
+        tabVersionSync._applyMode(); // what config.onSettingChange calls
+    }
+
+    test('ask -> reload: starts the short countdown and reloads once', async () => {
+        state.settings = { tabVersionSync: 'ask' };
+        visibility = 'visible';
+        hear('3.17.0');
+        expect(state.toasts).toHaveLength(1);
+        switchMode('reload');
+        await vi.advanceTimersByTimeAsync(ALWAYS_RELOAD_DELAY_MS + 100);
+        expect(state.flushes).toBe(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    test('ask -> auto while hidden: starts the hidden countdown', async () => {
+        state.settings = { tabVersionSync: 'ask' };
+        hear('3.17.0');
+        await settle();
+        expect(reload).not.toHaveBeenCalled();
+        switchMode('auto');
+        await vi.advanceTimersByTimeAsync(HIDDEN_RELOAD_DELAY_MS - 1000);
+        expect(reload).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    test('ask -> auto while visible: keeps the notice, no countdown', async () => {
+        state.settings = { tabVersionSync: 'ask' };
+        visibility = 'visible';
+        hear('3.17.0');
+        switchMode('auto');
+        await settle();
+        expect(reload).not.toHaveBeenCalled();
+        expect(state.toasts).toHaveLength(1);
+    });
+
+    test('reload -> ask with the countdown running: cancels it and shows the notice', async () => {
+        state.settings = { tabVersionSync: 'reload' };
+        visibility = 'visible';
+        hear('3.17.0');
+        expect(state.toasts).toHaveLength(0);
+        switchMode('ask');
+        expect(state.toasts).toHaveLength(1);
+        await settle();
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('any -> off: tears down, no reload', async () => {
+        state.settings = { tabVersionSync: 'reload' };
+        hear('3.17.0');
+        switchMode('off');
+        await settle();
+        expect(reload).not.toHaveBeenCalled();
+        expect(state.channels[0].closed).toBe(true);
+    });
+
+    test('mode change with nothing heard: nothing happens', async () => {
+        switchMode('reload');
+        await settle();
+        expect(reload).not.toHaveBeenCalled();
+        expect(state.toasts).toHaveLength(0);
+    });
+
+    test('mode change while a write is pending: reload refused, notice instead', async () => {
+        state.settings = { tabVersionSync: 'ask' };
+        visibility = 'visible';
+        hear('3.17.0');
+        state.pending = 1;
+        switchMode('reload');
+        await vi.advanceTimersByTimeAsync(ALWAYS_RELOAD_DELAY_MS + 100);
+        expect(state.flushes).toBe(1);
+        expect(reload).not.toHaveBeenCalled();
+    });
+});
