@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Guild trial players wrap in rows under your card
+### Guild trial players stay in a fixed place
 
-When more players are in a guild trial than fit beside your card, the extra ones now line up in rows under it instead of a tall narrow column, in both the combat and the skilling trial. The rows beside your card stay as the game draws them.
+The game reshuffles the trial party's tiles at some tier changes. Toolasha now keeps every player in the same spot, grouped by signed-up role (tanks, support, damage, then no role) and then by name; skilling trials go by name. Players who don't fit beside your card line up in rows under it instead of a tall narrow column.
 
 ### Guild trial payout card fits on one line
 
@@ -16,7 +16,7 @@ The payout card in a running guild trial leads with its figures and the fold tog
 
 ### Trial history shows how far each trial got
 
-Each cell in the guild Trial history reads the tier and the percent reached in it (T21 63%), stays blank for a trial that did not run, and a key under the table explains the marks. The Past weeks totals now sit as two rows under the same table instead of a separate list.
+Each cell in the guild Trial history reads the tier and the game's own end percent into the next tier (T19 64%), taken from the guild data when the trial finishes; T21 has no percent, and a trial that did not run is blank. Rows are striped for reading across, the Past weeks totals sit as two rows under the table, and a trial that ran to the clock is now recorded as finished.
 
 ### Loadout slot tooltips use the slot's enhancement level
 
