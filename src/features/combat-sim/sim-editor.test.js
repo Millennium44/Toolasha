@@ -31,6 +31,16 @@ const game = vi.hoisted(() => ({
     buildExport: null,
     /** Set per-test to stub what a pasted "+ Import" text parses to */
     parseImport: null,
+    /** The learned abilities the game holds now: [{abilityHrid, level}] */
+    learnedAbilities: null,
+    /** The skills the game holds now: [{skillHrid, level}] */
+    skills: null,
+    /** The gear worn now: entries of item location hrid -> {itemHrid, enhancementLevel} */
+    equipment: null,
+    /** The item sheet, for resolving a worn item's equipment type */
+    itemDetailMap: null,
+    /** Set to make the live reads throw */
+    readsThrow: false,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -39,9 +49,21 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.characterData;
         },
         getCurrentCharacterId: () => game.charId,
-        getInitClientData: () => ({ itemDetailMap: {}, abilityDetailMap: {} }),
+        getInitClientData: () => ({ itemDetailMap: game.itemDetailMap || {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
         getHouseRooms: () => game.houseRooms,
+        getLearnedAbilities: () => {
+            if (game.readsThrow) throw new Error('not loaded');
+            return game.learnedAbilities ? game.learnedAbilities.map((entry) => ({ ...entry })) : [];
+        },
+        getSkills: () => {
+            if (game.readsThrow) throw new Error('not loaded');
+            return game.skills ? [...game.skills] : null;
+        },
+        getEquipment: () => {
+            if (game.readsThrow) throw new Error('not loaded');
+            return new Map(game.equipment || []);
+        },
         // The same precedence the real one applies: a roster read off a battle
         // beats the one `init_character_data` froze at page load
         getPartyMembers: () => {
@@ -229,6 +251,11 @@ beforeEach(() => {
     game.houseRooms = null;
     game.buildExport = null;
     game.parseImport = null;
+    game.learnedAbilities = null;
+    game.skills = null;
+    game.equipment = null;
+    game.itemDetailMap = null;
+    game.readsThrow = false;
     game.allPlayers = {
         players: [
             { ...emptyDTO('player1'), attackLevel: 90 },
@@ -2588,5 +2615,370 @@ describe('loadParty (the Party Finder hands a whole party over)', () => {
         game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 2 }]]);
         expect(editor.getSelfHrid()).toBeNull();
         expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
+    });
+});
+
+describe('the self row follows the game', () => {
+    const AURA = '/abilities/fierce_aura';
+    const BERSERK = '/abilities/berserk';
+    const PUNCTURE = '/abilities/puncture';
+    const SWORD = '/items/rippling_trident';
+    const OTHER_SWORD = '/items/blooming_trident';
+    const HEAD = '/items/crimson_helmet';
+    const MAIN = '/equipment_types/two_hand';
+    const HEAD_SLOT = '/equipment_types/head';
+
+    const ability = (hrid, level) => ({ hrid, level, triggers: null });
+    const learned = (levels) => Object.entries(levels).map(([abilityHrid, level]) => ({ abilityHrid, level }));
+    const skill = (name, level) => ({ skillHrid: `/skills/${name}`, level });
+
+    /** Self wears the aura and Berserk at the levels the game said when the editor opened */
+    const withSelf = ({ abilities, equipment } = {}) => {
+        game.itemDetailMap = {
+            [SWORD]: { equipmentDetail: { type: MAIN } },
+            [OTHER_SWORD]: { equipmentDetail: { type: MAIN } },
+            [HEAD]: { equipmentDetail: { type: HEAD_SLOT } },
+        };
+        game.allPlayers.players[0] = {
+            ...emptyDTO('player1'),
+            attackLevel: 90,
+            abilities: abilities || [ability(AURA, 43), ability(BERSERK, 66), null, null, null],
+            equipment: equipment || {
+                [MAIN]: { hrid: SWORD, enhancementLevel: 8 },
+                [HEAD_SLOT]: { hrid: HEAD, enhancementLevel: 5 },
+            },
+        };
+        game.allPlayers.players[1] = {
+            ...emptyDTO('player2'),
+            attackLevel: 70,
+            abilities: [ability(AURA, 20), ability(BERSERK, 30), null, null, null],
+            equipment: { [MAIN]: { hrid: SWORD, enhancementLevel: 1 } },
+        };
+    };
+
+    const openEditor = async () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+        return { el, editor };
+    };
+
+    const self = (editor) => editor.getEditedDTOs().player1;
+    const levels = (dto) => dto.abilities.map((slot) => slot?.level ?? null);
+
+    describe('ability levels', () => {
+        test('a level gained after the panel opened is read on the next opening, with no "(edited)"', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 70 });
+            expect(editor.refreshFromGame()).toBe(true);
+
+            expect(levels(self(editor))).toEqual([45, 70, null, null, null]);
+            expect(editor.getOriginalDTO('player1').abilities[1].level).toBe(70);
+            expect(editor.generateSimLabel()).toBe('Current Gear');
+        });
+
+        test('a level typed by hand is theirs; the untouched slot still follows', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+            self(editor).abilities[1].level = 80; // "what would Berserk 80 do?"
+
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 70 });
+            editor.refreshFromGame();
+
+            expect(levels(self(editor))).toEqual([45, 80, null, null, null]);
+            expect(editor.generateSimLabel()).toContain('Lv 66→80');
+        });
+
+        test('an ability swapped by hand keeps the level it was given', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+            self(editor).abilities[1] = ability(PUNCTURE, 50);
+
+            game.learnedAbilities = learned({ [AURA]: 43, [BERSERK]: 70, [PUNCTURE]: 12 });
+            editor.getEditedDTOs();
+
+            expect(self(editor).abilities[1]).toMatchObject({ hrid: PUNCTURE, level: 50 });
+        });
+
+        test('the same ability in two slots: both follow, or only the untouched one', async () => {
+            withSelf({ abilities: [null, ability(BERSERK, 66), ability(BERSERK, 66), null, null] });
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = learned({ [BERSERK]: 70 });
+            editor.getEditedDTOs();
+            expect(levels(self(editor))).toEqual([null, 70, 70, null, null]);
+
+            self(editor).abilities[2].level = 99;
+            game.learnedAbilities = learned({ [BERSERK]: 72 });
+            editor.getEditedDTOs();
+            expect(levels(self(editor))).toEqual([null, 72, 99, null, null]);
+        });
+
+        test('an ability the game reports no level for is left as it is', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = [{ abilityHrid: AURA, level: 45 }, { abilityHrid: BERSERK }];
+            editor.getEditedDTOs();
+
+            expect(levels(self(editor))).toEqual([45, 66, null, null, null]);
+        });
+
+        test('a loadout wearing other abilities follows by ability, level-1 fallback included', async () => {
+            withSelf();
+            bridge.snapshots = [{ name: 'Swap', actionTypeHrid: '/action_types/combat' }];
+            // The real apply reads levels off the learned list, and falls back
+            // to 1 for one it does not know yet
+            bridge.mutate = (dto) => {
+                dto.abilities = [ability(AURA, 43), ability(PUNCTURE, 1), null, null, null];
+            };
+            const { editor } = await openEditor();
+            expect(editor.applyLoadoutByName('Swap')).toBe(true);
+            expect(editor.generateSimLabel()).toBe('Swap');
+
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 70, [PUNCTURE]: 12 });
+            expect(editor.refreshFromGame()).toBe(true);
+
+            expect(levels(self(editor))).toEqual([45, 12, null, null, null]);
+            expect(editor.generateSimLabel()).toBe('Swap');
+            // Current Gear, restored from underneath, is fresh too
+            expect(levels(editor.getOriginalDTO('player1'))).toEqual([45, 70, null, null, null]);
+        });
+
+        test('a hand edit made on a worn loadout survives', async () => {
+            withSelf();
+            bridge.snapshots = [{ name: 'Swap', actionTypeHrid: '/action_types/combat' }];
+            bridge.mutate = (dto) => {
+                dto.abilities = [ability(AURA, 43), ability(PUNCTURE, 10), null, null, null];
+            };
+            const { editor } = await openEditor();
+            editor.applyLoadoutByName('Swap');
+            self(editor).abilities[1].level = 30;
+
+            game.learnedAbilities = learned({ [AURA]: 45, [PUNCTURE]: 12 });
+            editor.refreshFromGame();
+
+            expect(levels(self(editor))).toEqual([45, 30, null, null, null]);
+        });
+    });
+
+    describe('skill levels', () => {
+        test('a level gained flows in, a hand-typed one stays, and the label stays clean', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+            self(editor).defenseLevel = 120;
+
+            game.skills = [skill('attack', 92), skill('defense', 95), skill('stamina', 1)];
+            expect(editor.refreshFromGame()).toBe(true);
+
+            expect(self(editor).attackLevel).toBe(92);
+            expect(self(editor).defenseLevel).toBe(120);
+            expect(editor.generateSimLabel()).toBe('Defense 1→120');
+        });
+
+        test('only levels the DTO carries are written', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.skills = [skill('woodcutting', 50), skill('attack', 90)];
+            expect(editor.refreshFromGame()).toBe(false);
+            expect(self(editor).woodcuttingLevel).toBeUndefined();
+        });
+
+        test('a self level-up recomputes the level-gap debuff of the rest of the party', async () => {
+            withSelf();
+            game.allPlayers.players[0].attackLevel = 1;
+            game.allPlayers.players[1].attackLevel = 1;
+            const { editor } = await openEditor();
+            expect(editor.getEditedDTOs().player2.debuffOnLevelGap ?? 0).toBe(0);
+
+            game.skills = [skill('attack', 100), skill('melee', 100)];
+            editor.getEditedDTOs();
+
+            expect(editor.getEditedDTOs().player2.debuffOnLevelGap).toBeLessThan(0);
+            // The partner's own levels are not theirs to follow
+            expect(editor.getEditedDTOs().player2.attackLevel).toBe(1);
+        });
+    });
+
+    describe('worn enhancement levels', () => {
+        const wear = (pieces) => {
+            game.equipment = pieces.map(([location, itemHrid, enhancementLevel]) => [
+                location,
+                { itemLocationHrid: location, itemHrid, enhancementLevel },
+            ]);
+        };
+
+        test('the same item worn at a new level follows; a hand edit stays', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+            self(editor).equipment[HEAD_SLOT].enhancementLevel = 10;
+
+            wear([
+                ['/item_locations/two_hand', SWORD, 9],
+                ['/item_locations/head', HEAD, 6],
+            ]);
+            expect(editor.refreshFromGame()).toBe(true);
+
+            expect(self(editor).equipment[MAIN].enhancementLevel).toBe(9);
+            expect(self(editor).equipment[HEAD_SLOT].enhancementLevel).toBe(10);
+            expect(editor.generateSimLabel()).toBe('Head +5→+10');
+        });
+
+        test('a different item worn in the slot is not followed', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            wear([['/item_locations/two_hand', OTHER_SWORD, 12]]);
+            expect(editor.refreshFromGame()).toBe(false);
+
+            expect(self(editor).equipment[MAIN]).toEqual({ hrid: SWORD, enhancementLevel: 8 });
+        });
+
+        test("a worn loadout's gear is the loadout's; current gear underneath is kept fresh", async () => {
+            withSelf();
+            bridge.snapshots = [{ name: 'Best', actionTypeHrid: '/action_types/combat' }];
+            bridge.mutate = (dto) => {
+                dto.equipment = { [MAIN]: { hrid: SWORD, enhancementLevel: 14 } };
+            };
+            const { editor } = await openEditor();
+            editor.applyLoadoutByName('Best');
+
+            wear([['/item_locations/two_hand', SWORD, 9]]);
+            expect(editor.refreshFromGame()).toBe(false);
+
+            expect(self(editor).equipment[MAIN].enhancementLevel).toBe(14);
+            expect(editor.getOriginalDTO('player1').equipment[MAIN].enhancementLevel).toBe(9);
+            expect(editor.generateSimLabel()).toBe('Best');
+        });
+    });
+
+    describe('every way it can end', () => {
+        test('nothing to sync: live equals the editor, no redraw', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = learned({ [AURA]: 43, [BERSERK]: 66 });
+            game.skills = [skill('attack', 90)];
+            game.equipment = [['/item_locations/two_hand', { itemHrid: SWORD, enhancementLevel: 8 }]];
+
+            expect(editor.refreshFromGame()).toBe(false);
+        });
+
+        test('everything hand-edited: nothing moves, no redraw', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+            const dto = self(editor);
+            dto.abilities[0].level = 1;
+            dto.abilities[1].level = 1;
+            dto.attackLevel = 1;
+            dto.equipment[MAIN].enhancementLevel = 0;
+
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 70 });
+            game.skills = [skill('attack', 92)];
+            game.equipment = [['/item_locations/two_hand', { itemHrid: SWORD, enhancementLevel: 9 }]];
+
+            expect(editor.refreshFromGame()).toBe(false);
+            expect(levels(dto)).toEqual([1, 1, null, null, null]);
+            expect(dto.attackLevel).toBe(1);
+            expect(dto.equipment[MAIN].enhancementLevel).toBe(0);
+        });
+
+        test('live data missing or failing: no change, no throw', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = [];
+            game.skills = null;
+            game.equipment = [];
+            expect(editor.refreshFromGame()).toBe(false);
+
+            game.readsThrow = true;
+            const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            expect(() => editor.getEditedDTOs()).not.toThrow();
+            expect(editor.refreshFromGame()).toBe(false);
+            spy.mockRestore();
+
+            expect(levels(self(editor))).toEqual([43, 66, null, null, null]);
+            expect(self(editor).attackLevel).toBe(90);
+        });
+
+        test('party members are never touched', async () => {
+            withSelf();
+            const { editor } = await openEditor();
+
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 70 });
+            game.skills = [skill('attack', 92)];
+            game.equipment = [['/item_locations/two_hand', { itemHrid: SWORD, enhancementLevel: 9 }]];
+            editor.getEditedDTOs();
+
+            const partner = editor.getEditedDTOs().player2;
+            expect(levels(partner)).toEqual([20, 30, null, null, null]);
+            expect(partner.attackLevel).toBe(70);
+            expect(partner.equipment[MAIN].enhancementLevel).toBe(1);
+        });
+
+        test('an imported stranger is not self, and keeps their build', () => {
+            const el = document.createElement('div');
+            const editor = new SimEditor({ editorEl: el });
+            editor.openWithExternalDTO(
+                { ...emptyDTO('x'), abilities: [ability(AURA, 10), null, null, null, null] },
+                'Venaam'
+            );
+
+            game.learnedAbilities = learned({ [AURA]: 45 });
+            game.skills = [skill('attack', 92)];
+
+            expect(levels(editor.getEditedDTOs().player1)).toEqual([10, null, null, null, null]);
+            expect(editor.getEditedDTOs().player1.attackLevel).toBe(1);
+        });
+    });
+
+    describe('a party handed over by the Party Finder', () => {
+        test('a what-if level on the live self is kept, a live one follows', () => {
+            game.itemDetailMap = { [SWORD]: { equipmentDetail: { type: MAIN } } };
+            game.learnedAbilities = learned({ [AURA]: 45, [BERSERK]: 66 });
+            game.skills = [skill('attack', 90)];
+            game.equipment = [['/item_locations/two_hand', { itemHrid: SWORD, enhancementLevel: 8 }]];
+            const el = document.createElement('div');
+            const editor = new SimEditor({ editorEl: el });
+            // The editor's own self, carrying hand edits, handed back as "live"
+            const me = {
+                ...emptyDTO('player1'),
+                attackLevel: 120,
+                abilities: [ability(AURA, 50), ability(BERSERK, 66), null, null, null],
+                equipment: { [MAIN]: { hrid: SWORD, enhancementLevel: 12 } },
+            };
+            editor.loadParty([me, emptyDTO('p2')], ['Me', 'Partner'], { selfIsLive: true });
+
+            game.learnedAbilities = learned({ [AURA]: 46, [BERSERK]: 70 });
+            game.skills = [skill('attack', 91)];
+            game.equipment = [['/item_locations/two_hand', { itemHrid: SWORD, enhancementLevel: 9 }]];
+            const dto = editor.getEditedDTOs().player1;
+
+            expect(levels(dto)).toEqual([50, 70, null, null, null]);
+            expect(dto.attackLevel).toBe(120);
+            expect(dto.equipment[MAIN].enhancementLevel).toBe(12);
+        });
+    });
+
+    test('a shrine followed while a loadout is worn does not read as edited', async () => {
+        const FORCE = '/guild_buffs/force_combat';
+        guild.detailMap = { [FORCE]: { hrid: FORCE, isCombat: true, sortIndex: 1 } };
+        guild.levels = { [FORCE]: 3 };
+        withSelf();
+        game.allPlayers.players[0].guildShrineLevels = { [FORCE]: 3 };
+        bridge.snapshots = [{ name: 'Swap', actionTypeHrid: '/action_types/combat' }];
+        bridge.mutate = () => {};
+        const { editor } = await openEditor();
+        editor.applyLoadoutByName('Swap');
+
+        guild.levels = { [FORCE]: 6 };
+        editor.refreshFromGame();
+
+        expect(self(editor).guildShrineLevels[FORCE]).toBe(6);
+        expect(editor.generateSimLabel()).toBe('Swap');
     });
 });
