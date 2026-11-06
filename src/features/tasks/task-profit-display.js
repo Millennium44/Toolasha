@@ -131,6 +131,25 @@ const MAX_RETIER_ATTEMPTS = 3;
 const GO_ESTIMATE_TIER = 0;
 
 /**
+ * Whether a combat action is a monster's own fight: one task monster per fight and nothing else, as the
+ * game's Go opens for a Defeat task (`/actions/combat/black_bear`, `maxSpawnCount` 1 on the live client),
+ * as opposed to the zone it also spawns in (`/actions/combat/bear_with_it`). There a kill is a fight.
+ * @param {Object|undefined} action - The action's `actionDetailMap` entry
+ * @param {string|undefined} monsterHrid
+ * @returns {boolean}
+ */
+export function isMonsterOwnFight(action, monsterHrid) {
+    if (!action || !monsterHrid) return false;
+    const fightInfo = action.combatZoneInfo?.fightInfo;
+    if (!fightInfo || action.combatZoneInfo?.isDungeon) return false;
+    if ((fightInfo.bossSpawns || []).length > 0) return false;
+    const spawnInfo = fightInfo.randomSpawnInfo;
+    const spawns = spawnInfo?.spawns || [];
+    if (spawns.length === 0 || !spawns.every((spawn) => spawn.combatMonsterHrid === monsterHrid)) return false;
+    return Number(spawnInfo.maxSpawnCount) === 1;
+}
+
+/**
  * How long the coalesced card refresh waits for the rest of the panel to arrive.
  *
  * Cards land one at a time, and each used to schedule its own pass over every
@@ -1269,6 +1288,22 @@ class TaskProfitDisplay {
                 fillsCount = false;
             }
         }
+        // Solo: the game's Go opens the monster's own fight (Black Bear), not the zone the Solo estimate
+        // simulated in (Bear With It). Every fight there is one of the task monster, so a kill is a fight:
+        // several tasks fill their summed kills, and a single one keeps the game's own count, which is
+        // already its remaining kills. Before this, the zone check below refused the landed panel, so
+        // neither the tier nor the merged count was ever applied.
+        const landedHrid = panel ? resolveDetailPanel(panel).actionHrid : null;
+        const ownFight =
+            estimate.mode !== 'zone' &&
+            Boolean(landedHrid) &&
+            landedHrid !== estimate.zoneHrid &&
+            isMonsterOwnFight(dataManager.getInitClientData()?.actionDetailMap?.[landedHrid], estimate.monsterHrid);
+        // (A redo in flight has no fight count, but the merged kills are exact and need none here.)
+        if (ownFight) {
+            fillsCount = mergedKills !== null;
+            if (fillsCount) fights = mergedKills;
+        }
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most
         // of the active tasks share. When the panel Go landed on is a
@@ -1292,7 +1327,12 @@ class TaskProfitDisplay {
             return;
         }
 
-        const tierConfirmed = await ensureZoneAndTier(panel, estimate.zoneHrid, tier, characterId);
+        const tierConfirmed = await ensureZoneAndTier(
+            panel,
+            ownFight ? landedHrid : estimate.zoneHrid,
+            tier,
+            characterId
+        );
         if (!tierConfirmed) return;
         if (characterIdentityChanged(characterId)) return;
 
