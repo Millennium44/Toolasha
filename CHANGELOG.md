@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim tries several ability levels at once
+
+The Upgrade tab's Ability Lv search has a Steps box: with +5 and 3 steps each ability is tried at +5, +10 and +15, and Next multiple tries the next few multiples (65, 70, 75 from 62). Nothing goes past the max level, and each step adds one simulation per ability.
+
+### Export CSV shares the Cards/Table row
+
+On the Combat Sim Upgrade tab, Export CSV now sits at the right of the Cards | Table switch instead of taking a row of its own.
+
 ### Item tooltips no longer cover the item
 
 When an inventory item's tooltip is too tall to fit above or below the item, it now opens to the left or right of the item, whichever side has more room, instead of covering it. Tooltips that already fit above or below stay where the game puts them. Turn it off with "Keep inventory tooltips off the hovered item".
