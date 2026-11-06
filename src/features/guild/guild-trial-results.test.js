@@ -398,6 +398,40 @@ describe('tileProgressPercent', () => {
         expect(tileProgressPercent(tile)).toBe(58);
     });
 
+    test('a boss reading of part of a wave is no percent; an older whole-wave reading is read instead', () => {
+        const partial = (t, current, max) => ({
+            t,
+            readings: [{ current, max, source: 'cards', slots: 1, waveCount: 2 }],
+        });
+        const whole = (t, current, max) => ({
+            t,
+            readings: [{ current, max, source: 'cards', slots: 2, waveCount: 2 }],
+        });
+        // Only a partial reading: one Badger's 20 of 100 left is not 80% of the tier
+        expect(tileProgressPercent({ kind: 'combat', samples: [partial(1000, 20, 100)] })).toBeNull();
+        // A whole-wave reading before it, and no badge moved since: that one stands
+        expect(
+            tileProgressPercent({
+                kind: 'combat',
+                samples: [whole(500, 60, 100), partial(1000, 20, 100)],
+                tierSeenAt: { 4: 100 },
+            })
+        ).toBe(40);
+        // A badge moved after the whole-wave reading: it was an earlier tier's, so nothing
+        expect(
+            tileProgressPercent({
+                kind: 'combat',
+                samples: [whole(500, 60, 100), partial(1000, 20, 100)],
+                tierSeenAt: { 4: 100, 5: 700 },
+            })
+        ).toBeNull();
+        // Nor is one filed with the result
+        const [result] = resultsFromCycle(
+            cycle(weeksAgo(1), { a: badger(6, 2240, { samples: [partial(1, 20, 100)] }) })
+        );
+        expect(result).not.toHaveProperty('progress');
+    });
+
     test('the last tier carries no percent: the bar read on it was T21’s own, just before it cleared', () => {
         const tile = { kind: 'combat', tier: 21, samples: [bar(1000, 1, 100)], tierSeenAt: { 21: 2000 } };
         expect(tileProgressPercent(tile)).toBeNull();

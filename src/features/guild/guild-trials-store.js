@@ -62,6 +62,7 @@ import {
     cleanScheduled,
     cycleTrialsFromHistory,
     cycleTrialsOf,
+    isPartialWaveReading,
     mergeCycleTrials,
     mergeResults,
     mergeScheduled,
@@ -2380,25 +2381,8 @@ export async function saveTrialRecord(
     return probeMergeWrite(guildTrialsStorageKey(guildName, characterId), stamped, fold, { overwrite });
 }
 
-/**
- * Whether a tagged combat reading (or the observation filed from one) summed
- * fewer monsters than its wave fields — one Badger card of two, one stream slot.
- * A reading tagged before the game data arrived carries no `waveCount`; the
- * count known now is passed in for it.
- *
- * @param {Object|null} reading - A reading or observation
- * @param {number|null} [waveCount] - The wave's monster count from the game data, for a reading that lacks one
- * @returns {boolean}
- */
-export function isPartialWaveReading(reading, waveCount = null) {
-    const count = Number.isFinite(reading?.waveCount) ? reading.waveCount : waveCount;
-    return (
-        typeof reading?.source === 'string' &&
-        Number.isFinite(reading.slots) &&
-        Number.isFinite(count) &&
-        reading.slots < count
-    );
-}
+// Defined beside the history's percent, which skips the same readings; kept exported from here for its callers
+export { isPartialWaveReading };
 
 /**
  * Drop the untagged and partial tier observations of multi-monster combat waves.

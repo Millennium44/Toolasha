@@ -233,6 +233,26 @@ function cycleWeek(cycle) {
 }
 
 /**
+ * Whether a tagged combat reading (or the observation filed from one) summed
+ * fewer monsters than its wave fields — one Badger card of two, one stream slot.
+ * A reading tagged before the game data arrived carries no `waveCount`; the
+ * count known now is passed in for it.
+ *
+ * @param {Object|null} reading - A reading or observation
+ * @param {number|null} [waveCount] - The wave's monster count from the game data, for a reading that lacks one
+ * @returns {boolean}
+ */
+export function isPartialWaveReading(reading, waveCount = null) {
+    const count = Number.isFinite(reading?.waveCount) ? reading.waveCount : waveCount;
+    return (
+        typeof reading?.source === 'string' &&
+        Number.isFinite(reading.slots) &&
+        Number.isFinite(count) &&
+        reading.slots < count
+    );
+}
+
+/**
  * Whether a tier is the ladder's last, which carries no percent.
  * @param {number|null} tier - Tiers cleared
  * @returns {boolean} True at {@link TRIAL_MAX_TIER} or above
@@ -263,6 +283,9 @@ export function tileProgressPercent(tile) {
     for (let at = samples.length - 1; at >= 0; at -= 1) {
         const reading = samples[at]?.readings?.[0];
         if (!reading || !(reading.max > 0) || !Number.isFinite(reading.current)) continue;
+        // A boss reading of part of a wave (one Badger card of two) is no tier's whole bar: an older whole-wave
+        // reading is read instead, under the same badge rule
+        if (isPartialWaveReading(reading)) continue;
         const readAt = samples[at]?.t;
         if (Number.isFinite(readAt) && seenAt.some((when) => when > readAt)) return null;
         const done = tile.kind === 'combat' ? reading.max - reading.current : reading.current;
