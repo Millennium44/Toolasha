@@ -776,6 +776,9 @@ class TooltipPrices {
             itemName = collectionNameElement.textContent.trim();
         } else {
             itemName = info.itemName;
+            // A level read off the hovered loadout slot is not in the name: key on it too, so a popper
+            // reused for the same item at another level is reprocessed
+            if (info.levelSource === 'loadout') itemName = `${itemName} +${info.enhancementLevel}`;
         }
 
         // Guard against duplicate processing for the same item.
