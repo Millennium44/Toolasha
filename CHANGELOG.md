@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial payout card fits on one line
+
+The payout card in a running guild trial leads with its figures and the fold toggle on one line, so it takes less room above the fight.
+
+### Trial history shows how far each trial got
+
+Each cell in the guild Trial history reads the tier and the percent reached in it (T21 63%), stays blank for a trial that did not run, and a key under the table explains the marks. The Past weeks totals now sit as two rows under the same table instead of a separate list.
+
 ### Loadout slot tooltips use the slot's enhancement level
 
 Hovering gear in the Loadouts panel now reads the item at the level the loadout uses (your highest owned with "Use highest enhancement level", otherwise the saved level), so a +20 piece shows its +20 name, stats, price and enhancement path instead of the plain item's figures. When no +20 price is known, the game's Market Price line is hidden rather than showing the plain item's.
