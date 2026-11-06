@@ -16,10 +16,14 @@ vi.mock('./data-manager.js', () => ({
         get characterItems() {
             return game.characterItems;
         },
+        getItemDetails: () => undefined,
+        getInitClientData: () => null,
     },
 }));
+vi.mock('../utils/market-data.js', () => ({ getItemPrices: () => null }));
 
 const { default: tooltipObserver, classifyTooltip } = await import('./tooltip-observer.js');
+const { applyLoadoutLevelToGameLines } = await import('../utils/loadout-tooltip-rewrite.js');
 
 const GLOVES = '/items/enchanted_gloves';
 const RING = '/items/ring_of_wisdom';
@@ -83,6 +87,18 @@ describe('level of a hovered Loadouts-panel slot', () => {
         expect(info.enhancementLevel).toBe(20);
         expect(info.levelSource).toBe('loadout');
         expect(info.itemName).toBe('Enchanted Gloves');
+    });
+
+    test('a reused popper whose name Toolasha already set to +20 classifies from the game name, not its own', () => {
+        const [icon] = mountPanel('Boss Gear', ['enchanted_gloves']);
+        hover(icon);
+        const el = tooltip('Enchanted Gloves');
+        const first = classifyTooltip(el);
+        applyLoadoutLevelToGameLines(el, first, GLOVES);
+        expect(el.textContent).toContain('Enchanted Gloves +20');
+        const again = classifyTooltip(el);
+        expect(again.itemName).toBe('Enchanted Gloves');
+        expect(again.levelSource).toBe('loadout');
     });
 
     test('a name that already carries +N wins', () => {

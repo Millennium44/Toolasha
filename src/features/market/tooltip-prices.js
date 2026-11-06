@@ -29,6 +29,7 @@ import {
     timeReadable,
 } from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { applyLoadoutLevelToGameLines } from '../../utils/loadout-tooltip-rewrite.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
 import { currentPricingSideChoice } from '../../utils/pricing-side-select.js';
@@ -779,6 +780,18 @@ class TooltipPrices {
             // A level read off the hovered loadout slot is not in the name: key on it too, so a popper
             // reused for the same item at another level is reprocessed
             if (info.levelSource === 'loadout') itemName = `${itemName} +${info.enhancementLevel}`;
+        }
+
+        // A loadout slot's level is not in the game's lines (name, stats, Market Price): set them to it, or put back
+        // the game's own when this pass is not a loadout one. Before the guard below so a repeat pass keeps them.
+        if (isItemTooltip && !isCollectionTooltip) {
+            applyLoadoutLevelToGameLines(
+                tooltipElement,
+                info,
+                info.itemHrid && dataManager.getItemDetails(info.itemHrid)
+                    ? info.itemHrid
+                    : this.extractItemHridFromName(info.itemName)
+            );
         }
 
         // Guard against duplicate processing for the same item.

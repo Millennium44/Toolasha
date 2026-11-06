@@ -13,6 +13,7 @@
 
 import domObserver from './dom-observer.js';
 import { resolveHoveredLoadoutLevel } from '../utils/loadout-hover-level.js';
+import { restoreLoadoutTooltip } from '../utils/loadout-tooltip-edits.js';
 
 /** The element the pointer last entered, for tooltips whose level only the hovered slot knows */
 let lastHoverTarget = null;
@@ -62,6 +63,9 @@ function classifyTooltip(element) {
         itemHrid: null,
     };
     if (!info.isTooltipPopper) return info;
+
+    // A popper the game reuses may still carry the loadout level Toolasha wrote into its lines: read the game's own
+    restoreLoadoutTooltip(element);
 
     info.collectionContent = element.querySelector('div[class*="Collection_tooltipContent"]');
     info.isCollectionTooltip = !!info.collectionContent;
