@@ -639,8 +639,8 @@ describe('the history — "n/r" against "—"', () => {
         const { rows } = view(cycleTrialsOf(record));
         const detail = trialHistoryDetail(row(rows, 'combat:badger'));
         expect(detail).toMatch(/: did not run$/m);
-        expect(detail).toContain('"n/r" is a cycle the game’s own list says the trial did not run in');
-        expect(detail).toContain('"—" is a cycle this client has no result for');
+        expect(detail).toContain('A blank cell is a cycle the game’s own list says the trial did not run in');
+        expect(detail).toContain('"—" is a cycle this client has not tracked');
         expect(detail).toContain('T12');
         expect(trialHistoryCells(row(rows, 'combat:badger'))).toContain('n/r');
     });

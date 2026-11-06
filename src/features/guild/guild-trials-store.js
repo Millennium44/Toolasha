@@ -62,6 +62,7 @@ import {
     cleanScheduled,
     cycleTrialsFromHistory,
     cycleTrialsOf,
+    isPartialWaveReading,
     mergeCycleTrials,
     mergeResults,
     mergeScheduled,
@@ -455,6 +456,40 @@ function capHistory(history) {
 /** The reason stamped on tiles archived by {@link archiveEarlierCycles} */
 const EARLIER_CYCLE_REASON = 'an earlier cycle of this week';
 
+/** How long a test-server cycle runs, start to start: one a day */
+const TEST_CYCLE_SPAN_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whether a week's rollover leaves the record's tiles in place rather than archiving them.
+ *
+ * On live the weekly reset is the cycle boundary. The test server runs a cycle a day, and its weekly
+ * reset falls inside one: archiving there cut the running cycle in two, a piece with no `cycleFrom`
+ * ("Last week") and the rest archived again when the next cycle began. So on the test server tiles
+ * stamped within a cycle of the rollover stay with the record. Older tiles cannot be a running cycle's
+ * and are archived as before, so a record left untouched for days is not folded into the next cycle.
+ *
+ * @param {Object} record - A record of an earlier week
+ * @param {number} weekStart - The week being started, ms
+ * @returns {boolean}
+ */
+function carriesOverRollover(record, weekStart) {
+    if (!isTestServer()) return false;
+    const tiles = Object.values(record?.tiles || {});
+    if (!tiles.length) return false;
+    const newest = tiles.reduce((most, tile) => Math.max(most, newestTileStamp(tile)), 0);
+    if (newest < weekStart - TEST_CYCLE_SPAN_MS) return false;
+    // A day reaches back into the cycle before the running one (the test cycle starts hours before the reset),
+    // so the record must show it saw the running cycle begin: a cycle start within a day of the reset, and reads
+    // since then. A device that slept through a cycle still holds the one before it; carried, those tiles would be
+    // archived under the running cycle's key and fold into another device's real result for it on sync.
+    const cycleStart = record?.cycleStart;
+    return (
+        Number.isFinite(cycleStart) &&
+        cycleStart > weekStart - TEST_CYCLE_SPAN_MS &&
+        newest >= cycleStart - CYCLE_START_SLACK_MS
+    );
+}
+
 /** The reason stamped on a week's tiles archived by {@link rollRecordToWeek} */
 export const WEEK_ROLLOVER_REASON = 'the week rolled over';
 
@@ -472,7 +507,8 @@ export const WEEK_ROLLOVER_REASON = 'the week rolled over';
  * that states more of it. The history cap ({@link MAX_ARCHIVED_CYCLES}) holds.
  *
  * The test server's earlier-cycle stamp (`cycleStart`) is the earlier week's
- * and is not carried.
+ * and is not carried — except where the running cycle is carried whole
+ * ({@link carriesOverRollover}): there the record goes on as it is, under the new week.
  *
  * @param {Object} record - A record of an earlier week (not mutated)
  * @param {number} weekStart - The week to start, in ms
@@ -485,6 +521,16 @@ export const WEEK_ROLLOVER_REASON = 'the week rolled over';
 export function rollRecordToWeek(record, weekStart, { guildId = null, guildName = null, accuracy = null } = {}) {
     if (!record || !Number.isFinite(record.weekStart) || !Number.isFinite(weekStart) || record.weekStart >= weekStart) {
         return record;
+    }
+    if (carriesOverRollover(record, weekStart)) {
+        // The running cycle goes on: its tiles, lists and cycle start stay on the record, and
+        // `archiveEarlierCycles` archives it whole when the next cycle starts, under its own `cycleFrom`
+        return {
+            ...record,
+            weekStart,
+            guildId: record.guildId ?? guildId ?? null,
+            guildName: record.guildName ?? guildName ?? null,
+        };
     }
     const archived = archiveCycle(record, WEEK_ROLLOVER_REASON, weekStart, { accuracy });
     return {
@@ -774,6 +820,8 @@ function tileStamps(tile) {
         tile?.endedAt,
         tile?.runSeenAt,
         tile?.signupLevelsAt,
+        tile?.levelProgress?.at,
+        tile?.serverProgress?.at,
     ]
         .filter((stamp) => stamp !== null && stamp !== undefined && Number.isFinite(Number(stamp)))
         .map(Number);
@@ -882,6 +930,8 @@ function currentCyclePart(tile, from) {
         ...(ended ? { endedAt: tile.endedAt, ...(tile.endReason ? { endReason: tile.endReason } : {}) } : {}),
         ...(watched ? { runSeenAt: tile.runSeenAt } : {}),
         ...(signedUp ? { signupLevels: tile.signupLevels, signupLevelsAt: tile.signupLevelsAt } : {}),
+        ...(since(tile.levelProgress?.at) ? { levelProgress: tile.levelProgress } : {}),
+        ...(since(tile.serverProgress?.at) ? { serverProgress: tile.serverProgress } : {}),
     };
 }
 
@@ -918,6 +968,8 @@ function earlierCyclePart(tile, from) {
         for (const field of ['endedAt', 'endReason']) delete part[field];
     }
     if (stampedSince(tile.runSeenAt, from)) delete part.runSeenAt;
+    if (stampedSince(tile.levelProgress?.at, from)) delete part.levelProgress;
+    if (stampedSince(tile.serverProgress?.at, from)) delete part.serverProgress;
     if (stampedSince(tile.signupLevelsAt, from)) {
         for (const field of ['signupLevels', 'signupLevelsAt']) delete part[field];
     }
@@ -1409,8 +1461,18 @@ export function recordTileSample(record, tile, at, characterId = null) {
         tierReadAt: Number.isFinite(tile?.tier)
             ? Math.max(at, Number.isFinite(existing.tierReadAt) ? existing.tierReadAt : at)
             : existing.tierReadAt,
+        // The game's "+64%" beside the card's level, kept only once the trial is over — a running card's percent is
+        // live progress, not the result. The newest finished read is kept; a card that shows no percent says nothing
+        // and leaves the last one alone
+        ...latestLevelProgress(
+            existing,
+            tile?.levelProgress && trialOverAt(tile, existing, at)
+                ? { levelProgress: { level: tile.levelProgress.level, pct: tile.levelProgress.pct, at } }
+                : null
+        ),
         // Written by `recordServerTiers` only; a card sample says nothing about them
         ...latestServerTier(existing, null),
+        ...latestServerProgress(existing, null),
         // …nor about how the trial ended or who signed up: carried through, not rebuilt
         ...mergeTrialFacts(existing, null),
         samples: samples.slice(-MAX_SAMPLES),
@@ -1458,6 +1520,9 @@ export function recordTileSample(record, tile, at, characterId = null) {
  * @param {{name: string, kind: string}|null} [stated.create] - Start the tile when the record has none
  * @param {number|null} [stated.points] - The payload's Guild Points for the trial (`serverPoints`). Written
  *   with a tier, or alone onto a tile that already carries this cycle's tier statement; never starts a tile
+ * @param {{tier: number, nextTierProgress: number}|null} [stated.endProgress] - A finished party's `highestTier`
+ *   and `nextTierProgress` (a fraction), the caller having checked `done`: kept as `serverProgress`, the trial's
+ *   end percent, never for the last tier. Stamped `seenAt`, else `at`; the newest kept
  * @returns {Object} The record, unchanged when there was nothing to write
  */
 export function recordServerTiers(
@@ -1473,6 +1538,7 @@ export function recordServerTiers(
         deadlineAt = null,
         signupLevels = null,
         points = null,
+        endProgress = null,
     } = {}
 ) {
     if (!record || !Number.isFinite(at)) return record;
@@ -1510,8 +1576,14 @@ export function recordServerTiers(
     const runSeenAt = runningNow && seenAt - lastSeen >= RUN_SEEN_REFRESH_MS ? seenAt : null;
     const staleEnd = runningNow && Number.isFinite(existing.endedAt) && seenAt > existing.endedAt;
     const signedUp = signupFacts(existing, signupLevels, Number.isFinite(seenAt) ? seenAt : at);
+    const stated = serverProgressOf(endProgress, Number.isFinite(seenAt) ? seenAt : at);
+    const progress = stated ? latestServerProgress(existing, { serverProgress: stated }) : {};
+    const progressChanged =
+        Boolean(progress.serverProgress) &&
+        JSON.stringify(progress.serverProgress) !== JSON.stringify(existing.serverProgress ?? null);
     if (
         record.tiles?.[key] &&
+        !progressChanged &&
         !changed &&
         !ended &&
         runSeenAt === null &&
@@ -1539,9 +1611,24 @@ export function recordServerTiers(
                 ...(ended || {}),
                 ...(signedUp || {}),
                 ...(pointsStated ? { serverPoints: points } : {}),
+                ...(progressChanged ? progress : {}),
             },
         },
     };
+}
+
+/**
+ * A finished party's end percent as stored: `{tier, pct, at}`, the whole percent floored as the card prints it.
+ * @param {{tier: number, nextTierProgress: number}|null} endProgress - The party's `highestTier` and fraction
+ * @param {number} at - When it was read, client ms
+ * @returns {{tier: number, pct: number, at: number}|null} Null for the last tier or anything malformed
+ */
+function serverProgressOf(endProgress, at) {
+    const tier = endProgress?.tier;
+    const fraction = endProgress?.nextTierProgress;
+    if (!Number.isInteger(tier) || tier < 0 || tier >= TRIAL_MAX_TIER || !Number.isFinite(at)) return null;
+    if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction >= 1) return null;
+    return { tier, pct: Math.min(99, Math.floor(fraction * 100 + 1e-9)), at };
 }
 
 /**
@@ -1724,6 +1811,73 @@ function latestRunSeenAt(a, b) {
 }
 
 /**
+ * Whether a card read at `at` was read on a finished trial: the card says Completed, or the record already knows
+ * the trial is over — finished (the same rule `_phaseFor` reads), the guild payload stated the party done, or the
+ * end it recorded is at or before the read.
+ * @param {Object|null} tile - The card being read
+ * @param {Object|null} existing - The tile's record so far
+ * @param {number} at - When the card was read, client ms
+ * @returns {boolean}
+ */
+function trialOverAt(tile, existing, at) {
+    if (tile?.completed || existing?.completed || existing?.serverDone) return true;
+    return Number.isFinite(existing?.endedAt) && Number.isFinite(at) && at >= existing.endedAt;
+}
+
+/**
+ * Whether a stored card figure is whole: a level, a whole percent 0-99 and when it was read.
+ * @param {*} value - A tile's `levelProgress`
+ * @returns {boolean}
+ */
+function isLevelProgress(value) {
+    return (
+        Boolean(value) &&
+        typeof value === 'object' &&
+        Number.isFinite(value.level) &&
+        Number.isInteger(value.pct) &&
+        value.pct >= 0 &&
+        value.pct <= 99 &&
+        Number.isFinite(value.at)
+    );
+}
+
+/**
+ * The newer of two tiles' end percents from the guild payload (`serverProgress`), omitted when neither has a whole
+ * one. Newest read wins, never the higher percent; the tier travels with the percent.
+ * @param {Object|null} a - One side's tile
+ * @param {Object|null} b - The other side's tile
+ * @returns {{serverProgress?: {tier: number, pct: number, at: number}}} Spreadable
+ */
+function latestServerProgress(a, b) {
+    const whole = (value) =>
+        Boolean(value) &&
+        typeof value === 'object' &&
+        Number.isInteger(value.tier) &&
+        Number.isInteger(value.pct) &&
+        value.pct >= 0 &&
+        value.pct <= 99 &&
+        Number.isFinite(value.at);
+    const figures = [a?.serverProgress, b?.serverProgress].filter(whole);
+    if (!figures.length) return {};
+    const newest = figures.reduce((best, figure) => (figure.at > best.at ? figure : best));
+    return { serverProgress: { tier: newest.tier, pct: newest.pct, at: newest.at } };
+}
+
+/**
+ * The newer of two tiles' card figures (`Lv.280 +64%`), omitted when neither has a whole one; see
+ * {@link latestServerProgress} for the payload's figure, merged the same way.
+ * @param {Object|null} a - One side's tile
+ * @param {Object|null} b - The other side's tile
+ * @returns {{levelProgress?: {level: number, pct: number, at: number}}} Spreadable
+ */
+function latestLevelProgress(a, b) {
+    const figures = [a?.levelProgress, b?.levelProgress].filter(isLevelProgress);
+    if (!figures.length) return {};
+    const newest = figures.reduce((best, figure) => (figure.at > best.at ? figure : best));
+    return { levelProgress: { level: newest.level, pct: newest.pct, at: newest.at } };
+}
+
+/**
  * The later of two tiles' guild-payload statements, omitted when neither has one.
  * @param {Object} a - One side's tile
  * @param {Object} b - The other side's tile
@@ -1785,15 +1939,18 @@ function foldArchivedCycle(kept, other) {
         const server = latestServerTier(held, tile);
         const tierSeenAt = mergeTierSeenAt(held.tierSeenAt, tile.tierSeenAt);
         const facts = mergeTrialFacts(held, tile);
+        const figure = { ...latestLevelProgress(held, tile), ...latestServerProgress(held, tile) };
         const same =
             JSON.stringify(mergeTrialFacts(held, null)) === JSON.stringify(facts) &&
+            JSON.stringify({ ...latestLevelProgress(held, null), ...latestServerProgress(held, null) }) ===
+                JSON.stringify(figure) &&
             held.serverTier === server.serverTier &&
             held.serverTierAt === server.serverTierAt &&
             Boolean(held.serverDone) === Boolean(server.serverDone) &&
             held.serverPoints === server.serverPoints &&
             JSON.stringify(held.tierSeenAt || {}) === JSON.stringify(tierSeenAt || {});
         if (same) continue;
-        tiles[key] = { ...held, ...server, tierSeenAt, ...facts };
+        tiles[key] = { ...held, ...server, tierSeenAt, ...facts, ...figure };
         changed = true;
     }
     return changed ? { ...kept, tiles } : kept;
@@ -1992,6 +2149,10 @@ export function mergeTrialRecords(base, incoming) {
             ...latestRunSeenAt(existing, tile),
             // Latest wins: either side reading the badge is the card being watched
             ...latestTierReadAt(existing, tile),
+            // The game's "+64%" by its own read time, never an older read over a newer
+            ...latestLevelProgress(existing, tile),
+            // …and the payload's end percent the same way
+            ...latestServerProgress(existing, tile),
             // The newer statement of the guild payload, all three fields together
             ...latestServerTier(existing, tile),
             samples,
@@ -2380,25 +2541,8 @@ export async function saveTrialRecord(
     return probeMergeWrite(guildTrialsStorageKey(guildName, characterId), stamped, fold, { overwrite });
 }
 
-/**
- * Whether a tagged combat reading (or the observation filed from one) summed
- * fewer monsters than its wave fields — one Badger card of two, one stream slot.
- * A reading tagged before the game data arrived carries no `waveCount`; the
- * count known now is passed in for it.
- *
- * @param {Object|null} reading - A reading or observation
- * @param {number|null} [waveCount] - The wave's monster count from the game data, for a reading that lacks one
- * @returns {boolean}
- */
-export function isPartialWaveReading(reading, waveCount = null) {
-    const count = Number.isFinite(reading?.waveCount) ? reading.waveCount : waveCount;
-    return (
-        typeof reading?.source === 'string' &&
-        Number.isFinite(reading.slots) &&
-        Number.isFinite(count) &&
-        reading.slots < count
-    );
-}
+// Defined beside the history's percent, which skips the same readings; kept exported from here for its callers
+export { isPartialWaveReading };
 
 /**
  * Drop the untagged and partial tier observations of multi-monster combat waves.

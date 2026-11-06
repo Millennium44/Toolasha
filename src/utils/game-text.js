@@ -93,6 +93,13 @@ export const TRIAL_KIND_COMBAT_RE = /\bcombat\b/i;
 export const TRIAL_LEVEL_RE = /Lv\.?\s*(\d+)/i;
 
 /**
+ * Seen in: "Lv.280 +64%" on a finished trial card's summary line — the level and how far into the next tier
+ * the trial got. Kept apart from {@link TRIAL_LEVEL_RE}, whose single capture group `split` callers rely on.
+ * The percent must follow the level directly, so another run's "+5%" is never paired with it.
+ */
+export const TRIAL_LEVEL_PROGRESS_RE = /Lv\.?\s*(\d+)\s*\+\s*(\d+(?:\.\d+)?)\s*[%％]/i;
+
+/**
  * Seen in: "600 pts" — what a card says clearing the trial is worth.
  *
  * A function rather than a constant: the points figure is grouped by the

@@ -1763,12 +1763,40 @@ describe('parseCurrentTrialsData', () => {
             tierStartedAtMs: 1_790_715_749_189,
             highestTierReachedAtMs: 1_790_715_749_189,
             done: false,
+            // This capture predates the field; absent reads as unknown
+            nextTierProgress: null,
             points: 980,
         });
         expect(read.skilling.trials['/guild_skilling/brewing'].highestTier).toBe(4);
         // No countdown on the kind itself: it is per party
         expect(read.skilling.budgetRemainingMs).toBeNull();
         expect(read.combat.trials).toEqual({});
+    });
+
+    test('a finished party’s end fraction is read; the last tier and anything outside 0-1 carry none', async () => {
+        const { NOV2_CURRENT_TRIALS_DATA } = await import('./guild-trial-points.fixture.js');
+        const read = parseCurrentTrialsData(NOV2_CURRENT_TRIALS_DATA);
+        expect(read.skilling.trials['/guild_skilling/brewing']).toMatchObject({
+            highestTier: 19,
+            done: true,
+            nextTierProgress: 0.4891,
+        });
+        // T21 parties carry no fraction on the wire
+        expect(read.combat.trials['/guild_combat/jellyfish']).toMatchObject({
+            highestTier: 21,
+            nextTierProgress: null,
+        });
+        const odd = (value) =>
+            parseCurrentTrialsData({
+                skilling: {
+                    status: 'completed',
+                    parties: { '/guild_skilling/milking': { highestTier: 3, nextTierProgress: value } },
+                },
+            }).skilling.trials['/guild_skilling/milking'].nextTierProgress;
+        expect(odd(1)).toBeNull();
+        expect(odd(-0.1)).toBeNull();
+        expect(odd('0.5')).toBeNull();
+        expect(odd(0)).toBe(0);
     });
 
     test('a broken or absent payload answers null rather than throwing', () => {

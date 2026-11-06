@@ -151,6 +151,7 @@ import guildTrialRecorder, {
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import trialHistory from './trial-history.js';
 import guildTrialBossDebuffsUI from './guild-trial-boss-debuffs-ui.js';
+import guildTrialUnitGrid from './guild-trial-unit-grid.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
 import guildTrialTrace, { describeTraceStatus } from './guild-trial-trace.js';
@@ -214,7 +215,13 @@ import {
     tileKey,
     tilePersonalStats,
 } from './guild-trials-store.js';
-import { FOREIGN_CYCLE_REASON, pastCycles, pastWeekLine, summariseArchivedCycle } from './guild-trial-history.js';
+import {
+    FOREIGN_CYCLE_REASON,
+    cyclePointsText,
+    cycleTokensText,
+    pastCycles,
+    summariseArchivedCycle,
+} from './guild-trial-history.js';
 import {
     cycleTrialsOf,
     historyRowFor,
@@ -331,16 +338,26 @@ function rangedPace(range) {
  * @param {string} label - The heading
  * @param {string} title - The hover, already escaped
  * @param {boolean} collapsed - Whether the section is folded
+ * @param {boolean} [inline] - Size to its label instead of a full-width row, so it can lead a row of figures
  * @returns {string} Markup
  */
-function foldHeading(key, label, title, collapsed) {
+function foldHeading(key, label, title, collapsed, inline = false) {
+    const size = inline
+        ? 'flex:none; width:auto; min-height:24px; margin:0;'
+        : 'width:100%; min-height:32px; margin:0 0 2px;';
     return (
         `<button type="button" data-fold="${key}" aria-expanded="${collapsed ? 'false' : 'true'}" title="${title}" ` +
-        `style="display:flex; align-items:center; gap:6px; width:100%; min-height:32px; padding:0; margin:0 0 2px; ` +
+        `style="display:flex; align-items:center; gap:6px; ${size} padding:0; ` +
         `background:none; border:0; cursor:pointer; text-align:left; color:${ACCENT}; font:inherit; font-weight:700;">` +
         `<span aria-hidden="true">${collapsed ? '▸' : '▾'}</span><span style="min-width:0; overflow-wrap:anywhere;">${label}</span></button>`
     );
 }
+
+/** The shade on every other Trial history row, faint on the game's dark panel */
+const TRIAL_HISTORY_STRIPE = 'rgba(255,255,255,0.04)';
+
+/** A Trial history row under the pointer, a step stronger than the stripe */
+const TRIAL_HISTORY_HOVER = 'rgba(255,255,255,0.08)';
 
 /** Cycles the Trial history table has a column for; earlier ones are in each row's hover */
 const TRIAL_HISTORY_COLUMNS = 5;
@@ -1258,6 +1275,29 @@ function line(label, value, color = GAME_COLORS.text, title = '') {
         `<span style="color:${GAME_COLORS.textDim}; overflow-wrap:break-word; hyphens:none;">${label}</span>` +
         `<span style="color:${color}; font-weight:600; text-align:right; overflow-wrap:break-word; ` +
         `line-height:1.35;">${text}</span></div>`
+    );
+}
+
+/**
+ * A label/value pair that sizes to its content, for a row of figures that wraps as whole pairs.
+ *
+ * The label never breaks (`white-space:nowrap`) and stays beside its value; a pair too wide for the row
+ * moves down whole, and only a value longer than the row itself wraps.
+ *
+ * @param {string} label - Left side
+ * @param {string} value - Right side
+ * @param {string} [color] - Value color
+ * @param {string} [title] - Tooltip
+ * @returns {string} HTML
+ */
+function pair(label, value, color = GAME_COLORS.text, title = '') {
+    const tip = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+    return (
+        `<div data-payout-pair="1" style="display:flex; align-items:baseline; gap:6px; flex:0 1 auto; ` +
+        `max-width:100%;"${tip}>` +
+        `<span style="color:${GAME_COLORS.textDim}; white-space:nowrap; flex:none;">${label}</span>` +
+        `<span style="color:${color}; font-weight:600; min-width:0; overflow-wrap:anywhere;">` +
+        `${String(value ?? '')}</span></div>`
     );
 }
 
@@ -3246,6 +3286,7 @@ class GuildTrials {
         // not on the next sample
         this.unregister.push(config.onSettingChange('guildTrialSim', () => this._render(findTrialsRoot())));
         guildTrialBossDebuffsUI.initialize();
+        guildTrialUnitGrid.initialize();
         guildTrialSkilling.initialize();
         guildTrialStatsModal.initialize();
         guildTrialAlerts.initialize?.();
@@ -3956,33 +3997,21 @@ class GuildTrials {
                     );
                     let key = joined?.[0] ?? null;
                     let create = null;
+                    const cardDone = Boolean(joined?.[1]?.completed);
                     if (!joined) {
                         const trial = trialFromHrid(partyKey);
                         if (!trial || trial.kind !== kind) continue;
                         key = tileKey(trial);
                         create = { name: trial.name, kind: trial.kind };
-                    } else if (joined[1]?.completed) {
+                    } else if (cardDone && !finished) {
                         continue;
                     }
-                    if (finished) {
-                        // Only onto a tile this cycle's tier statement is already on, and fresh
-                        // within the cycle: a completed payload outlives its cycle
-                        const stampedAt = joined?.[1]?.serverTierAt;
-                        if (!joined || !Number.isFinite(stampedAt) || now - stampedAt > 2 * TRIAL_ACTIVE_MS) continue;
-                        next = recordServerTiers(next, key, { points: party.points, at: stampedAt });
-                        continue;
-                    }
-
-                    // No offset means no stamp was ever readable, and then there
-                    // are no clears to place either
-                    const clears = {};
-                    if (offset !== null) {
-                        for (const [tier, serverAt] of Object.entries(
-                            this.serverTierClears?.[kind]?.[partyKey] || {}
-                        )) {
-                            clears[tier] = serverAt + offset;
-                        }
-                    }
+                    // A finished party's end percent, the game's own figure for the history (0.6471 → the card's
+                    // "+64%"), for the tier it banked. Never a running party's: that is progress, not the result
+                    const endProgress =
+                        party.done && Number.isFinite(party.highestTier) && Number.isFinite(party.nextTierProgress)
+                            ? { tier: party.highestTier, nextTierProgress: party.nextTierProgress }
+                            : null;
                     // The party's own bank time, as its `tierSeenAt` stamp is: a
                     // message arrives whenever *any* party banks, so its receipt is
                     // another party's clear as often as this one's
@@ -3997,6 +4026,45 @@ class GuildTrials {
                         Number.isFinite(party.budgetRemainingMs)
                             ? party.tierStartedAtMs + party.budgetRemainingMs + offset
                             : null;
+                    if (finished) {
+                        // Only onto a tile this cycle's tier statement is already on, and fresh
+                        // within the cycle: a completed payload outlives its cycle
+                        const stampedAt = joined?.[1]?.serverTierAt;
+                        if (!joined || !Number.isFinite(stampedAt) || now - stampedAt > 2 * TRIAL_ACTIVE_MS) continue;
+                        if (cardDone) {
+                            // A completed card is left as it is, all but the end percent the card cannot outrank
+                            next = recordServerTiers(next, key, { at: stampedAt, seenAt: held.at, endProgress });
+                            continue;
+                        }
+                        if (!party.done) {
+                            next = recordServerTiers(next, key, { points: party.points, at: stampedAt });
+                            continue;
+                        }
+                        // The party's last statement. A trial that runs to the clock goes done in the
+                        // same message that flips the kind to completed, so this is the only place its
+                        // done, its final tier and its end are ever stated
+                        next = recordServerTiers(next, key, {
+                            bankedTier: party.highestTier,
+                            done: true,
+                            at: offset !== null && Number.isFinite(partyAt) ? partyAt + offset : stampedAt,
+                            seenAt: held.at,
+                            deadlineAt,
+                            points: party.points,
+                            endProgress,
+                        });
+                        continue;
+                    }
+
+                    // No offset means no stamp was ever readable, and then there
+                    // are no clears to place either
+                    const clears = {};
+                    if (offset !== null) {
+                        for (const [tier, serverAt] of Object.entries(
+                            this.serverTierClears?.[kind]?.[partyKey] || {}
+                        )) {
+                            clears[tier] = serverAt + offset;
+                        }
+                    }
                     next = recordServerTiers(next, key, {
                         bankedTier: party.highestTier,
                         done: party.done,
@@ -4008,6 +4076,7 @@ class GuildTrials {
                         // Null while the sign-up sheet or level map has not been loaded: unknown, not empty
                         signupLevels: this._signupLevelsFor(partyKey, kind, record.guildId ?? this._guildId()),
                         points: party.points,
+                        endProgress,
                     });
                 }
             }
@@ -4200,6 +4269,9 @@ class GuildTrials {
         const week = this._payloadWeek(now);
         if (!record || week === null || week === record.weekStart) return this._recordServerTiers(record, now);
         if (week > record.weekStart) return record;
+        // The test server's rollover leaves the running cycle on the record (`rollRecordToWeek`), so the record
+        // is the cycle the payload's hour belongs to
+        if (isTestServer()) return this._recordServerTiers(record, now);
 
         const history = Array.isArray(record.history) ? record.history : [];
         const index = history.findIndex(
@@ -4701,7 +4773,6 @@ class GuildTrials {
                 }
                 // The archive still has last cycles' figures to show — a trial
                 // tab between weeks is exactly when they are asked for
-                if (this._renderHistory(root, now, bonuses)) drawn.add('history');
                 if (this._renderTrialHistory(root, now, bonuses)) drawn.add('trial-history');
                 this._reapBlocks(root, drawn);
                 return;
@@ -4810,7 +4881,6 @@ class GuildTrials {
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
             }
-            if (this._renderHistory(root, now, bonuses)) drawn.add('history');
             if (this._renderTrialHistory(root, now, bonuses, pastTiers)) drawn.add('trial-history');
             this._reapBlocks(root, drawn);
         } catch (error) {
@@ -5566,7 +5636,7 @@ class GuildTrials {
             : tokenPayoutLine(projected.participantTokens, participantTitle, { showGold: !inProgress });
 
         const bankedRow = !anyTierKnown
-            ? line(
+            ? pair(
                   'Guild Points banked',
                   'not known yet',
                   DIM,
@@ -5575,13 +5645,13 @@ class GuildTrials {
                       'It is unknown rather than zero.'
               )
             : !anyBanked
-              ? line(
+              ? pair(
                     'Guild Points banked',
                     'nothing banked yet',
                     DIM,
                     'A trial pays for tiers it has finished. This appears after the first tier completes.'
                 )
-              : line('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
+              : pair('Guild Points banked', exact(banked.guildPoints), GOOD, this._pointsProvenance(trials));
 
         // Folded, the heading carries the pace in one line, from the figures below. A trial with no pace
         // yet has nothing to state, which reads as a dash and not as the banked figure it falls back to
@@ -5594,27 +5664,29 @@ class GuildTrials {
             collapsed
                 ? `Trial payout · ${paceFigure((end) => end.guildPoints)} pts on pace · ` +
                       `${paceFigure((end) => end.participantTokens)} tokens`
-                : 'Trial payout',
+                : 'Payout',
             'The week’s Guild Points banked and on pace, and the tokens that pays. ' +
                 (collapsed
                     ? 'The summary is the pace and the tokens if you took part.'
                     : 'Fold it to a one-line summary; the buttons stay.'),
-            collapsed
+            collapsed,
+            !collapsed
         );
 
-        const rows = [
+        const figures = [
             bankedRow,
             spread
-                ? line(
+                ? pair(
                       'Guild Points on pace',
                       `~${exact(lowEnd.guildPoints)}–${exact(highEnd.guildPoints)}`,
                       ACCENT,
                       `What the pace would add to what is banked, at each end of its range of tiers.${rangeNote}`
                   )
-                : line('Guild Points on pace', exact(projected.guildPoints), ACCENT),
-            line('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
-            line('Tokens, if you took part', participant.value, GOOD, participant.title),
+                : pair('Guild Points on pace', exact(projected.guildPoints), ACCENT),
+            pair('Tokens, every eligible member', eligible.value, ACCENT, eligible.title),
+            pair('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
+        const rows = [];
 
         // The partial-tier rule (an unfinished tier paying 0.5% per 1% of
         // progress) is folded into the pace and banked figures silently now — the
@@ -5721,7 +5793,13 @@ class GuildTrials {
                 }
                 return root.firstElementChild === block;
             },
-            html: payoutHeading + (collapsed ? '' : rows.join('')) + this._controlsHTML(),
+            // Open, the toggle leads the row of figures; the notes take their own full-width line below
+            html:
+                (collapsed
+                    ? payoutHeading
+                    : `<div data-payout-figures="1" style="display:flex; flex-wrap:wrap; align-items:baseline; ` +
+                      `column-gap:18px; row-gap:2px; width:100%;">${payoutHeading}${figures.join('')}</div>` +
+                      (rows.length ? `<div style="width:100%;">${rows.join('')}</div>` : '')) + this._controlsHTML(),
             // Flat: the title, the four figures and the buttons flow on one
             // wrapping line instead of stacking half the panel tall — each
             // line() is a self-sizing chip once the container is a wrapping row
@@ -5926,59 +6004,6 @@ class GuildTrials {
     }
 
     /**
-     * The "Past weeks" block: one compact line per archived cycle.
-     *
-     * The archive exists because the figures were real when they were taken and
-     * a player who wants last cycle's numbers has nowhere else to get them —
-     * and until this block, nowhere to read them either. Drawn under everything
-     * else on the tab, and not at all when there is no history: an empty header
-     * would be a promise about data that does not exist.
-     *
-     * @param {Element} root - The trials content element
-     * @param {number} [now] - Clock
-     * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
-     * @returns {boolean} Whether a history block is on screen
-     */
-    _renderHistory(root, now = Date.now(), bonuses = null) {
-        // The In Progress tab is the live fight or the live skilling row; past
-        // cycles are the Trials tab's business. On the In Progress view the
-        // block landed at the top and was stretched by the view's own layout
-        // into an empty box over the live cards.
-        if (isInProgressView(root)) return false;
-        const summaries = this._pastWeekSummaries(now, bonuses);
-        if (!summaries.length) return false;
-
-        const collapsed = this._foldsFor().history === true;
-        const rows = [
-            foldHeading(
-                'history',
-                'Past weeks',
-                'The last few finished cycles, kept when the week rolled over. Newest first. ' +
-                    '&quot;—&quot; is a figure that never reached this client; a zero is a real result. ' +
-                    'Token figures, and points priced from a tier the guild stated rather than a card, are ' +
-                    'derived from today’s building bonuses, which is what the ~ marks. Points the guild’s own ' +
-                    'payload stated are exact. Tokens each is what every eligible member receives; members ' +
-                    'who took part receive a further half of it, rounded up.',
-                collapsed
-            ),
-        ];
-        for (const summary of collapsed ? [] : summaries) {
-            const title = summary.reason ? ` title="Archived: ${String(summary.reason).replace(/"/g, '&quot;')}"` : '';
-            rows.push(`<div style="color:${DIM};"${title}>${pastWeekLine(summary)}</div>`);
-        }
-
-        this._placeBlock(root, 'history', {
-            html: rows.join(''),
-            onBuild: (block) => this._wireFolds(block, root),
-            style:
-                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
-                'border-radius:6px; font-size:12px; line-height:1.7;',
-            place: (block) => root.insertAdjacentElement('beforeend', block),
-        });
-        return true;
-    }
-
-    /**
      * Which of the Trials tab's history sections are folded, `{[blockKey]: true}`.
      *
      * Read from the `settings` store once per session, as the Guild panel's
@@ -6028,7 +6053,6 @@ class GuildTrials {
                     refresh();
                     return;
                 }
-                this._renderHistory(root);
                 this._renderTrialHistory(root);
             });
         }
@@ -6051,7 +6075,7 @@ class GuildTrials {
 
     /**
      * The "Trial history" block: one line per trial, its tier each finished
-     * cycle, newest first, and its best. Drawn under "Past weeks", and not at
+     * cycle, newest first, and its best. Not drawn at
      * all before any cycle has finished.
      *
      * @param {Element} root - The trials content element
@@ -6079,6 +6103,25 @@ class GuildTrials {
             `<span style="color:${color}; text-align:center; font-weight:${weight}; overflow-wrap:break-word;"` +
             `${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeText(text)}</span>`;
 
+        // The archived cycles' summaries, found by the identity the columns use, never by position
+        const summaryOf = new Map();
+        for (const summary of this._pastWeekSummaries(now, bonuses)) {
+            if (summary.foreign || !Number.isFinite(summary.weekStart)) continue;
+            summaryOf.set(`${summary.weekStart}|${summary.cycleFrom ?? ''}`, summary);
+        }
+        const summaryRow = (label, pick) =>
+            `<div data-history-summary="${escapeAttr(label)}" style="${grid} border-top:1px solid rgba(255,255,255,0.1); ` +
+            `margin-top:2px;">` +
+            `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(label)}</span>` +
+            shown
+                .map((cycle) => {
+                    const summary = summaryOf.get(cycle.key);
+                    return cell(summary ? pick(summary) : '—', GAME_COLORS.textDim);
+                })
+                .join('') +
+            cell('', GAME_COLORS.text) +
+            '</div>';
+
         const header =
             `<div style="${grid} font-size:10px; margin-top:2px;">` +
             '<span></span>' +
@@ -6100,10 +6143,20 @@ class GuildTrials {
         const html = [
             heading,
             ...(collapsed ? [] : [header]),
-            ...(collapsed ? [] : rows).map((row) => {
+            // Every other trial row is shaded, by its place in this render, so a row reads across the columns;
+            // the hover rule is scoped to this block's own rows
+            ...(collapsed
+                ? []
+                : [
+                      '<style>[data-mwi-block="trial-history"] [data-history-row]:hover' +
+                          `{background:${TRIAL_HISTORY_HOVER} !important;}</style>`,
+                  ]),
+            ...(collapsed ? [] : rows).map((row, rowIndex) => {
                 const detail = trialHistoryDetail(row);
+                const stripe = rowIndex % 2 === 1 ? ` background:${TRIAL_HISTORY_STRIPE};` : '';
                 return (
-                    `<div style="${grid}" title="${escapeAttr(detail)}">` +
+                    `<div data-history-row="${rowIndex}" style="${grid} border-radius:2px;${stripe}" ` +
+                    `title="${escapeAttr(detail)}">` +
                     `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(row.name)}</span>` +
                     shown
                         .map((cycle, index) => {
@@ -6119,10 +6172,17 @@ class GuildTrials {
                     '</div>'
                 );
             }),
-            ...(hidden > 0 && !collapsed
+            ...(collapsed
+                ? []
+                : [summaryRow('Guild Points', cyclePointsText), summaryRow('Tokens each', cycleTokensText)]),
+            ...(!collapsed
                 ? [
-                      `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
-                          `+${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover</div>`,
+                      `<div data-history-key="1" style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
+                          'T15 63% = tier and progress reached · — = not tracked · blank = didn’t run' +
+                          (hidden > 0
+                              ? ` · +${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover`
+                              : '') +
+                          '</div>',
                   ]
                 : []),
         ].join('');
@@ -7048,6 +7108,7 @@ class GuildTrials {
         trialHistory.stop();
         guildTrialDamage.cleanup();
         guildTrialBossDebuffsUI.cleanup();
+        guildTrialUnitGrid.cleanup();
         guildTrialSkilling.cleanup();
         guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();

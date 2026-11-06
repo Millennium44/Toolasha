@@ -4356,6 +4356,17 @@ export const settingsGroups = {
                     'debuffing ability is seen to hit, for the duration the game data gives it; a stun is shown ' +
                     'for as long as the stream says the boss is stunned.',
             },
+            guildTrialPackUnits: {
+                id: 'guildTrialPackUnits',
+                label: 'Guild trials: keep party players in a fixed order and wrap extras under your card',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'The game reshuffles the trial party at some tier changes, so players jump around. This keeps ' +
+                    'each one in the same place: in a combat trial grouped by signed-up role (tank, support, ' +
+                    'damage dealer, then no role), then by name; in a skilling trial by name. Players that do not ' +
+                    'fit beside your card go in rows under it. Normal party fights are left as the game draws them.',
+            },
             guildTrialAutoRecord: {
                 id: 'guildTrialAutoRecord',
                 label: 'Guild Trials: Record a trial automatically when one starts',

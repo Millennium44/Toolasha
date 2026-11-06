@@ -85,6 +85,7 @@ import {
     TRIAL_KIND_SKILLING_RE,
     TRIAL_KIND_COMBAT_RE,
     TRIAL_LEVEL_RE,
+    TRIAL_LEVEL_PROGRESS_RE,
     trialPointsPattern,
     TRIAL_TIER_RE,
     TRIAL_CLOCK_LABEL_RE,
@@ -245,6 +246,27 @@ export function parseTrialLevel(text) {
     if (!match) return null;
     const level = Number(match[1]);
     return Number.isFinite(level) ? level : null;
+}
+
+/**
+ * How far into the next tier a finished trial's card says it got, from its `Lv.280 +64%` summary.
+ *
+ * The game's own figure, read beside the level it belongs to so the two are never paired from different runs.
+ * A card at the top level (Lv.300, T21) has no next tier and carries none; a percent there is refused. A card
+ * with a level and no `+N%` states nothing, which is not the same as 0%.
+ *
+ * @param {string} text - A card line
+ * @returns {{level: number, pct: number}|null} The level and a whole percent 0-99, or null when the line states none
+ */
+export function parseTrialLevelProgress(text) {
+    const match = typeof text === 'string' ? text.match(TRIAL_LEVEL_PROGRESS_RE) : null;
+    if (!match) return null;
+    const level = Number(match[1]);
+    const pct = Math.floor(Number(match[2]));
+    const tier = tierFromLevel(level);
+    if (!Number.isFinite(tier) || tier >= TRIAL_MAX_TIER) return null;
+    if (!Number.isFinite(pct) || pct < 0 || pct > 99) return null;
+    return { level, pct };
 }
 
 /**
@@ -834,7 +856,8 @@ function cardFor(start, root) {
  * @param {Element} root - The trials root, from {@link findTrialsRoot}
  * @returns {Array<{element: Element, name: string, level: number|null, tier: number|null,
  *   kind: 'combat'|'skilling', completed: boolean, readings: Array<{current: number, max: number}>,
- *   signups: {signed: number, total: number}|null, points: number|null}>} Cards, in document order
+ *   signups: {signed: number, total: number}|null, points: number|null,
+ *   levelProgress: {level: number, pct: number}|null}>} Cards, in document order
  */
 export function readTrialTiles(root) {
     if (!root || typeof root.querySelectorAll !== 'function') return [];
@@ -899,6 +922,9 @@ export function readTrialTiles(root) {
         if (!isTrialName(name)) continue;
 
         const level = lines.map(parseTrialLevel).find((candidate) => candidate !== null) ?? null;
+        // The game's "+64%" beside that level, only when it is the same level: one run states both
+        const stated = lines.map(parseTrialLevelProgress).find((candidate) => candidate !== null) ?? null;
+        const levelProgress = stated && stated.level === level ? stated : null;
         const signups = lines.map(parseSignups).find((candidate) => candidate !== null) ?? null;
         // A stated tier beats a derived one, and is available on a card that
         // carries no level at all. `textLines` skips this script's own elements,
@@ -916,8 +942,9 @@ export function readTrialTiles(root) {
             element: tile,
             name,
             level,
-            completed: lines.some((candidate) => COMPLETED_PATTERN.test(candidate)),
+            completed: lines.some((candidate) => COMPLETED_PATTERN.test(candidate)) || cardStatusCompleted(tile),
             tier: statedTier ?? (level === null ? null : tierFromLevel(level)),
+            levelProgress,
             kind: isCombatTrialName(name) ? 'combat' : 'skilling',
             // Sign-up counts are excluded rather than filtered afterwards:
             // "1/28 signed up" has precisely the shape of a progress bar, and a
@@ -930,6 +957,23 @@ export function readTrialTiles(root) {
     }
 
     return tiles;
+}
+
+/**
+ * Whether a card's status element is the game's Completed one, by class rather than by its words.
+ *
+ * The finished Trials-tab card draws `div.GuildPanel_tileStatusCompleted` ("Completed") in its
+ * `GuildPanel_tileBottom`, which can sit outside the element {@link cardFor} settles on — the nearest
+ * `GuildPanel_tile*` above the summary — so the whole `GuildPanel_trialTile` is asked when there is one. A class
+ * holds in a player's own language where the word does not.
+ *
+ * @param {Element} tile - The card, from {@link cardFor}
+ * @returns {boolean}
+ */
+function cardStatusCompleted(tile) {
+    const selector = '[class*="GuildPanel_tileStatusCompleted"]';
+    const whole = tile?.closest?.('[class*="GuildPanel_trialTile"]') || tile;
+    return Boolean(whole?.matches?.(selector) || whole?.querySelector?.(selector));
 }
 
 /**

@@ -2648,3 +2648,386 @@ describe('trial results — each trial’s tier kept after its week leaves the a
         expect(bytes / rolled.trialResults.length).toBeLessThan(400);
     });
 });
+
+describe('the weekly reset inside a test-server cycle', () => {
+    const HOUR = 3_600_000;
+    const WEEK_MS = 7 * 24 * HOUR;
+    const lastWeek = thisWeek - WEEK_MS;
+    // The daily cycle began three hours before the weekly reset and finished before it
+    const cycleBegan = thisWeek - 3 * HOUR;
+    const nextCycle = thisWeek + 21 * HOUR;
+    const alchemy = (tier, points, at) => ({
+        name: 'Alchemy',
+        kind: 'skilling',
+        level: 100 + tier * 10,
+        tier,
+        points,
+        pointsByTier: { [tier]: points },
+        completed: true,
+        tierReadAt: at,
+        samples: [{ t: at - 60_000, readings: [{ current: 30, max: 100 }] }],
+        tiers: [],
+        tierSeenAt: { [tier]: at - 120_000 },
+    });
+    const running = (at = cycleBegan + 90 * 60_000) => ({
+        weekStart: lastWeek,
+        tiles: { 'skilling::alchemy': alchemy(12, 1300, at) },
+        guildId: 'g1',
+        guildName: 'Milky Way',
+        history: [],
+        trialResults: [],
+        cycleStart: cycleBegan,
+        cycleStartAt: cycleBegan + 60_000,
+    });
+    // The next cycle's skilling hour, ten minutes in, as the guild payload states it
+    const nextHour = () =>
+        parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/brewing': {
+                            highestTier: 1,
+                            budgetRemainingMs: 50 * 60_000,
+                            tierStartedAtMs: nextCycle + 10 * 60_000,
+                            highestTierReachedAtMs: nextCycle + 10 * 60_000,
+                            done: false,
+                        },
+                    },
+                },
+                combat: { status: '', parties: null },
+            })
+        );
+
+    test('the rollover keeps the running cycle whole; it is archived once, at its end, with its cycleFrom', () => {
+        game.testServer = true;
+        const rolled = rollRecordToWeek(running(), thisWeek);
+        expect(rolled.weekStart).toBe(thisWeek);
+        expect(rolled.history).toEqual([]);
+        expect(rolled.tiles['skilling::alchemy'].tier).toBe(12);
+        expect(rolled.cycleStart).toBe(cycleBegan);
+
+        const ended = archiveEarlierCycles(rolled, nextHour(), { offset: 0, at: nextCycle + 16 * 60_000 });
+        expect(ended.history).toHaveLength(1);
+        expect(ended.history[0]).toMatchObject({ weekStart: thisWeek, cycleFrom: nextCycle });
+        const results = trialResultsOf(ended);
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({ trial: 'alchemy', cardTier: 12, cycleFrom: nextCycle });
+
+        // The next weekly reset carries nothing of it again, and files it under no second key
+        const later = rollRecordToWeek({ ...ended, tiles: {} }, thisWeek + WEEK_MS);
+        expect(trialResultsOf(later)).toHaveLength(1);
+        expect(later.history).toHaveLength(1);
+    });
+
+    test('a record untouched for over a cycle is no running cycle, and is archived at the rollover as before', () => {
+        game.testServer = true;
+        const rolled = rollRecordToWeek(running(thisWeek - 30 * HOUR), thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+        expect(rolled.history[0].cycleFrom).toBeUndefined();
+    });
+
+    test('a device that slept through the running cycle archives the one before it at the rollover', () => {
+        game.testServer = true;
+        // Wednesday's cycle read on Wednesday evening (~22 h before the reset, inside a day), its cycleStart
+        // the day before; Thursday's cycle never seen. Carried, those tiles would be archived under Thursday's key
+        const wednesday = { ...running(thisWeek - 22 * HOUR), cycleStart: cycleBegan - 24 * HOUR };
+        const rolled = rollRecordToWeek(wednesday, thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+    });
+
+    test('live is unchanged: the weekly reset is the cycle boundary', () => {
+        const rolled = rollRecordToWeek(running(), thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+        expect(trialResultsOf(rolled)[0]).toMatchObject({ trial: 'alchemy', cardTier: 12, cycleFrom: null });
+    });
+
+    test('a copy still on last week folds into the carried cycle, not into a second archive', () => {
+        game.testServer = true;
+        const tab = rollRecordToWeek(running(), thisWeek);
+        const folded = mergeTrialRecords(tab, running(cycleBegan + 100 * 60_000));
+        expect(folded.weekStart).toBe(thisWeek);
+        expect(folded.history).toEqual([]);
+        expect(folded.tiles['skilling::alchemy'].tier).toBe(12);
+    });
+
+    test('a split piece an older build stored stays as it was, beside the whole cycle', () => {
+        game.testServer = true;
+        // An older build's rollover piece, synced in: never rewritten, never hidden
+        const piece = {
+            archivedAt: thisWeek,
+            reason: 'the week rolled over',
+            weekStart: lastWeek,
+            tiles: { 'skilling::alchemy': alchemy(12, 1300, cycleBegan + 90 * 60_000) },
+        };
+        const folded = mergeTrialRecords(rollRecordToWeek(running(), thisWeek), {
+            weekStart: thisWeek,
+            tiles: {},
+            guildId: 'g1',
+            guildName: 'Milky Way',
+            history: [piece],
+        });
+        expect(folded.history).toEqual([piece]);
+        expect(folded.tiles['skilling::alchemy'].tier).toBe(12);
+    });
+});
+
+describe('the card’s own percent into the next tier', () => {
+    const KEY = 'skilling::milking';
+    const carded = (level, levelProgress = null, completed = true) => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level,
+        tier: level >= 100 ? (level - 100) / 10 + 1 : null,
+        points: 2700,
+        completed,
+        readings: [],
+        levelProgress,
+    });
+
+    test('a running card’s percent is never kept; the finished card’s replaces nothing but itself', () => {
+        // "+70%" read while the trial runs, then the finished card reads "+64%"
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        expect(record.tiles[KEY]).not.toHaveProperty('levelProgress');
+        record = recordTileSample(record, carded(280, { level: 280, pct: 64 }, true), now + 60_000);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now + 60_000 });
+        // Only a running read ever seen: nothing kept
+        const running = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        expect(running.tiles[KEY]).not.toHaveProperty('levelProgress');
+        // …and the archived result has no percent
+        const archived = archiveCycle(running, 'the week rolled over', now + 3_600_000);
+        expect(archived.trialResults[0]).not.toHaveProperty('endProgress');
+        expect(archived.trialResults[0]).not.toHaveProperty('progress');
+    });
+
+    test('a read after the record knows the trial is over counts as finished', () => {
+        const held = () => ({
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [],
+            pointSamples: [],
+            tiers: [],
+            pointsByTier: {},
+            tierSeenAt: {},
+        });
+        // The guild payload stated the party done; the card itself does not say Completed
+        const done = recordTileSample(
+            {
+                ...emptyRecord(thisWeek),
+                tiles: { [KEY]: { ...held(), serverTier: 19, serverTierAt: now, serverDone: true } },
+            },
+            carded(280, { level: 280, pct: 64 }, false),
+            now + 1000
+        );
+        expect(done.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now + 1000 });
+        // An end recorded before the read
+        const ended = recordTileSample(
+            { ...emptyRecord(thisWeek), tiles: { [KEY]: { ...held(), endedAt: now } } },
+            carded(280, { level: 280, pct: 64 }, false),
+            now + 1000
+        );
+        expect(ended.tiles[KEY].levelProgress.pct).toBe(64);
+        // An end recorded after the read is not this read's
+        const before = recordTileSample(
+            { ...emptyRecord(thisWeek), tiles: { [KEY]: { ...held(), endedAt: now + 5000 } } },
+            carded(280, { level: 280, pct: 70 }, false),
+            now + 1000
+        );
+        expect(before.tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('the finished figure reaches the archived result', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        record = recordTileSample(record, carded(280, { level: 280, pct: 64 }, true), now + 60_000);
+        const archived = archiveCycle(record, 'the week rolled over', now + 3_600_000);
+        expect(archived.trialResults[0]).toMatchObject({ cardTier: 19, endProgress: 64, endProgressAt: now + 60_000 });
+    });
+
+    test('a card read is kept with its level and when it was read; a read without one leaves it alone', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 64 }), now);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now });
+        // A later read with no percent beside the level states nothing: the figure stays, with its own level
+        record = recordTileSample(record, carded(290), now + 60_000);
+        expect(record.tiles[KEY]).toMatchObject({ level: 290, levelProgress: { level: 280, pct: 64, at: now } });
+        // A newer figure replaces it
+        record = recordTileSample(record, carded(290, { level: 290, pct: 7 }), now + 120_000);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 290, pct: 7, at: now + 120_000 });
+    });
+
+    test('a card with no percent writes no figure at all', () => {
+        const record = recordTileSample(emptyRecord(thisWeek), carded(300), now);
+        expect(record.tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('the merge keeps the newest read, from either side, never the higher percent', () => {
+        const older = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 90 }), now);
+        const newer = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 64 }), now + 5000);
+        expect(mergeTrialRecords(older, newer).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(newer, older).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        // A side from a build before the figure keeps the other side's
+        const legacy = recordTileSample(emptyRecord(thisWeek), carded(280), now + 9000);
+        expect(mergeTrialRecords(legacy, newer).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(newer, legacy).tiles[KEY].levelProgress).toEqual({
+            level: 280,
+            pct: 64,
+            at: now + 5000,
+        });
+        expect(mergeTrialRecords(legacy, legacy).tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('two copies of one archived cycle keep the newer figure', () => {
+        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+        const archived = (levelProgress) => ({
+            archivedAt: thisWeek,
+            reason: 'the week rolled over',
+            weekStart: lastWeek,
+            tiles: {
+                [KEY]: {
+                    name: 'Milking',
+                    kind: 'skilling',
+                    level: 280,
+                    tier: 19,
+                    points: 2700,
+                    completed: true,
+                    samples: [],
+                    tiers: [],
+                    pointsByTier: { 19: 2700 },
+                    tierSeenAt: {},
+                    ...(levelProgress ? { levelProgress } : {}),
+                },
+            },
+        });
+        const side = (levelProgress) => ({ ...emptyRecord(thisWeek), history: [archived(levelProgress)] });
+        const old = { level: 280, pct: 90, at: lastWeek + 1000 };
+        const fresh = { level: 280, pct: 64, at: lastWeek + 5000 };
+        for (const [a, b] of [
+            [side(old), side(fresh)],
+            [side(fresh), side(old)],
+            [side(null), side(fresh)],
+            [side(fresh), side(null)],
+        ]) {
+            const merged = mergeTrialRecords(a, b);
+            expect(merged.history).toHaveLength(1);
+            expect(merged.history[0].tiles[KEY].levelProgress).toEqual(fresh);
+        }
+    });
+});
+
+describe('the guild payload’s end percent', () => {
+    const KEY = 'skilling::enhancing';
+    const held = () => ({
+        name: 'Enhancing',
+        kind: 'skilling',
+        samples: [],
+        tiers: [],
+        pointsByTier: {},
+        tierSeenAt: {},
+        serverTier: 19,
+        serverTierAt: now,
+    });
+    const record = () => ({ ...emptyRecord(thisWeek), tiles: { [KEY]: held() } });
+
+    test('a finished party’s fraction is kept as a whole percent for the tier it banked', () => {
+        // The live Enhancing party: highestTier 19, nextTierProgress 0.6471, the card's "+64%"
+        const next = recordServerTiers(record(), KEY, {
+            bankedTier: 19,
+            done: true,
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        expect(next.tiles[KEY]).toMatchObject({
+            serverDone: true,
+            serverProgress: { tier: 19, pct: 64, at: now + 1000 },
+        });
+    });
+
+    test('an exact whole-percent fraction is not floored one short (0.58 * 100 is 57.999...)', () => {
+        for (const [fraction, pct] of [
+            [0.29, 29],
+            [0.57, 57],
+            [0.58, 58],
+            [0.9999, 99],
+        ]) {
+            const next = recordServerTiers(record(), KEY, {
+                bankedTier: 19,
+                done: true,
+                at: now,
+                seenAt: now + 1000,
+                endProgress: { tier: 19, nextTierProgress: fraction },
+            });
+            expect(next.tiles[KEY].serverProgress.pct).toBe(pct);
+        }
+    });
+
+    test('the last tier and a malformed fraction keep nothing', () => {
+        for (const endProgress of [
+            { tier: 21, nextTierProgress: 0.5 },
+            { tier: 19, nextTierProgress: 1 },
+            { tier: 19, nextTierProgress: null },
+            null,
+        ]) {
+            const next = recordServerTiers(record(), KEY, {
+                bankedTier: 19,
+                done: true,
+                at: now,
+                seenAt: now,
+                endProgress,
+            });
+            expect(next.tiles[KEY]).not.toHaveProperty('serverProgress');
+        }
+    });
+
+    test('alone it writes only the figure, and the same figure twice changes nothing', () => {
+        const once = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        expect(once.tiles[KEY]).toEqual({ ...held(), serverProgress: { tier: 19, pct: 64, at: now + 1000 } });
+        // An older read never replaces a newer one
+        const older = recordServerTiers(once, KEY, {
+            at: now,
+            seenAt: now,
+            endProgress: { tier: 19, nextTierProgress: 0.9 },
+        });
+        expect(older).toBe(once);
+    });
+
+    test('a card sample carries it through, and the merge keeps the newest from either side', () => {
+        const a = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 1000,
+            endProgress: { tier: 19, nextTierProgress: 0.9 },
+        });
+        const b = recordServerTiers(record(), KEY, {
+            at: now,
+            seenAt: now + 5000,
+            endProgress: { tier: 19, nextTierProgress: 0.6471 },
+        });
+        const sampled = recordTileSample(
+            b,
+            { name: 'Enhancing', kind: 'skilling', tier: 19, points: 2700, readings: [] },
+            now + 9000
+        );
+        expect(sampled.tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(a, b).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(b, a).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+        expect(mergeTrialRecords(record(), b).tiles[KEY].serverProgress).toEqual({ tier: 19, pct: 64, at: now + 5000 });
+    });
+});

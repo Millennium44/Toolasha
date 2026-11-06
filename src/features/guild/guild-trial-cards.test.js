@@ -107,8 +107,9 @@ describe('cycle labels', () => {
         const label = cycleEndLabel('this week', ended);
         expect(label).toMatch(/^[A-Z][a-z]{2} \d{1,2}:\d{2} [AP]M$/);
         expect(label).not.toMatch(/week|ended/i);
+        // The history names a column by when its trial ran: a day before the cycle ended
         const { cycles } = rowOf([cycle(thisWeek, { a: stated(4, 400) }, { cycleFrom: ended })]);
-        expect(cycles[0].label).toBe(label);
+        expect(cycles[0].label).toBe(cycleEndLabel('this week', ended - 24 * 3600_000));
         expect(pastWeekLine({ when: 'this week', endedAt: ended })).toMatch(/^[A-Z][a-z]{2} \d/);
     });
 

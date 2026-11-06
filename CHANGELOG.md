@@ -10,6 +10,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The upgrade details no longer show "would stale N cached rooms, M within 2pp of their bar", which was about the Labyrinth sim's saved results and not something to act on.
 
+### Guild trial players stay in a fixed place
+
+The game reshuffles the trial party's tiles at some tier changes. Toolasha now keeps every player in the same spot, grouped by signed-up role (tanks, support, damage, then no role) and then by name; skilling trials go by name. Players who don't fit beside your card line up in rows under it instead of a tall narrow column.
+
+### Guild trial payout card fits on one line
+
+The payout card in a running guild trial leads with its figures and the fold toggle on one line, so it takes less room above the fight.
+
+### Trial history shows how far each trial got
+
+Each cell in the guild Trial history reads the tier and the game's own end percent into the next tier (T19 64%), taken from the guild data when the trial finishes; T21 has no percent, and a trial that did not run is blank. Rows are striped for reading across, the Past weeks totals sit as two rows under the table, and a trial that ran to the clock is now recorded as finished.
+
 ### Loadout slot tooltips use the slot's enhancement level
 
 Hovering gear in the Loadouts panel now reads the item at the level the loadout uses (your highest owned with "Use highest enhancement level", otherwise the saved level), so a +20 piece shows its +20 name, stats, price and enhancement path instead of the plain item's figures. When no +20 price is known, the game's Market Price line is hidden rather than showing the plain item's.
