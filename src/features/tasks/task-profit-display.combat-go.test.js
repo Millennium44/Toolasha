@@ -37,7 +37,7 @@
  */
 
 import { describe, test, expect, afterEach, vi } from 'vitest';
-import taskProfitDisplay from './task-profit-display.js';
+import taskProfitDisplay, { isMonsterOwnFight } from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
@@ -74,7 +74,10 @@ function buildGameData(zones) {
             combatZoneInfo: {
                 isDungeon: !!z.isDungeon,
                 fightInfo: {
-                    randomSpawnInfo: { spawns: (z.monsters || []).map((m) => ({ combatMonsterHrid: m })) },
+                    randomSpawnInfo: {
+                        spawns: (z.monsters || []).map((m) => ({ combatMonsterHrid: m })),
+                        ...(z.spawnCount ? { maxSpawnCount: z.spawnCount } : {}),
+                    },
                     bossSpawns: (z.bosses || []).map((m) => ({ combatMonsterHrid: m })),
                 },
             },
@@ -1097,5 +1100,139 @@ describe('_applyGoEstimate (a fight worth more than one kill)', () => {
         });
 
         expect(input.value).toBe('100');
+    });
+});
+
+/**
+ * Solo estimate + Go. The game's Go on a Defeat card opens the monster's own fight (`black_bear`, one bear
+ * per fight), while a Solo estimate is stored against the zone it simulated in (`bear_with_it`). The zone
+ * check refused the landed panel, so a Solo estimate never applied its tier, and with two tasks on the
+ * monster the merge (which stands down for an estimate) filled nothing: 116 stayed instead of 227.
+ */
+describe("_applyGoEstimate on the monster's own fight (Solo)", () => {
+    const BEARS = [
+        {
+            hrid: '/actions/combat/bear_with_it',
+            name: 'Bear With It',
+            category: '/categories/bear',
+            sortIndex: 1,
+            monsters: ['/monsters/gummy_bear', '/monsters/black_bear', '/monsters/polar_bear'],
+            bosses: ['/monsters/red_panda'],
+            spawnCount: 4,
+        },
+        {
+            hrid: '/actions/combat/black_bear',
+            name: 'Black Bear',
+            category: '/categories/bear',
+            sortIndex: 2,
+            monsters: ['/monsters/black_bear'],
+            spawnCount: 1,
+        },
+    ];
+    const SOLO = {
+        zoneHrid: '/actions/combat/bear_with_it',
+        mode: 'solo',
+        monsterHrid: '/monsters/black_bear',
+        tier: 0,
+        predictedFights: 43,
+        killsNeeded: 116,
+        killsPerFight: 2.7,
+    };
+
+    test('two tasks on the monster fill their summed kills there', async () => {
+        dataManager.initClientData = buildGameData(BEARS);
+        const { input } = buildDetailPanel('Black Bear', 0);
+        input.value = '116';
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({ ...SOLO, mergedKills: 227, mergedBoss: false });
+
+        expect(input.value).toBe('227');
+    });
+
+    test('the merged kills still fill while a tier redo has no fight count yet', async () => {
+        dataManager.initClientData = buildGameData(BEARS);
+        const { input } = buildDetailPanel('Black Bear', 0);
+        input.value = '116';
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({
+            ...SOLO,
+            predictedFights: null,
+            countless: true,
+            mergedKills: 227,
+            mergedBoss: false,
+        });
+
+        expect(input.value).toBe('227');
+    });
+
+    test("a single task keeps the game's own count, already its remaining kills", async () => {
+        dataManager.initClientData = buildGameData(BEARS);
+        const { input } = buildDetailPanel('Black Bear', 0);
+        input.value = '116';
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate(SOLO);
+
+        // Not the zone-sim's 43 fights: those count four-bear encounters, and this fight has one bear
+        expect(input.value).toBe('116');
+    });
+
+    test('a Solo estimate landing on some other single-monster fight is still refused', async () => {
+        dataManager.initClientData = buildGameData([
+            ...BEARS,
+            {
+                hrid: '/actions/combat/polar_bear',
+                name: 'Polar Bear',
+                category: '/categories/bear',
+                sortIndex: 3,
+                monsters: ['/monsters/polar_bear'],
+                spawnCount: 1,
+            },
+        ]);
+        const { input } = buildDetailPanel('Polar Bear', 0);
+        input.value = '9';
+        vi.spyOn(dataManager, 'isBossMonster').mockReturnValue(false);
+
+        await taskProfitDisplay._applyGoEstimate({ ...SOLO, mergedKills: 227, mergedBoss: false });
+
+        expect(input.value).toBe('9');
+    });
+});
+
+describe('isMonsterOwnFight', () => {
+    const action = (o = {}) => ({
+        combatZoneInfo: {
+            isDungeon: false,
+            fightInfo: {
+                randomSpawnInfo: { maxSpawnCount: 1, spawns: [{ combatMonsterHrid: '/monsters/black_bear' }] },
+                bossSpawns: [],
+                ...o,
+            },
+        },
+    });
+
+    test('one of the monster per fight and nothing else', () => {
+        expect(isMonsterOwnFight(action(), '/monsters/black_bear')).toBe(true);
+    });
+
+    test('a zone, a boss wave, several per fight, another monster or no data are not', () => {
+        const zone = action({
+            randomSpawnInfo: {
+                maxSpawnCount: 4,
+                spawns: [{ combatMonsterHrid: '/monsters/black_bear' }, { combatMonsterHrid: '/monsters/panda' }],
+            },
+        });
+        const bossWave = action({ bossSpawns: [{ combatMonsterHrid: '/monsters/red_panda' }] });
+        const pack = action({
+            randomSpawnInfo: { maxSpawnCount: 3, spawns: [{ combatMonsterHrid: '/monsters/black_bear' }] },
+        });
+        expect(isMonsterOwnFight(zone, '/monsters/black_bear')).toBe(false);
+        expect(isMonsterOwnFight(bossWave, '/monsters/black_bear')).toBe(false);
+        expect(isMonsterOwnFight(pack, '/monsters/black_bear')).toBe(false);
+        expect(isMonsterOwnFight(action(), '/monsters/panda')).toBe(false);
+        expect(isMonsterOwnFight(undefined, '/monsters/black_bear')).toBe(false);
+        expect(isMonsterOwnFight(action(), undefined)).toBe(false);
     });
 });
