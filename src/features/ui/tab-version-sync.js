@@ -129,6 +129,10 @@ class TabVersionSync {
         this.visibilityListening = false;
         /** Bumped on cleanup so an in-flight flush cannot reload a torn-down feature */
         this.generation = 0;
+        /** Bumped whenever a countdown is cancelled or restarted, so a flush from an earlier one cannot reload */
+        this.countdown = 0;
+        /** Older builds already answered, so two tabs cannot trade announcements forever */
+        this.answered = new Set();
         this.onVisibility = () => this._onVisibility();
         this.onPageHide = () => this._closeChannel();
         this.onPageShow = (event) => {
@@ -216,7 +220,18 @@ class TabVersionSync {
     _onMessage(data) {
         if (!data || data.type !== 'version' || getMode() === 'off') return;
         const other = describeBuild(data.version, data.buildStamp);
-        if (!isStrictlyNewer(this._myBuild(), other)) return;
+        const mine = this._myBuild();
+        if (isStrictlyNewer(other, mine)) {
+            // A tab still on an older build (its reload loaded the old script) cannot learn of this one
+            // unless told. Answer once per older build; a newer announcement is never answered.
+            const olderId = `${other.kind}:${other.key}`;
+            if (!this.answered.has(olderId)) {
+                this.answered.add(olderId);
+                this._announce();
+            }
+            return;
+        }
+        if (!isStrictlyNewer(mine, other)) return;
 
         const id = `${other.kind}:${other.key}`;
         if (this.target?.id === id) return;
@@ -295,8 +310,10 @@ class TabVersionSync {
     /** @private */
     async _reloadWhenSafe(id, mode) {
         const generation = this.generation;
+        const countdown = this.countdown;
         const stillOk = () =>
             generation === this.generation &&
+            countdown === this.countdown &&
             this.target?.id === id &&
             getMode() === mode &&
             (mode === 'reload' || document.visibilityState === 'hidden') &&
@@ -318,7 +335,8 @@ class TabVersionSync {
             clearTimeout(flushTimer);
         }
 
-        if (!flushed || !stillOk() || !this._writeRecord(id)) {
+        // flushAll() can resolve with a failed write still queued, and writes made during the flush stay queued
+        if (!flushed || storage.pendingWriteCount() > 0 || !stillOk() || !this._writeRecord(id)) {
             this._showNotice(id);
             return;
         }
@@ -369,6 +387,7 @@ class TabVersionSync {
 
     /** @private */
     _cancelTimer() {
+        this.countdown += 1;
         if (this.timer) this.timerRegistry.cancelTimeout(this.timer);
         this.timer = null;
     }
@@ -402,6 +421,7 @@ class TabVersionSync {
             }
         }
         this.noticed.clear();
+        this.answered.clear();
         this.initialized = false;
     }
 }

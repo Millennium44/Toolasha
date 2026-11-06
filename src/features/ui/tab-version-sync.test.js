@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
     connected: true,
     flush: async () => {},
     flushes: 0,
+    pending: 0,
     toasts: [],
     channels: [],
 }));
@@ -32,6 +33,7 @@ vi.mock('../../core/storage.js', () => ({
             state.flushes += 1;
             return state.flush();
         },
+        pendingWriteCount: () => state.pending,
     },
 }));
 vi.mock('../../utils/script-version.js', () => ({ scriptVersion: () => state.version }));
@@ -104,6 +106,7 @@ beforeEach(async () => {
     state.connected = true;
     state.flush = async () => {};
     state.flushes = 0;
+    state.pending = 0;
     state.toasts = [];
     state.channels = [];
     window.sessionStorage.clear();
@@ -278,6 +281,79 @@ describe('endings', () => {
         await settle();
         await vi.advanceTimersByTimeAsync(6000);
         expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('a flush that resolves with writes still queued never reloads; the notice shows when seen', async () => {
+        state.flush = async () => {
+            state.pending = 1; // a failed write was requeued
+        };
+        hear('3.17.0');
+        await settle();
+        expect(state.flushes).toBe(1);
+        expect(reload).not.toHaveBeenCalled();
+        expect(window.sessionStorage.getItem(RECORD_KEY)).toBeNull();
+        setVisibility('visible');
+        expect(state.toasts).toHaveLength(1);
+    });
+
+    test('visible then hidden again during the flush: the earlier flush cannot reload early', async () => {
+        let release;
+        state.flush = () => new Promise((resolve) => (release = resolve));
+        hear('3.17.0');
+        await settle();
+        setVisibility('visible');
+        setVisibility('hidden'); // new two-minute countdown starts
+        release();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(reload).not.toHaveBeenCalled();
+        state.flush = async () => {};
+        await vi.advanceTimersByTimeAsync(HIDDEN_RELOAD_DELAY_MS + 100);
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    test('turned off during the flush: no reload', async () => {
+        let release;
+        state.flush = () => new Promise((resolve) => (release = resolve));
+        hear('3.17.0');
+        await settle();
+        state.settings.tabVersionSync = 'off';
+        tabVersionSync._applyMode();
+        release();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('an older build announcing is answered once with its own build', async () => {
+        const channel = state.channels.at(-1);
+        hear('3.15.0');
+        expect(channel.posted).toEqual([{ type: 'version', version: '3.16.0', buildStamp: null }]);
+        hear('3.15.0'); // same older build again: no second reply
+        expect(channel.posted).toHaveLength(1);
+        hear('3.14.0'); // a different older build: one more
+        expect(channel.posted).toHaveLength(2);
+        // equal, newer, garbage and a dev build against a release are never answered
+        hear('3.16.0');
+        hear('3.17.0');
+        hear('nonsense');
+        hear('3.1.0', '2026-08-22T15:30:00Z');
+        expect(channel.posted).toHaveLength(2);
+    });
+
+    test('an older tab that hears the reply follows the usual rules: one reload, then the notice', async () => {
+        feature.cleanup();
+        state.version = '3.15.0';
+        await feature.initialize();
+        hear('3.16.0'); // the reply from the newer tab
+        await settle();
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(state.channels.at(-1).posted).toEqual([{ type: 'version', version: '3.15.0', buildStamp: null }]); // only the startup announcement, no reply
+        feature.cleanup();
+        await feature.initialize(); // reload loaded the old script again
+        visibility = 'visible';
+        hear('3.16.0');
+        await settle();
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(state.toasts).toHaveLength(1);
     });
 
     test('a disconnected tab (character taken elsewhere) is not reloaded', async () => {
