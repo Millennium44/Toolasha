@@ -3899,6 +3899,45 @@ describe('the panel, end to end', () => {
             expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T5', 'T5']);
         });
 
+        test('a trial finished this week leads the table; its totals stay blank and nothing is stored', () => {
+            const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+            guildTrials.record = {
+                ...guildTrials.record,
+                history: [archivedWeek()],
+                tiles: {
+                    ...(guildTrials.record?.tiles || {}),
+                    // Finished this week, off screen: the card read T7 and the payload stated the party done
+                    'combat::trial chameleon': {
+                        name: 'Trial Chameleon',
+                        kind: 'combat',
+                        tier: 7,
+                        points: 1300,
+                        pointsByTier: { 7: 1300 },
+                        completed: true,
+                        samples: [],
+                        tiers: [],
+                        serverProgress: { tier: 7, pct: 40, at: now - 60_000 },
+                    },
+                },
+            };
+            fire(root);
+            expect(historyCells()).toEqual(['', 'This week', 'Last week', 'Best']);
+            expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', 'T7 40%', 'T5', 'T7 40%']);
+            // Milking did not finish this week (it is not on this week's record): blank, not "—"
+            expect(historyCells('Milking')).toEqual(['Milking', '', 'T6', 'T6']);
+            const summary = (label) =>
+                [...document.querySelector(`[data-history-summary="${label}"]`).children].map((c) => c.textContent);
+            expect(summary('Guild Points')[1]).toBe('');
+            expect(summary('Guild Points')[2]).not.toBe('');
+            expect(summary('Tokens each')[1]).toBe('');
+            // The stored results are the archive's alone
+            expect(
+                [...(guildTrials.record.trialResults || []), ...trialResultsOf(guildTrials.record)].every(
+                    (result) => result.weekStart < trialWeekStart(now)
+                )
+            ).toBe(true);
+        });
+
         test('the results are folded once a render pass, for the cards and the block alike', () => {
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
@@ -3906,7 +3945,14 @@ describe('the panel, end to end', () => {
             try {
                 fire(root);
                 expect(text()).toContain('Trial history');
-                expect(fold).toHaveBeenCalledTimes(1);
+                // Once for the cards (finished cycles only), once for the block (with the running cycle), and the
+                // stored results are folded once and handed to both
+                expect(fold).toHaveBeenCalledTimes(2);
+                const [cards, block] = fold.mock.calls.map((call) => call[2]);
+                expect(cards.live).toBeFalsy();
+                expect(block.live).toBe(true);
+                expect(Array.isArray(cards.results)).toBe(true);
+                expect(block.results).toBe(cards.results);
             } finally {
                 fold.mockRestore();
             }

@@ -225,6 +225,7 @@ import {
 import {
     cycleTrialsOf,
     historyRowFor,
+    liveTrialResults,
     resultCycleCap,
     trialHistoryBest,
     trialHistoryCell,
@@ -4778,8 +4779,10 @@ class GuildTrials {
                 return;
             }
 
-            // Once a pass: every card's "Past tiers" line is read off it
-            const pastTiers = this._trialHistory(now, bonuses);
+            // Once a pass: every card's "Past tiers" line is read off it. The block below adds the running
+            // cycle's finished trials; a card's "Past tiers" stays on finished cycles
+            const storedResults = trialResultsOf(this.record);
+            const pastTiers = this._trialHistory(now, bonuses, { results: storedResults });
             for (const tile of tiles) {
                 const record = this.record.tiles[tileKey(tile)];
                 if (!record) continue;
@@ -4881,7 +4884,15 @@ class GuildTrials {
             if (this._renderPayout(root, trialsForPayout, tiles[0]?.element || null, bonuses)) {
                 drawn.add('payout');
             }
-            if (this._renderTrialHistory(root, now, bonuses, pastTiers)) drawn.add('trial-history');
+            if (
+                this._renderTrialHistory(
+                    root,
+                    now,
+                    bonuses,
+                    this._trialHistory(now, bonuses, { live: true, results: storedResults })
+                )
+            )
+                drawn.add('trial-history');
             this._reapBlocks(root, drawn);
         } catch (error) {
             console.error('[GuildTrials] Drawing the trial panel failed:', error);
@@ -6062,14 +6073,25 @@ class GuildTrials {
      * Every trial's tier across the finished cycles, from the record's results.
      * @param {number} [now] - Clock
      * @param {Object} [bonuses] - From {@link _payoutBonuses}; resolved here when omitted
+     * @param {Object} [options] - What to include
+     * @param {boolean} [options.live] - Lead with the running cycle's finished trials, read off the record and
+     *   never stored. Only the Trial history block asks: a card's "Past tiers" and the report stay on finished cycles
+     * @param {Array<Object>|null} [options.results] - This pass's `trialResultsOf`, so the fold runs once
      * @returns {{cycles: Array<Object>, rows: Array<Object>}} From `trialResultsHistory`
      */
-    _trialHistory(now = Date.now(), bonuses = null) {
+    _trialHistory(now = Date.now(), bonuses = null, { live = false, results = null } = {}) {
         const resolved = bonuses || this._payoutBonuses();
-        return trialResultsHistory(trialResultsOf(this.record), {
+        // Another guild's record is about to be archived as such, and its trials are never this guild's
+        const own =
+            live &&
+            recordProvenance(this.record, { guildId: this._guildId(), guildName: this.guildName }) !== 'foreign';
+        return trialResultsHistory(results || trialResultsOf(this.record), {
             now,
             cycleTrials: cycleTrialsOf(this.record),
             buildersHallBonus: resolved?.buildersHall?.bonus ?? null,
+            live: own
+                ? { results: liveTrialResults(this.record, now), cycleStart: this.record?.cycleStart ?? null }
+                : null,
         });
     }
 
@@ -6086,7 +6108,7 @@ class GuildTrials {
      */
     _renderTrialHistory(root, now = Date.now(), bonuses = null, history = null) {
         if (isInProgressView(root)) return false;
-        const { cycles, rows } = history || this._trialHistory(now, bonuses);
+        const { cycles, rows } = history || this._trialHistory(now, bonuses, { live: true });
         // The cap of the server this is on: a cycle is a week on live, a few hours on the test server
         const kept = isTestServer() ? `the last ${resultCycleCap()} cycles` : `${resultCycleCap()} weeks`;
         if (!rows.length) return false;
@@ -6115,6 +6137,11 @@ class GuildTrials {
             `<span style="color:${GAME_COLORS.text}; overflow-wrap:anywhere;">${escapeText(label)}</span>` +
             shown
                 .map((cycle) => {
+                    // The running cycle's payout is not final until it is archived: left blank until then, and
+                    // its column then becomes the archived one with that cycle's own figures
+                    if (cycle.live) {
+                        return cell('', GAME_COLORS.textDim, 'Shown once the cycle is over and archived');
+                    }
                     const summary = summaryOf.get(cycle.key);
                     return cell(summary ? pick(summary) : '—', GAME_COLORS.textDim);
                 })
@@ -6134,7 +6161,8 @@ class GuildTrials {
             'trial-history',
             'Trial history',
             'The tier each trial reached in every finished cycle this client saw, newest first, and ' +
-                `its best. Kept for ${kept}, after the full cycle archive above is gone. &quot;n/r&quot; is a ` +
+                'its best. The running cycle leads as soon as one of its trials has finished; its Guild Points ' +
+                `and Tokens fill in once the cycle is over. Kept for ${kept}, after the full cycle archive above is gone. &quot;n/r&quot; is a ` +
                 'cycle the game&#39;s own list says the trial did not run in. &quot;—&quot; is a cycle with no ' +
                 'result for that trial, where it ran or this client has no list of what ran; T0 is a real result. ' +
                 'Hover a trial for every cycle and the date of its best.',
@@ -6179,6 +6207,7 @@ class GuildTrials {
                 ? [
                       `<div data-history-key="1" style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
                           'T15 63% = tier and progress reached · — = not tracked · blank = didn’t run' +
+                          (shown.some((cycle) => cycle.live) ? ' or not finished yet' : '') +
                           (hidden > 0
                               ? ` · +${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover`
                               : '') +
