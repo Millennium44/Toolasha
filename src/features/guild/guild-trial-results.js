@@ -364,6 +364,30 @@ export function resultsFromHistory(history) {
 }
 
 /**
+ * The running cycle's finished trials, read the way an archived cycle's are — for display only.
+ *
+ * A trial is finished once its card says so (`completed`) or the guild payload states its party done
+ * (`serverDone`); its tiles are read through {@link resultsFromCycle}, so the tier, the end percent and the
+ * points follow the archive's rules exactly. Never stored: the archive stays the only writer of
+ * `trialResults`, and {@link trialResultsHistory} drops these once the cycle has been archived.
+ *
+ * @param {Object|null} record - The trial record
+ * @param {number} [now] - Clock, for a record with no week
+ * @returns {Array<Object>} One entry per finished trial; none for an unfinished one
+ */
+export function liveTrialResults(record, now = Date.now()) {
+    if (!record || typeof record !== 'object' || !record.tiles || typeof record.tiles !== 'object') return [];
+    const tiles = Object.fromEntries(
+        Object.entries(record.tiles).filter(
+            ([, tile]) => tile && typeof tile === 'object' && (tile.completed || tile.serverDone)
+        )
+    );
+    if (!Object.keys(tiles).length) return [];
+    const weekStart = Number.isFinite(record.weekStart) ? record.weekStart : trialWeekStart(now);
+    return resultsFromCycle({ weekStart, tiles, archivedAt: null });
+}
+
+/**
  * How much of a result the card stated: its tier, then its points, then whether it finished.
  * @param {Object} result - A result entry
  * @returns {number[]} Compared in order
@@ -816,6 +840,61 @@ function cycleLabel(cycle, now) {
     return cycleEndLabel(describeCycleAge({ weekStart: cycle.weekStart }, now), cycle.cycleFrom);
 }
 
+/** The running cycle's column key: never an archived cycle's `week|cycle`, so the two can never be taken for one */
+export const LIVE_CYCLE_KEY = 'live';
+
+/**
+ * How long after the running cycle's start an archived cycle's `cycleFrom` may fall and still be the cycle
+ * before it. `cycleFrom` is the start of the cycle that closed an archive, so the previous cycle's archive
+ * carries this cycle's start, give or take the combat hour standing in for an unseen skilling start. One later
+ * than this was closed by a cycle after the running one: the running cycle is archived already.
+ */
+const LIVE_SUPERSEDED_MS = 3 * HOUR_MS;
+
+/**
+ * The running cycle's column: its finished trials, and what to call it.
+ *
+ * On live a cycle is the week. The week's own archive (excluded from the past columns as the live record) is
+ * folded in under the same key, one entry per trial, so a result archived mid-week and still on the record
+ * shows once. On the test server the column is dropped as soon as the archive holds a cycle closed after the
+ * running one began — the running cycle has been archived, and its archived column stands instead.
+ *
+ * @param {Array<Object>} results - Every stored result
+ * @param {Array<Object>} past - The results the past columns show
+ * @param {{results: Array<Object>, cycleStart?: number|null}|null} live - From {@link liveTrialResults}
+ * @param {number} now - Clock
+ * @returns {{label: string, results: Array<Object>}|null} Null when no trial of the running cycle has finished
+ */
+function liveColumn(results, past, live, now) {
+    if (!live || typeof live !== 'object') return null;
+    const thisWeek = trialWeekStart(now);
+    const own = (Array.isArray(live.results) ? live.results : []).filter(isResult);
+    const cycleStart = Number.isFinite(live.cycleStart) ? Math.round(live.cycleStart / 60_000) * 60_000 : null;
+    let shown;
+    let label;
+    if (isTestServer()) {
+        const archived =
+            cycleStart !== null &&
+            past.some(
+                (result) => Number.isFinite(result.cycleFrom) && result.cycleFrom > cycleStart + LIVE_SUPERSEDED_MS
+            );
+        shown = archived ? [] : own;
+        // Named by when it ran, as the archived columns are
+        label = cycleStart !== null ? cycleLabel({ weekStart: thisWeek, cycleFrom: cycleStart }, now) : 'This cycle';
+    } else {
+        const weekArchive = (Array.isArray(results) ? results : []).filter(
+            (result) => isResult(result) && result.weekStart === thisWeek && !Number.isFinite(result.cycleFrom)
+        );
+        // Only this week's record: an older week's is archived at the rollover, and would be that week's column
+        shown = mergeResults(
+            weekArchive,
+            own.filter((result) => result.weekStart === thisWeek && !Number.isFinite(result.cycleFrom))
+        );
+        label = 'This week';
+    }
+    return shown.length ? { label, results: shown } : null;
+}
+
 /**
  * The results as one row per trial, for the history block, the card hover and the report.
  *
@@ -832,13 +911,20 @@ function cycleLabel(cycle, now) {
  * @param {Array<Object>} [options.cycleTrials] - From {@link cycleTrialsOf}. A cell with no result is marked `notRun`
  *   only when the cycle's list for the trial's kind is there and omits the trial; with no list it is unknown, as before.
  *   Never read for a tier, a point or a best
- * @returns {{cycles: Array<{key: string, label: string}>, rows: Array<Object>}} The history
+ * @param {{results: Array<Object>, cycleStart?: number|null}|null} [options.live] - The running cycle's finished
+ *   trials ({@link liveTrialResults}) and, on the test server, when it began. Drawn as a first column keyed
+ *   {@link LIVE_CYCLE_KEY} (marked `live`); a trial not finished yet is `pending` there. Display only
+ * @returns {{cycles: Array<{key: string, label: string, live?: boolean}>, rows: Array<Object>}} The history
  */
-export function trialResultsHistory(results, { now = Date.now(), buildersHallBonus = null, cycleTrials = [] } = {}) {
+export function trialResultsHistory(
+    results,
+    { now = Date.now(), buildersHallBonus = null, cycleTrials = [], live = null } = {}
+) {
     const thisWeek = trialWeekStart(now);
     const past = (Array.isArray(results) ? results : []).filter(
         (result) => isResult(result) && !(result.weekStart >= thisWeek && !Number.isFinite(result.cycleFrom))
     );
+    const running = liveColumn(results, past, live, now);
 
     const cycleMap = new Map();
     for (const result of past) {
@@ -873,16 +959,20 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
         const before = starts.filter((start) => start < end && end - start <= DAY_MS + HOUR_MS);
         return before.length ? Math.max(...before) : end - DAY_MS;
     };
-    const cycles = [...cycleMap.values()]
-        .sort((a, b) => (a.order[0] !== b.order[0] ? b.order[0] - a.order[0] : b.order[1] - a.order[1]))
-        .map((cycle) => {
-            const end = cycle.cycleFrom ?? endOfPiece(cycle.archivedAt);
-            const ran = isTestServer() && Number.isFinite(end) ? startOf(end) : null;
-            return {
-                key: cycle.key,
-                label: ran === null ? cycleLabel(cycle, now) : cycleLabel({ ...cycle, cycleFrom: ran }, now),
-            };
-        });
+    const cycles = [
+        // The running cycle leads, newest; a column of its own key, never an archived cycle's
+        ...(running ? [{ key: LIVE_CYCLE_KEY, label: running.label, live: true }] : []),
+        ...[...cycleMap.values()]
+            .sort((a, b) => (a.order[0] !== b.order[0] ? b.order[0] - a.order[0] : b.order[1] - a.order[1]))
+            .map((cycle) => {
+                const end = cycle.cycleFrom ?? endOfPiece(cycle.archivedAt);
+                const ran = isTestServer() && Number.isFinite(end) ? startOf(end) : null;
+                return {
+                    key: cycle.key,
+                    label: ran === null ? cycleLabel(cycle, now) : cycleLabel({ ...cycle, cycleFrom: ran }, now),
+                };
+            }),
+    ];
 
     const listed = new Map();
     for (const entry of Array.isArray(cycleTrials) ? cycleTrials : []) {
@@ -896,13 +986,16 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
     };
 
     const byTrial = new Map();
-    for (const result of past) {
+    const file = (result, key) => {
         const id = `${result.kind}:${result.trial}`;
         if (!byTrial.has(id)) {
             byTrial.set(id, { id, trial: result.trial, kind: result.kind, name: result.name, byCycle: new Map() });
         }
-        byTrial.get(id).byCycle.set(cycleKeyOf(result), result);
-    }
+        byTrial.get(id).byCycle.set(key, result);
+    };
+    for (const result of past) file(result, cycleKeyOf(result));
+    // A trial finished only in the running cycle still gets its row
+    for (const result of running?.results || []) file(result, LIVE_CYCLE_KEY);
 
     const rows = [...byTrial.values()]
         .map((entry) => {
@@ -910,7 +1003,9 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                 const result = entry.byCycle.get(cycle.key);
                 if (!result) {
                     const empty = { key: cycle.key, label: cycle.label, tier: null, points: null };
-                    if (didNotRun(cycle.key, entry.kind, entry.trial)) empty.notRun = true;
+                    // The running cycle's trial that has not finished: blank, never "—" or "did not run"
+                    if (cycle.live) empty.pending = true;
+                    else if (didNotRun(cycle.key, entry.kind, entry.trial)) empty.notRun = true;
                     return empty;
                 }
                 const tier = resultTier(result);
@@ -979,6 +1074,8 @@ function tierWithProgress(tier, progress) {
  */
 export function trialHistoryCell(week) {
     if (Number.isFinite(week?.tier)) return tierWithProgress(week.tier, week.progress);
+    // The running cycle's unfinished trial: nothing to say yet
+    if (week?.pending) return '';
     return week?.notRun ? NOT_RUN_CELL : '—';
 }
 
@@ -993,7 +1090,9 @@ export const INLINE_CYCLES = 6;
  */
 export function trialHistoryTiers(row, inline = INLINE_CYCLES) {
     // Written text keeps "n/r" for a cycle the table leaves blank, so the line still reads
-    const shown = (row?.weeks || []).slice(0, inline).map((week) => trialHistoryCell(week) || 'n/r');
+    const shown = (row?.weeks || [])
+        .slice(0, inline)
+        .map((week) => trialHistoryCell(week) || (week?.pending ? 'running' : 'n/r'));
     const hidden = Math.max(0, (row?.weeks || []).length - inline);
     return [...shown, ...(hidden ? [`+${hidden} earlier`] : [])].join(' · ');
 }
@@ -1038,7 +1137,9 @@ export function trialHistoryCells(row, inline = INLINE_CYCLES) {
  */
 export function trialHistoryDetail(row) {
     const lines = (row?.weeks || []).map((week) => {
-        if (!Number.isFinite(week.tier)) return `${week.label}: ${week.notRun ? 'did not run' : '—'}`;
+        if (!Number.isFinite(week.tier)) {
+            return `${week.label}: ${week.pending ? 'not finished yet' : week.notRun ? 'did not run' : '—'}`;
+        }
         // An unknown figure is "—", never 0: a tier above T0 always paid something
         const points = week.points
             ? `${week.points.derived ? '~' : ''}${formatWithSeparator(Math.round(week.points.points))} pts`
@@ -1051,6 +1152,9 @@ export function trialHistoryDetail(row) {
         '"—" is a cycle this client has not tracked (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
         'A blank cell is a cycle the game’s own list says the trial did not run in.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',
+        ...((row?.weeks || []).some((week) => week.key === LIVE_CYCLE_KEY)
+            ? [`${row.weeks[0].label} is the running cycle: a trial shows there once it has finished.`]
+            : []),
         ...(row?.best
             ? [`Best: ${tierWithProgress(row.best.tier, row.best.progress)}, ${inSentence(row.best.label)}.`]
             : []),
