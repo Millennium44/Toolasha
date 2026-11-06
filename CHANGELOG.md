@@ -6745,6 +6745,100 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.77.0](https://github.com/Millennium44/Toolasha/compare/v3.76.1...v3.77.0) (2026-11-06)
+
+
+### Features
+
+* Combat and Labyrinth presets pair their blocks at three columns ([fb92025](https://github.com/Millennium44/Toolasha/commit/fb92025a8e4e2604152cfcb4115c38ff10b536e5))
+* combat sim upgrade search can try several ability levels per ability ([2c23512](https://github.com/Millennium44/Toolasha/commit/2c2351225c261dd205bd01301656c10cfa535b13))
+* consumables panel and overlay tile follow the active skill's teas ([55dbd62](https://github.com/Millennium44/Toolasha/commit/55dbd62caaf4175e1b0933cec9cfbefa87142639))
+* Dashboard preset is fourteen tiles, adding DPS, deaths per hour and luck ([46e68e4](https://github.com/Millennium44/Toolasha/commit/46e68e41f14a338dc3a30111f843a5cdeee0629e))
+* Dense preset for the twenty-tile overlay at nine columns ([e0f5fcf](https://github.com/Millennium44/Toolasha/commit/e0f5fcff4ada40e911a33534c99f8ed2fbecaf94))
+* Experience/hr and Total Profit answer for the running skilling action ([55e5bbb](https://github.com/Millennium44/Toolasha/commit/55e5bbb9341970f3171fea1fb4d8690a19466d44))
+* inventory item tooltips move off the hovered item when they would cover it ([9ef2643](https://github.com/Millennium44/Toolasha/commit/9ef2643b4e7402abd9a8f8e0e073f92e42103c72))
+* inventory item tooltips move off the hovered item when they would cover it ([608874c](https://github.com/Millennium44/Toolasha/commit/608874ce314d87a57181dc3fb7057e1d29ed66d0))
+* item spacing setting also applies to the game Inventory view ([198b75f](https://github.com/Millennium44/Toolasha/commit/198b75f4f696e6dfedf00b24cfc2fbed472ceca2))
+* overlay picker folds its tiles into groups, retires dead ones, renames two ([a1c945e](https://github.com/Millennium44/Toolasha/commit/a1c945ed5f5c0c3b06328008c24cbef41caecb34))
+* overlay picker lists tiles that answer in both activities under Combat and skilling ([660b52e](https://github.com/Millennium44/Toolasha/commit/660b52e4a08989717f67e9124f9abc3ddac8b728))
+* overlay picker move arrows are finger-sized on a touch screen ([2e7914a](https://github.com/Millennium44/Toolasha/commit/2e7914a4414d38c8eeb29198356a1cd521cd174b))
+* overlay tile text that would be cut off shrinks to fit ([e8379ea](https://github.com/Millennium44/Toolasha/commit/e8379eaf562e23ff06447c839e617c4fa34d39d5))
+* presets fill the rows on wide grids from four columns up ([dd1d267](https://github.com/Millennium44/Toolasha/commit/dd1d26773389c2b5be92ad318730eae283d41db3))
+* presets switch to three columns on wider panels and keep a hand-set column count ([0a29ce6](https://github.com/Millennium44/Toolasha/commit/0a29ce66d4af5464389323c410ca284a1e605bb6))
+* tabs follow a newer Toolasha version loaded in another tab ([6dcfd58](https://github.com/Millennium44/Toolasha/commit/6dcfd586b97cf0c146d24869d07e9e480407dd47))
+* tabs follow a newer Toolasha version loaded in another tab ([2a08192](https://github.com/Millennium44/Toolasha/commit/2a08192cd3000f7f53cbe94440316ac47dd01e00))
+* Time to Level follows the running skill, and the Skilling preset is the skilling set ([098bed3](https://github.com/Millennium44/Toolasha/commit/098bed3c447af1d70d2dc127c912c8f775244200))
+* trim overlay presets; Dashboard replaces Default as the starting and reset layout ([09897c6](https://github.com/Millennium44/Toolasha/commit/09897c6a822946eb50cf3647321ef24accf7baab))
+* upgrade finder can set each ability to the next multiple of a step ([1c9905f](https://github.com/Millennium44/Toolasha/commit/1c9905fcbb7566c7ae6114032d0445e4c3b1f608))
+
+
+### Bug Fixes
+
+* a disconnected page hides panel descendants that set their own visibility ([0b8cf16](https://github.com/Millennium44/Toolasha/commit/0b8cf16cf8e0ed5d10fef335e6f802ee7cef01a2))
+* a preset applied under a held column count is no longer marked edited ([f0a5f45](https://github.com/Millennium44/Toolasha/commit/f0a5f45417a4ed001724e9ae699b3aa90ad87c6b))
+* an overlay preset re-fit on resize no longer writes the synced settings ([b7b4b5a](https://github.com/Millennium44/Toolasha/commit/b7b4b5a16f4852c38ab75f341335939cc13ab3b9))
+* an untouched overlay preset re-fits its spans when the panel is widened or narrowed ([90fc282](https://github.com/Millennium44/Toolasha/commit/90fc28295bca981c65533c4a209b5f40062e52f4))
+* an untouched overlay preset re-fits to the real column count when the panel opens ([b0847a9](https://github.com/Millennium44/Toolasha/commit/b0847a983e0862290a570e711f94f28132623ffe))
+* an untouched overlay preset re-fits when a window resize changes the column count ([c5095ae](https://github.com/Millennium44/Toolasha/commit/c5095ae83717f6ec5e6e50229b1a97e8414c0dd5))
+* calibration leaves out forecasts saved while 3.76.0 scaled enhanced gear 50x too strongly ([ff2ea41](https://github.com/Millennium44/Toolasha/commit/ff2ea41ddb1b5b9b5b88523850a0f178f17d552e))
+* combat Consumables tile is two lines, matching the skilling one ([0577be1](https://github.com/Millennium44/Toolasha/commit/0577be1d2a6a0a076a2cdc1435ee29b137a2bcfe))
+* combat sim Export CSV sits on the Cards/Table row instead of its own row ([67eebf2](https://github.com/Millennium44/Toolasha/commit/67eebf2aec555829aba78dd370ac69c645f49d2a))
+* Consumables panel skill view drops the dungeon card and keeps its open dropdown ([1c35e42](https://github.com/Millennium44/Toolasha/commit/1c35e4208aa29c1b01f9a65384e6883634ebb93a))
+* Consumables panel skill view drops the Labyrinth list; rows stack on a narrow panel ([29e9e9a](https://github.com/Millennium44/Toolasha/commit/29e9e9a8bccb102ef3abd4ae3ecf4e14c18bb2b9))
+* Consumables panel stacks Labyrinth rows on a narrow panel ([c4645ca](https://github.com/Millennium44/Toolasha/commit/c4645ca43f1c0d186c18c12c6ee1d396179a6183))
+* Consumables tile keeps its Ask cost and unpriced flag on a narrow tile ([b113b68](https://github.com/Millennium44/Toolasha/commit/b113b686eca007cc68511f6b6d23ab496864f144))
+* Consumables tile tooltips say double-click, and a failed profit estimate is worded ([30c3c64](https://github.com/Millennium44/Toolasha/commit/30c3c64ad6a834a6bda90502d7acde8af5cede52))
+* dungeon ROI board prices food and XP from the party whose pace it uses ([50eee57](https://github.com/Millennium44/Toolasha/commit/50eee572f01f64d3fc63bd2c84d5de4496b84038)), closes [#800](https://github.com/Millennium44/Toolasha/issues/800)
+* floating panels no longer draw over the game's Disconnected screen ([68cca3f](https://github.com/Millennium44/Toolasha/commit/68cca3fda1d7f23926951ddafc18af25491d19a9))
+* merge duplicate tasks fills the combined count after a Solo estimate ([c28491f](https://github.com/Millennium44/Toolasha/commit/c28491f53e7faa61dddf5a172ed9e19496e56415))
+* merge duplicate tasks fills the combined count after a Solo estimate ([c57fdca](https://github.com/Millennium44/Toolasha/commit/c57fdca1e00c40a495875314da7d07b45b82c511))
+* overlay always floats on a phone and drops its dock button ([6c2b9d5](https://github.com/Millennium44/Toolasha/commit/6c2b9d5bab471fa3fe01d4478e247de307c3317b))
+* overlay no longer has the game's cooldown numbers showing through it ([a4f03e5](https://github.com/Millennium44/Toolasha/commit/a4f03e53d560934ebfe48a23445b90f08560dbd8))
+* overlay no longer reopens over the game after a refresh on a phone ([0d8a6fc](https://github.com/Millennium44/Toolasha/commit/0d8a6fc4646c7278c7b0bff316efadaaedb4b7c3))
+* overlay picker keeps a retired tile listed while the popover is open ([a910589](https://github.com/Millennium44/Toolasha/commit/a910589c25d0141bcd084dd17b4b8ebaf0d74716))
+* overlay tile picker keeps its scroll position on a redraw ([7ba275d](https://github.com/Millennium44/Toolasha/commit/7ba275d0b11fb22290792d7e1ef4bfc5a6a9d4da))
+* reroll walk drawer stays open when done; ability books default on for new players ([5b66a93](https://github.com/Millennium44/Toolasha/commit/5b66a938bd7cb9d8fc336b12a488f78b15a4c897))
+* reroll walk drawer stays open when done; ability books default on for new players ([def71ed](https://github.com/Millennium44/Toolasha/commit/def71ede6b932b7913a56211f5e3f1e86aaf00d9))
+* Reset layout picks the Dashboard spans for the width the reset produces ([983c78b](https://github.com/Millennium44/Toolasha/commit/983c78bc8b086ed7aa332f0390dd6b834dfbddc7))
+* skill pickers list action types in the game order, not alphabetical ([98d6a8a](https://github.com/Millennium44/Toolasha/commit/98d6a8ab5780bcdfb3f1d1a9b7146e8c7ffd6571))
+* skilling experience rate no longer reads low for ten minutes after a skill starts ([6dfceee](https://github.com/Millennium44/Toolasha/commit/6dfceee420ad33055ed661be0337dfc0f83029b9))
+* skilling tea refill counts the running activation like time left does ([8508139](https://github.com/Millennium44/Toolasha/commit/85081392ba77a71991ff4569318676e2e9802ae2))
+* sync clears its pull summary on a character switch; drop the stale carry-over notice ([35b3197](https://github.com/Millennium44/Toolasha/commit/35b3197753098aa5e4f8617dcdcf91d3b8924bec))
+* tab follow cancels its automatic reload while writes are still queued ([1acb546](https://github.com/Millennium44/Toolasha/commit/1acb546b370634a7d1724906c0f3be81ff720d3e))
+* task badge speed counts the game enhancement table, not the level ([ff4ed30](https://github.com/Millennium44/Toolasha/commit/ff4ed30e5e5a062c2979a7b8b255248676162a35))
+* ticking another upgrade candidate box no longer resets the ability level mode ([b0cbc78](https://github.com/Millennium44/Toolasha/commit/b0cbc789234e4acd0ac91520c8c68f32ce61a1f3))
+* tighter item spacing no longer leaves the game inventory tabs a column short ([a73ff89](https://github.com/Millennium44/Toolasha/commit/a73ff89795e65fbea7ec1447bc7da2b280153fc1))
+* Toolasha tab keeps the inventory icon row pinned; tab follow asks by default ([0de336f](https://github.com/Millennium44/Toolasha/commit/0de336f5495d6f8481f29f135e2136c9e8767436))
+* Total Profit blanks instead of showing a green zero before prices arrive ([95c139a](https://github.com/Millennium44/Toolasha/commit/95c139ac5260b2907eb5801d7732e10a33621ced))
+* Total Profit estimate for a running skill uses the action's own loadout ([d469bc0](https://github.com/Millennium44/Toolasha/commit/d469bc0a7fe326bfb31b10b59bb282a484a1c9af))
+* Total Profit prices an upgrade craft at the +N stack it draws ([ef8dffd](https://github.com/Millennium44/Toolasha/commit/ef8dffd42c38c742e3fdc8d792d48adab9a57368))
+* Total Profit tile keeps the sell-tax exclusion warning ([5655889](https://github.com/Millennium44/Toolasha/commit/56558893480b4b27449609d5d0690abad43af181))
+
+
+### Performance Improvements
+
+* overlay text fitting skips tiles whose width did not change ([02a2a3a](https://github.com/Millennium44/Toolasha/commit/02a2a3a147753a67a0c526b62047b9edcd12c107))
+
+
+### Documentation
+
+* changelog for skilling consumables and overlay presets ([4a57589](https://github.com/Millennium44/Toolasha/commit/4a57589a62a9145918fcad1627aeeac95a347191))
+* changelog for the combat sim ability steps and Export CSV row ([9391d8e](https://github.com/Millennium44/Toolasha/commit/9391d8e3d2ca97f97f3de7d79ae4996eeac40370))
+* changelog for the overlay presets, Dense preset, text fit and phone changes ([58fb293](https://github.com/Millennium44/Toolasha/commit/58fb2935d92587598d51a0002d287b63f040b823))
+* first read of a game table pastes one real value and names its scale ([1f5cdba](https://github.com/Millennium44/Toolasha/commit/1f5cdba3e2fff9d5a4536be9a9844c8a9df173f6))
+
+
+### Tests
+
+* real enhancement table and items as a fixture, with scaling tests at every level ([7dc6a79](https://github.com/Millennium44/Toolasha/commit/7dc6a79dfcbb792c04399d338c6adb31038954ff))
+* skilling profit estimate stubs the bridge accessors every mock factory must carry ([074dca8](https://github.com/Millennium44/Toolasha/commit/074dca8a77699c0c0ec16c0531676432d5ad9bde))
+
+
+### Miscellaneous Chores
+
+* compare worn-gear figures with the game noncombatStats once per character ([e06297c](https://github.com/Millennium44/Toolasha/commit/e06297c2af60eaec8960895a5403bb48889b7a38))
+* gates print failing tests and the summary instead of the last four lines ([6aadaa1](https://github.com/Millennium44/Toolasha/commit/6aadaa1cb312976a5760ec1c3ffd533490d108f8))
+
 ## [3.76.1](https://github.com/Millennium44/Toolasha/compare/v3.76.0...v3.76.1) (2026-11-05)
 
 ### Bug Fixes
