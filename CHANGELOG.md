@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial players wrap in rows under your card
+
+When more players are in a guild trial than fit beside your card, the extra ones now line up in rows under it instead of a tall narrow column, in both the combat and the skilling trial. The rows beside your card stay as the game draws them.
+
 ### Guild trial payout card fits on one line
 
 The payout card in a running guild trial leads with its figures and the fold toggle on one line, so it takes less room above the fight.
