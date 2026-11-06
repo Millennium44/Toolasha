@@ -612,8 +612,17 @@ class PhiloCalculator {
                 // A save from before the modes holds only the two switches: it keeps behaving as it did
                 // (the matching forced setup). Only a player who never saved a choice starts on Auto
                 // (the record always carries an empty itemCostOverrides, so "saved" alone says nothing).
+                // A save from before the modes that still reads the old default (Prime on, tea off) was never a
+                // choice: it starts on Auto like a new player (the maintainer's call). One that changed either
+                // checkbox keeps the matching fixed setup.
+                const untouchedOldDefault =
+                    !('catalystMode' in saved) &&
+                    !('teaMode' in saved) &&
+                    saved.useCatalyst !== false &&
+                    saved.useCatalyticTea !== true;
                 const oldSwitches =
-                    typeof saved.useCatalyst === 'boolean' || typeof saved.useCatalyticTea === 'boolean';
+                    !untouchedOldDefault &&
+                    (typeof saved.useCatalyst === 'boolean' || typeof saved.useCatalyticTea === 'boolean');
                 // A saved mode wins only while the old switches beside it still say what it would write. An
                 // older build keeps the mode it does not know (the record merges) but rewrites the switches,
                 // so a mismatch means the older build changed the setting last, and its switches are taken.

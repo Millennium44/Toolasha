@@ -1787,11 +1787,23 @@ describe('automatic catalyst and tea setup per row', () => {
             expect([c.catalystMode, c.teaMode]).toEqual(['auto', 'auto']);
         });
 
-        test('an old save with the two switches keeps behaving as it did', async () => {
+        test('an old save still on the old default (Prime on, tea off) starts on Auto', async () => {
             seed({ useCatalyst: true, useCatalyticTea: false });
             const c = new PhiloCalculator();
             await c.loadSettings();
-            expect([c.catalystMode, c.teaMode]).toEqual(['prime', 'off']);
+            expect([c.catalystMode, c.teaMode]).toEqual(['auto', 'auto']);
+        });
+
+        test('an old save that changed a switch keeps the matching fixed setup', async () => {
+            seed({ useCatalyst: true, useCatalyticTea: true });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['prime', 'on']);
+
+            seed({ useCatalyst: false, useCatalyticTea: false });
+            const e = new PhiloCalculator();
+            await e.loadSettings();
+            expect([e.catalystMode, e.teaMode]).toEqual(['none', 'off']);
 
             seed({ useCatalyst: false, useCatalyticTea: true });
             const d = new PhiloCalculator();
