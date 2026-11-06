@@ -5071,9 +5071,11 @@ class CombatSimUI {
      * @param {HTMLElement} container - The results container, already rendered
      * @param {string} stem - Filename stem
      * @param {Function} build - Returns `{ rows, columns }` at click time
+     * @param {Object} [options] - `{ besideViewSwitch }`: sit on the Cards | Table row, right-aligned, instead of
+     *   taking a row of its own (falls back to the own row when the container has no switch)
      * @private
      */
-    _addCsvExport(container, stem, build) {
+    _addCsvExport(container, stem, build, options = {}) {
         if (!container) return;
         container.querySelector('[data-csv-export]')?.remove();
 
@@ -5094,6 +5096,20 @@ class CombatSimUI {
 
         bar.appendChild(button);
 
+        const viewSwitch = options.besideViewSwitch ? container.querySelector('.mwi-ucards-switch') : null;
+        if (viewSwitch?.parentNode) {
+            // One wrapping row: the switch on the left, Export CSV pushed right (it drops under the switch
+            // rather than overflowing when the panel is too narrow for both)
+            const row = document.createElement('div');
+            row.dataset.viewRow = '';
+            row.style.cssText = 'display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:0 0 6px 0;';
+            viewSwitch.parentNode.insertBefore(row, viewSwitch);
+            viewSwitch.style.margin = '0';
+            row.appendChild(viewSwitch);
+            bar.style.cssText = 'display:flex; justify-content:flex-end; margin:0 0 0 auto;';
+            row.appendChild(bar);
+            return;
+        }
         container.insertBefore(bar, container.firstChild);
     }
 
@@ -15498,85 +15514,90 @@ class CombatSimUI {
 
         // Every measured figure, whatever the ⚙ menu is currently showing — the
         // point of a spreadsheet is the columns you did not think to look at
-        this._addCsvExport(container, 'combatsim-upgrades', () => ({
-            columns: [
-                { key: 'upgrade', label: 'Upgrade' },
-                { key: 'type', label: 'Type' },
-                { key: 'cost', label: 'Cost' },
-                { key: 'costSource', label: 'Cost basis' },
-                { key: 'score', label: 'Score' },
-                { key: 'dps', label: 'DPS' },
-                { key: 'xpPerHour', label: 'XP/hr' },
-                { key: 'profitPerHour', label: 'Profit/hr' },
-                { key: 'encountersPerHour', label: 'Encounters/hr' },
-                { key: 'deathsPerHour', label: 'Deaths/hr' },
-                { key: 'dpsPct', label: 'DPS change %' },
-                { key: 'xpPct', label: 'XP change %' },
-                { key: 'profitPct', label: 'Profit change %' },
-                { key: 'encountersPct', label: 'Encounters change %' },
-                { key: 'deathsPct', label: 'Deaths change %' },
-                { key: 'goldPerDps', label: 'Gold/0.01% DPS' },
-                { key: 'goldPerXp', label: 'Gold/0.01% EXP' },
-                { key: 'goldPerProfit', label: 'Gold/0.01% Profit' },
-                { key: 'goldPerEncounters', label: 'Gold/0.01% EPH' },
-                { key: 'goldPerDeaths', label: 'Gold/0.01% DPH' },
-                { key: 'profitGainPerHour', label: 'Profit gain/hr' },
-                { key: 'paybackHours', label: 'Hours to afford' },
-                { key: 'repayHours', label: 'Hours to repay' },
-                { key: 'roiAnnualPct', label: 'ROI 1yr %' },
-                { key: 'levelTimeHours', label: 'Hours to level' },
-                { key: 'scrollGoldPerDps', label: 'Scroll gold/hr per 0.01% DPS' },
-                { key: 'scrollGoldPerXp', label: 'Scroll gold/hr per 0.01% EXP' },
-                { key: 'scrollGoldPerProfit', label: 'Scroll gold/hr per 0.01% Profit' },
-                { key: 'scrollNetPerHour', label: 'Scroll net gold/hr after tokens' },
-                { key: 'dpsNoisePct', label: 'DPS error ±%' },
-                { key: 'profitNoisePct', label: 'Profit error ±%' },
-                { key: 'measured', label: 'Clears the noise' },
-                { key: 'costUnpriced', label: 'Unpriced running cost' },
-            ],
-            // Infinity is not a number a spreadsheet can hold; blank says the
-            // same thing ("never repays") without pretending to be a measurement
-            rows: (this._upgradeResultsData?.results || []).map((r) => {
-                const finite = (value) => (Number.isFinite(value) ? value : null);
-                return {
-                    upgrade: r.candidate?.description || '',
-                    type: r.candidate?.type || 'equipment',
-                    cost: finite(r.cost),
-                    costSource: r.costSource || '',
-                    // As the table shows it: points are whole, a percent of best is rounded
-                    score: Number.isFinite(r.score) && !r.candidate?.abilityOrder ? Math.round(r.score) : null,
-                    dps: finite(r.metrics?.dps),
-                    xpPerHour: finite(r.metrics?.xpPerHour),
-                    profitPerHour: finite(r.metrics?.profitPerHour),
-                    encountersPerHour: finite(r.metrics?.encountersPerHour),
-                    deathsPerHour: finite(r.metrics?.deathsPerHour),
-                    dpsPct: finite(r.deltas?.dps),
-                    xpPct: finite(r.deltas?.xp),
-                    profitPct: finite(r.deltas?.profit),
-                    encountersPct: finite(r.deltas?.encounters),
-                    deathsPct: finite(r.deltas?.deaths),
-                    goldPerDps: finite(r.goldPer?.dps),
-                    goldPerXp: finite(r.goldPer?.xp),
-                    goldPerProfit: finite(r.goldPer?.profit),
-                    goldPerEncounters: finite(r.goldPer?.encounters),
-                    goldPerDeaths: finite(r.goldPer?.deaths),
-                    profitGainPerHour: finite(r.economics?.profitGainPerHour),
-                    paybackHours: finite(r.economics?.paybackHours),
-                    repayHours: finite(r.economics?.repayHours),
-                    roiAnnualPct: finite(r.economics?.roiAnnualPct),
-                    levelTimeHours: finite(r.levelTimeHours),
-                    scrollGoldPerDps: finite(r.scrollGoldPer?.dps),
-                    scrollGoldPerXp: finite(r.scrollGoldPer?.xp),
-                    scrollGoldPerProfit: finite(r.scrollGoldPer?.profit),
-                    scrollNetPerHour: finite(r.scrollNetPerHour),
-                    dpsNoisePct: finite(r.noise?.dps),
-                    profitNoisePct: finite(r.noise?.profit),
-                    measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
-                    // The items nothing priced: the profit columns of such a row are a ceiling
-                    costUnpriced: (r.costUnpriced || []).join('; '),
-                };
+        this._addCsvExport(
+            container,
+            'combatsim-upgrades',
+            () => ({
+                columns: [
+                    { key: 'upgrade', label: 'Upgrade' },
+                    { key: 'type', label: 'Type' },
+                    { key: 'cost', label: 'Cost' },
+                    { key: 'costSource', label: 'Cost basis' },
+                    { key: 'score', label: 'Score' },
+                    { key: 'dps', label: 'DPS' },
+                    { key: 'xpPerHour', label: 'XP/hr' },
+                    { key: 'profitPerHour', label: 'Profit/hr' },
+                    { key: 'encountersPerHour', label: 'Encounters/hr' },
+                    { key: 'deathsPerHour', label: 'Deaths/hr' },
+                    { key: 'dpsPct', label: 'DPS change %' },
+                    { key: 'xpPct', label: 'XP change %' },
+                    { key: 'profitPct', label: 'Profit change %' },
+                    { key: 'encountersPct', label: 'Encounters change %' },
+                    { key: 'deathsPct', label: 'Deaths change %' },
+                    { key: 'goldPerDps', label: 'Gold/0.01% DPS' },
+                    { key: 'goldPerXp', label: 'Gold/0.01% EXP' },
+                    { key: 'goldPerProfit', label: 'Gold/0.01% Profit' },
+                    { key: 'goldPerEncounters', label: 'Gold/0.01% EPH' },
+                    { key: 'goldPerDeaths', label: 'Gold/0.01% DPH' },
+                    { key: 'profitGainPerHour', label: 'Profit gain/hr' },
+                    { key: 'paybackHours', label: 'Hours to afford' },
+                    { key: 'repayHours', label: 'Hours to repay' },
+                    { key: 'roiAnnualPct', label: 'ROI 1yr %' },
+                    { key: 'levelTimeHours', label: 'Hours to level' },
+                    { key: 'scrollGoldPerDps', label: 'Scroll gold/hr per 0.01% DPS' },
+                    { key: 'scrollGoldPerXp', label: 'Scroll gold/hr per 0.01% EXP' },
+                    { key: 'scrollGoldPerProfit', label: 'Scroll gold/hr per 0.01% Profit' },
+                    { key: 'scrollNetPerHour', label: 'Scroll net gold/hr after tokens' },
+                    { key: 'dpsNoisePct', label: 'DPS error ±%' },
+                    { key: 'profitNoisePct', label: 'Profit error ±%' },
+                    { key: 'measured', label: 'Clears the noise' },
+                    { key: 'costUnpriced', label: 'Unpriced running cost' },
+                ],
+                // Infinity is not a number a spreadsheet can hold; blank says the
+                // same thing ("never repays") without pretending to be a measurement
+                rows: (this._upgradeResultsData?.results || []).map((r) => {
+                    const finite = (value) => (Number.isFinite(value) ? value : null);
+                    return {
+                        upgrade: r.candidate?.description || '',
+                        type: r.candidate?.type || 'equipment',
+                        cost: finite(r.cost),
+                        costSource: r.costSource || '',
+                        // As the table shows it: points are whole, a percent of best is rounded
+                        score: Number.isFinite(r.score) && !r.candidate?.abilityOrder ? Math.round(r.score) : null,
+                        dps: finite(r.metrics?.dps),
+                        xpPerHour: finite(r.metrics?.xpPerHour),
+                        profitPerHour: finite(r.metrics?.profitPerHour),
+                        encountersPerHour: finite(r.metrics?.encountersPerHour),
+                        deathsPerHour: finite(r.metrics?.deathsPerHour),
+                        dpsPct: finite(r.deltas?.dps),
+                        xpPct: finite(r.deltas?.xp),
+                        profitPct: finite(r.deltas?.profit),
+                        encountersPct: finite(r.deltas?.encounters),
+                        deathsPct: finite(r.deltas?.deaths),
+                        goldPerDps: finite(r.goldPer?.dps),
+                        goldPerXp: finite(r.goldPer?.xp),
+                        goldPerProfit: finite(r.goldPer?.profit),
+                        goldPerEncounters: finite(r.goldPer?.encounters),
+                        goldPerDeaths: finite(r.goldPer?.deaths),
+                        profitGainPerHour: finite(r.economics?.profitGainPerHour),
+                        paybackHours: finite(r.economics?.paybackHours),
+                        repayHours: finite(r.economics?.repayHours),
+                        roiAnnualPct: finite(r.economics?.roiAnnualPct),
+                        levelTimeHours: finite(r.levelTimeHours),
+                        scrollGoldPerDps: finite(r.scrollGoldPer?.dps),
+                        scrollGoldPerXp: finite(r.scrollGoldPer?.xp),
+                        scrollGoldPerProfit: finite(r.scrollGoldPer?.profit),
+                        scrollNetPerHour: finite(r.scrollNetPerHour),
+                        dpsNoisePct: finite(r.noise?.dps),
+                        profitNoisePct: finite(r.noise?.profit),
+                        measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
+                        // The items nothing priced: the profit columns of such a row are a ceiling
+                        costUnpriced: (r.costUnpriced || []).join('; '),
+                    };
+                }),
             }),
-        }));
+            { besideViewSwitch: true }
+        );
 
         // Last, after the export bar has been inserted and the reopened details
         // have taken their height back — restoring earlier would clamp against a

@@ -16868,6 +16868,26 @@ describe('upgrade results as cards', () => {
         expect(container().querySelector('#mwi-csim-gold-verify')).toBeTruthy();
         expect(container().querySelector('[data-upgrade-stopped]')).toBeTruthy();
     });
+
+    test('Export CSV sits on the Cards | Table row, right-aligned and wrapping, with its handler intact', () => {
+        draw({}, rows());
+        for (const view of ['cards', 'table']) {
+            container().querySelector(`[data-card-view="${view}"]`).click();
+            const exported = container().querySelectorAll('[data-csv-export]');
+            expect(exported).toHaveLength(1);
+            const row = exported[0].parentElement;
+            expect(row.dataset.viewRow).toBeDefined();
+            expect(row.querySelector('.mwi-ucards-switch')).toBeTruthy();
+            expect(row.style.flexWrap).toBe('wrap');
+            expect(exported[0].style.marginLeft).toBe('auto');
+            expect(exported[0].querySelector('button').textContent).toBe('Export CSV');
+        }
+    });
+
+    test('no results drawn, no Export CSV button', () => {
+        container().innerHTML = '';
+        expect(container().querySelector('[data-csv-export]')).toBeNull();
+    });
 });
 
 describe('the Results tab reads long counts short', () => {
