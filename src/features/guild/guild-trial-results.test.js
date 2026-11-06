@@ -36,6 +36,7 @@ import { FOREIGN_CYCLE_REASON } from './guild-trial-history.js';
 import { trialWeekStart } from './guild-trials-math.js';
 
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
 const WEEK = 7 * DAY;
 const now = Date.parse('2026-10-28T12:00:00Z');
 const thisWeek = trialWeekStart(now);
@@ -328,6 +329,30 @@ describe('trialResultsHistory', () => {
         expect(cycles[0].label).toMatch(/^[A-Z][a-z]{2} \d{1,2}:\d{2} [AP]M$/);
         expect(cycles[0].label).not.toMatch(/this week/i);
         expect(trialHistoryCells(rows[0])).toMatch(/^T4 · T2 · best T4/);
+    });
+
+    test('a test-server piece an older build cut at the weekly reset is labelled by its cycle end, not "Last week"', () => {
+        game.testServer = true;
+        // The daily boundaries are cycleFrom values a day apart; the piece was archived 3 h after one boundary,
+        // with no cycleFrom, so its cycle ended at the next boundary
+        const boundary = thisWeek - 2 * DAY;
+        const results = resultsFromHistory([
+            cycle(weeksAgo(1), { a: badger(3, 300) }, { cycleFrom: boundary, reason: 'an earlier cycle of this week' }),
+            cycle(
+                weeksAgo(1),
+                { a: badger(5, 500) },
+                { archivedAt: boundary + 3 * HOUR, reason: 'the week rolled over' }
+            ),
+        ]);
+        const { cycles } = trialResultsHistory(results, { now });
+        const labels = cycles.map((c) => c.label);
+        expect(labels.some((label) => /last week/i.test(label))).toBe(false);
+        const end = new Date(boundary + DAY).toLocaleString('en-US', {
+            weekday: 'short',
+            hour: 'numeric',
+            minute: '2-digit',
+        });
+        expect(labels).toContain(end);
     });
 
     test('more cycles than fit inline say how many more there are', () => {

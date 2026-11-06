@@ -63,6 +63,9 @@ import {
     statesPoints,
 } from './guild-trial-history.js';
 import { isTestServer } from '../../utils/game-server.js';
+
+/** A test-server trial cycle: one a day */
+const DAY_MS = 24 * 60 * 60 * 1000;
 import { formatWithSeparator } from '../../utils/formatters.js';
 
 /** Finished cycles kept on live, where a cycle is a week: a year of them */
@@ -842,12 +845,35 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
         const order = resultOrder(result);
         const held = cycleMap.get(key);
         if (!held || order[1] > held.order[1]) {
-            cycleMap.set(key, { key, weekStart: result.weekStart, cycleFrom: result.cycleFrom ?? null, order });
+            cycleMap.set(key, {
+                key,
+                weekStart: result.weekStart,
+                cycleFrom: result.cycleFrom ?? null,
+                archivedAt: Number.isFinite(result.archivedAt) ? result.archivedAt : null,
+                order,
+            });
         }
     }
+    // An earlier build cut the test server's running daily cycle at the weekly reset and stored that piece with no
+    // cycleFrom, which reads "Last week". Its cycle really ended at the first daily boundary after it was archived;
+    // the boundaries are the other cycles' cycleFrom, a day apart. Only the label uses it: nothing stored changes
+    // The latest start before the piece, plus a day: stepping whole days from an older start drifts across a clock
+    // change (a cycle that began at 5:01 PM before Nov 1 put the piece at "4:01 PM")
+    const starts = past.map((result) => result.cycleFrom).filter(Number.isFinite);
+    const endOfPiece = (archivedAt) => {
+        if (!isTestServer() || !Number.isFinite(archivedAt)) return null;
+        const began = starts.filter((start) => start <= archivedAt && archivedAt - start < DAY_MS);
+        return began.length ? Math.max(...began) + DAY_MS : null;
+    };
     const cycles = [...cycleMap.values()]
         .sort((a, b) => (a.order[0] !== b.order[0] ? b.order[0] - a.order[0] : b.order[1] - a.order[1]))
-        .map((cycle) => ({ key: cycle.key, label: cycleLabel(cycle, now) }));
+        .map((cycle) => {
+            const pieceEnd = cycle.cycleFrom === null ? endOfPiece(cycle.archivedAt) : null;
+            return {
+                key: cycle.key,
+                label: pieceEnd === null ? cycleLabel(cycle, now) : cycleLabel({ ...cycle, cycleFrom: pieceEnd }, now),
+            };
+        });
 
     const listed = new Map();
     for (const entry of Array.isArray(cycleTrials) ? cycleTrials : []) {
