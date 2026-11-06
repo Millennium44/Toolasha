@@ -8,7 +8,7 @@
  * the game's per-session slot key.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
@@ -350,6 +350,39 @@ describe('describing one in a picker', () => {
         const line = describeSession(session('2026-08-03T01:00:00Z'), (s) => `${s}s`);
 
         expect(line).toContain('600s');
+    });
+
+    describe('the date', () => {
+        afterEach(() => vi.useRealTimers());
+
+        test('a run from today shows the time only', () => {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date(2026, 10, 6, 18, 0));
+            const line = describeSession(session(new Date(2026, 10, 6, 14, 32).toISOString()), (s) => `${s}s`);
+
+            expect(line).not.toContain('Nov');
+            expect(line).toContain('(600s)');
+        });
+
+        test('a run from another day carries its date, and two such runs are told apart', () => {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date(2026, 10, 6, 18, 0));
+            const fourth = describeSession(session(new Date(2026, 10, 4, 14, 32).toISOString()), (s) => `${s}s`);
+            const fifth = describeSession(session(new Date(2026, 10, 5, 14, 32).toISOString()), (s) => `${s}s`);
+
+            expect(fourth).toContain('Nov');
+            expect(fourth).toContain('4');
+            expect(fourth).not.toBe(fifth);
+            expect(fourth).not.toContain('2026');
+        });
+
+        test('a run from another year carries the year', () => {
+            vi.useFakeTimers({ toFake: ['Date'] });
+            vi.setSystemTime(new Date(2026, 0, 2, 9, 0));
+            const line = describeSession(session(new Date(2025, 11, 30, 14, 32).toISOString()), (s) => `${s}s`);
+
+            expect(line).toContain('2025');
+        });
     });
 
     test('a session with no start time still gets a line', () => {
