@@ -2777,14 +2777,77 @@ describe('the weekly reset inside a test-server cycle', () => {
 
 describe('the card’s own percent into the next tier', () => {
     const KEY = 'skilling::milking';
-    const carded = (level, levelProgress = null) => ({
+    const carded = (level, levelProgress = null, completed = true) => ({
         name: 'Milking',
         kind: 'skilling',
         level,
         tier: level >= 100 ? (level - 100) / 10 + 1 : null,
         points: 2700,
+        completed,
         readings: [],
         levelProgress,
+    });
+
+    test('a running card’s percent is never kept; the finished card’s replaces nothing but itself', () => {
+        // "+70%" read while the trial runs, then the finished card reads "+64%"
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        expect(record.tiles[KEY]).not.toHaveProperty('levelProgress');
+        record = recordTileSample(record, carded(280, { level: 280, pct: 64 }, true), now + 60_000);
+        expect(record.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now + 60_000 });
+        // Only a running read ever seen: nothing kept
+        const running = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        expect(running.tiles[KEY]).not.toHaveProperty('levelProgress');
+        // …and the archived result has no percent
+        const archived = archiveCycle(running, 'the week rolled over', now + 3_600_000);
+        expect(archived.trialResults[0]).not.toHaveProperty('cardProgress');
+        expect(archived.trialResults[0]).not.toHaveProperty('progress');
+    });
+
+    test('a read after the record knows the trial is over counts as finished', () => {
+        const held = () => ({
+            name: 'Milking',
+            kind: 'skilling',
+            samples: [],
+            pointSamples: [],
+            tiers: [],
+            pointsByTier: {},
+            tierSeenAt: {},
+        });
+        // The guild payload stated the party done; the card itself does not say Completed
+        const done = recordTileSample(
+            {
+                ...emptyRecord(thisWeek),
+                tiles: { [KEY]: { ...held(), serverTier: 19, serverTierAt: now, serverDone: true } },
+            },
+            carded(280, { level: 280, pct: 64 }, false),
+            now + 1000
+        );
+        expect(done.tiles[KEY].levelProgress).toEqual({ level: 280, pct: 64, at: now + 1000 });
+        // An end recorded before the read
+        const ended = recordTileSample(
+            { ...emptyRecord(thisWeek), tiles: { [KEY]: { ...held(), endedAt: now } } },
+            carded(280, { level: 280, pct: 64 }, false),
+            now + 1000
+        );
+        expect(ended.tiles[KEY].levelProgress.pct).toBe(64);
+        // An end recorded after the read is not this read's
+        const before = recordTileSample(
+            { ...emptyRecord(thisWeek), tiles: { [KEY]: { ...held(), endedAt: now + 5000 } } },
+            carded(280, { level: 280, pct: 70 }, false),
+            now + 1000
+        );
+        expect(before.tiles[KEY]).not.toHaveProperty('levelProgress');
+    });
+
+    test('the finished figure reaches the archived result', () => {
+        let record = recordTileSample(emptyRecord(thisWeek), carded(280, { level: 280, pct: 70 }, false), now);
+        record = recordTileSample(record, carded(280, { level: 280, pct: 64 }, true), now + 60_000);
+        const archived = archiveCycle(record, 'the week rolled over', now + 3_600_000);
+        expect(archived.trialResults[0]).toMatchObject({
+            cardTier: 19,
+            cardProgress: 64,
+            cardProgressAt: now + 60_000,
+        });
     });
 
     test('a card read is kept with its level and when it was read; a read without one leaves it alone', () => {

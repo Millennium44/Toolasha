@@ -1458,11 +1458,12 @@ export function recordTileSample(record, tile, at, characterId = null) {
         tierReadAt: Number.isFinite(tile?.tier)
             ? Math.max(at, Number.isFinite(existing.tierReadAt) ? existing.tierReadAt : at)
             : existing.tierReadAt,
-        // The game's "+64%" beside the card's level, the newest read kept; a card that shows no percent says
-        // nothing and leaves the last one alone
+        // The game's "+64%" beside the card's level, kept only once the trial is over — a running card's percent is
+        // live progress, not the result. The newest finished read is kept; a card that shows no percent says nothing
+        // and leaves the last one alone
         ...latestLevelProgress(
             existing,
-            tile?.levelProgress
+            tile?.levelProgress && trialOverAt(tile, existing, at)
                 ? { levelProgress: { level: tile.levelProgress.level, pct: tile.levelProgress.pct, at } }
                 : null
         ),
@@ -1778,6 +1779,20 @@ function latestTierReadAt(a, b) {
 function latestRunSeenAt(a, b) {
     const reads = [a?.runSeenAt, b?.runSeenAt].filter(Number.isFinite);
     return reads.length ? { runSeenAt: Math.max(...reads) } : {};
+}
+
+/**
+ * Whether a card read at `at` was read on a finished trial: the card says Completed, or the record already knows
+ * the trial is over — finished (the same rule `_phaseFor` reads), the guild payload stated the party done, or the
+ * end it recorded is at or before the read.
+ * @param {Object|null} tile - The card being read
+ * @param {Object|null} existing - The tile's record so far
+ * @param {number} at - When the card was read, client ms
+ * @returns {boolean}
+ */
+function trialOverAt(tile, existing, at) {
+    if (tile?.completed || existing?.completed || existing?.serverDone) return true;
+    return Number.isFinite(existing?.endedAt) && Number.isFinite(at) && at >= existing.endedAt;
 }
 
 /**

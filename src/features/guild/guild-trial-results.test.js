@@ -26,7 +26,6 @@ import {
     resultPoints,
     resultsFromCycle,
     resultsFromHistory,
-    tileProgressPercent,
     trialHistoryCells,
     trialHistoryDetail,
     trialOfTile,
@@ -274,7 +273,8 @@ describe('trialResultsHistory', () => {
         const results = resultsFromCycle(cycle(weeksAgo(1), { a: badger(6, 2240) }));
         const { rows } = trialResultsHistory(results, { now });
         expect(rows).toHaveLength(1);
-        expect(trialHistoryCells(rows[0])).toBe('T6 50% · best T6 50% (last week)');
+        // The fixture's bar reading is no percent: only a finished card's figure is
+        expect(trialHistoryCells(rows[0])).toBe('T6 · best T6 (last week)');
     });
 
     test('a trial that changed tier across weeks, a week it is absent from, newest first, best and when', () => {
@@ -289,10 +289,10 @@ describe('trialResultsHistory', () => {
         // Combat first
         expect(history_.rows.map((row) => row.name)).toEqual(['Trial Badger', 'Alchemy']);
         // Absent two weeks ago: a dash, never a zero
-        expect(trialHistoryCells(badgerRow)).toBe('T7 50% · — · T9 50% · best T9 50% (3 weeks ago)');
+        expect(trialHistoryCells(badgerRow)).toBe('T7 · — · T9 · best T9 (3 weeks ago)');
         expect(trialHistoryCells(alchemyRow)).toBe('T5 · T6 · T4 · best T6 (2 weeks ago)');
         expect(trialHistoryDetail(badgerRow)).toContain('2 weeks ago: —');
-        expect(trialHistoryDetail(badgerRow)).toContain('Last week: T7 50% · 3,000 pts');
+        expect(trialHistoryDetail(badgerRow)).toContain('Last week: T7 · 3,000 pts');
     });
 
     test('a server-only week prices its points as derived', () => {
@@ -327,15 +327,13 @@ describe('trialResultsHistory', () => {
         // The plain end time leads on the test server, and a finished cycle is never "This week"
         expect(cycles[0].label).toMatch(/^[A-Z][a-z]{2} \d{1,2}:\d{2} [AP]M$/);
         expect(cycles[0].label).not.toMatch(/this week/i);
-        expect(trialHistoryCells(rows[0])).toMatch(/^T4 50% · T2 50% · best T4 50%/);
+        expect(trialHistoryCells(rows[0])).toMatch(/^T4 · T2 · best T4/);
     });
 
     test('more cycles than fit inline say how many more there are', () => {
         const history = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => cycle(weeksAgo(n), { a: badger(n, n * 100) }));
         const [row] = trialResultsHistory(resultsFromHistory(history), { now }).rows;
-        expect(trialHistoryCells(row)).toBe(
-            'T1 50% · T2 50% · T3 50% · T4 50% · T5 50% · T6 50% · +2 earlier · best T8 50% (8 weeks ago)'
-        );
+        expect(trialHistoryCells(row)).toBe('T1 · T2 · T3 · T4 · T5 · T6 · +2 earlier · best T8 (8 weeks ago)');
     });
 
     test('a card’s name with no past results has no row', () => {
@@ -379,110 +377,41 @@ describe('trialResultsHistory', () => {
     });
 });
 
-describe('tileProgressPercent', () => {
-    const bar = (t, current, max) => ({ t, readings: [{ current, max }] });
-
-    test('reads the newest bar reading as a whole percent', () => {
-        expect(tileProgressPercent({ kind: 'skilling', samples: [bar(1000, 40, 100), bar(2000, 63, 100)] })).toBe(63);
-        // A combat bar counts the boss's health down
-        expect(tileProgressPercent({ kind: 'combat', samples: [bar(1000, 20, 100)] })).toBe(80);
-    });
-
-    test('a badge seen to move after the newest reading leaves the percent out', () => {
-        // A T3 reading at 80%, then a final T7 badge read on the Trials tab: nothing observed T8's bar
-        const tile = { kind: 'combat', samples: [bar(1000, 20, 100)], tierSeenAt: { 3: 500, 7: 5000 } };
-        expect(tileProgressPercent(tile)).toBeNull();
-    });
-
-    test('tiers all seen before the reading keep it', () => {
-        const tile = { kind: 'skilling', samples: [bar(5000, 58, 100)], tierSeenAt: { 3: 500, 7: 4000 } };
-        expect(tileProgressPercent(tile)).toBe(58);
-    });
-
-    test('a boss reading of part of a wave is no percent; an older whole-wave reading is read instead', () => {
-        const partial = (t, current, max) => ({
-            t,
-            readings: [{ current, max, source: 'cards', slots: 1, waveCount: 2 }],
-        });
-        const whole = (t, current, max) => ({
-            t,
-            readings: [{ current, max, source: 'cards', slots: 2, waveCount: 2 }],
-        });
-        // Only a partial reading: one Badger's 20 of 100 left is not 80% of the tier
-        expect(tileProgressPercent({ kind: 'combat', samples: [partial(1000, 20, 100)] })).toBeNull();
-        // A whole-wave reading before it, and no badge moved since: that one stands
-        expect(
-            tileProgressPercent({
-                kind: 'combat',
-                samples: [whole(500, 60, 100), partial(1000, 20, 100)],
-                tierSeenAt: { 4: 100 },
-            })
-        ).toBe(40);
-        // A badge moved after the whole-wave reading: it was an earlier tier's, so nothing
-        expect(
-            tileProgressPercent({
-                kind: 'combat',
-                samples: [whole(500, 60, 100), partial(1000, 20, 100)],
-                tierSeenAt: { 4: 100, 5: 700 },
-            })
-        ).toBeNull();
-        // Nor is one filed with the result
-        const [result] = resultsFromCycle(
-            cycle(weeksAgo(1), { a: badger(6, 2240, { samples: [partial(1, 20, 100)] }) })
-        );
-        expect(result).not.toHaveProperty('progress');
-    });
-
-    test('the last tier carries no percent: the bar read on it was T21’s own, just before it cleared', () => {
-        const tile = { kind: 'combat', tier: 21, samples: [bar(1000, 1, 100)], tierSeenAt: { 21: 2000 } };
-        expect(tileProgressPercent(tile)).toBeNull();
-        expect(tileProgressPercent({ ...tile, tier: 20, tierSeenAt: {} })).toBe(99);
-        // Nor is one filed with the result
-        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: badger(21, 9000, { samples: [bar(1, 1, 100)] }) }));
-        expect(result.cardTier).toBe(21);
-        expect(result).not.toHaveProperty('progress');
-    });
-
-    test('an entry stored with a percent on the last tier shows none, in the cell, the best and the hover', () => {
-        const stored = (week, tier, progress) => ({
-            ...resultsFromCycle(cycle(weeksAgo(week), { a: badger(tier, 9000) }))[0],
-            progress,
-        });
-        const { rows } = trialResultsHistory([stored(2, 20, 58), stored(1, 21, 99)], { now });
-        expect(rows[0].weeks.map((week) => week.progress)).toEqual([null, 58]);
-        expect(rows[0].best).toMatchObject({ tier: 21, progress: null });
-        expect(trialHistoryCells(rows[0])).toBe('T21 · T20 58% · best T21 (last week)');
-        expect(trialHistoryDetail(rows[0])).not.toContain('99%');
-    });
-});
-
-describe('the card’s own percent', () => {
-    // A combat bar of 20 left of 100 reads 80%; the card itself said 64%
+describe('the finished card’s own percent', () => {
+    // A combat bar of 20 left of 100 would read 80%; the finished card itself said 64%
     const bar80 = [{ t: 1000, readings: [{ current: 20, max: 100 }] }];
     const figure = (level, pct, at = 2000) => ({ levelProgress: { level, pct, at } });
 
-    test('the card’s figure is filed over the last bar reading when it was read at the finished tier', () => {
+    test('the card’s figure is filed when it was read at the finished tier', () => {
         const [result] = resultsFromCycle(
             cycle(weeksAgo(1), { a: badger(19, 9000, { samples: bar80, ...figure(280, 64) }) })
         );
-        expect(result).toMatchObject({ cardTier: 19, progress: 64 });
+        expect(result).toMatchObject({ cardTier: 19, cardProgress: 64, cardProgressAt: 2000 });
+        expect(result).not.toHaveProperty('progress');
+        const { rows } = trialResultsHistory([result], { now });
+        expect(trialHistoryCells(rows[0])).toContain('T19 64%');
     });
 
-    test('a figure read at another level falls back to the bar reading', () => {
-        // Read at Lv.280 (T19), then the card went on to finish T20 with no percent beside it
+    test('bar readings and no card figure: no percent at all', () => {
+        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: badger(19, 9000, { samples: bar80 }) }));
+        expect(result).not.toHaveProperty('cardProgress');
+        expect(result).not.toHaveProperty('progress');
+    });
+
+    test('a figure read at another level is no figure for the finished tier', () => {
+        // Read at Lv.280 (T19), then the card finished T20 with no percent beside it
         const tile = badger(20, 9000, { samples: bar80, ...figure(280, 64) });
         expect(cardLevelProgress(tile, 20)).toBeNull();
         const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: tile }));
-        expect(result).toMatchObject({ cardTier: 20, progress: 80 });
-        // …and with no bar to fall back on, no percent at all — never the T19 figure on T20
-        const [bare] = resultsFromCycle(cycle(weeksAgo(1), { a: { ...tile, samples: [] } }));
-        expect(bare).not.toHaveProperty('progress');
+        expect(result.cardTier).toBe(20);
+        expect(result).not.toHaveProperty('cardProgress');
+        expect(result).not.toHaveProperty('progress');
     });
 
     test('the last tier takes no figure, whatever is stored', () => {
         const tile = badger(21, 9000, { samples: [], ...figure(300, 40) });
         expect(cardLevelProgress(tile, 21)).toBeNull();
-        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).not.toHaveProperty('progress');
+        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).not.toHaveProperty('cardProgress');
     });
 
     test('a malformed figure is ignored', () => {
@@ -491,9 +420,35 @@ describe('the card’s own percent', () => {
         expect(cardLevelProgress(badger(19, 9000, { levelProgress: 'x' }), 19)).toBeNull();
     });
 
-    test('a tile from before the figure was kept reads exactly as it did', () => {
-        const tile = badger(19, 9000, { samples: bar80 });
-        expect(resultsFromCycle(cycle(weeksAgo(1), { a: tile }))[0]).toMatchObject({ cardTier: 19, progress: 80 });
-        expect(resultsFromCycle(cycle(weeksAgo(1), { a: { ...tile, samples: [] } }))[0]).not.toHaveProperty('progress');
+    test('an older entry’s bar-derived percent stays stored but is not shown; the card’s is', () => {
+        const stored = (week, tier, extra) => ({
+            ...resultsFromCycle(cycle(weeksAgo(week), { a: badger(tier, 9000) }))[0],
+            ...extra,
+        });
+        const legacy = stored(2, 20, { progress: 58 });
+        const legacyTop = stored(1, 21, { progress: 99, cardProgress: 99 });
+        const { rows } = trialResultsHistory([legacy, legacyTop], { now });
+        expect(rows[0].weeks.map((week) => week.progress)).toEqual([null, null]);
+        expect(rows[0].best).toMatchObject({ tier: 21, progress: null });
+        expect(trialHistoryCells(rows[0])).toBe('T21 · T20 · best T21 (last week)');
+        expect(trialHistoryDetail(rows[0])).not.toContain('99%');
+        expect(trialHistoryDetail(rows[0])).not.toContain('58%');
+        // The stored field itself is untouched by a merge
+        expect(mergeResults([legacy])[0].progress).toBe(58);
+    });
+
+    test('two copies of one result keep the newer card read, never the higher percent', () => {
+        const base = resultsFromCycle(cycle(weeksAgo(1), { a: badger(19, 9000) }))[0];
+        const older = { ...base, cardProgress: 90, cardProgressAt: 1000 };
+        const newer = { ...base, cardProgress: 64, cardProgressAt: 5000 };
+        expect(mergeResults([older], [newer])[0]).toMatchObject({ cardProgress: 64, cardProgressAt: 5000 });
+        expect(mergeResults([newer], [older])[0]).toMatchObject({ cardProgress: 64, cardProgressAt: 5000 });
+        // A copy without a figure (an older build's) keeps the other's
+        expect(mergeResults([base], [newer])[0]).toMatchObject({ cardProgress: 64 });
+        expect(mergeResults([newer], [base])[0]).toMatchObject({ cardProgress: 64 });
+        // A figure of another tier than the kept card's is dropped, never re-attached
+        const higher = { ...resultsFromCycle(cycle(weeksAgo(1), { a: badger(20, 9500) }))[0] };
+        expect(mergeResults([newer], [higher])[0]).toMatchObject({ cardTier: 20 });
+        expect(mergeResults([newer], [higher])[0]).not.toHaveProperty('cardProgress');
     });
 });

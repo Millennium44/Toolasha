@@ -3495,14 +3495,23 @@ describe('the panel, end to end', () => {
             guildTrials.record = {
                 ...guildTrials.record,
                 history: [
-                    // A skilling bar counts up: 31,360 of 65,280 is 48%
+                    // The finished card read "Lv.290 +48%"; its bar reading (a running 99%) is not the result
                     archivedWeek({
                         weekStart: weekAgo(1),
+                        tiles: {
+                            'skilling::alchemy': {
+                                ...alchemy(20, 1200),
+                                samples: bar(64_900, 65_280),
+                                levelProgress: { level: 290, pct: 48, at: 6 },
+                            },
+                        },
+                    }),
+                    // An older archive has a bar reading and no finished card's figure: the tier alone
+                    archivedWeek({
+                        weekStart: weekAgo(2),
                         tiles: { 'skilling::alchemy': { ...alchemy(20, 1200), samples: bar(31_360, 65_280) } },
                     }),
-                    // An older archive has no bar reading: the tier alone
-                    archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(20, 1200) } }),
-                    // A combat bar counts down: 250 left of 1,000 is 75% done
+                    // A combat card that finished T5 reading "Lv.140 +75%"
                     archivedWeek({
                         weekStart: weekAgo(3),
                         tiles: {
@@ -3513,7 +3522,8 @@ describe('the panel, end to end', () => {
                                 points: 960,
                                 pointsByTier: { 5: 960 },
                                 completed: false,
-                                samples: bar(250, 1000),
+                                samples: bar(900, 1000),
+                                levelProgress: { level: 140, pct: 75, at: 6 },
                                 tiers: [],
                             },
                         },
