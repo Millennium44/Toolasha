@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltips no longer cover the item
+
+When an inventory item's tooltip is too tall to fit above or below the item, it now opens to the left or right of the item, whichever side has more room, instead of covering it. Tooltips that already fit above or below stay where the game puts them. Turn it off with "Keep inventory tooltips off the hovered item".
+
 ### Other tabs offer to reload after an update
 
 When another tab of the same site loads a newer Toolasha, your other tabs show a notice with a Reload button. A setting can let tabs that have stayed hidden for 2 minutes reload on their own.

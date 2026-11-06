@@ -220,6 +220,13 @@ class Config {
                 description: 'Shows shop values for tokens, scrolls, and cowbells',
                 settingKey: 'dungeonTokenTooltips',
             },
+            inventoryTooltipBeside: {
+                enabled: true,
+                name: 'Keep Inventory Tooltips Off the Item',
+                category: 'Inventory',
+                description: 'Moves an inventory tooltip that would cover the hovered item to its left or right side',
+                settingKey: 'inventoryTooltipBeside',
+            },
             expectedValueCalculator: {
                 enabled: true,
                 name: 'Expected Value Calculator',
