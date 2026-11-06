@@ -6,9 +6,14 @@
  * on a UTC machine (the CI runner) `day-row-retention.test.js` then fails, and the others prove
  * nothing. Everything else runs on threads, which is about 2.5x faster on Windows.
  *
- * `scripts/vitest-forks-files.test.js` fails if a test file sets TZ without being listed here.
+ * The sync suites run here too. On threads they fail at random when several run together (59-148 of
+ * their 1,005 tests per run, a different set each time, measured 2026-11-06), and pass every time in
+ * child processes. A folder entry (a glob ending in .test.js) covers every test file under that folder.
+ *
+ * `scripts/vitest-forks-files.test.js` fails if a test file sets TZ without being covered here.
  */
 export default [
+    'src/features/sync/**/*.test.js',
     'src/features/networth/day-row-retention.test.js',
     'src/features/networth/gold-sources.test.js',
     'src/features/tasks/task-completion-tracker.test.js',
