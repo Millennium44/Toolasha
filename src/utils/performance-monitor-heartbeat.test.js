@@ -74,6 +74,15 @@ describe('stall watch without longtask support (heartbeat fallback)', () => {
         expect(performanceMonitor.getWorstStallMs()).toBe(400);
     });
 
+    test('a tick late by more than 30 s (sleep or suspend) is not a stall', () => {
+        performanceMonitor.startStallWatch();
+        tick(60_000);
+        tick(400);
+        const stalls = performanceMonitor.getStalls();
+        expect(stalls).toHaveLength(1);
+        expect(stalls[0].duration).toBe(400);
+    });
+
     test('lateness of 50ms or less is ignored', () => {
         performanceMonitor.startStallWatch();
         tick(50);

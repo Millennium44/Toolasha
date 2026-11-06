@@ -34,6 +34,7 @@ vi.mock('../../core/storage.js', () => ({
             return state.flush();
         },
         pendingWriteCount: () => state.pending,
+        isRestoreInProgress: () => state.restoring === true,
     },
 }));
 vi.mock('../../utils/script-version.js', () => ({ scriptVersion: () => state.version }));
@@ -107,6 +108,7 @@ beforeEach(async () => {
     state.flush = async () => {};
     state.flushes = 0;
     state.pending = 0;
+    state.restoring = false;
     state.toasts = [];
     state.channels = [];
     window.sessionStorage.clear();
@@ -505,6 +507,18 @@ describe('mode changed after a newer build was heard', () => {
         visibility = 'visible';
         hear('3.17.0');
         state.pending = 1;
+        switchMode('reload');
+        await vi.advanceTimersByTimeAsync(ALWAYS_RELOAD_DELAY_MS + 100);
+        expect(state.flushes).toBe(1);
+        expect(reload).not.toHaveBeenCalled();
+    });
+
+    test('a reload due while a restore or sync pull is writing asks instead', async () => {
+        state.settings = { tabVersionSync: 'ask' };
+        visibility = 'visible';
+        hear('3.17.0');
+        // flushAll() holds during a restore and resolves at once with nothing counted as pending
+        state.restoring = true;
         switchMode('reload');
         await vi.advanceTimersByTimeAsync(ALWAYS_RELOAD_DELAY_MS + 100);
         expect(state.flushes).toBe(1);

@@ -56,9 +56,9 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
         data?.players?.length && data?.combatStartTime
             ? `${data.players.map((p) => p?.name || p?.character?.name || '?').join(',')}|${data.combatStartTime}`
             : null,
-    loadSessions: async () => {
+    loadSessionsWithStatus: async () => {
         game.reads += 1;
-        return game.archived;
+        return { sessions: game.archived, ok: game.readOk !== false };
     },
     sessionsRevision: () => game.revision,
 }));
@@ -137,12 +137,21 @@ beforeEach(async () => {
     game.stats = { dailyIncome: { ask: 24000, bid: 12000 }, dailyConsumableCosts: 2400, expPerHour: 5000 };
     game.recorded = [];
     game.reads = 0;
+    game.readOk = true;
     bump();
     calibration = new CombatCalibration();
     await calibration.initialize();
 });
 
 describe('re-reading the archive', () => {
+    test('a failed read is not remembered: the next battle reads again', async () => {
+        game.readOk = false;
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        expect(game.reads).toBe(2);
+    });
+
     test('a key still pending does not re-read the archive on every battle while nothing was written', async () => {
         await send(battle('2026-08-04T10:00:00Z'));
         // The finished run's archive entry is slow to arrive
