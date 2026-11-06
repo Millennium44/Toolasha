@@ -1795,6 +1795,114 @@ describe('Storage restore quiescing', () => {
         expect(dataByStore.get('settings').has('watchlist')).toBe(false);
     });
 
+    // Issue #789: the hidden-tab flush (and every other flushAll caller — the
+    // character-switch drain, the version-sync reload) used to land held writes
+    // mid-restore, over a store the restore had written and not yet latched.
+    describe('flushAll during a restore', () => {
+        test('holds a write queued in the window instead of landing it over the restored value', async () => {
+            const { db, dataByStore } = createFakeDb(['settings']);
+            storage.db = db;
+
+            await storage.beginRestore();
+            const held = storage.set('watchlist', 'pre-restore memory', 'settings');
+            await storage.putAll('settings', { watchlist: 'restored' }, { bypassRestoreLatch: true });
+
+            // The tab is hidden before the restore latches
+            await storage.flushAll();
+            expect(dataByStore.get('settings').get('watchlist')).toBe('restored');
+            expect(storage.pendingWrites.has('settings:watchlist')).toBe(true);
+
+            storage.finishRestore(['settings']);
+            await storage.endRestore();
+            expect(await held).toBe(false);
+            expect(dataByStore.get('settings').get('watchlist')).toBe('restored');
+        });
+
+        test('holds a pre-restore write the opening drain failed to land', async () => {
+            const { db, dataByStore } = createFakeDb(['settings']);
+            storage.db = db;
+            storage.set('watchlist', 'before the restore', 'settings');
+            const realPutAllWritten = storage._putAllWritten.bind(storage);
+            const spy = vi.spyOn(storage, '_putAllWritten').mockImplementation(async () => []);
+
+            await storage.beginRestore();
+            spy.mockImplementation(realPutAllWritten);
+            expect(storage.pendingWrites.has('settings:watchlist')).toBe(true);
+            await storage.putAll('settings', { watchlist: 'restored' }, { bypassRestoreLatch: true });
+
+            await storage.flushAll();
+            expect(dataByStore.get('settings').get('watchlist')).toBe('restored');
+
+            storage.finishRestore(['settings']);
+            await storage.endRestore();
+            expect(dataByStore.get('settings').get('watchlist')).toBe('restored');
+        });
+
+        test('a held write to a store the restore never touches lands when the restore ends', async () => {
+            const { db, dataByStore } = createFakeDb(['settings', 'xpHistory']);
+            storage.db = db;
+
+            await storage.beginRestore();
+            const write = storage.set('sample', 42, 'xpHistory');
+            await storage.flushAll();
+            expect(dataByStore.get('xpHistory').has('sample')).toBe(false);
+
+            storage.finishRestore(['settings']);
+            await storage.endRestore();
+            expect(await write).toBe(true);
+            expect(dataByStore.get('xpHistory').get('sample')).toBe(42);
+        });
+
+        test('a restore that fails before latching still lands held writes when it ends', async () => {
+            const { db, dataByStore } = createFakeDb(['settings']);
+            storage.db = db;
+
+            await storage.beginRestore();
+            const write = storage.set('watchlist', 'kept', 'settings');
+            await storage.flushAll();
+            // The restore threw: nothing written, nothing latched, the hold released
+            await storage.endRestore();
+            expect(await write).toBe(true);
+            expect(dataByStore.get('settings').get('watchlist')).toBe('kept');
+        });
+
+        test('the opening drain still lands what was queued before the restore', async () => {
+            const { db, dataByStore } = createFakeDb(['settings']);
+            storage.db = db;
+            const write = storage.set('watchlist', 'before', 'settings');
+
+            await storage.beginRestore();
+            expect(await write).toBe(true);
+            expect(dataByStore.get('settings').get('watchlist')).toBe('before');
+            await storage.endRestore();
+        });
+
+        test('a flush after the restore ends writes normally', async () => {
+            const { db, dataByStore } = createFakeDb(['xpHistory']);
+            storage.db = db;
+            await storage.beginRestore();
+            await storage.endRestore();
+
+            storage.set('sample', 7, 'xpHistory');
+            await storage.flushAll();
+            expect(dataByStore.get('xpHistory').get('sample')).toBe(7);
+        });
+
+        test('page teardown mid-restore still lands held writes rather than losing them', async () => {
+            const { db, dataByStore } = createFakeDb(['xpHistory']);
+            db.close = () => {};
+            storage.db = db;
+
+            await storage.beginRestore();
+            storage.set('sample', 9, 'xpHistory');
+            const spy = vi.spyOn(storage, 'flushAll');
+            storage.closeForTeardown('pagehide');
+            await spy.mock.results[0].value;
+            expect(dataByStore.get('xpHistory').get('sample')).toBe(9);
+            storage._closingForTeardown = false;
+        });
+    });
+
     test('a folding write held through a restore lands folded over what the restore wrote', async () => {
         const union = (stored, value) => [...new Set([...(stored || []), ...value])];
         const { db, dataByStore } = createFakeDb(['settings']);
