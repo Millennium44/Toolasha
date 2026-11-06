@@ -5293,6 +5293,8 @@ describe('Check a swap', () => {
         expect(fights).toHaveLength(1);
         expect(fights[0]).toMatchObject({ monsterHrid: '/monsters/mimic', roomLevel: 170 });
         expect(fights[0].dto.equipment[BACK]).toEqual({ hrid: CAPE, enhancementLevel: 5 });
+        // A copy: the editor follows level-ups in place, and the check keeps the build it started with
+        expect(fights[0].dto).not.toBe(game.editedDTOs.p1);
         expect(extraCandidates[0]).toMatchObject({ checkedSwap: true, currentLevel: 5, upgradeLevel: 7 });
         allSpy.mockRestore();
         game.editedDTOs = null;

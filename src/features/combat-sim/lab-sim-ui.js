@@ -3196,7 +3196,8 @@ class LabSimUI {
             const editedDTOs = this._editor?.getEditedDTOs();
             if (editedDTOs) {
                 const selfHrid = this._editor.getSelfHrid();
-                selfDTO = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
+                // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+                selfDTO = structuredClone(editedDTOs[selfHrid] || Object.values(editedDTOs)[0]);
             } else {
                 const result = await buildAllPlayerDTOs();
                 selfDTO = result.players.find((p) => p.hrid === result.selfHrid) || result.players[0];
@@ -3824,7 +3825,8 @@ class LabSimUI {
         if (!monsterHrid) return none('Select a monster in the Configure tab first.');
         const edited = this._editor?.getEditedDTOs();
         let playerDTOs;
-        if (edited) playerDTOs = Object.values(edited);
+        // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+        if (edited) playerDTOs = structuredClone(Object.values(edited));
         else playerDTOs = (await buildAllPlayerDTOs()).players;
         const playerIndex = parseInt(this.panel?.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const dto = playerDTOs?.[playerIndex];
@@ -4701,7 +4703,8 @@ class LabSimUI {
                 let playerDTOs;
                 let selfHrid = null;
                 if (edited) {
-                    playerDTOs = Object.values(edited);
+                    // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+                    playerDTOs = structuredClone(Object.values(edited));
                     selfHrid = this._editor.getSelfHrid() ?? null;
                 } else {
                     const loaded = await buildAllPlayerDTOs();
