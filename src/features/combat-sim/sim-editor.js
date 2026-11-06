@@ -185,9 +185,248 @@ export class SimEditor {
     }
 
     getEditedDTOs() {
-        this._syncHouseRoomsFromGame();
-        this._syncGuildShrinesFromGame();
+        this._syncSelfFromGame();
         return this._editedDTOs;
+    }
+
+    /**
+     * Bring every reading of the self row that nobody has edited up to what the
+     * game says now: house rooms, guild shrines, ability levels, skill levels
+     * and the enhancement level of the gear being worn.
+     *
+     * Every part follows the same rule: a value still equal to the copy the
+     * Configure label diffs against (`_originalDTOs`, or the loadout baseline
+     * while a loadout is worn) follows the game, and anything edited away from
+     * it is the user's what-if and is left alone. Each sync moves the edited
+     * copy and that reference together, so a followed value never reads as
+     * "(edited)".
+     * @returns {boolean} True when a value the editor shows moved
+     * @private
+     */
+    _syncSelfFromGame() {
+        // Every one runs: an array, not `||`, which would stop at the first change
+        const moved = [
+            this._syncHouseRoomsFromGame(),
+            this._syncGuildShrinesFromGame(),
+            this._syncAbilityLevelsFromGame(),
+            this._syncSkillLevelsFromGame(),
+            this._syncEquipmentLevelsFromGame(),
+        ];
+        return moved.some(Boolean);
+    }
+
+    /**
+     * The self row's three copies: what runs (edited), what the game said
+     * (original), and the copy the label diffs against while a loadout is worn
+     * (the loadout baseline, else null). Null when no row is the live self —
+     * an import, an external DTO, or a Party Finder build that is not live.
+     * @returns {{edited: Object, original: Object, baseline: Object|null}|null}
+     * @private
+     */
+    _selfSyncTargets() {
+        const self = this._selfHrid;
+        if (!self) return null;
+        const edited = this._editedDTOs?.[self];
+        const original = this._originalDTOs?.[self];
+        if (!edited || !original) return null;
+        // The same choice `generateSimLabel` makes for its reference copy
+        const baseline = this.getLoadoutNameFor(self) ? this._loadoutBaselineDTOs?.[self] || null : null;
+        return { edited, original, baseline };
+    }
+
+    /**
+     * Learned ability levels as the game holds them now, by ability hrid.
+     * The learned list, not the equipped kit: a loadout can wear an ability
+     * the game does not have equipped, and `applyLoadoutSnapshotToDTO` reads
+     * its level from this same list. An entry without a usable level is left
+     * out rather than read as level 1.
+     * @returns {Map<string, number>|null} Null when nothing was read
+     * @private
+     */
+    _readLiveAbilityLevels() {
+        let learned;
+        try {
+            learned = dataManager.getLearnedAbilities?.();
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the ability levels:', error);
+            return null;
+        }
+        if (!Array.isArray(learned) || learned.length === 0) return null;
+        const levels = new Map();
+        for (const entry of learned) {
+            const level = Math.floor(Number(entry?.level));
+            if (entry?.abilityHrid && level > 0) levels.set(entry.abilityHrid, level);
+        }
+        return levels.size ? levels : null;
+    }
+
+    /**
+     * Skill levels as the game holds them now, as DTO keys (`attackLevel`).
+     * @returns {Map<string, number>|null} Null when nothing was read
+     * @private
+     */
+    _readLiveSkillLevels() {
+        let skills;
+        try {
+            skills = dataManager.getSkills?.();
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the skill levels:', error);
+            return null;
+        }
+        if (!Array.isArray(skills) || skills.length === 0) return null;
+        const levels = new Map();
+        for (const skill of skills) {
+            const name = typeof skill?.skillHrid === 'string' ? skill.skillHrid.split('/').pop() : '';
+            const level = Math.floor(Number(skill?.level));
+            if (name && level > 0) levels.set(name + 'Level', level);
+        }
+        return levels.size ? levels : null;
+    }
+
+    /**
+     * The gear worn now, keyed by equipment type the way the DTO keys it,
+     * resolved through the item sheet exactly as `buildPlayerDTO` does.
+     * @returns {Object<string, {hrid: string, enhancementLevel: number}>|null} Null when nothing was read
+     * @private
+     */
+    _readLiveEquipment() {
+        let worn;
+        let itemDetailMap;
+        try {
+            worn = dataManager.getEquipment?.();
+            itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        } catch (error) {
+            console.error('[SimEditor] Failed to read the equipped items:', error);
+            return null;
+        }
+        if (!worn || typeof worn.forEach !== 'function' || !itemDetailMap) return null;
+        const bySlot = {};
+        worn.forEach((item) => {
+            const type = itemDetailMap[item?.itemHrid]?.equipmentDetail?.type;
+            if (!type) return;
+            bySlot[type] = {
+                hrid: item.itemHrid,
+                enhancementLevel: Math.max(0, Math.floor(Number(item.enhancementLevel) || 0)),
+            };
+        });
+        return Object.keys(bySlot).length ? bySlot : null;
+    }
+
+    /**
+     * Bring the self player's ability levels up to what the game says now.
+     *
+     * The DTO is built once, and a loadout applied later reads the levels at
+     * that moment; an ability leveled since showed its old level (Fierce Aura
+     * 43 against the game's 45) until "Reset to Me". Slots are matched by
+     * position and ability against the label's reference copy, so a loadout
+     * that wears different abilities still follows, and a slot whose ability
+     * or level was changed by hand is left alone. An ability the game does not
+     * report is left as it is.
+     * @returns {boolean} True when an edited slot moved
+     * @private
+     */
+    _syncAbilityLevelsFromGame() {
+        const targets = this._selfSyncTargets();
+        if (!targets) return false;
+        const live = this._readLiveAbilityLevels();
+        if (!live) return false;
+        const { edited, original, baseline } = targets;
+        const reference = baseline || original;
+        let moved = false;
+        (edited.abilities || []).forEach((slot, index) => {
+            if (!slot?.hrid) return;
+            const level = live.get(slot.hrid);
+            if (level === undefined) return;
+            const ref = reference.abilities?.[index];
+            // A slot swapped or leveled by hand is theirs
+            if (!ref || ref.hrid !== slot.hrid || ref.level !== slot.level) return;
+            if (slot.level === level) return;
+            slot.level = level;
+            ref.level = level;
+            moved = true;
+        });
+        // While a loadout is worn the original is only the current-gear copy the
+        // dropdown's "Current Gear" restores, and nothing writes it by hand
+        if (baseline) {
+            for (const slot of original.abilities || []) {
+                if (!slot?.hrid) continue;
+                const level = live.get(slot.hrid);
+                if (level !== undefined) slot.level = level;
+            }
+        }
+        return moved;
+    }
+
+    /**
+     * Bring the self player's skill levels up to what the game says now. A
+     * level typed by hand is left alone. The level-gap debuffs are measured
+     * from combat levels, so they are recomputed when anything moved.
+     * @returns {boolean} True when a level moved
+     * @private
+     */
+    _syncSkillLevelsFromGame() {
+        const targets = this._selfSyncTargets();
+        if (!targets) return false;
+        const live = this._readLiveSkillLevels();
+        if (!live) return false;
+        const { edited, original, baseline } = targets;
+        const reference = baseline || original;
+        let moved = false;
+        for (const [key, level] of live) {
+            // Only the levels the DTO carries
+            if (original[key] === undefined) continue;
+            const was = reference[key];
+            if (edited[key] !== was) continue; // hand-edited: theirs
+            if (level === was) continue;
+            edited[key] = level;
+            original[key] = level;
+            if (baseline) baseline[key] = level;
+            moved = true;
+        }
+        if (moved) this._recomputeLevelGapDebuffs();
+        return moved;
+    }
+
+    /**
+     * Bring the enhancement level of the self player's worn gear up to what
+     * the game says now — the same item in the same slot, worn at a new level.
+     *
+     * Only for current gear. A worn loadout's levels come from the loadout
+     * store ("highest owned" resolves to the best copy owned), not from the
+     * item worn, so that gear is left as the loadout put it; only the
+     * current-gear copy the dropdown restores is kept fresh underneath it. A
+     * different item worn in a slot is not followed either: which gear is in
+     * the scenario is the user's call.
+     * @returns {boolean} True when an edited slot moved
+     * @private
+     */
+    _syncEquipmentLevelsFromGame() {
+        const targets = this._selfSyncTargets();
+        if (!targets) return false;
+        const live = this._readLiveEquipment();
+        if (!live) return false;
+        const { edited, original, baseline } = targets;
+        if (baseline) {
+            for (const [slot, piece] of Object.entries(original.equipment || {})) {
+                const now = live[slot];
+                if (piece?.hrid && now?.hrid === piece.hrid) piece.enhancementLevel = now.enhancementLevel;
+            }
+            return false;
+        }
+        let moved = false;
+        for (const [slot, piece] of Object.entries(edited.equipment || {})) {
+            const now = live[slot];
+            const ref = original.equipment?.[slot];
+            if (!piece?.hrid || !now || !ref) continue;
+            // A piece swapped or re-leveled by hand is theirs
+            if (ref.hrid !== piece.hrid || ref.enhancementLevel !== piece.enhancementLevel) continue;
+            if (now.hrid !== piece.hrid) continue;
+            if (piece.enhancementLevel === now.enhancementLevel) continue;
+            piece.enhancementLevel = now.enhancementLevel;
+            ref.enhancementLevel = now.enhancementLevel;
+            moved = true;
+        }
+        return moved;
     }
 
     /**
@@ -215,19 +454,19 @@ export class SimEditor {
      * alone; only rooms still at their opening value follow the game.
      */
     _syncHouseRoomsFromGame() {
-        const self = this._selfHrid;
-        const edited = this._editedDTOs?.[self];
-        const original = this._originalDTOs?.[self];
-        if (!edited || !original) return;
+        const targets = this._selfSyncTargets();
+        if (!targets) return false;
+        const { edited, original, baseline } = targets;
         let live;
         try {
             live = dataManager.getHouseRooms?.();
         } catch {
-            return;
+            return false;
         }
-        if (!live || typeof live.forEach !== 'function') return;
+        if (!live || typeof live.forEach !== 'function') return false;
         edited.houseRooms = edited.houseRooms || {};
         original.houseRooms = original.houseRooms || {};
+        let moved = false;
         live.forEach((room, hrid) => {
             const level = Number(room?.level) || 0;
             const was = original.houseRooms[hrid] || 0;
@@ -235,7 +474,10 @@ export class SimEditor {
             if (level === was) return;
             edited.houseRooms[hrid] = level;
             original.houseRooms[hrid] = level;
+            if (baseline) baseline.houseRooms = { ...(baseline.houseRooms || {}), [hrid]: level };
+            moved = true;
         });
+        return moved;
     }
 
     /**
@@ -259,22 +501,22 @@ export class SimEditor {
      * @private
      */
     _syncGuildShrinesFromGame() {
-        const self = this._selfHrid;
-        const edited = this._editedDTOs?.[self];
-        const original = this._originalDTOs?.[self];
-        if (!edited || !original) return;
+        const targets = this._selfSyncTargets();
+        if (!targets) return false;
+        const { edited, original, baseline } = targets;
         let live;
         try {
             live = readGuildShrineLevels();
         } catch (error) {
             console.error('[SimEditor] Failed to read the guild shrine levels:', error);
-            return;
+            return false;
         }
-        if (!live || typeof live !== 'object') return;
+        if (!live || typeof live !== 'object') return false;
         // Nothing read at all (no guild, or guild traffic that never arrived)
         // is not the same as every shrine sitting at zero, and must not
         // overwrite levels the DTO was built with
-        if (Object.keys(live).length === 0) return;
+        if (Object.keys(live).length === 0) return false;
+        let moved = false;
         edited.guildShrineLevels = edited.guildShrineLevels || {};
         original.guildShrineLevels = original.guildShrineLevels || {};
         const detailMap = getGuildBuffDetailMap();
@@ -285,12 +527,18 @@ export class SimEditor {
             if (level === was) continue;
             edited.guildShrineLevels[buffHrid] = level;
             original.guildShrineLevels[buffHrid] = level;
+            // The label diffs shrines against the baseline while a loadout is
+            // worn; left behind, a followed shrine read as a hand edit
+            if (baseline) baseline.guildShrineLevels = { ...(baseline.guildShrineLevels || {}), [buffHrid]: level };
             const detail = detailMap[buffHrid];
             if (detail?.isCombat) {
                 edited.guildCombatBuffs = applyGuildBuffLevel(edited.guildCombatBuffs, detail, level);
                 original.guildCombatBuffs = applyGuildBuffLevel(original.guildCombatBuffs, detail, level);
+                if (baseline) baseline.guildCombatBuffs = applyGuildBuffLevel(baseline.guildCombatBuffs, detail, level);
             }
+            moved = true;
         }
+        return moved;
     }
 
     /**
@@ -332,16 +580,14 @@ export class SimEditor {
      */
     refreshFromGame() {
         if (!this._editorInitialized) return false;
-        const shrines = () => JSON.stringify(this._editedDTOs?.[this._selfHrid]?.guildShrineLevels || {});
-        const before = shrines();
-        this._syncGuildShrinesFromGame();
+        const moved = this._syncSelfFromGame();
         // The party is checked here too, and deliberately only redrawn rather
         // than reloaded: the loaded players are the user's scenario, and a panel
         // that silently replaced them on reopen would throw away edits. What
         // changes is the note and the Reset to Party button, which is the hint
         // the user needs to make that call themselves.
         const partyMoved = this._partyKeyAtLoad !== null && this._partySignature().key !== this._partyKeyAtLoad;
-        if (shrines() === before && !partyMoved) return false;
+        if (!moved && !partyMoved) return false;
         this.renderEditor();
         return true;
     }
@@ -639,9 +885,10 @@ export class SimEditor {
             info.push({ hrid, name: names[index] || `Player ${index + 1}` });
         });
         this._originalDTOs = structuredClone(dtoMap);
-        // The live self's original holds the game's house rooms and shrines, which is what the live sync measures a
-        // hand edit against: the build handed over may carry a what-if level, and recorded as the original it would
-        // read as unedited and be put back to the game's level on the next read
+        // The live self's original holds the game's house rooms, shrines, ability and skill levels and worn
+        // enhancement levels, which is what the live syncs measure a hand edit against: the build handed over may
+        // carry a what-if level, and recorded as the original it would read as unedited and be put back to the
+        // game's level on the next read
         if (selfIsLive && this._originalDTOs.player1) this._seedLiveBaseline(this._originalDTOs.player1);
         this._editedDTOs = dtoMap;
         this._editedPlayerInfo = info;
@@ -662,9 +909,11 @@ export class SimEditor {
     }
 
     /**
-     * Set a live self's original house rooms and guild shrines to what the game says now, read from the same
-     * sources the live syncs read (never from an outgoing original, whose hand-edited fields those syncs leave
-     * behind). Rooms or shrines the game does not report keep the value the DTO was handed with.
+     * Set a live self's original house rooms, guild shrines, ability levels, skill levels and worn enhancement
+     * levels to what the game says now, read from the same sources the live syncs read (never from an outgoing
+     * original, whose hand-edited fields those syncs leave behind). Anything the game does not report — an
+     * ability it has no level for, a slot holding a different item than the one worn — keeps the value the DTO
+     * was handed with.
      * @param {Object} original - The live self's entry in `_originalDTOs`; mutated
      * @private
      */
@@ -679,6 +928,26 @@ export class SimEditor {
             }
         } catch (error) {
             console.error('[SimEditor] Failed to read the house rooms:', error);
+        }
+        const abilityLevels = this._readLiveAbilityLevels();
+        if (abilityLevels && Array.isArray(original.abilities)) {
+            original.abilities = original.abilities.map((slot) =>
+                slot?.hrid && abilityLevels.has(slot.hrid) ? { ...slot, level: abilityLevels.get(slot.hrid) } : slot
+            );
+        }
+        const skillLevels = this._readLiveSkillLevels();
+        if (skillLevels) {
+            for (const [key, level] of skillLevels) {
+                if (original[key] !== undefined) original[key] = level;
+            }
+        }
+        const worn = this._readLiveEquipment();
+        if (worn && original.equipment) {
+            for (const [slot, piece] of Object.entries(original.equipment)) {
+                if (piece?.hrid && worn[slot]?.hrid === piece.hrid) {
+                    original.equipment[slot] = { ...piece, enhancementLevel: worn[slot].enhancementLevel };
+                }
+            }
         }
         let shrines = null;
         try {
@@ -1470,8 +1739,8 @@ export class SimEditor {
         // Before the HTML is built, not just before a run: the reported bug was
         // about *reading* stale shrine levels in the Configure tab, so syncing
         // only in getEditedDTOs would fix the numbers the sim used and leave the
-        // ones on screen wrong.
-        this._syncGuildShrinesFromGame();
+        // ones on screen wrong. Ability and skill levels likewise.
+        this._syncSelfFromGame();
 
         const playerInfo = this._editedPlayerInfo || [];
         const activePlayer = this._activeEditPlayer;
