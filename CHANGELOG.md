@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim keeps up with your level-ups
+
+Your own row in the Combat and Lab sims now picks up ability, skill and gear enhancement level-ups as they happen, instead of waiting for Reset to Me. Any level you typed in by hand stays as you set it, and other players' rows are left alone.
+
 ### Net Worth History dots stay one color
 
 The dots on the Net Worth History line turned from dark to white after a setting-change marker. Every reading now shows as the same white dot, and only the setting-change diamond stands out in orange.
