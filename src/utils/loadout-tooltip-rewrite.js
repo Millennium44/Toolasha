@@ -88,9 +88,26 @@ function statsAt(equipmentDetail, steps) {
  * @returns {string}
  */
 function rowText(node) {
-    const host = node.parentElement;
-    const row = host.childNodes.length === 1 && host.parentElement ? host.parentElement : host;
-    return row.textContent;
+    return rowOf(node).textContent;
+}
+
+/**
+ * The tooltip row a text node belongs to: its ancestor sitting directly in the game's text block, whether the game
+ * draws label and value in one text node or splits them. Never the block itself, which holds every line.
+ * @param {Text} node
+ * @returns {Element}
+ */
+function rowOf(node) {
+    const inBlock = (el) => String(el?.className).includes('ItemTooltipText_itemTooltipText');
+    let row = node.parentElement;
+    while (
+        row.parentElement &&
+        !inBlock(row.parentElement) &&
+        !String(row.parentElement.className).includes('MuiTooltip')
+    ) {
+        row = row.parentElement;
+    }
+    return row;
 }
 
 /**
@@ -146,9 +163,8 @@ function rewriteMarketPrice(popper, nodes, skip, itemHrid, level, title) {
         if (value > 0) {
             setText(popper, node, `${prefix}${formatLike(Math.round(value), digits)}${tail}`, title);
         } else {
-            const parent = node.parentElement;
-            const wider = parent.childNodes.length === 1 ? parent.parentElement : null;
-            const hide = wider && MARKET_PRICE_LABEL.test(wider.textContent) ? wider : parent;
+            const hide = rowOf(node);
+            if (String(hide.className).includes('ItemTooltipText_itemTooltipText')) return;
             const list = edits.get(popper) || [];
             list.push({ node, orig: node.data, shown: node.data, hide, hideWas: hide.style.display });
             edits.set(popper, list);

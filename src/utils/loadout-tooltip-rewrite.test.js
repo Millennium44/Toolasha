@@ -121,6 +121,25 @@ describe('loadout level in the game lines', () => {
         expect(row.style.display).toBe('');
     });
 
+    test('no +20 price, live shape: only the Market Price row hides, never the tooltip text block', () => {
+        // As the game draws it (captured on the test server): unclassed rows straight inside the text block, each
+        // a div holding one text node
+        delete game.prices[`${GLOVES}:20`];
+        const el = document.createElement('div');
+        el.className = 'MuiTooltip-popper';
+        el.innerHTML = `<div class="MuiTooltip-tooltip"><div class="ItemTooltipText_itemTooltipText__zFq3A">
+            <div class="ItemTooltipText_name__n">Enchanted Gloves</div><div>Amount: 1</div>
+            <div>Sell Price: 200,000</div><div>Market Price: 8,328,000,000</div></div></div>`;
+        document.body.appendChild(el);
+        applyLoadoutLevelToGameLines(el, info(el), GLOVES);
+        const block = el.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
+        const market = [...block.children].find((row) => row.textContent.startsWith('Market Price'));
+        expect(block.style.display).toBe('');
+        expect(market.style.display).toBe('none');
+        expect([...block.children].filter((row) => row.style.display === 'none')).toHaveLength(1);
+        el.remove();
+    });
+
     test('a price in another language is found by its +0 figure, not its label', () => {
         const el = popper('附魔手套', ['加速: +10%'], '市场价: 8,328,000,000');
         applyLoadoutLevelToGameLines(el, info(el), GLOVES);
