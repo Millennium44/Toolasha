@@ -6131,7 +6131,7 @@ class GuildTrials {
             ...(!collapsed
                 ? [
                       `<div data-history-key="1" style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:2px;">` +
-                          'T21 63% = tier and progress reached · — = not tracked · blank = didn’t run' +
+                          'T15 63% = tier and progress reached · — = not tracked · blank = didn’t run' +
                           (hidden > 0
                               ? ` · +${hidden} earlier ${hidden === 1 ? 'cycle' : 'cycles'} in each trial’s hover`
                               : '') +

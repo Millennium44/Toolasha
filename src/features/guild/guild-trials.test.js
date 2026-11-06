@@ -3531,7 +3531,7 @@ describe('the panel, end to end', () => {
             fire(root);
             const key = document.querySelector('[data-mwi-block="trial-history"] [data-history-key]');
             expect(key.textContent).toContain(
-                'T21 63% = tier and progress reached · — = not tracked · blank = didn’t run'
+                'T15 63% = tier and progress reached · — = not tracked · blank = didn’t run'
             );
         });
 

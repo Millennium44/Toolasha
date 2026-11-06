@@ -879,7 +879,7 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
 export const NOT_RUN_CELL = '';
 
 /**
- * A tier with the percent reached in the next one, e.g. `T21 63%`; the tier alone where no percent was kept.
+ * A tier with the percent reached in the next one, e.g. `T15 63%`; the tier alone where no percent was kept.
  * @param {number} tier - Tiers cleared
  * @param {number|null} [progress] - Whole percent into the next tier
  * @returns {string} The text
@@ -889,7 +889,7 @@ function tierWithProgress(tier, progress) {
 }
 
 /**
- * One week's tier as a cell: `T21 63%` (the tier and the progress reached in the next one; the tier
+ * One week's tier as a cell: `T15 63%` (the tier and the progress reached in the next one; the tier
  * alone for a cycle recorded before the percent was), empty when the game's list for that cycle did not
  * include the trial, or "—" when it is not tracked (it ran, or this client has no list for the cycle).
  * @param {Object} week - A row's week
@@ -965,7 +965,7 @@ export function trialHistoryDetail(row) {
     });
     return [
         `${row?.name ?? 'Trial'} — tier and progress reached each finished cycle, newest first.`,
-        '"T21 63%" is tier 21 cleared and 63% of the way through the next; a cycle from before progress was kept shows the tier alone.',
+        '"T15 63%" is tier 15 cleared and 63% of the way through the next; the last tier, T21, has no next and shows the tier alone, as does a cycle from before progress was kept.',
         '"—" is a cycle this client has not tracked (the trial ran, or this client has no list of what ran) or a points figure it never saw; T0 is a real result.',
         'A blank cell is a cycle the game’s own list says the trial did not run in.',
         '~ marks points priced from a tier the guild payload stated, at today’s Builder’s Hall bonus.',
