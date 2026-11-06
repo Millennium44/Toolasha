@@ -841,6 +841,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'inventoryTooltipBeside',
+            name: 'Inventory Tooltip Beside',
+            category: 'Inventory',
+            module: Market.inventoryTooltipBeside,
+            async: true,
+        },
+        {
             key: 'dungeonShopPlanner',
             name: 'Dungeon Shop Planner',
             category: 'Inventory',

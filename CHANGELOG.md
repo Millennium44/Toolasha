@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltips no longer cover the item
+
+When an inventory item's tooltip is too tall to fit above or below the item, it now opens to the left or right of the item, whichever side has more room, instead of covering it. Tooltips that already fit above or below stay where the game puts them. Turn it off with "Keep inventory tooltips off the hovered item".
+
 ### Merge duplicate tasks works again after a Solo estimate
 
 With two or more combat tasks on the same monster, pressing Go after running a Solo ⚔ Estimate filled only that card's count instead of the combined total. It now fills the combined kills, and the estimate's difficulty tier is applied to the fight Go opens.
