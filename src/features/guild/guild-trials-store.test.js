@@ -2728,6 +2728,16 @@ describe('the weekly reset inside a test-server cycle', () => {
         expect(rolled.history[0].cycleFrom).toBeUndefined();
     });
 
+    test('a device that slept through the running cycle archives the one before it at the rollover', () => {
+        game.testServer = true;
+        // Wednesday's cycle read on Wednesday evening (~22 h before the reset, inside a day), its cycleStart
+        // the day before; Thursday's cycle never seen. Carried, those tiles would be archived under Thursday's key
+        const wednesday = { ...running(thisWeek - 22 * HOUR), cycleStart: cycleBegan - 24 * HOUR };
+        const rolled = rollRecordToWeek(wednesday, thisWeek);
+        expect(rolled.tiles).toEqual({});
+        expect(rolled.history[0]).toMatchObject({ reason: 'the week rolled over', weekStart: lastWeek });
+    });
+
     test('live is unchanged: the weekly reset is the cycle boundary', () => {
         const rolled = rollRecordToWeek(running(), thisWeek);
         expect(rolled.tiles).toEqual({});

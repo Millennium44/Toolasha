@@ -477,7 +477,17 @@ function carriesOverRollover(record, weekStart) {
     const tiles = Object.values(record?.tiles || {});
     if (!tiles.length) return false;
     const newest = tiles.reduce((most, tile) => Math.max(most, newestTileStamp(tile)), 0);
-    return newest >= weekStart - TEST_CYCLE_SPAN_MS;
+    if (newest < weekStart - TEST_CYCLE_SPAN_MS) return false;
+    // A day reaches back into the cycle before the running one (the test cycle starts hours before the reset),
+    // so the record must show it saw the running cycle begin: a cycle start within a day of the reset, and reads
+    // since then. A device that slept through a cycle still holds the one before it; carried, those tiles would be
+    // archived under the running cycle's key and fold into another device's real result for it on sync.
+    const cycleStart = record?.cycleStart;
+    return (
+        Number.isFinite(cycleStart) &&
+        cycleStart > weekStart - TEST_CYCLE_SPAN_MS &&
+        newest >= cycleStart - CYCLE_START_SLACK_MS
+    );
 }
 
 /** The reason stamped on a week's tiles archived by {@link rollRecordToWeek} */
