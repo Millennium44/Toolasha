@@ -6,7 +6,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { buildLabyrinthUpdated } from '../../__fixtures__/wire/labyrinth.js';
+import { buildLabyrinthUpdated, buildLabyrinthRoomProgress } from '../../__fixtures__/wire/labyrinth.js';
 import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 
@@ -276,6 +276,40 @@ describe('computeLiveEstimate', () => {
         expect(estimate.currentLevel).toBe(2);
         expect(estimate.targetLevel).toBe(5);
         expect(estimate.totalAttempts).toBe(15);
+    });
+});
+
+describe('computeLiveEstimate with the server deadline (timeoutAt)', () => {
+    // Real message: actionTimeMs 2578, timeoutAt 00:12:12.360Z
+    const real = buildLabyrinthRoomProgress('afterOneAction');
+    const deadline = Date.parse(real.timeoutAt);
+
+    test('uses the deadline for the attempts that remain', () => {
+        const estimate = labyrinthClearRate.computeLiveEstimate(real, deadline - 60000);
+        expect(estimate.attemptsLeft).toBe(Math.floor(60000 / 2578));
+        expect(estimate.totalAttempts).toBe(real.actionCounter + estimate.attemptsLeft);
+    });
+
+    test('falls back to the fixed room length without timeoutAt', () => {
+        const { timeoutAt: _unused, ...manual } = real;
+        const estimate = labyrinthClearRate.computeLiveEstimate(manual, deadline - 60000);
+        expect(estimate.totalAttempts).toBe(Math.floor(120000 / 2578));
+        expect(estimate.attemptsLeft).toBe(estimate.totalAttempts - real.actionCounter);
+    });
+
+    test('falls back when timeoutAt cannot be parsed', () => {
+        const estimate = labyrinthClearRate.computeLiveEstimate({ ...real, timeoutAt: 'not a date' }, deadline - 60000);
+        expect(estimate.totalAttempts).toBe(Math.floor(120000 / 2578));
+    });
+
+    test('falls back when the deadline has passed (a previous room)', () => {
+        const estimate = labyrinthClearRate.computeLiveEstimate(real, deadline + 30000);
+        expect(estimate.totalAttempts).toBe(Math.floor(120000 / 2578));
+    });
+
+    test('falls back when the deadline is further out than a room can last', () => {
+        const estimate = labyrinthClearRate.computeLiveEstimate(real, deadline - 300000);
+        expect(estimate.totalAttempts).toBe(Math.floor(120000 / 2578));
     });
 });
 

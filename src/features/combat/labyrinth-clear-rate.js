@@ -107,6 +107,8 @@ export { computeLabyrinthPath, computeApproachPath, countDisjointRoutes, compute
 const BADGE_CLASS = 'mwi-labyrinth-clear';
 const LIVE_PROGRESS_CLASS = 'mwi-labyrinth-live-progress';
 const LIVE_PROGRESS_STALE_MS = 5000;
+/** How far past a full room length a `timeoutAt` may sit before it is not trusted (clock skew, wrong room) */
+const ROOM_DEADLINE_SLACK_MS = 5000;
 const PREVIEW_ID = 'mwi-labyrinth-preview';
 /**
  * DataManager events after which a tile badge's inputs may have changed. Teas,
@@ -2761,17 +2763,43 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Compute live clear estimate from room progress data
+     * The attempts left before the server's own room deadline, when the message
+     * carries one. `labyrinth_room_progress` has `timeoutAt` on auto runs only;
+     * it names no room, so the deadline itself is the check that it belongs to
+     * the room now running: a missing or unparsable value, a deadline already
+     * past (a previous room's message), or one further out than a room can last
+     * (a different run, or a client clock far off the server's) all return null
+     * and the caller keeps the fixed room length.
+     * @param {Object} progress - labyrinth_room_progress payload
+     * @param {number} actionTimeMs - Milliseconds per action
+     * @param {number} nowMs - Current time, epoch ms
+     * @returns {number|null} Whole attempts that still fit, or null to use the fixed length
      */
-    computeLiveEstimate(progress) {
+    attemptsLeftBeforeDeadline(progress, actionTimeMs, nowMs) {
+        if (typeof progress?.timeoutAt !== 'string') return null;
+        const deadlineMs = Date.parse(progress.timeoutAt);
+        if (!Number.isFinite(deadlineMs)) return null;
+        const remainingMs = deadlineMs - nowMs;
+        if (remainingMs <= 0 || remainingMs > ROOM_DURATION * 1000 + ROOM_DEADLINE_SLACK_MS) return null;
+        return Math.floor(remainingMs / actionTimeMs);
+    }
+
+    /**
+     * Compute live clear estimate from room progress data
+     * @param {Object} progress - labyrinth_room_progress payload
+     * @param {number} [nowMs] - Current time, epoch ms
+     */
+    computeLiveEstimate(progress, nowMs = Date.now()) {
         const isEnhancing = progress.targetLevel != null;
         const successChance = this.normalizeChance(progress.successRate);
         const doubleChance = this.normalizeChance(progress.doubleProgressChance);
         const fallbackMs = (isEnhancing ? BASE_ENHANCING_TIME : BASE_SKILLING_TIME) * 1000;
         const actionTimeMs = Math.max(1, Number(progress.actionTimeMs) || fallbackMs);
-        const totalAttempts = Math.max(0, Math.floor((ROOM_DURATION * 1000) / actionTimeMs));
         const actionCounter = Math.max(0, Math.floor(Number(progress.actionCounter) || 0));
-        const attemptsLeft = Math.max(0, totalAttempts - actionCounter);
+        const deadlineAttempts = this.attemptsLeftBeforeDeadline(progress, actionTimeMs, nowMs);
+        const fixedTotal = Math.max(0, Math.floor((ROOM_DURATION * 1000) / actionTimeMs));
+        const attemptsLeft = deadlineAttempts ?? Math.max(0, fixedTotal - actionCounter);
+        const totalAttempts = deadlineAttempts == null ? fixedTotal : actionCounter + deadlineAttempts;
 
         if (isEnhancing) {
             const targetLevel = Math.max(0, Math.floor(Number(progress.targetLevel) || 0));
