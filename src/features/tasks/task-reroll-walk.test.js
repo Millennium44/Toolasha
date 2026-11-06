@@ -2340,6 +2340,10 @@ describe('toolbar docking', () => {
         expect(gear().style.display).toBe('');
         gear().click();
         expect(document.querySelector('.mwi-task-reroll-walk-hide')).toBeTruthy();
+        // Opening the drawer redraws the bar; that redraw used to close it again a moment later
+        walk._render();
+        expect(walk.widget.settingsOpen).toBe(true);
+        expect(document.querySelector('.mwi-task-reroll-walk-hide')).toBeTruthy();
     });
 
     test('the label is the action and its cost; the rest lives in the title', async () => {

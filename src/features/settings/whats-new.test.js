@@ -828,14 +828,18 @@ describe('applyPolicy when storage does not answer', () => {
 
 describe('a re-offered setting: not new, off for this player, shown once, never switched on', () => {
     const ID = 'simulateScrollEffects';
+    // Everything on the shipped list is offered together; this block follows the scroll switch
+    const BOOKS = 'networth_abilityBooksAsInventory';
+    const ALL = [ID, BOOKS];
     // The state record, not the snapshot the popup's Reopen reads
     const saved = () => mocks.saved.filter(([key]) => key === 'whatsNew_state_char-1').at(-1)?.[1];
-    const state = (extra = {}) => ({ ...CURRENT, knownIds: [ID, 'other'], ...extra });
+    const state = (extra = {}) => ({ ...CURRENT, knownIds: [ID, BOOKS, 'other'], ...extra });
 
     beforeEach(() => {
         // A checkboxWithButton in the real schema; shipping on since the default flipped
         mocks.definitions = {
             [ID]: { type: 'checkboxWithButton', default: true, label: 'Simulate', help: 'h' },
+            [BOOKS]: { type: 'checkbox', default: true, label: 'Books', help: 'h' },
             other: { type: 'checkbox', default: false },
         };
         domWindow.Toolasha = { ...CURRENT };
@@ -847,9 +851,9 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
 
         await whatsNew.applyPolicy();
 
-        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.reoffered).toEqual(ALL);
         expect(whatsNew._pending.newIds).toEqual([]);
-        expect(saved().offeredIds).toEqual([ID]);
+        expect(saved().offeredIds).toEqual(ALL);
         // Never the new-defaults machinery, and no value changed
         expect(mocks.written).toEqual([]);
     });
@@ -893,7 +897,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
     test('the same build with nothing else new still speaks, once', async () => {
         mocks.stateRead = { found: true, value: state() };
         await whatsNew.applyPolicy();
-        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.reoffered).toEqual(ALL);
 
         // Next start reads the state just saved
         mocks.stateRead = { found: true, value: saved() };
@@ -906,26 +910,26 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
     });
 
     test('it is not offered again after a later update either', async () => {
-        mocks.stateRead = { found: true, value: state({ version: '2.89.0', offeredIds: [ID] }) };
+        mocks.stateRead = { found: true, value: state({ version: '2.89.0', offeredIds: ALL }) };
 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending.reoffered).toEqual([]);
         expect(whatsNew._pending.headline).toContain('Updated 2.89.0');
-        expect(saved().offeredIds).toEqual([ID]);
+        expect(saved().offeredIds).toEqual(ALL);
     });
 
     test('a player who has it on is offered nothing, but it is marked so turning it off later does not offer it', async () => {
         mocks.stateRead = { found: true, value: state() };
-        mocks.settingValues = { [ID]: true };
+        mocks.settingValues = { [ID]: true, [BOOKS]: true };
 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending).toBeNull();
-        expect(saved().offeredIds).toEqual([ID]);
+        expect(saved().offeredIds).toEqual(ALL);
 
         mocks.stateRead = { found: true, value: saved() };
-        mocks.settingValues = { [ID]: false };
+        mocks.settingValues = { [ID]: false, [BOOKS]: false };
         mocks.saved = [];
         await whatsNew.applyPolicy();
         expect(whatsNew._pending).toBeNull();
@@ -937,7 +941,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending?.reoffered ?? []).toEqual([]);
-        expect(saved().offeredIds).toEqual([ID]);
+        expect(saved().offeredIds).toEqual(ALL);
     });
 
     test('a new version is a normal update with the offer alongside the new settings', async () => {
@@ -947,7 +951,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         await whatsNew.applyPolicy();
 
         expect(whatsNew._pending.newIds).toEqual(['brandNew']);
-        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.reoffered).toEqual(ALL);
     });
 
     test('the new-settings hold-back never touches it, even with every other new switch held off', async () => {
@@ -958,7 +962,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         await whatsNew.applyPolicy();
 
         expect(mocks.written).toEqual([['brandNewOn', false]]);
-        expect(whatsNew._pending.reoffered).toEqual([ID]);
+        expect(whatsNew._pending.reoffered).toEqual(ALL);
         expect(whatsNew._pending.turnedOff).toEqual(new Set(['brandNewOn']));
     });
 
@@ -970,8 +974,8 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
         whatsNew.maybeShow();
 
         expect(whatsNew.panel).toBeNull();
-        expect(saved().offeredIds).toEqual([ID]);
-        expect(whatsNew._shownData.reoffered).toEqual([ID]);
+        expect(saved().offeredIds).toEqual(ALL);
+        expect(whatsNew._shownData.reoffered).toEqual(ALL);
     });
 
     test('a read that failed, or settings that fell back to defaults, record nothing', async () => {
@@ -990,7 +994,7 @@ describe('a re-offered setting: not new, off for this player, shown once, never 
 
         await whatsNew.applyPolicy();
 
-        expect(saved().offeredIds).toEqual(['futureSetting', ID]);
+        expect(saved().offeredIds).toEqual(['futureSetting', ...ALL]);
     });
 
     test('the popup shows it under "Worth another look" with a live switch that changes only that setting', () => {

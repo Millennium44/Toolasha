@@ -2271,7 +2271,10 @@ class TaskRerollWalk {
         // Docked, the gear stays through Done: its drawer is then the only way to hide the walk
         const gearCollapsed = this.widgetMode === 'toolbar' ? '' : collapsed;
         if (widget.gear.style.display !== gearCollapsed) widget.gear.style.display = gearCollapsed;
-        if (done && widget.settingsOpen) widget.setSettingsOpen(false);
+        // Floating, Done folds the drawer away. Docked, the drawer is the only way to hide the walk, and
+        // this runs on every redraw (opening the drawer is itself one), so closing it here shut it again
+        // a moment after the gear opened it
+        if (done && this.widgetMode !== 'toolbar' && widget.settingsOpen) widget.setSettingsOpen(false);
         this._renderInfo();
     }
 

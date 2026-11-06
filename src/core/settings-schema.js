@@ -2442,7 +2442,7 @@ export const settingsGroups = {
                 id: 'networth_abilityBooksAsInventory',
                 label: 'Count ability books as inventory (Current Assets)',
                 type: 'checkbox',
-                default: false,
+                default: true,
                 help: 'Move ability books from Fixed Assets to Current Assets inventory value. Useful if you plan to sell them.',
                 requires: 'networth',
             },
