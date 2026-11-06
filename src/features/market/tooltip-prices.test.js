@@ -1045,6 +1045,50 @@ describe('loadout marks — on the tooltip itself', () => {
     });
 });
 
+describe('a Loadouts-panel slot whose tooltip name carries no +N', () => {
+    const SPRITE = '<svg><use href="/static/media/items_sprite.abc.svg#griffin_bulwark"></use></svg>';
+    const mountPanel = () => {
+        document.body.innerHTML = `<div class="LoadoutsPanel_selectedLoadout__s">
+            <div class="LoadoutsPanel_metadata__m">Name<svg></svg>Boss Gear<button>Edit</button></div>
+            <div class="LoadoutsPanel_equipment__e"><div class="Item_item__a">${SPRITE}</div></div></div>`;
+        return document.querySelector('.Item_item__a svg');
+    };
+    const slotTooltip = () =>
+        popper(`<div class="ItemTooltipText_itemTooltipText__x">
+            <div class="ItemTooltipText_name__2JAHA"><span>Griffin Bulwark</span></div>${SPRITE}</div>`);
+    const loadoutData = () => ({
+        characterItems: [{ itemHrid: '/items/griffin_bulwark', enhancementLevel: 8, count: 1 }],
+        characterLoadoutMap: {
+            a: {
+                name: 'Boss Gear',
+                useExactEnhancement: false,
+                wearableMap: { '/item_locations/body': 'c::/item_locations/inventory::/items/griffin_bulwark::0' },
+            },
+        },
+    });
+
+    test('is processed at the slot level: keyed on it and marked as in that loadout', async () => {
+        characterState.data = loadoutData();
+        mountPanel().dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        const el = slotTooltip();
+        observerState.handler(el);
+        await settle();
+        expect(el.dataset.pricesProcessedItem).toBe('Griffin Bulwark +8');
+        expect(el.querySelector('.mwi-loadout-marks')?.textContent).toBe('In loadouts: Boss Gear');
+    });
+
+    test('the same tooltip outside the panel stays at +0', async () => {
+        characterState.data = loadoutData();
+        document.body.innerHTML = `<div class="Inventory_items__i"><div class="Item_item__a">${SPRITE}</div></div>`;
+        document.querySelector('.Item_item__a svg').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        const el = slotTooltip();
+        observerState.handler(el);
+        await settle();
+        expect(el.dataset.pricesProcessedItem).toBe('Griffin Bulwark');
+        expect(el.querySelector('.mwi-loadout-marks')?.textContent ?? '').not.toContain('Boss Gear');
+    });
+});
+
 describe('self-use alchemy lines', () => {
     // The calculator's decompose result for a Cheese Sword, cut to what is read
     const cheeseSwordDecompose = () => ({

@@ -12,6 +12,13 @@
  */
 
 import domObserver from './dom-observer.js';
+import { resolveHoveredLoadoutLevel } from '../utils/loadout-hover-level.js';
+
+/** The element the pointer last entered, for tooltips whose level only the hovered slot knows */
+let lastHoverTarget = null;
+const onPointerOver = (event) => {
+    lastHoverTarget = event.target;
+};
 
 const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
 const REGEX_ITEM_LINK = /\/items\/(.+?)(?:\/|$)/;
@@ -30,6 +37,8 @@ const REGEX_SPRITE_NAME = /#(.+)$/;
  * @property {Element|null} collectionNameEl - The `div[class*="Collection_name"]` of a collection tooltip
  * @property {Element|null} abilityTooltip - The `Ability_abilityTooltip` content of an ability tooltip
  * @property {string|null} itemHrid - From an item link or sprite reference in the popper, when it carries one
+ * @property {'loadout'|undefined} [levelSource] - 'loadout' when `enhancementLevel` came from the hovered
+ *   Loadouts-panel slot because the name carried no "+N"
  */
 
 /**
@@ -59,10 +68,14 @@ function classifyTooltip(element) {
     info.nameEl = element.querySelector('div[class*="ItemTooltipText_name"]');
     info.isItemTooltip = !!info.nameEl;
 
+    let nameHasLevel = false;
     if (info.nameEl) {
         info.itemName = info.nameEl.textContent.trim();
         const match = info.itemName.match(REGEX_ENHANCEMENT_LEVEL);
-        if (match) info.enhancementLevel = parseInt(match[1], 10);
+        if (match) {
+            info.enhancementLevel = parseInt(match[1], 10);
+            nameHasLevel = true;
+        }
     }
 
     if (info.isCollectionTooltip) {
@@ -88,6 +101,21 @@ function classifyTooltip(element) {
             .find((ref) => ref.includes('items_sprite'));
         const spriteMatch = spriteRef?.match(REGEX_SPRITE_NAME);
         if (spriteMatch) info.itemHrid = `/items/${spriteMatch[1]}`;
+    }
+
+    // A loadout slot's tooltip names the item without its "+N" when the loadout wears the highest
+    // level owned; the panel knows the level. A name that carries one always wins.
+    if (info.kind === 'item' && !nameHasLevel) {
+        let level = null;
+        try {
+            level = resolveHoveredLoadoutLevel(lastHoverTarget, info.itemHrid);
+        } catch (error) {
+            console.error('[TooltipObserver] Loadout slot level failed:', error);
+        }
+        if (level > 0) {
+            info.enhancementLevel = level;
+            info.levelSource = 'loadout';
+        }
     }
 
     return info;
@@ -122,6 +150,8 @@ class TooltipObserver {
         }
 
         this.isInitialized = true;
+
+        document.addEventListener('mouseover', onPointerOver, { capture: true, passive: true });
 
         // Watch for tooltip/popper elements appearing
         // These are the common classes used by MUI tooltips/poppers
@@ -254,6 +284,8 @@ class TooltipObserver {
             this.unregisterObserver = null;
         }
         this._unwatchRemovals();
+        document.removeEventListener('mouseover', onPointerOver, { capture: true });
+        lastHoverTarget = null;
         for (const element of this.open) this.delivered.delete(element);
         this.open.clear();
         this.subscribers.clear();
