@@ -775,8 +775,10 @@ class NetworthHistoryChart {
                 borderWidth: 2,
                 pointRadius: (ctx) => (ctx.raw?._raw?.marker ? 6 : filtered.length > 200 ? 0 : 2),
                 pointStyle: (ctx) => (ctx.raw?._raw?.marker ? 'rectRot' : 'circle'),
-                pointBackgroundColor: (ctx) => (ctx.raw?._raw?.marker ? '#f59e0b' : undefined),
-                pointBorderColor: (ctx) => (ctx.raw?._raw?.marker ? '#fff' : undefined),
+                // Every point gets a color of its own: Chart.js 4 reuses one options object across points, so a
+                // point that answers `undefined` kept the marker's colors and every dot after a marker turned white
+                pointBackgroundColor: (ctx) => (ctx.raw?._raw?.marker ? '#f59e0b' : '#fff'),
+                pointBorderColor: '#fff',
                 pointHoverRadius: 6,
                 tension: 0.1,
                 fill: true,

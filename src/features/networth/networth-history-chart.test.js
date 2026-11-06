@@ -412,6 +412,24 @@ describe('growth figures and setting-change markers', () => {
         expect(text).toContain('10.40B');
     });
 
+    test('every point names its own colors, so dots after a marker look like dots before it', async () => {
+        getHistory.mockReturnValue([
+            { t: now - 3 * 3_600_000, total: 1_000, nonExcluded: 1_000 },
+            { t: now - 2 * 3_600_000, total: 1_100, nonExcluded: 1_100, marker: marked(100) },
+            { t: now - 3_600_000, total: 1_150, nonExcluded: 1_150 },
+        ]);
+        await networthHistoryChart.openModal();
+        const line = findDataset('Total Net Worth');
+        const resolve = (option, index) =>
+            typeof option === 'function' ? option({ raw: line.data[index], dataIndex: index }) : option;
+        const before = [resolve(line.pointBackgroundColor, 0), resolve(line.pointBorderColor, 0)];
+        const after = [resolve(line.pointBackgroundColor, 2), resolve(line.pointBorderColor, 2)];
+        // An `undefined` answer lets Chart.js 4 carry the marker's colors on to the next points
+        expect(before.every((c) => typeof c === 'string')).toBe(true);
+        expect(after).toEqual(before);
+        expect(resolve(line.pointBackgroundColor, 1)).toBe('#f59e0b');
+    });
+
     test('a marker that could not be separated is left in and flagged, not subtracted', async () => {
         getHistory.mockReturnValue([
             { t: now - 3 * 3_600_000, total: 1_000_000_000, nonExcluded: 1_000_000_000 },
