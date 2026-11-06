@@ -614,12 +614,22 @@ class PhiloCalculator {
                 // (the record always carries an empty itemCostOverrides, so "saved" alone says nothing).
                 const oldSwitches =
                     typeof saved.useCatalyst === 'boolean' || typeof saved.useCatalyticTea === 'boolean';
-                if (CATALYST_MODES.includes(saved.catalystMode)) {
+                // A saved mode wins only while the old switches beside it still say what it would write. An
+                // older build keeps the mode it does not know (the record merges) but rewrites the switches,
+                // so a mismatch means the older build changed the setting last, and its switches are taken.
+                const catalystModeHolds =
+                    CATALYST_MODES.includes(saved.catalystMode) &&
+                    (typeof saved.useCatalyst !== 'boolean' ||
+                        saved.useCatalyst === (saved.catalystMode === 'auto' || saved.catalystMode === 'prime'));
+                if (catalystModeHolds) {
                     this.catalystMode = saved.catalystMode;
                 } else if (oldSwitches) {
                     this.catalystMode = saved.useCatalyst === false ? 'none' : 'prime';
                 }
-                if (TEA_MODES.includes(saved.teaMode)) {
+                const teaModeHolds =
+                    TEA_MODES.includes(saved.teaMode) &&
+                    (typeof saved.useCatalyticTea !== 'boolean' || saved.useCatalyticTea === (saved.teaMode === 'on'));
+                if (teaModeHolds) {
                     this.teaMode = saved.teaMode;
                 } else if (oldSwitches) {
                     this.teaMode = saved.useCatalyticTea === true ? 'on' : 'off';
@@ -1942,7 +1952,16 @@ class PhiloCalculator {
      * @returns {string} Multi-line text
      */
     setupTitle(row) {
-        const lines = [row.setupForced ? 'Forced setup. Profit/hr of each candidate:' : 'Best of, by Profit/hr:'];
+        const fixed = [this.catalystMode !== 'auto' ? 'catalyst' : null, this.teaMode !== 'auto' ? 'tea' : null].filter(
+            Boolean
+        );
+        const lines = [
+            fixed.length === 2
+                ? 'Setup fixed in the controls. Profit/hr of each candidate:'
+                : fixed.length === 1
+                  ? `Best of, by Profit/hr (${fixed[0]} fixed in the controls):`
+                  : 'Best of, by Profit/hr:',
+        ];
         for (const candidate of row.setupCandidates || []) {
             const figure =
                 candidate.profitPerHour == null

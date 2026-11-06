@@ -1846,5 +1846,20 @@ describe('automatic catalyst and tea setup per row', () => {
             await c.loadSettings();
             expect([c.catalystMode, c.teaMode]).toEqual(['none', 'off']);
         });
+
+        test('a change an older build saved later wins over the mode it left behind', async () => {
+            // The older build keeps keys it does not know (the record merges) and rewrites only the switches
+            seed({ catalystMode: 'auto', teaMode: 'auto', useCatalyst: false, useCatalyticTea: true });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['none', 'on']);
+        });
+
+        test('a mode whose switches still agree with it is kept', async () => {
+            seed({ catalystMode: 'transmute', teaMode: 'off', useCatalyst: false, useCatalyticTea: false });
+            const c = new PhiloCalculator();
+            await c.loadSettings();
+            expect([c.catalystMode, c.teaMode]).toEqual(['transmute', 'off']);
+        });
     });
 });
