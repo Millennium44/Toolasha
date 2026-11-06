@@ -4407,6 +4407,35 @@ describe('a skilling analysis left running by a character switch', () => {
         spy.mockRestore();
     });
 
+    test('runs on a copy of the build, so a level-up the editor follows mid-run does not reach it', async () => {
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('skilling');
+        ui._skillingSortHandler = null;
+
+        let received;
+        let finish;
+        const spy = vi.spyOn(upgradeAdvisor, 'runSkillingUpgradeAnalysis').mockImplementation((params) => {
+            received = params.editorDTO;
+            return new Promise((resolve) => {
+                finish = () => resolve({ baseline: { clearRate: 0.5, xpPerRoom: 10 }, results: [] });
+            });
+        });
+
+        const run = ui._onSkillingUpgradeAnalyze();
+        await settle();
+        expect(spy).toHaveBeenCalledTimes(1);
+
+        const editorDTOs = ui._skillingEditor.getEditedDTOs();
+        const live = editorDTOs[ui._skillingEditor.getSelfHrid()] || Object.values(editorDTOs)[0];
+        expect(received).not.toBe(live);
+        expect(received).toEqual(live);
+
+        finish();
+        await run;
+        spy.mockRestore();
+    });
+
     test('is stopped by the teardown, and does not draw into the arriving character’s panel', async () => {
         ui.buildPanel();
         await settle();

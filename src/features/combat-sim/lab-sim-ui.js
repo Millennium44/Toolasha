@@ -4891,7 +4891,8 @@ class LabSimUI {
             this._setStatus('No character data. Wait for editor to load.');
             return;
         }
-        const dto = editedDTOs[this._skillingEditor.getSelfHrid()] || Object.values(editedDTOs)[0];
+        // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+        const dto = structuredClone(editedDTOs[this._skillingEditor.getSelfHrid()] || Object.values(editedDTOs)[0]);
         if (!dto) {
             this._setStatus('No player data available.');
             return;
@@ -10589,7 +10590,8 @@ class LabSimUI {
         }
 
         const selfHrid = this._skillingEditor.getSelfHrid();
-        const dto = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
+        // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+        const dto = structuredClone(editedDTOs[selfHrid] || Object.values(editedDTOs)[0]);
         if (!dto) {
             this._setStatus('No player data available.');
             return;
@@ -10771,7 +10773,8 @@ class LabSimUI {
         }
 
         const selfHrid = this._skillingEditor.getSelfHrid();
-        const dto = editedDTOs[selfHrid] || Object.values(editedDTOs)[0];
+        // A copy: the editor follows the game's level-ups in place, and the run keeps the build it started with
+        const dto = structuredClone(editedDTOs[selfHrid] || Object.values(editedDTOs)[0]);
         if (!dto) {
             this._setStatus('No player data available.');
             return;
