@@ -243,11 +243,17 @@ function cycleWeek(cycle) {
  */
 export function tileProgressPercent(tile) {
     const samples = Array.isArray(tile?.samples) ? tile.samples : [];
+    // The samples do not say which tier they read. A badge seen to move after the newest reading means the trial
+    // cleared a tier since, so that reading is of an earlier tier's bar (a T3 80% read, then a final T7 badge on the
+    // Trials tab): it says nothing about the tier after the archived one, and would be filed and ranked as if it did
+    const seenAt = Object.values(tile?.tierSeenAt || {}).filter(Number.isFinite);
     for (let at = samples.length - 1; at >= 0; at -= 1) {
         const reading = samples[at]?.readings?.[0];
         if (!reading || !(reading.max > 0) || !Number.isFinite(reading.current)) continue;
+        const readAt = samples[at]?.t;
+        if (Number.isFinite(readAt) && seenAt.some((when) => when > readAt)) return null;
         const done = tile.kind === 'combat' ? reading.max - reading.current : reading.current;
-        return Math.min(99, Math.max(0, Math.floor((done / reading.max) * 100)));
+        return Math.min(99, Math.max(0, Math.floor((done * 100) / reading.max)));
     }
     return null;
 }

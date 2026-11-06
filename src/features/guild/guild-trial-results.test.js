@@ -25,6 +25,7 @@ import {
     resultPoints,
     resultsFromCycle,
     resultsFromHistory,
+    tileProgressPercent,
     trialHistoryCells,
     trialHistoryDetail,
     trialOfTile,
@@ -374,5 +375,26 @@ describe('trialResultsHistory', () => {
         // A payload that kept up with the card still has its figure
         const [kept] = mergeResults([{ ...payloadOnly, serverTier: 5 }], [card]);
         expect(kept.serverPoints).toBe(1100);
+    });
+});
+
+describe('tileProgressPercent', () => {
+    const bar = (t, current, max) => ({ t, readings: [{ current, max }] });
+
+    test('reads the newest bar reading as a whole percent', () => {
+        expect(tileProgressPercent({ kind: 'skilling', samples: [bar(1000, 40, 100), bar(2000, 63, 100)] })).toBe(63);
+        // A combat bar counts the boss's health down
+        expect(tileProgressPercent({ kind: 'combat', samples: [bar(1000, 20, 100)] })).toBe(80);
+    });
+
+    test('a badge seen to move after the newest reading leaves the percent out', () => {
+        // A T3 reading at 80%, then a final T7 badge read on the Trials tab: nothing observed T8's bar
+        const tile = { kind: 'combat', samples: [bar(1000, 20, 100)], tierSeenAt: { 3: 500, 7: 5000 } };
+        expect(tileProgressPercent(tile)).toBeNull();
+    });
+
+    test('tiers all seen before the reading keep it', () => {
+        const tile = { kind: 'skilling', samples: [bar(5000, 58, 100)], tierSeenAt: { 3: 500, 7: 4000 } };
+        expect(tileProgressPercent(tile)).toBe(58);
     });
 });
