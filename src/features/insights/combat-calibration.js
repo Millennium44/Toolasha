@@ -48,7 +48,7 @@ import webSocketHook from '../../core/websocket.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 // Stateless functions, so the production bundle split can hold a copy on this
 // side: both read the same storage the collector writes
-import { sessionKey, loadSessions, sessionsRevision } from '../combat-stats/combat-session-history.js';
+import { sessionKey, loadSessionsWithStatus, sessionsRevision } from '../combat-stats/combat-session-history.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { predictionCalibration, MIN_DURATION_SEC } from './prediction-calibration.js';
 import { loadAllZonesSnapshot } from '../../utils/all-zones-snapshot.js';
@@ -222,7 +222,9 @@ class CombatCalibration {
     async _archive() {
         const revision = sessionsRevision();
         if (this.archiveCache && this.archiveRevision === revision) return this.archiveCache;
-        const archived = await loadSessions();
+        const { sessions: archived, ok } = await loadSessionsWithStatus();
+        // A failed read hands back [] or the in-memory list: use it for this battle, never cache it
+        if (!ok) return archived;
         this.archiveCache = archived;
         this.archiveRevision = revision;
         return archived;

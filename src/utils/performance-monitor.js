@@ -44,6 +44,8 @@ const ASYNC_RUNS_MAX = 100;
 /** Heartbeat fallback (browsers without `longtask`, i.e. Firefox): tick spacing and the lateness that counts */
 const STALL_HEARTBEAT_MS = 100;
 const STALL_HEARTBEAT_MIN_LATE_MS = 50;
+/** A tick this late is a sleep or a suspended tab, not a block: reset the baseline, record nothing. */
+const STALL_HEARTBEAT_MAX_LATE_MS = 30_000;
 
 const STALL_OURS_COVERAGE = 0.8;
 const STALL_NOT_OURS_COVERAGE = 0.2;
@@ -841,7 +843,7 @@ class PerformanceMonitor {
             if (typeof document !== 'undefined' && document.hidden) return;
             if (!this._tabVisible) return;
             const late = now - last - STALL_HEARTBEAT_MS;
-            if (late <= STALL_HEARTBEAT_MIN_LATE_MS) return;
+            if (late <= STALL_HEARTBEAT_MIN_LATE_MS || late > STALL_HEARTBEAT_MAX_LATE_MS) return;
             // The block began when the tick should have fired
             this._recordStall({ startTime: last + STALL_HEARTBEAT_MS, duration: late }, true);
         }, STALL_HEARTBEAT_MS);

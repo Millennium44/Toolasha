@@ -20,7 +20,11 @@ Runs not from today now show their date beside the time, so saved runs from diff
 
 ### A backup restore can't be undone by a background save
 
-A change saved while a restore or sync pull was writing could land over the restored value if the tab was hidden at that moment. Those saves now wait until the restore finishes. The Philo calculator also stops opening if you switch characters while it loads, so it can't save one character's settings over another's.
+A change saved while a restore or sync pull was writing could land over the restored value if the tab was hidden, a character switch ran or another tab triggered a reload at that moment. Those saves now wait until the restore finishes, and a tab-follow reload asks instead of cutting the restore off.
+
+### Philo calculator keeps each character's settings apart
+
+Switching characters while the Philo calculator was still loading could save the old character's settings under the new one. It now stops opening instead.
 
 ### Labyrinth estimate uses the room's real deadline
 

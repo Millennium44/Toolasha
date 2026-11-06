@@ -338,8 +338,16 @@ class TabVersionSync {
             clearTimeout(flushTimer);
         }
 
-        // flushAll() can resolve with a failed write still queued, and writes made during the flush stay queued
-        if (!flushed || storage.pendingWriteCount() > 0 || !stillOk() || !this._writeRecord(id)) {
+        // flushAll() can resolve with a failed write still queued, and writes made during the flush stay queued.
+        // During a backup restore or sync pull flushAll() holds and resolves at once: a reload then would cut
+        // the restore off part-way, so the tab asks instead.
+        if (
+            !flushed ||
+            storage.pendingWriteCount() > 0 ||
+            storage.isRestoreInProgress?.() ||
+            !stillOk() ||
+            !this._writeRecord(id)
+        ) {
             this._showNotice(id);
             return;
         }
