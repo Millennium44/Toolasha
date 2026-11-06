@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade details drop the "cached rooms" line
+
+The upgrade details no longer show "would stale N cached rooms, M within 2pp of their bar", which was about the Labyrinth sim's saved results and not something to act on.
+
 ### Guild trial players stay in a fixed place
 
 The game reshuffles the trial party's tiles at some tier changes. Toolasha now keeps every player in the same spot, grouped by signed-up role (tanks, support, damage, then no role) and then by name; skilling trials go by name. Players who don't fit beside your card line up in rows under it instead of a tall narrow column.

@@ -5895,6 +5895,20 @@ describe('upgrade row handoff', () => {
         expect(task).toContain('on task');
     });
 
+    test('an expanded gear-upgrade row carries no labyrinth cache-invalidation line', () => {
+        const html = upgradeRowNotesHtml({
+            cost: 1,
+            candidate: {
+                description: 'Cape',
+                upgradeHrid: '/items/cape',
+                upgradeLevel: 7,
+                type: 'enhancement',
+            },
+        });
+        expect(html).not.toContain('cached rooms');
+        expect(html).not.toContain('would stale');
+    });
+
     test('an owned-copy swap row offers no acquisition actions, a bought one does', () => {
         const bought = {
             description: 'Cape',
