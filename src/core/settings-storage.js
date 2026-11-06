@@ -135,6 +135,9 @@ const PINNED_PREVIOUS_DEFAULTS = [
     // offered it once in the update popup (whats-new-core.js REOFFERED_SETTINGS)
     { batch: 'p3', id: 'simulateScrollEffects', previous: false },
     { batch: 'p3', id: 'itemTooltip_multiActionProfit', previous: false },
+    // Ability books under Current Assets: on for new players only (2026-11-05); existing players keep the
+    // split they had, and the update popup offers the switch once (whats-new-core.js REOFFERED_SETTINGS)
+    { batch: 'p4', id: 'networth_abilityBooksAsInventory', previous: false },
 ];
 
 /** The batch an entry belongs to when it does not name one */

@@ -119,12 +119,15 @@ export function conservativeOverrides(newIds, lookup) {
  *   nothing selected, but a player who chose scrolls in Defaults... or the Loadouts panel while it was
  *   off has them applied the moment it is switched on, so the popup says how many are chosen.
  *
+ * - `networth_abilityBooksAsInventory`: now on for new players. Existing players keep their split, and
+ *   are reminded once that books can count as Current Assets. Total net worth is the same either way.
+ *
  * Not `newSettingIds`: those were never shown. These were, and nothing about them is new. Not
  * `conservativeOverrides` either, which switches things off; nothing here changes a value.
  *
  * @type {ReadonlyArray<string>}
  */
-export const REOFFERED_SETTINGS = Object.freeze(['simulateScrollEffects']);
+export const REOFFERED_SETTINGS = Object.freeze(['simulateScrollEffects', 'networth_abilityBooksAsInventory']);
 
 /**
  * The re-offered settings this player has not been shown yet.

@@ -1302,6 +1302,7 @@ describe('flipped checkbox defaults reach new players only', () => {
         'guildMembersShowGameMode',
         'simulateScrollEffects',
         'itemTooltip_multiActionProfit',
+        'networth_abilityBooksAsInventory',
     ];
     const box = (id, isTrue) => ({ id, type: 'checkbox', isTrue });
 

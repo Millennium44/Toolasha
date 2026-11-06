@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Ability books count as Current Assets for new players
+
+"Count ability books as inventory" now starts on for new players, so unread books show under Current Assets. Existing players keep their current split and the update popup offers the switch once. Total net worth is the same either way.
+
+### Reroll walk settings stay open once the walk is done
+
+With the walk docked in the Task Board bar, the ⚙ drawer no longer closes itself a moment after opening when the button reads "Walk again", so "Hide the walk" can be reached.
+
 ### Merge duplicate tasks works again after a Solo estimate
 
 With two or more combat tasks on the same monster, pressing Go after running a Solo ⚔ Estimate filled only that card's count instead of the combined total. It now fills the combined kills, and the estimate's difficulty tier is applied to the fight Go opens.

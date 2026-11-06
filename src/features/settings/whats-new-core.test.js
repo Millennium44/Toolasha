@@ -128,6 +128,8 @@ describe('settings offered a second time', () => {
 
     test('the shipped list names the scroll simulation switch, and every id on it is a switch in the schema', async () => {
         expect(REOFFERED_SETTINGS).toContain('simulateScrollEffects');
+        // On for new players since 2026-11-05; existing players are reminded once
+        expect(REOFFERED_SETTINGS).toContain('networth_abilityBooksAsInventory');
         const { getSettingDefinition } = await import('../../core/settings-schema.js');
         for (const id of REOFFERED_SETTINGS) {
             // The popup draws a live checkbox for these; a number or select would need its own row
