@@ -2957,6 +2957,24 @@ describe('the guild payload’s end percent', () => {
         });
     });
 
+    test('an exact whole-percent fraction is not floored one short (0.58 * 100 is 57.999...)', () => {
+        for (const [fraction, pct] of [
+            [0.29, 29],
+            [0.57, 57],
+            [0.58, 58],
+            [0.9999, 99],
+        ]) {
+            const next = recordServerTiers(record(), KEY, {
+                bankedTier: 19,
+                done: true,
+                at: now,
+                seenAt: now + 1000,
+                endProgress: { tier: 19, nextTierProgress: fraction },
+            });
+            expect(next.tiles[KEY].serverProgress.pct).toBe(pct);
+        }
+    });
+
     test('the last tier and a malformed fraction keep nothing', () => {
         for (const endProgress of [
             { tier: 21, nextTierProgress: 0.5 },

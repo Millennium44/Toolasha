@@ -1628,7 +1628,7 @@ function serverProgressOf(endProgress, at) {
     const fraction = endProgress?.nextTierProgress;
     if (!Number.isInteger(tier) || tier < 0 || tier >= TRIAL_MAX_TIER || !Number.isFinite(at)) return null;
     if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction < 0 || fraction >= 1) return null;
-    return { tier, pct: Math.min(99, Math.floor(fraction * 100)), at };
+    return { tier, pct: Math.min(99, Math.floor(fraction * 100 + 1e-9)), at };
 }
 
 /**
