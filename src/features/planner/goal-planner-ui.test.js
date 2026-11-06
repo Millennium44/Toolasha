@@ -21,7 +21,7 @@ const character = vi.hoisted(() => ({ id: 'char1' }));
  * `utils/inventory-reservations.test.js`; what matters here is which character
  * a claim is written under.
  */
-const ledger = vi.hoisted(() => ({ enabled: false, reserved: [], swept: [], onSweep: null }));
+const ledger = vi.hoisted(() => ({ enabled: false, reserved: [], swept: [], onSweep: null, writes: 0 }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
     onReservationsChanged: () => () => {},
     reservationsEnabled: () => ledger.enabled,
@@ -32,8 +32,11 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
         await ledger.onSweep?.();
         return 0;
     },
-    reserve: async (ownerId) => {
-        ledger.reserved.push({ ownerId, character: character.id });
+    // One call is one ledger write: `writes` is what the player waits on
+    reserveMany: async (entries, { abandoned } = {}) => {
+        if (abandoned?.()) return false;
+        ledger.writes += 1;
+        for (const { ownerId, label } of entries) ledger.reserved.push({ ownerId, label, character: character.id });
         return true;
     },
 }));
@@ -220,6 +223,7 @@ beforeEach(() => {
     character.id = 'char1';
     ledger.enabled = false;
     ledger.reserved = [];
+    ledger.writes = 0;
     ledger.swept = [];
     ledger.onSweep = null;
     shopping.calls = [];
@@ -480,6 +484,40 @@ describe('the character-switch boundary', () => {
 
         expect(ledger.swept).toHaveLength(1);
         // ...and nothing is claimed while it is off
+        expect(ledger.reserved).toEqual([]);
+    });
+
+    test('every goal, same-named ones included, is claimed in a single ledger write', async () => {
+        ledger.enabled = true;
+        // Four gold goals for the same amount: same title, distinct ids
+        store.data.goalPlannerGoals_char1 = Array.from({ length: 4 }, (_, index) => ({
+            id: `dup${index}`,
+            type: 'gold',
+            amount: 5_000_000,
+            createdAt: index,
+        }));
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(goalPlannerPanel.plans.length).toBeGreaterThanOrEqual(4);
+        expect(ledger.writes).toBe(1);
+        expect(ledger.reserved.map((entry) => entry.ownerId)).toEqual(
+            goalPlannerPanel.plans.map((plan) => `goal:${plan.goalId}`)
+        );
+        expect(ledger.reserved.map((entry) => entry.label)).toEqual(
+            goalPlannerPanel.plans.map((plan) => `Goal: ${plan.title}`)
+        );
+    });
+
+    test('no goals still sweeps but writes no claims', async () => {
+        ledger.enabled = true;
+        store.data.goalPlannerGoals_char1 = [];
+        goalPlannerPanel.show();
+        await goalPlannerPanel.load();
+        await goalPlannerPanel.refresh();
+
+        expect(ledger.swept).toHaveLength(1);
         expect(ledger.reserved).toEqual([]);
     });
 

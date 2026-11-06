@@ -77,7 +77,7 @@ import {
     saveCombatGear,
 } from './goal-planner-store.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
-import { releaseMissing, reserve, reservationsEnabled } from '../../utils/inventory-reservations.js';
+import { releaseMissing, reserveMany, reservationsEnabled } from '../../utils/inventory-reservations.js';
 import { GAME_COLORS, GAME_FRAME, setButtonVariant, styleGameButton } from '../../utils/game-look.js';
 import { ENHANCEMENT_SOLVER_MAX_LEVEL, maxLevel } from '../../utils/game-maximums.js';
 
@@ -707,12 +707,15 @@ class GoalPlannerPanel {
             // claims below need the setting, and `reserve()` gates on it itself.
             await releaseMissing(RESERVATION_OWNER_PREFIX, live);
             if (!reservationsEnabled() || gone()) return;
-            for (const plan of this.plans) {
-                if (gone()) return;
-                await reserve(`${RESERVATION_OWNER_PREFIX}${plan.goalId}`, reservationLines(plan), {
+            // One ledger write for every goal: a save per goal took seconds each
+            await reserveMany(
+                this.plans.map((plan) => ({
+                    ownerId: `${RESERVATION_OWNER_PREFIX}${plan.goalId}`,
+                    lines: reservationLines(plan),
                     label: `Goal: ${plan.title}`,
-                });
-            }
+                })),
+                { abandoned: gone }
+            );
         } catch (error) {
             console.error('[GoalPlanner] Recording reservations failed:', error);
         }

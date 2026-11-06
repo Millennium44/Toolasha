@@ -73,6 +73,7 @@ const {
     RESERVATIONS_KEY,
     RESERVATION_TTL_MS,
     reserve,
+    reserveMany,
     release,
     releaseMissing,
     loadReservations,
@@ -160,6 +161,74 @@ describe('reserve, replace and release', () => {
             { itemHrid: LOGS, count: 7 },
         ]);
         expect(allReservations()['goal:a'].lines).toEqual([{ itemHrid: LOGS, enhancementLevel: 0, count: 7 }]);
+    });
+});
+
+describe('reserveMany: many claims, one write', () => {
+    test('three owners, one of them twice, land in a single save', async () => {
+        await reserve('goal:keep', [{ itemHrid: LOGS, count: 10 }]);
+        await flushReservationWrites();
+        mockStorage.set.mockClear();
+
+        const landed = await reserveMany([
+            { ownerId: 'goal:a', lines: [{ itemHrid: LOGS, count: 100 }], label: 'Goal: Same name' },
+            { ownerId: 'goal:b', lines: [{ itemHrid: LOGS, count: 50 }], label: 'Goal: Same name' },
+            { ownerId: 'goal:c', lines: [{ itemHrid: LOGS, enhancementLevel: 2, count: 5 }], label: 'Goal: Other' },
+            // A repeated owner: the later entry replaces the earlier, as two `reserve` calls would
+            { ownerId: 'goal:a', lines: [{ itemHrid: LOGS, count: 120 }], label: 'Goal: Same name' },
+        ]);
+        await flushReservationWrites();
+
+        expect(landed).toBe(true);
+        expect(mockStorage.set).toHaveBeenCalledTimes(1);
+        const ledger = allReservations();
+        expect(ledger['goal:a'].lines[0].count).toBe(120);
+        expect(ledger['goal:b'].label).toBe('Goal: Same name');
+        expect(ledger['goal:c'].lines).toEqual([{ itemHrid: LOGS, enhancementLevel: 2, count: 5 }]);
+        // A claim not named in the call is left alone: it replaces per owner, it is not a sweep
+        expect(ledger['goal:keep'].lines[0].count).toBe(10);
+    });
+
+    test('an entry with nothing usable releases that owner, in the same write', async () => {
+        await reserve('goal:a', [{ itemHrid: LOGS, count: 100 }]);
+        await flushReservationWrites();
+        mockStorage.set.mockClear();
+
+        await reserveMany([
+            { ownerId: 'goal:a', lines: [] },
+            { ownerId: 'goal:b', lines: [{ itemHrid: LOGS, count: 1 }] },
+        ]);
+        await flushReservationWrites();
+
+        expect(mockStorage.set).toHaveBeenCalledTimes(1);
+        expect(allReservations()['goal:a']).toBeUndefined();
+        expect(allReservations()['goal:b']).toBeDefined();
+    });
+
+    test('empty input writes nothing', async () => {
+        mockStorage.set.mockClear();
+        expect(await reserveMany([])).toBe(false);
+        expect(await reserveMany([{ ownerId: 'goal:a', lines: [] }])).toBe(false);
+        await flushReservationWrites();
+        expect(mockStorage.set).not.toHaveBeenCalled();
+    });
+
+    test('writes nothing while the ledger is off', async () => {
+        mockConfig.enabled = false;
+        mockStorage.set.mockClear();
+        expect(await reserveMany([{ ownerId: 'goal:a', lines: [{ itemHrid: LOGS, count: 1 }] }])).toBe(false);
+        expect(mockStorage.set).not.toHaveBeenCalled();
+    });
+
+    test('a caller that has moved on after the load writes nothing', async () => {
+        mockStorage.set.mockClear();
+        const landed = await reserveMany([{ ownerId: 'goal:a', lines: [{ itemHrid: LOGS, count: 1 }] }], {
+            abandoned: () => true,
+        });
+        await flushReservationWrites();
+        expect(landed).toBe(false);
+        expect(allReservations()['goal:a']).toBeUndefined();
+        expect(mockStorage.set).not.toHaveBeenCalled();
     });
 });
 

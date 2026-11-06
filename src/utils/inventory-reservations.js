@@ -623,6 +623,72 @@ export async function reserve(ownerId, lines, { label = '' } = {}) {
 }
 
 /**
+ * Record the claims of many owners in ONE ledger write.
+ *
+ * The same contract as {@link reserve} per entry (replace, and an entry with no
+ * usable lines is a release), but one read-modify-write and one save for the
+ * whole set: a consumer with a hundred owners paid a hundred saves, a few
+ * seconds each, to restate them one by one. The edits are made to the in-memory
+ * ledger and saved once, so storage ends up holding either the old set or the
+ * new one, never a prefix of it.
+ *
+ * @param {Array<{ownerId: string, lines: Array<Object>, label?: string}>} entries - The claims
+ * @param {Object} [options]
+ * @param {() => boolean} [options.abandoned] - Checked after the ledger loads, the only await before the
+ *   edit; true means the caller's context (the character) has moved on and nothing is written
+ * @returns {Promise<boolean>} Whether a write landed
+ */
+export async function reserveMany(entries, { abandoned } = {}) {
+    if (!reservationsEnabled() || !Array.isArray(entries) || !entries.length) return false;
+    try {
+        await ensureLoaded();
+        if (abandoned?.()) return false;
+        // See `reserve`: a ledger that could not be read must not be overwritten
+        if (!record.isLoaded()) {
+            console.warn('[InventoryReservations] Not reserving: the ledger could not be read first');
+            return false;
+        }
+        const ledger = record.get();
+        const now = Date.now();
+        sweepExpired(ledger, now);
+        let touched = false;
+        for (const entry of entries) {
+            const ownerId = entry?.ownerId;
+            if (typeof ownerId !== 'string' || !ownerId || ownerId === RELEASED_KEY) continue;
+            const clean = cleanLines(entry.lines);
+            if (!clean.length) {
+                // A plan that needs nothing holds nothing: same as `release`
+                if (ownerId in ledger) {
+                    delete ledger[ownerId];
+                    tombstone(ledger, ownerId, now);
+                    touched = true;
+                }
+                continue;
+            }
+            ledger[ownerId] = { label: String(entry.label || ownerId), updatedAt: now, lines: clean };
+            if (ledger[RELEASED_KEY]) {
+                delete ledger[RELEASED_KEY][ownerId];
+                if (!Object.keys(ledger[RELEASED_KEY]).length) delete ledger[RELEASED_KEY];
+            }
+            touched = true;
+        }
+        if (!touched) return false;
+        sweepTombstones(ledger, now);
+
+        const ids = Object.keys(ledger).filter((id) => id !== RELEASED_KEY);
+        if (ids.length > MAX_OWNERS) {
+            ids.sort((a, b) => Number(ledger[a]?.updatedAt || 0) - Number(ledger[b]?.updatedAt || 0));
+            for (const id of ids.slice(0, ids.length - MAX_OWNERS)) delete ledger[id];
+        }
+        notifyChanged();
+        return await record.save({ overwrite: true });
+    } catch (error) {
+        console.error('[InventoryReservations] Reserving failed:', error);
+        return false;
+    }
+}
+
+/**
  * Drop an owner's claim.
  *
  * Runs whether or not the feature is on. A release only ever removes a claim,
@@ -952,6 +1018,7 @@ export default {
     ensureReservationsLoaded,
     allReservations,
     reserve,
+    reserveMany,
     release,
     releaseMissing,
     heldInInventory,
