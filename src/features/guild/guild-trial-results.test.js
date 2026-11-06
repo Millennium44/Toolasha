@@ -397,4 +397,26 @@ describe('tileProgressPercent', () => {
         const tile = { kind: 'skilling', samples: [bar(5000, 58, 100)], tierSeenAt: { 3: 500, 7: 4000 } };
         expect(tileProgressPercent(tile)).toBe(58);
     });
+
+    test('the last tier carries no percent: the bar read on it was T21’s own, just before it cleared', () => {
+        const tile = { kind: 'combat', tier: 21, samples: [bar(1000, 1, 100)], tierSeenAt: { 21: 2000 } };
+        expect(tileProgressPercent(tile)).toBeNull();
+        expect(tileProgressPercent({ ...tile, tier: 20, tierSeenAt: {} })).toBe(99);
+        // Nor is one filed with the result
+        const [result] = resultsFromCycle(cycle(weeksAgo(1), { a: badger(21, 9000, { samples: [bar(1, 1, 100)] }) }));
+        expect(result.cardTier).toBe(21);
+        expect(result).not.toHaveProperty('progress');
+    });
+
+    test('an entry stored with a percent on the last tier shows none, in the cell, the best and the hover', () => {
+        const stored = (week, tier, progress) => ({
+            ...resultsFromCycle(cycle(weeksAgo(week), { a: badger(tier, 9000) }))[0],
+            progress,
+        });
+        const { rows } = trialResultsHistory([stored(2, 20, 58), stored(1, 21, 99)], { now });
+        expect(rows[0].weeks.map((week) => week.progress)).toEqual([null, 58]);
+        expect(rows[0].best).toMatchObject({ tier: 21, progress: null });
+        expect(trialHistoryCells(rows[0])).toBe('T21 · T20 58% · best T21 (last week)');
+        expect(trialHistoryDetail(rows[0])).not.toContain('99%');
+    });
 });

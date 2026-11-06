@@ -46,6 +46,7 @@ import {
     trialFromHrid,
     TRIAL_ACTIVE_MS,
     TRIAL_BUDGET_MS,
+    TRIAL_MAX_TIER,
     trialWeekStart,
 } from './guild-trials-math.js';
 import { matchTrialHrid } from './guild-trials-scrape.js';
@@ -232,6 +233,15 @@ function cycleWeek(cycle) {
 }
 
 /**
+ * Whether a tier is the ladder's last, which carries no percent.
+ * @param {number|null} tier - Tiers cleared
+ * @returns {boolean} True at {@link TRIAL_MAX_TIER} or above
+ */
+function atLastTier(tier) {
+    return Number.isFinite(tier) && tier >= TRIAL_MAX_TIER;
+}
+
+/**
  * How far into the next tier a tile's last bar reading says the trial got, as a whole percent.
  *
  * The tile's samples already carry the bar (`{current, max}` per reading, the boss reading first for
@@ -239,9 +249,12 @@ function cycleWeek(cycle) {
  * combat bar counts down (the boss's health), as the live card reads them. Nothing usable gives null.
  *
  * @param {Object} tile - An archived tile
- * @returns {number|null} 0-99, or null when the tile has no bar reading
+ * @returns {number|null} 0-99, or null when the tile has no bar reading or finished the last tier
  */
 export function tileProgressPercent(tile) {
+    // The last tier has no next one to be part-way through: a bar read on it is the last tier's own, read
+    // just before it cleared (a T21 99%), and says nothing a finished T21 does not
+    if (atLastTier(cardClearedTier(tile))) return null;
     const samples = Array.isArray(tile?.samples) ? tile.samples : [];
     // The samples do not say which tier they read. A badge seen to move after the newest reading means the trial
     // cleared a tier since, so that reading is of an earlier tier's bar (a T3 80% read, then a final T7 badge on the
@@ -819,8 +832,12 @@ export function trialResultsHistory(results, { now = Date.now(), buildersHallBon
                     return empty;
                 }
                 const tier = resultTier(result);
-                // The percent is of the card's own tier; a tier only the payload stated has none
-                const progress = Number.isFinite(result.progress) && result.cardTier === tier ? result.progress : null;
+                // The percent is of the card's own tier; a tier only the payload stated has none, and neither does
+                // the last tier — an entry stored before that rule can still carry one, and it is not shown
+                const progress =
+                    Number.isFinite(result.progress) && result.cardTier === tier && !atLastTier(tier)
+                        ? result.progress
+                        : null;
                 return {
                     key: cycle.key,
                     label: cycle.label,

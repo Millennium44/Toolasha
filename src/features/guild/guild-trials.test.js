@@ -3489,6 +3489,7 @@ describe('the panel, end to end', () => {
         };
 
         test('the cell and the Best column carry the percent reached; a cycle kept without one shows the tier', () => {
+            // T20, not T21: the last tier carries no percent
             const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
             const bar = (current, max) => [{ t: 5, readings: [{ current, max }] }];
             guildTrials.record = {
@@ -3497,10 +3498,10 @@ describe('the panel, end to end', () => {
                     // A skilling bar counts up: 31,360 of 65,280 is 48%
                     archivedWeek({
                         weekStart: weekAgo(1),
-                        tiles: { 'skilling::alchemy': { ...alchemy(21, 1200), samples: bar(31_360, 65_280) } },
+                        tiles: { 'skilling::alchemy': { ...alchemy(20, 1200), samples: bar(31_360, 65_280) } },
                     }),
                     // An older archive has no bar reading: the tier alone
-                    archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(21, 1200) } }),
+                    archivedWeek({ weekStart: weekAgo(2), tiles: { 'skilling::alchemy': alchemy(20, 1200) } }),
                     // A combat bar counts down: 250 left of 1,000 is 75% done
                     archivedWeek({
                         weekStart: weekAgo(3),
@@ -3520,7 +3521,7 @@ describe('the panel, end to end', () => {
                 ],
             };
             fire(root);
-            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T21 48%', 'T21', '—', 'T21 48%']);
+            expect(historyCells('Alchemy')).toEqual(['Alchemy', 'T20 48%', 'T20', '—', 'T20 48%']);
             expect(historyCells('Trial Chameleon')).toEqual(['Trial Chameleon', '—', '—', 'T5 75%', 'T5 75%']);
         });
 
