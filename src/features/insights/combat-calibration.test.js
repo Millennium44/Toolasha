@@ -27,6 +27,10 @@ const game = vi.hoisted(() => ({
     stats: { dailyIncome: { ask: 2400, bid: 1200 }, dailyConsumableCosts: 0, expPerHour: 5000 },
     /** Pairs handed to the shared ledger */
     recorded: [],
+    /** What sessionsRevision() reports; the collector's writes move it */
+    revision: 'char1:0:0',
+    /** How many times the archive was actually read */
+    reads: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => game.calibrationOn } }));
@@ -52,7 +56,11 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
         data?.players?.length && data?.combatStartTime
             ? `${data.players.map((p) => p?.name || p?.character?.name || '?').join(',')}|${data.combatStartTime}`
             : null,
-    loadSessions: async () => game.archived,
+    loadSessions: async () => {
+        game.reads += 1;
+        return game.archived;
+    },
+    sessionsRevision: () => game.revision,
 }));
 vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
     valueOfLoot: () => ({ ask: 0, bid: 0, value: 0 }),
@@ -105,6 +113,13 @@ function archivedSession(start, overrides = {}) {
 
 let calibration;
 
+/** The archive was written: the revision moves, as the real one does. */
+let writes = 0;
+function bump() {
+    writes += 1;
+    game.revision = `char1:${writes}:0`;
+}
+
 /** Deliver a new_battle and wait for the queued pass. */
 async function send(data) {
     game.handlers.new_battle(data);
@@ -116,12 +131,73 @@ beforeEach(async () => {
     game.handlers = {};
     game.actions = [{ actionHrid: ZONE, difficultyTier: 1, isDone: false }];
     game.archived = [];
+    bump();
     game.snapshot = snapshot();
     game.wornFingerprint = 'gear-a';
     game.stats = { dailyIncome: { ask: 24000, bid: 12000 }, dailyConsumableCosts: 2400, expPerHour: 5000 };
     game.recorded = [];
+    game.reads = 0;
+    bump();
     calibration = new CombatCalibration();
     await calibration.initialize();
+});
+
+describe('re-reading the archive', () => {
+    test('a key still pending does not re-read the archive on every battle while nothing was written', async () => {
+        await send(battle('2026-08-04T10:00:00Z'));
+        // The finished run's archive entry is slow to arrive
+        await send(battle('2026-08-04T11:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+
+        expect(game.reads).toBe(1);
+        expect(game.recorded).toHaveLength(0);
+    });
+
+    test('a write to the archive triggers the next read, which pairs the run', async () => {
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        expect(game.reads).toBe(1);
+
+        game.archived = [archivedSession('2026-08-04T10:00:00Z')];
+        bump();
+        await send(battle('2026-08-04T11:00:00Z'));
+
+        expect(game.reads).toBe(2);
+        expect(game.recorded).toHaveLength(1);
+    });
+
+    test('a run that finishes into an archive already read is still paired, from the cached read', async () => {
+        // The archive held run B before B was pending (revision unchanged since)
+        game.archived = [archivedSession('2026-08-04T11:00:00Z')];
+        bump();
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        await send(battle('2026-08-04T12:00:00Z'));
+
+        expect(game.recorded.map((record) => record.id)).toEqual(['combat|Millennium44|2026-08-04T11:00:00Z']);
+        expect(game.reads).toBe(1);
+    });
+
+    test('a character switch (a new revision) reads again', async () => {
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        game.revision = 'char2:0:0';
+        await send(battle('2026-08-04T11:00:00Z'));
+
+        expect(game.reads).toBe(2);
+    });
+
+    test('disabling forgets the remembered read', async () => {
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+        calibration.disable();
+        await calibration.initialize();
+        await send(battle('2026-08-04T10:00:00Z'));
+        await send(battle('2026-08-04T11:00:00Z'));
+
+        expect(game.reads).toBe(2);
+    });
 });
 
 describe('pairing a forecast with an archived session', () => {
@@ -133,6 +209,7 @@ describe('pairing a forecast with an archived session', () => {
     test('writes the pair once the finished session reaches the archive', async () => {
         await send(battle('2026-08-04T10:00:00Z'));
         game.archived = [archivedSession('2026-08-04T10:00:00Z')];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded).toHaveLength(1);
@@ -157,6 +234,7 @@ describe('pairing a forecast with an archived session', () => {
         // A new sim run lands mid-session with a different figure
         game.snapshot = snapshot({ zones: [{ ...snapshot().zones[0], profitPerHour: 9999 }] });
         game.archived = [archivedSession('2026-08-04T10:00:00Z')];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded[0].predicted).toBe(1000);
@@ -166,6 +244,7 @@ describe('pairing a forecast with an archived session', () => {
         // The archive already holds a finished run, but no battle of it was
         // ever observed — there is no honestly-captured context to pair with
         game.archived = [archivedSession('2026-08-04T09:00:00Z')];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded).toHaveLength(0);
@@ -175,6 +254,7 @@ describe('pairing a forecast with an archived session', () => {
         game.actions = [{ actionHrid: ZONE, difficultyTier: 2, isDone: false }];
         await send(battle('2026-08-04T10:00:00Z'));
         game.archived = [archivedSession('2026-08-04T10:00:00Z')];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded).toHaveLength(0);
@@ -184,6 +264,7 @@ describe('pairing a forecast with an archived session', () => {
         game.wornFingerprint = 'gear-b';
         await send(battle('2026-08-04T10:00:00Z'));
         game.archived = [archivedSession('2026-08-04T10:00:00Z')];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
         expect(game.recorded[0].fingerprintMatch).toBe(false);
 
@@ -191,6 +272,7 @@ describe('pairing a forecast with an archived session', () => {
         game.snapshot = snapshot({ fingerprint: null });
         await send(battle('2026-08-04T12:00:00Z'));
         game.archived.push(archivedSession('2026-08-04T12:00:00Z'));
+        bump();
         await send(battle('2026-08-04T13:00:00Z'));
         expect(game.recorded[1].fingerprintMatch).toBeNull();
     });
@@ -198,6 +280,7 @@ describe('pairing a forecast with an archived session', () => {
     test('skips sessions too short for their rate to mean anything', async () => {
         await send(battle('2026-08-04T10:00:00Z'));
         game.archived = [archivedSession('2026-08-04T10:00:00Z', { durationSeconds: 30 })];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded).toHaveLength(0);
@@ -206,6 +289,7 @@ describe('pairing a forecast with an archived session', () => {
     test('refuses a pair when the archive remembers a different zone', async () => {
         await send(battle('2026-08-04T10:00:00Z'));
         game.archived = [archivedSession('2026-08-04T10:00:00Z', { actionHrid: '/actions/combat/other_zone' })];
+        bump();
         await send(battle('2026-08-04T11:00:00Z'));
 
         expect(game.recorded).toHaveLength(0);
