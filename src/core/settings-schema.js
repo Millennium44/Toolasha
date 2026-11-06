@@ -4234,6 +4234,25 @@ export const settingsGroups = {
                     'and only goes to the network as often as the interval below allows. Your userscript manager ' +
                     'still updates on its own schedule either way.',
             },
+            tabVersionSync: {
+                id: 'tabVersionSync',
+                label: 'Follow a newer Toolasha version loaded in another tab',
+                type: 'select',
+                default: 'ask',
+                options: [
+                    { value: 'ask', label: 'Ask (show a Reload notice)' },
+                    { value: 'auto', label: 'Background tabs reload, the tab in use asks' },
+                    { value: 'reload', label: 'Always reload' },
+                    { value: 'off', label: 'Off' },
+                ],
+                help:
+                    'When another tab of this site loads a newer Toolasha, this tab can catch up. By default it ' +
+                    'shows a notice with a Reload button. With background reload on, a tab that has stayed hidden ' +
+                    'for 2 minutes reloads itself (only while connected, and after pending saves are written), ' +
+                    'and a tab you are looking at still asks. A reload that does not bring a newer version is not ' +
+                    'repeated. Tabs talk only within the same site, so the test server and the live game never ' +
+                    'affect each other. Off opens no channel.',
+            },
             updateCheckHours: {
                 id: 'updateCheckHours',
                 label: 'Update check: Hours between checks (0 = every refresh)',
