@@ -32,8 +32,9 @@ const TILE_SELECTOR = '[class*="Item_itemContainer"]';
 const ITEM_SELECTOR = '[class*="Item_item"]';
 /** Another tooltip: an anchor inside one is never an item tile. A picker drawn as a menu popper is fine */
 const POPPER_SELECTOR = '[class*="MuiTooltip-popper"]';
-/** Gap between the tooltip and the hovered item, and the least margin kept from the viewport edge */
-const PANEL_GAP = 8;
+/** Gap between the tooltip and the hovered item: none, as the game's own above/below placement leaves none */
+const PANEL_GAP = 0;
+/** The least margin kept from the viewport edge */
 const VIEWPORT_MARGIN = 8;
 /**
  * One hover's budget, counted per short window. The game re-places a popper a few times on open and on scroll;

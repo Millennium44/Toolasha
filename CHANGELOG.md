@@ -28,7 +28,7 @@ The Upgrade tab's time-left estimate now learns how long each kind of candidate 
 
 ### Item tooltips keep off the hovered item everywhere
 
-The setting that moves a tooltip off the item it covers now covers the Loadouts and equipment panels, the marketplace and item pickers, not only the inventory, and is renamed "Keep item tooltips off the hovered item". A tooltip whose placement keeps flipping against the game's is handed back to the game for that hover instead of looping.
+The setting that moves a tooltip off the item it covers now covers the Loadouts and equipment panels, the marketplace and item pickers, not only the inventory, and is renamed "Keep item tooltips off the hovered item". A tooltip moved beside the item now touches it, as the game's above and below placements do, and one whose placement keeps flipping against the game's is handed back to the game for that hover.
 
 ### Labyrinth leftovers no longer show a full carry
 

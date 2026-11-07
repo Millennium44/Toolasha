@@ -55,13 +55,13 @@ describe('placeClear', () => {
         expect(placeClear(over({ top: -80, height: 370 }), tile, vp)).toBeNull();
         expect(placeClear(over({ top: 370 }), tile, vp)).toBeNull();
     });
-    it('moves a tooltip that covers the item to the roomier side, top at the tile', () => {
-        expect(placeClear(over(), tile, vp)).toEqual({ x: 672, y: 300 });
-        expect(placeClear(over({ left: 200 }), { ...tile, left: 300 }, vp)).toEqual({ x: 368, y: 300 });
+    it('moves a tooltip that covers the item to the roomier side, touching it as above and below do', () => {
+        expect(placeClear(over(), tile, vp)).toEqual({ x: 680, y: 300 });
+        expect(placeClear(over({ left: 200 }), { ...tile, left: 300 }, vp)).toEqual({ x: 360, y: 300 });
     });
     it('clamps so the bottom fits, and pins to the top margin when taller than the viewport', () => {
-        expect(placeClear(over({ top: 700 }), { ...tile, top: 900 }, vp)).toEqual({ x: 672, y: 622 });
-        expect(placeClear(over({ top: 0, height: 1200 }), { ...tile, top: 500 }, vp)).toEqual({ x: 672, y: 8 });
+        expect(placeClear(over({ top: 700 }), { ...tile, top: 900 }, vp)).toEqual({ x: 680, y: 622 });
+        expect(placeClear(over({ top: 0, height: 1200 }), { ...tile, top: 500 }, vp)).toEqual({ x: 680, y: 8 });
     });
     it('leaves the game placement when neither side has room, or nothing was measured', () => {
         expect(placeClear(over({ left: 200, width: 1700 }), { ...tile, left: 300 }, vp)).toBeNull();
@@ -98,7 +98,7 @@ describe('InventoryTooltipBeside', () => {
         const popper = build();
         h.callback(popper, 'opened', ITEM_INFO);
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
-        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('680px');
         expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('300px');
     });
 
@@ -147,7 +147,7 @@ describe('InventoryTooltipBeside', () => {
         popper.style.transform = 'translate3d(900px, 100px, 0)';
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
-        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('680px');
         // And a later game placement that clears the item hands it back
         popper.getBoundingClientRect = unplaced;
         popper.style.transform = 'translate3d(0px, 0px, 0)';
@@ -252,7 +252,7 @@ describe('ItemTooltipBeside outside the inventory', () => {
         stub(tile, popper);
         h.callback(popper, 'opened', BOOTS);
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
-        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('680px');
         expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('300px');
     });
 
@@ -268,7 +268,7 @@ describe('ItemTooltipBeside outside the inventory', () => {
         stub(tile, popper);
         h.callback(popper, 'opened', BOOTS);
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
-        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('680px');
     });
 
     it('falls back to the hovered item tile when no trigger names the popper (an item picker)', () => {
