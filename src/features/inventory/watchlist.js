@@ -347,9 +347,7 @@ export const WATCHLIST_CSV_COLUMNS = [
 export function watchlistRows() {
     // Built once per pass rather than per row: it is a walk of every listing,
     // and there are more rows than listings
-    const listed = listedCounts(
-        dataManager.getCharacterData?.()?.myMarketListings || dataManager.characterData?.myMarketListings
-    );
+    const listed = listedCounts(dataManager.characterData?.myMarketListings);
 
     const ironCow = isIronCowCharacter();
     const rows = valueWatchlist(state.entries, {

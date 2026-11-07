@@ -45,7 +45,7 @@ vi.mock('../../core/storage.js', () => ({
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {}, register: () => () => {} } }));
 vi.mock('../../core/tooltip-observer.js', () => ({ default: { register: () => () => {} } }));
 vi.mock('../../api/marketplace.js', () => ({
-    default: { getItemPrice: () => null, on: () => () => {}, off: () => {} },
+    default: { on: () => () => {}, off: () => {} },
 }));
 
 vi.mock('./gathering-profit.js', () => ({

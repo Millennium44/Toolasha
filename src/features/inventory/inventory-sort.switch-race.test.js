@@ -67,7 +67,6 @@ vi.mock('../../api/marketplace.js', () => ({
             marketMock.listeners -= 1;
         },
         isLoaded: () => true,
-        getItemPrice: () => null,
     },
 }));
 vi.mock('./inventory-badge-manager.js', () => ({

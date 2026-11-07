@@ -81,8 +81,6 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
 
 vi.mock('../../utils/house-cost-calculator.js', () => ({
     initialize: async () => {},
-    calculateUpgradeCost: () => null,
-    getCumulativeCost: () => null,
 }));
 
 const housePanelObserver = (await import('./house-panel-observer.js')).default;
