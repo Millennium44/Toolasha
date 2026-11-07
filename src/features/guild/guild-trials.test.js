@@ -331,8 +331,16 @@ const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial
 const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { parseCurrentTrialsData, tierPoolWork, trialWeekStart } = await import('./guild-trials-math.js');
 const { trialResultsOf } = await import('./guild-trial-results.js');
-const { emptyRecord, saveTrialRecord, tilePersonalStats, WEEK_ROLLOVER_REASON } =
-    await import('./guild-trials-store.js');
+const {
+    emptyRecord,
+    saveTrialRecord,
+    tilePersonalStats,
+    WEEK_ROLLOVER_REASON,
+    archiveEarlierCycles: archiveEarlierCyclesOf,
+    mergeTrialRecords: mergeTrialRecordsOf,
+    recordTileSample: recordTileSampleOf,
+    rollRecordToWeek: rollRecordToWeekOf,
+} = await import('./guild-trials-store.js');
 const { buildGuildUpdated } = await import('../../__fixtures__/wire/guild-trial.js');
 const { TRIAL_GAME_DATA } = await import('../combat-sim/engine/guild-trial-game-data.fixture.js');
 
@@ -10278,5 +10286,399 @@ describe('the sub-modules initialize() started, when the feature is switched off
         expect(() => guildMemberSkills.cleanup()).not.toThrow();
         expect(() => guildMemberSkills.cleanup()).not.toThrow();
         expect(game.wsHandlers.profile_shared).toBeUndefined();
+    });
+});
+
+describe('a finished test-server cycle is archived when the game posts the next schedule', () => {
+    const HOUR = 3_600_000;
+    const MIN = 60_000;
+    // The test server, 2026-11-06 (CST): the cycle ran Friday from 3 PM, the next is posted at 6 PM for Saturday 3 PM
+    const FRI3 = Date.parse('2026-11-06T21:00:00Z');
+    const SAT3 = FRI3 + 24 * HOUR;
+    const WEEK = Date.parse('2026-11-06T00:00:00Z');
+    // 6:08:30 PM, the header counting down whole minutes to Saturday 3 PM
+    const NOW = FRI3 + 3 * HOUR + 8 * MIN + 30_000;
+    const STATUS = {
+        phase: 'scheduled',
+        kind: null,
+        text: 'Scheduled Sat 03:00 PM 20h 51m',
+        startsInMs: (20 * 60 + 51) * MIN,
+    };
+    const EARLIER = 'an earlier cycle of this week';
+
+    /** A finished tile as the record holds it at 6 PM: the card's read and the payload's statement */
+    const finished = (name, kind, tier, points, endedMin) => ({
+        name,
+        kind,
+        level: 100 + tier * 10,
+        tier,
+        points,
+        completed: true,
+        samples: [{ t: FRI3 + (kind === 'combat' ? HOUR : 0) + 20 * MIN, readings: [{ current: 10, max: 900 }] }],
+        pointSamples: [{ t: FRI3 + (kind === 'combat' ? HOUR : 0) + 50 * MIN, points }],
+        tiers: [{ tier, total: 900 }],
+        pointsByTier: { [tier]: points },
+        tierSeenAt: { [tier]: FRI3 + endedMin * MIN - 5 * MIN },
+        // Re-read at 6 PM off the old cards, as the live record had it
+        tierReadAt: FRI3 + 3 * HOUR,
+        serverTier: tier,
+        serverTierAt: FRI3 + endedMin * MIN - 5 * MIN,
+        serverDone: true,
+        serverPoints: points,
+        endedAt: FRI3 + endedMin * MIN,
+        ...(tier < 21 ? { serverProgress: { tier, pct: 41, at: FRI3 + endedMin * MIN } } : {}),
+    });
+    const fridayTiles = () => ({
+        'skilling::foraging': finished('Foraging', 'skilling', 19, 2689, 60),
+        'skilling::crafting': finished('Crafting', 'skilling', 18, 2500, 60),
+        'skilling::tailoring': finished('Tailoring', 'skilling', 18, 2480, 60),
+        'skilling::enhancing': finished('Enhancing', 'skilling', 17, 2300, 60),
+        'combat::trial jellyfish': finished('Trial Jellyfish', 'combat', 21, 6160, 90),
+        'combat::trial chameleon': finished('Trial Chameleon', 'combat', 21, 6160, 95),
+    });
+    /** Thursday's cycle, archived when Friday's began */
+    const thursdayArchive = () => ({
+        archivedAt: FRI3 + 16 * MIN,
+        reason: EARLIER,
+        weekStart: WEEK,
+        cycleFrom: FRI3,
+        tiles: { 'skilling::cheesesmithing': finished('Cheesesmithing', 'skilling', 18, 2400, -23 * 60) },
+    });
+    const fridayRecord = (extra = {}) => {
+        const record = {
+            weekStart: WEEK,
+            guildName: 'Milky Way',
+            tiles: fridayTiles(),
+            history: [thursdayArchive()],
+            scheduled: {
+                skilling: { trials: ['crafting', 'enhancing', 'foraging', 'tailoring'], at: FRI3 },
+                combat: { trials: ['chameleon', 'jellyfish'], at: FRI3 + HOUR },
+            },
+            cycleStart: FRI3,
+            cycleStartAt: FRI3 + 16 * MIN,
+            ...extra,
+        };
+        record.trialResults = trialResultsOf(record);
+        return record;
+    };
+    /** The next cycle's cards: scheduled, nothing on them, the start level's derived tier (`tierFromLevel(100)`) */
+    const card = (name, kind) => ({
+        name,
+        kind,
+        level: 100,
+        tier: 1,
+        completed: false,
+        readings: [],
+        signups: { signed: 1, total: 22 },
+        points: 0,
+    });
+    const saturdayCards = () => [
+        card('Foraging', 'skilling'),
+        card('Woodcutting', 'skilling'),
+        card('Crafting', 'skilling'),
+        card('Alchemy', 'skilling'),
+        card('Trial Jellyfish', 'combat'),
+        card('Trial Swarm', 'combat'),
+    ];
+    /** The guild payload as it stands after both hours: every party done */
+    const finishedPayload = (at, { skillingStatus = 'completed', foragingDone = true } = {}) => {
+        const party = (tier, startedAt, done) => ({
+            highestTier: tier,
+            budgetRemainingMs: done ? 0 : 20 * MIN,
+            tierStartedAtMs: startedAt,
+            highestTierReachedAtMs: startedAt,
+            ...(tier < 21 ? { nextTierProgress: 0.41 } : {}),
+            done,
+        });
+        return {
+            ...parseCurrentTrialsData(
+                JSON.stringify({
+                    skilling: {
+                        status: skillingStatus,
+                        parties: {
+                            '/guild_skilling/foraging': party(19, FRI3 + 55 * MIN, foragingDone),
+                            '/guild_skilling/crafting': party(18, FRI3 + 55 * MIN, true),
+                            '/guild_skilling/tailoring': party(18, FRI3 + 55 * MIN, true),
+                            '/guild_skilling/enhancing': party(17, FRI3 + 55 * MIN, true),
+                        },
+                    },
+                    combat: {
+                        status: 'completed',
+                        parties: {
+                            '/guild_combat/jellyfish': party(21, FRI3 + 85 * MIN, true),
+                            '/guild_combat/chameleon': party(21, FRI3 + 90 * MIN, true),
+                        },
+                    },
+                })
+            ),
+            at,
+            source: 'socket',
+            guildId: null,
+            guildName: 'Milky Way',
+        };
+    };
+    /** A skilling hour stated running from `started` */
+    const skillingHour = (started) =>
+        parseCurrentTrialsData(
+            JSON.stringify({
+                skilling: {
+                    status: 'in_progress',
+                    parties: {
+                        '/guild_skilling/foraging': {
+                            highestTier: 0,
+                            tierStartedAtMs: started,
+                            budgetRemainingMs: HOUR,
+                            highestTierReachedAtMs: started,
+                            done: false,
+                        },
+                    },
+                },
+                combat: { status: '', parties: null },
+            })
+        );
+    const laterCycles = (record) =>
+        record.history.filter((cycle) => cycle.reason === EARLIER && cycle.cycleFrom !== FRI3);
+
+    let persist;
+    beforeEach(() => {
+        resetTrialsSingleton();
+        game.testServer = true;
+        guildTrials.guildName = 'Milky Way';
+        guildTrials.serverClockOffsetMs = 0;
+        persist = vi.spyOn(guildTrials, '_persistRecord').mockResolvedValue(true);
+    });
+    afterEach(() => {
+        persist.mockRestore();
+        game.testServer = false;
+        guildTrials.cycleStartMs = null;
+        resetTrialsSingleton();
+    });
+
+    test('archives the finished cycle once, under the key its next start gives it', () => {
+        guildTrials.record = fridayRecord();
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(true);
+
+        const fridays = laterCycles(guildTrials.record);
+        expect(fridays).toHaveLength(1);
+        expect(fridays[0].cycleFrom).toBe(SAT3);
+        expect(fridays[0].weekStart).toBe(WEEK);
+        expect(Object.keys(fridays[0].tiles).sort()).toEqual(Object.keys(fridayTiles()).sort());
+        // The old lists went with their tiles
+        expect(fridays[0].scheduled.combat.trials).toEqual(['chameleon', 'jellyfish']);
+        expect(guildTrials.record.tiles).toEqual({});
+        expect(guildTrials.record).not.toHaveProperty('scheduled');
+        expect(guildTrials.record.cycleStart).toBe(SAT3);
+        // Thursday's archive untouched
+        expect(guildTrials.record.history.find((cycle) => cycle.cycleFrom === FRI3)).toEqual(thursdayArchive());
+        expect(persist).toHaveBeenCalledWith({ overwrite: true });
+        // Each trial's result once, under the one key
+        const results = trialResultsOf(guildTrials.record).filter((result) => result.cycleFrom === SAT3);
+        expect(results.map((result) => result.trial).sort()).toEqual([
+            'chameleon',
+            'crafting',
+            'enhancing',
+            'foraging',
+            'jellyfish',
+            'tailoring',
+        ]);
+
+        // The next pass reads the new cards into fresh tiles, and archives nothing more
+        for (const tile of saturdayCards()) {
+            guildTrials.record = recordTileSampleOf(guildTrials.record, tile, NOW + 5_000);
+        }
+        const after = guildTrials.record;
+        persist.mockClear();
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW + 10_000)).toBe(false);
+        expect(guildTrials.record).toBe(after);
+        expect(persist).not.toHaveBeenCalled();
+    });
+
+    test('a repeated trial’s new card starts fresh, and the finished payload does not put the old result back', () => {
+        guildTrials.record = fridayRecord();
+        guildTrials.currentTrials = finishedPayload(NOW - 5 * MIN);
+        guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW);
+        for (const tile of saturdayCards()) {
+            guildTrials.record = recordTileSampleOf(guildTrials.record, tile, NOW + 5_000);
+        }
+        guildTrials.record = guildTrials._fileIntoPayloadWeek(guildTrials.record, NOW + 5_000);
+
+        for (const key of ['skilling::foraging', 'skilling::crafting', 'combat::trial jellyfish']) {
+            const tile = guildTrials.record.tiles[key];
+            expect(tile.completed).toBe(false);
+            expect(tile).not.toHaveProperty('serverTier');
+            expect(tile).not.toHaveProperty('serverDone');
+            expect(tile).not.toHaveProperty('serverProgress');
+            expect(tile).not.toHaveProperty('endedAt');
+            // Only what the new card says: its start-level tier with nothing banked
+            expect(tile.tier).toBe(1);
+            expect(tile.pointsByTier).toEqual({ 1: 0 });
+            expect(tile.points).toBe(0);
+            expect(tile.tierSeenAt).toEqual({});
+            expect(tile.tiers).toEqual([]);
+        }
+        // The finished payload's lists are the archived cycle's, not filed again as the running one's
+        expect(guildTrials.record).not.toHaveProperty('scheduled');
+        // Nothing of the new cycle has finished: no running-cycle column
+        const history = guildTrials._trialHistory(NOW + 5_000, null, { live: true });
+        expect(history.cycles.some((cycle) => cycle.live)).toBe(false);
+    });
+
+    test('the history shows the archived cycle once, named by the day it ran, and the live column is gone', () => {
+        guildTrials.record = fridayRecord();
+        // Before the archive the finished cycle is only the running cycle's column
+        expect(guildTrials._trialHistory(NOW, null, { live: true }).cycles[0].live).toBe(true);
+
+        guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW);
+        const history = guildTrials._trialHistory(NOW, null, { live: true });
+        expect(history.cycles.some((cycle) => cycle.live)).toBe(false);
+        const keys = history.cycles.map((cycle) => cycle.key);
+        expect(new Set(keys).size).toBe(keys.length);
+        const friday = history.cycles.find((cycle) => cycle.key === `${WEEK}|${SAT3}`);
+        const ranOn = new Date(FRI3).toLocaleString('en-US', { weekday: 'short' });
+        expect(friday.label.startsWith(ranOn)).toBe(true);
+        const foraging = history.rows.find((row) => row.trial === 'foraging');
+        expect(foraging.weeks.filter((week) => Number.isFinite(week.tier))).toHaveLength(1);
+        expect(foraging.weeks.find((week) => week.key === `${WEEK}|${SAT3}`).tier).toBe(19);
+    });
+
+    test('not while a trial of the cycle still runs', () => {
+        // The payload says the skilling hour is still on
+        guildTrials.record = fridayRecord();
+        guildTrials.currentTrials = finishedPayload(NOW - 5 * MIN, {
+            skillingStatus: 'in_progress',
+            foragingDone: false,
+        });
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(false);
+        expect(guildTrials.record.tiles['skilling::foraging'].completed).toBe(true);
+
+        // No payload, a trial not finished and the cycle's two hours not over
+        guildTrials.currentTrials = null;
+        const tiles = fridayTiles();
+        tiles['combat::trial chameleon'] = { ...tiles['combat::trial chameleon'], completed: false, serverDone: false };
+        guildTrials.record = fridayRecord({ tiles });
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), FRI3 + 100 * MIN)).toBe(false);
+
+        // A card still showing the finished cycle is no new schedule
+        guildTrials.record = fridayRecord();
+        const cards = saturdayCards();
+        cards[0] = { ...cards[0], completed: true, points: 2689, tier: 19 };
+        expect(guildTrials._archiveFinishedCycle(STATUS, cards, NOW)).toBe(false);
+        expect(persist).not.toHaveBeenCalled();
+    });
+
+    test('a device that saw only the new schedule archives the synced cycle; without its start it waits', () => {
+        // A synced copy: another device's finished tiles and cycle start, no sample or read of this one's
+        const tiles = Object.fromEntries(
+            Object.entries(fridayTiles()).map(([key, tile]) => [key, { ...tile, samples: [], tierReadAt: FRI3 + HOUR }])
+        );
+        guildTrials.record = fridayRecord({ tiles });
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(true);
+        expect(laterCycles(guildTrials.record).map((cycle) => cycle.cycleFrom)).toEqual([SAT3]);
+
+        // With no cycle start, or a countdown naming another time, the key is not known to the minute: left
+        // for the next start to archive, late rather than twice
+        persist.mockClear();
+        const unstarted = fridayRecord();
+        delete unstarted.cycleStart;
+        delete unstarted.cycleStartAt;
+        guildTrials.record = unstarted;
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(false);
+        guildTrials.record = fridayRecord();
+        expect(
+            guildTrials._archiveFinishedCycle({ ...STATUS, startsInMs: STATUS.startsInMs + HOUR }, saturdayCards(), NOW)
+        ).toBe(false);
+        expect(persist).not.toHaveBeenCalled();
+
+        // One with nothing of the cycle archives nothing: the new cards start their own tiles
+        persist.mockClear();
+        guildTrials.record = { weekStart: WEEK, guildName: 'Milky Way', tiles: {}, history: [thursdayArchive()] };
+        const held = guildTrials.record;
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(false);
+        expect(guildTrials.record).toBe(held);
+        expect(persist).not.toHaveBeenCalled();
+    });
+
+    test('two devices, one archiving at the schedule and one at the next start, fold into one archive', () => {
+        // Device A, at 6 PM
+        guildTrials.record = fridayRecord();
+        guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW);
+        const deviceA = guildTrials.record;
+
+        // Device B kept the tiles and archives them when Saturday's skilling hour starts (stated 20 s late)
+        const deviceB = archiveEarlierCyclesOf(fridayRecord(), skillingHour(SAT3 + 20_000), {
+            offset: 0,
+            at: SAT3 + MIN,
+            cycleStart: FRI3,
+        });
+        expect(laterCycles(deviceB).map((cycle) => cycle.cycleFrom)).toEqual([SAT3]);
+
+        for (const merged of [mergeTrialRecordsOf(deviceA, deviceB), mergeTrialRecordsOf(deviceB, deviceA)]) {
+            expect(laterCycles(merged)).toHaveLength(1);
+            const results = trialResultsOf(merged).filter((result) => result.cycleFrom !== FRI3);
+            expect(results).toHaveLength(6);
+            expect(new Set(results.map((result) => result.cycleFrom))).toEqual(new Set([SAT3]));
+        }
+
+        // A device holding A's archive whose stated start rounds a minute off still files under A's key
+        const afterSync = archiveEarlierCyclesOf(
+            { ...fridayRecord(), history: deviceA.history },
+            skillingHour(SAT3 + 70_000),
+            { offset: 0, at: SAT3 + 2 * MIN, cycleStart: FRI3 }
+        );
+        expect(laterCycles(afterSync).map((cycle) => cycle.cycleFrom)).toEqual([SAT3]);
+    });
+
+    test('on the weekly reset the carried cycle is archived under the new week, as its next start would', () => {
+        // Thursday: the cycle ran from 3 PM, and 6 PM is both the weekly reset and the schedule post
+        const THU3 = FRI3 - 24 * HOUR;
+        const LAST_WEEK = WEEK - 7 * 24 * HOUR;
+        const shift = (tile) => ({
+            ...tile,
+            samples: tile.samples.map((sample) => ({ ...sample, t: sample.t - 24 * HOUR })),
+            pointSamples: tile.pointSamples.map((sample) => ({ ...sample, t: sample.t - 24 * HOUR })),
+            tierSeenAt: Object.fromEntries(Object.entries(tile.tierSeenAt).map(([tier, at]) => [tier, at - 24 * HOUR])),
+            tierReadAt: tile.tierReadAt - 24 * HOUR,
+            serverTierAt: tile.serverTierAt - 24 * HOUR,
+            endedAt: tile.endedAt - 24 * HOUR,
+            ...(tile.serverProgress
+                ? { serverProgress: { ...tile.serverProgress, at: tile.serverProgress.at - 24 * HOUR } }
+                : {}),
+        });
+        const thursday = () => ({
+            weekStart: LAST_WEEK,
+            guildName: 'Milky Way',
+            tiles: Object.fromEntries(Object.entries(fridayTiles()).map(([key, tile]) => [key, shift(tile)])),
+            history: [],
+            cycleStart: THU3,
+            cycleStartAt: THU3 + 16 * MIN,
+        });
+        const at = WEEK + 8 * MIN + 30_000;
+
+        guildTrials.record = thursday();
+        expect(guildTrials._rollWeek(at)).toBe(true);
+        expect(guildTrials.record.weekStart).toBe(WEEK);
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), at)).toBe(true);
+        expect(guildTrials.record.history.map((cycle) => [cycle.reason, cycle.weekStart, cycle.cycleFrom])).toEqual([
+            [EARLIER, WEEK, FRI3],
+        ]);
+
+        // A device that rolled the week and archived at Friday's start holds the same key, and the two fold
+        const rolled = rollRecordToWeekOf(thursday(), WEEK, { guildName: 'Milky Way' });
+        const atStart = archiveEarlierCyclesOf(rolled, skillingHour(FRI3 + 20_000), {
+            offset: 0,
+            at: FRI3 + MIN,
+            cycleStart: THU3,
+        });
+        const merged = mergeTrialRecordsOf(guildTrials.record, atStart);
+        expect(merged.history.filter((cycle) => cycle.reason === EARLIER)).toHaveLength(1);
+        expect(trialResultsOf(merged)).toHaveLength(6);
+    });
+
+    test('live is left to the weekly rollover', () => {
+        game.testServer = false;
+        guildTrials.record = fridayRecord();
+        const held = guildTrials.record;
+        expect(guildTrials._archiveFinishedCycle(STATUS, saturdayCards(), NOW)).toBe(false);
+        expect(guildTrials.record).toBe(held);
     });
 });
