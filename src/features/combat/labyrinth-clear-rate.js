@@ -5030,6 +5030,7 @@ class LabyrinthClearRate {
             overlay.appendChild(this.buildPathTag(color, label));
         }
         cell.appendChild(overlay);
+        this.placeBeaconTag(cell);
     }
 
     /**
@@ -5076,7 +5077,9 @@ class LabyrinthClearRate {
             const room = flat[Number(overlay.dataset.tileIndex)];
             if (!room || !isRoomRevealed(room)) return;
             if (room.isCleared) {
+                const cell = overlay.parentElement;
                 overlay.remove();
+                if (cell) this.placeBeaconTag(cell);
                 return;
             }
             const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
@@ -5103,6 +5106,7 @@ class LabyrinthClearRate {
                 overlay.appendChild(this.buildPathTag(color, 'Shroud'));
             }
             delete overlay.dataset.pending;
+            if (overlay.parentElement) this.placeBeaconTag(overlay.parentElement);
         });
     }
 
@@ -5531,6 +5535,7 @@ class LabyrinthClearRate {
                 'position:absolute; top:1px; right:1px; padding:0 3px; border-radius:3px; background:#26d0aa; ' +
                 'color:#04263f; font-size:8px; font-weight:700; line-height:1.4;';
             tag.textContent = label;
+            tag.dataset.beaconTag = '1';
             // The overlay lets clicks through to the room; only the tag takes
             // the pointer so it can carry the now/later tooltip, and a click on
             // it still bubbles up to the room
@@ -5541,6 +5546,24 @@ class LabyrinthClearRate {
             overlay.appendChild(tag);
         }
         cell.appendChild(overlay);
+        this.placeBeaconTag(cell);
+    }
+
+    /**
+     * Keep the beacon tag clear of a path tag. The path word ("Shroud?" is about 36 px) takes the top-left of a
+     * 46 px room, so a beacon tag in the top-right corner sat under it; with a path tag present the beacon tag
+     * moves to the right edge just below that row, and returns to the corner when there is none.
+     * Called after either overlay is drawn, so the order they are drawn in does not matter.
+     * @param {HTMLElement} cell - The room tile
+     */
+    placeBeaconTag(cell) {
+        const beaconTag = cell.querySelector(`.${BEACON_OVERLAY_CLASS} [data-beacon-tag]`);
+        if (!beaconTag) return;
+        const pathTag = cell.querySelector(`.${PATH_OVERLAY_CLASS}:not([data-approach]) > div`);
+        // One path-tag row: font size x 1.4 line height + 1 px inset, 8 px on desktop and 6 px on a phone
+        const rowBelow = isMobileMode() ? 10 : 13;
+        beaconTag.style.top = pathTag ? `${rowBelow}px` : '1px';
+        beaconTag.style.right = '1px';
     }
 
     clearBeaconOverlays() {

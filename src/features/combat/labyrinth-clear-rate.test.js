@@ -8530,3 +8530,56 @@ describe('phone-sized room overlays', () => {
         }
     });
 });
+
+describe('beacon tag beside a path tag', () => {
+    const cellWith = (draw) => {
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        draw(cell);
+        return cell;
+    };
+    const beaconTagOf = (cell) => cell.querySelector('.mwi-labyrinth-beacon-overlay [data-beacon-tag]');
+    const drawPath = (cell) => labyrinthClearRate.appendPathOverlay(cell, '#ff5252', 'Shroud?', { index: 0 });
+    const drawBeacon = (cell) => labyrinthClearRate.appendBeaconOverlay(cell, true, 'B1');
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('a beacon tag alone keeps the top-right corner', () => {
+        const tag = beaconTagOf(cellWith(drawBeacon));
+        expect(tag.style.top).toBe('1px');
+        expect(tag.style.right).toBe('1px');
+    });
+
+    test('with a Shroud? tag at the top-left, the beacon tag sits on the right edge below that row', () => {
+        const cell = cellWith((c) => {
+            drawPath(c);
+            drawBeacon(c);
+        });
+        const path = cell.querySelector('.mwi-labyrinth-path-overlay > div');
+        const tag = beaconTagOf(cell);
+        expect(path.style.left).toBe('1px');
+        expect(path.style.top).toBe('1px');
+        expect(tag.style.right).toBe('1px');
+        expect(tag.style.top).not.toBe('1px');
+    });
+
+    test('drawing the path tag after the beacon tag gives the same placement', () => {
+        const cell = cellWith((c) => {
+            drawBeacon(c);
+            drawPath(c);
+        });
+        expect(beaconTagOf(cell).style.top).not.toBe('1px');
+    });
+
+    test('the beacon tag returns to the corner when the path overlay is removed', () => {
+        const cell = cellWith((c) => {
+            drawBeacon(c);
+            drawPath(c);
+        });
+        cell.querySelector('.mwi-labyrinth-path-overlay').remove();
+        labyrinthClearRate.placeBeaconTag(cell);
+        expect(beaconTagOf(cell).style.top).toBe('1px');
+    });
+});
