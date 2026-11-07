@@ -41,6 +41,8 @@ import {
     nextMultipleLevel,
     abilityLevelBoxHints,
     levelBoxHints,
+    SINGLE_STEPS_TITLE,
+    ENHANCEMENT_STEPS_TITLE,
     levelStepsTitle,
     normalizeLevelSteps,
     stepLevels,
@@ -656,23 +658,6 @@ const COMBAT_LEVEL_STEPS_TITLE = levelStepsTitle(
     'combat skill',
     'The Targets grid, while open, replaces the steps with one level per skill.'
 );
-
-/**
- * Help text for the House and Guild Shrine Steps boxes, which step one level at a time.
- * @param {string} noun - 'room' or 'shrine'
- * @returns {string}
- */
-const SINGLE_STEPS_TITLE = (noun) =>
-    `How many levels to try per ${noun} (1 to ${MAX_LEVEL_STEPS}): 3 steps tries +1, +2 and +3, each its own row ` +
-    `costed from the level the ${noun} is at now, never past the max. Each step is one more simulation per ${noun}. ` +
-    'With more than 1 step the Lv box is not used; the Targets grid, while open, replaces the steps.';
-
-/** Help text for the Equipment Steps box */
-const ENHANCEMENT_STEPS_TITLE =
-    `How many enhancement breakpoints (or levels) to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
-    '(+5 → +7 on most gear, as always). 3 tries each of the next three breakpoints: +7, +10 and +12 from +5, ' +
-    'never past the max enhancement level. Set the box beside it to Levels to step one level at a time instead ' +
-    '(+6, +7 and +8 from +5). Each extra step is one more simulation per item.';
 
 /** A Steps box's markup: a small labeled number box, 1 by default (today's single candidate) */
 const stepsBoxHtml = (groupId, inputId, title, stepsFor = '') => `

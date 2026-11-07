@@ -10,6 +10,9 @@ import {
     levelStepsTitle,
     levelBoxHints,
     LEVEL_STEPS_TITLE,
+    SINGLE_STEPS_TITLE,
+    ENHANCEMENT_STEPS_TITLE,
+    MAX_LEVEL_STEPS,
 } from './ability-level-step.js';
 
 describe('nextMultipleLevel', () => {
@@ -84,5 +87,15 @@ describe('the shared step rules beyond abilities', () => {
         expect(levelBoxHints('increment', 'combat skill').title).toBe('Number of levels to add to each combat skill');
         expect(levelBoxHints('target', 'ability').title).toBe('Absolute target level for all abilities');
         expect(abilityLevelBoxHints('next_multiple')).toEqual(levelBoxHints('next_multiple', 'ability'));
+    });
+});
+
+describe('shared Steps help texts', () => {
+    test('the single-step and enhancement texts name the Steps limit and what each box steps', () => {
+        expect(SINGLE_STEPS_TITLE('room')).toContain(`(1 to ${MAX_LEVEL_STEPS})`);
+        expect(SINGLE_STEPS_TITLE('room')).toContain('costed from the level the room is at now');
+        expect(SINGLE_STEPS_TITLE('shrine')).toContain('per shrine');
+        expect(ENHANCEMENT_STEPS_TITLE).toContain(`(1 to ${MAX_LEVEL_STEPS})`);
+        expect(ENHANCEMENT_STEPS_TITLE).toContain('Each extra step is one more simulation per item.');
     });
 });
