@@ -53,6 +53,7 @@ export const COMBAT_SIM_KEYS = Object.freeze({
     swapAuraOnly: 'combatSimSwapAuraOnly',
     shrineCapToGuild: 'combatSimShrineCapToGuild',
     budgetConstraints: 'combatSimBudgetConstraints',
+    houseNonCombatBundle: 'combatSimHouseNonCombatBundle',
     // Global from here down
     upgradeColumns: 'combatSimUpgradeColumns',
     allZonesMaxTierFood: 'combatSimAllZonesMaxTierFood',
@@ -159,6 +160,7 @@ const COMBAT_LABELS = {
     swapAuraOnly: 'Combat Sim signature swaps only',
     shrineCapToGuild: 'Combat Sim shrine cap',
     budgetConstraints: 'Combat Sim budget pins and exclusions',
+    houseNonCombatBundle: 'Combat Sim all non-combat rooms +1',
     upgradeColumns: 'Combat Sim upgrade columns',
     allZonesMaxTierFood: 'Combat Sim max-tier food',
     allZonesScoreScale: 'Combat Sim zones score scale',
