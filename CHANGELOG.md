@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.79.0 -->
+
 ### Combat Sim equipment Steps try breakpoints
 
 The Equipment Steps box now tries each of the next N enhancement breakpoints (+5 → +7, +10, +12 with 3 steps); a Breakpoints / Levels box beside it switches back to single levels. The Upgrades and Budget titles share one row with their buttons.
@@ -6871,16 +6873,14 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.79.0](https://github.com/Millennium44/Toolasha/compare/v3.78.0...v3.79.0) (2026-11-07)
 
-
 ### Features
 
-* combat sim equipment Steps by level toggle, budget amount saved ([c950bbc](https://github.com/Millennium44/Toolasha/commit/c950bbca3dbf8420deb1681eaba4324d9c5804b1))
-* combat sim equipment Steps try the next breakpoints ([448f518](https://github.com/Millennium44/Toolasha/commit/448f51812f88210257d5303aea7a49910b845089))
-
+- combat sim equipment Steps by level toggle, budget amount saved ([c950bbc](https://github.com/Millennium44/Toolasha/commit/c950bbca3dbf8420deb1681eaba4324d9c5804b1))
+- combat sim equipment Steps try the next breakpoints ([448f518](https://github.com/Millennium44/Toolasha/commit/448f51812f88210257d5303aea7a49910b845089))
 
 ### Documentation
 
-* agent hand-backs stay short, details go in a scratchpad file ([ca01b81](https://github.com/Millennium44/Toolasha/commit/ca01b81536c2a1e00310e36339475c998e6115a1))
+- agent hand-backs stay short, details go in a scratchpad file ([ca01b81](https://github.com/Millennium44/Toolasha/commit/ca01b81536c2a1e00310e36339475c998e6115a1))
 
 ## [3.78.0](https://github.com/Millennium44/Toolasha/compare/v3.77.0...v3.78.0) (2026-11-07)
 
