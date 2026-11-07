@@ -803,8 +803,69 @@ describe('readSyncGist', () => {
                 },
             },
         });
-        responses.push({ status: 401, body: {} });
+        // The anonymous page fetch is refused, then the authenticated retry is too
+        responses.push({ status: 401, body: {} }, { status: 401, body: {} });
         await expect(readSyncGist('tok', 'abc')).rejects.toMatchObject({ kind: 'auth' });
+    });
+
+    test('a truncated file downloads through the page fetch without the token, not the manager', async () => {
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 2 }) },
+                    [chunkFileName(0)]: {
+                        truncated: true,
+                        raw_url: 'https://gist.githubusercontent.com/u/abc/raw/rev/c0',
+                        content: '',
+                    },
+                    [chunkFileName(1)]: {
+                        truncated: true,
+                        raw_url: 'https://gist.githubusercontent.com/u/abc/raw/rev/c1',
+                        content: '',
+                    },
+                },
+            },
+        });
+        responses.push({ status: 200, body: '{"a":' }, { status: 200, body: '1}' });
+
+        const { payload } = await readSyncGist('tok', 'abc');
+        expect(payload).toBe('{"a":1}');
+        const raw = calls.filter((call) => call.url.includes('gist.githubusercontent.com'));
+        expect(raw).toHaveLength(2);
+        for (const call of raw) {
+            expect(call.transport).toBe('fetch');
+            expect(call.credentials).toBe('omit');
+            expect(JSON.stringify(call.headers ?? {})).not.toContain('tok');
+        }
+        expect(calls.some((call) => call.transport === 'gm')).toBe(false);
+    });
+
+    test('a raw download the page fetch cannot make is retried with the token through the manager', async () => {
+        const raw = 'https://gist.githubusercontent.com/u/abc/raw/rev/c0';
+        const truncatedGist = {
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { content: JSON.stringify({ toolashaSync: 1, chunks: 1 }) },
+                    [chunkFileName(0)]: { truncated: true, raw_url: raw, content: '' },
+                },
+            },
+        };
+
+        // Blocked outright (CORS or CSP)
+        responses.push(truncatedGist, { fetchThrows: true }, { status: 200, body: 'blocked-then-gm' });
+        expect((await readSyncGist('tok', 'abc')).payload).toBe('blocked-then-gm');
+        let rawCalls = calls.filter((call) => call.url === raw);
+        expect(rawCalls.map((call) => call.transport)).toEqual(['fetch', 'gm']);
+        expect(rawCalls[1].headers.Authorization).toBe('Bearer tok');
+
+        // Answered, but refused without the token
+        calls.length = 0;
+        responses.push(truncatedGist, { status: 404, body: {} }, { status: 200, body: 'refused-then-gm' });
+        expect((await readSyncGist('tok', 'abc')).payload).toBe('refused-then-gm');
+        rawCalls = calls.filter((call) => call.url === raw);
+        expect(rawCalls.map((call) => call.transport)).toEqual(['fetch', 'gm']);
     });
 
     test('a chunk cut short on download is an incomplete download, not a wrong passphrase', async () => {

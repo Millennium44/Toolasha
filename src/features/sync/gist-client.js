@@ -965,6 +965,33 @@ async function parseSyncGist(token, gistId, exchange) {
 }
 
 /**
+ * Download a truncated file from its `raw_url`, keeping the body out of the userscript manager.
+ *
+ * GitHub truncates sync chunks in practice even under {@link MAX_CHUNK_BYTES}, so every full read
+ * of the gist downloads most of the backup again from gist.githubusercontent.com. Sent through
+ * `GM_xmlhttpRequest`, each of those bodies landed in the manager's background process and stayed
+ * there: one tab was measured moving ~690 MB that way in under a day. That host answers a plain
+ * GET with `Access-Control-Allow-Origin: *` but refuses a preflight, so the page fetch goes without
+ * the Authorization header — a raw URL is revision-pinned and readable without it, and the payload
+ * is encrypted. Anything but a 2xx (a refusal, a block, a 404) is asked again the old way, with
+ * the token, through the manager.
+ * @param {string} token - GitHub personal access token, for the fallback only
+ * @param {string} url - The file's `raw_url`
+ * @returns {Promise<{status: number, text: string, headers: Record<string, string>}>} Response
+ */
+async function readRawFile(token, url) {
+    if (!pageFetchUnusable && typeof fetch === 'function') {
+        try {
+            const response = await pageFetch({ method: 'GET', url, headers: {}, anonymous: true }, true);
+            if (response.status >= 200 && response.status < 300) return response;
+        } catch {
+            /* refused or unreachable: the authenticated request below decides */
+        }
+    }
+    return httpRequest({ method: 'GET', url, headers: { Authorization: `Bearer ${token}` } });
+}
+
+/**
  * A gist file's contents, following `raw_url` when the API truncated it.
  *
  * When the API lists a numeric `size`, the text read must match it in UTF-8
@@ -984,11 +1011,7 @@ async function readFileContent(token, file, name = 'a gist file') {
     } else if (!file.raw_url) {
         text = file.content ?? '';
     } else {
-        const response = await httpRequest({
-            method: 'GET',
-            url: file.raw_url,
-            headers: { Authorization: `Bearer ${token}` },
-        });
+        const response = await readRawFile(token, file.raw_url);
         if (response.status < 200 || response.status >= 300) throw classify(response);
         text = response.text;
     }
