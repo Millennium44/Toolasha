@@ -1526,6 +1526,26 @@ describe('the panel', () => {
         });
     });
 
+    test('Equipment Steps: 1 by default (the breakpoint only), clamped, handed to the run', async () => {
+        const q = (id) => ui.panel.querySelector(id);
+        selectZone();
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        q('[data-upgrade-mode="equipment"]').checked = true;
+        expect(q('#mwi-csim-equip-steps').value).toBe('1');
+        expect(q('#mwi-csim-equip-steps-group').title).toMatch(/\+6, \+7 and \+8/);
+        await ui._onUpgradeAnalyze();
+        expect(seen.enhancementSteps).toBe(1);
+        q('#mwi-csim-equip-steps').value = '7';
+        q('#mwi-csim-equip-steps').dispatchEvent(new Event('change', { bubbles: true }));
+        expect(q('#mwi-csim-equip-steps').value).toBe('5');
+        await ui._onUpgradeAnalyze();
+        expect(seen.enhancementSteps).toBe(5);
+        q('#mwi-csim-equip-steps').value = '1';
+    });
+
     test('House and Guild Shrine Steps: 1 by default, clamped, set the Lv box aside above 1, handed to the run', async () => {
         const q = (id) => ui.panel.querySelector(id);
         const house = q('[data-upgrade-mode="house"]');

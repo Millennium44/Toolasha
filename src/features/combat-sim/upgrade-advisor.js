@@ -47,6 +47,7 @@ import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-t
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
     FALLBACK_MAX_HOUSE_ROOM_LEVEL,
+    ENHANCEMENT_SOLVER_MAX_LEVEL,
     maxEnhancementLevel,
     maxHouseRoomLevel,
     maxLevel,
@@ -1070,6 +1071,9 @@ export function generateCandidates(
     if (mode === 'equipment') {
         const tierProgression = getEquipmentTierProgression(gameData);
         const upgradeMap = buildUpgradeMap(gameData);
+        const enhancementSteps = normalizeLevelSteps(options?.enhancementSteps);
+        // The game's cap, never past what the enhancement cost solver can price
+        const enhancementCap = Math.min(maxEnhancementLevel(gameData), ENHANCEMENT_SOLVER_MAX_LEVEL);
 
         for (const [slot, equip] of Object.entries(playerDTO.equipment)) {
             if (!equip) continue;
@@ -1088,17 +1092,24 @@ export function generateCandidates(
             // level and tier from the table. See `isCharmItem`.
             if (!hasCombatStats(itemDetails) && !isCharmItem(itemDetails)) continue;
 
-            // Enhancement upgrade: next breakpoint
+            // Enhancement upgrade: the next breakpoint, as always, and with the Steps box above 1 also each of
+            // the next N levels one at a time (+5 → +6, +7, +8), capped at the game's max enhancement level
             const nextBP = getNextBreakpoint(currentLevel, slot, currentHrid);
-            if (nextBP) {
-                const itemName = gameData.itemDetailMap[currentHrid]?.name || currentHrid.split('/').pop();
+            const enhancementLevels = new Set(nextBP ? [nextBP] : []);
+            if (enhancementSteps > 1) {
+                for (const level of singleStepLevels(currentLevel, enhancementSteps, enhancementCap)) {
+                    enhancementLevels.add(level);
+                }
+            }
+            const itemName = gameData.itemDetailMap[currentHrid]?.name || currentHrid.split('/').pop();
+            for (const level of [...enhancementLevels].sort((a, b) => a - b)) {
                 candidates.push({
                     slot,
                     currentHrid,
                     currentLevel,
                     upgradeHrid: currentHrid,
-                    upgradeLevel: nextBP,
-                    description: `${itemName} +${currentLevel} → +${nextBP}`,
+                    upgradeLevel: level,
+                    description: `${itemName} +${currentLevel} → +${level}`,
                     type: 'enhancement',
                 });
             }
@@ -4725,7 +4736,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
  *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
  *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
- *   offered per room / shrine at +1 each, default 1), skipBackSlot, combatLevelTargets, charmTier,
+ *   offered per room / shrine at +1 each, default 1), enhancementSteps (above 1, each piece is also offered
+ *   at the next N enhancement levels besides its breakpoint), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
@@ -4750,6 +4762,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityLevelType,
         abilityTargetLevel,
         abilitySteps = 1,
+        enhancementSteps = 1,
         houseSteps = 1,
         guildShrineSteps = 1,
         combatLevelType = 'increment',
@@ -4810,7 +4823,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps, enhancementSteps }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
