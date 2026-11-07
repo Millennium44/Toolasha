@@ -2650,7 +2650,16 @@ class LabSimUI {
             levelType.style.display = isLevelMode ? '' : 'none';
             levelType.disabled = !levelTypeState.enabled;
             levelType.title = levelTypeState.reason;
-            if (!levelTypeState.enabled) levelType.value = 'increment';
+            if (!levelTypeState.enabled && levelType.value !== 'increment') {
+                // Forced to +Levels: the number box gets the rewrite the type select's own change makes, or a
+                // Target Lv (80) left in it would be read as +80 levels
+                levelType.value = 'increment';
+                try {
+                    this._syncAbilityLevelBox('increment');
+                } finally {
+                    void this._saveUpgradeInputs();
+                }
+            }
         }
         // The Steps box follows the (possibly just reset) type
         this._syncAbilityStepsBox();

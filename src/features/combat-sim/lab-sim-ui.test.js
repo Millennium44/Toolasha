@@ -8793,6 +8793,30 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         expect(q('allfights-useskip').checked).toBe(false);
     });
 
+    test('a Target Lv forced to +Levels by a wider scope does not stay in the box as +80 levels', async () => {
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: 'Mimic' },
+            { hrid: '/monsters/ghoul', name: 'Ghoul' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/ghoul': 140 };
+        await rebuild();
+        ui._switchTab('upgrade');
+        q('level-source').value = 'configure';
+        onlyDimension('ability_level');
+        setBox('upgrade-level-type', 'target');
+        setBox('upgrade-target-level', '80');
+        expect(q('upgrade-target-level').value).toBe('80');
+        const scope = q('upgrade-scope');
+        scope.value = 'all';
+        change(scope);
+        await settle();
+        expect(q('upgrade-level-type').disabled).toBe(true);
+        expect(q('upgrade-level-type').value).toBe('increment');
+        expect(q('upgrade-target-level').value).toBe('5');
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ abilityType: 'increment', abilityLevel: '5' });
+        expect(ui._readUpgradeSteps(new Set(['ability_level']))).toMatchObject({ abilitySteps: 1 });
+    });
+
     test('saved per character, put back through the same handlers, with the Lv boxes set aside', async () => {
         setBox('equip-step-kind', 'levels');
         setBox('equip-steps', '3');
