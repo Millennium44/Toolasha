@@ -17460,6 +17460,34 @@ describe('Upgrade tab inputs are remembered per character', () => {
         ui.destroy();
     });
 
+    test('a number typed without leaving the box is saved on input and read back by the next panel', async () => {
+        await open();
+        for (const [id, value] of [
+            ['#mwi-csim-upgrade-target-level', '12'],
+            ['#mwi-csim-upgrade-steps', '2'],
+            ['#mwi-csim-charm-enh', '3'],
+            ['#mwi-csim-upgrade-hours', '321'],
+        ]) {
+            q(id).value = value;
+            q(id).dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await settle();
+
+        expect(mocks.store.get(KEY('char1')).values).toMatchObject({
+            abilityLevel: '12',
+            abilitySteps: '2',
+            charmEnh: '3',
+        });
+        expect(mocks.store.get(KEY('char1')).hours).toBe(321);
+
+        ui.destroy();
+        await open();
+
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('12');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('2');
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('321');
+    });
+
     test('every kept control is written under the character and read back by the next panel', async () => {
         await open();
         // The charm options exist once Combat Lv has been ticked

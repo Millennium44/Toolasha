@@ -4424,6 +4424,15 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
             this._saveSwapAuraOnly();
         });
+        // A number typed and the page closed before leaving the box fires no `change`: save on `input` as well. The
+        // write is debounced storage, which the page-close flush drains, so the last keystroke lands. A restore sets
+        // values programmatically (no `input` event) and is guarded anyway
+        this.panel.addEventListener('input', (event) => {
+            if (event.target?.type !== 'number' || this._applyingUpgradeInputs || this._restoringUpgradeSettings)
+                return;
+            const inputGroup = UPGRADE_INPUT_GROUP_BY_ID.get(event.target.id);
+            if (inputGroup) this._onUpgradeInputChanged(inputGroup);
+        });
         // Delegated, so one listener covers the section's selects
         this.panel.addEventListener('change', (event) => {
             const inputGroup = UPGRADE_INPUT_GROUP_BY_ID.get(event.target?.id);
