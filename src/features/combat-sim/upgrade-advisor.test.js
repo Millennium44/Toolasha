@@ -4392,6 +4392,74 @@ describe('house upgrade candidates', () => {
         expect(candidates.find((c) => c.roomHrid === '/house_rooms/dojo').upgradeLevel).toBe(8);
     });
 
+    describe('Steps', () => {
+        const dojo = (candidates) =>
+            candidates.filter((c) => c.roomHrid === '/house_rooms/dojo').map((c) => c.upgradeLevel);
+        const rooms = (dojoLevel) => ({ houseRooms: { '/house_rooms/dojo': dojoLevel, '/house_rooms/gym': 7 } });
+
+        test('one step (or none, blank, 0) is exactly today: the Lv box, else one level up', () => {
+            for (const steps of [1, undefined, 0, '', NaN]) {
+                expect(dojo(generateHouseCandidates(rooms(3), houseGameData(), 0, null, { steps }))).toEqual([4]);
+                expect(dojo(generateHouseCandidates(rooms(3), houseGameData(), 6, null, { steps }))).toEqual([6]);
+            }
+        });
+
+        test('three steps: +1, +2, +3 per room, each its own row and label, the Lv box not read', () => {
+            const candidates = generateHouseCandidates(rooms(3), houseGameData(), 6, null, { steps: 3 });
+            expect(dojo(candidates)).toEqual([4, 5, 6]);
+            expect(candidates.filter((c) => c.roomHrid === '/house_rooms/dojo').map((c) => c.description)).toEqual([
+                'Dojo Lv3 → Lv4',
+                'Dojo Lv3 → Lv5',
+                'Dojo Lv3 → Lv6',
+            ]);
+            // Gym at 7 stops at the max of 8: one row, nothing past the cap
+            expect(candidates.filter((c) => c.roomHrid === '/house_rooms/gym').map((c) => c.upgradeLevel)).toEqual([8]);
+            expect(
+                candidates.find((c) => c.upgradeLevel === 6 && c.roomHrid === '/house_rooms/dojo').levelsBought
+            ).toBe(3);
+        });
+
+        test('a room at the max offers nothing; an open Targets grid replaces the steps', () => {
+            expect(dojo(generateHouseCandidates(rooms(8), houseGameData(), 0, null, { steps: 3 }))).toEqual([]);
+            const candidates = generateHouseCandidates(
+                rooms(3),
+                houseGameData(),
+                0,
+                { '/house_rooms/dojo': 7 },
+                {
+                    steps: 3,
+                }
+            );
+            expect(candidates.map((c) => [c.roomHrid, c.upgradeLevel])).toEqual([['/house_rooms/dojo', 7]]);
+        });
+
+        test('each step costs every level from where the room is now', () => {
+            resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 2_000 : 0 }));
+            const [one, two] = generateHouseCandidates(rooms(3), houseGameData(), 0, null, { steps: 2 });
+            expect(calculateUpgradeCost(one, houseGameData())).toBe(1_000_000 + 10 * 2_000);
+            expect(calculateUpgradeCost(two, houseGameData())).toBe(1_000_000 + 10 * 2_000 + 2_000_000);
+        });
+
+        test('reaches the house set through generateCandidates as houseSteps', () => {
+            const candidates = generateCandidates(
+                { equipment: {}, ...rooms(3) },
+                houseGameData(),
+                'house',
+                0,
+                'increment',
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                0,
+                { houseSteps: 2 }
+            );
+            expect(dojo(candidates)).toEqual([4, 5]);
+        });
+    });
+
     test('costs coins at face value plus the market price of each material', () => {
         resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 2_000 : 0 }));
 
@@ -5664,6 +5732,45 @@ describe('guild shrine candidates', () => {
 
             expect(generateGuildShrineCandidates(dto, { targetLevel: 0 })[0].upgradeLevel).toBe(4);
             expect(generateGuildShrineCandidates(dto)[0].upgradeLevel).toBe(4);
+        });
+    });
+
+    describe('Steps', () => {
+        const levels = (candidates) => candidates.map((c) => c.upgradeLevel);
+
+        test('one step is today: the target, else one level up', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            expect(levels(generateGuildShrineCandidates(dto, { steps: 1 }))).toEqual([4]);
+            expect(levels(generateGuildShrineCandidates(dto, { steps: 1, targetLevel: 5 }))).toEqual([5]);
+        });
+
+        test('+1, +2 ... each costed from the current level, stopping at the top of the cost table', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const candidates = generateGuildShrineCandidates(dto, { steps: 3, targetLevel: 5 });
+            expect(levels(candidates)).toEqual([4, 5]);
+            expect(candidates.map((c) => c.guildTokenCost)).toEqual([40, 90]);
+            expect(candidates.map((c) => c.description)).toEqual(['Force Shrine Lv3 → Lv4', 'Force Shrine Lv3 → Lv5']);
+            expect(
+                generateGuildShrineCandidates({ guildShrineLevels: { '/guild_buffs/force_combat': 5 } }, { steps: 3 })
+            ).toEqual([]);
+        });
+
+        test('with Guild-allowed only, a step past the guild building is not offered', () => {
+            guild.shrineLevels['/guild_shrines/force'] = 4;
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            expect(levels(generateGuildShrineCandidates(dto, { steps: 3, capToGuildLevel: true }))).toEqual([4]);
+            // Without the cap the row past the building says what it needs
+            const open = generateGuildShrineCandidates(dto, { steps: 3 });
+            expect(open.map((c) => c.needsShrineLevel)).toEqual([null, 5]);
+        });
+
+        test('per-shrine targets replace the steps', () => {
+            const dto = { guildShrineLevels: { '/guild_buffs/force_combat': 3 } };
+            const candidates = generateGuildShrineCandidates(dto, {
+                steps: 3,
+                perBuffTargets: { '/guild_buffs/force_combat': 5 },
+            });
+            expect(levels(candidates)).toEqual([5]);
         });
     });
 
