@@ -8,7 +8,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat Sim equipment Steps try breakpoints
 
-The Equipment Steps box now tries each of the next N enhancement breakpoints (+5 → +7, +10, +12 with 3 steps) instead of single levels, and the Upgrades and Budget titles share one row with their buttons.
+The Equipment Steps box now tries each of the next N enhancement breakpoints (+5 → +7, +10, +12 with 3 steps); a Breakpoints / Levels box beside it switches back to single levels. The Upgrades and Budget titles share one row with their buttons.
+
+### Combat Sim budget remembers its amount and goal
+
+The Budget amount and what it plans for (Score, profit, DPS…) are now saved per character with the pins, so a reload comes back to the same plan.
 
 <!-- shipped in 3.78.0 -->
 

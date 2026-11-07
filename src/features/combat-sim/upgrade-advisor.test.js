@@ -519,6 +519,30 @@ describe('generateCandidates equipment enhancement Steps', () => {
         expect(levels(enh('/items/fine_sword', 7, 2))).toEqual([10, 12]);
     });
 
+    test('by level, three steps from +5 are +6, +7, +8 and the next breakpoint stays', () => {
+        const byLevel = (level, steps) =>
+            generateCandidates(
+                buildPlayer('/items/fine_sword', level),
+                buildGameData(),
+                'equipment',
+                0,
+                'increment',
+                false,
+                null,
+                null,
+                0,
+                null,
+                null,
+                0,
+                { enhancementSteps: steps, enhancementStepKind: 'levels' }
+            )
+                .filter((c) => c.type === 'enhancement')
+                .map((c) => c.upgradeLevel);
+        expect(byLevel(5, 3)).toEqual([6, 7, 8]);
+        expect(byLevel(7, 2)).toEqual([8, 9, 10]);
+        expect(byLevel(18, 5)).toEqual([19, 20]);
+    });
+
     test('never past the max enhancement level; a piece at the max offers nothing', () => {
         expect(levels(enh('/items/fine_sword', 18, 5))).toEqual([19, 20]);
         expect(enh('/items/fine_sword', 20, 5)).toEqual([]);

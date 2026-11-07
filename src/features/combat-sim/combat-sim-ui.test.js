@@ -1544,6 +1544,12 @@ describe('the panel', () => {
         expect(q('#mwi-csim-equip-steps').value).toBe('5');
         await ui._onUpgradeAnalyze();
         expect(seen.enhancementSteps).toBe(5);
+        expect(q('#mwi-csim-equip-step-kind').value).toBe('breakpoints');
+        expect(seen.enhancementStepKind).toBe('breakpoints');
+        q('#mwi-csim-equip-step-kind').value = 'levels';
+        await ui._onUpgradeAnalyze();
+        expect(seen.enhancementStepKind).toBe('levels');
+        q('#mwi-csim-equip-step-kind').value = 'breakpoints';
         q('#mwi-csim-equip-steps').value = '1';
     });
 
@@ -15966,6 +15972,8 @@ describe('pins and exclusions are remembered per character (#545)', () => {
         expect(mocks.store.get(KEY('char1'))).toEqual({
             pins: [[idOf('Cape'), 'Cape']],
             excludes: [[idOf('Ring'), 'Ring']],
+            budgetText: '',
+            metric: 'profit',
         });
         expect(mocks.store.has(KEY('char2'))).toBe(false);
 
@@ -15978,6 +15986,39 @@ describe('pins and exclusions are remembered per character (#545)', () => {
 
         expect(ui._lastBudgetPlan.picks[0].candidate.description).toBe('Cape');
         expect(ui._lastBudgetPlan.picks.map((p) => p.candidate.description)).not.toContain('Ring');
+    });
+
+    test('the budget amount and its axis are saved on Plan and come back on the next panel', async () => {
+        ui._upgradeBudget = 0;
+        ui._upgradePlanMetric = null;
+        ui._renderUpgradeResults(analysis());
+        container().querySelector('#mwi-csim-budget-input').value = '300';
+        const metric = container().querySelector('#mwi-csim-budget-metric');
+        const other = [...metric.options].find((o) => o.value !== metric.value).value;
+        metric.value = other;
+        container().querySelector('#mwi-csim-budget-plan').click();
+        await settle();
+        expect(mocks.store.get(KEY('char1'))).toMatchObject({ budgetText: '300', metric: other });
+
+        ui.destroy();
+        ui.buildPanel();
+        ui._upgradeBudgetText = '';
+        ui._upgradeBudget = 0;
+        ui._upgradePlanMetric = null;
+        await ui._restoreBudgetConstraints();
+        ui._renderUpgradeResults(analysis());
+        expect(ui._upgradeBudget).toBe(300);
+        expect(container().querySelector('#mwi-csim-budget-input').value).toBe('300');
+        expect(container().querySelector('#mwi-csim-budget-metric').value).toBe(other);
+    });
+
+    test('a record saved before the amount was kept leaves the amount and axis alone', async () => {
+        ui._upgradeBudgetText = '500';
+        mocks.store.set(KEY('char1'), { pins: [], excludes: [] });
+        await ui._restoreBudgetConstraints();
+        expect(ui._upgradeBudgetText).toBe('500');
+        expect(ui._upgradePlanMetric).toBe('profit');
+        ui._upgradeBudgetText = '';
     });
 
     test('stored constraints arriving after the table is drawn redraw it', async () => {

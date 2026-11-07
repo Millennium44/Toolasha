@@ -3252,9 +3252,10 @@ const SINGLE_STEPS_TITLE = (noun) =>
 
 /** Help text for the Equipment Steps box */
 const ENHANCEMENT_STEPS_TITLE =
-    `How many enhancement breakpoints to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
+    `How many enhancement breakpoints (or levels) to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
     '(+5 → +7 on most gear, as always). 3 tries each of the next three breakpoints: +7, +10 and +12 from +5, ' +
-    'never past the max enhancement level. Each extra breakpoint is one more simulation per item.';
+    'never past the max enhancement level. Set the box beside it to Levels to step one level at a time instead ' +
+    '(+6, +7 and +8 from +5). Each extra step is one more simulation per item.';
 
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
@@ -3284,6 +3285,10 @@ const MODE_OPTIONS = {
                 Skip Back
             </label>
             <span style="color:${GAME_COLORS.border};">|</span>
+            <select class="toolasha-select" id="mwi-csim-equip-step-kind" title="${ENHANCEMENT_STEPS_TITLE}" style="${CHIP_INPUT_STYLE}">
+                <option value="breakpoints">Breakpoints</option>
+                <option value="levels">Levels</option>
+            </select>
             <label id="mwi-csim-equip-steps-group" title="${ENHANCEMENT_STEPS_TITLE}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
                 Steps
                 <input id="mwi-csim-equip-steps" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
@@ -10547,6 +10552,10 @@ class CombatSimUI {
         // In memory only: the departing character's stored pins stay under its own key, and the arriving
         // character's are read when its panel is built
         this._clearBudgetConstraints();
+        // The amount and axis are saved per character with the pins, so they go with the departing one
+        this._upgradeBudgetText = '';
+        this._upgradeBudget = 0;
+        this._upgradePlanMetric = null;
         this._simHistory = [];
         this._comparisonIndex = null;
         this._comparisonBaseline = null;
@@ -11635,6 +11644,8 @@ class CombatSimUI {
             const enhancementSteps = upgradeModes.includes('equipment')
                 ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-equip-steps')?.value)
                 : 1;
+            const enhancementStepKind =
+                this.panel.querySelector('#mwi-csim-equip-step-kind')?.value === 'levels' ? 'levels' : 'breakpoints';
             const isHouseMode = upgradeModes.includes('house');
             const houseTargetLevel = isHouseMode
                 ? Math.min(
@@ -11701,6 +11712,7 @@ class CombatSimUI {
                     abilityTargetLevel,
                     abilitySteps,
                     enhancementSteps,
+                    enhancementStepKind,
                     combatLevelType,
                     combatLevelBoost,
                     combatLevelSteps,
@@ -14212,7 +14224,12 @@ class CombatSimUI {
      */
     async _saveBudgetConstraints() {
         const { pins, excludes } = this._budgetConstraints();
-        const payload = { pins: [...pins], excludes: [...excludes] };
+        const payload = {
+            pins: [...pins],
+            excludes: [...excludes],
+            budgetText: this._upgradeBudgetText || '',
+            metric: this._upgradePlanMetric || '',
+        };
         const epoch = this._budgetConstraintsEpoch;
         let failed = false;
         try {
@@ -14255,8 +14272,15 @@ class CombatSimUI {
             };
             // One id is one thing: a stored pin and exclusion for the same id keeps the pin
             for (const id of next.pins.keys()) next.excludes.delete(id);
+            // The amount and axis: a record from before they were saved keeps what the panel has
+            const budgetText = typeof saved?.budgetText === 'string' ? saved.budgetText : this._upgradeBudgetText || '';
+            const metric = UPGRADE_PLAN_METRICS.some((m) => m.key === saved?.metric)
+                ? saved.metric
+                : this._upgradePlanMetric;
             const { pins, excludes } = this._budgetConstraints();
             if (
+                budgetText === (this._upgradeBudgetText || '') &&
+                metric === this._upgradePlanMetric &&
                 pins.size === next.pins.size &&
                 excludes.size === next.excludes.size &&
                 [...next.pins].every(([id, label]) => pins.get(id) === label) &&
@@ -14266,6 +14290,12 @@ class CombatSimUI {
             }
             this._upgradePins = next.pins;
             this._upgradeExcludes = next.excludes;
+            if (budgetText !== (this._upgradeBudgetText || '')) {
+                this._upgradeBudgetText = budgetText;
+                const typed = parseKMB(budgetText);
+                this._upgradeBudget = Number.isFinite(typed) ? typed : 0;
+            }
+            this._upgradePlanMetric = metric;
             if (this._upgradeResultsData) this._renderUpgradeResults(this._upgradeResultsData);
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore the budget pins and exclusions:', error);
@@ -14592,6 +14622,9 @@ class CombatSimUI {
             const typed = parseKMB(this._upgradeBudgetText);
             this._upgradeBudget = Number.isFinite(typed) ? typed : 0;
             this._upgradePlanMetric = select?.value || UPGRADE_PLAN_METRICS[0].key;
+            // The amount and axis are saved with the pins, so a reload comes back to the same plan
+            this._budgetConstraintsEpoch = (this._budgetConstraintsEpoch || 0) + 1;
+            this._saveBudgetConstraints();
             this._renderUpgradeResults(this._upgradeResultsData);
         };
 

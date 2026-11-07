@@ -1082,6 +1082,8 @@ export function generateCandidates(
         const tierProgression = getEquipmentTierProgression(gameData);
         const upgradeMap = buildUpgradeMap(gameData);
         const enhancementSteps = normalizeLevelSteps(options?.enhancementSteps);
+        // 'levels' walks +1 at a time; anything else walks the breakpoint list
+        const stepByLevel = options?.enhancementStepKind === 'levels';
         // The game's cap, never past what the enhancement cost solver can price
         const enhancementCap = Math.min(maxEnhancementLevel(gameData), ENHANCEMENT_SOLVER_MAX_LEVEL);
 
@@ -1103,17 +1105,15 @@ export function generateCandidates(
             if (!hasCombatStats(itemDetails) && !isCharmItem(itemDetails)) continue;
 
             // Enhancement upgrade: the next breakpoint, as always, and with the Steps box above 1 the next N
-            // breakpoints (+5 → +7, +10, +12 on most gear), capped at the game's max enhancement level
+            // breakpoints (+5 → +7, +10, +12 on most gear) or, by level, the next N levels (+6, +7, +8), capped at
+            // the game's max enhancement level
             const nextBP = getNextBreakpoint(currentLevel, slot, currentHrid);
             const enhancementLevels = new Set(nextBP ? [nextBP] : []);
             if (enhancementSteps > 1) {
-                for (const level of getNextBreakpoints(
-                    currentLevel,
-                    slot,
-                    currentHrid,
-                    enhancementSteps,
-                    enhancementCap
-                )) {
+                const stepLevels = stepByLevel
+                    ? singleStepLevels(currentLevel, enhancementSteps, enhancementCap)
+                    : getNextBreakpoints(currentLevel, slot, currentHrid, enhancementSteps, enhancementCap);
+                for (const level of stepLevels) {
                     enhancementLevels.add(level);
                 }
             }
@@ -4848,7 +4848,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
  *   +1" row), resimCloseCalls (re-sim the rows within noise of the leader for longer, see `resimCloseCallRows`),
  *   enhancementSteps (above 1, each piece is offered
- *   at each of its next N enhancement breakpoints), skipBackSlot, combatLevelTargets, charmTier,
+ *   at each of its next N enhancement breakpoints), enhancementStepKind ('breakpoints' default, or 'levels' to step
+ *   +1 at a time), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
@@ -4874,6 +4875,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityTargetLevel,
         abilitySteps = 1,
         enhancementSteps = 1,
+        enhancementStepKind = 'breakpoints',
         houseSteps = 1,
         houseNonCombatBundle = false,
         guildShrineSteps = 1,
@@ -4936,7 +4938,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps, enhancementSteps, houseNonCombatBundle }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps, enhancementSteps, enhancementStepKind, houseNonCombatBundle }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
