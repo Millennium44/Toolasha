@@ -365,6 +365,22 @@ describe('disable', () => {
     });
 });
 
+describe('hover target', () => {
+    test('hands over the element the pointer entered, never one inside the popper', () => {
+        tooltipObserver.initialize();
+        document.body.innerHTML = '<div id="slot" class="Item_item__a"><span id="icon"></span></div>';
+        const tooltip = popper(ITEM_TOOLTIP);
+        document.body.appendChild(tooltip);
+        const icon = document.getElementById('icon');
+        icon.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        expect(classifyTooltip(tooltip).hoverTarget).toBe(icon);
+        tooltip.querySelector('span').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        expect(classifyTooltip(tooltip).hoverTarget).toBeUndefined();
+        tooltipObserver.disable();
+        document.body.innerHTML = '';
+    });
+});
+
 describe('runaway canary', () => {
     test('warns once when tooltips are classified far more often than a hover could', async () => {
         const { resetRunawayCanary } = await import('./tooltip-observer.js');
