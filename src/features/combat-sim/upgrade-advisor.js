@@ -4830,7 +4830,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
  *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
  *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
- *   +1" row), enhancementSteps (above 1, each piece is also offered
+ *   +1" row), resimCloseCalls (re-sim the rows within noise of the leader for longer, see `resimCloseCallRows`),
+ *   enhancementSteps (above 1, each piece is also offered
  *   at the next N enhancement levels besides its breakpoint), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
@@ -4860,6 +4861,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseSteps = 1,
         houseNonCombatBundle = false,
         guildShrineSteps = 1,
+        resimCloseCalls = false,
         combatLevelType = 'increment',
         combatLevelBoost,
         combatLevelSteps = 1,
@@ -4878,7 +4880,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         auraSwapsOnly = false,
         extraCandidates = [],
     } = params;
-    const { abortSignal } = options;
+    const { abortSignal, now = () => Date.now() } = options;
     const gameData = buildGameDataPayload();
     if (!gameData) throw new Error('No game data available');
 
@@ -4958,7 +4960,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
     // +1 baseline, + XP-rate sims for combat levels (and one more each for the
     // primary skill's levels along the way), + the food search
-    const total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
+    // Grows when close calls are re-simmed
+    let total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
     let current = 0;
 
     // Every price the runs below can read, read now: an item first seen in a candidate (an added coffee, a drop
@@ -5038,10 +5041,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     const lanes = Math.max(1, Math.min(analysisConcurrency(), candidatesWithCost.length));
     const progress = { current };
 
-    const evaluateCandidate = async (candidate) => {
-        if (abortSignal?.()) return null;
-
-        // Clone playerDTOs and apply candidate upgrade
+    /**
+     * The party with one candidate applied: a fresh clone each call.
+     * @param {Object} candidate - The candidate
+     * @returns {Array<Object>} Player DTOs
+     */
+    const candidateDTOs = (candidate) => {
         const modifiedDTOs = JSON.parse(JSON.stringify(playerDTOs));
 
         if (candidate.checkedAbility) {
@@ -5105,17 +5110,25 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 enhancementLevel: candidate.upgradeLevel,
             };
         }
+        return modifiedDTOs;
+    };
 
-        // A candidate Stop interrupts is dropped, and the ones that finished are kept: they are measurements
-        let simResult;
+    /**
+     * One candidate's sim at `simHours`, paired with a baseline of the same length and seed. Stop rejects the
+     * sim in flight; that comes back as null here, anything else throws.
+     * @param {Object} candidate - The candidate
+     * @param {number} simHours - Hours to simulate
+     * @returns {Promise<Object|null>} SimResult, or null when stopped
+     */
+    const simulateCandidate = async (candidate, simHours) => {
         try {
-            simResult = await runSimulation(
+            return await runSimulation(
                 {
                     gameData,
-                    playerDTOs: modifiedDTOs,
+                    playerDTOs: candidateDTOs(candidate),
                     zoneHrid,
                     difficultyTier,
-                    hours,
+                    hours: simHours,
                     communityBuffs: applyCommunityBuffCandidate(communityBuffs, candidate),
                     seed: simSeed,
                     taskDamageMode: TASK_DAMAGE_OFF,
@@ -5129,25 +5142,33 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             if (stoppedHere()) return null;
             throw error;
         }
+    };
 
-        if (abortSignal?.()) return null;
-
-        const metrics = computeMetrics(simResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
-        const deltas = computeDeltas(baselineMetrics, metrics);
+    /**
+     * A result row from one candidate's sim against the baseline it was paired with. The first pass and the
+     * close-call re-sims both build their rows here, so a re-simmed row is measured exactly as a first one.
+     * @param {Object} candidate - The candidate
+     * @param {Object} simResult - Its SimResult
+     * @param {{metrics: Object, result: Object, hours: number}} base - The paired baseline and the hours both ran
+     * @returns {Object} Row
+     */
+    const measureRow = (candidate, simResult, base) => {
+        const metrics = computeMetrics(simResult, gameData, playerHrid, base.hours, { priceCache, saleTaxRate });
+        const deltas = computeDeltas(base.metrics, metrics);
         const goldPer = computeGoldPerImprovement(candidate.cost, deltas);
 
         // An extra coffee or key nothing priced is counted as free in the profit: the row's profit gain is a ceiling
         // until it is priced, so it is neither ranked as a gain, budgeted as one, nor given a payback
-        const costUnpriced = newlyUnpricedCosts(baselineMetrics, metrics);
-        const economics = withUnknownCost(computeEconomics(candidate.cost, baselineMetrics, metrics), costUnpriced);
-        const noise = rateDeltaNoisePct(baselineResult, simResult, playerHrid);
-        const significantBy = significantDeltas(deltas, noise, { baseline: baselineMetrics, upgraded: metrics });
+        const costUnpriced = newlyUnpricedCosts(base.metrics, metrics);
+        const economics = withUnknownCost(computeEconomics(candidate.cost, base.metrics, metrics), costUnpriced);
+        const noise = rateDeltaNoisePct(base.result, simResult, playerHrid);
+        const significantBy = significantDeltas(deltas, noise, { baseline: base.metrics, upgraded: metrics });
         if (costUnpriced.length) {
             significantBy.profit = false;
             goldPer.profit = Infinity;
         }
 
-        const row = {
+        return {
             candidate,
             cost: candidate.cost,
             costSource: candidate.costSource ?? null,
@@ -5164,6 +5185,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             // error bar; the planner narrows this to the axis actually chosen
             significant: Boolean(significantBy.dps || significantBy.profit || significantBy.xp),
         };
+    };
+
+    const evaluateCandidate = async (candidate) => {
+        if (abortSignal?.()) return null;
+
+        // A candidate Stop interrupts is dropped, and the ones that finished are kept: they are measurements
+        const simResult = await simulateCandidate(candidate, hours);
+        if (!simResult || abortSignal?.()) return null;
+
+        const row = measureRow(candidate, simResult, { metrics: baselineMetrics, result: baselineResult, hours });
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
@@ -5229,7 +5260,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                             total,
                             description: `${candidate.description} + ${along.label} ${along.currentLevel} → ${along.upgradeLevel}`,
                         });
-                        const bothDTOs = JSON.parse(JSON.stringify(modifiedDTOs));
+                        const bothDTOs = candidateDTOs(candidate);
                         bothDTOs[playerIndex][along.skillKey] = along.upgradeLevel;
                         recomputeLevelGapDebuffs(bothDTOs);
                         let bothResult;
@@ -5288,8 +5319,82 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     };
 
     onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    const firstPassStartedAt = now();
     const results = (await mapConcurrent(candidatesWithCost, evaluateCandidate, lanes)).filter(Boolean);
     current = progress.current;
+
+    // Close calls: rows the first pass could not tell from the leader are simulated again for longer
+    let resim = null;
+    if (resimCloseCalls && !abortSignal?.() && results.length > 1) {
+        resim = await resimCloseCallRows(results, {
+            firstPassMs: Math.max(0, now() - firstPassStartedAt),
+            firstPassSims: candidatesWithCost.length + 1,
+            hours,
+            now,
+            abortSignal,
+            lanes,
+            onRoundStart: (rows, multiplier) => {
+                total += rows.length + 1;
+                onProgress?.({
+                    current,
+                    total,
+                    phase: 'resim',
+                    description: `Close calls: ${rows.length} rows again at ${multiplier}× hours`,
+                });
+            },
+            runRound: async (rows, multiplier) => {
+                const simHours = hours * multiplier;
+                let longBaseline;
+                try {
+                    longBaseline = await runSimulation(
+                        {
+                            gameData,
+                            playerDTOs,
+                            zoneHrid,
+                            difficultyTier,
+                            hours: simHours,
+                            communityBuffs,
+                            seed: simSeed,
+                            taskDamageMode: TASK_DAMAGE_OFF,
+                        },
+                        null,
+                        { preempt: false, workers: 1 }
+                    );
+                } catch (error) {
+                    if (stoppedHere()) return null;
+                    throw error;
+                }
+                current++;
+                onProgress?.({ current, total, phase: 'resim', description: `Close calls: baseline at ${simHours}h` });
+                if (abortSignal?.()) return null;
+                const base = {
+                    metrics: computeMetrics(longBaseline, gameData, playerHrid, simHours, { priceCache, saleTaxRate }),
+                    result: longBaseline,
+                    hours: simHours,
+                };
+                const measured = await mapConcurrent(
+                    rows,
+                    async (row) => {
+                        if (abortSignal?.()) return null;
+                        const simResult = await simulateCandidate(row.candidate, simHours);
+                        if (!simResult || abortSignal?.()) return null;
+                        current++;
+                        onProgress?.({
+                            current,
+                            total,
+                            phase: 'resim',
+                            description: `Close call at ${simHours}h: ${row.candidate.description}`,
+                        });
+                        return measureRow(row.candidate, simResult, base);
+                    },
+                    lanes
+                );
+                // A round Stop cut short changes nothing: every row keeps its previous figures
+                if (abortSignal?.() || measured.some((row) => !row)) return null;
+                return measured;
+            },
+        });
+    }
 
     // Score only what can actually be bought — combat levels have no gold cost,
     // so ranking them alongside gear would seed the ladders with non-purchases
@@ -5335,6 +5440,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         results,
         // How many candidates the run set out to measure, so a stopped run can say how much of it it covers
         candidateCount: candidatesWithCost.length,
+        // What the close-call re-sims did (null when off or nothing to compare): see `resimCloseCallRows`
+        resim,
         // A saved build that carries more than the character can use (see `slotWarnings`): said, not trimmed
         slotWarnings: slotWarnings(playerDTO, gameData),
         food,
@@ -5364,6 +5471,166 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             saleTaxRate,
         },
     };
+}
+
+/**
+ * Longest the close-call re-sims may run, whatever the first pass took. The phase is otherwise allowed as long as
+ * the first pass ran (and at least {@link RESIM_MIN_BUDGET_MS}), so a quick analysis is never doubled into a slow one.
+ */
+export const RESIM_MAX_BUDGET_MS = 10 * 60 * 1000;
+/** The time the close-call re-sims may always take, however quick the first pass was */
+export const RESIM_MIN_BUDGET_MS = 30 * 1000;
+/** Hours multipliers the close calls are re-simmed at, one round each */
+export const RESIM_MULTIPLIERS = [2, 4];
+/** Most rows one re-sim round measures, closest to the leader first */
+export const RESIM_MAX_ROWS = 8;
+/** The value metrics a close call is judged on: the ones whose gains carry an error bar */
+const RESIM_METRICS = ['dps', 'xp', 'profit', 'encounters'];
+
+/**
+ * One row's error on a metric, in percent of the baseline metric. Profit's error is sized on the gold moving
+ * through the fight (`profitScale`), as `significantDeltas` judges it, then put in percent of the baseline profit.
+ * @param {Object} row - Result row
+ * @param {string} key - Metric
+ * @returns {number} Standard error in percent (Infinity when it cannot be read)
+ */
+function rowErrorPct(row, key) {
+    const error = Number(row?.noise?.[key]);
+    if (!Number.isFinite(error)) return Infinity;
+    if (key !== 'profit') return error;
+    const baseProfit = Math.abs(Number(row.metrics?.profitPerHour) - (Number(row.economics?.profitGainPerHour) || 0));
+    const scale = profitScale({
+        profit: row.metrics?.profitPerHour,
+        revenue: row.metrics?.revenuePerHour,
+        cost: row.metrics?.costPerHour,
+    });
+    return baseProfit > 0 ? (error * scale) / baseProfit : Infinity;
+}
+
+/**
+ * The rows whose ranking the first pass could not settle: for each value metric, the leader (lowest gold per
+ * 0.01%) and every row whose gold-per range overlaps the leader's. A row's range is its cost over its gain at
+ * ± {@link SIGNIFICANCE_Z} errors; a gain whose lower end is at or below zero has no upper bound, so it overlaps
+ * whenever its best case reaches the leader's worst. Only priced purchases with a gain take part (free rows and
+ * combat levels are not ranked on gold, unpriced rows have nothing to compare). Closest first, at most
+ * {@link RESIM_MAX_ROWS}.
+ *
+ * @param {Array<Object>} rows - Result rows
+ * @returns {Array<Object>} The close-call rows (the leaders included), an empty array when every leader is clear
+ */
+export function closeCallRows(rows) {
+    const eligible = rows.filter(
+        (row) =>
+            row?.candidate?.type !== 'combat_level' && Number.isFinite(row?.cost) && row.cost > 0 && !row.costUnpriced
+    );
+    const picked = new Map();
+    for (const key of RESIM_METRICS) {
+        const ranged = eligible
+            .filter((row) => row.deltas?.[key] > 0 && Number.isFinite(row.goldPer?.[key]))
+            .map((row) => {
+                const spread = SIGNIFICANCE_Z * rowErrorPct(row, key);
+                const high = row.deltas[key] + spread;
+                const low = row.deltas[key] - spread;
+                return {
+                    row,
+                    best: (row.cost * GOLD_PER_STEP_PCT) / high,
+                    worst: low > 0 ? (row.cost * GOLD_PER_STEP_PCT) / low : Infinity,
+                    value: row.goldPer[key],
+                };
+            })
+            .sort((a, b) => a.value - b.value);
+        if (ranged.length < 2) continue;
+        const [leader, ...rest] = ranged;
+        const close = rest.filter((entry) => entry.best <= leader.worst);
+        if (!close.length) continue;
+        for (const entry of [leader, ...close]) {
+            const closeness = entry.value / leader.value;
+            const was = picked.get(entry.row);
+            if (was === undefined || closeness < was) picked.set(entry.row, closeness);
+        }
+    }
+    return [...picked.entries()]
+        .sort((a, b) => a[1] - b[1])
+        .slice(0, RESIM_MAX_ROWS)
+        .map(([row]) => row);
+}
+
+/**
+ * Re-simulate the close calls for longer until they separate.
+ *
+ * Rounds at 2× then 4× the hours ({@link RESIM_MULTIPLIERS}). Each round runs a baseline of its own length (the
+ * shared seed only cancels noise between runs of the same length) and every close row against it, then picks the
+ * close calls again from the updated figures, so a row that separated drops out. It stops when nothing is close any
+ * more (`separated`), after the last multiplier (`max-hours`), when the next round would not fit the time budget
+ * (`time-cap`: as long as the first pass took, at least {@link RESIM_MIN_BUDGET_MS}, at most
+ * {@link RESIM_MAX_BUDGET_MS}), or on Stop (`stopped`). A round Stop cuts short applies nothing; a finished
+ * round replaces its rows in `results` (in place) and stamps each with `resim`. Rows never re-simmed are untouched.
+ *
+ * @param {Array<Object>} results - Result rows, replaced in place
+ * @param {Object} context
+ * @param {number} context.firstPassMs - How long the first pass took
+ * @param {number} context.firstPassSims - Sims in the first pass (baseline included)
+ * @param {number} context.hours - Hours of the first pass
+ * @param {Function} context.now - Clock
+ * @param {Function} [context.abortSignal] - Stop
+ * @param {number} [context.lanes=1] - Sims run at once
+ * @param {Function} [context.onRoundStart] - (rows, multiplier) before a round runs
+ * @param {Function} context.runRound - (rows, multiplier) => Promise<rows|null>: the re-measured rows in order, null
+ *   when stopped
+ * @returns {Promise<{ran: boolean, rounds: number, rows: number, reason: string, hours: number, budgetMs: number}>}
+ */
+export async function resimCloseCallRows(results, context) {
+    const { firstPassMs, firstPassSims, hours, now, abortSignal, lanes = 1, onRoundStart, runRound } = context;
+    const budgetMs = Math.min(RESIM_MAX_BUDGET_MS, Math.max(RESIM_MIN_BUDGET_MS, firstPassMs));
+    // Wall time one first-pass sim took, given how many ran at once
+    const perSimMs = firstPassSims > 0 ? firstPassMs / firstPassSims : 0;
+    const startedAt = now();
+    const touched = new Set();
+    let rounds = 0;
+    let lastHours = hours;
+    let reason = 'separated';
+
+    for (const multiplier of RESIM_MULTIPLIERS) {
+        const close = closeCallRows(results);
+        if (!close.length) {
+            reason = 'separated';
+            break;
+        }
+        // One sim took about `perSimMs × lanes` with `lanes` running at once; a round is its baseline alone, then
+        // the rows a lane-full at a time, each `multiplier` times as long
+        const width = Math.max(1, lanes);
+        const estimateMs = perSimMs * width * multiplier * (1 + Math.ceil(close.length / width));
+        if (now() - startedAt + estimateMs > budgetMs) {
+            reason = 'time-cap';
+            break;
+        }
+        if (abortSignal?.()) {
+            reason = 'stopped';
+            break;
+        }
+        onRoundStart?.(close, multiplier);
+        const measured = await runRound(close, multiplier);
+        if (!measured) {
+            reason = 'stopped';
+            break;
+        }
+        rounds++;
+        const roundHours = hours * multiplier;
+        lastHours = roundHours;
+        for (let i = 0; i < measured.length; i++) {
+            const row = measured[i];
+            const old = close[i];
+            const index = results.indexOf(old);
+            if (!row || index === -1) continue;
+            const first = old.resim?.noiseBefore ?? old.noise;
+            row.resim = { hours: roundHours, multiplier, rounds: (old.resim?.rounds || 0) + 1, noiseBefore: first };
+            results[index] = row;
+            touched.add(row.candidate);
+        }
+        reason = multiplier === RESIM_MULTIPLIERS[RESIM_MULTIPLIERS.length - 1] ? 'max-hours' : 'separated';
+    }
+    if (reason === 'max-hours' && !closeCallRows(results).length) reason = 'separated';
+    return { ran: true, rounds, rows: touched.size, reason, hours: lastHours, budgetMs };
 }
 
 /**

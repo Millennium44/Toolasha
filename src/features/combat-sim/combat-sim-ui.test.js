@@ -716,6 +716,7 @@ const {
     costSourceTagHtml,
     upgradeNoiseFor,
     upgradeRowNotesHtml,
+    resimSummaryText,
     abilityBookCount,
     cleanupUpgradeMarketAutofill,
     scoreDepthPlaces,
@@ -9313,6 +9314,74 @@ describe('the guild shrine guild-allowed cap', () => {
         await ui._onUpgradeAnalyze();
 
         expect(seen.guildShrineCapToGuild).toBe(false);
+    });
+});
+
+describe('Re-sim close calls', () => {
+    const q = (id) => ui.panel.querySelector(id);
+
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        ui.buildPanel();
+        const zone = q('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+    });
+
+    afterEach(() => {
+        ui.destroy();
+    });
+
+    test('on by default and sent with the run; unticking is remembered and sends false', async () => {
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        const box = q('#mwi-csim-upgrade-resim');
+        await vi.waitFor(() => expect(box.checked).toBe(true));
+        await ui._onUpgradeAnalyze();
+        expect(seen.resimCloseCalls).toBe(true);
+
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+        await ui._onUpgradeAnalyze();
+        expect(seen.resimCloseCalls).toBe(false);
+        await vi.waitFor(async () =>
+            expect(await readScoped('combatSimResimCloseCalls', 'settings', true)).toBe(false)
+        );
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+    });
+
+    test('every way it can end has its own sentence; off says nothing', () => {
+        expect(resimSummaryText(null)).toBe('');
+        expect(resimSummaryText({ ran: true, rounds: 0, rows: 0, reason: 'separated' })).toMatch(/No close calls/);
+        expect(resimSummaryText({ ran: true, rounds: 0, rows: 0, reason: 'time-cap' })).toMatch(/time limit/);
+        expect(resimSummaryText({ ran: true, rounds: 0, rows: 0, reason: 'stopped' })).toMatch(/Stop came first/);
+        expect(resimSummaryText({ ran: true, rounds: 1, rows: 1, reason: 'separated', hours: 200 })).toBe(
+            'Close calls: 1 row simulated again, up to 200h until they separated.'
+        );
+        expect(resimSummaryText({ ran: true, rounds: 2, rows: 3, reason: 'max-hours', hours: 400 })).toMatch(
+            /3 rows .* 400h\. Still within noise .* tie/
+        );
+        expect(resimSummaryText({ ran: true, rounds: 1, rows: 3, reason: 'time-cap', hours: 200 })).toMatch(
+            /then stopped at the time limit/
+        );
+        expect(resimSummaryText({ ran: true, rounds: 1, rows: 3, reason: 'stopped', hours: 200 })).toMatch(
+            /then Stop\. Each keeps its last finished figures/
+        );
+    });
+
+    test('a re-simmed row carries a chip with its tightened error; others do not', () => {
+        const base = { candidate: { type: 'enhancement', description: 'Sword +5 → +7' }, noise: { dps: 0.4 } };
+        expect(upgradeRowNotesHtml(base)).not.toContain('data-resim');
+        const html = upgradeRowNotesHtml({
+            ...base,
+            resim: { hours: 400, multiplier: 4, rounds: 2, noiseBefore: { dps: 1.12 } },
+        });
+        expect(html).toContain('re-simmed 4×');
+        expect(html).toContain('from ±1.12% to ±0.40%');
     });
 });
 
