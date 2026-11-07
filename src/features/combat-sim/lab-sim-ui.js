@@ -2115,18 +2115,24 @@ class LabSimUI {
             });
         });
         this.panel.querySelector('#mwi-labsim-upgrade-scope').addEventListener('change', () => {
-            this._populateUpgradeTargets();
-            this._onUpgradeSelectionChanged();
-            void this._saveUpgradeSelection();
+            try {
+                this._populateUpgradeTargets();
+                this._onUpgradeSelectionChanged();
+            } finally {
+                // A redraw that throws must not leave the chosen scope unsaved
+                void this._saveUpgradeSelection();
+            }
             // The Tune triggers section tunes the fights this scope names
             this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-allfights-useskip').addEventListener('change', () => {
+            // Saved first: the redraws below read the box, none changes it, and one that throws must not
+            // leave the player's tick unsaved (a reload then put the old tick back)
+            void this._saveUpgradeInputs();
             this._populateUpgradeTargets(this._getChosenTargets());
             this._onUpgradeSelectionChanged();
             // The trigger tuning's fights take their room levels from the same box
             this._onTriggerScopeChanged();
-            void this._saveUpgradeInputs();
         });
         for (const id of [
             'upgrade-target-level',

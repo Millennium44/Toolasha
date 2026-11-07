@@ -8756,6 +8756,44 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         );
     });
 
+    test('Upgrade tab: Use Skip Levels unticked after other boxes changed is saved too', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: true, equipKind: 'breakpoints', equipSteps: '1' } };
+        await rebuild();
+        setBox('equip-step-kind', 'levels');
+        setBox('equip-steps', '2');
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ equipKind: 'levels', equipSteps: '2' });
+        q('allfights-useskip').checked = false;
+        change(q('allfights-useskip'));
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me.useSkip).toBe(false);
+        storage.values = { ...storage.written };
+        await rebuild();
+        expect(q('allfights-useskip').checked).toBe(false);
+    });
+
+    test('Use Skip Levels is saved even when a redraw after the change fails', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: true, equipKind: 'breakpoints', equipSteps: '1' } };
+        await rebuild();
+        setBox('equip-steps', '2');
+        await settle();
+        const redraw = vi.spyOn(ui, '_onTriggerScopeChanged').mockImplementation(() => {
+            throw new Error('redraw failed');
+        });
+        q('allfights-useskip').checked = false;
+        try {
+            change(q('allfights-useskip'));
+        } catch {
+            /* jsdom reports a listener's throw; the save is what is under test */
+        }
+        await settle();
+        redraw.mockRestore();
+        expect(storage.written.labSimUpgradeInputs_me.useSkip).toBe(false);
+        storage.values = { ...storage.written };
+        await rebuild();
+        expect(q('allfights-useskip').checked).toBe(false);
+    });
+
     test('saved per character, put back through the same handlers, with the Lv boxes set aside', async () => {
         setBox('equip-step-kind', 'levels');
         setBox('equip-steps', '3');
