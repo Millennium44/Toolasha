@@ -14,6 +14,14 @@ The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the c
 
 The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakpoint or level, Ability Lv, House and Shrine, and Combat Lv now has its own +Levels / Next mult. of box and Steps.
 
+### Treasure panel shows a big beat as a multiple
+
+A drop far above its expected count now reads "100×" instead of a cut-off "+9900…" in the vs exp. column; hover it for the exact percent.
+
+### Labyrinth beacon tag shows beside Shroud?
+
+On a grid tile marked "Shroud?" the beacon tag (B1–B6) no longer hides under it; it sits on the right edge just below.
+
 ### Lab Sim keeps the ability target when it forces +Levels
 
 Choosing several fights switches the Lab's ability level type to +Levels, but a Target Lv number such as 80 stayed in the box and was read as +80 levels; the box now resets to the +Levels default.
