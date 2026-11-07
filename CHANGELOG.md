@@ -14,6 +14,10 @@ The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the c
 
 The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakpoint or level, Ability Lv, House and Shrine, and Combat Lv now has its own +Levels / Next mult. of box and Steps.
 
+### Lab Sim Use Skip Levels works when unticked
+
+Unticking Use Skip Levels on the Lab Sim's Upgrade tab had stopped working; it now uses each fight's live room level during a labyrinth run and the skip level otherwise.
+
 ### Combat Sim no longer loses its tabs when minimized
 
 Opening the sim for another character, or a run moving to Results, while the panel was minimized showed one pane with no tab row; the panel now unfolds first.

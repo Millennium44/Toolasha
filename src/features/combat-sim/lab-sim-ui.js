@@ -439,6 +439,26 @@ const SKILLING_SKILL_HRIDS = [
 const HOUSE_WIN_RATE_ONLY = { winRateOnly: true };
 
 /**
+ * The level of an uncleared combat room for this monster in the labyrinth run in progress, read off the live
+ * grid (`roomData`, rows of rooms), or 0 when no run is active or the monster has no such room. Treasure rooms
+ * are skipped: they can carry a leftover monsterHrid. Use Skip Levels unticked asks for this, falling back to
+ * the skip-derived level.
+ * @param {Object} clearRate - The labyrinth clear-rate module
+ * @param {string} monsterHrid
+ * @returns {number}
+ */
+export function liveCombatRoomLevel(clearRate, monsterHrid) {
+    const rows = Array.isArray(clearRate?.roomData) ? clearRate.roomData : [];
+    for (const room of rows.flat()) {
+        if (!room || room.isCleared || room.monsterHrid !== monsterHrid) continue;
+        if (String(room.roomType || '').endsWith('/treasure')) continue;
+        const level = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+        if (level > 0) return level;
+    }
+    return 0;
+}
+
+/**
  * What to call an item, falling back to a readable form of its own hrid.
  * @param {string} hrid - Item hrid
  * @returns {string} Display name
@@ -7050,10 +7070,11 @@ class LabSimUI {
      */
     _collectLabyrinthFights(useSkipLevels = true) {
         const fights = [];
+        const clearRate = labyrinthClearRate() || bundledLabyrinthClearRate;
         for (const monster of getLabyrinthMonsters()) {
             const roomLevel = useSkipLevels
-                ? (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatSkipRoomLevel(monster.hrid)
-                : (labyrinthClearRate() || bundledLabyrinthClearRate).getCombatRoomLevel(monster.hrid);
+                ? clearRate.getCombatSkipRoomLevel(monster.hrid)
+                : liveCombatRoomLevel(clearRate, monster.hrid) || clearRate.getCombatSkipRoomLevel(monster.hrid);
             if (!roomLevel) continue; // no skip threshold configured for this monster
             const loadoutId = (labyrinthClearRate() || bundledLabyrinthClearRate).getLabyrinthLoadoutId(monster.hrid);
             const dto = (labyrinthClearRate() || bundledLabyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);

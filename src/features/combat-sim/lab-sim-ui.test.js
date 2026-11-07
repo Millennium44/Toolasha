@@ -338,7 +338,6 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getCombatExperienceBonus: () => 0,
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
-        getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getRecommendedCombatRoomLevel: (hrid) => game.recommendedLevels[hrid] || 0,
         getLabyrinthLoadoutId: (monsterHrid) => game.loadoutByMonster[monsterHrid] ?? null,
         buildLabyrinthPlayerDTO: (loadoutId) => ({
@@ -417,7 +416,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 
-const { default: ui, describeAllFightsPlan, describeArchetypes } = await import('./lab-sim-ui.js');
+const { default: ui, describeAllFightsPlan, describeArchetypes, liveCombatRoomLevel } = await import('./lab-sim-ui.js');
 const { estimateLabUpgradeSims } = await import('./lab-sim-upgrade-modes.js');
 
 /** A pointer event happy-dom will hand to the drag helper's listeners. */
@@ -8862,5 +8861,27 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         await rebuild();
         expect(q('equip-steps').value).toBe('1');
         expect(q('combat-level-boost').value).toBe('5');
+    });
+});
+
+describe('Use Skip Levels unticked reads the live room level', () => {
+    const rows = [
+        [
+            { monsterHrid: '/monsters/a', recommendedLevel: 140, isCleared: true },
+            { monsterHrid: '/monsters/a', recommendedLevel: 150.7, isCleared: false },
+        ],
+        [{ monsterHrid: '/monsters/b', recommendedLevel: 90, roomType: '/labyrinth_room_types/treasure' }, null],
+    ];
+
+    test('an uncleared room for the monster gives its level; cleared and treasure rooms are skipped', () => {
+        expect(liveCombatRoomLevel({ roomData: rows }, '/monsters/a')).toBe(150);
+        expect(liveCombatRoomLevel({ roomData: rows }, '/monsters/b')).toBe(0);
+        expect(liveCombatRoomLevel({ roomData: rows }, '/monsters/c')).toBe(0);
+    });
+
+    test('no run in progress gives 0, so the caller falls back to the skip level', () => {
+        expect(liveCombatRoomLevel({ roomData: null }, '/monsters/a')).toBe(0);
+        expect(liveCombatRoomLevel({}, '/monsters/a')).toBe(0);
+        expect(liveCombatRoomLevel(null, '/monsters/a')).toBe(0);
     });
 });

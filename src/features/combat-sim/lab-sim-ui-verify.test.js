@@ -138,7 +138,6 @@ vi.mock('../combat/labyrinth-clear-rate.js', () => ({
         getCombatExperienceBonus: () => 0,
         getLabyrinthCombatBuffs: () => [],
         getCombatSkipRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
-        getCombatRoomLevel: (hrid) => game.skipLevels[hrid] || 0,
         getRecommendedCombatRoomLevel: () => 0,
         getLabyrinthLoadoutId: () => null,
         buildLabyrinthPlayerDTO: () => ({ equipment: {}, abilities: [], houseRooms: {}, guildShrineLevels: {} }),
