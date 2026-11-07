@@ -221,6 +221,16 @@ describe('formatReturn', () => {
         expect(formatReturn(0.8).text).toBe('-20.0%');
     });
 
+    test('a big beat reads as a multiple, the exact percent in title', () => {
+        expect(formatReturn(100).text).toBe('100×');
+        expect(formatReturn(100).title).toBe('+9900.0%');
+        expect(formatReturn(13.33).text).toBe('13×');
+        expect(formatReturn(11).text).toBe('+1000.0%');
+        expect(formatReturn(1.5).text).toBe('+50.0%');
+        expect(formatReturn(0).text).toBe('-100.0%');
+        expect(formatReturn(100).color).toBe(formatReturn(1.2).color);
+    });
+
     test('a run near expectation is not colored as news', () => {
         // Every chest sits a percent or two off; coloring that would make the
         // panel a wall of red and green saying nothing

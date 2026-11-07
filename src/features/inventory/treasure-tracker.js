@@ -227,19 +227,22 @@ const DEFAULT_SETTINGS = {
 
 /**
  * How a chest's return reads against expectation.
+ * A beat above +1000% reads as a multiple of expected ("100×", whole number: past +1000% the ratio is already 11 or
+ * more) because "+9900.0%" is cut off in the popup's narrow column. `title` always carries the exact percent.
  * @param {number|null} ratio - actual ÷ expected, or null with nothing opened
- * @returns {{text: string, color: string}}
+ * @returns {{text: string, color: string, title: string}}
  */
 export function formatReturn(ratio) {
-    if (ratio === null || ratio === undefined) return { text: '—', color: COLORS.textDim };
+    if (ratio === null || ratio === undefined) return { text: '—', color: COLORS.textDim, title: '' };
 
     const percent = (ratio - 1) * 100;
     const sign = percent >= 0 ? '+' : '';
-    const text = `${sign}${percent.toFixed(1)}%`;
+    const title = `${sign}${percent.toFixed(1)}%`;
+    const text = percent > 1000 ? `${Math.round(ratio)}×` : title;
 
-    if (percent > NOTABLE_RATIO * 100) return { text, color: COLORS.good };
-    if (percent < -NOTABLE_RATIO * 100) return { text, color: COLORS.bad };
-    return { text, color: COLORS.textDim };
+    if (percent > NOTABLE_RATIO * 100) return { text, color: COLORS.good, title };
+    if (percent < -NOTABLE_RATIO * 100) return { text, color: COLORS.bad, title };
+    return { text, color: COLORS.textDim, title };
 }
 
 /** What the game calls a scroll; see {@link isScrollItem} */
@@ -1665,6 +1668,7 @@ class TreasureTracker {
         actualValue.style.textAlign = 'right';
         const diff = this._span(verdict.text);
         diff.style.color = verdict.color;
+        diff.title = verdict.title;
         diff.style.textAlign = 'right';
 
         // Small expectations are the interesting ones — a rare owed 0.02 of
@@ -2680,6 +2684,7 @@ class TreasureTracker {
         valueEl.style.textAlign = 'right';
         const diffEl = this._span(ratio === null ? '' : verdict.text);
         diffEl.style.color = verdict.color;
+        diffEl.title = verdict.title;
         diffEl.style.textAlign = 'right';
 
         cell.append(this._icon(item.itemHrid, 13), countEl, valueEl, diffEl);
