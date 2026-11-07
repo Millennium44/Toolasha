@@ -18,9 +18,17 @@ const mockStorage = vi.hoisted(() => {
     return {
         stores,
         storeFor,
+        unreadable: new Set(),
         reset() {
             stores.clear();
+            this.unreadable.clear();
         },
+        // The tri-state read: {found, value}, or null when the read itself failed
+        tryGet: vi.fn(async (key, storeName = 'settings') => {
+            if (mockStorage.unreadable.has(key)) return null;
+            const store = storeFor(storeName);
+            return store.has(key) ? { found: true, value: store.get(key) } : { found: false, value: undefined };
+        }),
         get: vi.fn(async (key, storeName = 'settings', defaultValue = null) => {
             const store = storeFor(storeName);
             return store.has(key) && store.get(key) != null ? store.get(key) : defaultValue;
@@ -47,7 +55,14 @@ vi.mock('../core/data-manager.js', () => ({ default: mockDataManager }));
 vi.mock('../core/storage.js', () => ({ default: mockStorage }));
 vi.mock('./adoption-consent.js', () => mockConsent);
 
-import { characterKey, readScoped, readScopedFrom, writeScoped, _resetAdoptionCache } from './character-key.js';
+import {
+    characterKey,
+    readScoped,
+    readScopedChecked,
+    readScopedFrom,
+    writeScoped,
+    _resetAdoptionCache,
+} from './character-key.js';
 
 /** Let the fire-and-forget consent request settle. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -239,6 +254,55 @@ describe('readScoped', () => {
         expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
         await settle();
         expect(mockConsent.requestAdoptionConsent).not.toHaveBeenCalled();
+    });
+});
+
+describe('readScopedChecked', () => {
+    beforeEach(() => {
+        mockStorage.reset();
+        mockDataManager.currentCharacterId = 'market123';
+        mockDataManager.currentGameMode = 'standard';
+        mockConsent.target = null;
+        mockConsent.requestAdoptionConsent.mockClear();
+        _resetAdoptionCache();
+    });
+
+    it('reads a stored value as ok', async () => {
+        mockStorage.storeFor('settings').set('watchlist_market123', ['a']);
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: true, value: ['a'] });
+    });
+
+    it('keeps a stored falsy value rather than treating it as absent', async () => {
+        mockStorage.storeFor('settings').set('watchlist_market123', false);
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: true, value: false });
+    });
+
+    it('answers ok with a null value when nothing is stored', async () => {
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: true, value: null });
+    });
+
+    it('answers not ok when the scoped key cannot be read', async () => {
+        mockStorage.unreadable.add('watchlist_market123');
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: false, value: null });
+    });
+
+    it('answers not ok when the legacy key cannot be read', async () => {
+        mockStorage.unreadable.add('watchlist');
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: false, value: null });
+    });
+
+    it('migrates the legacy key for the confirmed character and deletes the bare key', async () => {
+        mockConsent.target = 'market123';
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: true, value: ['legacy'] });
+        expect(mockStorage.storeFor('settings').get('watchlist_market123')).toEqual(['legacy']);
+        expect(mockStorage.storeFor('settings').has('watchlist')).toBe(false);
+    });
+
+    it('leaves the legacy key alone and answers ok with null when the owner is undecided', async () => {
+        mockStorage.storeFor('settings').set('watchlist', ['legacy']);
+        expect(await readScopedChecked('watchlist')).toEqual({ ok: true, value: null });
+        expect(mockStorage.storeFor('settings').get('watchlist')).toEqual(['legacy']);
     });
 });
 
