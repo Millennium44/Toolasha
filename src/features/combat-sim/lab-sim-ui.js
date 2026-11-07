@@ -293,6 +293,39 @@ const SKILLING_ROOM_LEVELS_KEY = 'labSimSkillingRoomLevels';
 const SKILLING_TARGET_CLEAR_KEY = 'labSimSkillingTargetClear';
 const SKILLING_TARGET_FLOOR_KEY = 'labSimSkillingTargetFloor';
 
+/** The Ability level type select's options */
+const ABILITY_LEVEL_TYPES = ['increment', 'target', 'next_multiple'];
+
+/**
+ * A remembered level box's text, if the box would take it today.
+ * @param {*} value - What was stored
+ * @param {number} max - The box's ceiling
+ * @returns {string|null} The text to put in the box ('' for a blank one), or null to leave the box alone
+ */
+function restorableLevelText(value, max) {
+    if (value === '') return '';
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const text = String(value);
+    if (!/^\d+$/.test(text)) return null;
+    const level = parseInt(text, 10);
+    return level >= 1 && level <= max ? String(level) : null;
+}
+
+/**
+ * The Upgrade tab's remembered inputs, per character, as one record:
+ * `{useSkip, abilityType, abilityLevel, house, shrine, community, budget}`. The Use Skip Levels box, the
+ * Ability level type and number, the House, Shrine and Community Lv boxes (each as the box's text), and the
+ * Lab budget text. A field a record lacks (an older build wrote none) leaves its box alone, and an older
+ * build never reads the key. The Targets grids and the Player select are deliberately not kept.
+ */
+const UPGRADE_INPUTS_KEY = 'labSimUpgradeInputs';
+
+/**
+ * The Skilling tab's remembered inputs, per character: `{useSkip, roomLevel, skill, community}`. Same rules
+ * as the Upgrade tab's record.
+ */
+const SKILLING_INPUTS_KEY = 'labSimSkillingInputs';
+
 /**
  * Labyrinth token levels the Configure tab is simulating under.
  *
@@ -959,6 +992,11 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
+        // The Skilling tab's remembered inputs: the character they were last put back for, and how many
+        // times the player has changed one (a restore whose read was out during a change leaves them alone)
+        this._skillingInputsKey = null;
+        this._skillingInputsEdits = 0;
+        this._upgradeInputsEdits = 0;
         // The "Check a swap" queues, one per tab, and the sort the checked combat
         // table is in (kept apart from the generated table's)
         this._checkedSwaps = { combat: [], skilling: [] };
@@ -1994,7 +2032,18 @@ class LabSimUI {
             this._onUpgradeSelectionChanged();
             // The trigger tuning's fights take their room levels from the same box
             this._onTriggerScopeChanged();
+            void this._saveUpgradeInputs();
         });
+        for (const id of [
+            'upgrade-target-level',
+            'house-target-level',
+            'shrine-target-level',
+            'community-target-level',
+        ]) {
+            this.panel
+                .querySelector(`#mwi-labsim-${id}`)
+                ?.addEventListener('change', () => void this._saveUpgradeInputs());
+        }
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
             this._refreshLevelSourceReadout();
             void this._saveUpgradeSelection();
@@ -2039,12 +2088,8 @@ class LabSimUI {
             }
         });
         this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.addEventListener('change', (e) => {
-            const input = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
-            if (!input) return;
-            const hints = abilityLevelBoxHints(e.target.value);
-            input.value = hints.value;
-            input.placeholder = hints.placeholder;
-            input.title = hints.title;
+            this._syncAbilityLevelBox(e.target.value);
+            void this._saveUpgradeInputs();
         });
         this.panel.querySelector('#mwi-labsim-combat-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-combat-targets');
@@ -2091,12 +2136,19 @@ class LabSimUI {
         this.panel.querySelector('#mwi-labsim-skilling-useskip').addEventListener('change', (e) => {
             const levelInput = this.panel.querySelector('#mwi-labsim-skilling-level');
             if (levelInput) levelInput.disabled = e.target.checked;
+            void this._saveSkillingInputs();
         });
+        for (const id of ['level', 'community-level']) {
+            this.panel
+                .querySelector(`#mwi-labsim-skilling-${id}`)
+                ?.addEventListener('change', () => void this._saveSkillingInputs());
+        }
         this.panel.querySelector('#mwi-labsim-skilling-stop').addEventListener('click', () => {
             this._skillingAborted = true;
         });
         this.panel.querySelector('#mwi-labsim-skilling-filter').addEventListener('change', () => {
             this._renderSkillLoadoutTable();
+            void this._saveSkillingInputs();
         });
         this.panel.querySelector('#mwi-labsim-skilling-plan').addEventListener('click', () => this._onSkillingPlan());
         this.panel
@@ -2628,6 +2680,173 @@ class LabSimUI {
     }
 
     /**
+     * What the Upgrade tab's remembered inputs hold now (see `UPGRADE_INPUTS_KEY`).
+     * @returns {Object}
+     * @private
+     */
+    _upgradeInputsValues() {
+        const read = (id) => this.panel?.querySelector(id)?.value ?? '';
+        const budgetText = this._allFightsBudgetText;
+        return {
+            useSkip: this.panel?.querySelector('#mwi-labsim-allfights-useskip')?.checked ?? true,
+            abilityType: read('#mwi-labsim-upgrade-level-type') || 'increment',
+            abilityLevel: read('#mwi-labsim-upgrade-target-level'),
+            house: read('#mwi-labsim-house-target-level'),
+            shrine: read('#mwi-labsim-shrine-target-level'),
+            community: read('#mwi-labsim-community-target-level'),
+            // Only a budget the plan can use: the text of one the player pressed Plan on
+            budget: typeof budgetText === 'string' && Number.isFinite(parseKMB(budgetText)) ? budgetText : '',
+        };
+    }
+
+    /**
+     * Remember the Upgrade tab's inputs. Called only from the player's own changes, so the count of them
+     * is what a restore whose read was out checks before it puts anything on screen.
+     * @private
+     */
+    async _saveUpgradeInputs() {
+        this._upgradeInputsEdits++;
+        try {
+            await this._writeScopedIfChanged(UPGRADE_INPUTS_KEY, this._upgradeInputsValues());
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save upgrade inputs:', error);
+        }
+    }
+
+    /**
+     * Put the Ability level box's value, placeholder and hint in line with its type — the one rewrite the
+     * type select's own change makes.
+     * @param {string} type - 'increment' | 'target' | 'next_multiple'
+     * @private
+     */
+    _syncAbilityLevelBox(type) {
+        const input = this.panel?.querySelector('#mwi-labsim-upgrade-target-level');
+        if (!input) return;
+        const hints = abilityLevelBoxHints(type);
+        input.value = hints.value;
+        input.placeholder = hints.placeholder;
+        input.title = hints.title;
+    }
+
+    /**
+     * Put a remembered record of the Upgrade tab's inputs on the boxes. A missing record, a missing field
+     * or a value the box would not take today leaves that box as it is. Through the boxes' own side effects
+     * (the type select's rewrite of the number box), and without a save: nothing here is the player's change.
+     * @param {*} saved - The stored record
+     * @returns {boolean} Whether the Use Skip Levels box moved
+     * @private
+     */
+    _applyUpgradeInputs(saved) {
+        if (!this.panel || !saved || typeof saved !== 'object' || Array.isArray(saved)) return false;
+        const q = (id) => this.panel.querySelector(id);
+        let skipMoved = false;
+        const skipBox = q('#mwi-labsim-allfights-useskip');
+        if (skipBox && typeof saved.useSkip === 'boolean') {
+            skipMoved = skipBox.checked !== saved.useSkip;
+            skipBox.checked = saved.useSkip;
+        }
+        const typeSelect = q('#mwi-labsim-upgrade-level-type');
+        if (typeSelect && ABILITY_LEVEL_TYPES.includes(saved.abilityType)) {
+            typeSelect.value = saved.abilityType;
+            this._syncAbilityLevelBox(saved.abilityType);
+        }
+        const boxes = [
+            ['#mwi-labsim-upgrade-target-level', saved.abilityLevel, maxLevel()],
+            ['#mwi-labsim-house-target-level', saved.house, maxHouseRoomLevel()],
+            ['#mwi-labsim-shrine-target-level', saved.shrine, getGuildShrineMaxLevel()],
+            ['#mwi-labsim-community-target-level', saved.community, MAX_COMMUNITY_BUFF_LEVEL],
+        ];
+        for (const [id, value, max] of boxes) {
+            const text = restorableLevelText(value, max);
+            const box = q(id);
+            if (box && text !== null) box.value = text;
+        }
+        // The text and the budget the plan uses move together: the plan reads the number, the box the text
+        if (typeof saved.budget === 'string' && Number.isFinite(parseKMB(saved.budget))) {
+            this._allFightsBudgetText = saved.budget;
+            this._allFightsBudget = parseKMB(saved.budget);
+        }
+        return skipMoved;
+    }
+
+    /**
+     * What the Skilling tab's remembered inputs hold now (see `SKILLING_INPUTS_KEY`).
+     * @returns {Object}
+     * @private
+     */
+    _skillingInputsValues() {
+        const read = (id) => this.panel?.querySelector(id)?.value ?? '';
+        return {
+            useSkip: this.panel?.querySelector('#mwi-labsim-skilling-useskip')?.checked ?? true,
+            roomLevel: read('#mwi-labsim-skilling-level'),
+            skill: read('#mwi-labsim-skilling-filter'),
+            community: read('#mwi-labsim-skilling-community-level'),
+        };
+    }
+
+    /**
+     * Remember the Skilling tab's inputs; called only from the player's own changes.
+     * @private
+     */
+    async _saveSkillingInputs() {
+        this._skillingInputsEdits++;
+        try {
+            await this._writeScopedIfChanged(SKILLING_INPUTS_KEY, this._skillingInputsValues());
+        } catch (error) {
+            console.error('[LabSimUI] Failed to save skilling inputs:', error);
+        }
+    }
+
+    /**
+     * Put the remembered Use Skip Levels / Room Level / Skill / Community Lv back, once per character.
+     * Each goes through the box's own handling: the Room Level box follows the skip box's disabled state and
+     * a different Skill redraws the loadout table. A skill the filter no longer lists, or a number out of
+     * range, is ignored, and so is the whole record if the player changed a box while it was being read.
+     * @private
+     */
+    async _restoreSkillingInputs() {
+        const key = characterKey(SKILLING_INPUTS_KEY);
+        if (this._skillingInputsKey === key) return;
+        this._skillingInputsKey = key;
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
+        const edits = this._skillingInputsEdits;
+        let saved;
+        try {
+            saved = await readScoped(SKILLING_INPUTS_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[LabSimUI] Failed to restore skilling inputs:', error);
+            return;
+        }
+        if (!this.panel || this._skillingInputsKey !== key || !this._stillSameCharacter(ownerId)) return;
+        if (edits !== this._skillingInputsEdits) return;
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+        const q = (id) => this.panel.querySelector(id);
+        const skipBox = q('#mwi-labsim-skilling-useskip');
+        if (skipBox && typeof saved.useSkip === 'boolean') {
+            skipBox.checked = saved.useSkip;
+            const levelInput = q('#mwi-labsim-skilling-level');
+            if (levelInput) levelInput.disabled = skipBox.checked;
+        }
+        const roomLevel = restorableLevelText(saved.roomLevel, 1300);
+        const levelBox = q('#mwi-labsim-skilling-level');
+        if (levelBox && roomLevel !== null) levelBox.value = roomLevel;
+        const community = restorableLevelText(saved.community, MAX_COMMUNITY_BUFF_LEVEL);
+        const communityBox = q('#mwi-labsim-skilling-community-level');
+        if (communityBox && community !== null) communityBox.value = community;
+        const filter = q('#mwi-labsim-skilling-filter');
+        const skillListed =
+            typeof saved.skill === 'string' &&
+            filter &&
+            Array.from(filter.options).some((o) => o.value === saved.skill);
+        if (skillListed && filter.value !== saved.skill) {
+            filter.value = saved.skill;
+            void this._renderSkillLoadoutTable();
+        }
+        this._rememberRestored({ [SKILLING_INPUTS_KEY]: this._skillingInputsValues() }, { [SKILLING_INPUTS_KEY]: key });
+    }
+
+    /**
      * Re-read whatever of this panel's remembered choices a sync pull wrote, for the
      * character on screen, into memory and the controls. The keys are registered live-safe
      * in `sim-sync-keys.js`; without this the page would keep showing — and the next save
@@ -2660,6 +2879,7 @@ class LabSimUI {
                     'shrineCapToGuild',
                     'upgradeRoomLevels',
                     'upgradeTargetFloor',
+                    'upgradeInputs',
                     'legacyUpgradeMode'
                 )
             ) {
@@ -2672,6 +2892,11 @@ class LabSimUI {
             ) {
                 this._skillingGoalKey = null;
                 work.push(this._restoreSkillingGoalInputs());
+            }
+            // Likewise only once the Skilling tab has put them on screen
+            if (has('skillingInputs') && this._skillingInputsKey === characterKey(SKILLING_INPUTS_KEY)) {
+                this._skillingInputsKey = null;
+                work.push(this._restoreSkillingInputs());
             }
             if (has('tokenBuffLevels')) work.push(this._restoreTokenBuffLevels());
             if (has('resultsView')) work.push(this._loadViewChoices());
@@ -2756,11 +2981,16 @@ class LabSimUI {
         let savedRoomLevels = false;
         let savedTargetFloor = 0;
         let readOk = false;
+        let savedInputs = null;
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
+        // How many times the player has changed an input box: if one changed while this read was out, the
+        // remembered inputs are not put over it
+        const inputEdits = this._upgradeInputsEdits;
         // The scoped keys this restore reads, resolved before the first await
         const keys = Object.fromEntries(
             [
+                UPGRADE_INPUTS_KEY,
                 UPGRADE_DIMENSIONS_KEY,
                 UPGRADE_SCOPE_KEY,
                 UPGRADE_LEVEL_SOURCE_KEY,
@@ -2786,6 +3016,7 @@ class LabSimUI {
                 savedShrineCapGuild,
                 savedRoomLevels,
                 savedTargetFloor,
+                savedInputs,
             ] = await Promise.all([
                 readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null),
                 readScoped(UPGRADE_SCOPE_KEY, 'settings', null),
@@ -2794,6 +3025,7 @@ class LabSimUI {
                 readScoped(SHRINE_CAP_GUILD_KEY, 'settings', true),
                 readScoped(UPGRADE_ROOM_LEVELS_KEY, 'settings', false),
                 readScoped(UPGRADE_TARGET_FLOOR_KEY, 'settings', 0),
+                readScoped(UPGRADE_INPUTS_KEY, 'settings', null),
             ]);
             savedAuraOnly = Boolean(savedAuraOnly);
             savedShrineCapGuild = Boolean(savedShrineCapGuild);
@@ -2836,8 +3068,13 @@ class LabSimUI {
         const targetFloorInput = this.panel.querySelector('#mwi-labsim-upgrade-target-floor');
         if (targetFloorInput) targetFloorInput.value = floor ? String(floor) : '';
         this._refreshRoomLevelControls();
+        // Before the targets are drawn: they take their room levels from the Use Skip Levels box
+        const inputsApply = readOk && inputEdits === this._upgradeInputsEdits;
+        const skipMoved = inputsApply ? this._applyUpgradeInputs(savedInputs) : false;
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
+        // The trigger tuning's fights take their room levels from the same box
+        if (skipMoved) this._onTriggerScopeChanged();
         // What this restore read and put on the controls — the stored values, or the defaults a missing or
         // retired value reads as — is noted as what each key stores. The targets are the ones the grid just
         // drawn from the read selection offers. A failed read noted nothing, so the next save writes the
@@ -2855,6 +3092,16 @@ class LabSimUI {
                 },
                 keys
             );
+            // The inputs record only when it was read and put on the boxes (else the next save writes it)
+            if (inputsApply && savedInputs && typeof savedInputs === 'object') {
+                this._rememberRestored({ [UPGRADE_INPUTS_KEY]: this._upgradeInputsValues() }, keys);
+                // A budget box already on screen (a remembered table drew first) shows the restored one
+                const budgetInput = this.panel.querySelector('#mwi-labsim-budget-input');
+                if (budgetInput && typeof this._allFightsBudgetText === 'string' && this._allFightsBudgetText) {
+                    budgetInput.value = this._allFightsBudgetText;
+                    this.panel.querySelector('#mwi-labsim-budget-plan')?.click();
+                }
+            }
         }
     }
 
@@ -3130,6 +3377,7 @@ class LabSimUI {
             }
             await this._renderSkillLoadoutTable();
             await this._restoreSkillingGoalInputs();
+            await this._restoreSkillingInputs();
         } catch (error) {
             console.error('[LabSimUI] Failed to show skilling tab:', error);
             this._setStatus('Failed to load skilling tab: ' + error.message);
@@ -6656,6 +6904,7 @@ class LabSimUI {
             this._allFightsBudgetText = input?.value || '';
             const typed = parseKMB(this._allFightsBudgetText);
             this._allFightsBudget = Number.isFinite(typed) ? typed : 0;
+            void this._saveUpgradeInputs();
             this._renderAllFightsResults(this._allFightsResult, container);
         };
         container.querySelector('#mwi-labsim-budget-plan')?.addEventListener('click', plan);
@@ -12133,6 +12382,10 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
+        this._skillingInputsKey = null;
+        // The budget typed for one character is not the arriving character's
+        this._allFightsBudgetText = undefined;
+        this._allFightsBudget = undefined;
         // The next build reads every grouped key back and notes it again
         this._storedValues.clear();
         this._upgradeRunStarted = false;

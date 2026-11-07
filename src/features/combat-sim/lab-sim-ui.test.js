@@ -8239,3 +8239,195 @@ describe('Lab upgrade cards: the review round', () => {
         expect(card.textContent).toContain('unknown');
     });
 });
+
+/**
+ * The Upgrade and Skilling tabs' number, select and tick boxes outlive a reload, per character.
+ */
+describe('the Lab Sim input boxes are remembered per character', () => {
+    const change = (el) => el.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const up = (id) => ui.panel.querySelector(`#mwi-labsim-${id}`);
+    const rebuild = async (tab) => {
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        if (tab) {
+            ui._switchTab(tab);
+            await settle();
+        }
+    };
+    const setBox = (el, value) => {
+        el.value = value;
+        change(el);
+    };
+
+    beforeEach(async () => {
+        game.characterId = 'me';
+        storage.written = {};
+        storage.values = {};
+        storage.pending = {};
+        ui.buildPanel();
+        await settle();
+    });
+
+    afterEach(() => {
+        game.characterId = 'me';
+        storage.values = {};
+        storage.pending = {};
+        ui.destroy();
+    });
+
+    test('Upgrade tab: saved when changed and put back, through the type select’s rewrite, by a new panel', async () => {
+        up('allfights-useskip').checked = false;
+        change(up('allfights-useskip'));
+        setBox(up('upgrade-level-type'), 'next_multiple');
+        setBox(up('upgrade-target-level'), '10');
+        setBox(up('house-target-level'), '3');
+        setBox(up('shrine-target-level'), '2');
+        setBox(up('community-target-level'), '4');
+        await settle();
+
+        expect(storage.written.labSimUpgradeInputs_me).toEqual({
+            useSkip: false,
+            abilityType: 'next_multiple',
+            abilityLevel: '10',
+            house: '3',
+            shrine: '2',
+            community: '4',
+            budget: '',
+        });
+
+        storage.values = { ...storage.written };
+        await rebuild();
+
+        expect(up('allfights-useskip').checked).toBe(false);
+        expect(up('upgrade-level-type').value).toBe('next_multiple');
+        expect(up('upgrade-target-level').value).toBe('10');
+        // The type's own rewrite ran: hint and placeholder follow the type
+        expect(up('upgrade-target-level').placeholder).not.toBe('+5');
+        expect(up('house-target-level').value).toBe('3');
+        expect(up('shrine-target-level').value).toBe('2');
+        expect(up('community-target-level').value).toBe('4');
+    });
+
+    test('Upgrade tab: another character does not inherit them', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: false, house: '3' } };
+        game.characterId = 'alt';
+        await rebuild();
+        expect(up('allfights-useskip').checked).toBe(true);
+        expect(up('house-target-level').value).toBe('');
+    });
+
+    test('Upgrade tab: a record without the fields leaves the boxes alone', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: false } };
+        await rebuild();
+        expect(up('allfights-useskip').checked).toBe(false);
+        expect(up('upgrade-level-type').value).toBe('increment');
+        expect(up('upgrade-target-level').value).toBe('5');
+        expect(up('house-target-level').value).toBe('');
+        expect(ui._allFightsBudgetText).toBeUndefined();
+    });
+
+    test('Upgrade tab: values the boxes would not take now are ignored', async () => {
+        storage.values = {
+            labSimUpgradeInputs_me: {
+                useSkip: 'yes',
+                abilityType: 'bogus',
+                abilityLevel: 'abc',
+                house: 99999,
+                shrine: -3,
+                community: '1.5',
+                budget: 'zzz',
+            },
+        };
+        await rebuild();
+        expect(up('allfights-useskip').checked).toBe(true);
+        expect(up('upgrade-level-type').value).toBe('increment');
+        expect(up('upgrade-target-level').value).toBe('5');
+        expect(up('house-target-level').value).toBe('');
+        expect(up('shrine-target-level').value).toBe('');
+        expect(up('community-target-level').value).toBe('');
+        expect(ui._allFightsBudgetText).toBeUndefined();
+        expect(ui._allFightsBudget).toBeUndefined();
+    });
+
+    test('Upgrade tab: a restored budget text sets the budget the plan uses', async () => {
+        storage.values = { labSimUpgradeInputs_me: { budget: '500m' } };
+        await rebuild();
+        expect(ui._allFightsBudgetText).toBe('500m');
+        expect(ui._allFightsBudget).toBe(500_000_000);
+    });
+
+    test('Upgrade tab: the budget is saved when Plan is pressed, and not carried to another character', async () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<input id="mwi-labsim-budget-input"><button id="mwi-labsim-budget-plan"></button>';
+        const render = vi.spyOn(ui, '_renderAllFightsResults').mockImplementation(() => {});
+        try {
+            ui._wireBudgetPlan(container, [], {});
+            container.querySelector('input').value = '2b';
+            container.querySelector('button').click();
+            await settle();
+            expect(storage.written.labSimUpgradeInputs_me.budget).toBe('2b');
+            expect(ui._allFightsBudget).toBe(2_000_000_000);
+        } finally {
+            render.mockRestore();
+        }
+        game.characterId = 'alt';
+        await rebuild();
+        expect(ui._allFightsBudgetText).toBeUndefined();
+    });
+
+    test('Upgrade tab: a box changed while the read was out is not put over', async () => {
+        let release;
+        storage.pending.labSimUpgradeInputs_me = new Promise((resolve) => {
+            release = resolve;
+        });
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        setBox(up('house-target-level'), '5');
+        release({ house: '3', shrine: '2' });
+        await settle();
+        expect(up('house-target-level').value).toBe('5');
+        expect(up('shrine-target-level').value).toBe('');
+    });
+
+    test('Skilling tab: saved when changed and put back, with the Room Level box following the skip box', async () => {
+        ui._switchTab('skilling');
+        await settle();
+        up('skilling-useskip').checked = false;
+        change(up('skilling-useskip'));
+        setBox(up('skilling-level'), '120');
+        setBox(up('skilling-filter'), '/skills/woodcutting');
+        setBox(up('skilling-community-level'), '4');
+        await settle();
+
+        expect(storage.written.labSimSkillingInputs_me).toEqual({
+            useSkip: false,
+            roomLevel: '120',
+            skill: '/skills/woodcutting',
+            community: '4',
+        });
+
+        storage.values = { ...storage.written };
+        await rebuild('skilling');
+
+        expect(up('skilling-useskip').checked).toBe(false);
+        expect(up('skilling-level').disabled).toBe(false);
+        expect(up('skilling-level').value).toBe('120');
+        expect(up('skilling-filter').value).toBe('/skills/woodcutting');
+        expect(up('skilling-community-level').value).toBe('4');
+    });
+
+    test('Skilling tab: another character, an old record and an unlisted skill leave the boxes alone', async () => {
+        storage.values = {
+            labSimSkillingInputs_me: { skill: '/skills/retired', roomLevel: '0', community: 'x' },
+            labSimSkillingInputs_alt: { useSkip: false },
+        };
+        await rebuild('skilling');
+        expect(up('skilling-filter').value).toBe('');
+        expect(up('skilling-level').value).toBe('100');
+        expect(up('skilling-community-level').value).toBe('');
+        expect(up('skilling-useskip').checked).toBe(true);
+        expect(up('skilling-level').disabled).toBe(true);
+    });
+});
