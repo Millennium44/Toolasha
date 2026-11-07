@@ -1075,8 +1075,9 @@ export function archiveEarlierCycles(
     }
 
     // To the minute: the offset the start is derived through tightens by a trip
-    // or so between messages, and one boundary must stay one archive
-    const cycleFrom = Math.round(cycleBegan / 60_000) * 60_000;
+    // or so between messages, and one boundary must stay one archive. The cycle may have been put away
+    // already when the game posted this one's schedule ({@link archiveFinishedCycle}): its key is reused
+    const cycleFrom = heldCycleFrom(record, Math.round(cycleBegan / 60_000) * 60_000);
     // …and a list goes with these tiles only when it sits in their own cycle. One a cycle or more
     // older (this record kept it, or a stored copy brought it back) is not what ran when they did
     const archivedLists = listsOfTheirCycle(
@@ -1091,6 +1092,70 @@ export function archiveEarlierCycles(
     // cycle than that cycle's archive does
     const older = Object.fromEntries(Object.entries(lists.earlier || {}).filter(([kind]) => !archivedLists?.[kind]));
     return withListsFolded({ ...archived, tiles, ...(lists.current ? { scheduled: lists.current } : {}) }, older);
+}
+
+/**
+ * How far apart two stamps of one cycle boundary may sit and still be one boundary. The boundary is
+ * stamped from the header's countdown when the game posts the next schedule, and from the guild
+ * payload's running hour when that cycle starts: both name the same minute, give or take the
+ * countdown's rounding. Cycles are a day apart, so nothing else is this close.
+ */
+const CYCLE_BOUNDARY_SNAP_MS = 5 * 60_000;
+
+/**
+ * The `cycleFrom` an earlier-cycle archive of this week already holds near a boundary, or the boundary itself.
+ *
+ * One cycle is one archive: the cycle put away when the next one's schedule was posted is put away again,
+ * by a tab that kept some of its tiles, when the next one starts, and both must land on one key.
+ *
+ * @param {Object} record - The week's record
+ * @param {number} cycleFrom - The boundary, to the minute
+ * @returns {number} The held key when one is within {@link CYCLE_BOUNDARY_SNAP_MS}, else `cycleFrom`
+ */
+function heldCycleFrom(record, cycleFrom) {
+    const held = (Array.isArray(record?.history) ? record.history : []).find(
+        (cycle) =>
+            cycle?.reason === EARLIER_CYCLE_REASON &&
+            cycle.weekStart === (record?.weekStart ?? null) &&
+            Number.isFinite(cycle.cycleFrom) &&
+            Math.abs(cycle.cycleFrom - cycleFrom) <= CYCLE_BOUNDARY_SNAP_MS
+    );
+    return held ? held.cycleFrom : cycleFrom;
+}
+
+/**
+ * Archive the record's finished cycle when the game has posted the next one's schedule (test server).
+ *
+ * The test server posts the next cycle's trial list hours before that cycle starts, and {@link archiveEarlierCycles}
+ * only cuts once it starts: until then the finished cycle stayed on the record, out of the history, and a trial
+ * that runs again had its new card read onto the old tile (the old banked tier under the new "0 pts").
+ *
+ * The record's tiles go into the archive whole, under the key {@link archiveEarlierCycles} gives the same cycle when
+ * the next one starts: the earlier-cycle reason and `cycleFrom` the next cycle's start, so a tab or device that
+ * archives it then folds into this entry rather than adding a second. The caller decides the cycle is over.
+ * The record's cycle start moves to the next cycle's, so a finished payload of the archived cycle is not filed
+ * back onto the record as the running cycle's list.
+ *
+ * @param {Object} record - The week's record (not mutated)
+ * @param {number} nextStart - Client ms the next cycle is scheduled to start
+ * @param {Object} [options] - Context
+ * @param {number} [options.at] - Clock, for the archive entry
+ * @param {Object|null} [options.accuracy] - The archived cycle's attribution accuracy, see {@link archiveCycle}
+ * @returns {Object} The record, the same object when it holds no tiles
+ */
+export function archiveFinishedCycle(record, nextStart, { at = Date.now(), accuracy = null } = {}) {
+    const tiles = record?.tiles && typeof record.tiles === 'object' ? record.tiles : {};
+    if (!Object.keys(tiles).length || !Number.isFinite(nextStart)) return record;
+    const cycleFrom = heldCycleFrom(record, Math.round(nextStart / 60_000) * 60_000);
+    // The lists of the tiles' own cycle go with them; an older one is folded into its own cycle's archive
+    const held = cleanScheduled(record.scheduled);
+    const lists = listsOfTheirCycle(
+        held,
+        Object.values(tiles).flatMap((tile) => tileStamps(tile))
+    );
+    const archived = archiveCycle({ ...record, scheduled: lists }, EARLIER_CYCLE_REASON, at, { cycleFrom, accuracy });
+    const older = Object.fromEntries(Object.entries(held || {}).filter(([kind]) => !lists?.[kind]));
+    return withListsFolded({ ...archived, cycleStart: cycleFrom, cycleStartAt: at }, older);
 }
 
 /**

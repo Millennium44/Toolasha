@@ -62,6 +62,7 @@ vi.mock('../../utils/game-server.js', () => ({
 }));
 vi.mock('./guild-trials-store.js', () => ({
     archiveEarlierCycles: (record) => record,
+    archiveFinishedCycle: (record) => record,
     loadTrialRoster: async () => game.storedRoster,
     saveTrialRoster: async (entry) => {
         game.storedRoster = entry;

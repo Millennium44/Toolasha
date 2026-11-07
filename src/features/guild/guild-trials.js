@@ -193,6 +193,7 @@ import {
 import {
     archiveCycle,
     archiveEarlierCycles,
+    archiveFinishedCycle,
     WEEK_ROLLOVER_REASON,
     trialHourStartedAt,
     emptyRecord,
@@ -4535,6 +4536,7 @@ class GuildTrials {
             // sampled into and then archived — the sample would go with it.
             const status = readTrialStatus(root, panelLines);
             this._healStaleRecord(status, tiles, now);
+            this._archiveFinishedCycle(status, tiles, now);
             this._archiveEarlierCycles(now);
             // Any card actually running counts, whichever kind the header names
             const anyLive = tiles.some(
@@ -5249,6 +5251,109 @@ class GuildTrials {
             // and a merge would bring the stored copies back to life
             this._persistRecord({ overwrite: true });
         }
+    }
+
+    /**
+     * On the test server, archive a finished cycle once the game posts the next one's schedule.
+     *
+     * The test server posts the next cycle's trial list (the header "Scheduled", every card "0 pts") hours
+     * before that cycle starts, and {@link _archiveEarlierCycles} cuts only at the start. Until then the
+     * finished cycle stayed on the record and out of the history, and a trial that runs again had its new
+     * card read onto the old tile: the old banked tier and "finished" drawn over the new "0 pts".
+     *
+     * Archived once, when all of these hold:
+     * - the header says the next cycle is scheduled, and every card on the tab is a fresh one: no bar, not
+     *   completed, no points;
+     * - the record holds a result: a tile with points, a stated tier, a bar sample, or finished. A record of
+     *   zeroed cards (the next cycle's, read after this archive) holds none, so this runs once;
+     * - nothing of the cycle still runs: the payload has no kind in progress, no tile's party is stated
+     *   running, and every tile with a result is finished or the cycle's two hours are over.
+     *
+     * The key is the one {@link archiveEarlierCycles} gives the same cycle when the next starts (see
+     * `archiveFinishedCycle`), the cycle's own start a day on ({@link _nextCycleStart}). With no such start
+     * known it waits for the next start, as before. Live is left
+     * as it was: one cycle a week, closed by the weekly rollover.
+     *
+     * @param {Object} status - From `readTrialStatus`
+     * @param {Array<Object>} tiles - This pass's cards
+     * @param {number} now - Clock
+     * @returns {boolean} Whether a cycle was archived
+     */
+    _archiveFinishedCycle(status, tiles, now) {
+        try {
+            if (!isTestServer() || !this.record || status?.phase !== 'scheduled') return false;
+            const held = Object.values(this.record.tiles || {});
+            if (!held.length || !tiles.length) return false;
+            // Another guild's record is `_healStaleRecord`'s to put away
+            const provenance = recordProvenance(this.record, { guildId: this._guildId(), guildName: this.guildName });
+            if (provenance === 'foreign') return false;
+
+            // Every card is the next cycle's, stating nothing yet
+            if (tiles.some((tile) => tile.readings?.length || tile.completed || tile.points > 0)) return false;
+
+            // A card's tier alone is not one: a scheduled card's level derives a tier with nothing banked
+            const hasResult = (tile) =>
+                Boolean(tile?.completed) ||
+                Boolean(tile?.serverDone) ||
+                tile?.serverTier > 0 ||
+                tile?.points > 0 ||
+                (tile?.samples || []).length > 0;
+            const results = held.filter(hasResult);
+            if (!results.length) return false;
+
+            // Nothing of the cycle still running, on the payload's word or the record's
+            const payload = this.currentTrials;
+            const fresh = payload && Number.isFinite(payload.at) && now - payload.at <= TRIAL_ACTIVE_MS;
+            if (fresh && ['skilling', 'combat'].some((kind) => payload[kind]?.inProgress && !payload[kind]?.allDone)) {
+                return false;
+            }
+            if (held.some((tile) => this._trialRunning(tile, now) === true)) return false;
+            const cycleStart = Number.isFinite(this.record.cycleStart) ? this.record.cycleStart : null;
+            const hoursOver = cycleStart !== null && now >= cycleStart + 2 * TRIAL_ACTIVE_MS + 60_000;
+            if (!hoursOver && !results.every((tile) => tile.completed || tile.serverDone)) return false;
+
+            const nextStart = this._nextCycleStart(status, cycleStart, now);
+            if (nextStart === null) return false;
+
+            const next = archiveFinishedCycle(this.record, nextStart, {
+                at: now,
+                accuracy: guildTrialDamage.accuracySummary?.({ trace: guildTrialTrace.status?.() ?? null }) || null,
+            });
+            if (next === this.record) return false;
+            console.warn('[GuildTrials] Archiving a finished cycle: the game has posted the next one');
+            this.record = next;
+            this.cycleStartMs = Number.isFinite(next.cycleStart) ? next.cycleStart : null;
+            this.blockHtml.clear();
+            // The one write meant to lose tiles, as in `_archiveEarlierCycles`: a merge would bring them back
+            this._persistRecord({ overwrite: true });
+            return true;
+        } catch (error) {
+            console.error('[GuildTrials] Archiving a finished cycle failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * When the scheduled cycle starts, to the minute.
+     *
+     * The finished cycle's own start a day on is the boundary the payload will state when the next one
+     * starts, so it is taken when the header's countdown agrees with it (within a few minutes) or the header
+     * states none. With no cycle start (synced copies carry it), or a countdown that disagrees (the trial
+     * time moved), nothing is taken and the cycle waits for the next start, as before.
+     *
+     * @param {Object} status - From `readTrialStatus`
+     * @param {number|null} cycleStart - The finished cycle's start, client ms
+     * @param {number} now - Clock
+     * @returns {number|null} Client ms; null when not known, or the start is not ahead
+     */
+    _nextCycleStart(status, cycleStart, now) {
+        const minute = 60_000;
+        if (cycleStart === null) return null;
+        const byDay = Math.round((cycleStart + 24 * 3_600_000) / minute) * minute;
+        // The countdown only confirms: its rounding is not known, and a key a minute off the one the next
+        // start gives would file the cycle twice, where waiting for that start only files it late
+        if (Number.isFinite(status?.startsInMs) && Math.abs(now + status.startsInMs - byDay) > 5 * minute) return null;
+        return byDay > now ? byDay : null;
     }
 
     /**

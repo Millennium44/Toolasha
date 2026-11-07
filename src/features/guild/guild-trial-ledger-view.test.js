@@ -93,6 +93,7 @@ vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
 // `guild-trial-accuracy.test.js`
 vi.mock('./guild-trials-store.js', () => ({
     archiveEarlierCycles: (record) => record,
+    archiveFinishedCycle: (record) => record,
     loadTrialStats: async () => world.trialStats,
     loadTrialRecord: async () => world.trialRecord,
 }));

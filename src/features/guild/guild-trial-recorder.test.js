@@ -96,6 +96,7 @@ vi.mock('./guild-loadouts.js', () => ({
 }));
 vi.mock('./guild-trials-store.js', () => ({
     archiveEarlierCycles: (record) => record,
+    archiveFinishedCycle: (record) => record,
     loadTrialRecord: async () => game.record,
 }));
 vi.mock('./guild-member-skills.js', () => ({
