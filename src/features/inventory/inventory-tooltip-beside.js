@@ -26,6 +26,15 @@ const TILE_SELECTOR = '[class*="Item_itemContainer"]';
 /** Gap between the tooltip and the hovered item, and the least margin kept from the viewport edge */
 const PANEL_GAP = 8;
 const VIEWPORT_MARGIN = 8;
+/**
+ * One hover's budget. The game re-places a popper a few times on open and on scroll; a placement that keeps
+ * flipping between beside and the game's own spot (the game re-placing it for the size the class gives it,
+ * which changes what is measured next) or a burst of passes in a short window is a fight with the game, and
+ * the tooltip is handed back to the game's placement for the rest of that hover.
+ */
+const MAX_FLIPS = 6;
+const BURST_WINDOW_MS = 250;
+const MAX_PASSES_PER_WINDOW = 40;
 
 const CSS = `
 .${CLASS_NAME} {
@@ -96,8 +105,10 @@ export function placeClear(gameRect, tile, viewport) {
 class InventoryTooltipBeside {
     constructor() {
         this.isInitialized = false;
-        /** popper -> ResizeObserver, for every tooltip currently tracked */
+        /** popper -> {observers, passes, windowStart, flips, placed}, for every tooltip currently tracked */
         this.tracked = new Map();
+        /** Warned once per page about a tooltip given up on */
+        this.warned = false;
     }
 
     async initialize() {
@@ -122,15 +133,27 @@ class InventoryTooltipBeside {
         if (!info?.isTooltipPopper || !info.isItemTooltip) return;
         if (!config.isFeatureEnabled(SETTING_KEY) || isMobileMode()) return;
         if (!this.findTile(popper)) return;
-        this.reposition(popper);
-        if (this.tracked.has(popper)) return;
+        if (this.tracked.has(popper)) {
+            this.reposition(popper);
+            return;
+        }
         // The game positions the popper a frame after it is added, so the first check usually sees it
         // unplaced. Re-check whenever the game moves it (its inline style) or it resizes (lines appended).
+        const state = { observers: [], passes: 0, windowStart: 0, flips: 0, placed: false };
         const update = () => {
-            if (!popper.isConnected) this.release(popper);
-            else this.reposition(popper);
+            if (!popper.isConnected) {
+                this.release(popper);
+                return;
+            }
+            if (this.overBudget(popper, state)) return;
+            const placed = this.reposition(popper);
+            if (placed !== state.placed) {
+                state.placed = placed;
+                state.flips += 1;
+                if (state.flips > MAX_FLIPS) this.giveUp(popper, `placement flipped ${state.flips} times`);
+            }
         };
-        const observers = [];
+        const observers = state.observers;
         if (typeof MutationObserver === 'function') {
             const mutationObserver = new MutationObserver(update);
             mutationObserver.observe(popper, { attributes: true, attributeFilter: ['style'] });
@@ -141,7 +164,42 @@ class InventoryTooltipBeside {
             resizeObserver.observe(popper);
             observers.push(resizeObserver);
         }
-        this.tracked.set(popper, observers);
+        this.tracked.set(popper, state);
+        state.placed = this.reposition(popper);
+    }
+
+    /**
+     * Count one observer pass; past the burst budget the tooltip is handed back to the game.
+     * @param {Element} popper
+     * @param {{passes: number, windowStart: number}} state
+     * @returns {boolean} Whether the pass must be skipped
+     */
+    overBudget(popper, state) {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        if (now - state.windowStart > BURST_WINDOW_MS) {
+            state.windowStart = now;
+            state.passes = 0;
+        }
+        state.passes += 1;
+        if (state.passes <= MAX_PASSES_PER_WINDOW) return false;
+        this.giveUp(popper, `${state.passes} passes in ${BURST_WINDOW_MS} ms`);
+        return true;
+    }
+
+    /**
+     * Stop moving a tooltip that is fighting the game's placement, and say so once per page.
+     * @param {Element} popper
+     * @param {string} why
+     */
+    giveUp(popper, why) {
+        this.release(popper);
+        if (this.warned) return;
+        this.warned = true;
+        const name = popper.querySelector?.('[class*="ItemTooltipText_name"]')?.textContent?.trim() || '?';
+        console.warn(
+            `[InventoryTooltipBeside] Gave up keeping the "${name}" tooltip off the item (${why}); ` +
+                'the game places it for the rest of this hover.'
+        );
     }
 
     /**
@@ -203,7 +261,7 @@ class InventoryTooltipBeside {
 
     /** Stop tracking a tooltip and hand it back to the game's placement. */
     release(popper) {
-        for (const observer of this.tracked.get(popper) || []) observer.disconnect();
+        for (const observer of this.tracked.get(popper)?.observers || []) observer.disconnect();
         this.tracked.delete(popper);
         this.unplace(popper);
     }

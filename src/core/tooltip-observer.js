@@ -21,6 +21,45 @@ const onPointerOver = (event) => {
     lastHoverTarget = event.target;
 };
 
+/**
+ * A runaway canary. A hover classifies a popper once or twice; dozens a second means something is re-opening or
+ * re-classifying tooltips in a loop (the game remounting a popper Toolasha edited, a feature re-probing on every
+ * mutation). Counted per one-second window and reported once per page, with the item it was on.
+ */
+const RUNAWAY_WINDOW_MS = 1000;
+const RUNAWAY_CLASSIFIES = 60;
+const runaway = { windowStart: 0, count: 0, warned: false };
+
+/**
+ * Count one classification; warn once when a window holds more than a hover could.
+ * @param {string|null} itemName
+ * @returns {number} Classifications so far in this window
+ */
+function noteClassify(itemName) {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - runaway.windowStart > RUNAWAY_WINDOW_MS) {
+        runaway.windowStart = now;
+        runaway.count = 0;
+    }
+    runaway.count += 1;
+    if (runaway.count > RUNAWAY_CLASSIFIES && !runaway.warned) {
+        runaway.warned = true;
+        console.warn(
+            `[TooltipObserver] ${runaway.count} tooltip passes within a second (last: "${itemName || '?'}"). ` +
+                'Something is re-opening or re-reading tooltips in a loop; please report this with the steps.',
+            { hoverTarget: lastHoverTarget }
+        );
+    }
+    return runaway.count;
+}
+
+/** Test hook: forget the runaway window and the warning */
+function resetRunawayCanary() {
+    runaway.windowStart = 0;
+    runaway.count = 0;
+    runaway.warned = false;
+}
+
 const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
 const REGEX_ITEM_LINK = /\/items\/(.+?)(?:\/|$)/;
 const REGEX_SPRITE_NAME = /#(.+)$/;
@@ -75,6 +114,9 @@ function classifyTooltip(element) {
     let nameHasLevel = false;
     if (info.nameEl) {
         info.itemName = info.nameEl.textContent.trim();
+    }
+    noteClassify(info.itemName);
+    if (info.nameEl) {
         const match = info.itemName.match(REGEX_ENHANCEMENT_LEVEL);
         if (match) {
             info.enhancementLevel = parseInt(match[1], 10);
@@ -300,4 +342,4 @@ class TooltipObserver {
 const tooltipObserver = new TooltipObserver();
 
 export default tooltipObserver;
-export { classifyTooltip };
+export { classifyTooltip, resetRunawayCanary };
