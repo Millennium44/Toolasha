@@ -5434,6 +5434,13 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                         // takes `metrics − baseline` then reads the paired gain this run measured
                         const measuredRow = measureRow(row.candidate, simResult, base);
                         measuredRow.metrics = alignResimMetrics(measuredRow.metrics, base.metrics, baselineMetrics);
+                        // Time to afford divides by the table's profit rate, as every untouched row's does; the
+                        // repayment and ROI keep the paired gain this run measured
+                        measuredRow.economics = {
+                            ...measuredRow.economics,
+                            paybackHours: computeEconomics(row.candidate.cost, baselineMetrics, baselineMetrics)
+                                .paybackHours,
+                        };
                         return measuredRow;
                     },
                     lanes
