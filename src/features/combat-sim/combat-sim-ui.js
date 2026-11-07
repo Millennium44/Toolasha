@@ -3199,6 +3199,12 @@ const SINGLE_STEPS_TITLE = (noun) =>
     `costed from the level the ${noun} is at now, never past the max. Each step is one more simulation per ${noun}. ` +
     'With more than 1 step the Lv box is not used; the Targets grid, while open, replaces the steps.';
 
+/** Help text for the Equipment Steps box */
+const ENHANCEMENT_STEPS_TITLE =
+    `How many enhancement levels to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
+    '(+5 → +7 on most gear, as always). 3 also tries each of the next three levels: +6, +7 and +8 from +5, ' +
+    'never past the max enhancement level. Each extra level is one more simulation per item.';
+
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
     'background:' +
@@ -3225,6 +3231,12 @@ const MODE_OPTIONS = {
             <label id="mwi-csim-skip-back-label" title="Leave the back slot out of the candidate list" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
+            </label>
+            <label id="mwi-csim-equip-steps-group" title="${ENHANCEMENT_STEPS_TITLE}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="mwi-csim-equip-steps" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${ENHANCEMENT_STEPS_TITLE}">
             </label>
         </span>`;
     },
@@ -4399,6 +4411,9 @@ class CombatSimUI {
             input.title = hints.title;
         });
         this.panel.querySelector('#mwi-csim-combat-level-steps')?.addEventListener('change', (e) => {
+            e.target.value = String(normalizeLevelSteps(e.target.value));
+        });
+        this.panel.querySelector('#mwi-csim-equip-steps')?.addEventListener('change', (e) => {
             e.target.value = String(normalizeLevelSteps(e.target.value));
         });
         // House and Guild Shrine Steps: more than one step sets the Lv box aside, so it is shown as unused
@@ -11476,6 +11491,9 @@ class CombatSimUI {
             // try that left the progress bar up and the Stop button stuck forever
             const communityBuffs = getCommunityBuffs();
             const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
+            const enhancementSteps = upgradeModes.includes('equipment')
+                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-equip-steps')?.value)
+                : 1;
             const isHouseMode = upgradeModes.includes('house');
             const houseTargetLevel = isHouseMode
                 ? Math.min(
@@ -11538,6 +11556,7 @@ class CombatSimUI {
                     abilityLevelType,
                     abilityTargetLevel,
                     abilitySteps,
+                    enhancementSteps,
                     combatLevelType,
                     combatLevelBoost,
                     combatLevelSteps,

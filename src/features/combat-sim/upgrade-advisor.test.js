@@ -472,6 +472,51 @@ function buildPlayer(hrid, enhancementLevel) {
     };
 }
 
+describe('generateCandidates equipment enhancement Steps', () => {
+    const enh = (hrid, level, enhancementSteps) =>
+        generateCandidates(
+            buildPlayer(hrid, level),
+            buildGameData(),
+            'equipment',
+            0,
+            'increment',
+            false,
+            null,
+            null,
+            0,
+            null,
+            null,
+            0,
+            enhancementSteps === undefined ? {} : { enhancementSteps }
+        ).filter((c) => c.type === 'enhancement');
+    const levels = (candidates) => candidates.map((c) => c.upgradeLevel);
+
+    test('the default is today: one row at the next breakpoint (+5 → +7 on a weapon)', () => {
+        for (const steps of [undefined, 1, 0, '', NaN]) expect(levels(enh('/items/fine_sword', 5, steps))).toEqual([7]);
+        expect(levels(enh('/items/fine_sword', 7))).toEqual([10]);
+    });
+
+    test('three steps add +6, +7, +8 from +5, each labelled; the breakpoint is not repeated', () => {
+        const candidates = enh('/items/fine_sword', 5, 3);
+        expect(levels(candidates)).toEqual([6, 7, 8]);
+        expect(candidates.map((c) => c.description)).toEqual([
+            'Fine Sword +5 → +6',
+            'Fine Sword +5 → +7',
+            'Fine Sword +5 → +8',
+        ]);
+        expect(new Set(candidates.map((c) => c.slot)).size).toBe(1);
+    });
+
+    test('a breakpoint beyond the steps is kept: +7 with two steps is +8, +9 and +10', () => {
+        expect(levels(enh('/items/fine_sword', 7, 2))).toEqual([8, 9, 10]);
+    });
+
+    test('never past the max enhancement level; a piece at the max offers nothing', () => {
+        expect(levels(enh('/items/fine_sword', 18, 5))).toEqual([19, 20]);
+        expect(enh('/items/fine_sword', 20, 5)).toEqual([]);
+    });
+});
+
 describe('generateCandidates refined-equipment gating', () => {
     test('clamps refined recommendations below +10 up to +10', () => {
         const candidates = generateCandidates(buildPlayer('/items/fine_sword', 4), buildGameData(), 'equipment');
