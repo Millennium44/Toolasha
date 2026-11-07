@@ -8847,6 +8847,32 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         expect(storage.written.labSimUpgradeDimensions_me).toContain('house');
     });
 
+    test('Upgrade tab: a number typed but not yet left is saved and read back by a new panel', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: true, abilityType: 'increment', abilityLevel: '5' } };
+        await rebuild();
+        q('upgrade-target-level').value = '12';
+        q('upgrade-target-level').dispatchEvent(new window.Event('input', { bubbles: true }));
+        q('equip-steps').value = '3';
+        q('equip-steps').dispatchEvent(new window.Event('input', { bubbles: true }));
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ abilityLevel: '12', equipSteps: '3' });
+        storage.values = { ...storage.written };
+        await rebuild();
+        expect(q('upgrade-target-level').value).toBe('12');
+        expect(q('equip-steps').value).toBe('3');
+    });
+
+    test('Skilling tab: a Room Level typed but not yet left is saved', async () => {
+        storage.values = { labSimSkillingInputs_me: { useSkip: false, roomLevel: '100' } };
+        await rebuild();
+        ui._switchTab('skilling');
+        await settle();
+        q('skilling-level').value = '250';
+        q('skilling-level').dispatchEvent(new window.Event('input', { bubbles: true }));
+        await settle();
+        expect(storage.written.labSimSkillingInputs_me).toMatchObject({ roomLevel: '250' });
+    });
+
     test('saved per character, put back through the same handlers, with the Lv boxes set aside', async () => {
         setBox('equip-step-kind', 'levels');
         setBox('equip-steps', '3');

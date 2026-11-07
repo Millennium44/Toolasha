@@ -2164,9 +2164,11 @@ class LabSimUI {
             'shrine-target-level',
             'community-target-level',
         ]) {
-            this.panel
-                .querySelector(`#mwi-labsim-${id}`)
-                ?.addEventListener('change', () => void this._saveUpgradeInputs());
+            const box = this.panel.querySelector(`#mwi-labsim-${id}`);
+            box?.addEventListener('change', () => void this._saveUpgradeInputs());
+            // Saved as it is typed too: closing the page before leaving the box would lose it (storage debounces
+            // the write and flushes it on teardown)
+            box?.addEventListener('input', () => void this._saveUpgradeInputs());
         }
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
             // Saved first: the readout is drawn from the box and changes nothing in it, and one that throws must
@@ -2193,6 +2195,15 @@ class LabSimUI {
         // Capture phase, so it sees every box's change before the box's own handler saves (see `_watchInputEdits`)
         this.panel.addEventListener(
             'change',
+            (event) => {
+                const id = event.target?.id;
+                if (id) for (const watch of this._inputWatches) watch.ids.add(id);
+            },
+            true
+        );
+        // Typing counts as the player's change too (a box saved as it is typed is touched before it is left)
+        this.panel.addEventListener(
+            'input',
             (event) => {
                 const id = event.target?.id;
                 if (id) for (const watch of this._inputWatches) watch.ids.add(id);
@@ -2281,6 +2292,9 @@ class LabSimUI {
             this.panel
                 .querySelector(`#mwi-labsim-skilling-${id}`)
                 ?.addEventListener('change', () => void this._saveSkillingInputs());
+            this.panel
+                .querySelector(`#mwi-labsim-skilling-${id}`)
+                ?.addEventListener('input', () => void this._saveSkillingInputs());
         }
         this.panel.querySelector('#mwi-labsim-skilling-stop').addEventListener('click', () => {
             this._skillingAborted = true;
@@ -2878,6 +2892,13 @@ class LabSimUI {
     _wireUpgradeStepBoxes() {
         const q = (id) => this.panel?.querySelector(id);
         const save = () => void this._saveUpgradeInputs();
+        const stepIds = [
+            '#mwi-labsim-equip-steps',
+            '#mwi-labsim-upgrade-steps',
+            '#mwi-labsim-combat-level-steps',
+            '#mwi-labsim-house-steps',
+            '#mwi-labsim-shrine-steps',
+        ];
         for (const id of ['#mwi-labsim-equip-steps', '#mwi-labsim-upgrade-steps', '#mwi-labsim-combat-level-steps']) {
             q(id)?.addEventListener('change', (e) => {
                 e.target.value = String(normalizeLevelSteps(e.target.value));
@@ -2892,6 +2913,8 @@ class LabSimUI {
                 this._syncSingleStepsBox(e.target);
             });
         }
+        // Saved as typed as well (the change above then tidies the number and saves it again)
+        for (const id of [...stepIds, '#mwi-labsim-combat-level-boost']) q(id)?.addEventListener('input', save);
         q('#mwi-labsim-equip-step-kind')?.addEventListener('change', save);
         q('#mwi-labsim-combat-level-type')?.addEventListener('change', (e) => {
             try {
