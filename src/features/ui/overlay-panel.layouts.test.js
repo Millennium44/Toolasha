@@ -728,14 +728,23 @@ describe('saving and switching named layouts', () => {
 
         describe('a Dense applied under 3.77.0', () => {
             /** Wear the 3.77.0 Dense as applied at three columns, then open the panel at 876px */
-            async function openWithOldDense(edit = {}) {
+            async function openWithOldDense(edit = {}, { appendHidden = false } = {}) {
                 for (const key of [...PRESET_LAYOUTS.Dense.order, 'houses', 'skillLevel'])
                     registerRow({ key, name: key, render: (el) => (el.textContent = key) });
                 measureAs(876);
                 await overlayPanel.applyNamedLayout('Dense');
                 const [old] = legacyPresetFiles('Dense', { columns: 3 });
                 const { order, span, visible } = fromOPanelConfig(old).settings;
-                wear({ order, span: { ...span, ...edit }, visible });
+                // A live page's stored copy: every other tile appended hidden, keys in another order
+                const extra = appendHidden ? ['skillLevel', 'noticeLog', 'accountView'] : [];
+                const stored = appendHidden
+                    ? Object.fromEntries([...extra.map((key) => [key, false]), ...Object.entries(visible)].reverse())
+                    : visible;
+                wear({
+                    order: [...order, ...extra.filter((key) => !order.includes(key))],
+                    span: { ...span, ...edit },
+                    visible: stored,
+                });
                 overlayPanel._checkPresetFit();
                 await new Promise((resolve) => setTimeout(resolve, 60));
             }
@@ -746,6 +755,12 @@ describe('saving and switching named layouts', () => {
                 expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Dense.order);
                 expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
                 expect(overlayPanel.appliedLayout).toBe('Dense');
+            });
+
+            test('stored the way a live page keeps it, other tiles appended hidden, it is still recognised', async () => {
+                await openWithOldDense({}, { appendHidden: true });
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+                expect(overlayPanel.settings.visible.charmValue).toBe(true);
             });
 
             test('edited by hand, it is left as it is', async () => {

@@ -228,6 +228,32 @@ function layoutIdentity(file, ignoreColumns = false) {
     void columnsPinned;
     return JSON.stringify(rest);
 }
+
+/**
+ * What makes a layout look the way it does, for telling an untouched preset from an edited one.
+ *
+ * Only the shown tiles, in order, with their widths, plus the zoom and text size. A stored layout
+ * also carries every other registered tile, appended hidden as rows register and in whatever key
+ * order storage kept, so comparing the whole file never matched a real stored preset.
+ *
+ * @param {Object|null} settings - The overlay's settings, or a file's `toolasha.settings`
+ * @returns {string} A comparable key
+ */
+function presetShape(settings) {
+    const visible = settings?.visible || {};
+    const shown = (settings?.order || []).filter((key) => visible[key] === true);
+    const widthOf = (key) => Math.max(1, Math.round(Number(settings?.span?.[key]) || 1));
+    const zoom = Object.entries(settings?.zoom || {})
+        .filter(([key, value]) => shown.includes(key) && Number(value) !== 100)
+        .sort(([a], [b]) => a.localeCompare(b));
+    return JSON.stringify({
+        shown: shown.map((key) => [key, widthOf(key)]),
+        zoom,
+        textScale: settings?.textScale ?? 100,
+        separators: settings?.separators !== false,
+    });
+}
+
 const ZOOM_STEP = 10;
 
 /** Kept clear of the window's edges, so the panel never reaches them */
@@ -1015,17 +1041,17 @@ class OverlayPanel {
             if (map[key]?.file) return;
 
             const rows = registeredRows();
-            const current = layoutIdentity(toOPanelConfig(this.settings, null), true);
+            const current = presetShape(this.settings);
             let unedited = false;
             for (let at = 1; !unedited && at <= MAX_SPAN; at++)
-                unedited = layoutIdentity(presetFile(key, { rows, columns: at }), true) === current;
+                unedited = presetShape(presetFile(key, { rows, columns: at })?.toolasha?.settings) === current;
             if (!unedited) {
                 // A copy of an earlier shape of this preset, never touched: move it to the current one,
                 // tiles and all. Written, unlike a re-fit, since the stored copy is the old shape everywhere.
                 let legacy = false;
                 for (let at = 1; !legacy && at <= MAX_SPAN; at++)
                     legacy = legacyPresetFiles(key, { rows, columns: at }).some(
-                        (old) => layoutIdentity(old, true) === current
+                        (old) => presetShape(old?.toolasha?.settings) === current
                     );
                 if (legacy) await this.applyNamedLayout(key, { byHand: false });
                 return;
