@@ -73,6 +73,8 @@ const withSlicedPayload = vi.hoisted(() => (mod) => ({
     exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
     registeredKeysDivergeSliced: async (...args) => mod.registeredKeysDiverge(...args),
     contentHashSliced: async (...args) => mod.contentHash(...args),
+    // The real sliced parse answers as `JSON.parse` does, which is what these texts are fed to
+    parsePayloadSliced: async (text) => JSON.parse(text),
     learnExternalKeysFromTextSliced: async (...args) => mod.learnExternalKeysFromText?.(...args) ?? false,
 }));
 vi.mock('./sync-payload.js', async (importOriginal) => {

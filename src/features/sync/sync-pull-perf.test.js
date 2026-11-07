@@ -334,3 +334,74 @@ describe('a pull of a large gist hands the page a frame as it goes', () => {
         }
     });
 });
+
+describe('the pull of issue #841: 1,271 records, three of them changed', () => {
+    /** A clock that moves 1 ms per reading, so a slice's budget is a count of readings, not a machine's speed */
+    function steppedClock() {
+        let now = 0;
+        return vi.spyOn(performance, 'now').mockImplementation(() => (now += 1));
+    }
+
+    /**
+     * This device's stores and the gist's: 1,271 records over 1 MB, the gist's differing in three. The padding
+     * is in a store this script owns whole (the fixture's settings keys are not keys it owns)
+     */
+    function issueFixture() {
+        const local = buildFixture(0.05);
+        let count = Object.values(local).reduce((sum, entries) => sum + Object.keys(entries).length, 0);
+        for (let index = 0; count < 1271; index += 1, count += 1) local.collections[`pad_${index}`] = items(40, index);
+        const remote = structuredClone(local);
+        remote.collections.pad_0 = { changed: true };
+        remote.marketListings.l_0 = { changed: true };
+        remote.marketListings.l_new = { a: 1 };
+        return { local, remote, text: payloadText(remote), count };
+    }
+
+    test('the download check parses it in slices and reads what JSON.parse reads', async () => {
+        const { text, count } = issueFixture();
+        expect(count).toBe(1271);
+        // Past the size below which a payload is parsed in one go
+        expect(text.length).toBeGreaterThan(1 << 20);
+        const clock = steppedClock();
+        try {
+            yields.count = 0;
+            const parsed = await sync.parsePayloadSliced(text);
+            expect(yields.count).toBeGreaterThan(10);
+            expect(parsed).toEqual(JSON.parse(text));
+            await expect(sync.contentHashSliced(text)).resolves.toBe(contentHash(text));
+        } finally {
+            clock.mockRestore();
+        }
+    });
+
+    test('applying it writes the three changed records, exactly as downloaded, in either mode', async () => {
+        const { local, remote, text } = issueFixture();
+        const expectedStores = structuredClone(local);
+        expectedStores.collections.pad_0 = remote.collections.pad_0;
+        expectedStores.marketListings.l_0 = remote.marketListings.l_0;
+        expectedStores.marketListings.l_new = remote.marketListings.l_new;
+        for (const mode of ['pull', 'merge']) {
+            storeState.stores = structuredClone(local);
+            imported.length = 0;
+            const result = await applyPayload(text, { mode, baseline: null });
+            expect(result.complete).toBe(true);
+            expect(result.writtenWholeKeys.map(({ store, key }) => `${store}/${key}`).sort()).toEqual([
+                'collections/pad_0',
+                'marketListings/l_0',
+                'marketListings/l_new',
+            ]);
+            // One import, holding only what changed
+            expect(imported).toHaveLength(1);
+            const written = Object.fromEntries(
+                Object.entries(imported[0].stores)
+                    .filter(([, entries]) => Object.keys(entries).length > 0)
+                    .map(([name, entries]) => [name, entries])
+            );
+            expect(written).toEqual({
+                collections: { pad_0: remote.collections.pad_0 },
+                marketListings: { l_0: remote.marketListings.l_0, l_new: remote.marketListings.l_new },
+            });
+            expect(storeState.stores).toEqual(expectedStores);
+        }
+    });
+});
