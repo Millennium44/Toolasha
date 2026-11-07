@@ -3579,6 +3579,15 @@ describe('the panel, end to end', () => {
             fire(root);
             const again = [...document.querySelectorAll('[data-mwi-block="trial-history"] [data-history-row]')];
             expect(again.map((row) => Boolean(shade(row)))).toEqual([false, true, false]);
+
+            // The weekly reset rebuilds the tab and puts the game's content back after the block: the next pass
+            // moves the history back below it rather than leaving it at the top of the page
+            const gameContent = document.createElement('div');
+            gameContent.textContent = 'Each character can sign up for one skilling and one combat trial.';
+            block.insertAdjacentElement('afterend', gameContent);
+            fire(root);
+            const placed = document.querySelector('[data-mwi-block="trial-history"]');
+            expect(placed.compareDocumentPosition(gameContent) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
         });
 
         /** A summary row of the Trial history table, by its label */

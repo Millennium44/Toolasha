@@ -6194,6 +6194,15 @@ class GuildTrials {
                 'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
                 'border-radius:6px; font-size:12px; line-height:1.7;',
             place: (block) => root.insertAdjacentElement('beforeend', block),
+            // Its home is after the game's own content. The weekly reset rebuilds the tab and puts the game's nodes
+            // back after it, which left the history at the top of the page: anything of the game's following it
+            // means it is out of place, and it is moved back to the end
+            anchored: (block) => {
+                for (let next = block.nextElementSibling; next; next = next.nextElementSibling) {
+                    if (!next.classList?.contains(CSS_CLASS)) return false;
+                }
+                return true;
+            },
         });
         return true;
     }

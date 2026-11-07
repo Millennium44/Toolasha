@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial history stays in its place after the weekly reset
+
+At the weekly reset the game rebuilds the Trials tab, which left the Trial history table at the top of the page; it now moves back below the trial cards.
+
 ### Combat Sim upgrade details drop the "cached rooms" line
 
 The upgrade details no longer show "would stale N cached rooms, M within 2pp of their bar", which was about the Labyrinth sim's saved results and not something to act on.
