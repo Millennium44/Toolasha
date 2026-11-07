@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync no longer bloats Firefox's Tampermonkey memory
+
+Cloud sync's chunk downloads now go through the page instead of Tampermonkey, which kept every one. One tab had piled up gigabytes in Tampermonkey's process over a day of play; if the page route is blocked, sync falls back to the old way.
+
 ### Combat Sim upgrade Steps for levels, houses, shrines and gear
 
 On the Upgrade tab, Combat Lv gets its own +Levels / Next mult. of box and a Steps box, so it no longer shares the Ability Lv number. House and Guild Shrine get a Steps box that tries +1, +2 … +N levels. Equipment gets an enhancement Steps box that also tries the next few levels one at a time.
