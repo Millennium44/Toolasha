@@ -3189,6 +3189,28 @@ describe('close-call re-sims', () => {
             ).toEqual({ dps: 1010, deathsPerHour: 0 });
         });
 
+        test('a re-simmed row’s time to afford divides by the table’s profit rate, as every other row’s does', async () => {
+            const params = setup(true);
+            // A long run earns twice the rate: a row's own long baseline would halve its time to afford
+            calculateSimRevenue.mockImplementation((simResult) => {
+                const hours = simResult.simulatedTime / 3600 / 1e9;
+                const perHour = hours > 10 ? 2_000_000 : 1_000_000;
+                return {
+                    totalRevenue: perHour * hours,
+                    netPerHour: perHour,
+                    revenuePerHour: perHour,
+                    costPerHour: 0,
+                    itemRevenues: [],
+                };
+            });
+            const result = await runUpgradeAnalysis(params, null, { now: () => 0 });
+            const rate = result.baseline.profitPerHour;
+            expect(rate).toBeGreaterThan(0);
+            const resimmed = result.results.filter((r) => r.resim && Number.isFinite(r.candidate.cost));
+            expect(resimmed.length).toBeGreaterThan(0);
+            for (const r of resimmed) expect(r.economics.paybackHours).toBeCloseTo(r.candidate.cost / rate);
+        });
+
         test('progress carries the weighted time left: none before a sim has finished, the re-sim rounds included', async () => {
             let clock = 0;
             // Every sim takes a second of the test's clock, a 2× one two and a 4× one four
