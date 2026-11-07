@@ -364,3 +364,19 @@ describe('disable', () => {
         expect(callback).toHaveBeenCalledTimes(2);
     });
 });
+
+describe('runaway canary', () => {
+    test('warns once when tooltips are classified far more often than a hover could', async () => {
+        const { resetRunawayCanary } = await import('./tooltip-observer.js');
+        resetRunawayCanary();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const tooltip = popper(ITEM_TOOLTIP);
+        for (let i = 0; i < 10; i++) classifyTooltip(tooltip);
+        expect(warn).not.toHaveBeenCalled();
+        for (let i = 0; i < 200; i++) classifyTooltip(tooltip);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0][0]).toContain('Griffin Bulwark +7');
+        warn.mockRestore();
+        resetRunawayCanary();
+    });
+});

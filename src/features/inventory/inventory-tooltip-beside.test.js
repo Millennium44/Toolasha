@@ -16,7 +16,7 @@ vi.mock('../../core/tooltip-observer.js', () => ({
     },
 }));
 
-const { default: feature, placeClear } = await import('./inventory-tooltip-beside.js');
+const { default: feature, placeClear, InventoryTooltipBeside } = await import('./inventory-tooltip-beside.js');
 
 const rect = (o) => ({ left: 0, top: 0, width: 0, height: 0, ...o });
 const ITEM_INFO = { isTooltipPopper: true, isItemTooltip: true };
@@ -214,5 +214,59 @@ describe('InventoryTooltipBeside', () => {
         feature.cleanup();
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
         expect(document.getElementById('toolasha-tip-beside-style')).toBeNull();
+    });
+});
+
+describe('InventoryTooltipBeside bounded work', () => {
+    beforeEach(async () => {
+        h.enabled = true;
+        h.mobile = false;
+        window.innerWidth = 1920;
+        window.innerHeight = 1000;
+        delete globalThis.ResizeObserver;
+        await feature.initialize();
+    });
+    afterEach(() => {
+        feature.cleanup();
+        vi.restoreAllMocks();
+    });
+
+    it('hands a tooltip back to the game when the game keeps re-placing it against the move', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const popper = build();
+        // A game that re-places the popper for the size the class gives it: over the tile without the class,
+        // clear of it with the class on. Every move is a style write, and every answer changes the class
+        let gameWrites = 0;
+        const overTile = () => rect({ left: 900, top: 100, width: 320, height: 370 });
+        const clear = () => rect({ left: 900, top: -400, width: 320, height: 370 });
+        popper.getBoundingClientRect = overTile;
+        const game = new MutationObserver(() => {
+            if (gameWrites >= 500) return;
+            gameWrites += 1;
+            const placed = popper.classList.contains('toolasha-tip-beside');
+            popper.getBoundingClientRect = placed ? clear : overTile;
+            popper.style.transform = `translate3d(900px, ${placed ? -400 : 100}px, ${gameWrites}px)`;
+        });
+        game.observe(popper, { attributes: true, attributeFilter: ['class'] });
+        h.callback(popper, 'opened', ITEM_INFO);
+        for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        game.disconnect();
+        expect(gameWrites).toBeLessThan(50);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops after a burst of passes in one short window', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const popper = build();
+        const inst = new InventoryTooltipBeside();
+        inst.handleOpen(popper, ITEM_INFO);
+        const state = inst.tracked.get(popper);
+        let skipped = 0;
+        for (let i = 0; i < 100; i++) if (inst.overBudget(popper, state)) skipped += 1;
+        expect(skipped).toBeGreaterThan(0);
+        expect(inst.tracked.has(popper)).toBe(false);
+        expect(warn).toHaveBeenCalledTimes(1);
+        inst.release(popper);
     });
 });
