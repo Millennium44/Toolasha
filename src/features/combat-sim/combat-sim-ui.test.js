@@ -1526,6 +1526,56 @@ describe('the panel', () => {
         });
     });
 
+    test('House and Guild Shrine Steps: 1 by default, clamped, set the Lv box aside above 1, handed to the run', async () => {
+        const q = (id) => ui.panel.querySelector(id);
+        const house = q('[data-upgrade-mode="house"]');
+        const shrine = q('[data-upgrade-mode="guild_shrine"]');
+        const wasHouse = house.checked;
+        const wasShrine = shrine.checked;
+        try {
+            house.checked = true;
+            shrine.checked = true;
+            ui._onUpgradeModesChanged();
+            selectZone();
+            let seen = null;
+            mocks.onRun = (params) => {
+                seen = params;
+            };
+            expect(q('#mwi-csim-house-steps').value).toBe('1');
+            expect(q('#mwi-csim-shrine-steps').value).toBe('1');
+            expect(q('#mwi-csim-house-steps-group').title).toMatch(/\+1, \+2 and \+3/);
+            await ui._onUpgradeAnalyze();
+            expect(seen).toMatchObject({ houseSteps: 1, guildShrineSteps: 1 });
+
+            for (const [id, lv] of [
+                ['#mwi-csim-house-steps', '#mwi-csim-house-target-level'],
+                ['#mwi-csim-shrine-steps', '#mwi-csim-shrine-target-level'],
+            ]) {
+                q(id).value = '8';
+                q(id).dispatchEvent(new Event('change', { bubbles: true }));
+                expect(q(id).value).toBe('5');
+                expect(q(lv).disabled).toBe(true);
+            }
+            q('#mwi-csim-shrine-steps').value = '1';
+            q('#mwi-csim-shrine-steps').dispatchEvent(new Event('change', { bubbles: true }));
+            expect(q('#mwi-csim-shrine-target-level').disabled).toBe(false);
+            await ui._onUpgradeAnalyze();
+            expect(seen).toMatchObject({ houseSteps: 5, guildShrineSteps: 1 });
+
+            // A set that is off sends one step whatever its box says
+            house.checked = false;
+            ui._onUpgradeModesChanged();
+            await ui._onUpgradeAnalyze();
+            expect(seen.houseSteps).toBe(1);
+        } finally {
+            q('#mwi-csim-house-steps').value = '1';
+            q('#mwi-csim-house-target-level').disabled = false;
+            house.checked = wasHouse;
+            shrine.checked = wasShrine;
+            ui._onUpgradeModesChanged();
+        }
+    });
+
     test('an analysis started before the editor is set up still knows which DTO is the live character', async () => {
         selectZone();
         let selfHrid = 'unset';

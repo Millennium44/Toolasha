@@ -52,7 +52,12 @@ import {
     maxLevel,
     maxGuildShrineLevel,
 } from '../../utils/game-maximums.js';
-import { abilityStepLevels, stepLevels } from '../../utils/ability-level-step.js';
+import {
+    abilityStepLevels,
+    stepLevels,
+    singleStepLevels,
+    normalizeLevelSteps,
+} from '../../utils/ability-level-step.js';
 import { findMaxLabyrinthLevel, defaultThreshold } from './labyrinth-level-finder.js';
 import { measureRoomLevelGains, ROOM_LEVEL_SHORTLIST_SIZE } from './labyrinth-upgrade-levels.js';
 import { roomXpPerHour } from '../combat/labyrinth-formulas.js';
@@ -1554,6 +1559,7 @@ export function generateCandidates(
             ...generateHouseCandidates(playerDTO, gameData, houseTargetLevel, houseTargets, {
                 winRateOnly: Boolean(options?.houseWinRateOnly),
                 skipSkillingRooms: Boolean(options?.skipSkillingRooms),
+                steps: options?.houseSteps,
             })
         );
     }
@@ -1565,6 +1571,7 @@ export function generateCandidates(
                 targetLevel: guildShrineTargetLevel,
                 perBuffTargets: options?.guildShrineTargets || null,
                 capToGuildLevel: Boolean(options?.guildShrineCapToGuild),
+                steps: options?.guildShrineSteps,
             })
         );
     }
@@ -1867,7 +1874,9 @@ export function describeHouseScan(playerDTO, gameData, options = {}) {
  * @param {number} [targetLevel] - Level to sim every room at; 0/unset means one level up
  * @param {Object|null} [perRoomTargets] - roomHrid → target level; takes precedence
  *   over targetLevel, and a room absent from it is skipped (blank means skip)
- * @param {Object} [options] - `{ winRateOnly, skipSkillingRooms }`; see `houseRoomMovesWinRate`
+ * @param {Object} [options] - `{ winRateOnly, skipSkillingRooms }`; see `houseRoomMovesWinRate`. `steps` (the
+ *   Steps box, 1 when unset): above 1 every room is offered at +1, +2, ... +steps (capped at the max level) and
+ *   `targetLevel` is not read; `perRoomTargets` still wins over both, one row per room
  * @returns {Array<Object>} Candidates of type 'house'
  */
 export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null, options = {}) {
@@ -1877,6 +1886,7 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
     const target = Math.min(maxHouseRoomLevel(), Math.max(0, Math.floor(Number(targetLevel) || 0)));
     const explicit = perRoomTargets && typeof perRoomTargets === 'object' ? perRoomTargets : null;
     const isRelevant = houseRoomPredicate(options);
+    const steps = normalizeLevelSteps(options.steps);
 
     const candidates = [];
     for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
@@ -1885,27 +1895,31 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
         const currentLevel = Math.max(0, Math.floor(Number(playerDTO.houseRooms?.[roomHrid]) || 0));
         if (currentLevel >= maxHouseRoomLevel()) continue;
 
-        // Per-room target wins; then the uniform target; otherwise one level up.
+        // Per-room target wins; then several steps (+1, +2, ...); then the uniform target; otherwise one level up.
         // With per-room targets open, a room left blank is deliberately skipped.
-        let upgradeLevel;
+        let upgradeLevels;
         if (explicit) {
-            upgradeLevel = Math.min(maxHouseRoomLevel(), Math.floor(Number(explicit[roomHrid]) || 0));
+            upgradeLevels = [Math.min(maxHouseRoomLevel(), Math.floor(Number(explicit[roomHrid]) || 0))];
+        } else if (steps > 1) {
+            upgradeLevels = singleStepLevels(currentLevel, steps, maxHouseRoomLevel());
         } else {
-            upgradeLevel = target > 0 ? target : currentLevel + 1;
+            upgradeLevels = [target > 0 ? target : currentLevel + 1];
         }
-        if (upgradeLevel <= currentLevel) continue;
 
         const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
-        candidates.push({
-            type: 'house',
-            slot: `house|${roomHrid}`,
-            roomHrid,
-            roomName,
-            currentLevel,
-            upgradeLevel,
-            levelsBought: upgradeLevel - currentLevel,
-            description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
-        });
+        for (const upgradeLevel of upgradeLevels) {
+            if (upgradeLevel <= currentLevel) continue;
+            candidates.push({
+                type: 'house',
+                slot: `house|${roomHrid}`,
+                roomHrid,
+                roomName,
+                currentLevel,
+                upgradeLevel,
+                levelsBought: upgradeLevel - currentLevel,
+                description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
+            });
+        }
     }
     return candidates;
 }
@@ -2042,11 +2056,14 @@ function sumGuildShrineLevelCosts(detail, fromLevel, toLevel) {
  *   level up, and a buff absent from the map is skipped
  * @param {boolean} [options.capToGuildLevel=false] - Limit targets to the guild's own shrine
  *   building level, dropping shrines the guild has not built
+ * @param {number} [options.steps=1] - The Steps box: above 1 every shrine is offered at +1, +2, ... +steps
+ *   (each its own row, cost summed from the current level, capped at the same ceiling as one row) and
+ *   `targetLevel` is not read; `perBuffTargets` still wins, one row per shrine
  * @returns {Array<Object>} Candidates of type 'guild_shrine'
  */
 export function generateGuildShrineCandidates(
     playerDTO,
-    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false } = {}
+    { combat = true, targetLevel = 0, perBuffTargets = null, capToGuildLevel = false, steps = 1 } = {}
 ) {
     const detailMap = getGuildBuffDetailMap();
     const levels = playerDTO?.guildShrineLevels;
@@ -2057,6 +2074,7 @@ export function generateGuildShrineCandidates(
 
     const target = Math.max(0, Math.floor(Number(targetLevel) || 0));
     const explicit = perBuffTargets && typeof perBuffTargets === 'object' ? perBuffTargets : null;
+    const stepCount = normalizeLevelSteps(steps);
 
     /**
      * The guild's own level in a shrine building, 0 when nothing was read.
@@ -2080,35 +2098,45 @@ export function generateGuildShrineCandidates(
         const maxLevel = guildBuffMaxLevel(detail);
         const currentLevel = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
         const asked = explicit ? Math.floor(Number(explicit[buffHrid]) || 0) : NaN;
-        // A negative per-buff target is the grid's blank box: step this one once
-        const wanted = explicit ? (asked < 0 ? currentLevel + 1 : asked) : target > 0 ? target : currentLevel + 1;
         const shrineLevel = buildingLevel(detail.shrineHrid);
         if (capping && shrineLevel <= 0) continue;
         const ceiling = capping ? Math.min(maxLevel, shrineLevel) : maxLevel;
-        const upgradeLevel = Math.min(ceiling, wanted);
-        if (maxLevel <= 0 || upgradeLevel <= currentLevel) continue;
-
-        const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
+        if (maxLevel <= 0) continue;
+        let wantedLevels;
+        if (explicit) {
+            // A negative per-buff target is the grid's blank box: step this one once
+            wantedLevels = [asked < 0 ? currentLevel + 1 : asked];
+        } else if (stepCount > 1) {
+            // The same ceiling as one row: a step past the guild's building (when capping) or the max is not offered
+            wantedLevels = singleStepLevels(currentLevel, stepCount, ceiling);
+        } else {
+            wantedLevels = [target > 0 ? target : currentLevel + 1];
+        }
         const label = shrineName(detail.shrineHrid);
 
-        candidates.push({
-            type: 'guild_shrine',
-            slot: `guild_shrine|${buffHrid}`,
-            buffHrid,
-            shrineHrid: detail.shrineHrid,
-            isCombat: Boolean(detail.isCombat),
-            currentLevel,
-            upgradeLevel,
-            levelsBought: upgradeLevel - currentLevel,
-            maxLevel,
-            buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
-            guildTokenCost,
-            creditCosts,
-            shrineLevel,
-            shrineLevelKnown: shrineLevel > 0,
-            needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
-            description: `${label} Shrine Lv${currentLevel} → Lv${upgradeLevel}`,
-        });
+        for (const wanted of wantedLevels) {
+            const upgradeLevel = Math.min(ceiling, wanted);
+            if (upgradeLevel <= currentLevel) continue;
+            const { guildTokenCost, creditCosts } = sumGuildShrineLevelCosts(detail, currentLevel, upgradeLevel);
+            candidates.push({
+                type: 'guild_shrine',
+                slot: `guild_shrine|${buffHrid}`,
+                buffHrid,
+                shrineHrid: detail.shrineHrid,
+                isCombat: Boolean(detail.isCombat),
+                currentLevel,
+                upgradeLevel,
+                levelsBought: upgradeLevel - currentLevel,
+                maxLevel,
+                buffTypes: (detail.buffs || []).map((buff) => buff?.typeHrid).filter(Boolean),
+                guildTokenCost,
+                creditCosts,
+                shrineLevel,
+                shrineLevelKnown: shrineLevel > 0,
+                needsShrineLevel: shrineLevel > 0 && upgradeLevel > shrineLevel ? upgradeLevel : null,
+                description: `${label} Shrine Lv${currentLevel} → Lv${upgradeLevel}`,
+            });
+        }
     }
     return candidates;
 }
@@ -4696,7 +4724,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, abilitySteps (levels offered per ability in the
  *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
  *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
- *   combatLevelSteps (levels offered per combat skill, default 1), skipBackSlot, combatLevelTargets, charmTier,
+ *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
+ *   offered per room / shrine at +1 each, default 1), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
@@ -4721,6 +4750,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilityLevelType,
         abilityTargetLevel,
         abilitySteps = 1,
+        houseSteps = 1,
+        guildShrineSteps = 1,
         combatLevelType = 'increment',
         combatLevelBoost,
         combatLevelSteps = 1,
@@ -4779,7 +4810,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode

@@ -3189,6 +3189,16 @@ const COMBAT_LEVEL_STEPS_TITLE = levelStepsTitle(
         'alongside). The Targets grid, while open, replaces the steps with one level per skill.'
 );
 
+/**
+ * Help text for the House and Guild Shrine Steps boxes, which step one level at a time.
+ * @param {string} noun - 'room' or 'shrine'
+ * @returns {string}
+ */
+const SINGLE_STEPS_TITLE = (noun) =>
+    `How many levels to try per ${noun} (1 to ${MAX_LEVEL_STEPS}): 3 steps tries +1, +2 and +3, each its own row ` +
+    `costed from the level the ${noun} is at now, never past the max. Each step is one more simulation per ${noun}. ` +
+    'With more than 1 step the Lv box is not used; the Targets grid, while open, replaces the steps.';
+
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
     'background:' +
@@ -3282,6 +3292,12 @@ const MODE_OPTIONS = {
             <input id="mwi-csim-house-target-level" type="number" min="1" max="8" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to sim every combat house room at. Leave blank to sim one level up from where each room is now."></span>
+            <label id="mwi-csim-house-steps-group" title="${SINGLE_STEPS_TITLE('room')}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="mwi-csim-house-steps" data-steps-for="#mwi-csim-house-target-level" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${SINGLE_STEPS_TITLE('room')}">
+            </label>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`;
     },
@@ -3293,6 +3309,12 @@ const MODE_OPTIONS = {
             <input id="mwi-csim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="+1" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Target level to buy every combat shrine buff up to. Cost is every level from where the buff is now to this one; the improvement is measured at this one. Leave blank to evaluate one level up."></span>
+            <label id="mwi-csim-shrine-steps-group" title="${SINGLE_STEPS_TITLE('shrine')}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="mwi-csim-shrine-steps" data-steps-for="#mwi-csim-shrine-target-level" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${SINGLE_STEPS_TITLE('shrine')}">
+            </label>
             <button id="mwi-csim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
             <label id="mwi-csim-shrine-cap-label" title="Only rank shrine levels your guild's shrine buildings can actually sell you: a shrine the guild has not built is left out entirely, and one built to Lv4 stops at Lv4. Uncheck to plan against shrines the guild would have to upgrade first — those rows say so." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
@@ -4379,6 +4401,14 @@ class CombatSimUI {
         this.panel.querySelector('#mwi-csim-combat-level-steps')?.addEventListener('change', (e) => {
             e.target.value = String(normalizeLevelSteps(e.target.value));
         });
+        // House and Guild Shrine Steps: more than one step sets the Lv box aside, so it is shown as unused
+        for (const id of ['#mwi-csim-house-steps', '#mwi-csim-shrine-steps']) {
+            this.panel.querySelector(id)?.addEventListener('change', (e) => {
+                e.target.value = String(normalizeLevelSteps(e.target.value));
+                const lvBox = this.panel.querySelector(e.target.dataset.stepsFor);
+                if (lvBox) lvBox.disabled = Number(e.target.value) > 1;
+            });
+        }
         this.panel.querySelector('#mwi-csim-combat-level-boost')?.addEventListener('change', (e) => {
             const val = parseInt(e.target.value);
             if (val > maxLevel()) e.target.value = maxLevel();
@@ -11454,6 +11484,12 @@ class CombatSimUI {
                   )
                 : 0;
             const houseTargets = isHouseMode ? this._getHouseTargets() : null;
+            const houseSteps = isHouseMode
+                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-house-steps')?.value)
+                : 1;
+            const guildShrineSteps = upgradeModes.includes('guild_shrine')
+                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-shrine-steps')?.value)
+                : 1;
             // Blank means "one level up", which is what the advisor reads a 0 as
             const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
                 ? Math.min(
@@ -11512,8 +11548,10 @@ class CombatSimUI {
                     charmEnhancement,
                     houseTargetLevel,
                     houseTargets,
+                    houseSteps,
                     guildShrineTargetLevel,
                     guildShrineTargets,
+                    guildShrineSteps,
                     guildShrineCapToGuild,
                     communityBuffTargetLevel,
                     auraSwapsOnly,
