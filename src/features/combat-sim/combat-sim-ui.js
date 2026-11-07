@@ -405,6 +405,8 @@ const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
 const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
 /** Storage key for the House "All non-combat rooms +1" option (per character, off unless ticked) */
 const HOUSE_NON_COMBAT_BUNDLE_KEY = 'combatSimHouseNonCombatBundle';
+/** Storage key for "Re-sim close calls" (per character, on unless unticked) */
+const RESIM_CLOSE_CALLS_KEY = 'combatSimResimCloseCalls';
 
 /**
  * Storage key for the all-zones Max-tier Food toggle.
@@ -1237,6 +1239,32 @@ export function stoppedRunText(stopped) {
     return `stopped early — ${counted} candidate${(total ?? completed) === 1 ? '' : 's'}`;
 }
 
+/**
+ * What the close-call re-sims did, in one sentence for the results header; empty when they did not run.
+ * @param {Object|null} resim - `results.resim` from the analysis
+ * @returns {string}
+ */
+export function resimSummaryText(resim) {
+    if (!resim?.ran) return '';
+    const rows = Number(resim.rows) || 0;
+    const rounds = Number(resim.rounds) || 0;
+    if (!rounds) {
+        if (resim.reason === 'time-cap') {
+            return 'Close calls were not re-simmed: one more round would have run past the time limit.';
+        }
+        if (resim.reason === 'stopped') return 'Close calls were not re-simmed: Stop came first.';
+        return 'No close calls: every leader was clear of the rows behind it.';
+    }
+    const what = `Close calls: ${rows} row${rows === 1 ? '' : 's'} simulated again, up to ${resim.hours}h`;
+    if (resim.reason === 'max-hours') {
+        return `${what}. Still within noise of each other at the longest run: treat them as a tie.`;
+    }
+    if (resim.reason === 'time-cap')
+        return `${what}, then stopped at the time limit. Their figures are the longer run's.`;
+    if (resim.reason === 'stopped') return `${what}, then Stop. Each keeps its last finished figures.`;
+    return `${what} until they separated.`;
+}
+
 /** Shared styling for the small qualifier chips that sit beside a row's name */
 const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-radius:2px; vertical-align:middle;';
 
@@ -1309,6 +1337,22 @@ export function upgradeRowNotesHtml(result) {
     if (candidate.caveat) {
         notes.push(
             `<span title="${candidate.caveat}" style="${ROW_NOTE_STYLE} background:${GAME_COLORS.raisedMore}; color:#8ab4f8;">on task</span>`
+        );
+    }
+
+    // A close call simulated again for longer: its figures come from that run, against a baseline of the same length
+    if (result?.resim) {
+        const before = result.resim.noiseBefore?.dps;
+        const after = result?.noise?.dps;
+        const tightened =
+            Number.isFinite(before) && Number.isFinite(after)
+                ? ` The DPS error went from ±${before.toFixed(2)}% to ±${after.toFixed(2)}%.`
+                : '';
+        const title =
+            `A close call with the leader, so it was simulated again at ${result.resim.hours}h ` +
+            `(${result.resim.multiplier}× the hours) against a baseline of the same length.${tightened}`;
+        notes.push(
+            `<span data-resim title="${escapeAttribute(title)}" style="${ROW_NOTE_STYLE} background:${GAME_COLORS.raisedMore}; color:#8ab4f8;">re-simmed ${result.resim.multiplier}×</span>`
         );
     }
 
@@ -4071,6 +4115,10 @@ class CombatSimUI {
             ${UPGRADE_MODES.map(modeChipHtml).join('')}
             <label style="color:#888; font-size:12px;" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab.">Hours</label>
             <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
+            <label id="mwi-csim-upgrade-resim-label" title="After the first pass, rows within noise of the leader are simulated again at 2×, then 4× the hours (each against a baseline of the same length) until they separate. Capped at as long as the first pass took (30 s to 10 min); Stop ends it and keeps every finished figure. Rows that were not close are left as measured." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-upgrade-resim" checked style="margin:0; cursor:pointer;">
+                Re-sim close calls
+            </label>
             <button id="mwi-csim-upgrade-run" style="
                 ${GAME_BTN_CSS}
                 padding: 5px 14px;
@@ -4391,6 +4439,10 @@ class CombatSimUI {
             });
         }
         this._restoreHouseNonCombatBundle();
+        this._restoreResimCloseCalls();
+        this.panel.querySelector('#mwi-csim-upgrade-resim')?.addEventListener('change', () => {
+            this._saveResimCloseCalls();
+        });
         this.panel.querySelector('#mwi-csim-house-noncombat-bundle')?.addEventListener('change', () => {
             this._saveHouseNonCombatBundle();
         });
@@ -11231,6 +11283,33 @@ class CombatSimUI {
     }
 
     /**
+     * Persist "Re-sim close calls", per character.
+     * @private
+     */
+    async _saveResimCloseCalls() {
+        try {
+            const box = this.panel?.querySelector('#mwi-csim-upgrade-resim');
+            await writeScoped(RESIM_CLOSE_CALLS_KEY, Boolean(box?.checked));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the close-call re-sim option:', error);
+        }
+    }
+
+    /**
+     * Restore "Re-sim close calls", on until the player unticks it.
+     * @private
+     */
+    async _restoreResimCloseCalls() {
+        try {
+            const saved = await readScoped(RESIM_CLOSE_CALLS_KEY, 'settings', true);
+            const box = this.panel?.querySelector('#mwi-csim-upgrade-resim');
+            if (box) box.checked = Boolean(saved);
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore the close-call re-sim option:', error);
+        }
+    }
+
+    /**
      * Restore the House "All non-combat rooms +1" option, off until the player ticks it.
      * @private
      */
@@ -11302,6 +11381,7 @@ class CombatSimUI {
                 'shrineCapToGuild',
                 'budgetConstraints',
                 'houseNonCombatBundle',
+                'resimCloseCalls',
             ]);
             const settings = pulledNames(written, 'settings', {
                 ...Object.fromEntries(
@@ -11329,6 +11409,7 @@ class CombatSimUI {
             if (has('budgetConstraints')) work.push(this._restoreBudgetConstraints());
             if (has('shrineCapToGuild')) work.push(this._restoreShrineCapToGuild());
             if (has('houseNonCombatBundle')) work.push(this._restoreHouseNonCombatBundle());
+            if (has('resimCloseCalls')) work.push(this._restoreResimCloseCalls());
             if (has('allZonesMaxTierFood')) work.push(this._loadMaxTierFoodPref());
             if (has('allZonesScoreScale')) {
                 work.push(
@@ -11596,6 +11677,7 @@ class CombatSimUI {
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
                 : null;
+            const resimCloseCalls = Boolean(this.panel.querySelector('#mwi-csim-upgrade-resim')?.checked);
             const auraSwapsOnly =
                 upgradeModes.includes('ability_swap') &&
                 Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
@@ -11635,6 +11717,7 @@ class CombatSimUI {
                     guildShrineCapToGuild,
                     communityBuffTargetLevel,
                     auraSwapsOnly,
+                    resimCloseCalls,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;
@@ -12595,10 +12678,16 @@ class CombatSimUI {
             // Profit's error is a share of the gold moving through the fight, not of the net profit the
             // percentage beside it is taken of, so it is given in gold per day like the delta it qualifies
             const profitGold = key === 'profit' ? profitNoiseGold(r, baseline) : null;
+            // A re-simmed row says what its error was before the longer run
+            const wasPct = r.resim?.noiseBefore?.[key];
+            const was =
+                profitGold == null && Number.isFinite(wasPct)
+                    ? `<span data-resim-was style="color:${GAME_COLORS.textDim};" title="Error before the close call was simulated again at ${r.resim.hours}h"> (was ±${wasPct.toFixed(2)}%)</span>`
+                    : '';
             const bar =
                 profitGold != null
                     ? `<span style="color:${GAME_COLORS.textDim};"> ±${formatKMB(profitGold * 24)}/day</span>`
-                    : `<span style="color:${GAME_COLORS.textDim};"> ±${noisePct.toFixed(2)}%</span>`;
+                    : `<span style="color:${GAME_COLORS.textDim};"> ±${noisePct.toFixed(2)}%</span>${was}`;
             return significant
                 ? bar
                 : `${bar}<span style="color:#c9a227;" title="Smaller than this run's sampling error — sim for longer before trusting it."> within noise</span>`;
@@ -15442,6 +15531,15 @@ class CombatSimUI {
                 `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
                 `Analysis ${stoppedRunText(results.stopped)}: these rows are only the candidates measured before ` +
                 `Stop, not every upgrade the run set out to compare.</div>` +
+                html;
+        }
+        const resimText = resimSummaryText(results.resim);
+        if (resimText) {
+            html =
+                `<div data-upgrade-resim style="margin:0 0 8px; font-size:11px; color:${GAME_COLORS.textDim};" ` +
+                `title="Rows within noise of the leader are simulated again at 2×, then 4× the hours, each round against ` +
+                `a baseline of the same length, until they separate, the time limit (as long as the first pass took, ` +
+                `30 s to 10 min) is reached, or Stop.">${escapeAttribute(resimText)}</div>` +
                 html;
         }
         if (results.slotWarnings?.length) {

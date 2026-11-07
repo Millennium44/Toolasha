@@ -78,6 +78,7 @@ const KEYS = [
     ['settings', 'combatSimShrineCapToGuild'],
     ['settings', 'combatSimBudgetConstraints'],
     ['settings', 'combatSimHouseNonCombatBundle'],
+    ['settings', 'combatSimResimCloseCalls'],
     ['settings', 'combatSimUpgradeColumns'],
     ['settings', 'combatSimTriggerLastResult'],
     ['settings', 'combatSimAllZonesMaxTierFood'],

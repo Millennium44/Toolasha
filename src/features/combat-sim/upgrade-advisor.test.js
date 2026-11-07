@@ -212,6 +212,10 @@ const {
     applyPathBootsSimLevel,
     addRefinedPathBootCandidates,
     runUpgradeAnalysis,
+    closeCallRows,
+    resimCloseCallRows,
+    RESIM_MAX_ROWS,
+    RESIM_MIN_BUDGET_MS,
     applyCandidateToDTO,
     calculateUpgradeCost,
     findMatchingCharmForSkill,
@@ -2929,6 +2933,249 @@ describe('what a set of upgrades is worth together', () => {
         const setup = comboSetup();
 
         await expect(runLabyrinthCombinationCheck({ ...setup, picks: [] }, null, {})).rejects.toThrow();
+    });
+});
+
+describe('close-call re-sims', () => {
+    /** A row as the first pass builds one, gaining `delta`% DPS for `cost` with a ±`noise`% error */
+    const row = (name, cost, delta, noise, extra = {}) => ({
+        candidate: { type: 'enhancement', description: name, slot: name },
+        cost,
+        deltas: { dps: delta, xp: 0, profit: 0, encounters: 0, deaths: 0 },
+        goldPer: {
+            dps: delta > 0 ? (cost * 0.01) / delta : Infinity,
+            xp: Infinity,
+            profit: Infinity,
+            encounters: Infinity,
+        },
+        noise: { dps: noise, xp: noise, profit: noise, encounters: noise, deaths: noise },
+        metrics: { profitPerHour: 0 },
+        economics: { profitGainPerHour: 0 },
+        ...extra,
+    });
+    const names = (rows) => rows.map((r) => r.candidate.description);
+
+    describe('closeCallRows', () => {
+        test('the leader and every row whose gold-per range reaches the leader’s worst case; a clear row stays out', () => {
+            const rows = [row('A', 100, 2, 0.5), row('B', 110, 2, 0.5), row('C', 1000, 2, 0.1)];
+            expect(names(closeCallRows(rows))).toEqual(['A', 'B']);
+        });
+
+        test('a leader clear of everything: nothing to re-sim', () => {
+            expect(closeCallRows([row('A', 100, 5, 0.1), row('B', 1000, 2, 0.1)])).toEqual([]);
+            expect(closeCallRows([row('A', 100, 5, 3)])).toEqual([]);
+            expect(closeCallRows([])).toEqual([]);
+        });
+
+        test('combat levels, free rows, unpriced rows and rows with no gain take no part', () => {
+            const rows = [
+                row('A', 100, 2, 0.5),
+                row('Level', 100, 2, 0.5, { candidate: { type: 'combat_level', description: 'Level' } }),
+                row('Free', 0, 2, 0.5),
+                row('NoPrice', null, 2, 0.5),
+                row('Unpriced', 100, 2, 0.5, { costUnpriced: ['Coffee'] }),
+                row('Worse', 100, -1, 0.5),
+            ];
+            expect(closeCallRows(rows)).toEqual([]);
+        });
+
+        test('at most RESIM_MAX_ROWS, closest to the leader first', () => {
+            const rows = Array.from({ length: 12 }, (_, i) => row(`R${i}`, 100 + i, 2, 1));
+            const close = closeCallRows(rows);
+            expect(close).toHaveLength(RESIM_MAX_ROWS);
+            expect(names(close)).toEqual(Array.from({ length: RESIM_MAX_ROWS }, (_, i) => `R${i}`));
+        });
+    });
+
+    describe('resimCloseCallRows', () => {
+        const context = (overrides = {}) => ({
+            firstPassMs: 0,
+            firstPassSims: 4,
+            hours: 10,
+            now: () => 0,
+            lanes: 2,
+            ...overrides,
+        });
+        /** Re-measures each row with its error shrunk by √multiplier, and `shift` moved onto the named rows' gain */
+        const shrinking =
+            (shift = {}, seen = []) =>
+            async (rows, multiplier) => {
+                seen.push([multiplier, names(rows)]);
+                return rows.map((r) => {
+                    const name = r.candidate.description;
+                    const delta = r.deltas.dps + (shift[name] || 0);
+                    return row(name, r.cost, delta, r.noise.dps / Math.sqrt(multiplier), { candidate: r.candidate });
+                });
+            };
+
+        test('rows that separate after 2× stop there; rows never close are untouched; each re-simmed row says so', async () => {
+            const rows = [row('A', 100, 2, 0.5), row('B', 110, 2, 0.5), row('C', 1000, 2, 0.1)];
+            const c = rows[2];
+            const seen = [];
+            const out = await resimCloseCallRows(rows, { ...context(), runRound: shrinking({ A: 3 }, seen) });
+            expect(seen).toEqual([[2, ['A', 'B']]]);
+            expect(out).toMatchObject({ ran: true, rounds: 1, rows: 2, reason: 'separated', hours: 20 });
+            expect(rows[2]).toBe(c);
+            expect(rows[0].resim).toEqual({ hours: 20, multiplier: 2, rounds: 1, noiseBefore: expect.any(Object) });
+            expect(rows[0].resim.noiseBefore.dps).toBe(0.5);
+            expect(rows[0].noise.dps).toBeCloseTo(0.5 / Math.SQRT2);
+        });
+
+        test('still close after 2× goes on to 4×, then stops at the last multiplier', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            const seen = [];
+            const out = await resimCloseCallRows(rows, { ...context(), runRound: shrinking({}, seen) });
+            expect(seen.map(([m]) => m)).toEqual([2, 4]);
+            expect(out).toMatchObject({ rounds: 2, reason: 'max-hours', hours: 40 });
+            expect(rows[1].resim).toMatchObject({ multiplier: 4, rounds: 2 });
+            expect(rows[1].resim.noiseBefore.dps).toBe(2);
+        });
+
+        test('nothing close: no round runs', async () => {
+            const runRound = vi.fn();
+            const rows = [row('A', 100, 5, 0.1), row('B', 1000, 2, 0.1)];
+            expect(await resimCloseCallRows(rows, { ...context(), runRound })).toMatchObject({
+                rounds: 0,
+                rows: 0,
+                reason: 'separated',
+            });
+            expect(runRound).not.toHaveBeenCalled();
+        });
+
+        test('a round that would not fit the time budget is not started, and nothing changes', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            const before = [...rows];
+            const runRound = vi.fn();
+            // 40 s first pass over 4 sims, 2 lanes: one sim ~20 s; a 2× round is (1 + 1) × 2 × 20 s = 80 s > 40 s
+            const out = await resimCloseCallRows(rows, { ...context({ firstPassMs: 40_000 }), runRound });
+            expect(out).toMatchObject({ rounds: 0, reason: 'time-cap', budgetMs: 40_000 });
+            expect(runRound).not.toHaveBeenCalled();
+            expect(rows).toEqual(before);
+        });
+
+        test('the second round is refused once the first has used the budget', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            let clock = 0;
+            const runRound = async (r, m) => {
+                clock += RESIM_MIN_BUDGET_MS - 1000;
+                return shrinking()(r, m);
+            };
+            const out = await resimCloseCallRows(rows, {
+                ...context({ firstPassMs: 1000, now: () => clock }),
+                runRound,
+            });
+            expect(out).toMatchObject({ rounds: 1, reason: 'time-cap', hours: 20 });
+        });
+
+        test('Stop during a round applies nothing from it', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            const before = [...rows];
+            const out = await resimCloseCallRows(rows, { ...context(), runRound: async () => null });
+            expect(out).toMatchObject({ rounds: 0, reason: 'stopped' });
+            expect(rows).toEqual(before);
+            expect(rows.some((r) => r.resim)).toBe(false);
+        });
+
+        test('Stop between rounds keeps the finished round', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            let stopped = false;
+            const out = await resimCloseCallRows(rows, {
+                ...context(),
+                abortSignal: () => stopped,
+                runRound: async (r, m) => {
+                    const measured = await shrinking()(r, m);
+                    stopped = true;
+                    return measured;
+                },
+            });
+            expect(out).toMatchObject({ rounds: 1, reason: 'stopped' });
+            expect(rows.every((r) => r.resim?.multiplier === 2)).toBe(true);
+        });
+    });
+
+    describe('in an analysis', () => {
+        function setup(resimCloseCalls) {
+            const gameData = buildGameData();
+            buildGameDataPayload.mockReturnValue(gameData);
+            calculateSimRevenue.mockReturnValue({ totalRevenue: 0, itemRevenues: [] });
+            resolveItemPrice.mockImplementation(() => ({ price: 1_000_000 }));
+            getItemPrices.mockReturnValue({ ask: 2_000_000, bid: 1_500_000 });
+            plannedWorkerCount.mockReturnValue(1);
+            runSimulation.mockClear();
+            // A few encounters an hour, so every gain is inside a wide error bar and the rows stay close
+            runSimulation.mockImplementation(async ({ playerDTOs, hours }) => {
+                const level = playerDTOs[0].equipment[MAIN_HAND]?.enhancementLevel || 0;
+                return {
+                    simulatedTime: hours * 3600 * 1e9,
+                    encounters: 5 * hours,
+                    deaths: {},
+                    totalDamageDealt: { '/players/me': (1000 + level) * hours * 3600 },
+                    experienceGained: {},
+                };
+            });
+            return {
+                playerDTOs: [
+                    {
+                        equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: 5 } },
+                        abilities: [],
+                        hrid: '/players/me',
+                    },
+                ],
+                playerIndex: 0,
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 10,
+                communityBuffs: {},
+                upgradeModes: ['equipment'],
+                enhancementSteps: 3,
+                resimCloseCalls,
+            };
+        }
+        const hoursRun = () => runSimulation.mock.calls.map((call) => call[0].hours);
+
+        test('off: one pass at the chosen hours, no re-sim record', async () => {
+            const result = await runUpgradeAnalysis(setup(false), null, { now: () => 0 });
+            expect(new Set(hoursRun())).toEqual(new Set([10]));
+            expect(result.resim).toBeNull();
+            expect(result.results.some((r) => r.resim)).toBe(false);
+        });
+
+        test('on: the close rows and a baseline of their own length again at 20h then 40h, stamped', async () => {
+            const progress = [];
+            const result = await runUpgradeAnalysis(setup(true), (p) => progress.push(p), { now: () => 0 });
+            const at20 = runSimulation.mock.calls.filter((call) => call[0].hours === 20);
+            // The 2× baseline is the unchanged party
+            expect(at20[0][0].playerDTOs[0].equipment[MAIN_HAND].enhancementLevel).toBe(5);
+            expect(result.resim).toMatchObject({ ran: true, rounds: 2, reason: 'max-hours', hours: 40 });
+            const resimmed = result.results.filter((r) => r.resim);
+            expect(resimmed.length).toBe(at20.length - 1);
+            expect(resimmed.length).toBe(result.resim.rows);
+            expect(resimmed.every((r) => r.resim.hours === 40 && r.noise.dps < r.resim.noiseBefore.dps)).toBe(true);
+            // Every sim ran on one worker, as the first pass does
+            expect(runSimulation.mock.calls.every((call) => call[2]?.workers === 1)).toBe(true);
+            // The bar's total grew with each round and never ran past it
+            const last = progress[progress.length - 1];
+            expect(progress.some((p) => p.phase === 'resim')).toBe(true);
+            expect(progress.every((p) => p.current <= p.total)).toBe(true);
+            expect(last.current).toBe(last.total);
+        });
+
+        test('Stop once the re-sims start leaves every row as the first pass measured it', async () => {
+            let stopped = false;
+            const first = await runUpgradeAnalysis(setup(false), null, { now: () => 0 });
+            const result = await runUpgradeAnalysis(
+                setup(true),
+                (p) => {
+                    if (p.phase === 'resim') stopped = true;
+                },
+                { now: () => 0, abortSignal: () => stopped }
+            );
+            expect(result.resim).toMatchObject({ rounds: 0, reason: 'stopped' });
+            expect(result.results.some((r) => r.resim)).toBe(false);
+            const dps = (res) =>
+                Object.fromEntries(res.results.map((r) => [r.candidate.description, r.deltas.dps.toFixed(6)]));
+            expect(dps(result)).toEqual(dps(first));
+        });
     });
 });
 
