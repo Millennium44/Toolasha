@@ -6,6 +6,34 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim upgrade Steps for levels, houses, shrines and gear
+
+On the Upgrade tab, Combat Lv gets its own +Levels / Next mult. of box and a Steps box, so it no longer shares the Ability Lv number. House and Guild Shrine get a Steps box that tries +1, +2 … +N levels. Equipment gets an enhancement Steps box that also tries the next few levels one at a time.
+
+### Combat Sim house options
+
+House adds "Combat rooms only" (the skip-skilling-rooms setting, now in the panel) and an optional "All non-combat rooms +1" row that tests whether those rooms matter at all.
+
+### Combat Sim re-sims close calls
+
+The Upgrade tab re-simulates close calls at 2× then 4× the hours until they separate, within a time budget, and marks which rows were re-simmed and how much their error shrank. On by default, with a checkbox to turn it off.
+
+### Combat Sim time estimate learns each candidate's cost
+
+The Upgrade tab's time-left estimate now learns how long each kind of candidate takes, includes the close-call re-sims, and no longer jumps.
+
+### Item tooltips keep off the hovered item everywhere
+
+The setting that moves a tooltip off the item it covers now covers the Loadouts and equipment panels, the marketplace and item pickers, not only the inventory, and is renamed "Keep item tooltips off the hovered item". A tooltip whose placement keeps flipping against the game's is handed back to the game for that hover instead of looping.
+
+### Labyrinth leftovers no longer show a full carry
+
+After a page reload, a finished run could be saved a second time from the game's restocked counts, so "Left over" showed 400 torches for a run that used them. The line now reads only runs watched from start to end, counting each run once.
+
+### Trial history shows a trial as soon as it finishes
+
+A finished trial appears in Trial history right away. On the test server the finished cycle is filed as soon as the game posts the next schedule, so a trial that runs again no longer shows the old cycle's banked tier on its new card.
+
 ### Dense overlay matches the layout it was copied from
 
 The Dense preset now uses nine columns at any normal panel width, with the original tile widths, and includes mana per fight and charm value. On a panel too narrow for that it shows up to three narrow columns instead of one tile per row.
