@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim equipment Steps try breakpoints
+
+The Equipment Steps box now tries each of the next N enhancement breakpoints (+5 → +7, +10, +12 with 3 steps) instead of single levels, and the Upgrades and Budget titles share one row with their buttons.
+
 <!-- shipped in 3.78.0 -->
 
 ### Sync no longer bloats Firefox's Tampermonkey memory

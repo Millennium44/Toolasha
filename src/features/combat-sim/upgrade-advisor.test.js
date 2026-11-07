@@ -504,19 +504,19 @@ describe('generateCandidates equipment enhancement Steps', () => {
         expect(levels(enh('/items/fine_sword', 7))).toEqual([10]);
     });
 
-    test('three steps add +6, +7, +8 from +5, each labelled; the breakpoint is not repeated', () => {
+    test('three steps walk the next three breakpoints from +5: +7, +10, +12, each labelled once', () => {
         const candidates = enh('/items/fine_sword', 5, 3);
-        expect(levels(candidates)).toEqual([6, 7, 8]);
+        expect(levels(candidates)).toEqual([7, 10, 12]);
         expect(candidates.map((c) => c.description)).toEqual([
-            'Fine Sword +5 → +6',
             'Fine Sword +5 → +7',
-            'Fine Sword +5 → +8',
+            'Fine Sword +5 → +10',
+            'Fine Sword +5 → +12',
         ]);
         expect(new Set(candidates.map((c) => c.slot)).size).toBe(1);
     });
 
-    test('a breakpoint beyond the steps is kept: +7 with two steps is +8, +9 and +10', () => {
-        expect(levels(enh('/items/fine_sword', 7, 2))).toEqual([8, 9, 10]);
+    test('steps start from the current level: +7 with two steps is +10 and +12', () => {
+        expect(levels(enh('/items/fine_sword', 7, 2))).toEqual([10, 12]);
     });
 
     test('never past the max enhancement level; a piece at the max offers nothing', () => {

@@ -260,6 +260,19 @@ function getNextAbilityBreakpoint(currentLevel) {
  * @returns {number|null} Next breakpoint level, or null if already at max
  */
 function getNextBreakpoint(currentLevel, slot, itemHrid) {
+    return getNextBreakpoints(currentLevel, slot, itemHrid, 1)[0] ?? null;
+}
+
+/**
+ * The next `count` breakpoints above the current level for a slot and item, no higher than `cap`.
+ * @param {number} currentLevel
+ * @param {string} slot - Equipment type hrid
+ * @param {string} itemHrid
+ * @param {number} count
+ * @param {number} [cap=Infinity]
+ * @returns {number[]}
+ */
+function getNextBreakpoints(currentLevel, slot, itemHrid, count, cap = Infinity) {
     let breakpoints;
     if (slot === '/equipment_types/back') {
         breakpoints = BREAKPOINTS_BACK;
@@ -270,11 +283,7 @@ function getNextBreakpoint(currentLevel, slot, itemHrid) {
     } else {
         breakpoints = BREAKPOINTS_DEFAULT;
     }
-
-    for (const bp of breakpoints) {
-        if (bp > currentLevel) return bp;
-    }
-    return null;
+    return breakpoints.filter((bp) => bp > currentLevel && bp <= cap).slice(0, count);
 }
 
 /**
@@ -1093,12 +1102,18 @@ export function generateCandidates(
             // level and tier from the table. See `isCharmItem`.
             if (!hasCombatStats(itemDetails) && !isCharmItem(itemDetails)) continue;
 
-            // Enhancement upgrade: the next breakpoint, as always, and with the Steps box above 1 also each of
-            // the next N levels one at a time (+5 → +6, +7, +8), capped at the game's max enhancement level
+            // Enhancement upgrade: the next breakpoint, as always, and with the Steps box above 1 the next N
+            // breakpoints (+5 → +7, +10, +12 on most gear), capped at the game's max enhancement level
             const nextBP = getNextBreakpoint(currentLevel, slot, currentHrid);
             const enhancementLevels = new Set(nextBP ? [nextBP] : []);
             if (enhancementSteps > 1) {
-                for (const level of singleStepLevels(currentLevel, enhancementSteps, enhancementCap)) {
+                for (const level of getNextBreakpoints(
+                    currentLevel,
+                    slot,
+                    currentHrid,
+                    enhancementSteps,
+                    enhancementCap
+                )) {
                     enhancementLevels.add(level);
                 }
             }
@@ -4832,8 +4847,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
  *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
  *   +1" row), resimCloseCalls (re-sim the rows within noise of the leader for longer, see `resimCloseCallRows`),
- *   enhancementSteps (above 1, each piece is also offered
- *   at the next N enhancement levels besides its breakpoint), skipBackSlot, combatLevelTargets, charmTier,
+ *   enhancementSteps (above 1, each piece is offered
+ *   at each of its next N enhancement breakpoints), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }

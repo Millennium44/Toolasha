@@ -3252,9 +3252,9 @@ const SINGLE_STEPS_TITLE = (noun) =>
 
 /** Help text for the Equipment Steps box */
 const ENHANCEMENT_STEPS_TITLE =
-    `How many enhancement levels to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
-    '(+5 → +7 on most gear, as always). 3 also tries each of the next three levels: +6, +7 and +8 from +5, ' +
-    'never past the max enhancement level. Each extra level is one more simulation per item.';
+    `How many enhancement breakpoints to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
+    '(+5 → +7 on most gear, as always). 3 tries each of the next three breakpoints: +7, +10 and +12 from +5, ' +
+    'never past the max enhancement level. Each extra breakpoint is one more simulation per item.';
 
 /** Shared styling for the small inputs inside a mode chip */
 const CHIP_INPUT_STYLE =
@@ -3283,6 +3283,7 @@ const MODE_OPTIONS = {
                 <input type="checkbox" id="mwi-csim-upgrade-skip-back" style="margin:0; cursor:pointer;">
                 Skip Back
             </label>
+            <span style="color:${GAME_COLORS.border};">|</span>
             <label id="mwi-csim-equip-steps-group" title="${ENHANCEMENT_STEPS_TITLE}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
                 Steps
                 <input id="mwi-csim-equip-steps" type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
@@ -12964,7 +12965,7 @@ class CombatSimUI {
             key: 'gold',
             title: 'Upgrades',
             summary: `${rows.length} candidate${rows.length === 1 ? '' : 's'}`,
-            style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:4px;`,
+            style: `color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:6px;`,
         });
         // Verify measures one metric: the sort column's when it is one of the four, else profit. Chips show only
         // for verdicts measured under that metric
@@ -12979,9 +12980,13 @@ class CombatSimUI {
             `title="${canVerify ? `Re-measures the top ${VERIFY_DEFAULTS.top} rows by the table's order against your current setup on fresh seeds` : 'Re-run the analysis to verify'}">` +
             `Verify top ${VERIFY_DEFAULTS.top}</button>` +
             `<span>${canVerify ? `by ${verifyInfo.label}${verifyInfo.fallback ? ' (the sorted column is not one of profit, EXP, DPS or EPH)' : ''}` : 're-run the analysis to verify'}</span></div>`;
-        const head = `<div>${goldHead}${this._renderUpgradeColumnMenu()}${verifyBar}`;
+        // The title, Columns and Verify share one row, wrapping on a narrow screen; the body takes a full row below.
+        // They stay siblings of the title so collapsing it still hides everything after it
+        const head =
+            `<div style="display:flex; align-items:center; flex-wrap:wrap; column-gap:10px;">${goldHead}` +
+            `${this._renderUpgradeColumnMenu()}${verifyBar}<div style="flex:1 1 100%; min-width:0;">`;
         if (this._upgradeView() === 'cards') {
-            return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts })}</div>`;
+            return `${head}${this._goldCards({ sorted, baseline, allColumns, column, verifyInfo, verdicts })}</div></div>`;
         }
         let html = `${head}
         <div class="mwi-utable-wrap"><table style="width:100%; border-collapse:collapse; font-size:10px;">
@@ -13029,7 +13034,7 @@ class CombatSimUI {
             </tr>`;
         });
 
-        return html + '</tbody></table></div></div>';
+        return html + '</tbody></table></div></div></div>';
     }
 
     /**
@@ -14048,10 +14053,13 @@ class CombatSimUI {
             key: 'budget',
             title: 'Budget',
             summary: this._upgradeBudgetText ? `${this._upgradeBudgetText} budget` : 'no budget set',
-            style: `color:${ACCENT}; font-weight:700; font-size:11px; margin-bottom:4px;`,
+            style: `color:${ACCENT}; font-weight:700; font-size:11px;`,
         });
+        // The title and its controls share one row, wrapping on a narrow screen; the plan takes a full row below.
+        // They stay siblings of the title so collapsing it still hides everything after it
         return `<div id="mwi-csim-upgrade-budget" style="margin-bottom:8px; padding:6px 8px; background:${GAME_COLORS.box};
             border:1px solid #222; border-radius:4px;">
+            <div style="display:flex; align-items:center; flex-wrap:wrap; column-gap:10px; row-gap:4px;">
             ${budgetHead}
             <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#888; flex-wrap:wrap;">
                 <input id="mwi-csim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
@@ -14064,7 +14072,8 @@ class CombatSimUI {
                     Different abilities are different purchases and can all be in the same plan.">best set that
                     fits — one per slot, one per ability</span>
             </div>
-            ${body ? `<div style="margin-top:6px;">${body}</div>` : ''}
+            ${body ? `<div style="flex:1 1 100%; min-width:0; margin-top:2px;">${body}</div>` : ''}
+            </div>
         </div>`;
     }
 

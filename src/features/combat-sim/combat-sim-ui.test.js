@@ -1536,7 +1536,7 @@ describe('the panel', () => {
         };
         q('[data-upgrade-mode="equipment"]').checked = true;
         expect(q('#mwi-csim-equip-steps').value).toBe('1');
-        expect(q('#mwi-csim-equip-steps-group').title).toMatch(/\+6, \+7 and \+8/);
+        expect(q('#mwi-csim-equip-steps-group').title).toMatch(/\+7, \+10 and \+12/);
         await ui._onUpgradeAnalyze();
         expect(seen.enhancementSteps).toBe(1);
         q('#mwi-csim-equip-steps').value = '7';
@@ -1974,8 +1974,17 @@ describe('the panel', () => {
         ];
         const draw = () => ui._renderUpgradeResults({ baseline: BASELINE, results: rowsFor(), food: null });
         const header = (key) => ui.panel.querySelector(`[data-collapse-key="${key}"]`);
-        const tableHidden = () =>
-            ui.panel.querySelector('#mwi-csim-upgrade-results .mwi-utable-wrap').style.display === 'none';
+        // Hidden by its own style or by a wrapper's, up to the results box
+        const tableHidden = () => {
+            for (
+                let el = ui.panel.querySelector('#mwi-csim-upgrade-results .mwi-utable-wrap');
+                el && el.id !== 'mwi-csim-upgrade-results';
+                el = el.parentElement
+            ) {
+                if (el.style.display === 'none') return true;
+            }
+            return false;
+        };
 
         beforeEach(() => {
             // The panel is a singleton and remembers what was minimized
