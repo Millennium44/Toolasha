@@ -78,6 +78,7 @@ import {
     assertExternalKeysSaved,
     RESTORED_BASELINE,
 } from './sync-payload.js';
+import { syncPhase } from './sync-phase.js';
 import { startSyncDirtyTracker, syncWriteGeneration, markSyncClean, unchangedSinceClean } from './sync-dirty.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { flushPersistedRecords } from '../../utils/persisted-record.js';
@@ -1310,10 +1311,21 @@ class SyncManager {
      *   The plaintext payload and its manifest, and the version record this download proves
      * @private
      */
-    async _readRemote(token, gistId, known, etag = null, revision = null, { refuseOtherServer = false } = {}) {
-        const remote = revision
-            ? await readSyncGistRevision(token, gistId, revision)
-            : await readSyncGist(token, gistId, etag ? { etag } : undefined);
+    async _readRemote(
+        token,
+        gistId,
+        known,
+        etag = null,
+        revision = null,
+        { refuseOtherServer = false, phaseKind = null } = {}
+    ) {
+        // Names each step for the stall ledger when the caller asks (a pull); otherwise just runs it
+        const phase = phaseKind ? (name, fn) => syncPhase(phaseKind, name, fn) : (name, fn) => fn();
+        const remote = await phase('download', () =>
+            revision
+                ? readSyncGistRevision(token, gistId, revision)
+                : readSyncGist(token, gistId, etag ? { etag } : undefined)
+        );
         if (remote.notModified) return { notModified: true };
         if (refuseOtherServer) {
             const tagged = gistServerOf(remote);
@@ -1343,15 +1355,17 @@ class SyncManager {
                 );
             }
             const sealed = { ...manifest.encrypted, ciphertext: payload };
-            payload = manifest.compressed
-                ? await gunzipToText(await decryptBytes(sealed, passphrase))
-                : await decryptText(sealed, passphrase);
+            payload = await phase('decrypt', async () =>
+                manifest.compressed
+                    ? await gunzipToText(await decryptBytes(sealed, passphrase))
+                    : await decryptText(sealed, passphrase)
+            );
         } else if (manifest?.compressed) {
-            payload = await gunzipToText(base64ToBytes(payload));
+            payload = await phase('decompress', () => gunzipToText(base64ToBytes(payload)));
         }
 
         // The content hash the check worked out, kept so a pull does not hash the same text again
-        const payloadHash = await verifyAgainstManifest(manifest, payload);
+        const payloadHash = await phase('manifest-check', () => verifyAgainstManifest(manifest, payload));
         return {
             manifest,
             payload,
@@ -1596,6 +1610,8 @@ class SyncManager {
     async _doPull(silent, opToken, startup = false) {
         // Noted before anything is awaited, for the pull report (numbers and a visibility word only)
         const timingStart = beginPullTiming();
+        // Each phase is named for the PFormance stall ledger; observation only
+        const phase = (name, fn) => syncPhase('pull', name, fn);
         const token = this._token();
         const gistId = await this._resolveGistId(token);
         if (!gistId) {
@@ -1637,7 +1653,10 @@ class SyncManager {
         // gist is choosing the right one (the Gist ID box), not importing the other world's data.
         // Refused before any passphrase is asked for, and nothing is recorded, so choosing the
         // right gist starts clean
-        const remote = await this._readRemote(token, gistId, known, conditional, null, { refuseOtherServer: true });
+        const remote = await this._readRemote(token, gistId, known, conditional, null, {
+            refuseOtherServer: true,
+            phaseKind: 'pull',
+        });
         if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
         if (remote.notModified) {
             // An unchanged gist answers 304 before any download, so deletes an earlier pull owes are
@@ -1651,7 +1670,8 @@ class SyncManager {
         // checks below, and each pass over a played-in payload was a long task of its own. The manifest check
         // usually worked it out already
         let remoteHash = typeof remote.payloadHash === 'string' ? remote.payloadHash : null;
-        const remoteContentHash = async () => (remoteHash ??= await contentHashSliced(payload));
+        const remoteContentHash = async () =>
+            (remoteHash ??= await phase('hash-download', () => contentHashSliced(payload)));
 
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
@@ -1714,10 +1734,14 @@ class SyncManager {
         // Fingerprinting reads IndexedDB, not the debounce queue. Land recent
         // edits first so a pull cannot mistake an edited list for the last
         // synced copy and replace it without the conflict decision.
-        await flushPersistedRecords();
-        await storage.flushAll?.();
-        const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-        const localHash = await contentHashSliced(localText);
+        await phase('flush', async () => {
+            await flushPersistedRecords();
+            await storage.flushAll?.();
+        });
+        const localText = await phase('build-local', () =>
+            buildPayloadJSON(config.getSetting('sync_scope', 'settings'))
+        );
+        const localHash = await phase('hash-local', () => contentHashSliced(localText));
 
         // The gist holds exactly what this device would build now: in one
         // browser, the leader tab's own merged push. Its text is ordered by the
@@ -1730,7 +1754,9 @@ class SyncManager {
         let standDown =
             !retryHeld &&
             !replaced &&
-            (await this._sameContent(payload, localText, localHash, await remoteContentHash()));
+            (await phase('compare', async () =>
+                this._sameContent(payload, localText, localHash, await remoteContentHash())
+            ));
         if (standDown) {
             // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
             // over a displaced delete that is still owed. One that still fails is not settled over: the
@@ -1739,7 +1765,7 @@ class SyncManager {
             if (stillOwed > 0) standDown = false;
         }
         if (standDown) {
-            const settledBaseline = await exchangeBaselineSliced(payload, localText);
+            const settledBaseline = await phase('baseline', () => exchangeBaselineSliced(payload, localText));
             // The flush and the build above can outlast a takeover, whose own
             // record this one would roll back
             if (!this._stillOwns(opToken)) return this._supersededResult(silent, 'pull', opToken);
@@ -1899,8 +1925,10 @@ class SyncManager {
         let mergedRebuild = null;
         let pushOwed = false;
         if (silent && !mergeHeld?.length) {
-            mergedRebuild = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-            pushOwed = await addsToRemoteSliced(mergedRebuild, payload);
+            mergedRebuild = await phase('build-local', () =>
+                buildPayloadJSON(config.getSetting('sync_scope', 'settings'))
+            );
+            pushOwed = await phase('push-check', () => addsToRemoteSliced(mergedRebuild, payload));
             // Also owed when this device's scope or cleaning would take something
             // out of the gist (a Settings-only device pulling a gist that still
             // holds history stores): the trimmed upload is what stops every
@@ -1908,7 +1936,8 @@ class SyncManager {
             // gist's, so the push is not 'unchanged'; once it lands, it is.
             if (!pushOwed) {
                 try {
-                    pushOwed = (await mergeForUploadSliced(mergedRebuild, payload, null)).dropsFromRemote;
+                    pushOwed = (await phase('push-check', () => mergeForUploadSliced(mergedRebuild, payload, null)))
+                        .dropsFromRemote;
                 } catch (error) {
                     console.warn('[Sync] Could not check whether the gist holds more than this device syncs:', error);
                 }
@@ -1922,53 +1951,57 @@ class SyncManager {
         const appliedHash = mergedRebuild
             ? pushOwed
                 ? pulledHash
-                : await contentHashSliced(mergedRebuild)
+                : await phase('hash-applied', () => contentHashSliced(mergedRebuild))
             : mergeHeld?.length
-              ? await contentHashSliced(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+              ? await phase('hash-applied', async () =>
+                    contentHashSliced(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+                )
               : (applied ?? payload) === payload
                 ? pulledHash
-                : await contentHashSliced(applied);
-        const pulledHashes = await wholeKeyHashesSliced(payload);
+                : await phase('hash-applied', () => contentHashSliced(applied));
+        const pulledHashes = await phase('hash-keys', () => wholeKeyHashesSliced(payload));
         if (!this._stillOwns(opToken)) {
             return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
         }
 
-        await this._remember({
-            gistId,
-            exportedAt: remoteAt,
-            // The CONTENT hash of what was APPLIED — remembered so the next
-            // local rebuild of the same content compares equal. Not the raw
-            // download: a merging pull rewrites the payload before importing
-            // it, so the downloaded text describes something that was never
-            // stored. The manifest's own hash (older devices hashed the raw
-            // text, stamp included) could never match a rebuild either, and
-            // manufactured a permanent conflict.
-            // Held-back records remain on this device even though they were
-            // removed from `applied`; fingerprint the actual local snapshot
-            // so a retry does not mistake that expected difference for an edit.
-            hash: appliedHash,
-            chunkCount: Number(manifest?.chunks) || 0,
-            // Lamport's rule on receive: this device is now at least as far
-            // along as the payload it accepted. Written only here, after the
-            // `complete === false` return above — a counter advanced by a
-            // half-applied pull would make the retry answer 'not-newer' and
-            // the data would never arrive, which is the same trap the stamp
-            // already has to avoid.
-            syncSeq: advanceSeq(lastSeq, remoteSeq),
-            mergeHeld: pendingHeld,
-            // Applied whole, this version is now this device's. Held-back
-            // records mean it is not yet, and the retry must re-download it.
-            version: seen ? { ...seen, current: !pendingHeld } : null,
-            // One transaction with the stamp and counter, as on the push side
-            extra: {
-                // The gist's values are now the last exchange: a key this device
-                // kept over an unmoved gist value stays "moved here" against it
-                [KEY_BASELINE]: heldAsUnapplied(pulledHashes, mergeHeld),
-                // Whatever an automatic merge left in the gist has landed now —
-                // unless records were held back, which the retry has to take
-                ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
-            },
-        });
+        await phase('remember', () =>
+            this._remember({
+                gistId,
+                exportedAt: remoteAt,
+                // The CONTENT hash of what was APPLIED — remembered so the next
+                // local rebuild of the same content compares equal. Not the raw
+                // download: a merging pull rewrites the payload before importing
+                // it, so the downloaded text describes something that was never
+                // stored. The manifest's own hash (older devices hashed the raw
+                // text, stamp included) could never match a rebuild either, and
+                // manufactured a permanent conflict.
+                // Held-back records remain on this device even though they were
+                // removed from `applied`; fingerprint the actual local snapshot
+                // so a retry does not mistake that expected difference for an edit.
+                hash: appliedHash,
+                chunkCount: Number(manifest?.chunks) || 0,
+                // Lamport's rule on receive: this device is now at least as far
+                // along as the payload it accepted. Written only here, after the
+                // `complete === false` return above — a counter advanced by a
+                // half-applied pull would make the retry answer 'not-newer' and
+                // the data would never arrive, which is the same trap the stamp
+                // already has to avoid.
+                syncSeq: advanceSeq(lastSeq, remoteSeq),
+                mergeHeld: pendingHeld,
+                // Applied whole, this version is now this device's. Held-back
+                // records mean it is not yet, and the retry must re-download it.
+                version: seen ? { ...seen, current: !pendingHeld } : null,
+                // One transaction with the stamp and counter, as on the push side
+                extra: {
+                    // The gist's values are now the last exchange: a key this device
+                    // kept over an unmoved gist value stays "moved here" against it
+                    [KEY_BASELINE]: heldAsUnapplied(pulledHashes, mergeHeld),
+                    // Whatever an automatic merge left in the gist has landed now —
+                    // unless records were held back, which the retry has to take
+                    ...(pendingHeld ? {} : { [KEY_UNAPPLIED]: null }),
+                },
+            })
+        );
 
         // Every figure below comes out of the apply result; nothing here re-reads
         // storage to find out what changed. The apply left out every key this

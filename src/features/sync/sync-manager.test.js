@@ -240,6 +240,7 @@ vi.mock('./pull-summary-panel.js', () => ({
     openPullSummaryPanel: () => panelOpens.push(1),
 }));
 
+const { default: performanceMonitor } = await import('../../utils/performance-monitor.js');
 const { lastPullSummary, clearPullSummary, rememberPullSummary } = await import('./pull-summary.js');
 const { default: syncManager, isNewer, SyncManager } = await import('./sync-manager.js');
 
@@ -462,6 +463,60 @@ describe('pull', () => {
         expect(payload.applied).toBe('{"remote":1}');
         expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-02-01T00:00:00.000Z');
         expect(dialog.calls).toBe(0);
+    });
+
+    describe('names its phases for the stall ledger', () => {
+        /** Every name the pull ran under, with whether it had settled by the end of the pull */
+        let phases;
+        beforeEach(() => {
+            phases = [];
+            vi.spyOn(performanceMonitor, 'traceAsync').mockImplementation(async (name, fn) => {
+                const entry = { name, settled: false };
+                phases.push(entry);
+                try {
+                    return await fn();
+                } finally {
+                    entry.settled = true;
+                }
+            });
+        });
+        afterEach(() => vi.restoreAllMocks());
+
+        test('a pull that applies records each phase it ran, all closed', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+            stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+
+            const result = await syncManager.pull();
+
+            expect(result.ok).toBe(true);
+            expect(payload.applied).toBe('{"remote":1}');
+            const names = phases.map((entry) => entry.name);
+            for (const phase of [
+                'download',
+                'manifest-check',
+                'flush',
+                'build-local',
+                'hash-local',
+                'compare',
+                'remember',
+            ]) {
+                expect(names).toContain(`sync:pull:${phase}`);
+            }
+            expect(phases.every((entry) => entry.name.startsWith('sync:pull:') && entry.settled)).toBe(true);
+        });
+
+        test('a failing download still closes its phase and fails as it did', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            gist.readError = new Error('network down');
+
+            const result = await syncManager.pull();
+
+            expect(result.ok).toBe(false);
+            expect(phases.map((entry) => entry.name)).toEqual(['sync:pull:download']);
+            expect(phases[0].settled).toBe(true);
+        });
     });
 
     test('leaves everything alone when the remote is not newer', async () => {

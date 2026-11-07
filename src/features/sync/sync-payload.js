@@ -41,6 +41,7 @@ import {
 } from '../../utils/sync-merge-registry.js';
 import { GistError } from './gist-client.js';
 import { yieldToBrowser } from '../../utils/yield-to-browser.js';
+import { syncPhase } from './sync-phase.js';
 
 /** Matches the full-backup format, because that is what this produces */
 const FORMAT_VERSION = 1;
@@ -1194,7 +1195,9 @@ function refoldIfAppeared(registration, context) {
  *   the payload text as actually applied
  */
 export async function applyPayload(json, { mode = 'pull', baseline = null, retryHeld = false, heldKeys = null } = {}) {
-    const payload = await parsePayloadSliced(json);
+    // Each phase is named for the PFormance stall ledger; observation only
+    const phase = (name, fn) => syncPhase('pull', name, fn);
+    const payload = await phase('parse', () => parsePayloadSliced(json));
     await pageFrame();
     // Before anything is dropped as unowned: keys another script registered,
     // on this device on an earlier load or on another device, are carried
@@ -1291,15 +1294,13 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
                 if (splitRetiredKey(storeName, entries, key)) splitRetired = true;
             }
         }
-        const histories = await mergeLocalHistories(payload, foldBaseline, heldIds);
+        const histories = await phase('merge', () => mergeLocalHistories(payload, foldBaseline, heldIds));
         const mergeHeld = histories.held;
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it
         // already holds is noted, to be left out once `applied` is taken below
-        const { sameByStore, retentionDropped, displaced } = await weighAgainstLocal(
-            payload,
-            mode === 'merge' ? baseline : null,
-            histories.same
+        const { sameByStore, retentionDropped, displaced } = await phase('weigh', () =>
+            weighAgainstLocal(payload, mode === 'merge' ? baseline : null, histories.same)
         );
 
         // What is remembered as "the state of this device" has to be what was
@@ -1319,7 +1320,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             Boolean(settingsStore);
         // ...and again around re-serializing it, which costs about as much
         if (rewrote) await pageFrame();
-        const applied = rewrote ? await stringifyPayloadSliced(payload) : json;
+        const applied = rewrote ? await phase('serialize', () => stringifyPayloadSliced(payload)) : json;
         if (rewrote) await pageFrame();
 
         // After `applied`, which describes the data as it now stands here: a
@@ -1346,7 +1347,9 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
 
         let imported;
         try {
-            imported = await importEverything(payload, { liveSafeMerge: true, folds: histories.refolds });
+            imported = await phase('write', () =>
+                importEverything(payload, { liveSafeMerge: true, folds: histories.refolds })
+            );
         } catch (error) {
             await restoreMigrationRecords(migrationRecords);
             throw error;
@@ -1424,8 +1427,10 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
     }
     // The records that took the pull under a running page re-read what it wrote
     if (announcement) {
-        await settlePendingWrites();
-        announceSyncPullApplied(announcement.written, announcement.deleted);
+        await phase('announce', async () => {
+            await settlePendingWrites();
+            announceSyncPullApplied(announcement.written, announcement.deleted);
+        });
     }
     return result;
 }

@@ -81,7 +81,13 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 
 vi.mock('../../utils/performance-monitor.js', () => ({
-    default: { mark: () => {}, sinceBoot: () => 0, snapshot: () => {}, enabled: false },
+    default: {
+        mark: () => {},
+        sinceBoot: () => 0,
+        snapshot: () => {},
+        traceAsync: (_name, fn) => fn(),
+        enabled: false,
+    },
 }));
 
 // Counted, passed through, and a place to act from inside a yield
