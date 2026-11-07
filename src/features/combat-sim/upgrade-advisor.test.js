@@ -233,6 +233,9 @@ const {
     generateLabyrinthBuffCandidatesFromEditor,
     generateGuildShrineCandidates,
     generateHouseCandidates,
+    nonCombatHouseBundle,
+    isNonCombatHouseRoom,
+    houseRoomsOf,
     houseRoomAffectsCombat,
     houseRoomMovesWinRate,
     houseUpgradeMaterials,
@@ -4435,6 +4438,131 @@ describe('house upgrade candidates', () => {
     test('clamps a target level above the cap', () => {
         const candidates = generateHouseCandidates({ houseRooms: { '/house_rooms/dojo': 3 } }, houseGameData(), 99);
         expect(candidates.find((c) => c.roomHrid === '/house_rooms/dojo').upgradeLevel).toBe(8);
+    });
+
+    describe('All non-combat rooms +1', () => {
+        const WISDOM = { typeHrid: '/buff_types/wisdom' };
+        const RARE = { typeHrid: '/buff_types/rare_find' };
+        const EFFICIENCY = { typeHrid: '/buff_types/efficiency' };
+        function bundleGameData() {
+            const data = houseGameData();
+            data.houseRoomDetailMap['/house_rooms/dairy_barn'] = {
+                name: 'Dairy Barn',
+                actionBuffs: [EFFICIENCY],
+                globalBuffs: [WISDOM, RARE],
+                upgradeCostsMap: {
+                    3: [{ itemHrid: '/items/coin', count: 500 }],
+                    4: [{ itemHrid: '/items/coin', count: 900 }],
+                },
+            };
+            data.houseRoomDetailMap['/house_rooms/brewery'].upgradeCostsMap = {
+                1: [{ itemHrid: '/items/coin', count: 100 }],
+                2: [
+                    { itemHrid: '/items/coin', count: 200 },
+                    { itemHrid: '/items/lumber', count: 4 },
+                ],
+            };
+            data.houseRoomDetailMap['/house_rooms/empty'] = { name: 'Empty', upgradeCostsMap: {} };
+            return data;
+        }
+        const player = {
+            houseRooms: { '/house_rooms/dojo': 3, '/house_rooms/brewery': 1, '/house_rooms/dairy_barn': 2 },
+        };
+
+        test('a non-combat room has buffs but none that can change a fight; combat rooms and buff-less rooms are not', () => {
+            const map = bundleGameData().houseRoomDetailMap;
+            expect(isNonCombatHouseRoom(map['/house_rooms/dairy_barn'])).toBe(true);
+            expect(isNonCombatHouseRoom(map['/house_rooms/brewery'])).toBe(true);
+            expect(isNonCombatHouseRoom(map['/house_rooms/dojo'])).toBe(false);
+            expect(isNonCombatHouseRoom(map['/house_rooms/gym'])).toBe(false);
+            expect(isNonCombatHouseRoom(map['/house_rooms/empty'])).toBe(false);
+        });
+
+        test('one candidate raising every non-combat room one level, labelled plainly', () => {
+            const bundle = nonCombatHouseBundle(player, bundleGameData());
+            expect(bundle).toMatchObject({
+                type: 'house',
+                slot: 'house|non_combat_all',
+                bundle: true,
+                levelsBought: 2,
+            });
+            expect(bundle.rooms.map((r) => [r.roomHrid, r.currentLevel, r.upgradeLevel])).toEqual([
+                ['/house_rooms/brewery', 1, 2],
+                ['/house_rooms/dairy_barn', 2, 3],
+            ]);
+            expect(bundle.description).toBe('All non-combat rooms +1 (2 rooms: Brewery, Dairy Barn)');
+        });
+
+        test('only with the option; independent of the Lv box, Steps and Targets; with Combat rooms only too', () => {
+            const plain = generateHouseCandidates(player, bundleGameData(), 0, null, {});
+            expect(plain.some((c) => c.bundle)).toBe(false);
+            const options = { nonCombatBundle: true, steps: 3, skipSkillingRooms: true };
+            const withBundle = generateHouseCandidates(
+                player,
+                bundleGameData(),
+                6,
+                { '/house_rooms/dojo': 5 },
+                options
+            );
+            const bundle = withBundle.find((c) => c.bundle);
+            expect(bundle.rooms.map((r) => r.upgradeLevel)).toEqual([2, 3]);
+            // Combat rooms only left the non-combat rooms out on their own; the bundle still raises them
+            expect(withBundle.filter((c) => !c.bundle).map((c) => c.roomHrid)).toEqual(['/house_rooms/dojo']);
+        });
+
+        test('rooms at the max are left out; none left is no candidate', () => {
+            const atMax = { houseRooms: { '/house_rooms/brewery': 8, '/house_rooms/dairy_barn': 2 } };
+            expect(nonCombatHouseBundle(atMax, bundleGameData()).rooms.map((r) => r.roomHrid)).toEqual([
+                '/house_rooms/dairy_barn',
+            ]);
+            const allMax = { houseRooms: { '/house_rooms/brewery': 8, '/house_rooms/dairy_barn': 8 } };
+            expect(nonCombatHouseBundle(allMax, bundleGameData())).toBeNull();
+            expect(
+                generateHouseCandidates(allMax, bundleGameData(), 0, null, { nonCombatBundle: true }).some(
+                    (c) => c.bundle
+                )
+            ).toBe(false);
+        });
+
+        test('priced as the sum of every room’s bill; one unpriced room leaves the whole row unpriced and named', () => {
+            resolveItemPrice.mockImplementation((hrid) => ({ price: hrid === '/items/lumber' ? 50 : 0 }));
+            const bundle = nonCombatHouseBundle(player, bundleGameData());
+            expect(calculateUpgradeCost(bundle, bundleGameData())).toBe(200 + 4 * 50 + 500);
+            expect(houseUpgradeMaterials(bundle, bundleGameData()).map((m) => [m.itemHrid, m.count])).toEqual([
+                ['/items/lumber', 4],
+            ]);
+
+            resolveItemPrice.mockImplementation(() => ({ price: 0 }));
+            expect(calculateUpgradeCost(bundle, bundleGameData())).toBeNull();
+            expect(explainUpgradeCost(bundle, bundleGameData()).unpriced).toEqual(['Brewery']);
+        });
+
+        test('applied, every room goes up; it conflicts with each room it raises', () => {
+            const bundle = nonCombatHouseBundle(player, bundleGameData());
+            const dto = applyCandidateToDTO({ equipment: {}, houseRooms: { '/house_rooms/dojo': 3 } }, bundle);
+            expect(dto.houseRooms).toEqual({
+                '/house_rooms/dojo': 3,
+                '/house_rooms/brewery': 2,
+                '/house_rooms/dairy_barn': 3,
+            });
+            // A Brewery row as the generator writes one (it would only offer it with Combat rooms only off
+            // and a combat buff on the room, which this fixture's Brewery lacks)
+            const brewery = {
+                type: 'house',
+                slot: 'house|/house_rooms/brewery',
+                roomHrid: '/house_rooms/brewery',
+                roomName: 'Brewery',
+                currentLevel: 1,
+                upgradeLevel: 2,
+            };
+            const shared = conflictKeys(bundle).filter((key) => conflictKeys(brewery).includes(key));
+            expect(shared).toEqual(['house:house|/house_rooms/brewery']);
+            // A single room keeps the key it always had
+            expect(conflictKeys(brewery)).toEqual([`house:${brewery.slot}`]);
+            expect(houseRoomsOf(brewery)).toEqual([
+                { roomHrid: '/house_rooms/brewery', roomName: 'Brewery', currentLevel: 1, upgradeLevel: 2 },
+            ]);
+        });
     });
 
     describe('Steps', () => {

@@ -1571,6 +1571,7 @@ export function generateCandidates(
                 winRateOnly: Boolean(options?.houseWinRateOnly),
                 skipSkillingRooms: Boolean(options?.skipSkillingRooms),
                 steps: options?.houseSteps,
+                nonCombatBundle: Boolean(options?.houseNonCombatBundle),
             })
         );
     }
@@ -1878,6 +1879,75 @@ export function describeHouseScan(playerDTO, gameData, options = {}) {
     return { rooms: Object.keys(roomMap).length, withBuffs, combatRelevant, belowCap };
 }
 
+/** The slot the "All non-combat rooms +1" bundle is filed under */
+export const NON_COMBAT_HOUSE_BUNDLE_SLOT = 'house|non_combat_all';
+
+/**
+ * The rooms a house candidate raises, each `{roomHrid, roomName, currentLevel, upgradeLevel}`: one for an
+ * ordinary room row, every member for the non-combat bundle.
+ * @param {Object} candidate - A `house` candidate
+ * @returns {Array<Object>}
+ */
+export function houseRoomsOf(candidate) {
+    if (Array.isArray(candidate?.rooms)) return candidate.rooms;
+    if (!candidate?.roomHrid) return [];
+    return [
+        {
+            roomHrid: candidate.roomHrid,
+            roomName: candidate.roomName,
+            currentLevel: candidate.currentLevel || 0,
+            upgradeLevel: candidate.upgradeLevel || 0,
+        },
+    ];
+}
+
+/**
+ * Does this room have buffs, none of which can change whether a fight is won? The rooms "Combat rooms only"
+ * leaves out, and the ones the non-combat bundle raises.
+ * @param {Object} roomDetail - Entry from houseRoomDetailMap
+ * @returns {boolean}
+ */
+export function isNonCombatHouseRoom(roomDetail) {
+    const buffs = [...(roomDetail?.actionBuffs || []), ...(roomDetail?.globalBuffs || [])];
+    return buffs.length > 0 && !houseRoomMovesWinRate(roomDetail);
+}
+
+/**
+ * One candidate that raises every non-combat room (see `isNonCombatHouseRoom`) one level together, so a
+ * player can see whether those rooms matter at all. Rooms at the max are left out; none left is no candidate.
+ * Independent of the Lv box, Steps and the Targets grid: always +1 per room.
+ * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
+ * @param {Object} gameData - Game data payload (houseRoomDetailMap)
+ * @returns {Object|null} A `house` candidate carrying `rooms`, or null
+ */
+export function nonCombatHouseBundle(playerDTO, gameData) {
+    const roomMap = gameData?.houseRoomDetailMap || {};
+    const rooms = [];
+    for (const [roomHrid, roomDetail] of Object.entries(roomMap)) {
+        if (!isNonCombatHouseRoom(roomDetail)) continue;
+        const currentLevel = Math.max(0, Math.floor(Number(playerDTO?.houseRooms?.[roomHrid]) || 0));
+        if (currentLevel >= maxHouseRoomLevel()) continue;
+        const roomName = roomDetail.name || roomHrid.split('/').pop().replace(/_/g, ' ');
+        rooms.push({ roomHrid, roomName, currentLevel, upgradeLevel: currentLevel + 1 });
+    }
+    if (!rooms.length) return null;
+    const label = 'All non-combat rooms +1';
+    return {
+        type: 'house',
+        slot: NON_COMBAT_HOUSE_BUNDLE_SLOT,
+        roomHrid: null,
+        roomName: label,
+        rooms,
+        bundle: true,
+        currentLevel: 0,
+        upgradeLevel: 1,
+        levelsBought: rooms.length,
+        description: `${label} (${rooms.length} room${rooms.length === 1 ? '' : 's'}: ${rooms
+            .map((room) => room.roomName)
+            .join(', ')})`,
+    };
+}
+
 /**
  * Generate house room upgrade candidates for every combat-relevant room.
  * @param {Object} playerDTO - Player DTO (houseRooms carries current levels)
@@ -1887,7 +1957,8 @@ export function describeHouseScan(playerDTO, gameData, options = {}) {
  *   over targetLevel, and a room absent from it is skipped (blank means skip)
  * @param {Object} [options] - `{ winRateOnly, skipSkillingRooms }`; see `houseRoomMovesWinRate`. `steps` (the
  *   Steps box, 1 when unset): above 1 every room is offered at +1, +2, ... +steps (capped at the max level) and
- *   `targetLevel` is not read; `perRoomTargets` still wins over both, one row per room
+ *   `targetLevel` is not read; `perRoomTargets` still wins over both, one row per room. `nonCombatBundle` adds
+ *   the one "All non-combat rooms +1" candidate (`nonCombatHouseBundle`)
  * @returns {Array<Object>} Candidates of type 'house'
  */
 export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, perRoomTargets = null, options = {}) {
@@ -1931,6 +2002,10 @@ export function generateHouseCandidates(playerDTO, gameData, targetLevel = 0, pe
                 description: `${roomName} Lv${currentLevel} → Lv${upgradeLevel}`,
             });
         }
+    }
+    if (options.nonCombatBundle) {
+        const bundle = nonCombatHouseBundle(playerDTO, gameData);
+        if (bundle) candidates.push(bundle);
     }
     return candidates;
 }
@@ -2645,6 +2720,16 @@ function formatTokenNote(tokens, tokenGold) {
  * @returns {number|null} Total cost, or null when a level or material has no price
  */
 function calculateHouseUpgradeCost(candidate, gameData) {
+    if (Array.isArray(candidate?.rooms)) {
+        // The non-combat bundle: the sum of every room's own bill, unknown when any one of them is
+        let total = 0;
+        for (const room of candidate.rooms) {
+            const cost = calculateHouseUpgradeCost(room, gameData);
+            if (cost == null) return null;
+            total += cost;
+        }
+        return candidate.rooms.length && total > 0 ? total : null;
+    }
     const costsMap = gameData?.houseRoomDetailMap?.[candidate.roomHrid]?.upgradeCostsMap;
     if (!costsMap) return null;
 
@@ -2687,19 +2772,21 @@ function calculateHouseUpgradeCost(candidate, gameData) {
  * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number|null, total: number|null}>}
  */
 export function houseUpgradeMaterials(candidate, gameData) {
-    const costsMap = gameData?.houseRoomDetailMap?.[candidate?.roomHrid]?.upgradeCostsMap;
-    if (!costsMap) return [];
-
     const counts = new Map();
-    for (let level = (candidate.currentLevel || 0) + 1; level <= (candidate.upgradeLevel || 0); level++) {
-        const costs = costsMap[level] ?? costsMap[String(level)];
-        if (!Array.isArray(costs)) continue;
-        for (const entry of costs) {
-            const count = Number(entry?.count) || 0;
-            if (!entry?.itemHrid || count <= 0 || entry.itemHrid === '/items/coin') continue;
-            counts.set(entry.itemHrid, (counts.get(entry.itemHrid) || 0) + count);
+    for (const room of houseRoomsOf(candidate)) {
+        const costsMap = gameData?.houseRoomDetailMap?.[room.roomHrid]?.upgradeCostsMap;
+        if (!costsMap) continue;
+        for (let level = (room.currentLevel || 0) + 1; level <= (room.upgradeLevel || 0); level++) {
+            const costs = costsMap[level] ?? costsMap[String(level)];
+            if (!Array.isArray(costs)) continue;
+            for (const entry of costs) {
+                const count = Number(entry?.count) || 0;
+                if (!entry?.itemHrid || count <= 0 || entry.itemHrid === '/items/coin') continue;
+                counts.set(entry.itemHrid, (counts.get(entry.itemHrid) || 0) + count);
+            }
         }
     }
+    if (!counts.size) return [];
 
     const lines = [...counts.entries()].map(([itemHrid, count]) => {
         const { price } = resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' });
@@ -4533,13 +4620,19 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
         // Coins at face value plus materials at their buy price — a build cost,
         // not a listing for the room
         const total = calculateHouseUpgradeCost(candidate, gameData);
+        // The bundle names the rooms whose bill could not be priced, so the row says what is missing
+        const unpriced = Array.isArray(candidate.rooms)
+            ? candidate.rooms
+                  .filter((room) => calculateHouseUpgradeCost(room, gameData) == null)
+                  .map((room) => room.roomName || room.roomHrid)
+            : [];
         return {
             buys: [],
             credits: [],
             gross: total,
             credit: 0,
             net: total,
-            unpriced: [],
+            unpriced,
             creditApplied: false,
             source: total == null ? null : 'craft',
         };
@@ -4736,7 +4829,8 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
  *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
  *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
  *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
- *   offered per room / shrine at +1 each, default 1), enhancementSteps (above 1, each piece is also offered
+ *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
+ *   +1" row), enhancementSteps (above 1, each piece is also offered
  *   at the next N enhancement levels besides its breakpoint), skipBackSlot, combatLevelTargets, charmTier,
  *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
  *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
@@ -4764,6 +4858,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         abilitySteps = 1,
         enhancementSteps = 1,
         houseSteps = 1,
+        houseNonCombatBundle = false,
         guildShrineSteps = 1,
         combatLevelType = 'increment',
         combatLevelBoost,
@@ -4823,7 +4918,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             guildShrineTargetLevel,
             // Keep the paired guild-shrine fields together; a source guard enforces this invariant.
             // prettier-ignore
-            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps, enhancementSteps }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets, guildShrineCapToGuild, isSelf, playerCount: playerDTOs.length, skipSkillingRooms, abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps, enhancementSteps, houseNonCombatBundle }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
@@ -4977,9 +5072,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             // Raising a skill moves who in the party is highest level, so every member's level-gap XP penalty with it
             recomputeLevelGapDebuffs(modifiedDTOs);
         } else if (candidate.type === 'house') {
-            // House room level (a room at level 0 isn't in the map yet)
+            // House room level (a room at level 0 isn't in the map yet); the non-combat bundle raises every room
             if (!modifiedDTOs[playerIndex].houseRooms) modifiedDTOs[playerIndex].houseRooms = {};
-            modifiedDTOs[playerIndex].houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+            for (const room of houseRoomsOf(candidate)) {
+                modifiedDTOs[playerIndex].houseRooms[room.roomHrid] = room.upgradeLevel;
+            }
         } else if (candidate.type === 'guild_shrine') {
             // One more level in a guild shrine buff, rebuilt at its new value
             applyGuildShrineToDTO(modifiedDTOs[playerIndex], candidate);
@@ -6843,7 +6940,12 @@ export function replacedIn(candidate, dto, gameData) {
  */
 export function conflictKeys(candidate) {
     if (candidate.type === 'combat_level') return [`skill:${candidate.skillKey}`];
-    if (candidate.type === 'house') return [`house:${candidate.slot}`];
+    // One key per room: the non-combat bundle conflicts with each room it raises, so a budget cannot buy a room
+    // on its own and again inside the bundle
+    if (candidate.type === 'house') {
+        const rooms = houseRoomsOf(candidate);
+        return rooms.length ? rooms.map((room) => `house:house|${room.roomHrid}`) : [`house:${candidate.slot}`];
+    }
     if (candidate.type === 'guild_shrine') return [`guild:${candidate.buffHrid}`];
     if (candidate.type === 'community_buff') return [`community:${candidate.buffKey}`];
     // A scroll's on and off rows are two answers about one buff; they can never
@@ -9465,7 +9567,7 @@ export function applyCandidateToDTO(playerDTO, candidate) {
     // back a confident +0.00%.
     if (candidate.type === 'house') {
         if (!dto.houseRooms) dto.houseRooms = {};
-        dto.houseRooms[candidate.roomHrid] = candidate.upgradeLevel;
+        for (const room of houseRoomsOf(candidate)) dto.houseRooms[room.roomHrid] = room.upgradeLevel;
         return dto;
     }
 

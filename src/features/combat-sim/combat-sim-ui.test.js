@@ -9316,6 +9316,93 @@ describe('the guild shrine guild-allowed cap', () => {
     });
 });
 
+describe('House options: Combat rooms only and All non-combat rooms +1', () => {
+    const q = (id) => ui.panel.querySelector(id);
+    let seen = null;
+
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.onRun = null;
+        ui.buildPanel();
+        const zone = q('#mwi-csim-zone');
+        zone.innerHTML = '<option value="/zones/a">A</option>';
+        zone.value = '/zones/a';
+        q('[data-upgrade-mode="house"]').checked = true;
+        seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+    });
+
+    afterEach(() => {
+        mocks.skipSkillingRooms = false;
+        ui.destroy();
+    });
+
+    test('Combat rooms only is the skip-skilling-rooms setting: the box writes it and follows it', () => {
+        const box = q('#mwi-csim-house-combat-only');
+        const written = [];
+        const settingCallback = mocks.settingChangeCallbacks.get('combatSim_upgradeSkipSkillingRooms');
+        mocks.settingChangeCallbacks.set('combatSim_upgradeSkipSkillingRooms', (key, value) => {
+            written.push(value);
+            mocks.skipSkillingRooms = value;
+            settingCallback?.(key, value);
+        });
+        try {
+            box.checked = true;
+            box.dispatchEvent(new Event('change'));
+            expect(written).toEqual([true]);
+            expect(box.checked).toBe(true);
+            // Changed from the settings panel: the box follows
+            mocks.skipSkillingRooms = false;
+            settingCallback?.('combatSim_upgradeSkipSkillingRooms', false);
+            expect(box.checked).toBe(false);
+        } finally {
+            mocks.settingChangeCallbacks.set('combatSim_upgradeSkipSkillingRooms', settingCallback);
+        }
+    });
+
+    test('the bundle is off by default, remembered when ticked, and sent only with House on', async () => {
+        const box = q('#mwi-csim-house-noncombat-bundle');
+        expect(box.checked).toBe(false);
+        await ui._onUpgradeAnalyze();
+        expect(seen.houseNonCombatBundle).toBe(false);
+
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        await ui._onUpgradeAnalyze();
+        expect(seen.houseNonCombatBundle).toBe(true);
+        await vi.waitFor(async () =>
+            expect(await readScoped('combatSimHouseNonCombatBundle', 'settings', false)).toBe(true)
+        );
+
+        q('[data-upgrade-mode="house"]').checked = false;
+        await ui._onUpgradeAnalyze();
+        expect(seen.houseNonCombatBundle).toBe(false);
+
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+    });
+
+    test('a bundle row offers its summed bill at the Market and no single-room Save', () => {
+        const candidate = {
+            type: 'house',
+            slot: 'house|non_combat_all',
+            roomHrid: null,
+            roomName: 'All non-combat rooms +1',
+            bundle: true,
+            rooms: [{ roomHrid: '/house_rooms/brewery', roomName: 'Brewery', currentLevel: 2, upgradeLevel: 3 }],
+            currentLevel: 0,
+            upgradeLevel: 1,
+            description: 'All non-combat rooms +1 (1 room: Brewery)',
+        };
+        const buy = upgradeRowPurchase({ candidate, cost: 1000 });
+        expect(buy.name).toBe('All non-combat rooms +1');
+        expect(buy.house.bundle).toBe(true);
+        expect(upgradeRowActionsHtml({ candidate, cost: 1000 })).not.toContain('save-house');
+    });
+});
+
 /**
  * The House-targets grid: what it shows for a room a loaded player's DTO does
  * not carry.

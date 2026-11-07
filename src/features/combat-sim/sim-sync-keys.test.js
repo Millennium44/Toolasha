@@ -77,6 +77,7 @@ const KEYS = [
     ['settings', 'combatSimSwapAuraOnly'],
     ['settings', 'combatSimShrineCapToGuild'],
     ['settings', 'combatSimBudgetConstraints'],
+    ['settings', 'combatSimHouseNonCombatBundle'],
     ['settings', 'combatSimUpgradeColumns'],
     ['settings', 'combatSimTriggerLastResult'],
     ['settings', 'combatSimAllZonesMaxTierFood'],

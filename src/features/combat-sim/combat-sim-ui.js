@@ -403,6 +403,8 @@ const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
  */
 const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
 const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
+/** Storage key for the House "All non-combat rooms +1" option (per character, off unless ticked) */
+const HOUSE_NON_COMBAT_BUNDLE_KEY = 'combatSimHouseNonCombatBundle';
 
 /**
  * Storage key for the all-zones Max-tier Food toggle.
@@ -2515,6 +2517,8 @@ function multiItemPurchase(candidate) {
 function houseRowPurchase(candidate, result) {
     const roomName = candidate.roomName || candidate.roomHrid?.split('/').pop().replace(/_/g, ' ') || 'House room';
     const targetLevel = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+    // The non-combat bundle is several rooms: no one room-level goal to save for, only the summed bill
+    const label = candidate.bundle ? roomName : `${roomName} Lv${targetLevel}`;
     const cost = Number.isFinite(result?.cost) ? result.cost : null;
 
     let materials = [];
@@ -2528,7 +2532,7 @@ function houseRowPurchase(candidate, result) {
     return {
         itemHrid: biggest?.itemHrid || null,
         enhancementLevel: 0,
-        name: `${roomName} Lv${targetLevel}`,
+        name: label,
         quantity: biggest?.count || 1,
         // Nothing to reserve in the gear list: a room is not a slot
         savable: false,
@@ -2537,7 +2541,8 @@ function houseRowPurchase(candidate, result) {
             houseRoomHrid: candidate.roomHrid,
             targetLevel,
             cost,
-            label: `${roomName} Lv${targetLevel}`,
+            label,
+            ...(candidate.bundle ? { bundle: true } : {}),
         },
         materials,
     };
@@ -2671,7 +2676,9 @@ export function upgradeRowActionsHtml(result) {
     // handoff for the material the bill is mostly made of
     if (buy.house) {
         const cost = buy.house.cost == null ? '' : String(buy.house.cost);
-        const saveHouse = `<button type="button" data-buy-action="save-house"
+        const saveHouse = buy.house.bundle
+            ? ''
+            : `<button type="button" data-buy-action="save-house"
             data-house-hrid="${buy.house.houseRoomHrid}" data-house-level="${buy.house.targetLevel}"
             data-house-cost="${cost}" data-house-label="${escapeAttribute(buy.house.label)}"
             title="Save towards ${escapeAttribute(buy.house.label)} in Equipment Savings"
@@ -3311,6 +3318,14 @@ const MODE_OPTIONS = {
                     title="${SINGLE_STEPS_TITLE('room')}">
             </label>
             <button id="mwi-csim-house-targets-toggle" title="Set a desired target level per room instead of one level for all" style="${CHIP_BUTTON_STYLE}">Targets</button>
+            <label id="mwi-csim-house-combat-only-label" title="Only rooms with a fighting stat: damage, armor, accuracy, evasion, speed, crit, amplify, resistance, thorns, regen, life steal, tenacity, retaliation, healing or threat. Leaves out the skilling rooms, whose only combat effect is the small Wisdom and Rare Find every room gives. Saves simulation time. The same switch as the Combat Simulator setting &quot;skip skilling house rooms&quot;." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-house-combat-only" style="margin:0; cursor:pointer;">
+                Combat rooms only
+            </label>
+            <label id="mwi-csim-house-noncombat-bundle-label" title="Add one more row: every non-combat room (the ones Combat rooms only leaves out) raised one level together, priced as the sum of their upgrade costs and simulated once. Shows whether those rooms matter to this fight at all. Rooms already at the max are left out of it." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-house-noncombat-bundle" style="margin:0; cursor:pointer;">
+                All non-combat rooms +1
+            </label>
         </span>`;
     },
     get guild_shrine() {
@@ -4367,7 +4382,21 @@ class CombatSimUI {
                 this._buildHouseTargets();
             }
         });
+        // "Combat rooms only" is the in-panel face of the skip-skilling-rooms setting: one switch, two places
+        const combatOnlyBox = this.panel.querySelector('#mwi-csim-house-combat-only');
+        if (combatOnlyBox) {
+            combatOnlyBox.checked = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
+            combatOnlyBox.addEventListener('change', () => {
+                config.setSetting('combatSim_upgradeSkipSkillingRooms', Boolean(combatOnlyBox.checked));
+            });
+        }
+        this._restoreHouseNonCombatBundle();
+        this.panel.querySelector('#mwi-csim-house-noncombat-bundle')?.addEventListener('change', () => {
+            this._saveHouseNonCombatBundle();
+        });
         this._unsubscribeSkipSkillingRooms = config.onSettingChange('combatSim_upgradeSkipSkillingRooms', () => {
+            const box = this.panel?.querySelector('#mwi-csim-house-combat-only');
+            if (box) box.checked = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
             const grid = this.panel?.querySelector('#mwi-csim-house-targets');
             if (!grid || grid.style.display === 'none') return;
             const entered = new Map(
@@ -11189,6 +11218,33 @@ class CombatSimUI {
     }
 
     /**
+     * Persist the House "All non-combat rooms +1" option, per character.
+     * @private
+     */
+    async _saveHouseNonCombatBundle() {
+        try {
+            const box = this.panel?.querySelector('#mwi-csim-house-noncombat-bundle');
+            await writeScoped(HOUSE_NON_COMBAT_BUNDLE_KEY, Boolean(box?.checked));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the non-combat rooms option:', error);
+        }
+    }
+
+    /**
+     * Restore the House "All non-combat rooms +1" option, off until the player ticks it.
+     * @private
+     */
+    async _restoreHouseNonCombatBundle() {
+        try {
+            const saved = await readScoped(HOUSE_NON_COMBAT_BUNDLE_KEY, 'settings', false);
+            const box = this.panel?.querySelector('#mwi-csim-house-noncombat-bundle');
+            if (box) box.checked = Boolean(saved);
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to restore the non-combat rooms option:', error);
+        }
+    }
+
+    /**
      * Restore the remembered "Guild-allowed only" sub-option, which defaults on:
      * a shrine level the guild cannot sell is not an upgrade anyone can buy.
      * @private
@@ -11245,6 +11301,7 @@ class CombatSimUI {
                 'swapAuraOnly',
                 'shrineCapToGuild',
                 'budgetConstraints',
+                'houseNonCombatBundle',
             ]);
             const settings = pulledNames(written, 'settings', {
                 ...Object.fromEntries(
@@ -11271,6 +11328,7 @@ class CombatSimUI {
             if (has('swapAuraOnly')) work.push(this._restoreSwapAuraOnly());
             if (has('budgetConstraints')) work.push(this._restoreBudgetConstraints());
             if (has('shrineCapToGuild')) work.push(this._restoreShrineCapToGuild());
+            if (has('houseNonCombatBundle')) work.push(this._restoreHouseNonCombatBundle());
             if (has('allZonesMaxTierFood')) work.push(this._loadMaxTierFoodPref());
             if (has('allZonesScoreScale')) {
                 work.push(
@@ -11502,6 +11560,8 @@ class CombatSimUI {
                   )
                 : 0;
             const houseTargets = isHouseMode ? this._getHouseTargets() : null;
+            const houseNonCombatBundle =
+                isHouseMode && Boolean(this.panel.querySelector('#mwi-csim-house-noncombat-bundle')?.checked);
             const houseSteps = isHouseMode
                 ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-house-steps')?.value)
                 : 1;
@@ -11568,6 +11628,7 @@ class CombatSimUI {
                     houseTargetLevel,
                     houseTargets,
                     houseSteps,
+                    houseNonCombatBundle,
                     guildShrineTargetLevel,
                     guildShrineTargets,
                     guildShrineSteps,
