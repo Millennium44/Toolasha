@@ -1684,6 +1684,23 @@ describe('the labyrinth burn trend', () => {
         expect(text).toMatch(/[▁▂▃▄▅▆▇█]{3}/);
     });
 
+    test('the left-over line reads only runs watched from the door to the end', async () => {
+        // A run seen once at the door and closed by the next run's arrival
+        // left what it carried in on the record; so did a run joined part-way
+        // on the restocked pile. Neither is what a run left over.
+        const carried = { torch: 100, shroud: 4, beacon: 5 };
+        const withLeft = (fields, left) => ({ ...ledgerRun(fields), left });
+        const text = await draw([
+            { ...withLeft({ key: 'a', torch: 0 }, carried), endedByInference: true },
+            withLeft({ key: 'b' }, { torch: 16, shroud: 1, beacon: 0 }),
+            withLeft({ key: 'c', torch: 0, trusted: false }, carried),
+            withLeft({ key: 'd' }, { torch: 7, shroud: 3, beacon: 2 }),
+        ]);
+        expect(text).toContain('Left over after the last 2 runs (newest first):');
+        expect(text).toContain('16, 7');
+        expect(text).not.toContain('100, 16');
+    });
+
     test('an empty ledger draws neither line', async () => {
         const text = await draw([]);
         expect(text).not.toContain('Burn per run:');

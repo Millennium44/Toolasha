@@ -9,6 +9,66 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
+
+/**
+ * Whether a ledger record measured its run: watched from the door (its start
+ * is the run's real start) and seen to end (its leftovers are the run's real
+ * leftovers). A run joined part-way has a start of "wherever we came in"; one
+ * closed by inference has leftovers of "wherever we last looked" — which, for a
+ * run seen only at the door, is everything it carried in.
+ * @param {Object} run - Ledger record
+ * @returns {boolean}
+ */
+export function isMeasuredRun(run) {
+    return run?.startTrusted === true && run?.endedByInference !== true;
+}
+
+/**
+ * The ledger with each run once, in the order given.
+ *
+ * The ring is merged by the key text a run was first seen with, but the server
+ * spells one run's `startedAt` at two precisions (the opening message at
+ * nanoseconds, every later one at milliseconds). Before the append guard
+ * compared stamps, a reload followed by the server's post-run re-send banked a
+ * finished run a second time under the other spelling, on the restocked pile:
+ * a twin "ending" with the whole carry left over. Those stored twins are not
+ * rewritten; they are read past here. The earliest ending of a run stands — the
+ * later one is the re-send. Keys that are not timestamps are left alone.
+ *
+ * @param {Array<Object>} runs - Ledger records, newest first
+ * @returns {Array<Object>}
+ */
+export function distinctRuns(runs) {
+    const list = Array.isArray(runs) ? runs : [];
+    const firstEnding = new Map();
+    const stampOf = (run) => {
+        const stamp = labyrinthRunStamp(run?.key);
+        return stamp && /^\d+$/.test(stamp) ? stamp : null;
+    };
+    for (const run of list) {
+        const stamp = stampOf(run);
+        if (!stamp) continue;
+        const kept = firstEnding.get(stamp);
+        if (!kept || (Number(run?.endedAt) || 0) < (Number(kept?.endedAt) || 0)) firstEnding.set(stamp, run);
+    }
+    return list.filter((run) => {
+        const stamp = stampOf(run);
+        return !stamp || firstEnding.get(stamp) === run;
+    });
+}
+
+/**
+ * The runs whose figures are measurements: each run once, watched from the
+ * door to the end, newest first. Every per-run reading (leftovers, burn,
+ * torches per floor) reads this population, so a line never shows a run the
+ * line beside it left out.
+ * @param {Array<Object>} runs - Ledger records, newest first
+ * @returns {Array<Object>}
+ */
+export function measuredRuns(runs) {
+    return distinctRuns(runs).filter(isMeasuredRun);
+}
 
 /**
  * The grid width of a floor — 4×4 on floor 1, one wider per floor, 8×8 from
@@ -132,7 +192,7 @@ export function rushFloorTable(deepestFloor, torchCap, preserve = 0) {
  */
 export function observedUse(runs, kind) {
     const out = [];
-    for (const run of runs || []) {
+    for (const run of distinctRuns(runs)) {
         // A run first seen mid-way (a reload, a tab opened late) has its
         // "start" set to wherever it was seen, so its spend is a floor, not a
         // measurement — averaging those in is how 350-torch runs read as 106.
@@ -208,7 +268,7 @@ export function burnSummary(runs, kind) {
  */
 export function torchesPerFloor(runs) {
     const out = [];
-    for (const run of runs || []) {
+    for (const run of distinctRuns(runs)) {
         if (run?.startTrusted !== true) continue;
         if (run?.endedByInference === true) continue;
         const floor = Math.floor(Number(run?.floor) || 0);
