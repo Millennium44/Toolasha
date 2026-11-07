@@ -81,6 +81,7 @@ const KEYS = [
     ['settings', 'combatSimBudgetConstraints'],
     ['settings', 'combatSimHouseNonCombatBundle'],
     ['settings', 'combatSimResimCloseCalls'],
+    ['settings', 'combatSimUpgradeInputs'],
     ['settings', 'combatSimUpgradeColumns'],
     ['settings', 'combatSimTriggerLastResult'],
     ['settings', 'combatSimAllZonesMaxTierFood'],

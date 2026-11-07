@@ -17405,3 +17405,291 @@ describe('the change beside a figure', () => {
         expect(rate).not.toContain('title=');
     });
 });
+
+describe('Upgrade tab inputs are remembered per character', () => {
+    const KEY = (id) => `settings:combatSimUpgradeInputs_${id}`;
+    const q = (id) => ui.panel.querySelector(id);
+    const settle = async () => {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+    const restored = () => vi.waitFor(() => expect(ui._upgradeInputsRestored).toBe(true));
+    /** Set a control the way a player does: value, then the change event */
+    const set = (id, value) => {
+        const el = q(id);
+        if (el.type === 'checkbox') el.checked = value;
+        else el.value = value;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const open = async (characterId = 'char1') => {
+        mocks.characterId = characterId;
+        ui.buildPanel();
+        await restored();
+    };
+
+    beforeEach(() => {
+        mocks.characterId = 'char1';
+        mocks.editedDTOs = null;
+    });
+
+    afterEach(() => {
+        mocks.characterId = 'char1';
+        mocks.editedDTOs = null;
+        ui.destroy();
+    });
+
+    test('every kept control is written under the character and read back by the next panel', async () => {
+        await open();
+        // The charm options exist once Combat Lv has been ticked
+        ui._populateCharmSelect();
+        set('#mwi-csim-upgrade-level-type', 'next_multiple');
+        set('#mwi-csim-upgrade-target-level', '10');
+        set('#mwi-csim-upgrade-steps', '3');
+        set('#mwi-csim-combat-level-type', 'next_multiple');
+        set('#mwi-csim-combat-level-boost', '25');
+        set('#mwi-csim-combat-level-steps', '2');
+        set('#mwi-csim-charm-select', 'none');
+        set('#mwi-csim-charm-enh', '4');
+        set('#mwi-csim-house-target-level', '5');
+        set('#mwi-csim-shrine-target-level', '3');
+        set('#mwi-csim-shrine-steps', '1');
+        set('#mwi-csim-community-target-level', '12');
+        set('#mwi-csim-upgrade-skip-back', true);
+        set('#mwi-csim-equip-step-kind', 'levels');
+        set('#mwi-csim-equip-steps', '4');
+        set('#mwi-csim-upgrade-hours', '250');
+        await settle();
+
+        expect(mocks.store.get(KEY('char1')).values).toMatchObject({
+            abilityType: 'next_multiple',
+            abilityLevel: '10',
+            abilitySteps: '3',
+            combatLevel: '25',
+            charm: 'none',
+            charmEnh: '4',
+            houseLevel: '5',
+            communityLevel: '12',
+            skipBack: true,
+            equipKind: 'levels',
+            equipSteps: '4',
+        });
+        expect(mocks.store.get(KEY('char1')).hours).toBe(250);
+        expect(mocks.store.has(KEY('char2'))).toBe(false);
+
+        ui.destroy();
+        await open();
+
+        expect(q('#mwi-csim-upgrade-level-type').value).toBe('next_multiple');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('10');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('3');
+        expect(q('#mwi-csim-combat-level-type').value).toBe('next_multiple');
+        expect(q('#mwi-csim-combat-level-boost').value).toBe('25');
+        expect(q('#mwi-csim-combat-level-steps').value).toBe('2');
+        expect(q('#mwi-csim-charm-select').value).toBe('none');
+        expect(q('#mwi-csim-charm-enh').value).toBe('4');
+        expect(q('#mwi-csim-house-target-level').value).toBe('5');
+        expect(q('#mwi-csim-shrine-target-level').value).toBe('3');
+        expect(q('#mwi-csim-community-target-level').value).toBe('12');
+        expect(q('#mwi-csim-upgrade-skip-back').checked).toBe(true);
+        expect(q('#mwi-csim-equip-step-kind').value).toBe('levels');
+        expect(q('#mwi-csim-equip-steps').value).toBe('4');
+        // Both Hours boxes are one setting
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('250');
+        expect(q('#mwi-csim-hours').value).toBe('250');
+    });
+
+    test('the run reads what the restored boxes show', async () => {
+        mocks.store.set(KEY('char1'), {
+            v: 1,
+            values: { abilityType: 'next_multiple', abilityLevel: '10', abilitySteps: '3', equipSteps: '2' },
+            hours: 40,
+        });
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        await open();
+        selectZone();
+        let seen = null;
+        mocks.onRun = (params) => {
+            seen = params;
+        };
+        await ui._onUpgradeAnalyze();
+        mocks.onRun = null;
+
+        expect(seen.hours).toBe(40);
+        expect(seen.abilityLevelType).toBe('next_multiple');
+        expect(seen.abilityTargetLevel).toBe(10);
+        expect(seen.abilitySteps).toBe(3);
+        expect(seen.enhancementSteps).toBe(2);
+    });
+
+    test('nothing saved leaves the defaults, with the default-hours setting for Hours', async () => {
+        await open();
+        expect(q('#mwi-csim-upgrade-level-type').value).toBe('increment');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('5');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('1');
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('100');
+        expect(q('#mwi-csim-upgrade-skip-back').checked).toBe(false);
+        // Opening the panel alone writes nothing
+        await settle();
+        expect(mocks.store.has(KEY('char1'))).toBe(false);
+    });
+
+    test("another character's inputs are never read, and a switch shows the arriving character's own", async () => {
+        mocks.store.set(KEY('char2'), { v: 1, values: { abilityLevel: '17', equipSteps: '5' }, hours: 77 });
+        await open('char1');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('5');
+        set('#mwi-csim-equip-steps', '2');
+        await settle();
+
+        ui.destroy();
+        await open('char2');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('17');
+        expect(q('#mwi-csim-equip-steps').value).toBe('5');
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('77');
+        expect(mocks.store.get(KEY('char1')).values.equipSteps).toBe('2');
+        expect(mocks.store.get(KEY('char2')).values.equipSteps).toBe('5');
+    });
+
+    test('a saved value that is not valid now is ignored', async () => {
+        mocks.store.set(KEY('char1'), {
+            v: 1,
+            values: {
+                abilityType: 'bogus',
+                abilityLevel: '99999',
+                abilitySteps: '0',
+                combatType: 'target',
+                combatSteps: '-3',
+                charm: 'No Such Charm',
+                charmEnh: '999',
+                houseLevel: '9',
+                houseSteps: 'abc',
+                communityLevel: '21',
+                skipBack: 'yes',
+                equipKind: 'sideways',
+                equipSteps: '1e3',
+                shrineSteps: '6',
+            },
+            hours: 0,
+            player: { name: 7, nth: -1 },
+        });
+        await open();
+
+        expect(q('#mwi-csim-upgrade-level-type').value).toBe('increment');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('5');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('1');
+        expect(q('#mwi-csim-combat-level-type').value).toBe('increment');
+        expect(q('#mwi-csim-combat-level-steps').value).toBe('1');
+        expect(q('#mwi-csim-charm-select').value).toBe('auto');
+        expect(q('#mwi-csim-charm-enh').value).toBe('');
+        expect(q('#mwi-csim-house-target-level').value).toBe('');
+        expect(q('#mwi-csim-house-steps').value).toBe('1');
+        expect(q('#mwi-csim-community-target-level').value).toBe('');
+        expect(q('#mwi-csim-upgrade-skip-back').checked).toBe(false);
+        expect(q('#mwi-csim-equip-step-kind').value).toBe('breakpoints');
+        expect(q('#mwi-csim-equip-steps').value).toBe('1');
+        expect(q('#mwi-csim-shrine-steps').value).toBe('1');
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('100');
+    });
+
+    test('a restored House or Shrine Steps above 1 sets its Lv box aside, as the change does', async () => {
+        mocks.store.set(KEY('char1'), {
+            v: 1,
+            values: { houseLevel: '4', houseSteps: '3', shrineLevel: '2', shrineSteps: '1' },
+        });
+        await open();
+
+        expect(q('#mwi-csim-house-steps').value).toBe('3');
+        expect(q('#mwi-csim-house-target-level').disabled).toBe(true);
+        expect(q('#mwi-csim-shrine-steps').value).toBe('1');
+        expect(q('#mwi-csim-shrine-target-level').disabled).toBe(false);
+        expect(q('#mwi-csim-shrine-target-level').value).toBe('2');
+    });
+
+    test('a restored level type rewrites its hints, and the saved number goes over them', async () => {
+        mocks.store.set(KEY('char1'), {
+            v: 1,
+            values: { abilityType: 'target', abilityLevel: '60', abilitySteps: '2' },
+        });
+        await open();
+
+        expect(q('#mwi-csim-upgrade-level-type').value).toBe('target');
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('60');
+        // Steps do not apply to an absolute target, and the box says so
+        expect(q('#mwi-csim-upgrade-steps-group').style.display).toBe('none');
+    });
+
+    test('the chosen player is kept by name, and picked again when the party still has them', async () => {
+        mocks.editedDTOs = { alice: { hrid: 'alice' }, bob: { hrid: 'bob' } };
+        await open();
+        ui._populateUpgradePlayerSelector();
+        expect(q('#mwi-csim-upgrade-player').value).toBe('0');
+        set('#mwi-csim-upgrade-player', '1');
+        await settle();
+        expect(mocks.store.get(KEY('char1')).player).toEqual({ name: 'bob', nth: 0 });
+
+        ui.destroy();
+        // The party is ordered differently now
+        mocks.editedDTOs = { bob: { hrid: 'bob' }, alice: { hrid: 'alice' } };
+        await open();
+        ui._switchTab('upgrade');
+        const select = q('#mwi-csim-upgrade-player');
+        expect(select.options[Number(select.value)].textContent).toBe('bob');
+        // Switching tabs repopulates the select without losing the pick
+        ui._switchTab('configure');
+        ui._switchTab('upgrade');
+        expect(select.options[Number(select.value)].textContent).toBe('bob');
+    });
+
+    test('a remembered player who is not in the party leaves the first player chosen', async () => {
+        mocks.store.set(KEY('char1'), { v: 1, values: {}, player: { name: 'zed', nth: 0 } });
+        mocks.editedDTOs = { alice: { hrid: 'alice' }, bob: { hrid: 'bob' } };
+        await open();
+        ui._switchTab('upgrade');
+
+        expect(q('#mwi-csim-upgrade-player').value).toBe('0');
+    });
+
+    test('a box changed while the read was out is not overwritten, and is saved with the rest', async () => {
+        mocks.store.set(KEY('char1'), {
+            v: 1,
+            values: { abilityType: 'target', abilityLevel: '60', equipSteps: '5' },
+            hours: 30,
+        });
+        mocks.characterId = 'char1';
+        ui.buildPanel();
+        // Before the read has been applied
+        set('#mwi-csim-upgrade-level-type', 'next_multiple');
+        await restored();
+        await settle();
+
+        expect(q('#mwi-csim-upgrade-level-type').value).toBe('next_multiple');
+        expect(q('#mwi-csim-upgrade-target-level').value).not.toBe('60');
+        // The other groups still came back
+        expect(q('#mwi-csim-equip-steps').value).toBe('5');
+        expect(q('#mwi-csim-upgrade-hours').value).toBe('30');
+        expect(mocks.store.get(KEY('char1')).values).toMatchObject({ abilityType: 'next_multiple', equipSteps: '5' });
+    });
+
+    test('Ability Lv ticked after a restore keeps the restored number instead of the defaults', async () => {
+        mocks.store.set('settings:combatSimUpgradeModes_char1', ['equipment']);
+        mocks.store.set(KEY('char1'), { v: 1, values: { abilityLevel: '12', abilitySteps: '2' } });
+        await open();
+        expect(q('[data-upgrade-mode="ability_level"]').checked).toBe(false);
+
+        const box = q('[data-upgrade-mode="ability_level"]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('12');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('2');
+    });
+
+    test('a pulled record is applied to the boxes on screen', async () => {
+        await open();
+        mocks.store.set(KEY('char1'), { v: 1, values: { equipSteps: '3', skipBack: true }, hours: 55 });
+
+        await ui._adoptPulledSettings({ settings: [KEY('char1').replace('settings:', '')] });
+
+        expect(q('#mwi-csim-equip-steps').value).toBe('3');
+        expect(q('#mwi-csim-upgrade-skip-back').checked).toBe(true);
+        expect(q('#mwi-csim-hours').value).toBe('55');
+    });
+});

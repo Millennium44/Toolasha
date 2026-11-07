@@ -57,6 +57,7 @@ export const COMBAT_SIM_KEYS = Object.freeze({
     budgetConstraints: 'combatSimBudgetConstraints',
     houseNonCombatBundle: 'combatSimHouseNonCombatBundle',
     resimCloseCalls: 'combatSimResimCloseCalls',
+    upgradeInputs: 'combatSimUpgradeInputs',
     // Global from here down
     upgradeColumns: 'combatSimUpgradeColumns',
     allZonesMaxTierFood: 'combatSimAllZonesMaxTierFood',
@@ -167,6 +168,7 @@ const COMBAT_LABELS = {
     budgetConstraints: 'Combat Sim budget pins and exclusions',
     houseNonCombatBundle: 'Combat Sim all non-combat rooms +1',
     resimCloseCalls: 'Combat Sim re-sim close calls',
+    upgradeInputs: 'Combat Sim upgrade level, steps and hours boxes',
     upgradeColumns: 'Combat Sim upgrade columns',
     allZonesMaxTierFood: 'Combat Sim max-tier food',
     allZonesScoreScale: 'Combat Sim zones score scale',

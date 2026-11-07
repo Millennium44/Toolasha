@@ -407,6 +407,42 @@ const SHRINE_CAP_GUILD_KEY = 'combatSimShrineCapToGuild';
 const HOUSE_NON_COMBAT_BUNDLE_KEY = 'combatSimHouseNonCombatBundle';
 /** Storage key for "Re-sim close calls" (per character, on unless unticked) */
 const RESIM_CLOSE_CALLS_KEY = 'combatSimResimCloseCalls';
+/**
+ * Storage key for the Upgrade tab's level, Steps, charm and equipment inputs, the Hours box and the chosen
+ * player (per character). One record: `{v: 1, values: {field: string|boolean}, hours?: number, player?: {name, nth}}`.
+ * The Targets grids are not kept.
+ */
+const UPGRADE_INPUTS_KEY = 'combatSimUpgradeInputs';
+/**
+ * The Upgrade controls kept in `UPGRADE_INPUTS_KEY`: [record field, control id, kind, group]. The order is the
+ * order they are applied in (a type select first, because its change handler rewrites the number beside it). A
+ * group is touched, and so skipped on restore, as a whole.
+ */
+const UPGRADE_INPUT_FIELDS = [
+    ['abilityType', 'mwi-csim-upgrade-level-type', 'select', 'ability'],
+    ['abilityLevel', 'mwi-csim-upgrade-target-level', 'level', 'ability'],
+    ['abilitySteps', 'mwi-csim-upgrade-steps', 'steps', 'ability'],
+    ['combatType', 'mwi-csim-combat-level-type', 'select', 'combat'],
+    ['combatLevel', 'mwi-csim-combat-level-boost', 'level', 'combat'],
+    ['combatSteps', 'mwi-csim-combat-level-steps', 'steps', 'combat'],
+    ['charm', 'mwi-csim-charm-select', 'select', 'charm'],
+    ['charmEnh', 'mwi-csim-charm-enh', 'enhancement', 'charm'],
+    ['houseLevel', 'mwi-csim-house-target-level', 'house', 'house'],
+    ['houseSteps', 'mwi-csim-house-steps', 'steps', 'house'],
+    ['shrineLevel', 'mwi-csim-shrine-target-level', 'shrine', 'shrine'],
+    ['shrineSteps', 'mwi-csim-shrine-steps', 'steps', 'shrine'],
+    ['communityLevel', 'mwi-csim-community-target-level', 'community', 'community'],
+    ['skipBack', 'mwi-csim-upgrade-skip-back', 'checkbox', 'equipment'],
+    ['equipKind', 'mwi-csim-equip-step-kind', 'select', 'equipment'],
+    ['equipSteps', 'mwi-csim-equip-steps', 'steps', 'equipment'],
+];
+/** Control id → touched group, for every control whose change is saved (the Hours pair and the player included) */
+const UPGRADE_INPUT_GROUP_BY_ID = new Map([
+    ...UPGRADE_INPUT_FIELDS.map(([, id, , group]) => [id, group]),
+    ['mwi-csim-upgrade-hours', 'hours'],
+    ['mwi-csim-hours', 'hours'],
+    ['mwi-csim-upgrade-player', 'player'],
+]);
 
 /**
  * Storage key for the all-zones Max-tier Food toggle.
@@ -4385,6 +4421,11 @@ class CombatSimUI {
         });
         // Delegated, so one listener covers the section's selects
         this.panel.addEventListener('change', (event) => {
+            const inputGroup = UPGRADE_INPUT_GROUP_BY_ID.get(event.target?.id);
+            if (inputGroup && !this._applyingUpgradeInputs) {
+                if (inputGroup === 'player') this._upgradePlayerPick = this._currentUpgradePlayerPick(event.target);
+                this._onUpgradeInputChanged(inputGroup);
+            }
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
                 this._saveTriggerChoices();
                 this._refreshCachedTriggerResult();
@@ -4394,8 +4435,16 @@ class CombatSimUI {
             }
         });
         // The remembered trigger result can only be matched once the chip and its choices are restored
+        this._upgradeInputsRestored = false;
+        this._upgradeInputsTouched = new Set();
+        this._upgradePlayerPick = null;
+        this._keepAbilityOnTick = false;
+        this._keepCombatOnTick = false;
         (async () => {
             await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
+            // After the sets: restoring them can put the Ability Lv and Combat Lv boxes back to their defaults,
+            // and the remembered values go over that
+            await this._restoreUpgradeInputs();
             await this._refreshCachedTriggerResult();
         })();
         this._restoreSwapAuraOnly();
@@ -10637,6 +10686,9 @@ class CombatSimUI {
             option.textContent = 'Player 1';
             select.appendChild(option);
         }
+
+        // The remembered player, by name: party members change, so an index would pick a stranger
+        this._applyUpgradePlayerPick(select);
     }
 
     /**
@@ -10804,6 +10856,8 @@ class CombatSimUI {
         const steps = this.panel.querySelector('#mwi-csim-upgrade-steps');
         if (steps) steps.value = '1';
         this._syncStepsBox();
+        // Putting the defaults back is a change like any other: what is stored follows what the boxes show
+        if (this._upgradeInputsRestored) void this._saveUpgradeInputs();
     }
 
     /**
@@ -10821,6 +10875,7 @@ class CombatSimUI {
         input.title = hints.title;
         const steps = this.panel.querySelector('#mwi-csim-combat-level-steps');
         if (steps) steps.value = '1';
+        if (this._upgradeInputsRestored) void this._saveUpgradeInputs();
     }
 
     /**
@@ -10889,7 +10944,11 @@ class CombatSimUI {
         if (isCombatLevelMode) {
             this._populateCharmSelect();
             // Only when Combat Lv is turned on, as Ability Lv does: ticking another set keeps the mode and number
-            if (!this._combatLevelModeOn) this._setDefaultCombatLevelControls();
+            // ...except the first time after a restore, which brought values that are not the defaults
+            if (!this._combatLevelModeOn) {
+                if (this._keepCombatOnTick) this._keepCombatOnTick = false;
+                else this._setDefaultCombatLevelControls();
+            }
         } else {
             this.panel.querySelector('#mwi-csim-combat-targets').style.display = 'none';
         }
@@ -10903,7 +10962,8 @@ class CombatSimUI {
         } else if (!this._abilityLevelModeOn) {
             // Only when Ability Lv is turned on: every other candidate box lands here too,
             // and ticking one must not throw away the mode and number already chosen
-            this._setDefaultAbilityTargetLevel();
+            if (this._keepAbilityOnTick) this._keepAbilityOnTick = false;
+            else this._setDefaultAbilityTargetLevel();
         }
         this._abilityLevelModeOn = isLevelMode;
 
@@ -11320,6 +11380,175 @@ class CombatSimUI {
     }
 
     /**
+     * A control changed that `UPGRADE_INPUTS_KEY` keeps. Before the first read has been applied nothing is
+     * written (the boxes still show defaults, and a save would put them over the stored record); the group is
+     * noted instead so the read leaves it alone, and the record is written once the read is applied.
+     * @param {string} group - The control's group
+     * @private
+     */
+    _onUpgradeInputChanged(group) {
+        if (!this._upgradeInputsTouched) this._upgradeInputsTouched = new Set();
+        if (!this._upgradeInputsRestored) {
+            this._upgradeInputsTouched.add(group);
+            return;
+        }
+        void this._saveUpgradeInputs();
+    }
+
+    /**
+     * Which option of the Upgrade tab's player select is chosen, by name: `{name, nth}` where nth counts the
+     * earlier players with the same name.
+     * @param {HTMLSelectElement|null} select - The player select
+     * @returns {{name: string, nth: number}|null}
+     * @private
+     */
+    _currentUpgradePlayerPick(select) {
+        const options = [...(select?.options || [])];
+        const index = select?.selectedIndex ?? -1;
+        if (index < 0 || !options[index]) return null;
+        const name = options[index].textContent;
+        return { name, nth: options.slice(0, index).filter((o) => o.textContent === name).length };
+    }
+
+    /**
+     * Select the remembered player in the Upgrade tab's player select when this party has them; otherwise the
+     * select is left as it is.
+     * @param {HTMLSelectElement|null} select - The player select
+     * @returns {boolean} Whether an option was chosen
+     * @private
+     */
+    _applyUpgradePlayerPick(select) {
+        const pick = this._upgradePlayerPick;
+        if (!select || !pick) return false;
+        const match = [...select.options].filter((o) => o.textContent === pick.name)[pick.nth];
+        if (!match) return false;
+        select.value = match.value;
+        return true;
+    }
+
+    /**
+     * Persist the Upgrade inputs, per character. The key is resolved at the call, before any await, so a
+     * character switch while the write is out cannot file them under the next character.
+     * @private
+     */
+    async _saveUpgradeInputs() {
+        if (!this.panel) return;
+        try {
+            const values = {};
+            for (const [field, id, kind] of UPGRADE_INPUT_FIELDS) {
+                const el = this.panel.querySelector(`#${id}`);
+                // The charm options are made when Combat Lv is first ticked; an empty select holds no choice
+                if (!el || (kind === 'select' && el.options.length === 0)) continue;
+                values[field] = kind === 'checkbox' ? Boolean(el.checked) : String(el.value);
+            }
+            const record = { v: 1, values };
+            const hours = parseInt(this.panel.querySelector('#mwi-csim-upgrade-hours')?.value);
+            if (Number.isFinite(hours) && hours >= 1 && hours <= 10000) record.hours = hours;
+            const player = this._upgradePlayerPick;
+            if (player) record.player = { name: player.name, nth: player.nth };
+            await writeScoped(UPGRADE_INPUTS_KEY, record, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the Upgrade inputs:', error);
+        }
+    }
+
+    /**
+     * Read this character's Upgrade inputs back and apply them. Each value is checked against what the box
+     * accepts now (an option that exists, a number in range) and ignored if it fails; an applied value goes
+     * through the box's own change handler, so Steps are clamped, a House or Shrine Steps above 1 sets its Lv box
+     * aside, and a level-type change rewrites its hints, exactly as if the player had set it. Nothing is applied
+     * to a group the player touched while the read was out, or if the panel or character changed.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _restoreUpgradeInputs() {
+        const panel = this.panel;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        try {
+            const saved = await readScoped(UPGRADE_INPUTS_KEY, 'settings', null);
+            if (!panel || this.panel !== panel) return;
+            if (characterId !== dataManager.getCurrentCharacterId?.()) return;
+            const first = !this._upgradeInputsRestored;
+            const touched = first ? this._upgradeInputsTouched || new Set() : new Set();
+            const skip = (group) => touched.has(group);
+            if (saved && typeof saved === 'object' && saved.values && typeof saved.values === 'object') {
+                const intIn = (value, lo, hi, blank = true) => {
+                    if (typeof value !== 'string') return false;
+                    if (value === '') return blank;
+                    if (!/^\d{1,6}$/.test(value)) return false;
+                    const n = Number(value);
+                    return n >= lo && n <= hi;
+                };
+                const valid = {
+                    level: (v) => intIn(v, 1, maxLevel()),
+                    steps: (v) => intIn(v, 1, MAX_LEVEL_STEPS, false),
+                    enhancement: (v) => intIn(v, 0, maxEnhancementLevel()),
+                    house: (v) => intIn(v, 1, 8),
+                    shrine: (v) => intIn(v, 1, getGuildShrineMaxLevel()),
+                    community: (v) => intIn(v, 1, 20),
+                };
+                this._applyingUpgradeInputs = true;
+                try {
+                    // The charm options are made when Combat Lv is first ticked; a restore may come before that
+                    this._populateCharmSelect();
+                    for (const [field, id, kind, group] of UPGRADE_INPUT_FIELDS) {
+                        if (skip(group) || !Object.prototype.hasOwnProperty.call(saved.values, field)) continue;
+                        const el = panel.querySelector(`#${id}`);
+                        const value = saved.values[field];
+                        if (!el) continue;
+                        if (kind === 'checkbox') {
+                            if (typeof value !== 'boolean') continue;
+                            el.checked = value;
+                        } else if (kind === 'select') {
+                            if (typeof value !== 'string' || ![...el.options].some((o) => o.value === value)) continue;
+                            el.value = value;
+                        } else {
+                            if (!valid[kind]?.(value)) continue;
+                            el.value = value;
+                        }
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    if (!skip('hours') && Number.isInteger(saved.hours) && saved.hours >= 1 && saved.hours <= 10000) {
+                        // Both Hours boxes are one setting
+                        for (const id of ['mwi-csim-upgrade-hours', 'mwi-csim-hours']) {
+                            const el = panel.querySelector(`#${id}`);
+                            if (el) el.value = String(saved.hours);
+                        }
+                    }
+                    const player = saved.player;
+                    if (
+                        !skip('player') &&
+                        player &&
+                        typeof player.name === 'string' &&
+                        player.name !== '' &&
+                        Number.isInteger(player.nth) &&
+                        player.nth >= 0
+                    ) {
+                        this._upgradePlayerPick = { name: player.name, nth: player.nth };
+                        const select = panel.querySelector('#mwi-csim-upgrade-player');
+                        if (this._applyUpgradePlayerPick(select)) {
+                            select.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }
+                } finally {
+                    this._applyingUpgradeInputs = false;
+                }
+                // A restored number must survive Ability Lv / Combat Lv being ticked later, which would put the
+                // defaults back over it
+                if (!skip('ability') && !this._abilityLevelModeOn) this._keepAbilityOnTick = true;
+                if (!skip('combat') && !this._combatLevelModeOn) this._keepCombatOnTick = true;
+            }
+            this._upgradeInputsRestored = true;
+            this._upgradeInputsTouched = new Set();
+            // What the player changed during the read is saved now, with everything else as it stands
+            if (touched.size > 0) void this._saveUpgradeInputs();
+        } catch (error) {
+            // Saves stay off for this panel: a record that could not be read is not written over with defaults
+            console.error('[CombatSimUI] Failed to restore the Upgrade inputs:', error);
+        }
+    }
+
+    /**
      * Restore the House "All non-combat rooms +1" option, off until the player ticks it.
      * @private
      */
@@ -11392,6 +11621,7 @@ class CombatSimUI {
                 'budgetConstraints',
                 'houseNonCombatBundle',
                 'resimCloseCalls',
+                'upgradeInputs',
             ]);
             const settings = pulledNames(written, 'settings', {
                 ...Object.fromEntries(
@@ -11411,9 +11641,13 @@ class CombatSimUI {
                 work.push(
                     (async () => {
                         await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
+                        // After the sets, which can put the Ability Lv and Combat Lv boxes back to defaults
+                        if (has('upgradeInputs')) await this._restoreUpgradeInputs();
                         await this._refreshCachedTriggerResult();
                     })()
                 );
+            } else if (has('upgradeInputs')) {
+                work.push(this._restoreUpgradeInputs());
             }
             if (has('swapAuraOnly')) work.push(this._restoreSwapAuraOnly());
             if (has('budgetConstraints')) work.push(this._restoreBudgetConstraints());
