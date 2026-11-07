@@ -66,6 +66,7 @@ import {
     contentHash,
     contentHashSliced,
     hashPayload,
+    parsePayloadSliced,
     addsToRemoteSliced,
     mergeForUploadSliced,
     wholeKeyHashesSliced,
@@ -1349,8 +1350,16 @@ class SyncManager {
             payload = await gunzipToText(base64ToBytes(payload));
         }
 
-        verifyAgainstManifest(manifest, payload);
-        return { manifest, payload, seen, history: remote.history ?? null, server: remote.server ?? null };
+        // The content hash the check worked out, kept so a pull does not hash the same text again
+        const payloadHash = await verifyAgainstManifest(manifest, payload);
+        return {
+            manifest,
+            payload,
+            payloadHash,
+            seen,
+            history: remote.history ?? null,
+            server: remote.server ?? null,
+        };
     }
 
     /**
@@ -1638,6 +1647,11 @@ class SyncManager {
         }
         const { manifest, seen } = remote;
         const payload = remote.payload;
+        // `contentHash(payload)`, worked out once and sliced: the download is hashed by up to four of the
+        // checks below, and each pass over a played-in payload was a long task of its own. The manifest check
+        // usually worked it out already
+        let remoteHash = typeof remote.payloadHash === 'string' ? remote.payloadHash : null;
+        const remoteContentHash = async () => (remoteHash ??= await contentHashSliced(payload));
 
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
@@ -1648,7 +1662,7 @@ class SyncManager {
         // replayed indefinitely, but its held-back keys still need the same
         // remote payload. Only retry the exact download, not an older gist.
         const held = await storage.get(KEY_MERGE_HELD, STORE, null);
-        const retryHeld = held?.exportedAt === remoteAt && held?.hash === contentHash(payload);
+        const retryHeld = held?.exportedAt === remoteAt && held?.hash === (await remoteContentHash());
 
         // This device's own last push may be missing from the gist: another
         // device wrote over it without having seen it (the gist's manifest is
@@ -1680,7 +1694,7 @@ class SyncManager {
         // to apply, whatever its counter says. Settled the way a merge that adds
         // nothing settles: the counter taken, nothing imported, no reload asked
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
-        if (!retryHeld && !takeUnapplied && Boolean(lastHash) && contentHash(payload) === lastHash) {
+        if (!retryHeld && !takeUnapplied && Boolean(lastHash) && (await remoteContentHash()) === lastHash) {
             await retryPendingDisplacedDeletes();
             await this._remember({
                 gistId,
@@ -1703,7 +1717,7 @@ class SyncManager {
         await flushPersistedRecords();
         await storage.flushAll?.();
         const localText = await buildPayloadJSON(config.getSetting('sync_scope', 'settings'));
-        const localHash = contentHash(localText);
+        const localHash = await contentHashSliced(localText);
 
         // The gist holds exactly what this device would build now: in one
         // browser, the leader tab's own merged push. Its text is ordered by the
@@ -1713,7 +1727,10 @@ class SyncManager {
         // over nothing. Settled the way an upload merge that adds nothing
         // settles (see `_mergeIntoUpload`): nothing imported, nothing said.
         // Held-back records and a replaced push keep their own paths.
-        let standDown = !retryHeld && !replaced && (await this._sameContent(payload, localText, localHash));
+        let standDown =
+            !retryHeld &&
+            !replaced &&
+            (await this._sameContent(payload, localText, localHash, await remoteContentHash()));
         if (standDown) {
             // `addsToRemote` ignores a stale out-of-window key, so this shortcut would otherwise settle
             // over a displaced delete that is still owed. One that still fails is not settled over: the
@@ -1799,6 +1816,9 @@ class SyncManager {
             pushBack = answer === 'merge';
         }
 
+        // The download's hash is in hand by here (most pulls took it above), so nothing after the import
+        // waits on it: a held-back marker is recorded in the same turn as the takeover check before it
+        const pulledHash = await remoteContentHash();
         // Last check before the write that actually lands in IndexedDB. On the
         // no-dialog path this catches a slow download or fingerprint taking
         // long enough for a takeover — the same "wedged" shape as the dialog
@@ -1828,7 +1848,7 @@ class SyncManager {
         const pendingHeld = mergeHeld?.length
             ? {
                   exportedAt: remoteAt,
-                  hash: contentHash(payload),
+                  hash: pulledHash,
                   keys: mergeHeld.map(({ store, key }) => ({ store, key })),
               }
             : null;
@@ -1900,10 +1920,14 @@ class SyncManager {
         // landed above while this pull still owned the operation, so it is not written again: whatever is
         // stored by now is the newer operation's, and putting this one back would only force a spurious retry
         const appliedHash = mergedRebuild
-            ? contentHash(pushOwed ? payload : mergedRebuild)
+            ? pushOwed
+                ? pulledHash
+                : await contentHashSliced(mergedRebuild)
             : mergeHeld?.length
-              ? contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
-              : contentHash(applied ?? payload);
+              ? await contentHashSliced(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')))
+              : (applied ?? payload) === payload
+                ? pulledHash
+                : await contentHashSliced(applied);
         const pulledHashes = await wholeKeyHashesSliced(payload);
         if (!this._stillOwns(opToken)) {
             return this._stoppedAfterApply({ latched, complete, mergeFailed, mergeHeld });
@@ -2106,17 +2130,19 @@ class SyncManager {
      * @param {string} remoteText - The gist's payload, as downloaded
      * @param {string} localText - This device's payload, just built
      * @param {string} localHash - `contentHash(localText)`
+     * @param {string|null} [remoteHash] - `contentHash(remoteText)`, when the caller already has it
      * @returns {Promise<boolean>} True when the two hold the same data
      * @private
      */
-    async _sameContent(remoteText, localText, localHash) {
-        if (contentHash(remoteText) === localHash) return true;
+    async _sameContent(remoteText, localText, localHash, remoteHash = null) {
+        if ((remoteHash ?? (await contentHashSliced(remoteText))) === localHash) return true;
         try {
             // The store comparison reads only `stores`. A download whose format
             // or registry differs must reach the apply, which refuses a newer
-            // format and learns the registry
-            const remote = JSON.parse(remoteText);
-            const local = JSON.parse(localText);
+            // format and learns the registry. Parsed in slices: two whole parses
+            // back to back were one long task over a payload of megabytes
+            const remote = await parsePayloadSliced(remoteText);
+            const local = await parsePayloadSliced(localText);
             if (remote?.formatVersion !== local?.formatVersion) return false;
             if (stableStringify(remote?.externalKeys ?? null) !== stableStringify(local?.externalKeys ?? null)) {
                 return false;
@@ -3191,10 +3217,10 @@ function sameHeldMarker(a, b) {
  *
  * @param {Object} manifest - The gist's manifest
  * @param {string} payload - The decrypted, decompressed payload text
- * @returns {void}
+ * @returns {Promise<string|null>} `contentHash(payload)`, when the manifest has a hash to check it against
  * @throws {GistError} With kind 'parse' when the payload is not what was pushed
  */
-function verifyAgainstManifest(manifest, payload) {
+async function verifyAgainstManifest(manifest, payload) {
     const expectedBytes = Number(manifest?.bytes);
     if (Number.isFinite(expectedBytes) && expectedBytes > 0 && payload.length !== expectedBytes) {
         throw new GistError(
@@ -3206,13 +3232,17 @@ function verifyAgainstManifest(manifest, payload) {
 
     const expectedHash = manifest?.hash;
     if (typeof expectedHash === 'string' && expectedHash) {
-        if (contentHash(payload) !== expectedHash && hashPayload(payload) !== expectedHash) {
+        // Sliced: the same digest as `contentHash`, without one long task over a payload of megabytes
+        const payloadHash = await contentHashSliced(payload);
+        if (payloadHash !== expectedHash && hashPayload(payload) !== expectedHash) {
             throw new GistError(
                 'parse',
                 'The sync gist does not match its own manifest checksum — it looks corrupted or edited by hand.'
             );
         }
+        return payloadHash;
     }
+    return null;
 }
 
 /**

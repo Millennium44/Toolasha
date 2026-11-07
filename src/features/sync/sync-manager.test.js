@@ -74,6 +74,8 @@ const withSlicedPayload = vi.hoisted(() => (mod) => ({
     exchangeBaselineSliced: async (...args) => mod.exchangeBaseline(...args),
     registeredKeysDivergeSliced: async (...args) => mod.registeredKeysDiverge(...args),
     contentHashSliced: async (...args) => mod.contentHash(...args),
+    // The real sliced parse answers as `JSON.parse` does, which is what these texts are fed to
+    parsePayloadSliced: async (text) => JSON.parse(text),
     learnExternalKeysFromTextSliced: async (...args) => mod.learnExternalKeysFromText?.(...args) ?? false,
 }));
 vi.mock('./sync-payload.js', () => {
@@ -140,6 +142,15 @@ vi.mock('./sync-payload.js', () => {
     };
     return {
         ...withSlicedPayload(mod),
+        // Each text hashed, by which variant: a pull hashes its download once, and in slices
+        contentHash: (text) => {
+            (payload.plainHashed ||= []).push(text);
+            return mod.contentHash(text);
+        },
+        contentHashSliced: async (text) => {
+            (payload.slicedHashed ||= []).push(text);
+            return mod.contentHash(text);
+        },
         // A wait a test can hold open: the hashing of the download, after the import and before the record
         wholeKeyHashesSliced: async (text) => {
             payload.hashCalls = (payload.hashCalls || 0) + 1;
@@ -252,6 +263,8 @@ beforeEach(() => {
     payload.applyWait = null;
     payload.hashCalls = 0;
     payload.hashWait = null;
+    payload.plainHashed = [];
+    payload.slicedHashed = [];
     payload.applyOptions = undefined;
     payload.hashes = undefined;
     payload.addsToRemote = undefined;
@@ -3367,5 +3380,108 @@ describe('the first-push Merge against a gist holding more than this device sync
         expect(await syncManager.push()).toMatchObject({ ok: true });
         expect(dialog.calls).toBe(1);
         expect(payload.uploadMerges).toBe(1);
+    });
+});
+
+describe('a pull hashes its download once, in slices, and decides as before', () => {
+    const body = '{"remote":1}';
+    const download = (exportedAt = '2026-02-01T00:00:00.000Z', text = body) => ({
+        manifest: { exportedAt, chunks: 1, hash: `h:${text}`, bytes: text.length },
+        payload: text,
+    });
+    const hashesOf = (text) => ({
+        sliced: payload.slicedHashed.filter((hashed) => hashed === text).length,
+        plain: payload.plainHashed.filter((hashed) => hashed === text).length,
+    });
+
+    test('an interval pull that applies: one sliced pass over the download, the same records kept', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        gist.read = download();
+
+        const result = await syncManager.pull({ silent: true });
+
+        expect(result.ok).toBe(true);
+        expect(payload.applied).toBe(body);
+        // The fold of this device into the gist adds something, so the gist's own text is remembered
+        expect(stored.map.toolasha_sync_lastHash).toBe(`h:${body}`);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2026-02-01T00:00:00.000Z');
+        expect(hashesOf(body)).toEqual({ sliced: 1, plain: 0 });
+        // This device's own build is hashed in slices too
+        expect(payload.plainHashed).toEqual([]);
+    });
+
+    test('records held back mark the download by its content hash, and the retry recognizes it', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"local":1}';
+        gist.read = download();
+        payload.mergeHeld = [{ store: 'marketplace', key: 'market', label: 'market history' }];
+
+        await syncManager.pull({ silent: true });
+
+        expect(stored.map.toolasha_sync_mergeHeld).toEqual({
+            exportedAt: '2026-02-01T00:00:00.000Z',
+            hash: `h:${body}`,
+            keys: [{ store: 'marketplace', key: 'market' }],
+        });
+        expect(hashesOf(body)).toEqual({ sliced: 1, plain: 0 });
+
+        // The same version again: the marker's hash matches, so the pull is the retry
+        payload.mergeHeld = [];
+        payload.slicedHashed = [];
+        await syncManager.pull({ silent: true });
+
+        expect(payload.applyCalls).toBe(2);
+        expect(payload.applyOptions).toMatchObject({
+            retryHeld: true,
+            heldKeys: [{ store: 'marketplace', key: 'market' }],
+        });
+        expect(hashesOf(body)).toEqual({ sliced: 1, plain: 0 });
+    });
+
+    test("a download that is this device's last exchange settles in step, hashed once", async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = `h:${body}`;
+        gist.read = download();
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ skipped: true, reason: 'in-step' });
+        expect(payload.applied).toBeUndefined();
+        expect(hashesOf(body)).toEqual({ sliced: 1, plain: 0 });
+    });
+
+    test('a download holding what this device holds, in another order, stands down', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:{"older":1}';
+        gist.read = download('2026-02-01T00:00:00.000Z', '{"b":2,"a":1}');
+        payload.text = '{"a":1,"b":2}';
+        // Neither side adds anything to the other
+        payload.addsToRemote = () => false;
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ skipped: true, reason: 'same-content' });
+        expect(payload.applied).toBeUndefined();
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"a":1,"b":2}');
+        expect(hashesOf('{"b":2,"a":1}')).toEqual({ sliced: 1, plain: 0 });
+    });
+
+    test('a download whose format differs, or that does not parse, still reaches the apply', async () => {
+        for (const text of ['{"formatVersion":2,"remote":1}', 'not json at all']) {
+            stored.map = {
+                toolasha_sync_gistId: 'abc',
+                toolasha_sync_lastSyncedAt: '2026-01-01T00:00:00.000Z',
+                toolasha_sync_lastHash: 'h:{"local":1}',
+            };
+            payload.applied = undefined;
+            payload.addsToRemote = () => false;
+            gist.read = download('2026-02-01T00:00:00.000Z', text);
+
+            const result = await syncManager.pull({ silent: true });
+
+            expect(result.ok).toBe(true);
+            expect(payload.applied).toBe(text);
+        }
     });
 });
