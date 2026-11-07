@@ -1562,6 +1562,20 @@ describe('the panel', () => {
         q('#mwi-csim-equip-steps').value = '1';
     });
 
+    test('a tab switch made for the player unfolds a minimized panel, so a pane never shows under no tab bar', () => {
+        const q = (id) => ui.panel.querySelector(id);
+        ui._switchTab('configure');
+        ui.minimizeCtl.setCollapsed(true);
+        expect(q('#mwi-csim-tabbar').style.display).toBe('none');
+        // As an All Zones run finishing, or the sim opened for another character
+        ui._switchTab('results');
+        expect(ui.panel.dataset.minimized).toBe('false');
+        expect(q('#mwi-csim-tabbar').style.display).not.toBe('none');
+        expect(q('#mwi-csim-results-content').style.display).not.toBe('none');
+        expect(q('#mwi-csim-configure-content').style.display).toBe('none');
+        ui._switchTab('configure');
+    });
+
     test('House and Guild Shrine Steps: 1 by default, clamped, set the Lv box aside above 1, handed to the run', async () => {
         const q = (id) => ui.panel.querySelector(id);
         const house = q('[data-upgrade-mode="house"]');

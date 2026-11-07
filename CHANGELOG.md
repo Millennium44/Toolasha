@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim and Lab Sim remember their Upgrade boxes
+
+The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the chosen player on the Combat Sim Upgrade tab, and the Lab Sim's level boxes, Use Skip Levels and budget, are now saved per character and come back after a reload.
+
+### Lab Sim Upgrade Steps
+
+The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakpoint or level, Ability Lv, House and Shrine, and Combat Lv now has its own +Levels / Next mult. of box and Steps.
+
+### Combat Sim no longer loses its tabs when minimized
+
+Opening the sim for another character, or a run moving to Results, while the panel was minimized showed one pane with no tab row; the panel now unfolds first.
+
 <!-- shipped in 3.79.0 -->
 
 ### Combat Sim equipment Steps try breakpoints

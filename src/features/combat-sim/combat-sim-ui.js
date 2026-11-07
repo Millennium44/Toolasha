@@ -4367,6 +4367,11 @@ class CombatSimUI {
             panelKey: GEOMETRY_KEY,
             beforeEl: header.querySelector('#mwi-csim-close'),
             accent: '#aaa',
+            // Unfolding puts back the panes as they were when folded; a switch made while folded may have moved
+            // the active tab since, so show that one
+            onToggle: (collapsed) => {
+                if (!collapsed && this._activeMainTab) this._switchTab(this._activeMainTab);
+            },
         });
 
         // Event listeners
@@ -7379,6 +7384,9 @@ class CombatSimUI {
      * @private
      */
     _switchTab(requested) {
+        // A minimized panel hides the tab bar with the panes, so a switch made for the player (opening the sim for
+        // another character, a run moving to Results) unfolds it first; otherwise one pane shows under no tab bar
+        if (this.panel?.dataset.minimized === 'true') this.minimizeCtl?.setCollapsed(false);
         // The Party tab only exists while its setting is on
         const tab = requested === 'party' && !this._partyFinder ? 'configure' : requested;
         this._activeMainTab = tab;
