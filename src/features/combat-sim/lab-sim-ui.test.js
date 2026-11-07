@@ -8817,6 +8817,36 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         expect(ui._readUpgradeSteps(new Set(['ability_level']))).toMatchObject({ abilitySteps: 1 });
     });
 
+    test('a box is saved even when the redraw after its change fails', async () => {
+        storage.values = { labSimUpgradeInputs_me: { useSkip: true, abilityType: 'increment', abilityLevel: '5' } };
+        await rebuild();
+        const boom = () => {
+            throw new Error('redraw failed');
+        };
+        const tolerate = (fn) => {
+            try {
+                fn();
+            } catch {
+                /* jsdom reports a listener's throw; the save is what is under test */
+            }
+        };
+        // The ability type select rewrites its number box through _syncAbilityLevelBox
+        const sync = vi.spyOn(ui, '_syncAbilityLevelBox').mockImplementation(boom);
+        q('upgrade-level-type').value = 'next_multiple';
+        tolerate(() => change(q('upgrade-level-type')));
+        await settle();
+        sync.mockRestore();
+        expect(storage.written.labSimUpgradeInputs_me.abilityType).toBe('next_multiple');
+        // A dimension chip redraws through _onUpgradeSelectionChanged
+        const redraw = vi.spyOn(ui, '_onUpgradeSelectionChanged').mockImplementation(boom);
+        const chip = ui.panel.querySelector('[data-lab-upgrade-dimension="house"]');
+        chip.checked = !chip.checked;
+        tolerate(() => change(chip));
+        await settle();
+        redraw.mockRestore();
+        expect(storage.written.labSimUpgradeDimensions_me).toContain('house');
+    });
+
     test('saved per character, put back through the same handlers, with the Lv boxes set aside', async () => {
         setBox('equip-step-kind', 'levels');
         setBox('equip-steps', '3');

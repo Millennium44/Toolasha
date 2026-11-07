@@ -2130,8 +2130,12 @@ class LabSimUI {
         });
         this.panel.querySelectorAll('[data-lab-upgrade-dimension]').forEach((box) => {
             box.addEventListener('change', () => {
-                this._onUpgradeSelectionChanged();
-                void this._saveUpgradeSelection();
+                try {
+                    this._onUpgradeSelectionChanged();
+                } finally {
+                    // A redraw that throws must not leave the ticked set unsaved
+                    void this._saveUpgradeSelection();
+                }
             });
         });
         this.panel.querySelector('#mwi-labsim-upgrade-scope').addEventListener('change', () => {
@@ -2165,8 +2169,10 @@ class LabSimUI {
                 ?.addEventListener('change', () => void this._saveUpgradeInputs());
         }
         this.panel.querySelector('#mwi-labsim-level-source').addEventListener('change', () => {
-            this._refreshLevelSourceReadout();
+            // Saved first: the readout is drawn from the box and changes nothing in it, and one that throws must
+            // not leave the player's choice unsaved
             void this._saveUpgradeSelection();
+            this._refreshLevelSourceReadout();
             this._onTriggerScopeChanged();
         });
         this.panel.querySelector('#mwi-labsim-swap-aura-only')?.addEventListener('change', () => {
@@ -2217,8 +2223,11 @@ class LabSimUI {
             }
         });
         this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.addEventListener('change', (e) => {
-            this._syncAbilityLevelBox(e.target.value);
-            void this._saveUpgradeInputs();
+            try {
+                this._syncAbilityLevelBox(e.target.value);
+            } finally {
+                void this._saveUpgradeInputs();
+            }
         });
         this._wireUpgradeStepBoxes();
         this.panel.querySelector('#mwi-labsim-combat-targets-toggle').addEventListener('click', () => {
@@ -2277,8 +2286,9 @@ class LabSimUI {
             this._skillingAborted = true;
         });
         this.panel.querySelector('#mwi-labsim-skilling-filter').addEventListener('change', () => {
-            this._renderSkillLoadoutTable();
+            // Saved first: the table is drawn from the box and changes nothing in it
             void this._saveSkillingInputs();
+            this._renderSkillLoadoutTable();
         });
         this.panel.querySelector('#mwi-labsim-skilling-plan').addEventListener('click', () => this._onSkillingPlan());
         this.panel
@@ -2573,8 +2583,11 @@ class LabSimUI {
 
         grid.querySelectorAll('[data-lab-target]').forEach((box) => {
             box.addEventListener('change', () => {
-                this._onUpgradeSelectionChanged();
-                void this._saveUpgradeSelection();
+                try {
+                    this._onUpgradeSelectionChanged();
+                } finally {
+                    void this._saveUpgradeSelection();
+                }
                 this._onTriggerScopeChanged();
             });
         });
@@ -2582,8 +2595,11 @@ class LabSimUI {
             grid.querySelectorAll('[data-lab-target]').forEach((box) => {
                 box.checked = checked;
             });
-            this._onUpgradeSelectionChanged();
-            void this._saveUpgradeSelection();
+            try {
+                this._onUpgradeSelectionChanged();
+            } finally {
+                void this._saveUpgradeSelection();
+            }
             this._onTriggerScopeChanged();
         };
         grid.querySelector('[data-lab-target-all]')?.addEventListener('click', () => setAll(true));
@@ -2871,14 +2887,18 @@ class LabSimUI {
         for (const id of ['#mwi-labsim-house-steps', '#mwi-labsim-shrine-steps']) {
             q(id)?.addEventListener('change', (e) => {
                 e.target.value = String(normalizeLevelSteps(e.target.value));
-                this._syncSingleStepsBox(e.target);
+                // Saved before the Lv box is set aside: that changes nothing the record holds
                 save();
+                this._syncSingleStepsBox(e.target);
             });
         }
         q('#mwi-labsim-equip-step-kind')?.addEventListener('change', save);
         q('#mwi-labsim-combat-level-type')?.addEventListener('change', (e) => {
-            this._syncCombatLevelBox(e.target.value);
-            save();
+            try {
+                this._syncCombatLevelBox(e.target.value);
+            } finally {
+                save();
+            }
         });
         q('#mwi-labsim-combat-level-boost')?.addEventListener('change', (e) => {
             const val = parseInt(e.target.value, 10);
