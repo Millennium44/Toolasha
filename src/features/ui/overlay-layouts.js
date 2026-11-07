@@ -674,6 +674,26 @@ export function presetSpans(name, columns = 2) {
 }
 
 /**
+ * The most columns a preset was drawn for.
+ *
+ * A preset is saved with `columns: 2` like every other (see {@link presetFile}),
+ * so the stored count cannot say that Dense was made for nine. Its `exact` maps
+ * can: the widest count it pins spans for is the grid it was designed on. Read
+ * by the panel only to give a narrow panel narrow columns rather than one; it
+ * is never stored.
+ *
+ * @param {string} name - A layout name
+ * @returns {number} The widest `exact` count, or 0 for a preset without one or a name that is no preset
+ */
+export function presetDesignedColumns(name) {
+    const preset = PRESET_LAYOUTS[normalizeName(name)];
+    const counts = Object.keys(preset?.exact || {})
+        .map(Number)
+        .filter((count) => Number.isFinite(count));
+    return counts.length ? Math.max(...counts) : 0;
+}
+
+/**
  * A preset as a layout file, in exactly the shape a saved one has.
  *
  * Built through `toOPanelConfig` rather than hand-written, so a preset takes

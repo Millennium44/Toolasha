@@ -119,6 +119,7 @@ import {
     offeredLayouts,
     presetFile,
     presetSpans,
+    presetDesignedColumns,
     isPreset,
     freshSwitchState,
     decideAutoSwitch,
@@ -2319,7 +2320,8 @@ class OverlayPanel {
             // A preset is built for the columns the grid has now, and keeps a
             // count the player set by hand (a layout they saved does neither)
             const asPreset = !map[key]?.file && isPreset(key);
-            const saved = map[key]?.file || presetFile(key, { rows: registeredRows(), columns: this._columns() });
+            // Measured for the layout arriving, not the one it replaces: Dense gets narrow columns
+            const saved = map[key]?.file || presetFile(key, { rows: registeredRows(), columns: this._columns(key) });
             if (!saved) return false;
 
             const read = fromOPanelConfig(saved);
@@ -3088,12 +3090,18 @@ class OverlayPanel {
      * gutter it does not change the content box either, but the border box is
      * the honest thing to ask and costs nothing.
      *
+     * A preset made for many columns (Dense) gets narrow columns on a narrow
+     * panel rather than one; see `columnsForLayout`. Read from the layout's name,
+     * since a preset stores the same two columns as any other.
+     *
+     * @param {string|null} [layout] - The layout to measure for; the one in force by default
      * @returns {number} Between 1 and `MAX_SPAN`
      */
-    _columns() {
+    _columns(layout = this.appliedLayout) {
         const outer = this.scrollEl?.offsetWidth || this.scrollEl?.clientWidth || DEFAULT_PANEL.width;
         return columnsForLayout(outer - SCROLLER_PADDING, this.settings.columns, {
             pinned: this.settings.columnsPinned === true,
+            designed: layout ? presetDesignedColumns(layout) : 0,
         });
     }
 

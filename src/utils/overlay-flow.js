@@ -49,6 +49,29 @@ export const THREE_COLUMN_MIN = 608;
 export const GAP = 4;
 
 /**
+ * The narrowest a column may be for a layout designed for many columns.
+ *
+ * Such a layout (the Dense preset, nine columns) on a panel narrower than two
+ * {@link COLUMN_MIN} columns was drawn as one column, every tile its own row.
+ * It gets columns this narrow instead. 116 because three of them and their two
+ * gaps (356) fit the 366-pixel canvas of a 378-pixel panel, which 120 (368)
+ * misses by two. A column of 116 leaves a 106-pixel content box after the
+ * tile's 4-pixel side padding and borders: a glyph and a figure ("1.23B"), or
+ * "0.4 deaths/hr", fit at full size, and the tile fitter shrinks longer text to
+ * 75% before it would cut anything.
+ */
+export const NARROW_COLUMN_MIN = 116;
+
+/**
+ * The most narrow columns a layout is lifted to.
+ *
+ * Three, because from {@link THREE_COLUMN_MIN} the ordinary law already gives
+ * three: below it a many-column layout gets up to three narrow ones, at and
+ * above it nothing changes, and the count never falls as the panel widens.
+ */
+export const NARROW_COLUMNS_MAX = 3;
+
+/**
  * The widest any tile may be, in columns.
  *
  * A ceiling rather than a preference. A stored span is only meaningful if it can
@@ -110,11 +133,22 @@ export function columnsFor(width) {
  * exception is a panel narrow enough to hold one column at all: a phone gets one
  * column whatever the layout wanted, which is what it always got.
  *
+ * Unless the layout was made for many columns — more than two, by its own
+ * authored count or by `designed` (what a preset was drawn for, which a preset
+ * does not store). Below the width that gives three ordinary columns, such a
+ * layout gets up to {@link NARROW_COLUMNS_MAX} columns of
+ * {@link NARROW_COLUMN_MIN}, never more than it was made for, so a narrow
+ * panel keeps a compact grid instead of a single column of full-width rows.
+ * A layout made for one or two columns is untouched.
+ *
  * @param {number} width - Canvas width in pixels
  * @param {number} [authored] - The columns the layout was written for
+ * @param {Object} [options]
+ * @param {boolean} [options.pinned] - The count was chosen by hand and holds at any width
+ * @param {number} [options.designed] - The columns a preset was designed for; only ever widens a narrow panel
  * @returns {number} Between 1 and {@link MAX_SPAN}
  */
-export function columnsForLayout(width, authored = 2, { pinned = false } = {}) {
+export function columnsForLayout(width, authored = 2, { pinned = false, designed = 0 } = {}) {
     const wanted = Number.isFinite(authored) ? Math.round(authored) : 2;
 
     // Pinned is a person's explicit choice from the columns stepper, and it is
@@ -125,9 +159,13 @@ export function columnsForLayout(width, authored = 2, { pinned = false } = {}) {
     if (pinned) return Math.min(MAX_SPAN, Math.max(1, wanted));
 
     const affords = columnsFor(width);
-    if (affords <= 1) return 1;
+    const ordinary = affords <= 1 ? 1 : Math.min(MAX_SPAN, Math.max(1, affords, wanted));
 
-    return Math.min(MAX_SPAN, Math.max(1, affords, wanted));
+    const madeFor = Math.min(MAX_SPAN, Math.max(wanted, Number.isFinite(designed) ? Math.round(designed) : 0));
+    if (madeFor <= 2 || affords >= NARROW_COLUMNS_MAX) return ordinary;
+
+    const narrow = width > 0 ? Math.floor((width + GAP) / (NARROW_COLUMN_MIN + GAP)) : 1;
+    return Math.max(ordinary, Math.min(madeFor, NARROW_COLUMNS_MAX, Math.max(1, narrow)));
 }
 
 /**

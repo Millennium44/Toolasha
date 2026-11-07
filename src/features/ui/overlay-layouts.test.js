@@ -56,6 +56,7 @@ const {
     presetNames,
     presetFile,
     presetSpans,
+    presetDesignedColumns,
     wideSpans,
     isPreset,
     offeredLayouts,
@@ -754,6 +755,23 @@ describe('presets', () => {
         expect(offered[0]).toEqual({ name: 'Dungeon', preset: false, label: 'Dungeon' });
         expect(offered[1]).toEqual({ name: 'Combat', preset: true, label: `Combat${PRESET_SUFFIX}` });
         expect(offered).toHaveLength(1 + presetNames().length);
+    });
+});
+
+describe('the columns a preset was designed for', () => {
+    test('Dense was drawn for nine, by its exact map', () => {
+        expect(presetDesignedColumns('Dense')).toBe(9);
+        expect(presetDesignedColumns('  Dense ')).toBe(9);
+    });
+
+    test('the activity presets and the dashboard carry no such count, so a narrow panel treats them as before', () => {
+        for (const name of ['Combat', 'Skilling', 'Labyrinth', 'Market', 'Dashboard', 'Default'])
+            expect(presetDesignedColumns(name)).toBe(0);
+    });
+
+    test('a name that is no preset is 0', () => {
+        expect(presetDesignedColumns('My own layout')).toBe(0);
+        expect(presetDesignedColumns(null)).toBe(0);
     });
 });
 

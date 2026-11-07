@@ -471,7 +471,8 @@ describe('saving and switching named layouts', () => {
                     written.push(JSON.stringify(overlayPanel.settings.span));
                 });
 
-                widthAs(480);
+                // 300 rather than the default 480: Dense, made for nine, takes three narrow columns at 480
+                widthAs(300);
                 overlayPanel.show();
                 await new Promise((resolve) => setTimeout(resolve, 60));
 
@@ -699,6 +700,75 @@ describe('saving and switching named layouts', () => {
         expect(overlayPanel.columns).toBe(3);
         expect(overlayPanel.settings.columnsPinned).toBe(true);
         expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 3));
+    });
+
+    describe('Dense on a narrow panel', () => {
+        /** Resize the panel and let the coalesced redraw and the refit run. @param {number} width - Pixels */
+        async function resizeTo(width) {
+            measureAs(width);
+            overlayPanel._onPanelResized();
+            await new Promise((resolve) => setTimeout(resolve, 60));
+        }
+
+        test('applied on the 378px panel it gets three narrow columns and its three-column spans', async () => {
+            measureAs(378);
+            await overlayPanel.applyNamedLayout('Dense');
+            expect(overlayPanel.columns).toBe(3);
+            expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 3));
+            // What is stored is what any preset stores: the count stays advisory and unpinned
+            expect(overlayPanel.settings.columns).toBe(2);
+            expect(overlayPanel.settings.columnsPinned).toBe(false);
+        });
+
+        test('a two-column preset on the same panel is one column, as before', async () => {
+            measureAs(378);
+            await overlayPanel.applyNamedLayout('Dashboard');
+            expect(overlayPanel.columns).toBe(1);
+            await overlayPanel.applyNamedLayout('Combat');
+            expect(overlayPanel.columns).toBe(1);
+        });
+
+        test('a column count pinned by hand still wins', async () => {
+            measureAs(378);
+            overlayPanel.settings.columns = 1;
+            overlayPanel.settings.columnsPinned = true;
+            await overlayPanel.applyNamedLayout('Dense');
+            expect(overlayPanel.columns).toBe(1);
+        });
+
+        test('re-fits as the panel narrows and widens: 9, 3, 2, 1, 3, unsaved', async () => {
+            measureAs(2040);
+            await overlayPanel.applyNamedLayout('Dense');
+            expect(overlayPanel.columns).toBe(9);
+            const saves = vi.spyOn(overlayPanel, '_save');
+
+            for (const [width, columns] of [
+                [378, 3],
+                [300, 2],
+                [220, 1],
+                [378, 3],
+            ]) {
+                await resizeTo(width);
+                expect(overlayPanel.columns).toBe(columns);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', columns));
+            }
+            expect(saves).not.toHaveBeenCalled();
+            saves.mockRestore();
+        });
+
+        test('a span wider than the narrow grid is clamped to it', async () => {
+            registerRow({ key: 'totalProfit', name: 'Profit', render: (el) => (el.textContent = 'profit') });
+            measureAs(2040);
+            await overlayPanel.applyNamedLayout('Dense');
+            // Edited, so the re-fit leaves it alone and the stored 5 reaches the grid
+            overlayPanel.settings.span = { ...overlayPanel.settings.span, totalProfit: 5, dps: 7 };
+            await resizeTo(378);
+            expect(overlayPanel.columns).toBe(3);
+            expect(overlayPanel.settings.span.totalProfit).toBe(5);
+            const spans = Object.fromEntries(overlayPanel._visibleRows().map((row) => [row.key, row.span]));
+            expect(spans.totalProfit).toBe(3);
+            expect(spans.dps).toBe(3);
+        });
     });
 
     test('a saved layout named Dense shadows the preset, and the switcher lists it once', async () => {

@@ -16,6 +16,7 @@ import {
     GAP,
     MAX_SPAN,
     THREE_COLUMN_MIN,
+    NARROW_COLUMN_MIN,
 } from './overlay-flow.js';
 
 describe('columnsFor', () => {
@@ -195,8 +196,10 @@ describe('columnsForLayout', () => {
         expect(columnsForLayout(700, 2)).toBe(3);
     });
 
-    test('a phone is one column whatever the layout wanted', () => {
-        expect(columnsForLayout(370, 4)).toBe(1);
+    test('a phone is one column whatever the layout wanted, once even narrow columns do not fit', () => {
+        expect(columnsForLayout(230, 4)).toBe(1);
+        // Wide enough for narrow ones: see the many-columns block below
+        expect(columnsForLayout(370, 4)).toBe(3);
     });
 
     test('never past the ceiling, and never below one', () => {
@@ -585,5 +588,65 @@ describe('columnsForLayout pinned', () => {
     test('pinned still clamps to the span range', () => {
         expect(columnsForLayout(1200, 0, { pinned: true })).toBe(1);
         expect(columnsForLayout(1200, 99, { pinned: true })).toBe(MAX_SPAN);
+    });
+});
+
+describe('columnsForLayout, a layout designed for many columns on a narrow panel', () => {
+    test('the Dense preset on the 378px test-server panel gets three columns, not one and not nine', () => {
+        // 378 less the scroller's 12px of padding
+        expect(columnsForLayout(366, 2, { designed: 9 })).toBe(3);
+    });
+
+    test('never more than the layout was designed for, nor than narrow columns fit', () => {
+        expect(columnsForLayout(366, 2, { designed: 3 })).toBe(3);
+        expect(columnsForLayout(300, 2, { designed: 9 })).toBe(2);
+        expect(columnsForLayout(200, 2, { designed: 9 })).toBe(1);
+    });
+
+    test('a layout written for one or two columns behaves on a phone exactly as before', () => {
+        for (const width of [200, 300, 366, 443]) {
+            expect(columnsForLayout(width, 2)).toBe(1);
+            expect(columnsForLayout(width, 2, { designed: 2 })).toBe(1);
+            expect(columnsForLayout(width, 1, { designed: 0 })).toBe(1);
+        }
+    });
+
+    test('a layout saved with an authored count of three or more gets narrow columns too', () => {
+        expect(columnsForLayout(366, 4)).toBe(3);
+        expect(columnsForLayout(300, 4)).toBe(2);
+    });
+
+    test('below the width the ordinary law gives three columns, it is lifted to at most three', () => {
+        expect(columnsForLayout(500, 2, { designed: 9 })).toBe(3);
+        expect(columnsForLayout(THREE_COLUMN_MIN - 1, 2, { designed: 9 })).toBe(3);
+    });
+
+    test('from the width the ordinary law gives three columns, nothing changes', () => {
+        for (const width of [THREE_COLUMN_MIN, 700, 1000, 1200, 2012, 2300]) {
+            expect(columnsForLayout(width, 2, { designed: 9 })).toBe(columnsForLayout(width, 2));
+        }
+        expect(columnsForLayout(1200, 2, { designed: 9 })).toBe(5);
+    });
+
+    test('a pinned count still wins', () => {
+        expect(columnsForLayout(366, 1, { pinned: true, designed: 9 })).toBe(1);
+        expect(columnsForLayout(366, 5, { pinned: true, designed: 9 })).toBe(5);
+    });
+
+    test('never falls as the panel widens', () => {
+        for (const authored of [2, 4]) {
+            let previous = 0;
+            for (let width = 100; width <= 2400; width += 1) {
+                const columns = columnsForLayout(width, authored, { designed: 9 });
+                expect(columns).toBeGreaterThanOrEqual(previous);
+                previous = columns;
+            }
+        }
+    });
+
+    test('three narrow columns fit the 378px panel, and each still holds a figure', () => {
+        expect(3 * NARROW_COLUMN_MIN + 2 * GAP).toBeLessThanOrEqual(366);
+        // Content box is the column less the tile's 4px side padding and 1px borders
+        expect(NARROW_COLUMN_MIN - 10).toBeGreaterThanOrEqual(100);
     });
 });
