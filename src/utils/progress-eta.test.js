@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { createEtaTracker, formatEta } from './progress-eta.js';
+import { createEtaTracker, createWorkEstimator, formatEta } from './progress-eta.js';
 
 /** A tracker whose clock is a variable this test moves by hand */
 function tracked(options = {}) {
@@ -137,5 +137,113 @@ describe('the elapsed side', () => {
         run.at(7_500, 0.3);
 
         expect(run.tracker.elapsedMs()).toBe(7_500);
+    });
+});
+
+describe('time left weighted by what each piece of work costs', () => {
+    /** An estimator whose clock this test moves by hand */
+    function estimator(options = {}) {
+        const clock = { at: 0 };
+        const work = createWorkEstimator({ now: () => clock.at, ...options });
+        /** Run one planned piece from `from` to `to` ms */
+        const run = (kind, units, from, to) => {
+            clock.at = from;
+            const job = work.start(kind, units);
+            clock.at = to;
+            work.finish(job);
+        };
+        return { work, clock, run };
+    }
+
+    test('says nothing until a piece has finished', () => {
+        const { work } = estimator();
+        work.add('house', 1, 3);
+        expect(work.remainingMs()).toBeNull();
+    });
+
+    test('a combat level (three sims) left to run is not priced like a house room (one)', () => {
+        const { work, run } = estimator({ priorWeight: 0 });
+        work.add('baseline', 1);
+        work.add('house', 1, 2);
+        work.add('combat_level', 1, 5);
+        run('baseline', 1, 0, 1000);
+        run('house', 1, 1000, 2000);
+        run('combat_level', 1, 2000, 5000);
+        // Left: one house room (1 s) and four combat levels (3 s each). A plain per-item average (5 s over three
+        // items done) would say 5 × 1.67 s = 8.3 s
+        expect(work.remainingMs()).toBe(1000 + 4 * 3000);
+    });
+
+    test('a kind not seen yet is costed at the run average; one seen once leans on the average', () => {
+        const { work, run } = estimator({ priorWeight: 1 });
+        work.add('house', 1, 2);
+        work.add('drink', 1, 1);
+        run('house', 1, 0, 1000);
+        expect(work.rateMs('drink')).toBe(1000);
+        expect(work.remainingMs()).toBe(2000);
+        work.add('combat_level', 1, 1);
+        run('combat_level', 1, 1000, 4000);
+        // Average now 2 s a unit; combat level's own 3 s blended with one unit of it is 2.5 s
+        expect(work.rateMs('combat_level')).toBe(2500);
+    });
+
+    test('units scale the cost: a 4× re-sim of a kind is four of its first-pass pieces', () => {
+        const { work, run } = estimator({ priorWeight: 0 });
+        work.add('enhancement', 1, 2);
+        run('enhancement', 1, 0, 2000);
+        work.add('baseline', 4);
+        work.add('enhancement', 4, 2);
+        // One enhancement left at 1 unit, two at 4 units, a baseline at 4 units costed at the run average (2 s)
+        expect(work.remainingMs()).toBe(2000 + 2 * 8000 + 8000);
+    });
+
+    test('a running piece counts what is left of it; lanes divide the total', () => {
+        const { work, run, clock } = estimator({ priorWeight: 0, lanes: 2 });
+        work.add('house', 1, 3);
+        run('house', 1, 0, 2000);
+        work.start('house', 1);
+        clock.at = 3500;
+        // One pending (2 s) plus 0.5 s left of the running one, over two lanes
+        expect(work.remainingMs()).toBe((2000 + 500) / 2);
+    });
+
+    test('a piece Stop cut short teaches nothing; complete() records a piece timed from outside', () => {
+        const { work, clock } = estimator({ priorWeight: 0 });
+        work.add('food', 1, 3);
+        const job = work.start('food', 1);
+        clock.at = 100;
+        work.finish(job, false);
+        expect(work.remainingMs()).toBeNull();
+        work.complete('food', 1, 400);
+        expect(work.remainingMs()).toBe(400);
+    });
+});
+
+describe('a smoothed estimate the run worked out itself', () => {
+    test('counts down between reports and moves only part of the way to a new reading', () => {
+        let clock = 0;
+        const eta = createEtaTracker({ now: () => clock, minElapsedMs: 0 });
+        expect(eta.updateRemaining(null, 0).text).toBe('estimating…');
+        clock = 2000;
+        expect(eta.updateRemaining(60_000, 0.1).remainingMs).toBe(60_000);
+        // Ten seconds on with the same reading: the countdown says 50 s, the reading 60 s
+        clock = 12_000;
+        expect(eta.updateRemaining(60_000, 0.2).remainingMs).toBeCloseTo(50_000 + 0.3 * 10_000);
+        // A round of re-sims doubles the reading: the shown figure moves 30% of the way, not all of it
+        clock = 12_000;
+        const before = eta.updateRemaining(53_000, 0.2).remainingMs;
+        const after = eta.updateRemaining(120_000, 0.2).remainingMs;
+        expect(after).toBeCloseTo(before + 0.3 * (120_000 - before));
+        expect(after).toBeLessThan(80_000);
+    });
+
+    test('quiet while the run is young, empty once finished', () => {
+        let clock = 0;
+        const eta = createEtaTracker({ now: () => clock, minElapsedMs: 1500 });
+        clock = 500;
+        expect(eta.updateRemaining(10_000, 0.5).text).toBe('estimating…');
+        clock = 2000;
+        expect(eta.updateRemaining(10_000, 0.5).text).toMatch(/left$/);
+        expect(eta.updateRemaining(0, 1).text).toBe('');
     });
 });

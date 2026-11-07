@@ -3160,6 +3160,27 @@ describe('close-call re-sims', () => {
             expect(last.current).toBe(last.total);
         });
 
+        test('progress carries the weighted time left: none before a sim has finished, the re-sim rounds included', async () => {
+            let clock = 0;
+            // Every sim takes a second of the test's clock, a 2× one two and a 4× one four
+            const params = setup(true);
+            const sim = runSimulation.getMockImplementation();
+            runSimulation.mockImplementation(async (args, ...rest) => {
+                clock += 1000 * (args.hours / 10);
+                return sim(args, ...rest);
+            });
+            const progress = [];
+            await runUpgradeAnalysis(params, (p) => progress.push(p), { now: () => clock });
+            expect(progress[0].remainingMs).toBeNull();
+            const afterBaseline = progress.find((p) => p.description === 'Baseline complete');
+            expect(afterBaseline.remainingMs).toBeGreaterThan(0);
+            // A round's start adds its sims, at their multiple of the hours, to what is left
+            const roundStart = progress.find((p) => p.phase === 'resim');
+            const before = progress[progress.indexOf(roundStart) - 1];
+            expect(roundStart.remainingMs).toBeGreaterThan(before.remainingMs);
+            expect(progress[progress.length - 1].remainingMs).toBe(0);
+        });
+
         test('Stop once the re-sims start leaves every row as the first pass measured it', async () => {
             let stopped = false;
             const first = await runUpgradeAnalysis(setup(false), null, { now: () => 0 });

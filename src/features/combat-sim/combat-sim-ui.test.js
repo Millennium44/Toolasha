@@ -9354,6 +9354,27 @@ describe('Re-sim close calls', () => {
         box.dispatchEvent(new Event('change'));
     });
 
+    test('the bar holds when re-sims add to the total, and the time left is the run’s own weighted figure', async () => {
+        const seen = [];
+        mocks.onRun = (params, onProgress) => {
+            const read = () => ({
+                width: q('#mwi-csim-upgrade-progress-fill').style.width,
+                text: q('#mwi-csim-upgrade-progress-text').textContent,
+            });
+            onProgress({ current: 0, total: 4, description: 'Running baseline...', remainingMs: null });
+            seen.push(read());
+            onProgress({ current: 3, total: 4, description: 'x', remainingMs: 90_000 });
+            seen.push(read());
+            onProgress({ current: 3, total: 7, phase: 'resim', description: 'Close calls', remainingMs: 200_000 });
+            seen.push(read());
+        };
+        await ui._onUpgradeAnalyze();
+        expect(seen[0].text).toBe('0 / 4 · estimating…');
+        expect(seen[1].width).toBe('75%');
+        expect(seen[2].width).toBe('75%');
+        expect(seen[2].text).toMatch(/^3 \/ 7/);
+    });
+
     test('every way it can end has its own sentence; off says nothing', () => {
         expect(resimSummaryText(null)).toBe('');
         expect(resimSummaryText({ ran: true, rounds: 0, rows: 0, reason: 'separated' })).toMatch(/No close calls/);

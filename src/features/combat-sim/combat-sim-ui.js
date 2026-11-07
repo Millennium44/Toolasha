@@ -11624,6 +11624,7 @@ class CombatSimUI {
         // analysis keeps them: one whose row is gone shows up as "not in the current results"
         // One tracker per run: it starts its clock where it is made
         const eta = createEtaTracker();
+        let barPct = 0;
 
         try {
             // Reading the buffs can throw on unexpected game data, and outside the
@@ -11719,13 +11720,19 @@ class CombatSimUI {
                     auraSwapsOnly,
                     resimCloseCalls,
                 },
-                ({ current, total, description }) => {
+                ({ current, total, description, remainingMs }) => {
                     if (this._upgradeAborted) return;
                     const fill = this.panel.querySelector('#mwi-csim-upgrade-progress-fill');
                     const text = this.panel.querySelector('#mwi-csim-upgrade-progress-text');
-                    // The food search's sim count is an estimate, so cap the bar
-                    const pct = Math.min(100, Math.round((current / total) * 100));
-                    const { text: remaining } = eta.update(total > 0 ? Math.min(1, current / total) : 0);
+                    // The food search's sim count is an estimate, so cap the bar. Close-call re-sims add to the
+                    // total, so the bar holds where it was rather than sliding back when they do
+                    const fraction = total > 0 ? Math.min(1, current / total) : 0;
+                    barPct = Math.max(barPct, Math.min(100, Math.round(fraction * 100)));
+                    const pct = barPct;
+                    // The advisor's weighted estimate (see `createWorkEstimator`), smoothed here; the plain pace
+                    // estimate only for a caller that sends none
+                    const { text: remaining } =
+                        remainingMs !== undefined ? eta.updateRemaining(remainingMs, fraction) : eta.update(fraction);
                     if (fill) fill.style.width = pct + '%';
                     if (text) text.textContent = `${current} / ${total}` + (remaining ? ` · ${remaining}` : '');
                     this._setStatus(description);

@@ -43,6 +43,7 @@ import { findProducingAction } from '../../utils/production-index.js';
 import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
+import { createWorkEstimator } from '../../utils/progress-eta.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
@@ -4964,6 +4965,18 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     let total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
     let current = 0;
 
+    // Sims run at once in the candidate queue (see below)
+    const lanes = Math.max(1, Math.min(analysisConcurrency(), candidatesWithCost.length));
+    // Time left, weighted by what each piece of work costs: a piece's kind is its candidate type (a combat level
+    // is three sims, a house room one), its units are its sim hours over the first pass's. Learned per kind from
+    // the pieces already done, so the estimate follows the mix still to come. See `createWorkEstimator`.
+    const work = createWorkEstimator({ now, lanes });
+    work.add('baseline', 1);
+    for (const candidate of candidatesWithCost) work.add(candidateWorkKind(candidate), 1);
+    if (foodSimCount) work.add('food', 1, foodSimCount);
+    /** Progress with the weighted time left on it (null until a piece has finished) */
+    const reportProgress = (payload) => onProgress?.({ ...payload, remainingMs: work.remainingMs() });
+
     // Every price the runs below can read, read now: an item first seen in a candidate (an added coffee, a drop
     // the baseline never rolled) would otherwise be priced when that candidate finishes, after any change
     seedSimPriceCache(priceCache, gameData, {
@@ -4978,7 +4991,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     });
 
     // Run baseline sim
-    onProgress?.({ current: 0, total, description: 'Running baseline...' });
+    reportProgress({ current: 0, total, description: 'Running baseline...' });
     // One worker, like every candidate below. The shared seed only cancels
     // sampling noise while both runs draw the same stream in the same order,
     // and the chunking decides the streams: a baseline split four ways is four
@@ -4994,6 +5007,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // only while this run's own abort flag is set: a cancel from anywhere else still fails the analysis
     const stoppedHere = () => Boolean(abortSignal?.());
     let baselineResult;
+    const baselineJob = work.start('baseline', 1);
     try {
         baselineResult = await runSimulation(
             {
@@ -5017,11 +5031,12 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         if (stoppedHere()) return { baseline: null, results: [] };
         throw error;
     }
+    work.finish(baselineJob);
     current++;
 
     if (abortSignal?.()) return { baseline: null, results: [] };
 
-    onProgress?.({ current, total, description: 'Baseline complete' });
+    reportProgress({ current, total, description: 'Baseline complete' });
 
     // Calculate baseline metrics
     const baselineMetrics = computeMetrics(baselineResult, gameData, playerHrid, hours, { priceCache, saleTaxRate });
@@ -5038,7 +5053,6 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     //
     // Fanning out is still right for a *single* run, where there is no queue to
     // fill — a lone 600-hour sim is about twice as quick split four ways.
-    const lanes = Math.max(1, Math.min(analysisConcurrency(), candidatesWithCost.length));
     const progress = { current };
 
     /**
@@ -5189,7 +5203,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
     const evaluateCandidate = async (candidate) => {
         if (abortSignal?.()) return null;
+        const job = work.start(candidateWorkKind(candidate), 1);
+        try {
+            return await evaluateCandidateRow(candidate);
+        } finally {
+            // A piece Stop cut short teaches nothing about how long that kind takes
+            work.finish(job, !abortSignal?.());
+        }
+    };
 
+    const evaluateCandidateRow = async (candidate) => {
         // A candidate Stop interrupts is dropped, and the ones that finished are kept: they are measurements
         const simResult = await simulateCandidate(candidate, hours);
         if (!simResult || abortSignal?.()) return null;
@@ -5198,7 +5221,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         if (candidate.type === 'combat_level') {
             // Leveling posture: XP rates with the matching charm for this skill
             // equipped (current levels), since that's what you'd wear to grind it
-            onProgress?.({ current: progress.current, total, description: `XP rate: ${candidate.description}` });
+            reportProgress({ current: progress.current, total, description: `XP rate: ${candidate.description}` });
             const xpDTOs = JSON.parse(JSON.stringify(playerDTOs));
             const currentCharm = xpDTOs[playerIndex].equipment[CHARM_SLOT] || null;
             const matchingCharm = findMatchingCharmForSkill(
@@ -5255,7 +5278,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 if (along) {
                     row.alongside = along;
                     if (along.upgradeLevel > along.currentLevel && !abortSignal?.()) {
-                        onProgress?.({
+                        reportProgress({
                             current: progress.current,
                             total,
                             description: `${candidate.description} + ${along.label} ${along.currentLevel} → ${along.upgradeLevel}`,
@@ -5314,11 +5337,15 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             progress.current++;
         }
         progress.current++;
-        onProgress?.({ current: progress.current, total, description: candidate.description });
+        reportProgress({ current: progress.current, total, description: candidate.description });
         return row;
     };
 
-    onProgress?.({ current: progress.current, total, description: `Simulating ${candidatesWithCost.length} upgrades` });
+    reportProgress({
+        current: progress.current,
+        total,
+        description: `Simulating ${candidatesWithCost.length} upgrades`,
+    });
     const firstPassStartedAt = now();
     const results = (await mapConcurrent(candidatesWithCost, evaluateCandidate, lanes)).filter(Boolean);
     current = progress.current;
@@ -5335,7 +5362,10 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             lanes,
             onRoundStart: (rows, multiplier) => {
                 total += rows.length + 1;
-                onProgress?.({
+                // The round's own baseline and rows, each `multiplier` units of its kind
+                work.add('baseline', multiplier);
+                for (const row of rows) work.add(candidateWorkKind(row.candidate), multiplier);
+                reportProgress({
                     current,
                     total,
                     phase: 'resim',
@@ -5345,6 +5375,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             runRound: async (rows, multiplier) => {
                 const simHours = hours * multiplier;
                 let longBaseline;
+                const longBaselineJob = work.start('baseline', multiplier);
                 try {
                     longBaseline = await runSimulation(
                         {
@@ -5363,9 +5394,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 } catch (error) {
                     if (stoppedHere()) return null;
                     throw error;
+                } finally {
+                    work.finish(longBaselineJob, !abortSignal?.());
                 }
                 current++;
-                onProgress?.({ current, total, phase: 'resim', description: `Close calls: baseline at ${simHours}h` });
+                reportProgress({
+                    current,
+                    total,
+                    phase: 'resim',
+                    description: `Close calls: baseline at ${simHours}h`,
+                });
                 if (abortSignal?.()) return null;
                 const base = {
                     metrics: computeMetrics(longBaseline, gameData, playerHrid, simHours, { priceCache, saleTaxRate }),
@@ -5376,10 +5414,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                     rows,
                     async (row) => {
                         if (abortSignal?.()) return null;
-                        const simResult = await simulateCandidate(row.candidate, simHours);
+                        const job = work.start(candidateWorkKind(row.candidate), multiplier);
+                        let simResult;
+                        try {
+                            simResult = await simulateCandidate(row.candidate, simHours);
+                        } finally {
+                            work.finish(job, !abortSignal?.());
+                        }
                         if (!simResult || abortSignal?.()) return null;
                         current++;
-                        onProgress?.({
+                        reportProgress({
                             current,
                             total,
                             phase: 'resim',
@@ -5410,6 +5454,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // Food is not a ranked upgrade — it is a cost floor at fixed survival, so it
     // gets its own search and its own result shape
     let food = null;
+    let foodTickAt = now();
     if (optimizeFood && !abortSignal?.()) {
         try {
             food = await runFoodOptimization(
@@ -5426,7 +5471,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 },
                 ({ description }) => {
                     current++;
-                    onProgress?.({ current, total, description });
+                    // Each food sim is one unit of 'food', timed from the one before it
+                    const at = now();
+                    work.complete('food', 1, at - foodTickAt);
+                    foodTickAt = at;
+                    reportProgress({ current, total, description });
                 },
                 { abortSignal }
             );
@@ -5478,6 +5527,16 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
  * the first pass ran (and at least {@link RESIM_MIN_BUDGET_MS}), so a quick analysis is never doubled into a slow one.
  */
 export const RESIM_MAX_BUDGET_MS = 10 * 60 * 1000;
+
+/**
+ * The kind of work a candidate is for the time estimate: its type, which is what decides how many sims it takes
+ * (a combat level runs three) and how heavy each is.
+ * @param {Object} candidate
+ * @returns {string}
+ */
+function candidateWorkKind(candidate) {
+    return candidate?.type || 'equipment';
+}
 /** The time the close-call re-sims may always take, however quick the first pass was */
 export const RESIM_MIN_BUDGET_MS = 30 * 1000;
 /** Hours multipliers the close calls are re-simmed at, one round each */
