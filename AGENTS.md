@@ -168,7 +168,8 @@ Every brief to a sub-agent carries these lines:
 
 - Work only in your own worktree and branch. Never push, never touch `CHANGELOG.md`, never spawn
   sub-agents.
-- **No background polling loops** (`until grep …; do sleep …`) — run gates in the foreground. **No
+- **Run only the tests your change reaches, never the full gates** — the integrator runs those once.
+- **No background polling loops** (`until grep …; do sleep …`) — run tests in the foreground. **No
   whole-disk searches** (`find /`, a drive root) — search the repo or a named scratch folder only. Both
   have left processes running for hours after the agent finished.
 - Commit messages go in a uniquely named file (`msg-<branch>.txt`); the scratch folder is shared, and a
@@ -247,7 +248,13 @@ Every brief to a sub-agent carries these lines:
 
 ### Before handing off or pushing
 
-Run `bash scripts/gates.sh` and see `All gates passed.` It mirrors CI step for step: ESLint, Prettier
+**Sub-agents do not run the full gates** (maintainer's rule, 2026-11-06). They run only the test files
+their change can reach (`npx --no-install vitest run <files>`, including every `<module>*.test.js`),
+plus ESLint and Prettier on the touched files, and hand off. The integrating session runs the full gates
+**once** for everything it is about to push. Several full runs at once (agents in parallel, then again at
+integration) load the machine enough that the test server's tabs lose their storage connection.
+
+Before a push, run `bash scripts/gates.sh` and see `All gates passed.` It mirrors CI step for step: ESLint, Prettier
 with CI's globs (`CHANGELOG.md` included), the suite, both builds, the bundle-sharing check, the 2 MiB
 `@require` ceiling, and the `@require` classic-script check. A branch that passes it will not learn
 anything new from CI. Never report a gate result from a run you did not do.
