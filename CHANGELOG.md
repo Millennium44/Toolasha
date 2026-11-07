@@ -14,6 +14,18 @@ The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the c
 
 The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakpoint or level, Ability Lv, House and Shrine, and Combat Lv now has its own +Levels / Next mult. of box and Steps.
 
+### Lab Sim keeps the ability target when it forces +Levels
+
+Choosing several fights switches the Lab's ability level type to +Levels, but a Target Lv number such as 80 stayed in the box and was read as +80 levels; the box now resets to the +Levels default.
+
+### Sim Upgrade boxes save as you type
+
+Both sims now save a number the moment you type it, so closing the page before leaving the box no longer loses it, and a Lab box still saves if its redraw fails.
+
+### Combat Sim says every house room is at max
+
+With House checked on a character whose rooms are all maxed, the Upgrade tab now says so instead of "Ensure equipment is configured."
+
 ### Lab Sim Use Skip Levels works when unticked
 
 Unticking Use Skip Levels on the Lab Sim's Upgrade tab had stopped working; it now uses each fight's live room level during a labyrinth run and the skip level otherwise.
