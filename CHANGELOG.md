@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dense overlay on a narrow panel
+
+A layout made for many columns, like the Dense preset, now shows up to three narrow columns on a narrow panel instead of one column with every tile on its own row.
+
 ### Trial history stays in its place after the weekly reset
 
 At the weekly reset the game rebuilds the Trials tab, which left the Trial history table at the top of the page; it now moves back below the trial cards.
