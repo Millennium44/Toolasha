@@ -337,7 +337,13 @@ class LabyrinthRunLedger {
         // a run re-recorded after a reload (the server's post-run re-sends land
         // with no memory of what was already banked) would replace its true
         // leftovers with a post-run snapshot rather than sit beside it.
-        if (ledger.get().some((run) => run?.key === ended.key)) return false;
+        // Matched by stamp, not key text: the ring keeps the spelling the run
+        // was first seen with (nanoseconds, from the door), and a post-reload
+        // re-send spells the same instant at milliseconds
+        const stamp = labyrinthRunStamp(ended.key);
+        if (ledger.get().some((run) => run?.key === ended.key || (!!stamp && labyrinthRunStamp(run?.key) === stamp))) {
+            return false;
+        }
         return ledger.update((runs) => [ended, ...runs].slice(0, MAX_RUNS));
     }
 

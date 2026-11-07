@@ -75,6 +75,7 @@ const {
     burnSummary,
     torchesPerFloor,
     sparkText,
+    measuredRuns,
 } = await import('./labyrinth-run-ledger-math.js');
 
 describe('the grid arithmetic, straight from the game guide', () => {
@@ -453,6 +454,38 @@ describe('the ring survives a failed read and a second tab', () => {
         expect(stored()[0].left.torch).toBe(43);
     });
 
+    test('a reload after a run ended does not bank the post-run re-send as a second run', async () => {
+        // The run opens on the nanosecond stamp (`...55.00649767Z`) and every
+        // later message spells it at milliseconds (`...55.006Z`). After a reload
+        // nothing remembers the ending but the ring, and the ring holds the
+        // first spelling, so a raw-text match missed the post-run re-send and
+        // banked the restocked pile (400/12/15) as a run that spent nothing.
+        const flush = async () => {
+            for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        for (const name of ['entry', 'roomClearReveal', 'lastFloor', 'newFloor', 'exit']) {
+            labyrinthRunLedger.observe(buildLabyrinthUpdated(name).labyrinth);
+        }
+        await flush();
+        expect(stored()).toHaveLength(1);
+        expect(stored()[0].left).toEqual({ torch: 312, shroud: 12, beacon: 15 });
+
+        // The reload: no session memory, only what is stored
+        labyrinthRunLedger.cleanup();
+        labyrinthRunLedger.ledgerOwner = null;
+        // A re-send with no `isActive` still carries the path, so it reads as
+        // active, on the restocked counts
+        labyrinthRunLedger.observe(
+            buildLabyrinthUpdated('exit', { isActive: undefined, torchCount: 400, shroudCount: 12, beaconCount: 15 })
+                .labyrinth
+        );
+        labyrinthRunLedger.observe(buildLabyrinthUpdated('exit').labyrinth);
+        await flush();
+
+        expect(stored()).toHaveLength(1);
+        expect(stored()[0].left).toEqual({ torch: 312, shroud: 12, beacon: 15 });
+    });
+
     test('a character switch forgets the departing character’s endings', async () => {
         await labyrinthRunLedger._append(ending('1'));
         game.characterId = 'char2';
@@ -539,6 +572,61 @@ describe('burnSummary', () => {
         expect(burnSummary([run({ trusted: false })], 'torch')).toBeNull();
         expect(burnSummary([], 'torch')).toBeNull();
         expect(burnSummary(null, 'torch')).toBeNull();
+    });
+});
+
+describe('measuredRuns', () => {
+    // The last five runs as one live ledger read: two full-carry records
+    // (left = what was carried in) between three real ones. Real stamps, as the
+    // ring keys them: the first spelling the run was seen with.
+    const carried = { torch: 400, shroud: 12, beacon: 15 };
+    const ledger = [
+        // Re-banked after a reload: the twin of the next run, spelt at milliseconds
+        run({
+            key: '2026-11-02T03:00:00.123Z',
+            endedAt: 5000,
+            left: carried,
+            start: carried,
+            torch: 0,
+            shroud: 0,
+            beacon: 0,
+        }),
+        run({ key: '2026-11-02T03:00:00.12345678Z', endedAt: 4000, left: { torch: 16, shroud: 1, beacon: 0 } }),
+        // Seen once at the door, closed by the next run's arrival
+        run({
+            key: '2026-11-02T02:00:00.5Z',
+            endedAt: 3000,
+            endedByInference: true,
+            left: carried,
+            torch: 0,
+            shroud: 0,
+            beacon: 0,
+        }),
+        run({ key: '2026-11-02T01:00:00.25Z', endedAt: 2000, left: { torch: 0, shroud: 3, beacon: 8 } }),
+        run({ key: '2026-11-02T00:00:00.75Z', endedAt: 1000, left: { torch: 39, shroud: 0, beacon: 0 } }),
+    ];
+
+    test('keeps only runs watched from the door to the end, once each, newest first', () => {
+        expect(measuredRuns(ledger).map((r) => r.left.torch)).toEqual([16, 0, 39]);
+    });
+
+    test('a joined-mid-way run is not a measured run', () => {
+        expect(measuredRuns([run({ trusted: false, left: carried })])).toEqual([]);
+    });
+
+    test('a second ending of the same run never outranks the first', () => {
+        // Whichever order the ring holds them in, the earlier ending stands
+        expect(measuredRuns([...ledger].reverse()).map((r) => r.left.torch)).toEqual([39, 0, 16]);
+    });
+
+    test('the burn reading and its range ignore the excluded runs', () => {
+        expect(burnSummary(ledger, 'torch')).toMatchObject({ runs: 3, min: 100, max: 100 });
+        expect(observedUse(ledger, 'beacon')).toEqual([3, 3, 3]);
+        expect(torchesPerFloor(ledger)).toHaveLength(3);
+    });
+
+    test('runs whose keys are not stamps are never merged with each other', () => {
+        expect(measuredRuns([run({ key: 'r' }), run({ key: 'r' })])).toHaveLength(2);
     });
 });
 

@@ -106,6 +106,7 @@ import {
     burnSummary,
     torchesPerFloor,
     sparkText,
+    measuredRuns,
 } from '../combat/labyrinth-run-ledger-math.js';
 import { rushFloorVerdict } from '../combat/labyrinth-rush-floor-verdict.js';
 import storage from '../../core/storage.js';
@@ -2843,7 +2844,9 @@ class ConsumablesPanel {
             beacon: cap('labyrinthBeaconCap', 5),
         };
         const needs = [];
-        const ledger = (this._ledgerRuns || []).slice(0, 5);
+        // The last five measured runs, not the last five records: an excluded
+        // record would otherwise take a slot from a real run
+        const ledger = measuredRuns(this._ledgerRuns).slice(0, 5);
         for (const kind of SUPPLY_KINDS) {
             if (!(capacity[kind] > 0)) continue;
             // The tier the last run actually carried names the item; what is
@@ -2992,8 +2995,10 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
         // What recent runs actually left unspent, and what each rush-for-exit
         // floor would cost against the torch capacity — the two readings that
-        // together answer "could the rush floor come down?"
-        const ledger = (this._ledgerRuns || []).slice(0, 5);
+        // together answer "could the rush floor come down?" Only measured runs:
+        // a run closed by inference on its door sighting, or banked twice off a
+        // post-run re-send, "left over" everything it carried in
+        const ledger = measuredRuns(this._ledgerRuns).slice(0, 5);
         if (ledger.length) {
             const line = document.createElement('div');
             line.style.cssText =
@@ -3019,8 +3024,9 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
                 const nums = document.createElement('span');
                 nums.textContent = values.join(', ');
                 chip.appendChild(nums);
-                chip.title = `${kind.charAt(0).toUpperCase() + kind.slice(1)}es left at the end of each run, newest first`;
-                if (kind === 'beacon') chip.title = 'Beacons left at the end of each run, newest first';
+                chip.title = `${kind.charAt(0).toUpperCase() + kind.slice(1)}es left at the end of each run watched from the door to the end, newest first`;
+                if (kind === 'beacon')
+                    chip.title = 'Beacons left at the end of each run watched from the door to the end, newest first';
                 line.appendChild(chip);
             }
 
