@@ -351,12 +351,100 @@ const DASHBOARD_PRESET = {
 };
 
 /**
- * The maintainer's own dense overlay: twenty tiles, nine columns. Its widths at
- * nine columns are the ones in `exact`, except that Treasure takes three rather
- * than four: four left the row of inventory, treasure and build score one column
- * short and wrapped Net Worth alone beneath it, and three closes the row.
+ * The maintainer's own dense overlay: twenty-two tiles, nine columns, every
+ * width in `exact` copied from their exported layout. Each row of it fills the
+ * nine exactly; inventory, mana and treasure share one, build score, net worth
+ * and charms the last.
  */
 const DENSE_PRESET = {
+    activity: ACTIVITY.NONE,
+    order: [
+        'battleTimer',
+        'experiencePerHour',
+        'deathsPerHour',
+        'combatStatus',
+        'combatRevenue',
+        'timeToLevel',
+        'houses',
+        'totalProfit',
+        'consumables',
+        'equipmentWatch',
+        'coins',
+        'marketListings',
+        'dps',
+        'luck',
+        'watchlist',
+        'skillBooks',
+        'inventoryValue',
+        'manaPerFight',
+        'treasure',
+        'buildScore',
+        'netWorth',
+        'charmValue',
+    ],
+    // Blocks and the long lists take both columns, figures pair up
+    span: {
+        battleTimer: 2,
+        combatStatus: 2,
+        combatRevenue: 2,
+        timeToLevel: 2,
+        houses: 2,
+        totalProfit: 2,
+        consumables: 2,
+        equipmentWatch: 2,
+        dps: 2,
+        manaPerFight: 2,
+        treasure: 2,
+        charmValue: 2,
+    },
+    // Timer; three figures; revenue; three; supplies beside the list; three; three; inventory and mana; treasure; three
+    span3: { battleTimer: 3, combatRevenue: 3, equipmentWatch: 2, manaPerFight: 2, treasure: 3 },
+    sizes: {
+        battleTimer: 'block',
+        combatRevenue: 'block',
+        timeToLevel: 'block',
+        houses: 'block',
+        totalProfit: 'wide',
+        consumables: 'block',
+        equipmentWatch: 'wide',
+        dps: 'block',
+        treasure: 'block',
+        charmValue: 'wide',
+    },
+    exact: {
+        9: {
+            battleTimer: 3,
+            experiencePerHour: 2,
+            deathsPerHour: 2,
+            combatStatus: 2,
+            combatRevenue: 3,
+            timeToLevel: 3,
+            houses: 3,
+            totalProfit: 5,
+            consumables: 4,
+            equipmentWatch: 5,
+            coins: 2,
+            marketListings: 2,
+            dps: 3,
+            luck: 2,
+            watchlist: 2,
+            skillBooks: 2,
+            inventoryValue: 2,
+            manaPerFight: 3,
+            treasure: 4,
+            buildScore: 2,
+            netWorth: 2,
+            charmValue: 5,
+        },
+    },
+};
+
+/**
+ * Dense as 3.77.0 shipped it: twenty tiles, Treasure at three. Kept only so a copy
+ * applied then and never touched is recognised and moved to the current Dense
+ * (see {@link legacyPresetFiles}); never offered or applied.
+ */
+const DENSE_PRESET_3_77 = {
     activity: ACTIVITY.NONE,
     order: [
         'battleTimer',
@@ -431,6 +519,9 @@ const DENSE_PRESET = {
         },
     },
 };
+
+/** Earlier shapes of a preset, by name, that an untouched copy may still be in */
+const LEGACY_PRESETS = { Dense: [DENSE_PRESET_3_77] };
 
 /** Presets that resolve by name but are not offered in the Layouts switcher */
 const UNLISTED_PRESETS = new Set(['Default']);
@@ -665,7 +756,16 @@ export function wideSpans(order, sizes, columns) {
  * @returns {Object|null} The spans, or null when there is no such preset
  */
 export function presetSpans(name, columns = 2) {
-    const preset = PRESET_LAYOUTS[normalizeName(name)];
+    return spansOfPreset(PRESET_LAYOUTS[normalizeName(name)], columns);
+}
+
+/**
+ * {@link presetSpans} for a preset definition rather than a name.
+ * @param {Object|undefined} preset - A preset definition
+ * @param {number} columns - The grid's column count
+ * @returns {Object<string, number>|null} Spans, or null without a preset
+ */
+function spansOfPreset(preset, columns) {
     if (!preset) return null;
     if (columns === 3 && preset.span3) return { ...preset.span3 };
     if (columns >= 4 && preset.exact?.[columns]) return { ...preset.exact[columns] };
@@ -734,7 +834,30 @@ export function presetDesignedColumns(name) {
  * @returns {Object|null} A file for `fromOPanelConfig`, or null when there is no such preset
  */
 export function presetFile(name, { rows = null, columns = 2 } = {}) {
-    const preset = PRESET_LAYOUTS[normalizeName(name)];
+    return fileOfPreset(PRESET_LAYOUTS[normalizeName(name)], { rows, columns });
+}
+
+/**
+ * The files of a preset's earlier shapes at a column count, for recognising a copy applied
+ * under an older build and never edited. Empty for a preset that never changed.
+ *
+ * @param {string} name - A preset name
+ * @param {Object} [options]
+ * @param {Array<Object>|null} [options.rows] - A registry snapshot, or null for the live one
+ * @param {number} [options.columns] - The column count
+ * @returns {Array<Object>} Layout files
+ */
+export function legacyPresetFiles(name, { rows = null, columns = 2 } = {}) {
+    return (LEGACY_PRESETS[normalizeName(name)] || []).map((preset) => fileOfPreset(preset, { rows, columns }));
+}
+
+/**
+ * {@link presetFile} for a preset definition rather than a name.
+ * @param {Object|undefined} preset - A preset definition
+ * @param {Object} options - As {@link presetFile}
+ * @returns {Object|null} A layout file, or null without a preset
+ */
+function fileOfPreset(preset, { rows, columns }) {
     if (!preset) return null;
 
     const available = registryKeys(rows);
@@ -751,7 +874,7 @@ export function presetFile(name, { rows = null, columns = 2 } = {}) {
         // Every preset is written for the two columns the default panel gives
         columns: 2,
         order: [...preset.order],
-        span: presetSpans(name, columns),
+        span: spansOfPreset(preset, columns),
         visible,
         zoom: {},
         // Applied locked. A preset is somebody else's arrangement arriving

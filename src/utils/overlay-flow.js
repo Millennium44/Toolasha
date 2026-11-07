@@ -133,10 +133,12 @@ export function columnsFor(width) {
  * exception is a panel narrow enough to hold one column at all: a phone gets one
  * column whatever the layout wanted, which is what it always got.
  *
- * Unless the layout was made for many columns — more than two, by its own
- * authored count or by `designed` (what a preset was drawn for, which a preset
- * does not store). Below the width that gives three ordinary columns, such a
- * layout gets up to {@link NARROW_COLUMNS_MAX} columns of
+ * A preset's `designed` count (what it was drawn for, which a preset does not
+ * store) counts as its authored count, so Dense gets the nine columns of the
+ * layout it was copied from wherever an imported nine-column layout would.
+ *
+ * On a panel too narrow for two ordinary columns, a layout made for more than
+ * two gets up to {@link NARROW_COLUMNS_MAX} columns of
  * {@link NARROW_COLUMN_MIN}, never more than it was made for, so a narrow
  * panel keeps a compact grid instead of a single column of full-width rows.
  * A layout made for one or two columns is untouched.
@@ -145,7 +147,7 @@ export function columnsFor(width) {
  * @param {number} [authored] - The columns the layout was written for
  * @param {Object} [options]
  * @param {boolean} [options.pinned] - The count was chosen by hand and holds at any width
- * @param {number} [options.designed] - The columns a preset was designed for; only ever widens a narrow panel
+ * @param {number} [options.designed] - The columns a preset was designed for; counts as the authored count
  * @returns {number} Between 1 and {@link MAX_SPAN}
  */
 export function columnsForLayout(width, authored = 2, { pinned = false, designed = 0 } = {}) {
@@ -159,10 +161,10 @@ export function columnsForLayout(width, authored = 2, { pinned = false, designed
     if (pinned) return Math.min(MAX_SPAN, Math.max(1, wanted));
 
     const affords = columnsFor(width);
-    const ordinary = affords <= 1 ? 1 : Math.min(MAX_SPAN, Math.max(1, affords, wanted));
-
+    // A preset's designed count is its authored count: Dense drawn at nine like the layout it was copied from
     const madeFor = Math.min(MAX_SPAN, Math.max(wanted, Number.isFinite(designed) ? Math.round(designed) : 0));
-    if (madeFor <= 2 || affords >= NARROW_COLUMNS_MAX) return ordinary;
+    const ordinary = affords <= 1 ? 1 : Math.min(MAX_SPAN, Math.max(1, affords, madeFor));
+    if (madeFor <= 2 || affords >= 2) return ordinary;
 
     const narrow = width > 0 ? Math.floor((width + GAP) / (NARROW_COLUMN_MIN + GAP)) : 1;
     return Math.max(ordinary, Math.min(madeFor, NARROW_COLUMNS_MAX, Math.max(1, narrow)));

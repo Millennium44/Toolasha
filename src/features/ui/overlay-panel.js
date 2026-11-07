@@ -118,6 +118,7 @@ import {
     PRESET_LAYOUTS,
     offeredLayouts,
     presetFile,
+    legacyPresetFiles,
     presetSpans,
     presetDesignedColumns,
     isPreset,
@@ -1018,7 +1019,17 @@ class OverlayPanel {
             let unedited = false;
             for (let at = 1; !unedited && at <= MAX_SPAN; at++)
                 unedited = layoutIdentity(presetFile(key, { rows, columns: at }), true) === current;
-            if (!unedited) return;
+            if (!unedited) {
+                // A copy of an earlier shape of this preset, never touched: move it to the current one,
+                // tiles and all. Written, unlike a re-fit, since the stored copy is the old shape everywhere.
+                let legacy = false;
+                for (let at = 1; !legacy && at <= MAX_SPAN; at++)
+                    legacy = legacyPresetFiles(key, { rows, columns: at }).some(
+                        (old) => layoutIdentity(old, true) === current
+                    );
+                if (legacy) await this.applyNamedLayout(key, { byHand: false });
+                return;
+            }
 
             const wanted = fromOPanelConfig(presetFile(key, { rows, columns }));
             if (!wanted?.settings?.span) return;

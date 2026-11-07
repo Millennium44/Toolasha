@@ -616,16 +616,12 @@ describe('columnsForLayout, a layout designed for many columns on a narrow panel
         expect(columnsForLayout(300, 4)).toBe(2);
     });
 
-    test('below the width the ordinary law gives three columns, it is lifted to at most three', () => {
-        expect(columnsForLayout(500, 2, { designed: 9 })).toBe(3);
-        expect(columnsForLayout(THREE_COLUMN_MIN - 1, 2, { designed: 9 })).toBe(3);
-    });
-
-    test('from the width the ordinary law gives three columns, nothing changes', () => {
-        for (const width of [THREE_COLUMN_MIN, 700, 1000, 1200, 2012, 2300]) {
-            expect(columnsForLayout(width, 2, { designed: 9 })).toBe(columnsForLayout(width, 2));
+    test('from two ordinary columns up, a preset gets the columns it was designed for, like an imported layout', () => {
+        for (const width of [444, 500, THREE_COLUMN_MIN, 860, 1200, 2012]) {
+            expect(columnsForLayout(width, 2, { designed: 9 })).toBe(9);
+            expect(columnsForLayout(width, 2, { designed: 9 })).toBe(columnsForLayout(width, 9));
         }
-        expect(columnsForLayout(1200, 2, { designed: 9 })).toBe(5);
+        expect(columnsForLayout(2300, 2, { designed: 9 })).toBe(10);
     });
 
     test('a pinned count still wins', () => {

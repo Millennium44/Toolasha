@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Dense overlay on a narrow panel
+### Dense overlay matches the layout it was copied from
 
-A layout made for many columns, like the Dense preset, now shows up to three narrow columns on a narrow panel instead of one column with every tile on its own row.
+The Dense preset now uses nine columns at any normal panel width, with the original tile widths, and includes mana per fight and charm value. On a panel too narrow for that it shows up to three narrow columns instead of one tile per row.
 
 ### Trial history stays in its place after the weekly reset
 

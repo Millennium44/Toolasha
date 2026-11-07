@@ -82,7 +82,8 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => dialog.a
 
 const { registerRow } = await import('../../utils/overlay-rows.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
-const { loadLayouts, layoutNames, presetSpans, PRESET_LAYOUTS } = await import('./overlay-layouts.js');
+const { loadLayouts, layoutNames, presetSpans, PRESET_LAYOUTS, legacyPresetFiles } =
+    await import('./overlay-layouts.js');
 const { toOPanelConfig, fromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /** An arrangement worth telling apart from another one. @returns {Object} */
@@ -401,33 +402,30 @@ describe('saving and switching named layouts', () => {
             expect(overlayPanel.appliedLayout).toBe('Skilling');
         });
 
-        test.each(['Dense', 'Dashboard'])(
-            '%s follows a chain 3, 5, 9, 4, 3 exactly as applying it would',
-            async (name) => {
-                // The whole registry, as a live game has it: the preset's own tiles and others it switches off
-                for (const key of [...PRESET_LAYOUTS[name].order, 'houses', 'skillLevel', 'accountView', 'noticeLog'])
-                    registerRow({ key, name: key, render: (el) => (el.textContent = key) });
-                overlayPanel.settings.visible = {};
-                measureAs(660);
-                await overlayPanel.applyNamedLayout(name);
-                expect(overlayPanel.columns).toBe(3);
+        test.each(['Dashboard'])('%s follows a chain 3, 5, 9, 4, 3 exactly as applying it would', async (name) => {
+            // The whole registry, as a live game has it: the preset's own tiles and others it switches off
+            for (const key of [...PRESET_LAYOUTS[name].order, 'houses', 'skillLevel', 'accountView', 'noticeLog'])
+                registerRow({ key, name: key, render: (el) => (el.textContent = key) });
+            overlayPanel.settings.visible = {};
+            measureAs(660);
+            await overlayPanel.applyNamedLayout(name);
+            expect(overlayPanel.columns).toBe(3);
 
-                for (const [width, columns] of [
-                    [1350, 5],
-                    [2050, 9],
-                    [1000, 4],
-                    [660, 3],
-                ]) {
-                    await resizeTo(width);
-                    expect(overlayPanel.columns).toBe(columns);
-                    expect(overlayPanel.settings.span).toEqual(presetSpans(name, columns));
-                }
+            for (const [width, columns] of [
+                [1350, 5],
+                [2050, 9],
+                [1000, 4],
+                [660, 3],
+            ]) {
+                await resizeTo(width);
+                expect(overlayPanel.columns).toBe(columns);
+                expect(overlayPanel.settings.span).toEqual(presetSpans(name, columns));
             }
-        );
+        });
 
         test('a resize chain writes nothing to storage, and the re-fitted preset still reads unedited', async () => {
             measureAs(660);
-            await overlayPanel.applyNamedLayout('Dense');
+            await overlayPanel.applyNamedLayout('Dashboard');
             const saves = vi.spyOn(overlayPanel, '_save');
             const stored = JSON.stringify(overlayPanel.settings.span);
 
@@ -437,16 +435,16 @@ describe('saving and switching named layouts', () => {
                 [1000, 4],
             ]) {
                 await resizeTo(width);
-                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', columns));
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dashboard', columns));
             }
 
             expect(saves).not.toHaveBeenCalled();
-            expect(stored).toBe(JSON.stringify(presetSpans('Dense', 3)));
+            expect(stored).toBe(JSON.stringify(presetSpans('Dashboard', 3)));
             const line = document.createElement('div');
             document.body.appendChild(line);
-            line.textContent = 'Showing: Dense';
+            line.textContent = 'Showing: Dashboard';
             await overlayPanel._markAppliedLayoutDrift(line);
-            expect(line.textContent).toBe('Showing: Dense');
+            expect(line.textContent).toBe('Showing: Dashboard');
             saves.mockRestore();
         });
 
@@ -463,7 +461,7 @@ describe('saving and switching named layouts', () => {
             });
 
             test('applied at nine columns, closed and reopened at two, it has the two-column spans', async () => {
-                await overlayPanel.applyNamedLayout('Dense');
+                await overlayPanel.applyNamedLayout('Dashboard');
                 expect(overlayPanel.columns).toBe(9);
                 overlayPanel.hide();
                 const written = [];
@@ -471,20 +469,19 @@ describe('saving and switching named layouts', () => {
                     written.push(JSON.stringify(overlayPanel.settings.span));
                 });
 
-                // 300 rather than the default 480: Dense, made for nine, takes three narrow columns at 480
-                widthAs(300);
+                widthAs(480);
                 overlayPanel.show();
                 await new Promise((resolve) => setTimeout(resolve, 60));
 
                 expect(overlayPanel.columns).toBe(2);
-                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 2));
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dashboard', 2));
                 // Whatever else saved (opening it does), the re-fitted spans were never written
                 expect(written).not.toContain(JSON.stringify(overlayPanel.settings.span));
                 saves.mockRestore();
             });
 
             test('stored nine-column spans on a three-column page load become three-column spans, unsaved', async () => {
-                await overlayPanel.applyNamedLayout('Dense');
+                await overlayPanel.applyNamedLayout('Dashboard');
                 overlayPanel.hide();
                 overlayPanel.columns = 0;
                 const written = [];
@@ -497,14 +494,14 @@ describe('saving and switching named layouts', () => {
                 await new Promise((resolve) => setTimeout(resolve, 60));
 
                 expect(overlayPanel.columns).toBe(3);
-                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 3));
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dashboard', 3));
                 // Whatever else saved (opening it does), the re-fitted spans were never written
                 expect(written).not.toContain(JSON.stringify(overlayPanel.settings.span));
                 saves.mockRestore();
             });
 
             test('a hand-edited layout is left alone on reopen', async () => {
-                await overlayPanel.applyNamedLayout('Dense');
+                await overlayPanel.applyNamedLayout('Dashboard');
                 overlayPanel.settings.span = { ...overlayPanel.settings.span, coins: 3 };
                 const edited = { ...overlayPanel.settings.span };
                 overlayPanel.hide();
@@ -519,7 +516,7 @@ describe('saving and switching named layouts', () => {
 
         test('a window resize that applies the new count first still re-fits the preset', async () => {
             measureAs(660);
-            await overlayPanel.applyNamedLayout('Dense');
+            await overlayPanel.applyNamedLayout('Dashboard');
             for (const [width, columns] of [
                 [1350, 5],
                 [2050, 9],
@@ -528,15 +525,15 @@ describe('saving and switching named layouts', () => {
                 overlayPanel._onViewportChange();
                 await new Promise((resolve) => setTimeout(resolve, 60));
                 expect(overlayPanel.columns).toBe(columns);
-                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', columns));
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dashboard', columns));
             }
         });
 
         test('a span edited after the first re-fit stops the re-fitting', async () => {
             measureAs(660);
-            await overlayPanel.applyNamedLayout('Dense');
+            await overlayPanel.applyNamedLayout('Dashboard');
             await resizeTo(1350);
-            expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 5));
+            expect(overlayPanel.settings.span).toEqual(presetSpans('Dashboard', 5));
 
             overlayPanel.settings.span = { ...overlayPanel.settings.span, netWorth: 4 };
             const edited = { ...overlayPanel.settings.span };
@@ -686,13 +683,13 @@ describe('saving and switching named layouts', () => {
         expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
     });
 
-    test('Dense applies its twenty tiles with the nine-column spans, and keeps a count set by hand', async () => {
+    test('Dense applies its twenty-two tiles with the nine-column spans, and keeps a count set by hand', async () => {
         measureAs(2040);
         await overlayPanel.applyNamedLayout('Dense');
         expect(overlayPanel.columns).toBe(9);
         expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
         expect(overlayPanel.settings.span.totalProfit).toBe(5);
-        expect(overlayPanel.settings.order).toHaveLength(20);
+        expect(overlayPanel.settings.order).toHaveLength(22);
 
         overlayPanel.settings.columns = 3;
         overlayPanel.settings.columnsPinned = true;
@@ -718,6 +715,44 @@ describe('saving and switching named layouts', () => {
             // What is stored is what any preset stores: the count stays advisory and unpinned
             expect(overlayPanel.settings.columns).toBe(2);
             expect(overlayPanel.settings.columnsPinned).toBe(false);
+        });
+
+        test('from two ordinary columns up it has the nine columns of the layout it copies', async () => {
+            for (const width of [480, 876, 1350]) {
+                measureAs(width);
+                await overlayPanel.applyNamedLayout('Dense');
+                expect(overlayPanel.columns).toBe(9);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+            }
+        });
+
+        describe('a Dense applied under 3.77.0', () => {
+            /** Wear the 3.77.0 Dense as applied at three columns, then open the panel at 876px */
+            async function openWithOldDense(edit = {}) {
+                for (const key of [...PRESET_LAYOUTS.Dense.order, 'houses', 'skillLevel'])
+                    registerRow({ key, name: key, render: (el) => (el.textContent = key) });
+                measureAs(876);
+                await overlayPanel.applyNamedLayout('Dense');
+                const [old] = legacyPresetFiles('Dense', { columns: 3 });
+                const { order, span, visible } = fromOPanelConfig(old).settings;
+                wear({ order, span: { ...span, ...edit }, visible });
+                overlayPanel._checkPresetFit();
+                await new Promise((resolve) => setTimeout(resolve, 60));
+            }
+
+            test('untouched, it becomes the current Dense with its nine-column widths and new tiles', async () => {
+                await openWithOldDense();
+                expect(overlayPanel.columns).toBe(9);
+                expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Dense.order);
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+                expect(overlayPanel.appliedLayout).toBe('Dense');
+            });
+
+            test('edited by hand, it is left as it is', async () => {
+                await openWithOldDense({ coins: 3 });
+                expect(overlayPanel.settings.order).toHaveLength(20);
+                expect(overlayPanel.settings.span.coins).toBe(3);
+            });
         });
 
         test('a two-column preset on the same panel is one column, as before', async () => {
