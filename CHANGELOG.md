@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.80.0 -->
+
 ### Combat Sim and Lab Sim remember their Upgrade boxes
 
 The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the chosen player on the Combat Sim Upgrade tab, and the Lab Sim's level boxes, Use Skip Levels and budget, are now saved per character and come back after a reload.
@@ -6886,6 +6888,21 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.80.0](https://github.com/Millennium44/Toolasha/compare/v3.79.0...v3.80.0) (2026-11-07)
+
+### Features
+
+- combat sim Upgrade tab remembers level, Steps, charm, equipment, hours and player boxes per character ([8ba2f99](https://github.com/Millennium44/Toolasha/commit/8ba2f99ed9a422579e2d13c17170c8e58be3c3ed))
+- lab sim remembers its input boxes across a reload ([a40ac30](https://github.com/Millennium44/Toolasha/commit/a40ac30679be930a4d4bd519d3e473622a7346bc))
+- lab sim upgrade Steps for equipment, abilities, combat levels, houses and shrines ([8bcdf16](https://github.com/Millennium44/Toolasha/commit/8bcdf168c9dca3bfe71004ee8e09bc7e4bb66f69))
+
+### Bug Fixes
+
+- combat sim unfolds a minimized panel before switching tabs for the player ([eeae64c](https://github.com/Millennium44/Toolasha/commit/eeae64c908a0cc7716f67f92c3ddd767ed59cb17))
+- lab sim saves Use Skip Levels when it is changed ([9d29fb5](https://github.com/Millennium44/Toolasha/commit/9d29fb531a41006211dce4f16a9ca2ebe8f01539))
+- lab sim Use Skip Levels unticked uses the live room level again ([4ca68d4](https://github.com/Millennium44/Toolasha/commit/4ca68d4f9e6f99c5bb1e6c981137ea086e7533a5))
+- sim input boxes never save defaults over a stored or pulled record ([6fd1b1f](https://github.com/Millennium44/Toolasha/commit/6fd1b1f61e10bc5aa05ad406405475c3690a0e65))
 
 ## [3.79.0](https://github.com/Millennium44/Toolasha/compare/v3.78.0...v3.79.0) (2026-11-07)
 
