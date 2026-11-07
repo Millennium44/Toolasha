@@ -233,10 +233,19 @@ vi.mock('../../core/storage.js', () => {
     return {
         default: {
             get: async (key, store, fallback) => {
+                // A wedged database answers the default, as `storage.get` does
+                if (mocks.unreadable) return fallback;
                 const value = mocks.store.get(keyOf(key, store));
                 return value === undefined ? fallback : value;
             },
+            // A read that says whether it worked: `mocks.unreadable` makes every one fail, as a wedged database does
+            tryGet: async (key, store) => {
+                if (mocks.unreadable) return null;
+                const value = mocks.store.get(keyOf(key, store));
+                return value == null ? { found: false, value: null } : { found: true, value };
+            },
             set: async (key, value, store) => {
+                mocks.setLog?.push(keyOf(key, store));
                 mocks.store.set(keyOf(key, store), value);
                 return true;
             },
@@ -17680,6 +17689,79 @@ describe('Upgrade tab inputs are remembered per character', () => {
 
         expect(q('#mwi-csim-upgrade-target-level').value).toBe('12');
         expect(q('#mwi-csim-upgrade-steps').value).toBe('2');
+    });
+
+    test('a pull that turns Ability Lv on does not queue the default boxes over the pulled record', async () => {
+        mocks.store.set('settings:combatSimUpgradeModes_char1', ['equipment']);
+        mocks.store.set(KEY('char1'), { v: 1, values: { abilityLevel: '12', abilitySteps: '2' } });
+        await open();
+        // The restored number is kept once; ticking and unticking uses that up
+        const box = q('[data-upgrade-mode="ability_level"]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        box.checked = false;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+
+        const pulled = { v: 1, values: { abilityLevel: '12', abilitySteps: '2' }, hours: 77 };
+        mocks.store.set('settings:combatSimUpgradeModes_char1', ['equipment', 'ability_level']);
+        mocks.store.set(KEY('char1'), pulled);
+        mocks.setLog = [];
+        try {
+            await ui._adoptPulledSettings({
+                settings: ['combatSimUpgradeModes_char1', KEY('char1').replace('settings:', '')],
+            });
+            await settle();
+            expect(mocks.setLog.filter((key) => key === KEY('char1'))).toEqual([]);
+        } finally {
+            mocks.setLog = null;
+        }
+        expect(mocks.store.get(KEY('char1'))).toEqual(pulled);
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('12');
+        expect(q('#mwi-csim-upgrade-steps').value).toBe('2');
+    });
+
+    test('a pull of the candidate sets alone puts the stored inputs back over the defaults it set', async () => {
+        mocks.store.set('settings:combatSimUpgradeModes_char1', ['equipment']);
+        mocks.store.set(KEY('char1'), { v: 1, values: { abilityLevel: '12', abilitySteps: '2' } });
+        await open();
+        const box = q('[data-upgrade-mode="ability_level"]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        box.checked = false;
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        await settle();
+
+        mocks.store.set('settings:combatSimUpgradeModes_char1', ['equipment', 'ability_level']);
+        mocks.setLog = [];
+        try {
+            await ui._adoptPulledSettings({ settings: ['combatSimUpgradeModes_char1'] });
+            await settle();
+            expect(mocks.setLog.filter((key) => key === KEY('char1'))).toEqual([]);
+        } finally {
+            mocks.setLog = null;
+        }
+        expect(q('#mwi-csim-upgrade-target-level').value).toBe('12');
+        expect(mocks.store.get(KEY('char1')).values.abilityLevel).toBe('12');
+    });
+
+    test('a record that could not be read is not written over, whatever is changed afterwards', async () => {
+        const stored = { v: 1, values: { houseLevel: '9', communityLevel: '12' }, hours: 40 };
+        mocks.store.set(KEY('char1'), stored);
+        mocks.unreadable = true;
+        try {
+            mocks.characterId = 'char1';
+            ui.buildPanel();
+            await settle();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            set('#mwi-csim-house-target-level', '5');
+            set('#mwi-csim-upgrade-steps', '3');
+            await settle();
+            expect(ui._upgradeInputsRestored).toBe(false);
+        } finally {
+            mocks.unreadable = false;
+        }
+        expect(mocks.store.get(KEY('char1'))).toEqual(stored);
     });
 
     test('a pulled record is applied to the boxes on screen', async () => {

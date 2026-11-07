@@ -7,7 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
 import { shortFigure, exactFiguresHtml, wireExactRows } from './lab-exact-figures.js';
@@ -347,6 +347,23 @@ function restorableStepsText(value) {
  * build never reads the key. The Targets grids and the Player select are deliberately not kept.
  */
 const UPGRADE_INPUTS_KEY = 'labSimUpgradeInputs';
+/** The boxes `UPGRADE_INPUTS_KEY` keeps, by element id: a change to one of them while its read is out is the player's */
+const UPGRADE_INPUT_IDS = new Set([
+    'mwi-labsim-allfights-useskip',
+    'mwi-labsim-upgrade-level-type',
+    'mwi-labsim-upgrade-target-level',
+    'mwi-labsim-house-target-level',
+    'mwi-labsim-shrine-target-level',
+    'mwi-labsim-community-target-level',
+    'mwi-labsim-equip-step-kind',
+    'mwi-labsim-equip-steps',
+    'mwi-labsim-upgrade-steps',
+    'mwi-labsim-combat-level-type',
+    'mwi-labsim-combat-level-boost',
+    'mwi-labsim-combat-level-steps',
+    'mwi-labsim-house-steps',
+    'mwi-labsim-shrine-steps',
+]);
 
 /**
  * The Skilling tab's remembered inputs, per character: `{useSkip, roomLevel, skill, community}`. Same rules
@@ -1069,11 +1086,11 @@ class LabSimUI {
         this._skillingAnalysis = null;
         this._skillingChecked = [];
         this._skillingGoalKey = null;
-        // The Skilling tab's remembered inputs: the character they were last put back for, and how many
-        // times the player has changed one (a restore whose read was out during a change leaves them alone)
+        // The Skilling tab's remembered inputs: the character they were last put back for
         this._skillingInputsKey = null;
-        this._skillingInputsEdits = 0;
-        this._upgradeInputsEdits = 0;
+        // Input boxes the player changed while a restore's read was out, one set per restore in flight: the
+        // restore puts the stored values on every other box and keeps these (see `_watchInputEdits`)
+        this._inputWatches = [];
         // The "Check a swap" queues, one per tab, and the sort the checked combat
         // table is in (kept apart from the generated table's)
         this._checkedSwaps = { combat: [], skilling: [] };
@@ -2141,6 +2158,15 @@ class LabSimUI {
             e.target.value = floor ? String(floor) : '';
             void this._saveUpgradeSelection();
         });
+        // Capture phase, so it sees every box's change before the box's own handler saves (see `_watchInputEdits`)
+        this.panel.addEventListener(
+            'change',
+            (event) => {
+                const id = event.target?.id;
+                if (id) for (const watch of this._inputWatches) watch.ids.add(id);
+            },
+            true
+        );
         void this._restoreUpgradeSelection();
         void this._restoreTokenBuffLevels();
         void this._loadViewChoices();
@@ -2743,6 +2769,9 @@ class LabSimUI {
      */
     _writeScopedIfChanged(base, value) {
         const scopedKey = characterKey(base);
+        // Not a key this page has read: it may hold a record nobody here has seen, and what the controls show
+        // is only the template's defaults until the read is applied. The restore saves what the player changed.
+        if (!this._storedValues.observed(scopedKey)) return Promise.resolve();
         if (!this._storedValues.differs(scopedKey, value)) return Promise.resolve();
         // Noted as stored only while the write holds: one that fails is tried again by the next save
         return this._storedValues.track(scopedKey, value, writeScoped(base, value, 'settings'));
@@ -2777,12 +2806,11 @@ class LabSimUI {
     }
 
     /**
-     * Remember the Upgrade tab's inputs. Called only from the player's own changes, so the count of them
-     * is what a restore whose read was out checks before it puts anything on screen.
+     * Remember the Upgrade tab's inputs. Called from the player's own changes, and by a restore that found a
+     * box changed while its read was out. Nothing is written until the record has been read (see `_writeScopedIfChanged`).
      * @private
      */
     async _saveUpgradeInputs() {
-        this._upgradeInputsEdits++;
         try {
             await this._writeScopedIfChanged(UPGRADE_INPUTS_KEY, this._upgradeInputsValues());
         } catch (error) {
@@ -2910,6 +2938,57 @@ class LabSimUI {
     }
 
     /**
+     * Start noting which input boxes the player changes, until `_stopWatchingInputEdits`.
+     * @returns {{ids: Set<string>, budgetText: *}} `ids` fills with the boxes changed from now on; `budgetText`
+     *   is the budget as it stood at the start (the Plan button is not a box change)
+     * @private
+     */
+    _watchInputEdits() {
+        const watch = { ids: new Set(), budgetText: this._allFightsBudgetText };
+        this._inputWatches.push(watch);
+        return watch;
+    }
+
+    /**
+     * Stop noting changes for a set from `_watchInputEdits`.
+     * @param {{ids: Set<string>, budgetText: *}} watch - What it returned
+     * @private
+     */
+    _stopWatchingInputEdits(watch) {
+        this._inputWatches = this._inputWatches.filter((w) => w !== watch);
+    }
+
+    /**
+     * Run a restore's apply step and then put back, on the boxes the player changed while the read was out,
+     * the values they hold now: the stored record fills every other box, never the player's own change.
+     * @param {{ids: Set<string>, budgetText: *}} watch - From `_watchInputEdits`
+     * @param {() => void} apply - Puts the stored record on the boxes
+     * @private
+     */
+    _applyKeepingTouched(watch, apply) {
+        const kept = [...watch.ids]
+            .map((id) => ({ el: this.panel?.querySelector(`[id="${id}"]`), id }))
+            .filter(({ el }) => el)
+            .map(({ el }) => ({ el, value: el.value, checked: el.checked }));
+        const budget = { text: this._allFightsBudgetText, value: this._allFightsBudget };
+        apply();
+        for (const { el, value, checked } of kept) {
+            if (el.type === 'checkbox') el.checked = checked;
+            else el.value = value;
+        }
+        if (budget.text !== watch.budgetText) {
+            this._allFightsBudgetText = budget.text;
+            this._allFightsBudget = budget.value;
+        }
+        // The Steps boxes' side effects follow the values they now hold
+        this._syncAbilityStepsBox();
+        for (const id of ['#mwi-labsim-house-steps', '#mwi-labsim-shrine-steps']) {
+            const box = this.panel?.querySelector(id);
+            if (box) this._syncSingleStepsBox(box);
+        }
+    }
+
+    /**
      * Put a remembered record of the Upgrade tab's inputs on the boxes. A missing record, a missing field
      * or a value the box would not take today leaves that box as it is. Through the boxes' own side effects
      * (the type select's rewrite of the number box), and without a save: nothing here is the player's change.
@@ -2991,11 +3070,10 @@ class LabSimUI {
     }
 
     /**
-     * Remember the Skilling tab's inputs; called only from the player's own changes.
+     * Remember the Skilling tab's inputs; nothing is written until the record has been read.
      * @private
      */
     async _saveSkillingInputs() {
-        this._skillingInputsEdits++;
         try {
             await this._writeScopedIfChanged(SKILLING_INPUTS_KEY, this._skillingInputsValues());
         } catch (error) {
@@ -3016,40 +3094,68 @@ class LabSimUI {
         this._skillingInputsKey = key;
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
-        const edits = this._skillingInputsEdits;
-        let saved;
+        // The boxes the player changes while the read is out keep their value; the stored one goes on the rest
+        const watch = this._watchInputEdits();
+        let read;
         try {
-            saved = await readScoped(SKILLING_INPUTS_KEY, 'settings', null);
+            read = await readScopedChecked(SKILLING_INPUTS_KEY, 'settings');
         } catch (error) {
             console.error('[LabSimUI] Failed to restore skilling inputs:', error);
-            return;
+            read = { ok: false, value: null };
+        } finally {
+            this._stopWatchingInputEdits(watch);
         }
         if (!this.panel || this._skillingInputsKey !== key || !this._stillSameCharacter(ownerId)) return;
-        if (edits !== this._skillingInputsEdits) return;
-        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
+        if (!read.ok) {
+            // Unknown, not absent: nothing is noted as stored, so nothing is written over the record, and the
+            // next showing of the tab reads it again
+            this._skillingInputsKey = null;
+            return;
+        }
+        const saved = read.value;
+        const touched = watch.ids;
+        const changed = () => touched.size > 0;
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+            this._storedValues.markAbsent(key);
+            if (changed()) void this._saveSkillingInputs();
+            return;
+        }
         const q = (id) => this.panel.querySelector(id);
+        const skip = (id) => touched.has(id);
         const skipBox = q('#mwi-labsim-skilling-useskip');
-        if (skipBox && typeof saved.useSkip === 'boolean') {
+        if (skipBox && !skip('mwi-labsim-skilling-useskip') && typeof saved.useSkip === 'boolean') {
             skipBox.checked = saved.useSkip;
             const levelInput = q('#mwi-labsim-skilling-level');
             if (levelInput) levelInput.disabled = skipBox.checked;
         }
         const roomLevel = restorableLevelText(saved.roomLevel, 1300);
         const levelBox = q('#mwi-labsim-skilling-level');
-        if (levelBox && roomLevel !== null) levelBox.value = roomLevel;
+        if (levelBox && !skip('mwi-labsim-skilling-level') && roomLevel !== null) levelBox.value = roomLevel;
         const community = restorableLevelText(saved.community, MAX_COMMUNITY_BUFF_LEVEL);
         const communityBox = q('#mwi-labsim-skilling-community-level');
-        if (communityBox && community !== null) communityBox.value = community;
+        if (communityBox && !skip('mwi-labsim-skilling-community-level') && community !== null) {
+            communityBox.value = community;
+        }
         const filter = q('#mwi-labsim-skilling-filter');
         const skillListed =
             typeof saved.skill === 'string' &&
             filter &&
             Array.from(filter.options).some((o) => o.value === saved.skill);
-        if (skillListed && filter.value !== saved.skill) {
+        if (skillListed && !skip('mwi-labsim-skilling-filter') && filter.value !== saved.skill) {
             filter.value = saved.skill;
             void this._renderSkillLoadoutTable();
         }
-        this._rememberRestored({ [SKILLING_INPUTS_KEY]: this._skillingInputsValues() }, { [SKILLING_INPUTS_KEY]: key });
+        // What was stored, as the boxes now show it; a box the player changed differs from it, so the one
+        // save below writes the stored values with the player's change on top
+        if (changed()) {
+            this._storedValues.remember(key, saved);
+            void this._saveSkillingInputs();
+        } else {
+            this._rememberRestored(
+                { [SKILLING_INPUTS_KEY]: this._skillingInputsValues() },
+                { [SKILLING_INPUTS_KEY]: key }
+            );
+        }
     }
 
     /**
@@ -3190,9 +3296,8 @@ class LabSimUI {
         let savedInputs = null;
         // Captured before the first await — see `_stillSameCharacter`
         const ownerId = dataManager.getCurrentCharacterId();
-        // How many times the player has changed an input box: if one changed while this read was out, the
-        // remembered inputs are not put over it
-        const inputEdits = this._upgradeInputsEdits;
+        // The input boxes the player changes while this read is out: the remembered inputs go on every other box
+        const watch = this._watchInputEdits();
         // The scoped keys this restore reads, resolved before the first await
         const keys = Object.fromEntries(
             [
@@ -3223,16 +3328,26 @@ class LabSimUI {
                 savedRoomLevels,
                 savedTargetFloor,
                 savedInputs,
-            ] = await Promise.all([
-                readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null),
-                readScoped(UPGRADE_SCOPE_KEY, 'settings', null),
-                readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null),
-                readScoped(UPGRADE_SWAP_AURA_KEY, 'settings', false),
-                readScoped(SHRINE_CAP_GUILD_KEY, 'settings', true),
-                readScoped(UPGRADE_ROOM_LEVELS_KEY, 'settings', false),
-                readScoped(UPGRADE_TARGET_FLOOR_KEY, 'settings', 0),
-                readScoped(UPGRADE_INPUTS_KEY, 'settings', null),
-            ]);
+            ] = (
+                await Promise.all(
+                    [
+                        UPGRADE_DIMENSIONS_KEY,
+                        UPGRADE_SCOPE_KEY,
+                        UPGRADE_LEVEL_SOURCE_KEY,
+                        UPGRADE_SWAP_AURA_KEY,
+                        SHRINE_CAP_GUILD_KEY,
+                        UPGRADE_ROOM_LEVELS_KEY,
+                        UPGRADE_TARGET_FLOOR_KEY,
+                        UPGRADE_INPUTS_KEY,
+                    ].map((base) => readScopedChecked(base, 'settings'))
+                )
+            ).map((read, index) => {
+                // A read that failed is not a record that is absent: nothing is noted as stored, so nothing
+                // is written over it (see `_writeScopedIfChanged`)
+                if (!read.ok) throw new Error('unreadable');
+                const defaults = [null, null, null, false, true, false, 0, null];
+                return read.value ?? defaults[index];
+            });
             savedAuraOnly = Boolean(savedAuraOnly);
             savedShrineCapGuild = Boolean(savedShrineCapGuild);
             const legacyMode =
@@ -3245,6 +3360,7 @@ class LabSimUI {
             console.error('[LabSimUI] Failed to restore upgrade selection:', error);
             selection = sanitizeLabUpgradeSelection(null, null);
         }
+        this._stopWatchingInputEdits(watch);
 
         // A switch during the read rebuilt the panel for the arriving character, whose own restore fills it:
         // the departing character's selection put on its controls would be saved under the arriving one
@@ -3275,8 +3391,13 @@ class LabSimUI {
         if (targetFloorInput) targetFloorInput.value = floor ? String(floor) : '';
         this._refreshRoomLevelControls();
         // Before the targets are drawn: they take their room levels from the Use Skip Levels box
-        const inputsApply = readOk && inputEdits === this._upgradeInputsEdits;
-        const skipMoved = inputsApply ? this._applyUpgradeInputs(savedInputs) : false;
+        const inputsRecord = savedInputs && typeof savedInputs === 'object' && !Array.isArray(savedInputs);
+        let skipMoved = false;
+        if (readOk && inputsRecord) {
+            this._applyKeepingTouched(watch, () => {
+                skipMoved = this._applyUpgradeInputs(savedInputs);
+            });
+        }
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
         // The trigger tuning's fights take their room levels from the same box
@@ -3298,9 +3419,16 @@ class LabSimUI {
                 },
                 keys
             );
-            // The inputs record only when it was read and put on the boxes (else the next save writes it)
-            if (inputsApply && savedInputs && typeof savedInputs === 'object') {
-                this._rememberRestored({ [UPGRADE_INPUTS_KEY]: this._upgradeInputsValues() }, keys);
+            // The inputs record: what was stored, as the boxes now show it. A box changed while the read was out
+            // differs from it, so the one save below writes the stored values with the player's change on top
+            const touchedInputs =
+                [...watch.ids].some((id) => UPGRADE_INPUT_IDS.has(id)) ||
+                watch.budgetText !== this._allFightsBudgetText;
+            if (!inputsRecord) this._storedValues.markAbsent(keys[UPGRADE_INPUTS_KEY]);
+            else if (touchedInputs) this._storedValues.remember(keys[UPGRADE_INPUTS_KEY], savedInputs);
+            else this._rememberRestored({ [UPGRADE_INPUTS_KEY]: this._upgradeInputsValues() }, keys);
+            if (touchedInputs) void this._saveUpgradeInputs();
+            if (inputsRecord) {
                 // A budget box already on screen (a remembered table drew first) shows the restored one
                 const budgetInput = this.panel.querySelector('#mwi-labsim-budget-input');
                 if (budgetInput && typeof this._allFightsBudgetText === 'string' && this._allFightsBudgetText) {
@@ -6343,13 +6471,18 @@ class LabSimUI {
         );
         let saved;
         try {
-            saved = await Promise.all([
-                readScoped(SKILLING_ROOM_LEVELS_KEY, 'settings', false),
-                readScoped(SKILLING_TARGET_CLEAR_KEY, 'settings', null),
-                readScoped(SKILLING_TARGET_FLOOR_KEY, 'settings', 0),
-            ]);
+            const reads = await Promise.all(
+                [SKILLING_ROOM_LEVELS_KEY, SKILLING_TARGET_CLEAR_KEY, SKILLING_TARGET_FLOOR_KEY].map((base) =>
+                    readScopedChecked(base, 'settings')
+                )
+            );
+            // A read that failed is not a record that is absent: nothing is noted as stored, so nothing is
+            // written over it, and the next showing of the tab reads again
+            if (reads.some((read) => !read.ok)) throw new Error('unreadable');
+            saved = [reads[0].value ?? false, reads[1].value, reads[2].value ?? 0];
         } catch (error) {
             console.error('[LabSimUI] Failed to restore skilling goal inputs:', error);
+            if (this._skillingGoalKey === key) this._skillingGoalKey = null;
             return;
         }
         // A switch during the read means the arriving character's own restore is

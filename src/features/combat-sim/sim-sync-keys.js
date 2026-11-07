@@ -216,6 +216,27 @@ export class StoredValueMemo {
     constructor() {
         /** @type {Map<string, string>} storage key → stable text of the value */
         this._seen = new Map();
+        /** @type {Set<string>} keys whose stored state this page has observed (read, or written) since the last clear */
+        this._observed = new Set();
+    }
+
+    /**
+     * Whether this page has observed what a key stores (a read that worked, or a write it made).
+     * A key not observed may hold a record this page has not seen, so a grouped save leaves it alone.
+     * @param {string} key - Full storage key
+     * @returns {boolean}
+     */
+    observed(key) {
+        return this._observed.has(key);
+    }
+
+    /**
+     * Note that a read worked and found nothing stored under the key: any value then differs.
+     * @param {string} key - Full storage key
+     */
+    markAbsent(key) {
+        this._observed.add(key);
+        this._seen.delete(key);
     }
 
     /**
@@ -224,6 +245,7 @@ export class StoredValueMemo {
      * @param {*} value - Its value
      */
     remember(key, value) {
+        this._observed.add(key);
         this._seen.set(key, stableStringify(value ?? null));
     }
 
@@ -271,5 +293,6 @@ export class StoredValueMemo {
     /** Forget everything, e.g. on a character switch */
     clear() {
         this._seen.clear();
+        this._observed.clear();
     }
 }

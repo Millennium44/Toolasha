@@ -166,6 +166,31 @@ export async function readScoped(base, storeName = 'settings', defaultValue = nu
 }
 
 /**
+ * `readScoped` that says whether the read itself worked.
+ *
+ * `readScoped` answers the default for an absent key and for a database that could not be read, which
+ * is right for a setting and wrong for a record the caller writes back from its own controls: a failed
+ * read taken for "nothing stored" lets the next save put defaults over a record that was never seen.
+ * This uses `storage.tryGet`, so `ok: false` means the stored state is unknown, and `ok: true` with a
+ * null value means the record is genuinely absent. The legacy bare key is migrated as `readScoped` does.
+ * @param {string} base - The unscoped key
+ * @param {string} [storeName] - Object store name (default: 'settings')
+ * @param {{migrate?: 'adopt'|'discard'}} [options] - Legacy migration mode (default: 'adopt')
+ * @returns {Promise<{ok: boolean, value: *}>} The read; value is null when absent or when not ok
+ */
+export async function readScopedChecked(base, storeName = 'settings', options = {}) {
+    const scopedKey = characterKey(base);
+    const scoped = await storage.tryGet(scopedKey, storeName);
+    if (scoped === null || scoped === undefined) return { ok: false, value: null };
+    if (scoped.found) return { ok: true, value: scoped.value };
+
+    const legacy = await storage.tryGet(base, storeName);
+    if (legacy === null || legacy === undefined) return { ok: false, value: null };
+    if (!legacy.found) return { ok: true, value: null };
+    return { ok: true, value: await migrateLegacy(base, scopedKey, legacy.value, storeName, null, options) };
+}
+
+/**
  * `readScoped` over values a caller already read in one batched transaction.
  *
  * A feature that pulls several of its records at startup with

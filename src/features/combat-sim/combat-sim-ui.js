@@ -61,7 +61,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { normalizeTaskDamageMode } from './engine/task-damage-mode.js';
-import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { COMBAT_SIM_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import { scriptVersion } from '../../utils/script-version.js';
@@ -10856,8 +10856,10 @@ class CombatSimUI {
         const steps = this.panel.querySelector('#mwi-csim-upgrade-steps');
         if (steps) steps.value = '1';
         this._syncStepsBox();
-        // Putting the defaults back is a change like any other: what is stored follows what the boxes show
-        if (this._upgradeInputsRestored) void this._saveUpgradeInputs();
+        // Putting the defaults back is a change like any other: what is stored follows what the boxes show.
+        // Not while a restore or a sync pull is putting the controls in line with a stored record: that
+        // record is what is stored, and a save of these defaults would queue over it
+        if (this._upgradeInputsRestored && !this._restoringUpgradeSettings) void this._saveUpgradeInputs();
     }
 
     /**
@@ -10875,7 +10877,8 @@ class CombatSimUI {
         input.title = hints.title;
         const steps = this.panel.querySelector('#mwi-csim-combat-level-steps');
         if (steps) steps.value = '1';
-        if (this._upgradeInputsRestored) void this._saveUpgradeInputs();
+        // Same rule as the Ability Lv defaults: a restore's defaults are not a change to save
+        if (this._upgradeInputsRestored && !this._restoringUpgradeSettings) void this._saveUpgradeInputs();
     }
 
     /**
@@ -11202,7 +11205,13 @@ class CombatSimUI {
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore upgrade modes:', error);
         }
-        this._onUpgradeModesChanged();
+        // The default setters this runs must not save: this is a restore, not a change the player made
+        this._restoringUpgradeSettings = (this._restoringUpgradeSettings || 0) + 1;
+        try {
+            this._onUpgradeModesChanged();
+        } finally {
+            this._restoringUpgradeSettings -= 1;
+        }
     }
 
     /**
@@ -11465,9 +11474,15 @@ class CombatSimUI {
         const panel = this.panel;
         const characterId = dataManager.getCurrentCharacterId?.();
         try {
-            const saved = await readScoped(UPGRADE_INPUTS_KEY, 'settings', null);
+            // `ok: false` is a record that could not be read, which is not the same as one that is not there:
+            // saves stay off for this panel rather than put the boxes' defaults over a record never seen
+            const { ok, value: saved } = await readScopedChecked(UPGRADE_INPUTS_KEY, 'settings');
             if (!panel || this.panel !== panel) return;
             if (characterId !== dataManager.getCurrentCharacterId?.()) return;
+            if (!ok) {
+                console.warn('[CombatSimUI] The Upgrade inputs could not be read; they are not saved this time');
+                return;
+            }
             const first = !this._upgradeInputsRestored;
             const touched = first ? this._upgradeInputsTouched || new Set() : new Set();
             const skip = (group) => touched.has(group);
@@ -11488,6 +11503,7 @@ class CombatSimUI {
                     community: (v) => intIn(v, 1, 20),
                 };
                 this._applyingUpgradeInputs = true;
+                this._restoringUpgradeSettings = (this._restoringUpgradeSettings || 0) + 1;
                 try {
                     // The charm options are made when Combat Lv is first ticked; a restore may come before that
                     this._populateCharmSelect();
@@ -11532,6 +11548,7 @@ class CombatSimUI {
                     }
                 } finally {
                     this._applyingUpgradeInputs = false;
+                    this._restoringUpgradeSettings -= 1;
                 }
                 // A restored number must survive Ability Lv / Combat Lv being ticked later, which would put the
                 // defaults back over it
@@ -11641,8 +11658,10 @@ class CombatSimUI {
                 work.push(
                     (async () => {
                         await Promise.all([this._restoreUpgradeModes(), this._restoreTriggerChoices()]);
-                        // After the sets, which can put the Ability Lv and Combat Lv boxes back to defaults
-                        if (has('upgradeInputs')) await this._restoreUpgradeInputs();
+                        // After the sets, which can put the Ability Lv and Combat Lv boxes back to defaults. The
+                        // stored record is read back whether or not it was pulled too, so the boxes follow it
+                        // rather than the defaults the sets just put there
+                        if (has('upgradeInputs') || this._upgradeInputsRestored) await this._restoreUpgradeInputs();
                         await this._refreshCachedTriggerResult();
                     })()
                 );

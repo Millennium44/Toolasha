@@ -120,6 +120,15 @@ vi.mock('../../core/storage.js', () => ({
             if (key in storage.pending) return storage.pending[key];
             return key in storage.values ? storage.values[key] : fallback;
         },
+        // A read that says whether it worked: `storage.unreadable` makes every one fail, as a wedged database does
+        tryGet: async (key) => {
+            if (storage.unreadable) return null;
+            if (key in storage.pending) {
+                const value = await storage.pending[key];
+                return value == null ? { found: false, value: null } : { found: true, value };
+            }
+            return key in storage.values ? { found: true, value: storage.values[key] } : { found: false, value: null };
+        },
         set: async (key, value) => {
             storage.written[key] = value;
         },
@@ -1266,8 +1275,19 @@ describe('the Configure fight is analysed at a level that was chosen', () => {
         // selection, a combination neither of them ever chose.
         setScope('all');
         storage.written = {};
-        // Nothing noted as stored, so every key of the group is written and each one's owner shows
+        // Read and found absent, so every key of the group is written and each one's owner shows
         ui._storedValues.clear();
+        for (const base of [
+            'labSimUpgradeDimensions',
+            'labSimUpgradeScope',
+            'labSimUpgradeLevelSource',
+            'labSimSwapAuraOnly',
+            'labSimShrineCapToGuild',
+            'labSimUpgradeRoomLevels',
+            'labSimUpgradeTargetFloor',
+        ]) {
+            ui._storedValues.markAbsent(`${base}_me`);
+        }
         const saving = ui._saveUpgradeSelection();
         game.characterId = 'alt';
         try {
@@ -6764,6 +6784,7 @@ describe('the Ability order Include option', () => {
         tick('equipment', 'ability_order');
         storage.written = {};
         ui._storedValues.clear();
+        ui._storedValues.markAbsent('labSimUpgradeDimensions_me');
         await ui._saveUpgradeSelection();
         expect(storage.written['labSimUpgradeDimensions_me']).toEqual(['equipment', 'ability_order']);
 
@@ -8395,7 +8416,89 @@ describe('the Lab Sim input boxes are remembered per character', () => {
         release({ house: '3', shrine: '2' });
         await settle();
         expect(up('house-target-level').value).toBe('5');
-        expect(up('shrine-target-level').value).toBe('');
+        // Only the changed box is kept; the stored value goes on the others
+        expect(up('shrine-target-level').value).toBe('2');
+    });
+
+    test('Upgrade tab: a box changed while the read was out keeps the stored values of every other box', async () => {
+        let release;
+        storage.values = {};
+        storage.pending.labSimUpgradeInputs_me = new Promise((resolve) => {
+            release = resolve;
+        });
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        setBox(up('house-target-level'), '5');
+        // Held: the boxes show the template's defaults, which must not be written over the unread record
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toBeUndefined();
+        release({ house: '3', shrine: '2', community: '4', abilitySteps: '3', budget: '500m' });
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({
+            house: '5',
+            shrine: '2',
+            community: '4',
+            abilitySteps: '3',
+            budget: '500m',
+        });
+    });
+
+    test('Upgrade tab: a record that could not be read is not written over', async () => {
+        storage.unreadable = true;
+        try {
+            ui.destroy();
+            ui.buildPanel();
+            await settle();
+            setBox(up('house-target-level'), '5');
+            setBox(up('community-target-level'), '4');
+            await settle();
+            expect(storage.written.labSimUpgradeInputs_me).toBeUndefined();
+            expect(storage.written.labSimUpgradeDimensions_me).toBeUndefined();
+        } finally {
+            storage.unreadable = false;
+        }
+    });
+
+    test('Upgrade tab: a record found absent is written on the first change', async () => {
+        await rebuild();
+        setBox(up('house-target-level'), '5');
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ house: '5' });
+    });
+
+    test('Skilling tab: a box changed while the read was out keeps the stored values of every other box', async () => {
+        let release;
+        storage.pending.labSimSkillingInputs_me = new Promise((resolve) => {
+            release = resolve;
+        });
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('skilling');
+        await settle();
+        setBox(up('skilling-community-level'), '7');
+        await settle();
+        expect(storage.written.labSimSkillingInputs_me).toBeUndefined();
+        release({ useSkip: false, roomLevel: '120', community: '4' });
+        await settle();
+        expect(storage.written.labSimSkillingInputs_me).toMatchObject({
+            useSkip: false,
+            roomLevel: '120',
+            community: '7',
+        });
+    });
+
+    test('Skilling tab: a record that could not be read is not written over', async () => {
+        storage.unreadable = true;
+        try {
+            await rebuild('skilling');
+            setBox(up('skilling-community-level'), '7');
+            await settle();
+            expect(storage.written.labSimSkillingInputs_me).toBeUndefined();
+        } finally {
+            storage.unreadable = false;
+        }
     });
 
     test('Skilling tab: saved when changed and put back, with the Room Level box following the skip box', async () => {
