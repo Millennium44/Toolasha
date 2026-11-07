@@ -498,14 +498,21 @@ export const LAB_HEAVY_RUN_SIMS = 400;
  *
  * @param {string[]} dimensions - Checked dimension keys
  * @param {number} targetCount - From `labScopeTargetCount`
+ * @param {Object<string, number>} [steps] - The Steps boxes' values by dimension key (1 or missing: one candidate
+ *   per piece, as before). Each step is another candidate: an equipment step is only about half of that set's
+ *   count, since the tier upgrades and forced armor sets do not repeat, so it grows by half a set per step
  * @returns {{sims: number, heavy: boolean, text: string}} `text` is the phrase
  *   for the status line, already rounded to something honest about its precision
  */
-export function estimateLabUpgradeSims(dimensions, targetCount) {
+export function estimateLabUpgradeSims(dimensions, targetCount, steps = {}) {
     const fights = Math.max(0, Math.floor(targetCount) || 0);
     const perFight = (dimensions || [])
         .filter((key) => LAB_UPGRADE_DIMENSION_KEYS.includes(key))
-        .reduce((sum, key) => sum + (LAB_DIMENSION_SIMS_PER_FIGHT[key] || 0), 0);
+        .reduce((sum, key) => {
+            const base = LAB_DIMENSION_SIMS_PER_FIGHT[key] || 0;
+            const count = Math.max(1, Math.floor(Number(steps?.[key])) || 1);
+            return sum + (key === 'equipment' ? (base / 2) * (1 + count) : base * count);
+        }, 0);
     // The baseline pass is one sim per fight on top of the candidate passes
     const sims = fights * (perFight + 1);
     // Two significant figures: a number like 1,043 would claim a precision this

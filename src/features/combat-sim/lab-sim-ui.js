@@ -37,7 +37,16 @@ import {
 } from './lab-upgrade-cards.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
-import { nextMultipleLevel, abilityLevelBoxHints } from '../../utils/ability-level-step.js';
+import {
+    nextMultipleLevel,
+    abilityLevelBoxHints,
+    levelBoxHints,
+    levelStepsTitle,
+    normalizeLevelSteps,
+    stepLevels,
+    MAX_LEVEL_STEPS,
+    LEVEL_STEPS_TITLE,
+} from '../../utils/ability-level-step.js';
 import { LAB_SIM_KEYS, LAB_SIM_GLOBAL_KEYS, StoredValueMemo, pulledNames } from './sim-sync-keys.js';
 import {
     buildGameDataPayload,
@@ -311,10 +320,29 @@ function restorableLevelText(value, max) {
     return level >= 1 && level <= max ? String(level) : null;
 }
 
+/** The Equipment Steps box's two readings, and the Combat Lv chip's two modes */
+const EQUIPMENT_STEP_KINDS = ['breakpoints', 'levels'];
+const COMBAT_LEVEL_TYPES = ['increment', 'next_multiple'];
+
+/**
+ * A remembered Steps box's text, if the box would take it today: a whole number from 1 to the box's max.
+ * @param {*} value - What was stored
+ * @returns {string|null} The text to put in the box, or null to leave the box alone
+ */
+function restorableStepsText(value) {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    const text = String(value);
+    if (!/^\d+$/.test(text)) return null;
+    const steps = parseInt(text, 10);
+    return steps >= 1 && steps <= MAX_LEVEL_STEPS ? String(steps) : null;
+}
+
 /**
  * The Upgrade tab's remembered inputs, per character, as one record:
- * `{useSkip, abilityType, abilityLevel, house, shrine, community, budget}`. The Use Skip Levels box, the
- * Ability level type and number, the House, Shrine and Community Lv boxes (each as the box's text), and the
+ * `{useSkip, abilityType, abilityLevel, house, shrine, community, equipKind, equipSteps, abilitySteps, combatType,
+ * combatBoost, combatSteps, houseSteps, shrineSteps, budget}`. The Use Skip Levels box, the
+ * Ability level type and number, the House, Shrine and Community Lv boxes, the Equipment kind, the Combat Lv type
+ * and number and the five Steps boxes (each as the box's text), and the
  * Lab budget text. A field a record lacks (an older build wrote none) leaves its box alone, and an older
  * build never reads the key. The Targets grids and the Player select are deliberately not kept.
  */
@@ -586,6 +614,38 @@ const CHIP_BUTTON_STYLE =
     'background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:3px 8px; border-radius:4px; ' +
     'font-size:11px; cursor:pointer; font-family:inherit;';
 
+/** Help text for the Combat Lv Steps box */
+const COMBAT_LEVEL_STEPS_TITLE = levelStepsTitle(
+    'combat skill',
+    'The Targets grid, while open, replaces the steps with one level per skill.'
+);
+
+/**
+ * Help text for the House and Guild Shrine Steps boxes, which step one level at a time.
+ * @param {string} noun - 'room' or 'shrine'
+ * @returns {string}
+ */
+const SINGLE_STEPS_TITLE = (noun) =>
+    `How many levels to try per ${noun} (1 to ${MAX_LEVEL_STEPS}): 3 steps tries +1, +2 and +3, each its own row ` +
+    `costed from the level the ${noun} is at now, never past the max. Each step is one more simulation per ${noun}. ` +
+    'With more than 1 step the Lv box is not used; the Targets grid, while open, replaces the steps.';
+
+/** Help text for the Equipment Steps box */
+const ENHANCEMENT_STEPS_TITLE =
+    `How many enhancement breakpoints (or levels) to try per item (1 to ${MAX_LEVEL_STEPS}). 1 tries only the next breakpoint ` +
+    '(+5 → +7 on most gear, as always). 3 tries each of the next three breakpoints: +7, +10 and +12 from +5, ' +
+    'never past the max enhancement level. Set the box beside it to Levels to step one level at a time instead ' +
+    '(+6, +7 and +8 from +5). Each extra step is one more simulation per item.';
+
+/** A Steps box's markup: a small labeled number box, 1 by default (today's single candidate) */
+const stepsBoxHtml = (groupId, inputId, title, stepsFor = '') => `
+            <label id="${groupId}" title="${title}" style="display:inline-flex; align-items:center; gap:3px; color:#888; font-size:11px;">
+                Steps
+                <input id="${inputId}"${stepsFor ? ` data-steps-for="${stepsFor}"` : ''} type="number" min="1" max="${MAX_LEVEL_STEPS}" value="1" placeholder="1" style="
+                    width:40px; text-align:center; ${CHIP_INPUT_STYLE}"
+                    title="${title}">
+            </label>`;
+
 /**
  * Options that belong to one candidate set, drawn inside that set's chip.
  *
@@ -595,6 +655,16 @@ const CHIP_BUTTON_STYLE =
  * `_onUpgradeSelectionChanged`.
  */
 const LAB_MODE_OPTIONS = {
+    get equipment() {
+        return `
+        <span id="mwi-labsim-equip-group" data-lab-mode-options="equipment" style="display:none; align-items:center; gap:4px;">
+            <span style="color:${GAME_COLORS.border};">|</span>
+            <select class="toolasha-select" id="mwi-labsim-equip-step-kind" title="${ENHANCEMENT_STEPS_TITLE}" style="${CHIP_INPUT_STYLE}">
+                <option value="breakpoints">Breakpoints</option>
+                <option value="levels">Levels</option>
+            </select>${stepsBoxHtml('mwi-labsim-equip-steps-group', 'mwi-labsim-equip-steps', ENHANCEMENT_STEPS_TITLE)}
+        </span>`;
+    },
     get ability_level() {
         return `
         <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
@@ -606,7 +676,7 @@ const LAB_MODE_OPTIONS = {
             </select>
             <input id="mwi-labsim-upgrade-target-level" type="number" min="1" max="${maxLevel()}" value="5" style="
                 width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Number of levels to add to each ability">
+                title="Number of levels to add to each ability">${stepsBoxHtml('mwi-labsim-upgrade-steps-group', 'mwi-labsim-upgrade-steps', LEVEL_STEPS_TITLE)}
             <button id="mwi-labsim-ability-targets-toggle" title="Set a desired target level per ability instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`;
     },
@@ -624,6 +694,13 @@ const LAB_MODE_OPTIONS = {
         return `
         <span id="mwi-labsim-combat-group" data-lab-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:${GAME_COLORS.border};">|</span>
+            <select class="toolasha-select" id="mwi-labsim-combat-level-type" title="How far to raise each combat skill" style="${CHIP_INPUT_STYLE}">
+                <option value="increment">+Levels</option>
+                <option value="next_multiple">Next mult. of</option>
+            </select>
+            <input id="mwi-labsim-combat-level-boost" type="number" min="1" max="${maxLevel()}" value="5" placeholder="+5" style="
+                width:55px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Number of levels to add to each combat skill">${stepsBoxHtml('mwi-labsim-combat-level-steps-group', 'mwi-labsim-combat-level-steps', COMBAT_LEVEL_STEPS_TITLE)}
             <button id="mwi-labsim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`;
     },
@@ -633,7 +710,7 @@ const LAB_MODE_OPTIONS = {
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-house-target-level" type="number" min="1" max="${maxHouseRoomLevel()}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${maxHouseRoomLevel()}.">
+                title="Buy every room up to this level in one row — Lv2 → Lv5 is costed at levels 3, 4 and 5 together. Blank means one level up. Capped at ${maxHouseRoomLevel()}.">${stepsBoxHtml('mwi-labsim-house-steps-group', 'mwi-labsim-house-steps', SINGLE_STEPS_TITLE('room'), '#mwi-labsim-house-target-level')}
             <button id="mwi-labsim-house-targets-toggle" title="Set a target level per room instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
         </span>`;
     },
@@ -643,7 +720,7 @@ const LAB_MODE_OPTIONS = {
             <span style="color:${GAME_COLORS.border};">|</span>
             <input id="mwi-labsim-shrine-target-level" type="number" min="1" max="${MAX_GUILD_SHRINE_LEVEL}" placeholder="Lv" style="
                 width:48px; text-align:center; ${CHIP_INPUT_STYLE}"
-                title="Buy every shrine buff up to this level in one row, costed at every level in between. Blank means one level up. Capped at each buff's own maximum.">
+                title="Buy every shrine buff up to this level in one row, costed at every level in between. Blank means one level up. Capped at each buff's own maximum.">${stepsBoxHtml('mwi-labsim-shrine-steps-group', 'mwi-labsim-shrine-steps', SINGLE_STEPS_TITLE('shrine'), '#mwi-labsim-shrine-target-level')}
             <button id="mwi-labsim-shrine-targets-toggle" title="Set a target level per shrine instead of one number for all of them" style="${CHIP_BUTTON_STYLE}">Targets</button>
             <label id="mwi-labsim-shrine-cap-label" title="Only rank shrine levels your guild's shrine buildings can actually sell you: a shrine the guild has not built is left out entirely, and one built to Lv4 stops at Lv4. Uncheck to plan against shrines the guild would have to upgrade first — those rows say so." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-labsim-shrine-cap-guild" checked style="margin:0; cursor:pointer;">
@@ -2091,6 +2168,7 @@ class LabSimUI {
             this._syncAbilityLevelBox(e.target.value);
             void this._saveUpgradeInputs();
         });
+        this._wireUpgradeStepBoxes();
         this.panel.querySelector('#mwi-labsim-combat-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-combat-targets');
             const opening = grid.style.display === 'none';
@@ -2510,13 +2588,11 @@ class LabSimUI {
         const shrineBox = this.panel.querySelector('#mwi-labsim-shrine-target-level');
         if (shrineBox) shrineBox.max = String(getGuildShrineMaxLevel());
 
-        // Combat Levels borrows the Ability Lv boost box when Ability Lv is off,
-        // since one number drives both — same arrangement as the combat sim
+        // Combat Levels has its own mode, number and Steps now, as in the combat sim
         const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
-        if (levelGroup) levelGroup.style.display = isLevelMode || isCombatLevelMode ? 'inline-flex' : 'none';
+        if (levelGroup) levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
 
         const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
-        const levelInput = this.panel.querySelector('#mwi-labsim-upgrade-target-level');
         const levelTypeState = labAbilityLevelTypeAvailability(scopeMode, targetCount);
         if (levelType) {
             levelType.style.display = isLevelMode ? '' : 'none';
@@ -2524,15 +2600,8 @@ class LabSimUI {
             levelType.title = levelTypeState.reason;
             if (!levelTypeState.enabled) levelType.value = 'increment';
         }
-        if (levelInput) {
-            levelInput.title =
-                isLevelMode && isCombatLevelMode
-                    ? 'Levels added to each ability and each combat skill'
-                    : isCombatLevelMode
-                      ? 'Levels added to each combat skill'
-                      : 'Number of levels to add to each ability';
-            if (isCombatLevelMode && !parseInt(levelInput.value, 10)) levelInput.value = '5';
-        }
+        // The Steps box follows the (possibly just reset) type
+        this._syncAbilityStepsBox();
 
         const abilityGrid = this.panel.querySelector('#mwi-labsim-ability-targets');
         if (!isLevelMode) abilityGrid.style.display = 'none';
@@ -2694,6 +2763,14 @@ class LabSimUI {
             house: read('#mwi-labsim-house-target-level'),
             shrine: read('#mwi-labsim-shrine-target-level'),
             community: read('#mwi-labsim-community-target-level'),
+            equipKind: read('#mwi-labsim-equip-step-kind') || 'breakpoints',
+            equipSteps: read('#mwi-labsim-equip-steps'),
+            abilitySteps: read('#mwi-labsim-upgrade-steps'),
+            combatType: read('#mwi-labsim-combat-level-type') || 'increment',
+            combatBoost: read('#mwi-labsim-combat-level-boost'),
+            combatSteps: read('#mwi-labsim-combat-level-steps'),
+            houseSteps: read('#mwi-labsim-house-steps'),
+            shrineSteps: read('#mwi-labsim-shrine-steps'),
             // Only a budget the plan can use: the text of one the player pressed Plan on
             budget: typeof budgetText === 'string' && Number.isFinite(parseKMB(budgetText)) ? budgetText : '',
         };
@@ -2714,6 +2791,109 @@ class LabSimUI {
     }
 
     /**
+     * Wire the Steps boxes and the selects beside them: each Steps box takes a whole number from 1 to the max,
+     * the House and Shrine ones set their Lv box aside above 1, the Combat Lv type rewrites its number box, and
+     * every one of them is remembered with the Upgrade tab's other inputs.
+     * @private
+     */
+    _wireUpgradeStepBoxes() {
+        const q = (id) => this.panel?.querySelector(id);
+        const save = () => void this._saveUpgradeInputs();
+        for (const id of ['#mwi-labsim-equip-steps', '#mwi-labsim-upgrade-steps', '#mwi-labsim-combat-level-steps']) {
+            q(id)?.addEventListener('change', (e) => {
+                e.target.value = String(normalizeLevelSteps(e.target.value));
+                save();
+            });
+        }
+        for (const id of ['#mwi-labsim-house-steps', '#mwi-labsim-shrine-steps']) {
+            q(id)?.addEventListener('change', (e) => {
+                e.target.value = String(normalizeLevelSteps(e.target.value));
+                this._syncSingleStepsBox(e.target);
+                save();
+            });
+        }
+        q('#mwi-labsim-equip-step-kind')?.addEventListener('change', save);
+        q('#mwi-labsim-combat-level-type')?.addEventListener('change', (e) => {
+            this._syncCombatLevelBox(e.target.value);
+            save();
+        });
+        q('#mwi-labsim-combat-level-boost')?.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value, 10);
+            if (val > maxLevel()) e.target.value = maxLevel();
+            if (val < 1 && e.target.value !== '') e.target.value = 1;
+            save();
+        });
+    }
+
+    /**
+     * More than one House or Shrine step sets the Lv box aside, so it is shown as unused.
+     * @param {HTMLInputElement} stepsBox - The Steps box (its `data-steps-for` names the Lv box)
+     * @private
+     */
+    _syncSingleStepsBox(stepsBox) {
+        const lvBox = stepsBox?.dataset?.stepsFor ? this.panel?.querySelector(stepsBox.dataset.stepsFor) : null;
+        if (lvBox) lvBox.disabled = Number(stepsBox.value) > 1;
+    }
+
+    /**
+     * The Ability Steps box applies to +Levels and Next mult. of, not to an absolute Target Lv.
+     * @private
+     */
+    _syncAbilityStepsBox() {
+        const group = this.panel?.querySelector('#mwi-labsim-upgrade-steps-group');
+        const type = this.panel?.querySelector('#mwi-labsim-upgrade-level-type')?.value;
+        if (group) group.style.display = type === 'target' ? 'none' : 'inline-flex';
+    }
+
+    /**
+     * Put the Combat Lv number box's value, placeholder and hint in line with its type.
+     * @param {string} type - 'increment' | 'next_multiple'
+     * @private
+     */
+    _syncCombatLevelBox(type) {
+        const input = this.panel?.querySelector('#mwi-labsim-combat-level-boost');
+        if (!input) return;
+        const hints = levelBoxHints(type, 'combat skill');
+        input.value = hints.value;
+        input.placeholder = hints.placeholder;
+        input.title = hints.title;
+    }
+
+    /**
+     * What the Steps boxes ask for, as the options the candidate generator takes. A box whose set is not
+     * checked reads as 1 step (today's single candidate), and the Ability Steps box means nothing to an
+     * absolute Target Lv.
+     * @param {Set<string>} dimensions - The checked sets, `combined` already split into its two
+     * @returns {{abilitySteps: number, enhancementSteps: number, enhancementStepKind: string,
+     *   combatLevelType: string, combatLevelBoost: number, combatLevelSteps: number, houseSteps: number,
+     *   guildShrineSteps: number}}
+     * @private
+     */
+    _readUpgradeSteps(dimensions) {
+        const q = (id) => this.panel?.querySelector(id);
+        const has = (key) => dimensions.has(key);
+        const abilityType = q('#mwi-labsim-upgrade-level-type')?.value || 'increment';
+        const combat = has('combat_level');
+        return {
+            abilitySteps:
+                has('ability_level') && abilityType !== 'target'
+                    ? normalizeLevelSteps(q('#mwi-labsim-upgrade-steps')?.value)
+                    : 1,
+            enhancementSteps: has('equipment') ? normalizeLevelSteps(q('#mwi-labsim-equip-steps')?.value) : 1,
+            enhancementStepKind: q('#mwi-labsim-equip-step-kind')?.value === 'levels' ? 'levels' : 'breakpoints',
+            // The Combat Lv chip's own mode, number (blank means 5, as +Levels has always read it) and Steps
+            combatLevelType:
+                combat && q('#mwi-labsim-combat-level-type')?.value === 'next_multiple' ? 'next_multiple' : 'increment',
+            combatLevelBoost: combat
+                ? Math.min(maxLevel(), parseInt(q('#mwi-labsim-combat-level-boost')?.value, 10) || 5)
+                : 5,
+            combatLevelSteps: combat ? normalizeLevelSteps(q('#mwi-labsim-combat-level-steps')?.value) : 1,
+            houseSteps: has('house') ? normalizeLevelSteps(q('#mwi-labsim-house-steps')?.value) : 1,
+            guildShrineSteps: has('guild_shrine') ? normalizeLevelSteps(q('#mwi-labsim-shrine-steps')?.value) : 1,
+        };
+    }
+
+    /**
      * Put the Ability level box's value, placeholder and hint in line with its type — the one rewrite the
      * type select's own change makes.
      * @param {string} type - 'increment' | 'target' | 'next_multiple'
@@ -2726,6 +2906,7 @@ class LabSimUI {
         input.value = hints.value;
         input.placeholder = hints.placeholder;
         input.title = hints.title;
+        this._syncAbilityStepsBox();
     }
 
     /**
@@ -2750,7 +2931,16 @@ class LabSimUI {
             typeSelect.value = saved.abilityType;
             this._syncAbilityLevelBox(saved.abilityType);
         }
+        // The equipment kind, and the Combat Lv type (which rewrites its number box, so it goes first)
+        const kindSelect = q('#mwi-labsim-equip-step-kind');
+        if (kindSelect && EQUIPMENT_STEP_KINDS.includes(saved.equipKind)) kindSelect.value = saved.equipKind;
+        const combatSelect = q('#mwi-labsim-combat-level-type');
+        if (combatSelect && COMBAT_LEVEL_TYPES.includes(saved.combatType)) {
+            combatSelect.value = saved.combatType;
+            this._syncCombatLevelBox(saved.combatType);
+        }
         const boxes = [
+            ['#mwi-labsim-combat-level-boost', saved.combatBoost, maxLevel()],
             ['#mwi-labsim-upgrade-target-level', saved.abilityLevel, maxLevel()],
             ['#mwi-labsim-house-target-level', saved.house, maxHouseRoomLevel()],
             ['#mwi-labsim-shrine-target-level', saved.shrine, getGuildShrineMaxLevel()],
@@ -2761,6 +2951,22 @@ class LabSimUI {
             const box = q(id);
             if (box && text !== null) box.value = text;
         }
+        // Steps boxes: a whole number from 1 to the max, as the boxes take it; House and Shrine set their Lv aside
+        const stepBoxes = [
+            ['#mwi-labsim-equip-steps', saved.equipSteps],
+            ['#mwi-labsim-upgrade-steps', saved.abilitySteps],
+            ['#mwi-labsim-combat-level-steps', saved.combatSteps],
+            ['#mwi-labsim-house-steps', saved.houseSteps],
+            ['#mwi-labsim-shrine-steps', saved.shrineSteps],
+        ];
+        for (const [id, value] of stepBoxes) {
+            const text = restorableStepsText(value);
+            const box = q(id);
+            if (!box || text === null) continue;
+            box.value = text;
+            this._syncSingleStepsBox(box);
+        }
+        this._syncAbilityStepsBox();
         // The text and the budget the plan uses move together: the plan reads the number, the box the text
         if (typeof saved.budget === 'string' && Number.isFinite(parseKMB(saved.budget))) {
             this._allFightsBudgetText = saved.budget;
@@ -5347,14 +5553,13 @@ class LabSimUI {
             selectedDimensions.add('ability_level');
         }
         const abilityLevelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type')?.value || 'increment';
-        let abilityTargetLevel = Math.min(
+        const abilityTargetLevel = Math.min(
             maxLevel(),
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value, 10) || 0
         );
         const isCombatLevelMode = selectedDimensions.has('combat_level');
-        // Combat levels are ranked as "+N on each skill", and N is this box —
-        // an empty box would generate no candidates at all
-        if (isCombatLevelMode && !abilityTargetLevel) abilityTargetLevel = 5;
+        // The Steps boxes and the Combat Lv chip's own mode and number; a set that is off reads as one step
+        const stepOptions = this._readUpgradeSteps(selectedDimensions);
         const combatLevelTargets = isCombatLevelMode ? this._getLabCombatLevelTargets() : null;
         const abilityTargets = selectedDimensions.has('ability_level')
             ? this._getAbilityTargets('#mwi-labsim-ability-targets')
@@ -5437,7 +5642,14 @@ class LabSimUI {
                 // "I did not mean to ask for that".
                 const estimate = estimateLabUpgradeSims(
                     [...plan.modes, ...(plan.includeAbilityOrder ? ['ability_order'] : [])],
-                    fights.length
+                    fights.length,
+                    {
+                        equipment: stepOptions.enhancementSteps,
+                        ability_level: stepOptions.abilitySteps,
+                        combat_level: stepOptions.combatLevelSteps,
+                        house: stepOptions.houseSteps,
+                        guild_shrine: stepOptions.guildShrineSteps,
+                    }
                 );
                 this._setStatus(`Starting: ${estimate.text}. Stop cancels at any point.`);
                 // The table result a combined run saves again with the order section
@@ -5452,6 +5664,7 @@ class LabSimUI {
                             communityBuffs,
                             labyrinthCombatBuffs,
                             abilityTargetLevel,
+                            ...stepOptions,
                             combatLevelTargets,
                             abilityTargets,
                             modes: plan.modes,
@@ -5550,6 +5763,7 @@ class LabSimUI {
                         upgradeMode: plan.upgradeMode,
                         abilityLevelType,
                         abilityTargetLevel,
+                        ...stepOptions,
                         combatLevelTargets,
                         abilityTargets,
                         auraSwapsOnly: this._getAuraSwapsOnly(),
@@ -5579,6 +5793,7 @@ class LabSimUI {
                             {
                                 abilityTargetLevel,
                                 abilityLevelType,
+                                ...stepOptions,
                                 combatLevelTargets,
                                 abilityTargets,
                                 auraSwapsOnly: this._getAuraSwapsOnly(),
@@ -5690,7 +5905,9 @@ class LabSimUI {
      * @param {Object} gameData - From `buildGameDataPayload`
      * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
      *   auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
-     *   guildShrineCapToGuild, isSelf }`
+     *   guildShrineCapToGuild, isSelf, abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType,
+     *   combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps }` (the Steps boxes, from
+     *   `_readUpgradeSteps`; each defaults to the single candidate a set always offered)
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
@@ -5710,6 +5927,14 @@ class LabSimUI {
             communityBuffs = null,
             communityBuffTargetLevel = 0,
             isSelf = true,
+            abilitySteps = 1,
+            enhancementSteps = 1,
+            enhancementStepKind = 'breakpoints',
+            combatLevelType = 'increment',
+            combatLevelBoost,
+            combatLevelSteps = 1,
+            houseSteps = 1,
+            guildShrineSteps = 1,
         } = options;
         try {
             return modes.flatMap((mode) =>
@@ -5735,6 +5960,14 @@ class LabSimUI {
                         // As the analysis's own mode is generated: a party member's swaps are not levelled from
                         // the live character's ability books
                         isSelf,
+                        abilitySteps,
+                        enhancementSteps,
+                        enhancementStepKind,
+                        combatLevelType,
+                        combatLevelBoost,
+                        combatLevelSteps,
+                        houseSteps,
+                        guildShrineSteps,
                     }
                 )
             );
@@ -6449,7 +6682,8 @@ class LabSimUI {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
-        const boost = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-target-level')?.value) || 5;
+        const boost = parseInt(this.panel.querySelector('#mwi-labsim-combat-level-boost')?.value) || 5;
+        const levelType = this.panel.querySelector('#mwi-labsim-combat-level-type')?.value || 'increment';
         const isAllFights = this._upgradeTargetCount() > 1;
 
         const gameData = buildGameDataPayload();
@@ -6464,7 +6698,8 @@ class LabSimUI {
                 return;
             }
             const current = Math.max(1, Math.floor(dto?.[input.dataset.labCombatTarget] || 1));
-            input.value = Math.min(maxLevel(), current + boost);
+            // The first level the chip's mode would offer, as the advisor reads it (a skill at the max stays there)
+            input.value = stepLevels(current, levelType, boost, 1, maxLevel())[0] ?? Math.min(maxLevel(), current);
         });
     }
 

@@ -6736,6 +6736,14 @@ function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
  * @param {Array} [params.labyrinthCombatBuffs] - Combat buffs from labyrinth upgrades
  * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
  * @param {number} [params.abilityTargetLevel] - Target ability level
+ * @param {number} [params.abilitySteps=1] - Levels offered per ability in the +Levels / Next-multiple modes
+ * @param {number} [params.enhancementSteps=1] - Breakpoints (or levels) offered per equipped piece
+ * @param {string} [params.enhancementStepKind='breakpoints'] - 'levels' steps one level at a time
+ * @param {string} [params.combatLevelType='increment'] - 'increment' or 'next_multiple'
+ * @param {number} [params.combatLevelBoost] - The Combat Lv +N or multiple (unset borrows abilityTargetLevel)
+ * @param {number} [params.combatLevelSteps=1] - Levels offered per combat skill
+ * @param {number} [params.houseSteps=1] - +1..+N offered per house room
+ * @param {number} [params.guildShrineSteps=1] - +1..+N offered per guild shrine
  * @param {boolean} [params.auraSwapsOnly] - Restrict ability swaps to the build guide's
  *   aura options and the archetype's signature ability
  * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
@@ -6774,6 +6782,14 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         upgradeMode,
         abilityLevelType,
         abilityTargetLevel,
+        abilitySteps = 1,
+        enhancementSteps = 1,
+        enhancementStepKind = 'breakpoints',
+        combatLevelType = 'increment',
+        combatLevelBoost,
+        combatLevelSteps = 1,
+        houseSteps = 1,
+        guildShrineSteps = 1,
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
@@ -6827,7 +6843,8 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             // This table ranks win rate and Gold/1% and nothing else, so a room
             // whose only combat-facing buffs are the global wisdom and rare find
             // every room grants has nothing it could move here
-            { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild, isSelf }
+            // prettier-ignore
+            { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild, isSelf, abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps }
         )
     );
 
@@ -8453,6 +8470,8 @@ export function labAllFightsTrialBudget(sims, hours) {
  * always simulated.
  *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
+ *   abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType, combatLevelBoost, combatLevelSteps,
+ *   houseSteps, guildShrineSteps (the Upgrade tab's Steps boxes; each defaults to 1 candidate, as before),
  *   combatLevelTargets, auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
  *   guildShrineTargets, guildShrineCapToGuild, tokenLevels, claimLoadouts }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]; `claimLoadouts` is every
@@ -8474,6 +8493,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         communityBuffs,
         labyrinthCombatBuffs = [],
         abilityTargetLevel,
+        abilitySteps = 1,
+        enhancementSteps = 1,
+        enhancementStepKind = 'breakpoints',
+        combatLevelType = 'increment',
+        combatLevelBoost,
+        combatLevelSteps = 1,
+        houseSteps = 1,
+        guildShrineSteps = 1,
         combatLevelTargets,
         abilityTargets,
         modes = ['combat_level'],
@@ -8545,7 +8572,8 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 // Every row in this table is ranked on attempts to clear, so a
                 // house room that can only move XP or loot is a row that can
                 // only report the sims' own noise
-                { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild }
+                // prettier-ignore
+                { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets, guildShrineCapToGuild, abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType, combatLevelBoost, combatLevelSteps, houseSteps, guildShrineSteps }
             );
             for (const candidate of fightCandidates) {
                 pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);

@@ -826,15 +826,14 @@ describe('the Upgrade tab asks two questions instead of one', () => {
         expect(levelGroup.style.display).toBe('none');
     });
 
-    test('combat levels borrow the boost box, and get a number to work with', () => {
+    test('combat levels have their own number box now, and no longer borrow the ability one', () => {
         const levelGroup = ui.panel.querySelector('#mwi-labsim-upgrade-level-group');
-        const levelInput = ui.panel.querySelector('#mwi-labsim-upgrade-target-level');
-        levelInput.value = '';
+        const combatInput = ui.panel.querySelector('#mwi-labsim-combat-level-boost');
 
         check('combat_level', true);
 
-        expect(levelGroup.style.display).toBe('inline-flex');
-        expect(levelInput.value).toBe('5');
+        expect(levelGroup.style.display).toBe('none');
+        expect(combatInput.value).toBe('5');
     });
 
     test('nothing checked is refused rather than run empty', () => {
@@ -8293,6 +8292,14 @@ describe('the Lab Sim input boxes are remembered per character', () => {
             house: '3',
             shrine: '2',
             community: '4',
+            equipKind: 'breakpoints',
+            equipSteps: '1',
+            abilitySteps: '1',
+            combatType: 'increment',
+            combatBoost: '5',
+            combatSteps: '1',
+            houseSteps: '1',
+            shrineSteps: '1',
             budget: '',
         });
 
@@ -8429,5 +8436,290 @@ describe('the Lab Sim input boxes are remembered per character', () => {
         expect(up('skilling-community-level').value).toBe('');
         expect(up('skilling-useskip').checked).toBe(true);
         expect(up('skilling-level').disabled).toBe(true);
+    });
+});
+
+/**
+ * The Upgrade tab's Steps controls (Equipment kind and Steps, Ability Steps, the Combat Lv mode, number and
+ * Steps, House and Shrine Steps), ported from the Combat Sim. A set offered no Steps reads as today's single
+ * candidate; every box reaches the analyses and the candidate generator, and is remembered per character.
+ */
+describe('the Lab Sim Upgrade Steps controls', () => {
+    const change = (el) => el.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const q = (id) => ui.panel.querySelector(`#mwi-labsim-${id}`);
+    const setBox = (id, value) => {
+        q(id).value = value;
+        change(q(id));
+    };
+    const onlyDimension = (...keys) => {
+        for (const box of ui.panel.querySelectorAll('[data-lab-upgrade-dimension]')) {
+            box.checked = keys.includes(box.getAttribute('data-lab-upgrade-dimension'));
+            change(box);
+        }
+    };
+    const rebuild = async () => {
+        ui.destroy();
+        ui.buildPanel();
+        await settle();
+    };
+    let singleSpy;
+
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        storage.written = {};
+        storage.values = {};
+        game.characterId = 'me';
+        game.monsters = [{ hrid: '/monsters/mimic', name: 'Mimic' }];
+        game.skipLevels = { '/monsters/mimic': 130 };
+        game.players = [{ hrid: 'p1', equipment: {}, abilities: [], houseRooms: {}, guildShrineLevels: {} }];
+        ui.buildPanel();
+        await settle();
+        ui._switchTab('upgrade');
+        ui.panel.querySelector('#mwi-labsim-monster').value = '/monsters/mimic';
+        await ui._restoreUpgradeSelection();
+        ui.panel.querySelector('#mwi-labsim-level-source').value = 'configure';
+        singleSpy = vi
+            .spyOn(upgradeAdvisor, 'runLabyrinthUpgradeAnalysis')
+            .mockResolvedValue({ baseline: null, results: [] });
+    });
+
+    afterEach(() => {
+        singleSpy.mockRestore();
+        game.players = [];
+        storage.values = {};
+        ui.destroy();
+    });
+
+    test('every box opens on today’s single candidate, inside its own chip', () => {
+        expect(q('equip-steps').value).toBe('1');
+        expect(q('equip-step-kind').value).toBe('breakpoints');
+        expect(q('upgrade-steps').value).toBe('1');
+        expect(q('combat-level-steps').value).toBe('1');
+        expect(q('combat-level-type').value).toBe('increment');
+        expect(q('combat-level-boost').value).toBe('5');
+        expect(q('house-steps').value).toBe('1');
+        expect(q('shrine-steps').value).toBe('1');
+        const within = (group, id) => ui.panel.querySelector(`[data-lab-mode-options="${group}"]`).contains(q(id));
+        expect(within('equipment', 'equip-steps')).toBe(true);
+        expect(within('ability_level', 'upgrade-steps')).toBe(true);
+        expect(within('combat_level', 'combat-level-steps')).toBe(true);
+        expect(within('house', 'house-steps')).toBe(true);
+        expect(within('guild_shrine', 'shrine-steps')).toBe(true);
+    });
+
+    test('with nothing touched the analysis gets one step everywhere and the combat +5', async () => {
+        onlyDimension('equipment');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[0][0]).toMatchObject({
+            abilitySteps: 1,
+            enhancementSteps: 1,
+            enhancementStepKind: 'breakpoints',
+            combatLevelType: 'increment',
+            combatLevelBoost: 5,
+            combatLevelSteps: 1,
+            houseSteps: 1,
+            guildShrineSteps: 1,
+        });
+    });
+
+    test('each box reaches the single-fight analysis, and a Steps box off its set reads as 1', async () => {
+        setBox('equip-steps', '3');
+        setBox('equip-step-kind', 'levels');
+        setBox('upgrade-steps', '4');
+        setBox('combat-level-type', 'next_multiple');
+        setBox('combat-level-boost', '10');
+        setBox('combat-level-steps', '2');
+        setBox('house-steps', '5');
+        setBox('shrine-steps', '2');
+
+        onlyDimension('equipment');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[0][0]).toMatchObject({
+            enhancementSteps: 3,
+            enhancementStepKind: 'levels',
+            abilitySteps: 1,
+            combatLevelSteps: 1,
+            houseSteps: 1,
+            guildShrineSteps: 1,
+        });
+
+        onlyDimension('combat_level');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[1][0]).toMatchObject({
+            combatLevelType: 'next_multiple',
+            combatLevelBoost: 10,
+            combatLevelSteps: 2,
+            enhancementSteps: 1,
+        });
+
+        onlyDimension('house');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[2][0].houseSteps).toBe(5);
+
+        onlyDimension('guild_shrine');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[3][0].guildShrineSteps).toBe(2);
+
+        onlyDimension('ability_level');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[4][0].abilitySteps).toBe(4);
+        // An absolute Target Lv has no steps
+        setBox('upgrade-level-type', 'target');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[5][0].abilitySteps).toBe(1);
+    });
+
+    test('a combined selection reads the Equipment and Ability Steps both', async () => {
+        setBox('equip-steps', '2');
+        setBox('upgrade-steps', '3');
+        onlyDimension('equipment', 'ability_level');
+        await ui._onUpgradeAnalyze();
+        expect(singleSpy.mock.calls[0][0]).toMatchObject({ enhancementSteps: 2, abilitySteps: 3 });
+    });
+
+    test('Steps are clamped to 1..max and the House and Shrine ones set their Lv box aside above 1', () => {
+        setBox('equip-steps', '99');
+        expect(q('equip-steps').value).toBe('5');
+        setBox('upgrade-steps', '0');
+        expect(q('upgrade-steps').value).toBe('1');
+        setBox('house-steps', '3');
+        expect(q('house-target-level').disabled).toBe(true);
+        setBox('house-steps', '1');
+        expect(q('house-target-level').disabled).toBe(false);
+        setBox('shrine-steps', '2');
+        expect(q('shrine-target-level').disabled).toBe(true);
+    });
+
+    test('the Combat Lv type rewrites its own number box, and Ability Lv no longer lends its box', () => {
+        setBox('combat-level-type', 'next_multiple');
+        expect(q('combat-level-boost').placeholder).not.toBe('+5');
+        onlyDimension('combat_level');
+        expect(q('upgrade-level-group').style.display).toBe('none');
+    });
+
+    test('reaches generateCandidates through _extraDimensionCandidates, and a missing option is today’s default', () => {
+        const generateSpy = vi.spyOn(upgradeAdvisor, 'generateCandidates');
+        try {
+            ui._extraDimensionCandidates(
+                ['equipment'],
+                { equipment: {}, abilities: [] },
+                { itemDetailMap: {} },
+                { enhancementSteps: 3, enhancementStepKind: 'levels', abilitySteps: 2, houseSteps: 4 }
+            );
+            expect(generateSpy.mock.calls[0][12]).toMatchObject({
+                enhancementSteps: 3,
+                enhancementStepKind: 'levels',
+                abilitySteps: 2,
+                houseSteps: 4,
+            });
+            ui._extraDimensionCandidates(['equipment'], { equipment: {}, abilities: [] }, { itemDetailMap: {} });
+            expect(generateSpy.mock.calls[1][12]).toMatchObject({
+                enhancementSteps: 1,
+                enhancementStepKind: 'breakpoints',
+                abilitySteps: 1,
+                combatLevelSteps: 1,
+                houseSteps: 1,
+                guildShrineSteps: 1,
+            });
+        } finally {
+            generateSpy.mockRestore();
+        }
+    });
+
+    test('Combat Lv options give the right levels for a real skill: today by default, then steps', () => {
+        const dto = { equipment: {}, abilities: [], attackLevel: 95 };
+        const levelsOf = (options) =>
+            ui
+                ._extraDimensionCandidates(['combat_level'], dto, { itemDetailMap: {}, abilityDetailMap: {} }, options)
+                .filter((c) => c.skillKey === 'attackLevel')
+                .map((c) => c.upgradeLevel);
+        // Today: +5, one row
+        expect(levelsOf({})).toEqual([100]);
+        expect(levelsOf({ combatLevelBoost: 5, combatLevelSteps: 3 })).toEqual([100, 105, 110]);
+        expect(levelsOf({ combatLevelType: 'next_multiple', combatLevelBoost: 10, combatLevelSteps: 2 })).toEqual([
+            100, 110,
+        ]);
+    });
+
+    test('the run estimate grows with the Steps, and 1 step is the figure it always gave', () => {
+        const base = estimateLabUpgradeSims(['equipment', 'combat_level'], 4).sims;
+        expect(estimateLabUpgradeSims(['equipment', 'combat_level'], 4, {}).sims).toBe(base);
+        expect(estimateLabUpgradeSims(['equipment', 'combat_level'], 4, { equipment: 1, combat_level: 1 }).sims).toBe(
+            base
+        );
+        expect(estimateLabUpgradeSims(['house'], 4, { house: 3 }).sims).toBeGreaterThan(
+            estimateLabUpgradeSims(['house'], 4).sims
+        );
+    });
+
+    test('saved per character, put back through the same handlers, with the Lv boxes set aside', async () => {
+        setBox('equip-step-kind', 'levels');
+        setBox('equip-steps', '3');
+        setBox('upgrade-steps', '2');
+        setBox('combat-level-type', 'next_multiple');
+        setBox('combat-level-boost', '10');
+        setBox('combat-level-steps', '4');
+        setBox('house-steps', '3');
+        setBox('shrine-steps', '2');
+        await settle();
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({
+            equipKind: 'levels',
+            equipSteps: '3',
+            abilitySteps: '2',
+            combatType: 'next_multiple',
+            combatBoost: '10',
+            combatSteps: '4',
+            houseSteps: '3',
+            shrineSteps: '2',
+        });
+
+        storage.values = { ...storage.written };
+        await rebuild();
+        expect(q('equip-step-kind').value).toBe('levels');
+        expect(q('equip-steps').value).toBe('3');
+        expect(q('upgrade-steps').value).toBe('2');
+        expect(q('combat-level-type').value).toBe('next_multiple');
+        expect(q('combat-level-boost').value).toBe('10');
+        expect(q('combat-level-steps').value).toBe('4');
+        expect(q('house-steps').value).toBe('3');
+        expect(q('house-target-level').disabled).toBe(true);
+        expect(q('shrine-steps').value).toBe('2');
+        expect(q('shrine-target-level').disabled).toBe(true);
+
+        // Another character does not inherit them
+        game.characterId = 'alt';
+        await rebuild();
+        expect(q('equip-steps').value).toBe('1');
+        expect(q('house-steps').value).toBe('1');
+    });
+
+    test('invalid remembered values are ignored, and a record without the fields leaves the defaults', async () => {
+        storage.values = {
+            labSimUpgradeInputs_me: {
+                equipKind: 'bogus',
+                equipSteps: '99',
+                abilitySteps: 'abc',
+                combatType: 'nope',
+                combatBoost: '-4',
+                combatSteps: '0',
+                houseSteps: 1.5,
+                shrineSteps: {},
+            },
+        };
+        await rebuild();
+        expect(q('equip-step-kind').value).toBe('breakpoints');
+        expect(q('equip-steps').value).toBe('1');
+        expect(q('upgrade-steps').value).toBe('1');
+        expect(q('combat-level-type').value).toBe('increment');
+        expect(q('combat-level-boost').value).toBe('5');
+        expect(q('combat-level-steps').value).toBe('1');
+        expect(q('house-steps').value).toBe('1');
+        expect(q('shrine-steps').value).toBe('1');
+
+        storage.values = { labSimUpgradeInputs_me: { useSkip: false } };
+        await rebuild();
+        expect(q('equip-steps').value).toBe('1');
+        expect(q('combat-level-boost').value).toBe('5');
     });
 });
