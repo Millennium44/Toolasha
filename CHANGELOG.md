@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync pulls do less work at once and name their slow steps
+
+A sync pull now hashes each download once instead of up to five times and checks it in slices, and the Performance panel names the pull step (download, merge, write…) that was running during a stall.
+
 ### Combat Sim and Lab Sim remember their Upgrade boxes
 
 The level, Steps, charm and Breakpoints/Levels boxes, Skip Back, Hours and the chosen player on the Combat Sim Upgrade tab, and the Lab Sim's level boxes, Use Skip Levels and budget, are now saved per character and come back after a reload.
