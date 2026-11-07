@@ -222,9 +222,9 @@ class Config {
             },
             inventoryTooltipBeside: {
                 enabled: true,
-                name: 'Keep Inventory Tooltips Off the Item',
+                name: 'Keep Item Tooltips Off the Item',
                 category: 'Inventory',
-                description: 'Moves an inventory tooltip that would cover the hovered item to its left or right side',
+                description: 'Moves an item tooltip that would cover the hovered item to its left or right side',
                 settingKey: 'inventoryTooltipBeside',
             },
             expectedValueCalculator: {

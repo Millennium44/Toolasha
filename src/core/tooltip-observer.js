@@ -79,6 +79,8 @@ const REGEX_SPRITE_NAME = /#(.+)$/;
  * @property {string|null} itemHrid - From an item link or sprite reference in the popper, when it carries one
  * @property {'loadout'|undefined} [levelSource] - 'loadout' when `enhancementLevel` came from the hovered
  *   Loadouts-panel slot because the name carried no "+N"
+ * @property {Element|undefined} [hoverTarget] - The element the pointer last entered, outside the popper, when
+ *   still in the document: the tooltip's anchor
  */
 
 /**
@@ -102,6 +104,10 @@ function classifyTooltip(element) {
         itemHrid: null,
     };
     if (!info.isTooltipPopper) return info;
+
+    // The element the pointer entered for this hover: the tooltip's anchor, for features that place by it.
+    // Never one inside the popper itself (an interactive tooltip is hovered too)
+    if (lastHoverTarget?.isConnected && !element.contains(lastHoverTarget)) info.hoverTarget = lastHoverTarget;
 
     // A popper the game reuses may still carry the loadout level Toolasha wrote into its lines: read the game's own
     restoreLoadoutTooltip(element);

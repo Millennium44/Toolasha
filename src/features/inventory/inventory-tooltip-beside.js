@@ -1,8 +1,13 @@
 /**
- * Inventory Tooltip Beside
- * Keeps an inventory item's tooltip off the hovered item itself. The game's placement above or below is
- * kept whenever it clears the item; a tooltip that would land on it (too tall for either side) moves to
- * the left or right of the item, whichever has more room.
+ * Item Tooltip Beside
+ * Keeps an item's tooltip off the hovered item itself: the inventory, the Loadouts and equipment panels,
+ * the marketplace, item pickers, anywhere a tooltip belongs to an item tile. The game's placement above or
+ * below is kept whenever it clears the item; a tooltip that would land on it (too tall for either side)
+ * moves to the left or right of the item, whichever has more room.
+ *
+ * The tile is the tooltip's own anchor: the element whose `aria-describedby` names the popper, else the
+ * element the pointer entered (the tooltip observer's hover target), never the text it shows. It is found
+ * once when the tooltip opens and kept for that hover.
  *
  * Rides the shared tooltip observer for open and close. Positioning is a class on the popper plus two
  * CSS custom properties: Popper.js keeps rewriting the inline transform on its own updates, and a class
@@ -23,12 +28,16 @@ const STYLE_ID = 'toolasha-tip-beside-style';
 const CLASS_NAME = 'toolasha-tip-beside';
 const INVENTORY_SELECTOR = '[class*="Inventory_items"]';
 const TILE_SELECTOR = '[class*="Item_itemContainer"]';
+/** An item icon outside the inventory: a Loadouts or equipment slot, a market listing, a picker entry */
+const ITEM_SELECTOR = '[class*="Item_item"]';
+/** Another tooltip: an anchor inside one is never an item tile. A picker drawn as a menu popper is fine */
+const POPPER_SELECTOR = '[class*="MuiTooltip-popper"]';
 /** Gap between the tooltip and the hovered item, and the least margin kept from the viewport edge */
 const PANEL_GAP = 8;
 const VIEWPORT_MARGIN = 8;
 /**
- * One hover's budget. The game re-places a popper a few times on open and on scroll; a placement that keeps
- * flipping between beside and the game's own spot (the game re-placing it for the size the class gives it,
+ * One hover's budget, counted per short window. The game re-places a popper a few times on open and on scroll;
+ * a placement that keeps flipping between beside and the game's own spot (the game re-placing it for the size the class gives it,
  * which changes what is measured next) or a burst of passes in a short window is a fight with the game, and
  * the tooltip is handed back to the game's placement for the rest of that hover.
  */
@@ -102,6 +111,33 @@ export function placeClear(gameRect, tile, viewport) {
     return { x: Math.round(x), y: Math.round(y) };
 }
 
+/**
+ * The item tile an element sits in, never one inside a tooltip.
+ * @param {Element|null|undefined} el
+ * @param {Element} popper
+ * @returns {Element|null}
+ */
+function itemTileOf(el, popper) {
+    if (!el?.isConnected || typeof el.closest !== 'function') return null;
+    if (popper.contains(el) || el.closest(POPPER_SELECTOR)) return null;
+    return el.closest(TILE_SELECTOR) || el.closest(ITEM_SELECTOR);
+}
+
+/**
+ * The item a tile's icon shows, from `href` or `xlink:href`.
+ * @param {Element} tile
+ * @returns {string|null}
+ */
+function spriteHrid(tile) {
+    for (const use of tile.querySelectorAll('use')) {
+        const ref = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
+        if (!ref.includes('items_sprite')) continue;
+        const fragment = ref.split('#')[1];
+        if (fragment) return `/items/${fragment}`;
+    }
+    return null;
+}
+
 class InventoryTooltipBeside {
     constructor() {
         this.isInitialized = false;
@@ -132,14 +168,15 @@ class InventoryTooltipBeside {
     handleOpen(popper, info) {
         if (!info?.isTooltipPopper || !info.isItemTooltip) return;
         if (!config.isFeatureEnabled(SETTING_KEY) || isMobileMode()) return;
-        if (!this.findTile(popper)) return;
         if (this.tracked.has(popper)) {
             this.reposition(popper);
             return;
         }
+        const tile = this.findTile(popper, info);
+        if (!tile) return;
         // The game positions the popper a frame after it is added, so the first check usually sees it
         // unplaced. Re-check whenever the game moves it (its inline style) or it resizes (lines appended).
-        const state = { observers: [], passes: 0, windowStart: 0, flips: 0, placed: false };
+        const state = { observers: [], passes: 0, windowStart: 0, flips: 0, placed: false, tile, info };
         const update = () => {
             if (!popper.isConnected) {
                 this.release(popper);
@@ -179,6 +216,7 @@ class InventoryTooltipBeside {
         if (now - state.windowStart > BURST_WINDOW_MS) {
             state.windowStart = now;
             state.passes = 0;
+            state.flips = 0;
         }
         state.passes += 1;
         if (state.passes <= MAX_PASSES_PER_WINDOW) return false;
@@ -203,14 +241,36 @@ class InventoryTooltipBeside {
     }
 
     /**
-     * The hovered inventory tile a tooltip belongs to, or null when its anchor is not in the inventory.
+     * The hovered item tile a tooltip belongs to, or null when its anchor is not an item.
+     *
+     * In the inventory, the tile around the trigger (or the trigger itself). Elsewhere, the item tile around
+     * the trigger, or around the element the pointer entered when no trigger names the popper; a hover target
+     * whose icon shows another item than the tooltip names is a stale one and is not used.
+     * @param {Element} popper
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info]
+     * @returns {Element|null}
+     */
+    findTile(popper, info) {
+        const trigger = popper.id ? document.querySelector(`[aria-describedby="${popper.id}"]`) : null;
+        if (trigger?.closest(INVENTORY_SELECTOR)) return trigger.closest(TILE_SELECTOR) || trigger;
+        if (trigger) return itemTileOf(trigger, popper);
+        const tile = itemTileOf(info?.hoverTarget, popper);
+        if (!tile) return null;
+        const shown = spriteHrid(tile);
+        if (info?.itemHrid && shown && shown !== info.itemHrid) return null;
+        return tile;
+    }
+
+    /**
+     * The tile kept for a tracked tooltip, found again only when the game has replaced it.
      * @param {Element} popper
      * @returns {Element|null}
      */
-    findTile(popper) {
-        const trigger = popper.id ? document.querySelector(`[aria-describedby="${popper.id}"]`) : null;
-        if (!trigger?.closest(INVENTORY_SELECTOR)) return null;
-        return trigger.closest(TILE_SELECTOR) || trigger;
+    tileFor(popper) {
+        const state = this.tracked.get(popper);
+        if (!state) return this.findTile(popper);
+        if (!state.tile?.isConnected) state.tile = this.findTile(popper, state.info);
+        return state.tile;
     }
 
     /**
@@ -224,7 +284,7 @@ class InventoryTooltipBeside {
             this.unplace(popper);
             return false;
         }
-        const tile = this.findTile(popper);
+        const tile = this.tileFor(popper);
         if (!tile) {
             this.unplace(popper);
             return false;
@@ -277,7 +337,7 @@ class InventoryTooltipBeside {
 const inventoryTooltipBeside = new InventoryTooltipBeside();
 
 export default {
-    name: 'Inventory Tooltip Beside',
+    name: 'Item Tooltip Beside',
     initialize: async () => {
         await inventoryTooltipBeside.initialize();
     },

@@ -163,7 +163,7 @@ describe('InventoryTooltipBeside', () => {
         expect(h.resizeCallbacks.length).toBe(1);
     });
 
-    it('leaves a tooltip whose anchor is outside the inventory alone', () => {
+    it('leaves a tooltip whose anchor is not an item tile alone', () => {
         const popper = build({ inInventory: false });
         h.callback(popper, 'opened', ITEM_INFO);
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
@@ -214,6 +214,120 @@ describe('InventoryTooltipBeside', () => {
         feature.cleanup();
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
         expect(document.getElementById('toolasha-tip-beside-style')).toBeNull();
+    });
+});
+
+describe('ItemTooltipBeside outside the inventory', () => {
+    const sprite = (fragment) => `<svg><use href="/static/media/items_sprite.abc.svg#${fragment}"></use></svg>`;
+    const POPPER = `<div id="pop1" class="MuiPopper-root MuiTooltip-popper">
+        <div class="MuiTooltip-tooltip"><div class="ItemTooltipText_name__n"><span>Pathbreaker Boots</span></div></div>
+    </div>`;
+    const BOOTS = { ...ITEM_INFO, itemHrid: '/items/pathbreaker_boots' };
+
+    /** Stub the tile and popper rects: the game's placement covers the tile */
+    function stub(tile, popper) {
+        tile.getBoundingClientRect = () => rect({ left: 1000, top: 300, width: 60, height: 60 });
+        popper.getBoundingClientRect = () => rect({ left: 900, top: 100, width: 320, height: 370 });
+    }
+
+    beforeEach(async () => {
+        h.enabled = true;
+        h.mobile = false;
+        window.innerWidth = 1920;
+        window.innerHeight = 1000;
+        delete globalThis.ResizeObserver;
+        await feature.initialize();
+    });
+    afterEach(() => {
+        feature.cleanup();
+    });
+
+    it('moves a Loadouts-panel slot tooltip off the slot (anchor named by aria-describedby)', () => {
+        document.body.innerHTML = `
+            <div class="LoadoutsPanel_selectedLoadout__s"><div class="LoadoutsPanel_equipment__e">
+                <div class="Item_item__a" aria-describedby="pop1">${sprite('pathbreaker_boots')}</div>
+            </div></div>${POPPER}`;
+        const tile = document.querySelector('.Item_item__a');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', BOOTS);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+        expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('300px');
+    });
+
+    it('moves an equipment-panel tooltip off the worn item, measured from the item container', () => {
+        document.body.innerHTML = `
+            <div class="EquipmentPanel_playerModel__p"><div class="EquipmentPanel_equipmentSlot__q">
+                <div class="Item_itemContainer__c"><div class="Item_item__a" aria-describedby="pop1">${sprite(
+                    'pathbreaker_boots'
+                )}</div></div>
+            </div></div>${POPPER}`;
+        const tile = document.querySelector('.Item_itemContainer__c');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', BOOTS);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('672px');
+    });
+
+    it('falls back to the hovered item tile when no trigger names the popper (an item picker)', () => {
+        document.body.innerHTML = `
+            <div class="Modal_modal__m"><div class="ItemSelector_itemList__l">
+                <div class="Item_itemContainer__c"><div class="Item_item__a" id="hovered">${sprite(
+                    'pathbreaker_boots'
+                )}</div></div>
+            </div></div>${POPPER}`;
+        const tile = document.querySelector('.Item_itemContainer__c');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', { ...BOOTS, hoverTarget: document.querySelector('#hovered use') });
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+    });
+
+    it('moves the tooltip of a picker the game draws as a menu popper', () => {
+        document.body.innerHTML = `
+            <div class="MuiPopper-root MuiPopover-paper"><div class="ItemSelector_itemList__l">
+                <div class="Item_itemContainer__c"><div class="Item_item__a" aria-describedby="pop1">${sprite(
+                    'pathbreaker_boots'
+                )}</div></div>
+            </div></div>${POPPER}`;
+        const tile = document.querySelector('.Item_itemContainer__c');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', BOOTS);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+    });
+
+    it('ignores a hover target showing another item than the tooltip, or one outside any item tile', () => {
+        document.body.innerHTML = `
+            <div class="Item_itemContainer__c"><div class="Item_item__a" id="hovered">${sprite('gummy')}</div></div>
+            <button id="plain">Equip</button>${POPPER}`;
+        const tile = document.querySelector('.Item_itemContainer__c');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', { ...BOOTS, hoverTarget: document.getElementById('hovered') });
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
+        h.callback(popper, 'closed', BOOTS);
+        h.callback(popper, 'opened', { ...BOOTS, hoverTarget: document.getElementById('plain') });
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
+    });
+
+    it('hands back a tooltip the enhance selector hides', async () => {
+        document.body.innerHTML = `
+            <div class="Item_itemContainer__c"><div class="Item_item__a" aria-describedby="pop1">${sprite(
+                'pathbreaker_boots'
+            )}</div></div>${POPPER}`;
+        const tile = document.querySelector('.Item_itemContainer__c');
+        const popper = document.getElementById('pop1');
+        stub(tile, popper);
+        h.callback(popper, 'opened', BOOTS);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+        popper.getBoundingClientRect = () => rect({});
+        popper.style.display = 'none';
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('');
     });
 });
 
