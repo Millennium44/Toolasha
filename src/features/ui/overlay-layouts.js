@@ -351,101 +351,15 @@ const DASHBOARD_PRESET = {
 };
 
 /**
- * The maintainer's own dense overlay: twenty-two tiles, nine columns, every
- * width in `exact` copied from their exported layout. Each row of it fills the
- * nine exactly; inventory, mana and treasure share one, build score, net worth
- * and charms the last.
+ * The maintainer's own dense overlay: twenty tiles, nine columns. Its widths at
+ * nine columns are the ones in `exact`, except that Treasure takes three rather
+ * than four: four left the row of inventory, treasure and build score one column
+ * short and wrapped Net Worth alone beneath it, and three closes the row.
  */
 const DENSE_PRESET = {
     activity: ACTIVITY.NONE,
-    order: [
-        'battleTimer',
-        'experiencePerHour',
-        'deathsPerHour',
-        'combatStatus',
-        'combatRevenue',
-        'timeToLevel',
-        'houses',
-        'totalProfit',
-        'consumables',
-        'equipmentWatch',
-        'coins',
-        'marketListings',
-        'dps',
-        'luck',
-        'watchlist',
-        'skillBooks',
-        'inventoryValue',
-        'manaPerFight',
-        'treasure',
-        'buildScore',
-        'netWorth',
-        'charmValue',
-    ],
-    // Blocks and the long lists take both columns, figures pair up
-    span: {
-        battleTimer: 2,
-        combatStatus: 2,
-        combatRevenue: 2,
-        timeToLevel: 2,
-        houses: 2,
-        totalProfit: 2,
-        consumables: 2,
-        equipmentWatch: 2,
-        dps: 2,
-        manaPerFight: 2,
-        treasure: 2,
-        charmValue: 2,
-    },
-    // Timer; three figures; revenue; three; supplies beside the list; three; three; inventory and mana; treasure; three
-    span3: { battleTimer: 3, combatRevenue: 3, equipmentWatch: 2, manaPerFight: 2, treasure: 3 },
-    sizes: {
-        battleTimer: 'block',
-        combatRevenue: 'block',
-        timeToLevel: 'block',
-        houses: 'block',
-        totalProfit: 'wide',
-        consumables: 'block',
-        equipmentWatch: 'wide',
-        dps: 'block',
-        treasure: 'block',
-        charmValue: 'wide',
-    },
-    exact: {
-        9: {
-            battleTimer: 3,
-            experiencePerHour: 2,
-            deathsPerHour: 2,
-            combatStatus: 2,
-            combatRevenue: 3,
-            timeToLevel: 3,
-            houses: 3,
-            totalProfit: 5,
-            consumables: 4,
-            equipmentWatch: 5,
-            coins: 2,
-            marketListings: 2,
-            dps: 3,
-            luck: 2,
-            watchlist: 2,
-            skillBooks: 2,
-            inventoryValue: 2,
-            manaPerFight: 3,
-            treasure: 4,
-            buildScore: 2,
-            netWorth: 2,
-            charmValue: 5,
-        },
-    },
-};
-
-/**
- * Dense as 3.77.0 shipped it: twenty tiles, Treasure at three. Kept only so a copy
- * applied then and never touched is recognised and moved to the current Dense
- * (see {@link legacyPresetFiles}); never offered or applied.
- */
-const DENSE_PRESET_3_77 = {
-    activity: ACTIVITY.NONE,
+    // Nine columns on a docked panel are narrow: at full size half the figures do not fit
+    textScale: 80,
     order: [
         'battleTimer',
         'experiencePerHour',
@@ -519,9 +433,6 @@ const DENSE_PRESET_3_77 = {
         },
     },
 };
-
-/** Earlier shapes of a preset, by name, that an untouched copy may still be in */
-const LEGACY_PRESETS = { Dense: [DENSE_PRESET_3_77] };
 
 /** Presets that resolve by name but are not offered in the Layouts switcher */
 const UNLISTED_PRESETS = new Set(['Default']);
@@ -838,20 +749,6 @@ export function presetFile(name, { rows = null, columns = 2 } = {}) {
 }
 
 /**
- * The files of a preset's earlier shapes at a column count, for recognising a copy applied
- * under an older build and never edited. Empty for a preset that never changed.
- *
- * @param {string} name - A preset name
- * @param {Object} [options]
- * @param {Array<Object>|null} [options.rows] - A registry snapshot, or null for the live one
- * @param {number} [options.columns] - The column count
- * @returns {Array<Object>} Layout files
- */
-export function legacyPresetFiles(name, { rows = null, columns = 2 } = {}) {
-    return (LEGACY_PRESETS[normalizeName(name)] || []).map((preset) => fileOfPreset(preset, { rows, columns }));
-}
-
-/**
  * {@link presetFile} for a preset definition rather than a name.
  * @param {Object|undefined} preset - A preset definition
  * @param {Object} options - As {@link presetFile}
@@ -882,7 +779,8 @@ function fileOfPreset(preset, { rows, columns }) {
         // lands on it drags a tile.
         locked: true,
         separators: true,
-        textScale: 100,
+        // Dense is drawn at the 80% the overlay it was copied from used; every other preset at full size
+        textScale: preset.textScale ?? 100,
     });
 }
 

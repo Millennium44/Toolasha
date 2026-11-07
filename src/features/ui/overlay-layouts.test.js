@@ -553,10 +553,10 @@ describe('presets', () => {
         ]);
     });
 
-    test('Dense is the twenty-two tiles of the maintainer overlay, in order, never chosen by activity', () => {
+    test('Dense is the twenty tiles of the maintainer overlay, in order, never chosen by activity', () => {
         expect(presetNames().indexOf('Dense')).toBe(presetNames().indexOf('Dashboard') + 1);
         expect(PRESET_LAYOUTS.Dense.activity).toBe(ACTIVITY.NONE);
-        expect(PRESET_LAYOUTS.Dense.order).toHaveLength(22);
+        expect(PRESET_LAYOUTS.Dense.order).toHaveLength(20);
         expect(PRESET_LAYOUTS.Dense.order.slice(0, 5)).toEqual([
             'battleTimer',
             'experiencePerHour',
@@ -564,7 +564,7 @@ describe('presets', () => {
             'combatStatus',
             'combatRevenue',
         ]);
-        expect(PRESET_LAYOUTS.Dense.order[21]).toBe('charmValue');
+        expect(PRESET_LAYOUTS.Dense.order[19]).toBe('netWorth');
         expect(PRESET_LAYOUTS.Dense.order).not.toContain('overExpected');
         expect(layoutForActivity(ACTIVITY.COMBAT, {}, [])).toBe('Combat');
         const nine = presetSpans('Dense', 9);
@@ -578,10 +578,9 @@ describe('presets', () => {
             dps: 3,
             luck: 2,
             netWorth: 2,
-            manaPerFight: 3,
-            treasure: 4,
-            charmValue: 5,
         });
+        // The single width that differs from the live overlay, so the row closes
+        expect(nine.treasure).toBe(3);
     });
 
     test('Dense reads in full rows at three and nine columns', () => {
@@ -595,9 +594,8 @@ describe('presets', () => {
             'consumables|equipmentWatch',
             'coins|marketListings|dps',
             'luck|watchlist|skillBooks',
-            'inventoryValue|manaPerFight',
-            'treasure',
-            'buildScore|netWorth|charmValue',
+            'inventoryValue|treasure',
+            'buildScore|netWorth',
         ]);
         expect(rowsOf(9)).toEqual([
             'battleTimer|experiencePerHour|deathsPerHour|combatStatus',
@@ -605,8 +603,7 @@ describe('presets', () => {
             'totalProfit|consumables',
             'equipmentWatch|coins|marketListings',
             'dps|luck|watchlist|skillBooks',
-            'inventoryValue|manaPerFight|treasure',
-            'buildScore|netWorth|charmValue',
+            'inventoryValue|treasure|buildScore|netWorth',
         ]);
         expect(rowsOf(2)).toEqual([
             'battleTimer',
@@ -622,16 +619,19 @@ describe('presets', () => {
             'dps',
             'luck|watchlist',
             'skillBooks|inventoryValue',
-            'manaPerFight',
             'treasure',
             'buildScore|netWorth',
-            'charmValue',
         ]);
+    });
+
+    test('Dense is drawn at the 80% text size of the overlay it was copied from; the others at full size', () => {
+        for (const name of presetNames())
+            expect([name, presetFile(name).toolasha.settings.textScale]).toEqual([name, name === 'Dense' ? 80 : 100]);
     });
 
     test('Dense on one column is one tile per row in order', () => {
         const span = presetFile('Dense', { columns: 1 }).toolasha.settings.span;
-        expect(PRESET_LAYOUTS.Dense.order.map((key) => spanFor(span[key], 1))).toEqual(Array(22).fill(1));
+        expect(PRESET_LAYOUTS.Dense.order.map((key) => spanFor(span[key], 1))).toEqual(Array(20).fill(1));
     });
 
     test('the Default alias and a saved layout named Dense keep their meanings', async () => {

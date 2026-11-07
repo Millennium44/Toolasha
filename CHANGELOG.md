@@ -40,7 +40,11 @@ A finished trial appears in Trial history right away. On the test server the fin
 
 ### Dense overlay matches the layout it was copied from
 
-The Dense preset now uses nine columns at any normal panel width, with the original tile widths, and includes mana per fight and charm value. On a panel too narrow for that it shows up to three narrow columns instead of one tile per row.
+The Dense preset now uses nine columns at any normal panel width, with the original tile widths and its 80% text size. On a panel too narrow for that it shows up to three narrow columns instead of one tile per row.
+
+### Overlay text shrinks further and on both sides
+
+A right-aligned or centered figure too wide for its tile was cut off at the left instead of shrinking; it now shrinks like any other line, down to 60% of its size and never below 7 px (was 75% and 10 px). A preset also re-fits to a new panel width even after other tiles were added to the overlay.
 
 ### Trial history stays in its place after the weekly reset
 

@@ -82,8 +82,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => dialog.a
 
 const { registerRow } = await import('../../utils/overlay-rows.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
-const { loadLayouts, layoutNames, presetSpans, PRESET_LAYOUTS, legacyPresetFiles } =
-    await import('./overlay-layouts.js');
+const { loadLayouts, layoutNames, presetSpans, PRESET_LAYOUTS, presetFile } = await import('./overlay-layouts.js');
 const { toOPanelConfig, fromOPanelConfig } = await import('../../utils/opanel-config.js');
 
 /** An arrangement worth telling apart from another one. @returns {Object} */
@@ -683,13 +682,13 @@ describe('saving and switching named layouts', () => {
         expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
     });
 
-    test('Dense applies its twenty-two tiles with the nine-column spans, and keeps a count set by hand', async () => {
+    test('Dense applies its twenty tiles with the nine-column spans, and keeps a count set by hand', async () => {
         measureAs(2040);
         await overlayPanel.applyNamedLayout('Dense');
         expect(overlayPanel.columns).toBe(9);
         expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
         expect(overlayPanel.settings.span.totalProfit).toBe(5);
-        expect(overlayPanel.settings.order).toHaveLength(22);
+        expect(overlayPanel.settings.order).toHaveLength(20);
 
         overlayPanel.settings.columns = 3;
         overlayPanel.settings.columnsPinned = true;
@@ -726,15 +725,14 @@ describe('saving and switching named layouts', () => {
             }
         });
 
-        describe('a Dense applied under 3.77.0', () => {
-            /** Wear the 3.77.0 Dense as applied at three columns, then open the panel at 876px */
-            async function openWithOldDense(edit = {}, { appendHidden = false } = {}) {
+        describe('a Dense stored at three columns, opened at nine', () => {
+            /** Wear Dense as applied at three columns, then open the panel at 876px */
+            async function openWithStoredDense(edit = {}, { appendHidden = false, textScale = 80 } = {}) {
                 for (const key of [...PRESET_LAYOUTS.Dense.order, 'houses', 'skillLevel'])
                     registerRow({ key, name: key, render: (el) => (el.textContent = key) });
                 measureAs(876);
                 await overlayPanel.applyNamedLayout('Dense');
-                const [old] = legacyPresetFiles('Dense', { columns: 3 });
-                const { order, span, visible } = fromOPanelConfig(old).settings;
+                const { order, span, visible } = fromOPanelConfig(presetFile('Dense', { columns: 3 })).settings;
                 // A live page's stored copy: every other tile appended hidden, keys in another order
                 const extra = appendHidden ? ['skillLevel', 'noticeLog', 'accountView'] : [];
                 const stored = appendHidden
@@ -744,29 +742,33 @@ describe('saving and switching named layouts', () => {
                     order: [...order, ...extra.filter((key) => !order.includes(key))],
                     span: { ...span, ...edit },
                     visible: stored,
+                    textScale,
                 });
                 overlayPanel._checkPresetFit();
                 await new Promise((resolve) => setTimeout(resolve, 60));
             }
 
-            test('untouched, it becomes the current Dense with its nine-column widths and new tiles', async () => {
-                await openWithOldDense();
+            test('untouched, it gets the nine-column widths', async () => {
+                await openWithStoredDense();
                 expect(overlayPanel.columns).toBe(9);
-                expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Dense.order);
                 expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
-                expect(overlayPanel.appliedLayout).toBe('Dense');
             });
 
             test('stored the way a live page keeps it, other tiles appended hidden, it is still recognised', async () => {
-                await openWithOldDense({}, { appendHidden: true });
+                await openWithStoredDense({}, { appendHidden: true });
                 expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
-                expect(overlayPanel.settings.visible.charmValue).toBe(true);
+            });
+
+            test('a text size of the player’s own does not count as an edit', async () => {
+                await openWithStoredDense({}, { textScale: 100 });
+                expect(overlayPanel.settings.span).toEqual(presetSpans('Dense', 9));
+                expect(overlayPanel.settings.textScale).toBe(100);
             });
 
             test('edited by hand, it is left as it is', async () => {
-                await openWithOldDense({ coins: 3 });
-                expect(overlayPanel.settings.order).toHaveLength(20);
+                await openWithStoredDense({ coins: 3 });
                 expect(overlayPanel.settings.span.coins).toBe(3);
+                expect(overlayPanel.settings.span.totalProfit).toBeUndefined();
             });
         });
 

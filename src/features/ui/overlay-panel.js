@@ -118,7 +118,6 @@ import {
     PRESET_LAYOUTS,
     offeredLayouts,
     presetFile,
-    legacyPresetFiles,
     presetSpans,
     presetDesignedColumns,
     isPreset,
@@ -232,7 +231,8 @@ function layoutIdentity(file, ignoreColumns = false) {
 /**
  * What makes a layout look the way it does, for telling an untouched preset from an edited one.
  *
- * Only the shown tiles, in order, with their widths, plus the zoom and text size. A stored layout
+ * Only the shown tiles, in order, with their widths, plus their zoom. The text size is the player's
+ * to choose and is not part of the arrangement a re-fit replaces. A stored layout
  * also carries every other registered tile, appended hidden as rows register and in whatever key
  * order storage kept, so comparing the whole file never matched a real stored preset.
  *
@@ -249,7 +249,6 @@ function presetShape(settings) {
     return JSON.stringify({
         shown: shown.map((key) => [key, widthOf(key)]),
         zoom,
-        textScale: settings?.textScale ?? 100,
         separators: settings?.separators !== false,
     });
 }
@@ -304,9 +303,9 @@ const DEFAULT_TILE_HEIGHT = 30;
  * is laid out by somebody else's rules.
  */
 /** Fractions of its own size a tile's text steps down through when a line does not fit */
-const FIT_STEPS = [0.9, 0.8, 0.75];
+const FIT_STEPS = [0.9, 0.8, 0.7, 0.6];
 /** A tile's text is never fitted below this many rendered pixels */
-const FIT_MIN_PX = 10;
+const FIT_MIN_PX = 7;
 
 const CONTENT_STYLE = { width: '100%', height: 'auto', minHeight: '0', overflow: 'hidden' };
 
@@ -1045,17 +1044,7 @@ class OverlayPanel {
             let unedited = false;
             for (let at = 1; !unedited && at <= MAX_SPAN; at++)
                 unedited = presetShape(presetFile(key, { rows, columns: at })?.toolasha?.settings) === current;
-            if (!unedited) {
-                // A copy of an earlier shape of this preset, never touched: move it to the current one,
-                // tiles and all. Written, unlike a re-fit, since the stored copy is the old shape everywhere.
-                let legacy = false;
-                for (let at = 1; !legacy && at <= MAX_SPAN; at++)
-                    legacy = legacyPresetFiles(key, { rows, columns: at }).some(
-                        (old) => presetShape(old?.toolasha?.settings) === current
-                    );
-                if (legacy) await this.applyNamedLayout(key, { byHand: false });
-                return;
-            }
+            if (!unedited) return;
 
             const wanted = fromOPanelConfig(presetFile(key, { rows, columns }));
             if (!wanted?.settings?.span) return;
@@ -3423,8 +3412,13 @@ class OverlayPanel {
      * @returns {boolean} True when something is cut off
      */
     _overflows(content) {
+        // Text pushed past the start edge (a right-aligned or centred line too wide for its tile) is never
+        // counted by scrollWidth, which only measures overflow towards the end; the boxes say it is cut off
+        const box = content.getBoundingClientRect();
         for (const element of content.querySelectorAll('div, span')) {
             if (element.scrollWidth > element.clientWidth + 1) return true;
+            const rect = element.getBoundingClientRect();
+            if (rect.width > 0 && (rect.left < box.left - 1 || rect.right > box.right + 1)) return true;
         }
         return false;
     }
@@ -3433,7 +3427,7 @@ class OverlayPanel {
      * Shrink the text of each tile that has changed until it shows in full.
      *
      * Per tile, from the player's own size (text scale × tile zoom) in steps down
-     * to a floor of 75% and never below 10 rendered pixels; stops at the first
+     * to a floor of 60% and never below 7 rendered pixels; stops at the first
      * step that fits, and keeps the floor (and its ellipsis) when none does. The
      * result is derived from the tile's content and width, so it is never stored.
      * Only tiles in `fitDirty` are touched — new content, a new width or a new

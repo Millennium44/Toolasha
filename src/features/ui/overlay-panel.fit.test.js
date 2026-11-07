@@ -119,6 +119,25 @@ afterEach(() => {
 });
 
 describe('fitting the text of a tile', () => {
+    test('a right-aligned line spilling past the start edge steps down too, which scrollWidth never shows', () => {
+        rowDef.current = {
+            ...longRow(),
+            render: (el) => {
+                const span = document.createElement('span');
+                span.textContent = '111,921 exp/h';
+                const factor = () => (parseFloat(el.style.fontSize) || 100) / 100;
+                // Pinned to the end of a 100px box: a wider line hangs off the start, which scrollWidth ignores
+                el.getBoundingClientRect = () => ({ left: 0, right: 100, width: 100 });
+                span.getBoundingClientRect = () => ({ left: 100 - 105 * factor(), right: 100, width: 105 * factor() });
+                el.replaceChildren(span);
+            },
+        };
+        overlayPanel.hide();
+        overlayPanel.show();
+        fit();
+        expect(fontSize()).toBe('90%');
+    });
+
     test('text that fits is left at full size', () => {
         fit();
         expect(fontSize()).toBe('');
@@ -130,23 +149,23 @@ describe('fitting the text of a tile', () => {
         expect(fontSize()).toBe('90%');
     });
 
-    test('text that fits only at the floor (10 px at the default size) stops there', () => {
+    test('text that fits only lower down steps until it does', () => {
         renders.natural = 128;
         fit();
-        expect(fontSize()).toBe('77%');
+        expect(fontSize()).toBe('70%');
     });
 
     test('text that never fits keeps the floor and its ellipsis', () => {
         renders.natural = 400;
         fit();
-        expect(fontSize()).toBe('77%');
+        expect(fontSize()).toBe('60%');
         expect(tile()._content.querySelector('span').textContent).toBe('A very long name');
     });
 
     test('shorter content grows back to full size', () => {
         renders.natural = 128;
         fit();
-        expect(fontSize()).toBe('77%');
+        expect(fontSize()).toBe('70%');
         renders.natural = 90;
         fit();
         expect(fontSize()).toBe('');
@@ -155,37 +174,37 @@ describe('fitting the text of a tile', () => {
     test('a wider tile grows back', () => {
         renders.natural = 128;
         fit();
-        expect(fontSize()).toBe('77%');
+        expect(fontSize()).toBe('70%');
         renders.box = 200;
         fit();
         expect(fontSize()).toBe('');
     });
 
-    test('the text scale lifts the floor so nothing goes below 10 px', () => {
-        // 13 px x 80% = 10.4 px: only a step to about 96% keeps it at 10 px
+    test('the text scale lifts the floor so nothing goes below 7 px', () => {
+        // 13 px x 80% = 10.4 px: the floor is about 67%, 7 px
         overlayPanel.settings.textScale = 80;
         renders.natural = 400;
         fit();
-        expect(fontSize()).toBe('96%');
+        expect(fontSize()).toBe('67%');
     });
 
-    test('text scale and tile zoom combine: at 8 px already, nothing shrinks', () => {
+    test('text scale and tile zoom combine: at 8.3 px it shrinks only to 7 px', () => {
         overlayPanel.settings.textScale = 80;
         overlayPanel.settings.zoom = { luck: 80 };
         overlayPanel.hide();
         overlayPanel.show();
         renders.natural = 400;
         fit();
-        expect(fontSize()).toBe('');
+        expect(fontSize()).toBe('84%');
     });
 
-    test('a tile with a larger zoom has more room to shrink, down to the 75% floor', () => {
+    test('a tile with a larger zoom has more room to shrink, down to the 60% floor', () => {
         overlayPanel.settings.zoom = { luck: 150 };
         overlayPanel.hide();
         overlayPanel.show();
         renders.natural = 400;
         fit();
-        expect(fontSize()).toBe('75%');
+        expect(fontSize()).toBe('60%');
     });
 
     test('fitting does not draw again or change the version', () => {
@@ -200,7 +219,7 @@ describe('fitting the text of a tile', () => {
         // a redraw with the same version keeps what was fitted
         overlayPanel._renderBody();
         expect(renders.count).toBe(drawn);
-        expect(fontSize()).toBe('77%');
+        expect(fontSize()).toBe('70%');
     });
 
     test('the resize observer marks a tile dirty for a width change only, not for its padding', () => {
