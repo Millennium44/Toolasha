@@ -6859,6 +6859,124 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.78.0](https://github.com/Millennium44/Toolasha/compare/v3.77.0...v3.78.0) (2026-11-07)
+
+
+### Features
+
+* combat sim House options for combat rooms only and all non-combat rooms +1 ([5f6491b](https://github.com/Millennium44/Toolasha/commit/5f6491b7ffb7b54a8a69257c8e3ba586f89b038b))
+* Combat Sim upgrade details no longer show the "would stale N cached rooms" line ([44e3640](https://github.com/Millennium44/Toolasha/commit/44e3640a34476bb5b8dd292642b8eabb8913b468))
+* combat sim Upgrade tab adds a Steps box to House and Guild Shrine ([c83220b](https://github.com/Millennium44/Toolasha/commit/c83220b4fea1811908051f8ee41dd0b32408e99a))
+* combat sim Upgrade tab adds an enhancement Steps box to Equipment ([041a47a](https://github.com/Millennium44/Toolasha/commit/041a47a7ad62e354a88a41944ca94fde6687a26f))
+* combat sim Upgrade tab gives Combat Lv its own +N / Next mult. of and Steps ([13f102d](https://github.com/Millennium44/Toolasha/commit/13f102dc0afa35efd48e89e6da5ad3febb701062))
+* combat sim Upgrade tab re-sims close calls for longer until they separate ([3e98299](https://github.com/Millennium44/Toolasha/commit/3e9829968a4f4004a847e8963bf759f82a8eaa4f))
+* combat sim Upgrade tab time estimate weights each candidate by its kind ([e6ca5ff](https://github.com/Millennium44/Toolasha/commit/e6ca5ff62232d46cd0a3bf30271d0ab15c9c53c8))
+* guild trial fight packs party units into fewer rows ([ecc82a6](https://github.com/Millennium44/Toolasha/commit/ecc82a63782bf8ab188cc87466140044d79c8767))
+* guild trial overflow rows, shorter payout card, trial history percents ([84c5736](https://github.com/Millennium44/Toolasha/commit/84c57362e699e484a941f001d8290bfb5250f114))
+* guild trial party keeps each player in a fixed place, grouped by signed-up role ([3d7bf89](https://github.com/Millennium44/Toolasha/commit/3d7bf891308f5907d8b2adc61587e1010f16d223))
+* guild trial payout card leads its figures with the fold toggle on one row ([2191806](https://github.com/Millennium44/Toolasha/commit/2191806be81272bdcfe9c96c581c56ab12dcedb7))
+* guild trials lay out the players that wrap under your card in rows ([04e831f](https://github.com/Millennium44/Toolasha/commit/04e831feda52d6f82df250824d911bf1e59319d0))
+* item tooltips keep off the hovered item outside the inventory too ([bb223f1](https://github.com/Millennium44/Toolasha/commit/bb223f155a9b99eedca85c3a2bf3d59b7c6b9c4a))
+* Past weeks folds into two summary rows under the Trial history table ([39d8488](https://github.com/Millennium44/Toolasha/commit/39d848839ac75ffc42df80658170f78523fab0ee))
+* philo calculator input cost per philo, and the table fills its panel ([ef0cd9d](https://github.com/Millennium44/Toolasha/commit/ef0cd9d6b2e1fe8b2e1145d0e72e58c86c52c2f1))
+* philo calculator picks the best catalyst and tea for each item ([5b9f02f](https://github.com/Millennium44/Toolasha/commit/5b9f02f4e685a4a83d8cf18159cfe5be405fca32))
+* philo saves still on the old default start on Auto ([6204191](https://github.com/Millennium44/Toolasha/commit/620419141d17660966114513c34b2732a415b45e))
+* trial history cells show the percent reached in the tier; blank for a trial that did not run ([45bf1de](https://github.com/Millennium44/Toolasha/commit/45bf1defce99010c849c4e2e33fe41b8fd8255c5))
+* trial history is titled Past cycles on daily servers and gets a key under the table ([6a9a01b](https://github.com/Millennium44/Toolasha/commit/6a9a01b7af9b7187a2b86a79b182bf4f74f0ed5d))
+* trial history percent comes only from the finished card, never a running reading ([1284605](https://github.com/Millennium44/Toolasha/commit/128460505f9800ea88945a59395198039bf6cfec))
+* trial history percent is the game's own "+N%" off the finished card ([d328344](https://github.com/Millennium44/Toolasha/commit/d32834432af8632764f89f7a440ab5fa05daed35))
+* trial history shows a trial as soon as it finishes ([6c1c581](https://github.com/Millennium44/Toolasha/commit/6c1c581451c2a2ce404e340ad5f797395789be87))
+* trial history table shades every other trial row ([45ae300](https://github.com/Millennium44/Toolasha/commit/45ae30059a5aab3e7da5be8e945bb2389d93b14b))
+
+
+### Bug Fixes
+
+* a sync pull that changes no custom inventory tab no longer asks for a reload ([e81556b](https://github.com/Millennium44/Toolasha/commit/e81556b9b2ab796f00ece5f1cebaba7e89b081f4))
+* a sync pull that changes no custom inventory tab no longer asks for a reload ([7037460](https://github.com/Millennium44/Toolasha/commit/70374609fb4636dbcd984c2af8c31d2d2601f586))
+* a tooltip moved beside the item touches it, like the game's above and below ([e03fbea](https://github.com/Millennium44/Toolasha/commit/e03fbea135d7f87e546f22ab0d5dbd8b5f4692e2))
+* combat and lab sim runs keep the build they started with ([3cdec20](https://github.com/Millennium44/Toolasha/commit/3cdec20838042172a2c832e90fd62a6574d365fa))
+* combat sim keeps your ability, skill and gear levels current after the panel opens ([47e069e](https://github.com/Millennium44/Toolasha/commit/47e069ef60237c065e5f92c585bd9474dd559412))
+* combat sim re-simmed rows keep time to afford on the table's profit rate ([8fbaaef](https://github.com/Millennium44/Toolasha/commit/8fbaaefc5d2b85bc3342534380f2a469769d0949))
+* dense overlay preset matches the nine-column layout it was copied from ([4969d7f](https://github.com/Millennium44/Toolasha/commit/4969d7fd19fd4e551e56292bac9bbd2d9b7de1fd))
+* goal planner claims every goal in one ledger write ([cc078c6](https://github.com/Millennium44/Toolasha/commit/cc078c6db32371ced74a6d74ee458596a03a9afe)), closes [#798](https://github.com/Millennium44/Toolasha/issues/798)
+* hold storage flushes while a backup restore or sync pull is running ([e828670](https://github.com/Millennium44/Toolasha/commit/e8286702099ce83f8585fa9b7b5e567a06c535fb)), closes [#789](https://github.com/Millennium44/Toolasha/issues/789)
+* lab combat swap check and run-time trigger targets keep their starting build ([8b6f5a8](https://github.com/Millennium44/Toolasha/commit/8b6f5a8c39172cd05d48e17c2852e2d795d54524))
+* lab skilling analyses keep the build they started with ([3fd7fbb](https://github.com/Millennium44/Toolasha/commit/3fd7fbbd326b1a26dd88c52437b3a87edb1e209a))
+* labyrinth left-over line no longer shows a whole carry for runs that spent it ([4709973](https://github.com/Millennium44/Toolasha/commit/470997332fc248dd3259760d42dbda873e573697))
+* labyrinth live clear chance counts attempts to the server's room deadline ([44e2ee4](https://github.com/Millennium44/Toolasha/commit/44e2ee4fcdf7d1bd9797d0e73cf3c6e562546718))
+* loadout slot tooltips price the item at the slot's enhancement level ([d918d2f](https://github.com/Millennium44/Toolasha/commit/d918d2f2f709bd969ea70fcda4418cb6513cfd3a))
+* loadout slot tooltips show the game's name, stats and Market Price at the loadout's level ([ee8b582](https://github.com/Millennium44/Toolasha/commit/ee8b5829127df7fe90f4faa867911764ba7d95de))
+* loadout tooltip rewrite finds each line's own row in the game's markup ([9b0b8be](https://github.com/Millennium44/Toolasha/commit/9b0b8be76a94c4381a1ff2f77cdaacf51804f9c3))
+* loadout tooltip rewrite never scales Amount or a price as a stat ([f6ce279](https://github.com/Millennium44/Toolasha/commit/f6ce27910ab1110a041db24d657e858ddbb1fc9e))
+* loadout tooltip rewrite takes the labelled Market Price row before a matching number ([1d934a7](https://github.com/Millennium44/Toolasha/commit/1d934a7e3118b26c1af1d71a75da77cbf9ead843))
+* net worth history dots keep one color after a setting-change marker ([d84d5d8](https://github.com/Millennium44/Toolasha/commit/d84d5d80852d1aee5448813f2522eebdc60cacc7))
+* overlay gives a many-column layout narrow columns on a narrow panel ([e77c656](https://github.com/Millennium44/Toolasha/commit/e77c656b5135489f2721f0a2ce933ec7486b46c1))
+* overlay recognizes an untouched preset by its shown tiles, not the whole stored file ([1e197f3](https://github.com/Millennium44/Toolasha/commit/1e197f35658bd06f1328d355c7a44381916c6fa9))
+* overlay text shrinks when it spills left, and further; dense is 20 tiles at 80% text ([87da769](https://github.com/Millennium44/Toolasha/commit/87da7696ba88f06c8f6b7d6c95d74743a5db1f4f))
+* party loot run picker shows the date for runs not from today ([2e5430e](https://github.com/Millennium44/Toolasha/commit/2e5430ec756f46e9f9facf9b44a55a79a7c5423c)), closes [#798](https://github.com/Millennium44/Toolasha/issues/798)
+* philo calculator modal stands down when its settings read is overtaken ([9f8397d](https://github.com/Millennium44/Toolasha/commit/9f8397dbee6d5876646b90f648ade0af1135b22f)), closes [#789](https://github.com/Millennium44/Toolasha/issues/789)
+* philo settings take an older build's later catalyst change; tooltip names the fixed half ([fdb168c](https://github.com/Millennium44/Toolasha/commit/fdb168ce24e14c70f7ecc5043958b67440d15b49))
+* re-simmed close-call rows show their gain against the table's baseline ([90c217c](https://github.com/Millennium44/Toolasha/commit/90c217c3061462db134ff8be254ab6d630f75208))
+* stall watch falls back to a late-timer heartbeat where longtask is unsupported ([b0fd2cf](https://github.com/Millennium44/Toolasha/commit/b0fd2cfd2e97b5108affa47dab984db736647b39))
+* sync downloads truncated gist chunks through the page, not Tampermonkey ([b700b81](https://github.com/Millennium44/Toolasha/commit/b700b81bd9cd62ae83111ae3ff7f21b32e4ea414))
+* tab version sync acts at once when the setting changes after a newer build was heard ([19c2952](https://github.com/Millennium44/Toolasha/commit/19c295295b0eac4bcebdacaec997f401d473a8eb)), closes [#826](https://github.com/Millennium44/Toolasha/issues/826)
+* tab-follow never reloads mid-restore; calibration skips caching a failed read; heartbeat ignores sleep ([54fc0a4](https://github.com/Millennium44/Toolasha/commit/54fc0a43ef98528873df9bd0307563d0ab4bf78a))
+* test-server rollover carries a cycle only if the record saw it begin ([c6371ad](https://github.com/Millennium44/Toolasha/commit/c6371ad2ed1e67a976332462a69c0a072aa35e72))
+* test-server trial history names each column by when its trial ran ([668f61e](https://github.com/Millennium44/Toolasha/commit/668f61e9ca9f3778ab3033c03e0682080a1e2407))
+* test-server weekly reset no longer cuts the running trial cycle in two ([c08cc1a](https://github.com/Millennium44/Toolasha/commit/c08cc1a355bfe0695f9940197e7db0bf8e98f772))
+* tooltip placement gives up after a fight with the game instead of looping ([c518685](https://github.com/Millennium44/Toolasha/commit/c51868524c24a8f6e28a50f768ec8bfe6cb0f0bb))
+* trial end percent no longer floors an exact whole percent one short ([6350f67](https://github.com/Millennium44/Toolasha/commit/6350f6761692eeba646aefcf5ad5e2bad40feeaa))
+* trial history files a finished test-server cycle when the next schedule is posted ([9fb7c32](https://github.com/Millennium44/Toolasha/commit/9fb7c32dd0f16fc8ac3c826e0c0e24ea802c34c9))
+* trial history key gives its percent example on a tier that can carry one ([dd67b3d](https://github.com/Millennium44/Toolasha/commit/dd67b3ddf4a1c438115989dc394bf19094502868))
+* trial history labels a reset-cut test cycle by its end, not "Last week" ([767ef32](https://github.com/Millennium44/Toolasha/commit/767ef3213ce746fece3574d2a2d3ba48e7435cfa))
+* trial history moves back below the game's content after the weekly reset ([cef3276](https://github.com/Millennium44/Toolasha/commit/cef32765f403d9486e8b2b83ec08e1af1dfd33da))
+* trial history percent comes from the guild payload's end figure, and a trial that ran to the clock is stated done ([acce4c8](https://github.com/Millennium44/Toolasha/commit/acce4c80f56d016346d5dd22c957384d4a10bb7f))
+* trial history percent only from a bar reading of the tier after the archived one ([429e9b4](https://github.com/Millennium44/Toolasha/commit/429e9b45120d658967c80406a993fb8dcb2b8385))
+* trial history percent skips a boss reading of part of a wave ([27e6eee](https://github.com/Millennium44/Toolasha/commit/27e6eee2a370c70a994a55b8195338a3fde91035))
+* trial history shows no percent on the last tier ([eb68442](https://github.com/Millennium44/Toolasha/commit/eb68442ef140ee99466eac3449e2ab63d8132f23))
+
+
+### Performance Improvements
+
+* combat calibration reads saved sessions only when the archive changed ([8b5b91a](https://github.com/Millennium44/Toolasha/commit/8b5b91ac3db24ab647b21bcb374bb597792fe0d1)), closes [#798](https://github.com/Millennium44/Toolasha/issues/798)
+
+
+### Documentation
+
+* changelog for combat sim steps, tooltips beside, labyrinth leftovers and trial history filing ([a101b29](https://github.com/Millennium44/Toolasha/commit/a101b297718f4b6ace7dc5b50ba43ba2a9bb1133))
+* changelog for guild trial overflow rows ([3729ce7](https://github.com/Millennium44/Toolasha/commit/3729ce758ea55e4632db7838bb35b8551a60c195))
+* changelog for loadout slot tooltip levels ([e40a7b0](https://github.com/Millennium44/Toolasha/commit/e40a7b024cbcd4807ee08f00714a23f937c86264))
+* changelog for the 2026-11-06 follow-up fixes ([b80bc82](https://github.com/Millennium44/Toolasha/commit/b80bc82ee2e8c1893f5f267715ba3f6a285ccb1b))
+* changelog for the Combat Sim self row following level-ups ([ec1a9f4](https://github.com/Millennium44/Toolasha/commit/ec1a9f45424ea83e313d989555cec81996ae7559))
+* changelog for the dense overlay on a narrow panel ([a44ee8e](https://github.com/Millennium44/Toolasha/commit/a44ee8e65856874a161473775623c65e4fc6f5c0))
+* changelog for the guild trial fixed order and end percent ([14c0cb0](https://github.com/Millennium44/Toolasha/commit/14c0cb0a06597598a0c5eb989faf04ff7decdddd))
+* changelog for the guild trial payout card and trial history ([c4f42cd](https://github.com/Millennium44/Toolasha/commit/c4f42cd5e073bfd8650a66af94c91bee6dc1f049))
+* changelog for the philo calculator auto setup ([a2b8b2d](https://github.com/Millennium44/Toolasha/commit/a2b8b2d4aa898107d818064bc349f297cf67a8d2))
+* changelog for the quieter tab-pull reload ([a9c8679](https://github.com/Millennium44/Toolasha/commit/a9c86796524fc445300d2dcf24dfe95a97bc04f8))
+* changelog for the removed cached rooms line ([cbcc945](https://github.com/Millennium44/Toolasha/commit/cbcc9459659fdc0e9bba5cd837de9d79f2f84f26))
+* sub-agents run only the tests their change reaches; full gates once at integration ([6b82d6b](https://github.com/Millennium44/Toolasha/commit/6b82d6b7c8a7389421ef8b2200a17fc1b4bbd71e))
+
+
+### Tests
+
+* clear timers a test file leaves running when the file ends ([27ed933](https://github.com/Millennium44/Toolasha/commit/27ed9336921a6fb4649cb5dc7f1d6066586696a0))
+* run the suite on worker threads instead of child processes ([57c8d7e](https://github.com/Millennium44/Toolasha/commit/57c8d7e49d1b1a3ddbeb83cd77efa48e90287d77))
+* run the suite on worker threads instead of child processes ([b4b27ea](https://github.com/Millennium44/Toolasha/commit/b4b27ea1098a148e63c78bd5c8d1350f660343fa))
+* run the sync suites in child processes ([a84a00a](https://github.com/Millennium44/Toolasha/commit/a84a00ad2b72b815e001def23e30e36e06025e2d))
+* time-zone suites stay on forks; a guard lists every file that sets TZ ([360fa5e](https://github.com/Millennium44/Toolasha/commit/360fa5e751c0de1f9af54d19048cfaf2a4649b19))
+
+
+### Continuous Integration
+
+* drop repeated release-note bullets before a release is cut ([7b0cee8](https://github.com/Millennium44/Toolasha/commit/7b0cee8faf8cd7b8109f2b8e539ac83c6b82c48e))
+* drop repeated release-note bullets before a release is cut ([36ee6fe](https://github.com/Millennium44/Toolasha/commit/36ee6fe8804f3f7940fe0d676e85170dc3ab5b9f))
+
+
+### Miscellaneous Chores
+
+* bump dev dependencies (eslint, rollup, terser, happy-dom, markdownlint, lockfile security bumps) ([539b7c9](https://github.com/Millennium44/Toolasha/commit/539b7c9b23f8111c4e8e8790e1e981bec17d136d))
+* **deps:** load Chart.js 4.6.1 (header [@require](https://github.com/require) and package.json together) ([79ed5c0](https://github.com/Millennium44/Toolasha/commit/79ed5c016c4c865f7c7036850f98b3e218bd9b8b))
+
 ## [3.77.0](https://github.com/Millennium44/Toolasha/compare/v3.76.1...v3.77.0) (2026-11-06)
 
 ### Features
