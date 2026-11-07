@@ -5007,6 +5007,8 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // only while this run's own abort flag is set: a cancel from anywhere else still fails the analysis
     const stoppedHere = () => Boolean(abortSignal?.());
     let baselineResult;
+    // The first pass (baseline included) is what the close-call re-sims are budgeted against
+    const firstPassStartedAt = now();
     const baselineJob = work.start('baseline', 1);
     try {
         baselineResult = await runSimulation(
@@ -5346,7 +5348,6 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         total,
         description: `Simulating ${candidatesWithCost.length} upgrades`,
     });
-    const firstPassStartedAt = now();
     const results = (await mapConcurrent(candidatesWithCost, evaluateCandidate, lanes)).filter(Boolean);
     current = progress.current;
 
@@ -5429,7 +5430,11 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                             phase: 'resim',
                             description: `Close call at ${simHours}h: ${row.candidate.description}`,
                         });
-                        return measureRow(row.candidate, simResult, base);
+                        // Measured against its own long baseline, then placed on the table's: every reader that
+                        // takes `metrics − baseline` then reads the paired gain this run measured
+                        const measuredRow = measureRow(row.candidate, simResult, base);
+                        measuredRow.metrics = alignResimMetrics(measuredRow.metrics, base.metrics, baselineMetrics);
+                        return measuredRow;
                     },
                     lanes
                 );
@@ -5527,6 +5532,41 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
  * the first pass ran (and at least {@link RESIM_MIN_BUDGET_MS}), so a quick analysis is never doubled into a slow one.
  */
 export const RESIM_MAX_BUDGET_MS = 10 * 60 * 1000;
+
+/** The per-hour rates on a metrics record that readers subtract the table's baseline from */
+const RESIM_ALIGNED_RATES = [
+    'dps',
+    'xpPerHour',
+    'profitPerHour',
+    'revenuePerHour',
+    'costPerHour',
+    'deathsPerHour',
+    'encountersPerHour',
+];
+
+/**
+ * A re-simmed row's metrics placed on the table's baseline: each rate is the table baseline plus the gain the
+ * longer run measured against its own baseline (`metrics − pairedBaseline`). The table subtracts its one baseline
+ * from every row's metrics, and a re-simmed row's raw figures belong to another, longer baseline: subtracting
+ * the wrong one could even give a gain the opposite sign to the row's own percentage. Counts never go below 0.
+ * The percentage deltas, noise and economics stay as measured against the paired baseline.
+ * @param {Object} metrics - The re-simmed row's metrics
+ * @param {Object} pairedBaseline - The baseline it was paired with
+ * @param {Object} tableBaseline - The first pass's baseline, which the table shows
+ * @returns {Object} New metrics
+ */
+export function alignResimMetrics(metrics, pairedBaseline, tableBaseline) {
+    const aligned = { ...metrics };
+    for (const key of RESIM_ALIGNED_RATES) {
+        const value = Number(metrics?.[key]);
+        const paired = Number(pairedBaseline?.[key]);
+        const table = Number(tableBaseline?.[key]);
+        if (!Number.isFinite(value) || !Number.isFinite(paired) || !Number.isFinite(table)) continue;
+        const shifted = table + (value - paired);
+        aligned[key] = key === 'profitPerHour' ? shifted : Math.max(0, shifted);
+    }
+    return aligned;
+}
 
 /**
  * The kind of work a candidate is for the time estimate: its type, which is what decides how many sims it takes

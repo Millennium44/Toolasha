@@ -214,6 +214,7 @@ const {
     runUpgradeAnalysis,
     closeCallRows,
     resimCloseCallRows,
+    alignResimMetrics,
     RESIM_MAX_ROWS,
     RESIM_MIN_BUDGET_MS,
     applyCandidateToDTO,
@@ -3158,6 +3159,34 @@ describe('close-call re-sims', () => {
             expect(progress.some((p) => p.phase === 'resim')).toBe(true);
             expect(progress.every((p) => p.current <= p.total)).toBe(true);
             expect(last.current).toBe(last.total);
+        });
+
+        test('a re-simmed row’s figures sit on the table baseline: its gain there is the paired gain, same sign', async () => {
+            // Longer runs read lower across the board, baseline and candidates alike: the paired gain is +1 DPS per
+            // level, but a long-run row against the 10h baseline would read as a loss
+            const params = setup(true);
+            const sim = runSimulation.getMockImplementation();
+            runSimulation.mockImplementation(async (args, ...rest) => {
+                const result = await sim(args, ...rest);
+                const level = args.playerDTOs[0].equipment[MAIN_HAND]?.enhancementLevel || 0;
+                result.totalDamageDealt['/players/me'] = (1000 + level - args.hours / 2) * args.hours * 3600;
+                return result;
+            });
+            const result = await runUpgradeAnalysis(params, null, { now: () => 0 });
+            const resimmed = result.results.filter((r) => r.resim && r.candidate.type === 'enhancement');
+            expect(resimmed.length).toBeGreaterThan(0);
+            for (const r of resimmed) {
+                const gain = r.metrics.dps - result.baseline.dps;
+                expect(Math.sign(gain)).toBe(Math.sign(r.deltas.dps));
+                expect(gain).toBeCloseTo(r.candidate.upgradeLevel - 5);
+            }
+            expect(
+                alignResimMetrics(
+                    { dps: 990, deathsPerHour: 0 },
+                    { dps: 980, deathsPerHour: 2 },
+                    { dps: 1000, deathsPerHour: 1 }
+                )
+            ).toEqual({ dps: 1010, deathsPerHour: 0 });
         });
 
         test('progress carries the weighted time left: none before a sim has finished, the re-sim rounds included', async () => {
