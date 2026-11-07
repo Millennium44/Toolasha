@@ -12817,10 +12817,22 @@ class CombatSimUI {
         if (scan.combatRelevant === 0) {
             return `<br><span style="font-size:11px;">House: none of ${scan.rooms} rooms (${scan.withBuffs} with buffs) look combat-relevant — the game's buff data may have changed shape.</span>`;
         }
-        if (scan.belowCap === 0) {
-            return `<br><span style="font-size:11px;">House: all ${scan.combatRelevant} combat rooms are already at max level.</span>`;
-        }
+        // belowCap === 0 is said by `_emptyUpgradeMessage`, as the reason, not as a footnote
         return '';
+    }
+
+    /**
+     * The sentence an empty Upgrade result opens with. When House was ticked and every room it could raise is
+     * already at max, that is why nothing was generated, and it is said plainly rather than blamed on equipment.
+     * @param {Object|null} scan - houseScan from the analysis
+     * @returns {string} Plain text
+     * @private
+     */
+    _emptyUpgradeMessage(scan) {
+        if (scan && scan.rooms > 0 && scan.combatRelevant > 0 && scan.belowCap === 0) {
+            return `Every house room is already at max level (${scan.combatRelevant} combat rooms checked), so there is nothing to upgrade.`;
+        }
+        return 'No upgrade candidates found. Ensure equipment is configured.';
     }
 
     /**
@@ -15787,7 +15799,7 @@ class CombatSimUI {
             this._refreshAnalysisNote();
             container.innerHTML =
                 foodHtml ||
-                `<div style="color:#888; text-align:center; padding:20px;">No upgrade candidates found. Ensure equipment is configured.${this._houseScanNote(results.houseScan)}</div>`;
+                `<div style="color:#888; text-align:center; padding:20px;">${this._emptyUpgradeMessage(results.houseScan)}${this._houseScanNote(results.houseScan)}</div>`;
             container.innerHTML += this._renderAbilityOrderSection([], results);
             this._wireAbilityOrder(container);
             this._enhanceCollapsibles(container);

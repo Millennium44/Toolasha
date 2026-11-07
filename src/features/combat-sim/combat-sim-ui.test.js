@@ -16439,6 +16439,26 @@ describe('upgrade results as cards', () => {
             expect(container().querySelector('[data-upgrade-cards="gold"]')).toBeTruthy();
         });
 
+        test('an empty House result with every room at max says so instead of blaming equipment', () => {
+            draw({}, []);
+            ui._renderUpgradeResults({
+                ...ui._upgradeResultsData,
+                results: [],
+                houseScan: { rooms: 12, withBuffs: 9, combatRelevant: 5, belowCap: 0 },
+            });
+            expect(container().textContent).toContain('Every house room is already at max level');
+            expect(container().textContent).not.toContain('Ensure equipment is configured');
+        });
+
+        test('an empty result keeps the equipment message when House is not the cause', () => {
+            draw({}, []);
+            for (const houseScan of [null, { rooms: 12, withBuffs: 9, combatRelevant: 5, belowCap: 2 }]) {
+                ui._renderUpgradeResults({ ...ui._upgradeResultsData, results: [], houseScan });
+                expect(container().textContent).toContain('No upgrade candidates found. Ensure equipment');
+                expect(container().textContent).not.toContain('at max level');
+            }
+        });
+
         test('an empty analysis replaces the previous one, so a rotation cannot bring it back', () => {
             draw();
             showCards();
