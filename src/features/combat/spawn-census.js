@@ -50,6 +50,7 @@ import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { runInBackground } from '../../utils/background-work.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
 import { analyzeSpawnDivergence, divergenceLines, fingerprintOf } from './spawn-divergence.js';
 import spawnDivergenceAlert from './spawn-divergence-alert.js';
@@ -388,7 +389,14 @@ class SpawnCensus {
         webSocketHook.on('new_battle', this.newBattleHandler);
         this.timers.registerInterval(setInterval(() => this.flush(), FLUSH_MS));
 
-        await this.load();
+        // Registered above, read below: the stored record is one of the largest
+        // reads of the start, and every small read behind it waited for it. Waves
+        // counted before it lands are kept - `hydrate` is additive and `flush`
+        // reads first - so nothing is lost by it arriving late. `initialized` is
+        // rechecked because a disable inside the wait leaves nothing to fill.
+        this.ready = runInBackground('spawnCensus', async () => {
+            if (this.initialized) await this.load();
+        });
     }
 
     /**
@@ -684,6 +692,13 @@ class SpawnCensus {
         if (!this.dirty) return false;
         this.dirty = false;
         try {
+            // Never write a tally that has not met the stored one. Memory holds
+            // only what this session counted until the deferred read lands, and
+            // writing it then would replace every earlier session's waves; and a
+            // flush that absorbed the whole record first (no baseline yet) would
+            // be hydrated a second time by the read, doubling every count.
+            await this.load();
+            if (!this.loaded) throw new Error('the stored census has not been read');
             await this._absorbForeignWrites();
             const record = this.serialize();
             await storage.setJSON(RECORD_KEY, record, STORE, true);

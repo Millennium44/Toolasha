@@ -26,6 +26,10 @@ const world = vi.hoisted(() => ({
     tickAutosaveResult: false,
     /** Live subscriptions to the fight pool's pull notification */
     poolListeners: 0,
+    /** Held open to park background work, as feature startup does */
+    bgGate: null,
+    /** How many times the fight pool was asked to load */
+    poolLoads: 0,
 }));
 
 /** Every live websocket handler, by message type, so leaks are countable. */
@@ -87,6 +91,12 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'char1',
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
+vi.mock('../../utils/background-work.js', () => ({
+    runInBackground: async (_name, work) => {
+        if (world.bgGate) await world.bgGate;
+        return work();
+    },
+}));
 vi.mock('./labyrinth-fight-recorder.js', () => ({
     default: {
         onPoolChanged: () => {
@@ -97,7 +107,9 @@ vi.mock('./labyrinth-fight-recorder.js', () => ({
                 live = false;
             };
         },
-        load: async () => {},
+        load: async () => {
+            world.poolLoads += 1;
+        },
         forget: () => {},
         noteAttempt: () => {},
         recordedAttempts: () => [],
@@ -173,6 +185,35 @@ describe('a character switch landing inside the room log read', () => {
         world.gate = null;
         await pending;
     }
+
+    test('the fight pool is read after feature startup, not inside initialize', async () => {
+        world.poolLoads = 0;
+        let open;
+        world.bgGate = new Promise((resolve) => {
+            open = resolve;
+        });
+        await labyrinthRoomLogs.initialize();
+        expect(world.poolLoads).toBe(0);
+
+        open();
+        world.bgGate = null;
+        await vi.waitFor(() => expect(world.poolLoads).toBe(1));
+    });
+
+    test('a teardown inside the wait stands the pool read down', async () => {
+        world.poolLoads = 0;
+        let open;
+        world.bgGate = new Promise((resolve) => {
+            open = resolve;
+        });
+        await labyrinthRoomLogs.initialize();
+        await labyrinthRoomLogs.disable();
+
+        open();
+        world.bgGate = null;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(world.poolLoads).toBe(0);
+    });
 
     test('the pool and outcomes subscriptions are released on teardown, once per initialize', async () => {
         world.poolListeners = 0;

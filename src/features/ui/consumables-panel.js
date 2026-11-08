@@ -110,6 +110,7 @@ import {
 } from '../combat/labyrinth-run-ledger-math.js';
 import { rushFloorVerdict } from '../combat/labyrinth-rush-floor-verdict.js';
 import storage from '../../core/storage.js';
+import { runInBackground } from '../../utils/background-work.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
@@ -498,6 +499,25 @@ class ConsumablesPanel {
         }
     }
 
+    /**
+     * Read the recorded dungeon runs once feature startup is out of the way.
+     *
+     * @returns {Promise<void>} Resolves when the read has been applied or stood down; never rejects
+     * @private
+     */
+    _loadDungeonHistoryLater() {
+        const generation = this._storedReadingsGeneration;
+        return runInBackground('consumablesRunHistory', async () => {
+            const stored = await storage.getJSON('allRuns', 'unifiedRuns', null).catch(() => null);
+            // Unreadable is not empty: keep what is held
+            if (!Array.isArray(stored)) return;
+            if (generation !== this._storedReadingsGeneration) return;
+            this._dungeonHistory = clearsOnly(stored);
+            this._readinessMemo = null;
+            if (this.panel) this._render();
+        });
+    }
+
     hide({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         this._remove();
@@ -540,7 +560,12 @@ class ConsumablesPanel {
         this._dungeonRuns =
             parseRunsPlanned(await storage.get('consumablesDungeonRuns', 'settings', DEFAULT_DUNGEON_RUNS)) ??
             DEFAULT_DUNGEON_RUNS;
-        this._dungeonHistory = clearsOnly(await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => []));
+        // The run history is the whole dungeon ledger and one of the biggest reads of the start, so it is
+        // read after feature startup instead. Nothing draws from it before the panel is shown, and `show()`
+        // re-reads it anyway; a read that loses that race (the panel's own refresh landed first) stands down
+        // rather than put an older answer over a newer one, and a failed read leaves the history as it was
+        // instead of replacing it with an empty one.
+        this._loadDungeonHistoryLater();
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
         // Everything the readiness memo is a function of has just been re-read.
         // The key costing goes with it: a craft cost is this character's own —

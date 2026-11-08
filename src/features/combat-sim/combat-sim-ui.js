@@ -6,6 +6,7 @@
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
+import { runInBackground } from '../../utils/background-work.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import {
@@ -4453,7 +4454,15 @@ class CombatSimUI {
         this._loadMaxTierFoodPref();
         this._loadZonesScorePref();
         this._loadBestiaryPlanPrefs();
-        this._restoreUpgradeResults();
+        // After feature startup rather than during the build: the saved results are a large record and the
+        // panel is hidden until opened. The restore already stands down when a run or a pull has drawn a table
+        // by the time it lands, and finding nothing saved leaves the table alone rather than clearing it. The
+        // character is rechecked first because the key is built when the read starts, not when it was asked for.
+        const restoreOwner = dataManager.getCurrentCharacterId();
+        runInBackground('combatSimUpgradeResults', async () => {
+            if (!this.panel || !this._stillSameCharacter(restoreOwner)) return;
+            await this._restoreUpgradeResults();
+        });
         this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');

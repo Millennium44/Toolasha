@@ -22,6 +22,7 @@
  */
 
 import config from '../../core/config.js';
+import { runInBackground } from '../../utils/background-work.js';
 import storage from '../../core/storage.js';
 import { characterKey } from '../../utils/character-key.js';
 import { labyrinthRunStamp } from '../../utils/labyrinth-session.js';
@@ -454,9 +455,19 @@ class LabyrinthRoomLogs {
 
         // Bring the accumulated calibration fights back into memory, so the pool
         // survives a reload rather than starting empty each session
-        labFightRecorder
-            .load()
-            .catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
+        //
+        // After feature startup rather than during it: the pool is up to a thousand
+        // fights and every small read behind it waited for it. Fights noted before
+        // it lands are safe - `persist()` saves through the record's fold, which
+        // reads what is stored first and unions it under memory - and a switch or
+        // a disable inside the wait stands the load down (`forget()` resets the
+        // pool, and the arriving character's own initialise asks again).
+        runInBackground('labyrinthFightPool', async () => {
+            if (!stillOurs(ticket)) return;
+            await labFightRecorder.load();
+            // A Pool view opened inside the wait drew the empty pool; redraw it with the real one
+            if (stillOurs(ticket)) this.renderIfOpen({ fightRecord: true });
+        }).catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
 
         // A capture nobody could save — a crash, a closed tab, a Save dialog
         // the user cancelled — survives a reload as a stopped, held capture

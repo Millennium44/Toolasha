@@ -22,6 +22,8 @@ import { SIM_UPGRADE_PHONE_CSS } from './sim-phone-layout.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 
 const mocks = vi.hoisted(() => ({
+    /** Background work held back, as it is while features start; `mocks.runBackground()` lets it go */
+    bgJobs: [],
     /** What the scroll table reads as the best gold/token; null means the shop prices nothing */
     scrollRate: null,
     upgradeResult: { baseline: null, results: [], food: null },
@@ -403,6 +405,13 @@ vi.mock('../market/expected-value-calculator.js', () => ({
         calculateSingleContainer: () => null,
         calculateContainerValueAtTaxRate: () => null,
     },
+}));
+
+vi.mock('../../utils/background-work.js', () => ({
+    runInBackground: (_name, work) =>
+        new Promise((resolve) => {
+            mocks.bgJobs.push(async () => resolve(await work()));
+        }),
 }));
 
 vi.mock('../../utils/panel-z-index.js', () => ({
@@ -3798,6 +3807,74 @@ describe('results outliving the character they were run for', () => {
         // The first reprice is of the snapshot rows, before the snapshot is written
         expect(savedWhenRepriced[0]).toBe(false);
         expect(mocks.store.has('combatExport:allZonesSnapshot_char1')).toBe(true);
+    });
+
+    describe('the remembered upgrade run is read after startup', () => {
+        const KEY = 'combatExport:combatSimUpgradeResults_char1';
+        const container = () => ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+        const runBackground = async () => {
+            const jobs = mocks.bgJobs.splice(0);
+            for (const job of jobs) await job();
+        };
+
+        beforeEach(async () => {
+            mocks.bgJobs.length = 0;
+            mocks.characterId = 'char1';
+            const { default: config } = await import('../../core/config.js');
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_rememberUpgradeResults' ? true : fallback
+            );
+            mocks.store.set(KEY, { data: { baseline: BASELINE, results: [row('Remembered run')] }, savedAt: 1 });
+        });
+
+        test('building the panel does not read it, and the held read then draws it', async () => {
+            ui.buildPanel();
+            await settle();
+            expect(container().textContent).not.toContain('Remembered run');
+
+            await runBackground();
+            expect(container().textContent).toContain('Remembered run');
+        });
+
+        test('a run drawn while the read was held keeps the table', async () => {
+            ui.buildPanel();
+            selectZone();
+            mocks.upgradeResult = { baseline: BASELINE, results: [row('Fresh run')], food: null };
+            await ui._onUpgradeAnalyze();
+
+            await runBackground();
+            expect(container().textContent).toContain('Fresh run');
+            expect(container().textContent).not.toContain('Remembered run');
+        });
+
+        test('nothing saved leaves the stored key and the table alone', async () => {
+            mocks.store.delete(KEY);
+            ui.buildPanel();
+            await runBackground();
+            expect(container().textContent).toBe('');
+            expect(mocks.store.has(KEY)).toBe(false);
+        });
+
+        test('a character switch inside the wait draws nothing for the arriving character', async () => {
+            mocks.store.set('combatExport:combatSimUpgradeResults_char2', {
+                data: { baseline: BASELINE, results: [row('Alt run')] },
+                savedAt: 1,
+            });
+            ui.buildPanel();
+            mocks.characterId = 'char2';
+            await runBackground();
+            expect(container().textContent).not.toContain('Alt run');
+            expect(container().textContent).not.toContain('Remembered run');
+        });
+
+        test('a panel torn down inside the wait is not drawn into', async () => {
+            ui.buildPanel();
+            await settle();
+            ui.destroy();
+            await expect(runBackground()).resolves.toBeUndefined();
+            expect(ui.panel).toBeFalsy();
+        });
     });
 
     test('an upgrade analysis finishing after a switch does not replace the arriving character’s remembered run', async () => {

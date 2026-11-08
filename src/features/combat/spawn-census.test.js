@@ -21,6 +21,16 @@ const game = vi.hoisted(() => ({
     stored: null,
     readFails: false,
     alertCalls: [],
+    // When set, background work waits on it - the stand-in for "feature startup has not finished"
+    bgGate: null,
+}));
+
+// The real gate waits on the feature registry (and a 10 s timer); here it waits on a promise the test controls
+vi.mock('../../utils/background-work.js', () => ({
+    runInBackground: async (name, work) => {
+        if (game.bgGate) await game.bgGate;
+        return work();
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -107,6 +117,7 @@ beforeEach(async () => {
     game.setting = true;
     game.stored = null;
     game.readFails = false;
+    game.bgGate = null;
     game.actions = [];
     game.wsHandlers = {};
     game.actionDetails = {
@@ -116,6 +127,7 @@ beforeEach(async () => {
     spawnCensus.initialized = false;
     spawnCensus._reset();
     await spawnCensus.initialize();
+    await spawnCensus.ready;
     inZone(DUNGEON);
 });
 
@@ -488,6 +500,85 @@ describe('hydrating exactly once', () => {
         game.stored = { version: 1, waves: 4, rosters: { 'chimerical_den|0|1|rat': [4, 1, 2] } };
         await spawnCensus.load();
         expect(spawnCensus.waves).toBe(4);
+    });
+});
+
+describe('reading the stored record after startup', () => {
+    const STORED = { version: 1, waves: 4, rosters: { 'chimerical_den|0|1|rat': [4, 1, 2] } };
+
+    /** Re-initialize with the deferred read held back, as it is while features start */
+    const startDeferred = async () => {
+        await spawnCensus.disable();
+        spawnCensus._reset();
+        game.stored = JSON.parse(JSON.stringify(STORED));
+        let open;
+        game.bgGate = new Promise((resolve) => {
+            open = resolve;
+        });
+        await spawnCensus.initialize();
+        return open;
+    };
+
+    test('initialize does not wait for the stored record', async () => {
+        await startDeferred();
+        expect(spawnCensus.loaded).toBe(false);
+        expect(spawnCensus.waves).toBe(0);
+    });
+
+    test('the record lands under waves counted while it was out', async () => {
+        const open = await startDeferred();
+        inZone(DUNGEON);
+        battle(['rat'], { wave: 1 });
+        open();
+        await spawnCensus.ready;
+
+        expect(spawnCensus.loaded).toBe(true);
+        expect(spawnCensus.rosters.get('chimerical_den|0|1|rat').n).toBe(5);
+        expect(spawnCensus.waves).toBe(5);
+    });
+
+    test('a flush before the read lands reads first and never overwrites the stored tally', async () => {
+        await startDeferred();
+        inZone(DUNGEON);
+        battle(['rat'], { wave: 1 });
+
+        await spawnCensus.flush();
+
+        expect(game.stored.rosters['chimerical_den|0|1|rat'][0]).toBe(5);
+        expect(game.stored.waves).toBe(5);
+    });
+
+    test('the deferred read after such a flush does not count the record twice', async () => {
+        const open = await startDeferred();
+        inZone(DUNGEON);
+        battle(['rat'], { wave: 1 });
+        await spawnCensus.flush();
+        open();
+        await spawnCensus.ready;
+
+        expect(spawnCensus.waves).toBe(5);
+        expect(spawnCensus.rosters.get('chimerical_den|0|1|rat').n).toBe(5);
+    });
+
+    test('an unreadable record is never written over: the flush keeps the tally dirty', async () => {
+        await startDeferred();
+        inZone(DUNGEON);
+        battle(['rat'], { wave: 1 });
+        game.readFails = true;
+        const before = game.stored;
+
+        expect(await spawnCensus.flush()).toBe(false);
+
+        expect(game.stored).toBe(before);
+        expect(spawnCensus.dirty).toBe(true);
+    });
+
+    test('a disable inside the wait leaves nothing to read', async () => {
+        const open = await startDeferred();
+        await spawnCensus.disable();
+        open();
+        await spawnCensus.ready;
+        expect(spawnCensus.loaded).toBe(false);
     });
 });
 
