@@ -46,8 +46,7 @@ export default defineConfig({
             },
             {
                 extends: true,
-                // A larger heap for the memory-heavy files listed in vitest.forks-files.js
-                test: { name: 'forks', pool: 'forks', include: forksFiles, execArgv: ['--max-old-space-size=4096'] },
+                test: { name: 'forks', pool: 'forks', include: forksFiles },
             },
         ],
         coverage: {
