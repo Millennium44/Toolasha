@@ -3405,17 +3405,21 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 32,
-                help: 'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine)',
+                help:
+                    'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine; with Ignore ' +
+                    'thread caps, every core)',
             },
             combatSim_uncapThreads: {
                 id: 'combatSim_uncapThreads',
-                label: 'Combat Simulator: Ignore the thread caps',
+                label: 'Combat Simulator: Ignore thread caps',
                 type: 'checkbox',
                 default: false,
                 help:
                     'Max threads is normally clamped to your core count, and an analysis runs at most "Simulations at ' +
                     'once" simulations together — each one holds its own copy of the game data, and the tab running ' +
-                    'the game needs a core too. Turn this on to take the thread number literally and lift that limit.',
+                    'the game needs a core too. Turn this on to take the thread number literally (0 then means every ' +
+                    'core) and lift the phone 2-thread limit and Simulations at once. It does not lift Max hrs, the ' +
+                    're-sim time cap or Shorten above.',
             },
             combatSim_maxConcurrentSims: {
                 id: 'combatSim_maxConcurrentSims',
@@ -3426,8 +3430,8 @@ export const settingsGroups = {
                 max: 32,
                 help:
                     'Most simulations one analysis (Upgrade tab, trigger optimizer) runs at the same time, never more ' +
-                    'than Max threads allows. Each one holds its own copy of the game data. Ignored when "Ignore the ' +
-                    'thread caps" is on.',
+                    'than Max threads allows. Each one holds its own copy of the game data. Ignored when "Ignore thread ' +
+                    'caps" is on.',
             },
             combatSim_resimMaxMinutes: {
                 id: 'combatSim_resimMaxMinutes',

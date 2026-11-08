@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Sim performance limits are editable in the panels
 
-Combat Sim and Lab Sim each have a ⚙ Performance strip for threads (with the real count in use), Ignore caps, simulations at once and the close-call re-sim time cap (0 = none). Big Lab whole-run analyses no longer cut each sim short; set "Shorten above N sims" in the strip to bring that back.
+Combat Sim and Lab Sim each have a ⚙ Performance strip for threads (with the real count in use), simulations at once, Ignore thread caps (Threads 0 then uses every core) and, in Combat Sim, the close-call re-sim time cap (0 = none). Big Lab whole-run analyses no longer cut each sim short; set "Shorten above N sims" in the strip to bring that back.
 
 <!-- shipped in 3.81.0 -->
 

@@ -1950,7 +1950,7 @@ class LabSimUI {
         // Assemble
         this.panel.appendChild(header);
         this.panel.appendChild(tabBar);
-        const perfStrip = createPerformanceStrip({ includeShorten: true, idPrefix: 'mwi-labsim' });
+        const perfStrip = createPerformanceStrip({ includeShorten: true, includeResim: false, idPrefix: 'mwi-labsim' });
         this.panel.appendChild(perfStrip);
         this.panel.appendChild(configureContent);
         this.panel.appendChild(maxLevelContent);

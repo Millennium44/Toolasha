@@ -17,11 +17,16 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ maxThreads: 0, mobile: false }));
+const settings = vi.hoisted(() => ({ maxThreads: 0, mobile: false, uncap: false }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
-        getSetting: (key) => (key === 'combatSim_maxThreads' ? settings.maxThreads : false),
+        getSetting: (key) =>
+            key === 'combatSim_maxThreads'
+                ? settings.maxThreads
+                : key === 'combatSim_uncapThreads'
+                  ? settings.uncap
+                  : false,
     },
 }));
 
@@ -30,6 +35,7 @@ vi.mock('../../utils/mobile.js', () => ({
 }));
 
 const {
+    getMaxWorkers,
     plannedWorkerCount,
     runSimulation,
     runLabyrinthSimulation,
@@ -104,6 +110,7 @@ function captureWorkerMessages() {
 beforeEach(() => {
     settings.maxThreads = 0;
     settings.mobile = false;
+    settings.uncap = false;
     vi.stubGlobal('navigator', { hardwareConcurrency: 8 });
     // Workers now outlive the run that built them, so one test's warm pool is
     // the next one's confusing worker count unless it is emptied here.
@@ -226,6 +233,19 @@ describe('how wide one simulation spreads itself', () => {
         vi.stubGlobal('navigator', { hardwareConcurrency: 3 });
 
         expect(plannedWorkerCount(10_000)).toBe(3);
+    });
+
+    test('Ignore thread caps with Threads 0 uses every core, even on mobile', () => {
+        settings.uncap = true;
+        expect(getMaxWorkers()).toBe(8);
+        settings.mobile = true;
+        expect(getMaxWorkers()).toBe(8);
+    });
+
+    test('Ignore thread caps with a set number takes it literally', () => {
+        settings.uncap = true;
+        settings.maxThreads = 12;
+        expect(getMaxWorkers()).toBe(12);
     });
 
     test('mobile mode narrows the budget to two', () => {
