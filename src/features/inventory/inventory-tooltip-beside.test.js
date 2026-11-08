@@ -16,7 +16,12 @@ vi.mock('../../core/tooltip-observer.js', () => ({
     },
 }));
 
-const { default: feature, placeClear, InventoryTooltipBeside } = await import('./inventory-tooltip-beside.js');
+const {
+    default: feature,
+    placeClear,
+    placePhone,
+    InventoryTooltipBeside,
+} = await import('./inventory-tooltip-beside.js');
 
 const rect = (o) => ({ left: 0, top: 0, width: 0, height: 0, ...o });
 const ITEM_INFO = { isTooltipPopper: true, isItemTooltip: true };
@@ -66,6 +71,46 @@ describe('placeClear', () => {
     it('leaves the game placement when neither side has room, or nothing was measured', () => {
         expect(placeClear(over({ left: 200, width: 1700 }), { ...tile, left: 300 }, vp)).toBeNull();
         expect(placeClear(over({ width: 0 }), tile, vp)).toBeNull();
+    });
+});
+
+describe('placePhone', () => {
+    const vp = { width: 412, height: 800 };
+    const tile = { left: 100, top: 400, width: 44, height: 44 };
+    const overlaps = (r) => r.left < 144 && 100 < r.left + r.width && r.top < 444 && 400 < r.top + r.height;
+    it('never covers the tapped tile, above or below, with or without a cap', () => {
+        for (const height of [200, 360, 500, 900]) {
+            for (const top of [100, 380, 500]) {
+                const spot = placePhone({ left: 10, top, width: 380, height }, tile, vp);
+                const shown = spot ? spot.maxHeight || height : 0;
+                const at = spot || { x: 10, y: top };
+                expect(overlaps({ left: at.x, top: at.y, width: 380, height: shown || height })).toBe(false);
+                if (spot) {
+                    expect(spot.y).toBeGreaterThanOrEqual(8);
+                    expect(spot.y + shown).toBeLessThanOrEqual(792);
+                }
+            }
+        }
+    });
+    it('places a short tooltip that fits without a cap', () => {
+        const spot = placePhone({ left: 10, top: 380, width: 380, height: 200 }, tile, vp);
+        expect(spot).toEqual({ x: 10, y: 200, maxHeight: 0 });
+    });
+    it('goes above when below has no room, capped when taller than the room', () => {
+        const low = { ...tile, top: 700 };
+        expect(placePhone({ left: 10, top: 600, width: 380, height: 300 }, low, vp)).toEqual({
+            x: 10,
+            y: 400,
+            maxHeight: 0,
+        });
+        expect(placePhone({ left: 10, top: 600, width: 380, height: 900 }, low, vp).maxHeight).toBe(692);
+    });
+    it('leaves a tooltip that clears the tile and fits the screen to the game', () => {
+        expect(placePhone({ left: 10, top: 450, width: 380, height: 300 }, tile, vp)).toBeNull();
+    });
+    it('caps a tooltip that clears the tile but runs off the screen', () => {
+        const spot = placePhone({ left: 10, top: 450, width: 380, height: 500 }, tile, vp);
+        expect(spot).toMatchObject({ y: 8, maxHeight: 392 });
     });
 });
 
@@ -200,11 +245,16 @@ describe('InventoryTooltipBeside', () => {
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
     });
 
-    it('keeps the game placement on a phone', () => {
+    it('on a phone, moves a tooltip covering the tapped item below it and caps its height', () => {
         h.mobile = true;
-        const popper = build();
+        window.innerWidth = 412;
+        window.innerHeight = 800;
+        const popper = build({ tileLeft: 100, tileTop: 100 });
+        popper.getBoundingClientRect = () => rect({ left: 10, top: 50, width: 380, height: 900 });
         h.callback(popper, 'opened', ITEM_INFO);
-        expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
+        expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
+        expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('160px');
+        expect(popper.style.getPropertyValue('--tl-tip-max')).toBe('632px');
     });
 
     it('cleanup hands open tooltips back and removes the stylesheet', () => {

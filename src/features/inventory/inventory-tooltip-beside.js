@@ -13,8 +13,8 @@
  * CSS custom properties: Popper.js keeps rewriting the inline transform on its own updates, and a class
  * rule with !important wins over it without a fight. Re-checked when the game moves the popper (its
  * inline style; the first placement lands a frame after open) and when it resizes (features append
- * lines after open); nothing runs on a timer or on pointer move. With no room on either side, or on a
- * phone, the game's own placement is left alone.
+ * lines after open); nothing runs on a timer or on pointer move. With no room on either side the game's
+ * own placement is left alone. On a phone the tooltip goes above or below the tile instead, capped to the room.
  */
 
 import config from '../../core/config.js';
@@ -54,7 +54,7 @@ const CSS = `
     transform: translate3d(var(--tl-tip-x, 0px), var(--tl-tip-y, 0px), 0) !important;
 }
 .${CLASS_NAME} .MuiTooltip-tooltip {
-    max-height: calc(100vh - ${VIEWPORT_MARGIN * 2}px);
+    max-height: var(--tl-tip-max, calc(100vh - ${VIEWPORT_MARGIN * 2}px));
     overflow-y: auto;
 }
 .${CLASS_NAME} .MuiTooltip-arrow,
@@ -113,6 +113,41 @@ export function placeClear(gameRect, tile, viewport) {
 }
 
 /**
+ * Where a tooltip goes on a phone, or null to keep the game's placement. A phone has no room beside a tile
+ * (the tooltip is nearly the screen wide), so it goes above or below the tile, whichever side has more
+ * room (the game's side wins when the tooltip fits there), never over the tile. A tooltip taller than that
+ * room is capped to it and scrolls. A tooltip that already clears the tile and fits the screen is left alone.
+ * @param {DOMRect|Object} gameRect - Where the game placed the tooltip
+ * @param {DOMRect|Object} tile - Tapped tile rect
+ * @param {{width: number, height: number}} viewport - Viewport size
+ * @returns {{x: number, y: number, maxHeight: number}|null} maxHeight is 0 when no cap is needed
+ */
+export function placePhone(gameRect, tile, viewport) {
+    const width = gameRect.width;
+    const height = gameRect.height;
+    if (!(width > 0)) return null;
+    const gameBottom = gameRect.top + height;
+    const fitsScreen = gameRect.top >= VIEWPORT_MARGIN && gameBottom <= viewport.height - VIEWPORT_MARGIN;
+    if (fitsScreen && !rectsOverlap(gameRect, tile)) return null;
+
+    const tileBottom = Number.isFinite(tile.bottom) ? tile.bottom : tile.top + (tile.height || 0);
+    const roomBelow = viewport.height - VIEWPORT_MARGIN - tileBottom;
+    const roomAbove = tile.top - VIEWPORT_MARGIN;
+    let below;
+    if (height <= roomBelow && height <= roomAbove) below = gameRect.top >= tile.top || roomBelow >= roomAbove;
+    else if (height <= roomBelow) below = true;
+    else if (height <= roomAbove) below = false;
+    else below = roomBelow >= roomAbove;
+    const room = Math.max(0, Math.floor(below ? roomBelow : roomAbove));
+    const shownHeight = Math.min(height, room);
+    if (!(shownHeight > 0)) return null;
+    const y = below ? tileBottom : tile.top - shownHeight;
+    const maxX = Math.max(VIEWPORT_MARGIN, viewport.width - VIEWPORT_MARGIN - width);
+    const x = Math.min(Math.max(gameRect.left, VIEWPORT_MARGIN), maxX);
+    return { x: Math.round(x), y: Math.round(y), maxHeight: shownHeight < height ? room : 0 };
+}
+
+/**
  * The item tile an element sits in, never one inside a tooltip.
  * @param {Element|null|undefined} el
  * @param {Element} popper
@@ -168,7 +203,7 @@ class InventoryTooltipBeside {
      */
     handleOpen(popper, info) {
         if (!info?.isTooltipPopper || !info.isItemTooltip) return;
-        if (!config.isFeatureEnabled(SETTING_KEY) || isMobileMode()) return;
+        if (!config.isFeatureEnabled(SETTING_KEY)) return;
         if (this.tracked.has(popper)) {
             this.reposition(popper);
             return;
@@ -281,7 +316,7 @@ class InventoryTooltipBeside {
      * @returns {boolean} Whether the tooltip is now moved beside the item
      */
     reposition(popper) {
-        if (!config.isFeatureEnabled(SETTING_KEY) || isMobileMode()) {
+        if (!config.isFeatureEnabled(SETTING_KEY)) {
             this.unplace(popper);
             return false;
         }
@@ -296,10 +331,11 @@ class InventoryTooltipBeside {
         if (wasPlaced) popper.classList.remove(CLASS_NAME);
         const gameRect = popper.getBoundingClientRect();
         if (wasPlaced) popper.classList.add(CLASS_NAME);
-        const spot = placeClear(gameRect, tile.getBoundingClientRect(), {
-            width: window.innerWidth,
-            height: window.innerHeight,
-        });
+        const viewport = { width: window.innerWidth, height: window.innerHeight };
+        const tileRect = tile.getBoundingClientRect();
+        const spot = isMobileMode()
+            ? placePhone(gameRect, tileRect, viewport)
+            : placeClear(gameRect, tileRect, viewport);
         if (!spot) {
             this.unplace(popper);
             return false;
@@ -308,6 +344,9 @@ class InventoryTooltipBeside {
         const y = `${spot.y}px`;
         if (popper.style.getPropertyValue('--tl-tip-x') !== x) popper.style.setProperty('--tl-tip-x', x);
         if (popper.style.getPropertyValue('--tl-tip-y') !== y) popper.style.setProperty('--tl-tip-y', y);
+        const cap = spot.maxHeight ? `${spot.maxHeight}px` : '';
+        if (cap && popper.style.getPropertyValue('--tl-tip-max') !== cap) popper.style.setProperty('--tl-tip-max', cap);
+        else if (!cap && popper.style.getPropertyValue('--tl-tip-max')) popper.style.removeProperty('--tl-tip-max');
         popper.classList.add(CLASS_NAME);
         return true;
     }
@@ -318,6 +357,7 @@ class InventoryTooltipBeside {
         // Only touch the style when there is something to remove: every style write wakes the observer
         if (popper.style.getPropertyValue('--tl-tip-x')) popper.style.removeProperty('--tl-tip-x');
         if (popper.style.getPropertyValue('--tl-tip-y')) popper.style.removeProperty('--tl-tip-y');
+        if (popper.style.getPropertyValue('--tl-tip-max')) popper.style.removeProperty('--tl-tip-max');
     }
 
     /** Stop tracking a tooltip and hand it back to the game's placement. */
