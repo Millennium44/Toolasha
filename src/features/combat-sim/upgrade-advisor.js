@@ -6,6 +6,12 @@
  */
 
 import config from '../../core/config.js';
+import {
+    maxConcurrentSims,
+    resimMaxBudgetMs,
+    allFightsSimBudgetSetting,
+    DEFAULT_RESIM_MAX_MINUTES,
+} from './sim-performance-settings.js';
 import dataManager from '../../core/data-manager.js';
 import {
     buildGameDataPayload,
@@ -5555,7 +5561,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
  * Longest the close-call re-sims may run, whatever the first pass took. The phase is otherwise allowed as long as
  * the first pass ran (and at least {@link RESIM_MIN_BUDGET_MS}), so a quick analysis is never doubled into a slow one.
  */
-export const RESIM_MAX_BUDGET_MS = 10 * 60 * 1000;
+export const RESIM_MAX_BUDGET_MS = DEFAULT_RESIM_MAX_MINUTES * 60 * 1000;
 
 /** The per-hour rates on a metrics record that readers subtract the table's baseline from */
 const RESIM_ALIGNED_RATES = [
@@ -5685,8 +5691,8 @@ export function closeCallRows(rows) {
  * shared seed only cancels noise between runs of the same length) and every close row against it, then picks the
  * close calls again from the updated figures, so a row that separated drops out. It stops when nothing is close any
  * more (`separated`), after the last multiplier (`max-hours`), when the next round would not fit the time budget
- * (`time-cap`: as long as the first pass took, at least {@link RESIM_MIN_BUDGET_MS}, at most
- * {@link RESIM_MAX_BUDGET_MS}), or on Stop (`stopped`). A round Stop cuts short applies nothing; a finished
+ * (`time-cap`: as long as the first pass took, at least {@link RESIM_MIN_BUDGET_MS}, at most the
+ * `combatSim_resimMaxMinutes` setting, default {@link RESIM_MAX_BUDGET_MS}; 0 = no time cap), or on Stop (`stopped`). A round Stop cuts short applies nothing; a finished
  * round replaces its rows in `results` (in place) and stamps each with `resim`. Rows never re-simmed are untouched.
  *
  * @param {Array<Object>} results - Result rows, replaced in place
@@ -5697,6 +5703,7 @@ export function closeCallRows(rows) {
  * @param {Function} context.now - Clock
  * @param {Function} [context.abortSignal] - Stop
  * @param {number} [context.lanes=1] - Sims run at once
+ * @param {number} [context.maxBudgetMs] - Ceiling on the phase (Infinity = none); the setting when omitted
  * @param {Function} [context.onRoundStart] - (rows, multiplier) before a round runs
  * @param {Function} context.runRound - (rows, multiplier) => Promise<rows|null>: the re-measured rows in order, null
  *   when stopped
@@ -5704,7 +5711,10 @@ export function closeCallRows(rows) {
  */
 export async function resimCloseCallRows(results, context) {
     const { firstPassMs, firstPassSims, hours, now, abortSignal, lanes = 1, onRoundStart, runRound } = context;
-    const budgetMs = Math.min(RESIM_MAX_BUDGET_MS, Math.max(RESIM_MIN_BUDGET_MS, firstPassMs));
+    // The setting's ceiling; Infinity means no time cap (the phase then ends on separation, the round limit or Stop)
+    const maxBudgetMs = typeof context.maxBudgetMs === 'number' ? context.maxBudgetMs : resimMaxBudgetMs();
+    const budgetMs =
+        maxBudgetMs === Infinity ? Infinity : Math.min(maxBudgetMs, Math.max(RESIM_MIN_BUDGET_MS, firstPassMs));
     // Wall time one first-pass sim took, given how many ran at once
     const perSimMs = firstPassSims > 0 ? firstPassMs / firstPassSims : 0;
     const startedAt = now();
@@ -8278,14 +8288,11 @@ async function mapConcurrent(items, run, limit = analysisConcurrency()) {
  *
  * @returns {number} Simulations at once
  */
-function analysisConcurrency() {
+export function analysisConcurrency() {
     const budget = getMaxWorkers();
     if (config.getSetting('combatSim_uncapThreads')) return Math.max(1, budget);
-    return Math.max(1, Math.min(budget, ANALYSIS_MAX_CONCURRENCY));
+    return Math.max(1, Math.min(budget, maxConcurrentSims()));
 }
-
-/** Ceiling on simultaneous sims per analysis, whatever the thread setting says */
-const ANALYSIS_MAX_CONCURRENCY = 6;
 
 /** Expected labyrinth attempts to clear one fight (retry until win) */
 export function expectedFightAttempts(winRate) {
@@ -8453,6 +8460,9 @@ function labArmorForLoadout(candidate, dto, keepReplaced) {
  * is about is always simulated, and what gives instead is how long each
  * simulation runs. A shorter run is a noisier win rate, and the noise is already
  * measured, carried on the row and used to grey out gains it swallows.
+ *
+ * This is the default for {@link labAllFightsTrialBudget}'s `budget` argument. The player's setting
+ * (`labSim_allFightsSimBudget`, default 0 = never shorten) is what a run actually passes.
  */
 export const ALL_FIGHTS_SIM_BUDGET = 500;
 
@@ -8464,10 +8474,11 @@ export const MIN_TRIAL_FRACTION = 0.25;
  *
  * @param {number} sims - Simulations the run has planned
  * @param {number} hours - Hours per fight the player asked for
+ * @param {number} [budget] - Sims allowed before runs are shortened; 0 or less never shortens
  * @returns {{scale: number, hours: number, reduced: boolean}}
  */
-export function labAllFightsTrialBudget(sims, hours) {
-    const scale = sims > ALL_FIGHTS_SIM_BUDGET ? Math.max(MIN_TRIAL_FRACTION, ALL_FIGHTS_SIM_BUDGET / sims) : 1;
+export function labAllFightsTrialBudget(sims, hours, budget = ALL_FIGHTS_SIM_BUDGET) {
+    const scale = budget > 0 && sims > budget ? Math.max(MIN_TRIAL_FRACTION, budget / sims) : 1;
     return { scale, hours: hours * scale, reduced: scale < 1 };
 }
 
@@ -8698,7 +8709,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // What a big run gives up. Never a fight — every fight a candidate is about
     // is simulated, or its row would be answering a different question from the
     // one its column headings ask — but each simulation may be shorter.
-    const budget = labAllFightsTrialBudget(total, hours);
+    const budget = labAllFightsTrialBudget(total, hours, allFightsSimBudgetSetting(0));
     const simHours = budget.hours;
     // An object rather than a counter variable: the fight passes run
     // concurrently and close over it, and a plain `let` shared by closures

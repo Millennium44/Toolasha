@@ -86,7 +86,8 @@ export function getMaxWorkers() {
     // Normally the machine has the last word: more workers than cores is more
     // memory and more contention for no more throughput. Someone who wants the
     // number taken literally can say so.
-    if (config.getSetting('combatSim_uncapThreads') && setting > 0) return setting;
+    // With the caps ignored, 0 means every core and the phone limit is lifted too: the player asked for it.
+    if (config.getSetting('combatSim_uncapThreads')) return setting > 0 ? setting : cores;
     const cap = setting > 0 ? Math.min(setting, cores) : Math.min(MAX_WORKERS, cores);
     // A phone reporting eight logical cores is not offering eight cores' worth
     // of simulation: every worker holds its own clone of the game data, the

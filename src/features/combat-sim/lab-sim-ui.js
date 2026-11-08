@@ -35,6 +35,7 @@ import {
     resolveCardView,
     withViewChoice,
 } from './lab-upgrade-cards.js';
+import { createPerformanceStrip } from './sim-performance-strip.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
 import {
@@ -1951,6 +1952,8 @@ class LabSimUI {
         // Assemble
         this.panel.appendChild(header);
         this.panel.appendChild(tabBar);
+        const perfStrip = createPerformanceStrip({ includeShorten: true, includeResim: false, idPrefix: 'mwi-labsim' });
+        this.panel.appendChild(perfStrip);
         this.panel.appendChild(configureContent);
         this.panel.appendChild(maxLevelContent);
         this.panel.appendChild(upgradeContent);
@@ -2008,7 +2011,7 @@ class LabSimUI {
         this.minimizeCtl = attachMinimize({
             panel: this.panel,
             header,
-            body: [tabBar, configureContent, maxLevelContent, upgradeContent, skillingContent, status],
+            body: [tabBar, perfStrip, configureContent, maxLevelContent, upgradeContent, skillingContent, status],
             panelKey: GEOMETRY_KEY,
             beforeEl: header.querySelector('#mwi-labsim-close'),
             accent: '#aaa',
@@ -13072,7 +13075,8 @@ export function describeAllFightsPlan(plan) {
     if (!plan.reduced) return `${head}. Stop cancels at any point.`;
     return (
         `${head}. Big enough that each one runs ${Math.round(plan.trialScale * 100)}% of the ${plan.requestedHours}h ` +
-        'asked for — every fight is still simulated, the win rates are just noisier. Stop cancels at any point.'
+        'asked for — every fight is still simulated, the win rates are just noisier ' +
+        '(Performance: "Shorten above N sims"). Stop cancels at any point.'
     );
 }
 

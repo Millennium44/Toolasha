@@ -3405,17 +3405,55 @@ export const settingsGroups = {
                 default: 0,
                 min: 0,
                 max: 32,
-                help: 'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine)',
+                help:
+                    'Maximum Web Worker threads for simulations (0 = auto: 4, or fewer on a smaller machine; with Ignore ' +
+                    'thread caps, every core)',
             },
             combatSim_uncapThreads: {
                 id: 'combatSim_uncapThreads',
-                label: 'Combat Simulator: Ignore the thread caps',
+                label: 'Combat Simulator: Ignore thread caps',
                 type: 'checkbox',
                 default: false,
                 help:
-                    'Max threads is normally clamped to your core count, and an analysis runs at most 6 simulations ' +
-                    'at once — each one holds its own copy of the game data, and the tab running the game needs a ' +
-                    'core too. Turn this on to take the number above literally.',
+                    'Max threads is normally clamped to your core count, and an analysis runs at most "Simulations at ' +
+                    'once" simulations together — each one holds its own copy of the game data, and the tab running ' +
+                    'the game needs a core too. Turn this on to take the thread number literally (0 then means every ' +
+                    'core) and lift the phone 2-thread limit and Simulations at once. It does not lift Max hrs, the ' +
+                    're-sim time cap or Shorten above.',
+            },
+            combatSim_maxConcurrentSims: {
+                id: 'combatSim_maxConcurrentSims',
+                label: 'Combat Simulator: Simulations at once',
+                type: 'number',
+                default: 6,
+                min: 1,
+                max: 32,
+                help:
+                    'Most simulations one analysis (Upgrade tab, trigger optimizer) runs at the same time, never more ' +
+                    'than Max threads allows. Each one holds its own copy of the game data. Ignored when "Ignore thread ' +
+                    'caps" is on.',
+            },
+            combatSim_resimMaxMinutes: {
+                id: 'combatSim_resimMaxMinutes',
+                label: 'Combat Simulator: Close-call re-sim time cap (minutes)',
+                type: 'number',
+                default: 10,
+                min: 0,
+                help:
+                    'Longest the "Re-sim close calls" phase of an Upgrade analysis may run, in minutes. It is otherwise ' +
+                    'allowed as long as the first pass took (at least 30 s). 0 = no time cap: it runs until the rows ' +
+                    'separate, its round limit is reached, or you press Stop.',
+            },
+            labSim_allFightsSimBudget: {
+                id: 'labSim_allFightsSimBudget',
+                label: 'Lab Simulator: Shorten whole-run analyses above this many sims',
+                type: 'number',
+                default: 0,
+                min: 0,
+                help:
+                    'A whole-run Lab analysis that plans more simulations than this runs each one for a smaller share ' +
+                    'of the hours asked for (never below 25%), so the win rates are noisier but it finishes sooner. ' +
+                    '0 = never shorten: every simulation runs the full hours.',
             },
             combatSim_upgradeSkipSkillingRooms: {
                 id: 'combatSim_upgradeSkipSkillingRooms',

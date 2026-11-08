@@ -76,7 +76,13 @@ export const REDACTED_SETTING_IDS = ['sync_token', 'sync_passphrase'];
  * `SHARED_SETTING_IDS` in `core/settings-storage.js`, which is where the sharing
  * is decided. This list only says they stop at the edge of the device.
  */
-export const DEVICE_LOCAL_SETTING_IDS = ['combatSim_maxThreads', 'combatSim_uncapThreads'];
+export const DEVICE_LOCAL_SETTING_IDS = [
+    'combatSim_maxThreads',
+    'combatSim_uncapThreads',
+    'combatSim_maxConcurrentSims',
+    'combatSim_resimMaxMinutes',
+    'labSim_allFightsSimBudget',
+];
 
 /**
  * Every setting ID that stays on the machine that wrote it, for whichever of the

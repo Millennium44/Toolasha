@@ -465,6 +465,17 @@ describe('the Lab Sim panel remembers where it was left', () => {
         expect(document.getElementById('mwi-sim-upgrade-phone-layout')).not.toBeNull();
     });
 
+    test('the panel carries a collapsed Performance strip with the Lab-only shorten box, and it opens', () => {
+        ui.buildPanel();
+        const strip = document.querySelector('#mwi-labsim-perf');
+        expect(strip).not.toBeNull();
+        expect(strip.querySelector('#mwi-labsim-perf-body').style.display).toBe('none');
+        expect(strip.querySelector('#mwi-labsim-perf-shorten')).not.toBeNull();
+        expect(strip.querySelector('#mwi-labsim-perf-effective').textContent).toContain('2');
+        strip.querySelector('#mwi-labsim-perf-toggle').click();
+        expect(strip.querySelector('#mwi-labsim-perf-body').style.display).toBe('flex');
+    });
+
     test('with nothing saved it opens at its designed corner', async () => {
         ui.buildPanel();
         await Promise.resolve();
