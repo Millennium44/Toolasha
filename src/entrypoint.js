@@ -3307,6 +3307,8 @@ if (combatSimulatorSite === 'metz') {
                 } catch (error) {
                     console.error('[Toolasha] Dual-install check failed:', error);
                 }
+                // One mark per wait between the settings load and the features, so a slow startup names its step
+                performanceMonitor.mark('startup:dualInstallChecked');
 
                 // MWITools, checked here rather than at import time for the same
                 // reason as the signals above: its own public-api and
@@ -3321,6 +3323,7 @@ if (combatSimulatorSite === 'metz') {
                 // has to turn a new switch off before anything reads it — a
                 // feature switched off after startup has already run once
                 await UI.whatsNew.applyPolicy();
+                performanceMonitor.mark('startup:whatsNewPolicy');
 
                 // Start the Settings UI now and let it settle alongside the
                 // scroll-simulator read rather than ahead of it: its synchronous
@@ -3336,9 +3339,11 @@ if (combatSimulatorSite === 'metz') {
                 await Combat.scrollSimulator.initialize().catch((error) => {
                     console.error('[Toolasha] Scroll simulator initialization failed:', error);
                 });
+                performanceMonitor.mark('startup:scrollSimulator');
 
                 // The overrides read is the one thing features expect settled
                 await settingsUIReady;
+                performanceMonitor.mark('startup:settingsUI');
 
                 const initFailures = await featureRegistry.initializeFeatures();
                 if (startupModeRequest === 'debug') Core.startupMode?.recordInitFailures?.(initFailures);
