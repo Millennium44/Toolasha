@@ -880,6 +880,7 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // Set first, so no pass or retry begins another start meanwhile
             await waitForInFlightStarts();
             await disableAllFeatures();
+            performanceMonitor.mark('switch:featuresDisabled');
         });
     });
 
@@ -903,6 +904,8 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // is the one that brings the layer back up.
             if (dataManager.getIsCharacterSwitching()) return;
 
+            performanceMonitor.mark('switch:reinitStart', { to: targetId });
+
             // Offer a settings-mirror restore for the arriving character
             // before its own load, the same point the boot path offers one —
             // see the parameter doc above.
@@ -917,11 +920,13 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
                 }
             }
             if (isStale()) return;
+            performanceMonitor.mark('switch:mirrorOffered', { to: targetId });
 
             // Load settings BEFORE any feature initialization so every feature
             // sees the new character's values (loadSettings reads the current id).
             await config.loadSettings();
             config.applyColorSettings();
+            performanceMonitor.mark('switch:settingsLoaded', { to: targetId });
             if (isStale()) return;
 
             // Small delay to let game state settle, then re-init with fresh settings
@@ -932,6 +937,7 @@ function setupCharacterSwitchHandler(onInitFailures, onBeforeSettingsLoad) {
             // The layer is up again for the character that is current now, so
             // the next switch owes a real teardown.
             layerTornDown = false;
+            performanceMonitor.mark('switch:complete', { to: targetId, failed: initFailures?.length ?? 0 });
 
             if (typeof onInitFailures === 'function') {
                 onInitFailures(initFailures);

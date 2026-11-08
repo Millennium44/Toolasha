@@ -1152,6 +1152,9 @@ class DataManager {
             // landing in one of those suspension points must see that a switch
             // is in flight rather than write into the old character's state.
             this.isCharacterSwitching = true;
+            // Marks along the switch (names prefixed `switch:`, `to` says which
+            // switch in a burst): the departing character's waits, split.
+            performanceMonitor.mark('switch:requested', { to: newCharacterId, rapid: isRapidSwitch });
 
             if (isRapidSwitch) {
                 console.warn(
@@ -1181,6 +1184,8 @@ class DataManager {
                 console.error('[Toolasha] Failed to flush storage before character switch:', error);
             }
 
+            performanceMonitor.mark('switch:storageFlushed', { to: newCharacterId });
+
             // Emit character_switching event (cleanup phase).
             //
             // Before currentCharacterId moves, always: a listener that reads
@@ -1196,6 +1201,9 @@ class DataManager {
                 oldName: this.currentCharacterName,
                 newName: newCharacterName,
             });
+
+            // The awaited emit above includes the feature layer's teardown
+            performanceMonitor.mark('switch:teardownDone', { to: newCharacterId });
 
             // Update character tracking
             this.currentCharacterId = newCharacterId;
@@ -1229,6 +1237,7 @@ class DataManager {
 
             // Reset switching flag (cleanup complete, ready for re-init)
             this.isCharacterSwitching = false;
+            performanceMonitor.mark('switch:dataCleared', { to: newCharacterId });
 
             // Emit character_switched event (ready for re-init).
             // Paired with character_switching — one of each, per switch,

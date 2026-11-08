@@ -75,6 +75,7 @@ const { default: dataManager } = await import('./data-manager.js');
 const { default: featureRegistry } = await import('./feature-registry.js');
 const { characterKey } = await import('../utils/character-key.js');
 const storage = (await import('./storage.js')).default;
+const performanceMonitor = (await import('../utils/performance-monitor.js')).default;
 
 /** A minimal init_character_data payload. */
 const initPayload = (id, name) => ({
@@ -186,5 +187,35 @@ describe('teardown ordering against the character pointer', () => {
         // reload, which is the half that would have sat in front of the next
         // teardown and, through it, in front of char-3's data update.
         expect(configMock.loadSettings).toBe(1);
+    });
+});
+
+describe('switch timing marks', () => {
+    test('one switch leaves its marks in order, each naming the arriving character', async () => {
+        const initialize = vi.fn(async () => {});
+        featureRegistry.replaceFeatures([{ key: 'x', name: 'X', initialize, disable: vi.fn(async () => {}) }]);
+        featureRegistry.setupCharacterSwitchHandler();
+
+        const init = webSocketHandlers.get('init_character_data');
+        await init(initPayload('char-1', 'One'));
+        performanceMonitor.mark.mockClear();
+
+        await init(initPayload('char-2', 'Two'));
+        await new Promise((resolve) => setTimeout(resolve, 120));
+
+        const names = performanceMonitor.mark.mock.calls.map(([name]) => name).filter((n) => n.startsWith('switch:'));
+        expect(names).toEqual([
+            'switch:requested',
+            'switch:storageFlushed',
+            'switch:featuresDisabled',
+            'switch:teardownDone',
+            'switch:dataCleared',
+            'switch:reinitStart',
+            'switch:mirrorOffered',
+            'switch:settingsLoaded',
+            'switch:complete',
+        ]);
+        const requested = performanceMonitor.mark.mock.calls.find(([name]) => name === 'switch:requested');
+        expect(requested[1]).toMatchObject({ to: 'char-2' });
     });
 });
