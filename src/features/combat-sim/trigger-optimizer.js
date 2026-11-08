@@ -18,6 +18,7 @@ import { calculateSimRevenue } from './combat-sim-adapter.js';
 import { saleTaxRateOf } from './upgrade-advisor.js';
 import { seedRunPriceCache } from './sim-price-seed.js';
 import { runSimulation, getMaxWorkers } from './combat-sim-runner.js';
+import { maxConcurrentSims } from './sim-performance-settings.js';
 import { getGameData, setGameData } from './engine/game-data.js';
 import Monster from './engine/monster.js';
 import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
@@ -50,9 +51,6 @@ import {
 } from './trigger-tuning.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
-/** Ceiling on simultaneous sims, whatever the thread setting says (matches the upgrade advisor) */
-const MAX_CONCURRENCY = 6;
-
 /** Seeds one stream can hold; stream N's seeds are indices N * this + k */
 export const STREAM_WIDTH = 64;
 
@@ -63,7 +61,7 @@ export const STREAM_WIDTH = 64;
 export function concurrency() {
     const budget = getMaxWorkers();
     if (config.getSetting('combatSim_uncapThreads')) return Math.max(1, budget);
-    return Math.max(1, Math.min(budget, MAX_CONCURRENCY));
+    return Math.max(1, Math.min(budget, maxConcurrentSims()));
 }
 
 /**
