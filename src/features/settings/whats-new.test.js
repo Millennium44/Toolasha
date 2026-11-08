@@ -359,9 +359,9 @@ describe('the fallback control for a non-inline-editable setting', () => {
     const base = { headline: 'x', forkChanged: false, turnedOff: new Set(), isNewcomer: false };
 
     test('a button type gets a clickable control that closes the dialog and opens settings', async () => {
-        mocks.definitions = { spawnCensusExport: { type: 'button', label: 'Export census' } };
+        mocks.definitions = { enhanceSim_resetProDefaults: { type: 'button', label: 'Reset to defaults' } };
 
-        whatsNew._buildPanel({ ...base, newIds: ['spawnCensusExport'] });
+        whatsNew._buildPanel({ ...base, newIds: ['enhanceSim_resetProDefaults'] });
         // The header's × and the footer's Close button are also <button>s, so
         // find the row's control by its own text rather than the first match
         const control = [...whatsNew.panel.querySelectorAll('button')].find(
@@ -375,7 +375,7 @@ describe('the fallback control for a non-inline-editable setting', () => {
 
         // Closing happens synchronously, before openSettings is even awaited
         expect(whatsNew.panel).toBeNull();
-        expect(mocks.openSettingsCalls).toEqual([['', 'spawnCensusExport']]);
+        expect(mocks.openSettingsCalls).toEqual([['', 'enhanceSim_resetProDefaults']]);
     });
 });
 

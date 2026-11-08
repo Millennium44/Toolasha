@@ -100,10 +100,10 @@ export const DEVICE_ONLY_STORES = ['actionProgress'];
  * - `networthHistory` `networthMovers`: the per-item value maps behind the
  *   chart's "what moved" view, and their index. Large, and only useful beside
  *   the readings this device took (`features/networth/networth-movers.js`).
- * - `combatExport` `spawnCensus`: this machine's running tally of wave
- *   rosters. It is rewritten on every flush, and a pull replaces the key
- *   whole, so the two devices' tallies would overwrite each other rather than
- *   add. It has its own export for sharing.
+ * - `combatExport` `spawnCensus`: the feature is gone, but older builds (and a
+ *   rollback) leave this record in IndexedDB. `combatExport` syncs whole, so
+ *   dropping the entry would start pushing a stale per-device tally to the Gist
+ *   and let a pull overwrite it. Stays listed for that reason.
  *
  * Applied on the way out and on the way in, so a payload written by an older
  * build that still carries them cannot plant one. Backups are unaffected.
@@ -265,7 +265,6 @@ export const OWNED_KEY_PREFIXES = [
     'dungeonTracker_',
     'labyrinthRoomLogs',
     'labyrinthFightOutcomes',
-    'spawnCensus',
     'allZonesSnapshot',
     'playerColors',
     'playerClassOverrides',

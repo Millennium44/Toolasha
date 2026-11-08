@@ -28,7 +28,6 @@ import {
 } from '../../utils/pricing-side-select.js';
 import { detectedModeLabel, hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
-import spawnCensus from '../combat/spawn-census.js';
 import whatsNew from './whats-new.js';
 import ironCowMode, { IRON_COW_SETTINGS, pricingRowsLocked as isPricingRowsLocked } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -628,9 +627,6 @@ class SettingsUI {
             if (e.target.classList.contains('toolasha-setting-action-btn')) {
                 if (e.target.dataset.settingId === 'enhanceSim_resetProDefaults') {
                     this.resetEnhanceSimToProDefaults(e.target);
-                }
-                if (e.target.dataset.settingId === 'spawnCensusExport') {
-                    this.exportSpawnCensus(e.target);
                 }
                 if (e.target.dataset.settingId === 'itemTooltip_selfUseKeepList') {
                     this.openSelfUseKeepList();
@@ -1844,50 +1840,6 @@ class SettingsUI {
             setTimeout(() => {
                 if (button.isConnected) button.textContent = label;
             }, 1500);
-        }
-    }
-
-    /**
-     * Download the Spawn Census export, the same file `Toolasha.Debug.spawnCensusExport()`
-     * produces, from a settings button so contributing data doesn't need the console.
-     *
-     * Works regardless of whether the `spawnCensus` checkbox is currently on - someone may
-     * have switched it off but still wants what was already collected, so this button carries
-     * no `disabledBy`. The only thing that blocks it is having nothing recorded yet, which is
-     * reported on the button itself rather than silently downloading an empty file.
-     *
-     * @param {HTMLElement} [button] - The pressed button, for a moment's feedback
-     */
-    async exportSpawnCensus(button) {
-        const label = button?.textContent;
-        const flash = (text) => {
-            if (!button) return;
-            button.textContent = text;
-            setTimeout(() => {
-                if (button.isConnected) button.textContent = label;
-            }, 2000);
-        };
-
-        // If the feature was off when this page loaded, nothing was hydrated from
-        // storage into memory (initialize() bails before load() in that case) - a
-        // prior session's data would otherwise look like it was never collected.
-        // Unconditional now that load() is idempotent: the previous "only when
-        // memory is empty" guard was still true for a second press that arrived
-        // while the first read was in flight, and hydrate() is additive, so two
-        // quick presses doubled every count and then flushed the doubled copy.
-        await spawnCensus.load();
-
-        await spawnCensus.flush();
-        const waveCount = spawnCensus.summary().wavesSeen;
-        if (!waveCount) {
-            flash('Nothing recorded yet');
-            return;
-        }
-
-        if (spawnCensus.downloadExport()) {
-            flash(`Exported ${waveCount.toLocaleString()} waves ✓`);
-        } else {
-            flash('Nothing recorded yet');
         }
     }
 
