@@ -11,6 +11,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 const game = vi.hoisted(() => ({
     inventory: [],
@@ -226,6 +227,7 @@ const {
     enhancementCost,
     upgradeBaseCost,
     upgradeBaseRoute,
+    mirrorBuildRoute,
     resetEquipmentSavings,
     setLocked,
     watchAbility,
@@ -2671,4 +2673,202 @@ describe('what one redraw costs', () => {
         // run, and the chip naming the bench on the card
         expect(benches).toBeLessThanOrEqual(2);
     }, 30_000);
+});
+
+describe("the Philosopher's Mirror build as a route", () => {
+    // The maintainer's case: Furious Spear ★ +13. The game makes a ★+13 from the ★+12 it runs on, an
+    // unrefined Furious Spear +11 (baseItemHrids[0]) and a mirror. Prices are the ones off the enhancement tooltip.
+    const REFINED = '/items/furious_spear_refined';
+    const PLAIN = '/items/furious_spear';
+    const MIRROR = '/items/philosophers_mirror';
+    const bills = [];
+
+    // What the game's sale tax leaves of a bid, floored to whole coins (the repo's own rate, not a copy of it)
+    const afterTax = (bid) => Math.floor(calculatePriceAfterTax(bid));
+
+    beforeEach(() => {
+        bills.length = 0;
+        window.Toolasha = { Actions: { missingMaterialsButton: { openMaterialsList: (...args) => bills.push(args) } } };
+        game.equipment = new Map();
+        game.details[PLAIN] = { name: 'Furious Spear', equipmentDetail: { type: '/equipment_types/main_hand' } };
+        game.details[REFINED] = {
+            name: 'Furious Spear ★',
+            equipmentDetail: { type: '/equipment_types/main_hand' },
+            baseItemHrids: [PLAIN],
+        };
+        game.details[MIRROR] = { name: "Philosopher's Mirror" };
+        game.actions['/actions/refine_furious'] = {
+            outputItems: [{ itemHrid: REFINED, count: 1 }],
+            inputItems: [{ itemHrid: '/items/shard', count: 266 }],
+            upgradeItemHrid: PLAIN,
+            retainAllEnhancement: true,
+        };
+        game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 560_000_000 };
+        game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 2_080_000_000 };
+        game.prices[`${PLAIN}:11`] = { ask: 940_000_000, bid: 900_000_000 };
+        game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 3_700_000_000 };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    const own = (itemHrid, enhancementLevel, location = '/item_locations/inventory') =>
+        game.inventory.push({ itemHrid, enhancementLevel, count: 1, itemLocationHrid: location });
+    const only = () => watchedTargets()[0];
+
+    test('neither input owned: both bought at ask, the mirror wins when the listing is dearer', () => {
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        expect(target.route).toBe('mirror');
+        expect(target.cost).toBe(2_320_000_000 + 940_000_000 + 612_500_000);
+        expect(target.realCost).toBe(target.cost);
+        expect(target.mirrorBuild.inputs.map((input) => input.owned)).toEqual([false, false]);
+    });
+
+    test('it loses when the listing is cheaper, and the card still offers it as the alternative', () => {
+        game.prices[`${REFINED}:13`] = { ask: 3_000_000_000, bid: 2_800_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        expect(target.route).toBeNull();
+        expect(target.cost).toBe(3_000_000_000);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Mirror build instead:');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('an owned copy it consumes is charged at its after-tax bid, never as free', () => {
+        own(REFINED, 12);
+        game.prices[`${REFINED}:13`] = { ask: 3_500_000_000, bid: 3_000_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        const sale = afterTax(2_080_000_000);
+        // 940M + 612.5M of coins is far under the 3.5B listing, but the build gives up the +12 sale
+        // (2.04B) too: 3.59B of real cost, dearer than the listing, so the listing stands
+        expect(target.mirrorBuild.coins).toBe(940_000_000 + 612_500_000);
+        expect(target.mirrorBuild.forgone).toBe(sale);
+        expect(target.mirrorBuild.real).toBe(940_000_000 + 612_500_000 + sale);
+        expect(target.route).toBeNull();
+        expect(target.cost).toBe(3_500_000_000);
+    });
+
+    test('when it wins with an owned copy, cost is the coins to find and realCost counts the sale', () => {
+        own(REFINED, 12);
+        game.prices[`${REFINED}:13`] = { ask: 3_800_000_000, bid: 3_500_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+        const sale = afterTax(2_080_000_000);
+
+        expect(target.route).toBe('mirror');
+        expect(target.cost).toBe(940_000_000 + 612_500_000);
+        expect(target.realCost).toBe(940_000_000 + 612_500_000 + sale);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Mirror build:');
+        expect(text()).toContain('gives up');
+        expect(text()).toContain('real cost');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('both inputs owned: only the mirror is bought, both sales are given up', () => {
+        own(REFINED, 12);
+        own(PLAIN, 11);
+        watchTarget(REFINED, 13);
+        const build = only().mirrorBuild;
+
+        expect(build.coins).toBe(612_500_000);
+        expect(build.forgone).toBe(afterTax(2_080_000_000) + afterTax(900_000_000));
+        expect(build.bill).toEqual([{ itemHrid: MIRROR, count: 1 }]);
+    });
+
+    test('a worn piece the build consumes is not also traded in', () => {
+        own(REFINED, 12, '/item_locations/main_hand');
+        const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+        game.equipment = new Map([['/item_locations/main_hand', worn]]);
+        const build = mirrorBuildRoute(REFINED, 13, { worn });
+
+        expect(build.wornConsumed).toBe(true);
+        // No trade-in credit against the coins: the worn piece cannot be sold and mirrored
+        expect(build.cash).toBe(940_000_000 + 612_500_000);
+        // Selling it is the baseline the listing route nets, so it cancels out of the real cost
+        expect(build.real).toBe(940_000_000 + 612_500_000);
+        // Keeping the old piece: no baseline sale, so the consumed copy is a real charge
+        const keeping = mirrorBuildRoute(REFINED, 13, { worn, noSell: true });
+        expect(keeping.real).toBe(940_000_000 + 612_500_000 + afterTax(2_080_000_000));
+    });
+
+    test('a listed copy cannot be consumed, so the input is bought', () => {
+        own(REFINED, 12, '/item_locations/market_listing');
+        const build = mirrorBuildRoute(REFINED, 13);
+
+        expect(build.inputs[0].owned).toBe(false);
+        expect(build.coins).toBe(2_320_000_000 + 940_000_000 + 612_500_000);
+    });
+
+    test('unpriced: an owned copy with no bid, or a bought input with no ask, makes the route unpriced', () => {
+        own(REFINED, 12);
+        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 0 };
+        expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
+        watchTarget(REFINED, 13);
+        expect(only().route).toBeNull();
+        expect(only().mirrorBuild).toBeNull();
+
+        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 2_080_000_000 };
+        delete game.prices[`${PLAIN}:11`];
+        expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
+    });
+
+    test('not applicable: no mirror price, or a level the mirror cannot make', () => {
+        expect(mirrorBuildRoute(REFINED, 2)).toBeNull();
+        delete game.prices[`${MIRROR}:0`];
+        expect(mirrorBuildRoute(REFINED, 13)).toBeNull();
+        watchTarget(REFINED, 13);
+        expect(only().route).toBeNull();
+        expect(only().cost).toBe(5_000_000_000);
+    });
+
+    test('a plain piece mirrors from its own +(L-1) and +(L-2)', () => {
+        game.prices[`${PLAIN}:12`] = { ask: 1_000_000_000, bid: 900_000_000 };
+        const build = mirrorBuildRoute(PLAIN, 13);
+
+        expect(build.inputs.map((input) => [input.itemHrid, input.level])).toEqual([
+            [PLAIN, 12],
+            [PLAIN, 11],
+        ]);
+    });
+
+    test('a crafted card names the mirror route and Missing Mats shops its inputs', async () => {
+        own(REFINED, 12);
+        game.prices['/items/shard:0'] = { ask: 2_380_000, bid: 2_000_000 };
+        watchTarget(REFINED, 13);
+        toggleCrafting(REFINED, 13);
+        const target = only();
+
+        // 266 shards (633M) plus a +13 base at 4B is the refine route; the mirror build beats it
+        expect(target.crafted).toBe(true);
+        expect(target.route).toBe('mirror');
+
+        equipmentSavingsPanel.show();
+        const button = equipmentSavingsPanel.panel.querySelector('[data-mirror-bill]');
+        expect(button).toBeTruthy();
+        button.click();
+        await Promise.resolve();
+
+        expect(bills).toHaveLength(1);
+        expect(bills[0][0]).toEqual([
+            { itemHrid: PLAIN, enhancementLevel: 11, count: 1 },
+            { itemHrid: MIRROR, count: 1 },
+        ]);
+    });
+
+    test('an advisor quote stands for itself: no mirror route replaces it', () => {
+        watchTarget(REFINED, 13, { cost: 1_000_000_000, costSource: 'Lab' });
+        const target = only();
+
+        expect(target.route).toBeNull();
+        expect(target.cost).toBe(1_000_000_000);
+    });
 });

@@ -85,7 +85,9 @@ import {
     getCheapestProtectionPrice,
     perAttemptMaterialCost,
     pricingStamp,
+    priceMirror,
 } from '../../utils/enhancement-input-pricing.js';
+import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID } from '../../utils/mirror-route.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -1488,7 +1490,7 @@ function basePrice(itemHrid) {
  * @param {number} enhancementLevel - Which enhancement
  * @returns {{cost: number|null, ask: number, crafted: boolean, recipe: Object|null}}
  */
-function costOf(itemHrid, enhancementLevel) {
+function conventionalCost(itemHrid, enhancementLevel) {
     const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
     const worn = wornRivalOf(itemHrid);
     const wornBid = wornTradeIn(worn);
@@ -1707,6 +1709,165 @@ export function upgradeBaseRoute(recipe, enhancementLevel, priceBase) {
     return candidates.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
 }
 
+/** Where a piece in the inventory list is a market listing, which cannot be spent */
+const LISTED_LOCATION = '/item_locations/market_listing';
+
+/** Where an unequipped piece sits */
+const BAG_LOCATION = '/item_locations/inventory';
+
+/**
+ * Whether a copy of exactly this piece at exactly this level is in hand to be consumed.
+ *
+ * A bag copy is preferred to the worn one: the worn one is what the trade-in
+ * rule is about. A listed copy is on the auction and cannot go into a mirror.
+ *
+ * @param {string} itemHrid - The piece
+ * @param {number} level - Enhancement level
+ * @param {{itemHrid: string, enhancementLevel?: number}|null} worn - What the slot holds
+ * @returns {{worn: boolean}|null} Null when none is held
+ */
+function heldCopyAt(itemHrid, level, worn) {
+    let bag = false;
+    let equipped = false;
+    for (const item of dataManager.getInventory?.() || []) {
+        // Same explicit-zero-only rule as highestOwnedLevel: an equipped entry carries no count
+        if (item.itemHrid !== itemHrid || item.count === 0) continue;
+        if ((item.enhancementLevel || 0) !== level) continue;
+        const location = item.itemLocationHrid;
+        if (location === LISTED_LOCATION) continue;
+        if (!location || location === BAG_LOCATION) bag = true;
+        else equipped = true;
+    }
+    if (bag) return { worn: false };
+    const wornMatch = Boolean(worn) && worn.itemHrid === itemHrid && (worn.enhancementLevel || 0) === level;
+    if (wornMatch) return { worn: true };
+    return equipped ? { worn: false } : null;
+}
+
+/**
+ * The Philosopher's Mirror build for one target: a +L is made from a +(L-1) of the
+ * piece itself and a +(L-2) of its base item (the unrefined one for a refined piece,
+ * `baseItemHrids[0]`), plus a mirror. The same recipe the enhancement tooltip and the
+ * upgrade advisor price (see `utils/mirror-route.js`).
+ *
+ * An input already owned is CONSUMED, so it is not free: it is charged at what selling it
+ * would have fetched (its bid after tax). An input not owned is bought at its ask. Three
+ * figures come out, because they answer three questions:
+ *
+ * - `cash`: coins to find. Bought inputs and the mirror, less the worn piece's trade-in when
+ *   the worn piece is not itself consumed (a consumed worn piece cannot also be sold). This is
+ *   what the bar, the countdown and the alerts fill against.
+ * - `real`: `coins` plus the sale value of the owned copies the build uses, net of the trade-in
+ *   credit the buy route also nets. This is what routes are compared on, so a build never wins
+ *   merely because it needs less cash.
+ * - `forgone`: the sale value of the owned copies consumed, for the card's own line.
+ *
+ * Not modelled (the build is simply not offered, never mispriced): building an input with a
+ * mirror of its own, enhancing an owned lower copy up to the level, Blessed Tea.
+ *
+ * @param {string} itemHrid - The target
+ * @param {number} level - Enhancement level wanted
+ * @param {Object} [context] - Context
+ * @param {Object|null} [context.worn] - The piece in the slot
+ * @param {boolean} [context.noSell] - Keeping the old piece, so no trade-in
+ * @returns {Object|null} Null when the build does not apply; `{unpriced: true}` when an input
+ *   or the mirror has no price; otherwise the priced build
+ */
+export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false } = {}) {
+    if (!itemHrid || !(level >= MIRROR_FIRST_LEVEL)) return null;
+
+    const mirror = priceMirror();
+    if (!(mirror?.price > 0) || mirror.unpriced || mirror.partial) return null;
+
+    const details = dataManager.getItemDetails?.(itemHrid);
+    const baseHrid =
+        details?.baseItemHrids?.[0] ||
+        (itemHrid.endsWith('_refined') ? recipeFor(itemHrid)?.upgradeItemHrid : null) ||
+        itemHrid;
+
+    const wanted = [
+        { itemHrid, level: level - 1 },
+        { itemHrid: baseHrid, level: level - 2 },
+    ];
+    const inputs = [];
+    let bought = 0;
+    let forgone = 0;
+    let wornConsumed = false;
+    for (const want of wanted) {
+        const held = heldCopyAt(want.itemHrid, want.level, worn);
+        if (held) {
+            // What selling it would have fetched, after tax. No bid is an unpriced route, not a free copy
+            const sale = wornTradeIn({ itemHrid: want.itemHrid, enhancementLevel: want.level });
+            if (!(sale > 0)) return { unpriced: true };
+            forgone += sale;
+            if (held.worn) wornConsumed = true;
+            inputs.push({ ...want, owned: true, worn: held.worn, price: sale });
+        } else {
+            const ask = getItemPrices(want.itemHrid, want.level)?.ask || 0;
+            if (!(ask > 0)) return { unpriced: true };
+            bought += ask;
+            inputs.push({ ...want, owned: false, worn: false, price: ask });
+        }
+    }
+
+    const coins = bought + mirror.price;
+    const credit = noSell ? 0 : wornTradeIn(worn);
+    return {
+        inputs,
+        mirrorPrice: mirror.price,
+        coins,
+        forgone,
+        wornConsumed,
+        cash: Math.max(0, coins - (wornConsumed ? 0 : credit)),
+        real: Math.max(0, coins + forgone - credit),
+        bill: [
+            ...inputs
+                .filter((input) => !input.owned)
+                .map((input) => ({ itemHrid: input.itemHrid, enhancementLevel: input.level, count: 1 })),
+            { itemHrid: MIRROR_ITEM_HRID, count: 1 },
+        ],
+    };
+}
+
+/**
+ * What one target costs by the cheapest route: the conventional one (buy, craft, or
+ * enhance) or a Philosopher's Mirror build.
+ *
+ * Routes are compared on REAL cost, but `cost` stays the coins to find, which is what every
+ * reader (bar, countdown, sort, totals, alerts) fills against. Without a mirror price, or on
+ * the enhance-only route for gear nobody sells, the result is the conventional one unchanged.
+ *
+ * @param {string} itemHrid - The target
+ * @param {number} enhancementLevel - Which enhancement
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.mirror] - Whether a mirror build may win (off when an advisor quote supplies the figure)
+ * @returns {Object} `conventionalCost`'s fields plus `realCost`, `route` ('mirror' when the build wins)
+ *   and `mirrorBuild` (the priced build, winning or not)
+ */
+function costOf(itemHrid, enhancementLevel, { mirror: allowMirror = true } = {}) {
+    const base = conventionalCost(itemHrid, enhancementLevel);
+    const plain = { ...base, realCost: base.cost, route: null, mirrorBuild: null };
+    // Enhancing a piece nobody sells is its own decision (direct against ladder)
+    if (base.enhancing) return plain;
+
+    const worn = wornRivalOf(itemHrid);
+    const noSell = targetNoSell(itemHrid, enhancementLevel);
+    const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
+    if (!build || build.unpriced) return plain;
+
+    const winning = allowMirror && (base.cost === null || build.real < base.cost);
+    if (!winning) return { ...plain, mirrorBuild: build };
+    return {
+        ...base,
+        cost: build.cash,
+        realCost: build.real,
+        route: 'mirror',
+        mirrorBuild: build,
+        // The craft route's listing no longer applies
+        upgradeBaseLevel: 0,
+    };
+}
+
 /**
  * Every target, costed against what you are wearing and what you have.
  *
@@ -1727,8 +1888,14 @@ function costEveryTarget() {
     const targets = Object.entries(state.targets).map(([key, target]) => {
         const itemHrid = target.itemHrid || key;
         const enhancementLevel = target.enhancementLevel || 0;
+        // A figure the caller costed wins over one derived here (see below), and an advisor quote
+        // already models mirrors, so a mirror build only competes when this module does the costing
+        const hasQuote = Number.isFinite(target.quotedCost);
         const {
             cost,
+            realCost,
+            route,
+            mirrorBuild,
             ask,
             crafted,
             recipe,
@@ -1740,7 +1907,7 @@ function costEveryTarget() {
             mode,
             enhanceSource,
             upgradeBaseLevel,
-        } = costOf(itemHrid, enhancementLevel);
+        } = costOf(itemHrid, enhancementLevel, { mirror: !hasQuote });
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = wornTradeIn(worn);
@@ -1779,7 +1946,15 @@ function costEveryTarget() {
             noSell: targetNoSell(itemHrid, enhancementLevel),
             ownNoSell: target.noSell !== undefined,
             worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
+            // Coins to find: what the bar, the countdown, the sort and the totals fill against
             cost: settled,
+            // The cost with the sale value of any owned copy a route consumes counted in. Only
+            // choosing between routes reads it; a quoted figure stands for itself
+            realCost: quoted ?? realCost,
+            // 'mirror' when a Philosopher's Mirror build is the cheapest route, else null
+            route: hasQuote ? null : route,
+            // The priced build whether or not it won, for the card to name or offer
+            mirrorBuild: mirrorBuild || null,
             // What this module would have said on its own, and who said
             // otherwise — the card needs both to explain the figure it shows
             derivedCost: cost,
@@ -2306,9 +2481,12 @@ function targetCard(target) {
     cost.title =
         target.cost === null
             ? 'Nobody is selling this, so what it would cost is unknown rather than nothing.'
-            : target.worn
-              ? `${formatKMB(target.ask)} to buy, less ${formatKMB(target.worn.bid)} for your ${target.worn.name}.`
-              : `${formatKMB(target.ask)} to buy. Nothing in that slot to trade in.`;
+            : target.route === 'mirror' && target.mirrorBuild
+              ? `${formatKMB(target.cost)} in coins to build it with a Philosopher's Mirror. ` +
+                mirrorBuildSummary(target.mirrorBuild)
+              : target.worn
+                ? `${formatKMB(target.ask)} to buy, less ${formatKMB(target.worn.bid)} for your ${target.worn.name}.`
+                : `${formatKMB(target.ask)} to buy. Nothing in that slot to trade in.`;
 
     const remove = document.createElement('button');
     remove.textContent = '✕';
@@ -2385,7 +2563,10 @@ function targetCard(target) {
     if (target.enhancing && target.ladder) perTarget.appendChild(ladderButton(target));
     card.appendChild(perTarget);
 
-    if (target.enhancing) {
+    if (target.route === 'mirror' && target.mirrorBuild) {
+        card.appendChild(mirrorLines(target));
+        card.appendChild(mirrorBillButton(target.mirrorBuild.bill));
+    } else if (target.enhancing) {
         // The chosen path leads in gold and the other follows in blue, so the
         // two rows swap places rather than the card losing one of them: the
         // comparison is the whole point, and only which one the bar is filling
@@ -2432,6 +2613,19 @@ function targetCard(target) {
                 'Difference:',
                 `+${formatWithSeparator(Math.round(target.cost ?? 0))}`,
                 target.affordable ? ROW_COLORS.good : ROW_COLORS.bad
+            )
+        );
+    }
+
+    // A mirror build that is priced but not the cheapest is still worth its figure: it is the
+    // alternative a player might take for a different reason (to keep a copy, say)
+    if (target.route !== 'mirror' && target.mirrorBuild && target.quotedCost == null) {
+        card.appendChild(
+            priceLine(
+                'Mirror build instead:',
+                formatWithSeparator(Math.round(target.mirrorBuild.real)),
+                ROW_COLORS.accent,
+                mirrorBuildSummary(target.mirrorBuild)
             )
         );
     }
@@ -2516,6 +2710,125 @@ function missingMatsButton(actionHrid, upgradeBaseLevel = 0) {
         button.textContent = 'Opening…';
         try {
             await open(actionHrid, 1, { upgradeItemLevel: upgradeBaseLevel });
+        } catch (error) {
+            console.error('[EquipmentSavings] Opening the missing materials failed:', error);
+            button.textContent = 'Could not open the marketplace';
+        }
+    });
+    return button;
+}
+
+/**
+ * One input of a mirror build, named with its level: "Furious Spear ★ +12".
+ * @param {{itemHrid: string, level: number}} input - An input of the build
+ * @returns {string}
+ */
+function mirrorInputName(input) {
+    return `${nameOf(input.itemHrid)} +${input.level}`;
+}
+
+/**
+ * The mirror build in a sentence, for a tooltip.
+ * @param {Object} build - From `mirrorBuildRoute`
+ * @returns {string}
+ */
+function mirrorBuildSummary(build) {
+    const parts = build.inputs.map((input) =>
+        input.owned
+            ? `your ${mirrorInputName(input)} (gives up ${formatKMB(input.price)} sale)`
+            : `a ${mirrorInputName(input)} (${formatKMB(input.price)})`
+    );
+    return `Mirror build: ${parts.join(' + ')} + a Philosopher's Mirror (${formatKMB(build.mirrorPrice)}).`;
+}
+
+/**
+ * The mirror build, itemised: every input as owned or bought, the mirror, the sale the owned
+ * copies give up, and the coins to find.
+ *
+ * Two numbers on purpose. The coins are what the bar fills against; the real cost also counts
+ * the sale value of the copies the build consumes, and it is what the route was chosen on.
+ *
+ * @param {Object} target - A costed target whose cheapest route is the mirror build
+ * @returns {HTMLElement}
+ */
+function mirrorLines(target) {
+    const build = target.mirrorBuild;
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, { display: 'flex', flexDirection: 'column', gap: '1px' });
+
+    const owned = build.inputs.filter((input) => input.owned);
+    const summary = build.inputs.map((input) =>
+        input.owned ? `your ${mirrorInputName(input)}` : `a ${mirrorInputName(input)}`
+    );
+    wrap.appendChild(
+        priceLine(
+            'Mirror build:',
+            `${summary.join(' + ')} + a Philosopher's Mirror`,
+            ROW_COLORS.gold,
+            "The cheapest route found. A Philosopher's Mirror always succeeds: it turns a +(L-1) and a +(L-2) " +
+                'into a +L.'
+        )
+    );
+    for (const input of build.inputs) {
+        wrap.appendChild(
+            priceLine(
+                mirrorInputName(input),
+                input.owned ? 'you have one' : formatWithSeparator(Math.round(input.price)),
+                input.owned ? ROW_COLORS.good : ROW_COLORS.gold
+            )
+        );
+    }
+    wrap.appendChild(
+        priceLine("Philosopher's Mirror", formatWithSeparator(Math.round(build.mirrorPrice)), ROW_COLORS.gold)
+    );
+
+    // An owned copy that goes into the build is not free: it is a sale not made
+    if (owned.length) {
+        wrap.appendChild(
+            priceLine(
+                `Uses your ${owned.map(mirrorInputName).join(' and ')} — gives up ${formatKMB(build.forgone)} sale`,
+                `real cost ${formatKMB(target.realCost ?? build.real)}`,
+                ROW_COLORS.accent,
+                'The sale value counted is the bid after tax. The bar fills against the coins below; the route ' +
+                    'was chosen on this real cost, so it never wins just because it needs less cash.'
+            )
+        );
+    }
+
+    wrap.appendChild(
+        priceLine(
+            'Difference:',
+            target.cost === null ? 'no price' : `+${formatWithSeparator(Math.round(target.cost))}`,
+            target.cost === null ? ROW_COLORS.bad : target.affordable ? ROW_COLORS.good : ROW_COLORS.bad
+        )
+    );
+    return wrap;
+}
+
+/**
+ * The Missing Mats button for a mirror build: shops for what the build actually needs (the
+ * inputs not owned, and the mirror), not the old route's listing. Owned copies are not billed.
+ *
+ * @param {Array<{itemHrid: string, enhancementLevel?: number, count: number}>} bill - From `mirrorBuildRoute`
+ * @returns {HTMLElement}
+ */
+function mirrorBillButton(bill) {
+    const button = document.createElement('button');
+    button.textContent = 'Missing Mats Marketplace';
+    button.dataset.mirrorBill = 'true';
+    styleGameButton(button, 'primary', true);
+    Object.assign(button.style, { marginTop: '4px', width: '100%', height: 'auto', minHeight: '1.5rem' });
+    button.title = "Open the marketplace on the inputs and the Philosopher's Mirror this build is short of.";
+
+    button.addEventListener('click', async () => {
+        const open = missingMaterialsButton()?.openMaterialsList;
+        if (!open) {
+            button.textContent = 'The action panel feature is off';
+            return;
+        }
+        button.textContent = 'Opening…';
+        try {
+            await open(bill);
         } catch (error) {
             console.error('[EquipmentSavings] Opening the missing materials failed:', error);
             button.textContent = 'Could not open the marketplace';
