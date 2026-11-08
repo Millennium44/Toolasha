@@ -164,7 +164,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
-import { ladderSentence } from './cost-basis-text.js';
+import { compactCostLines } from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -9075,7 +9075,7 @@ class LabSimUI {
                 const fightRows = fightBreakdown(r);
                 html += `<tr data-allfights-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${goldExactHtml(r.cost, null)}${fightRows}${this._renderAllFightsNotes(r)}</td>
+                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${goldExactHtml(r.cost, null)}${this._renderAllFightsCostExplanation(r)}${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
             });
 
@@ -9396,7 +9396,7 @@ class LabSimUI {
             </tr>
             <tr data-allfights-level-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
+                    ${this._renderAllFightsCostExplanation(r)}${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
         });
         return html + '</tbody></table></div></div>';
@@ -9522,7 +9522,7 @@ class LabSimUI {
                     `<div style="color:#8ab4f8; margin-top:6px; white-space:normal; line-height:1.4;">${note}</div>`
             )
             .join('');
-        return explanation + noteHtml;
+        return noteHtml;
     }
 
     /**
@@ -9553,37 +9553,27 @@ class LabSimUI {
             (Number.isFinite(cost) && Number.isFinite(net) && Math.abs(cost - net) <= 1);
         if (!agrees) return '';
 
-        const parts = [];
-        const source = COST_SOURCES[detail.source];
-        if (source) parts.push(line(`Cost basis: ${source.label} — ${source.title}`));
-        const money = (value) => formatKMB(Math.round(value));
-        if (detail.ladder && (detail.gross != null || detail.ladder.alreadyHeld)) {
-            parts.push(line(ladderSentence(detail.ladder, detail.gross), '#888'));
-        } else if (detail.enhancementPath || candidate?.type === 'enhancement') {
-            const from = candidate?.currentLevel ?? 0;
-            const to = candidate?.upgradeLevel;
-            if (detail.enhancementPath && to != null) {
-                parts.push(
-                    line(
-                        detail.gross == null
-                            ? `Enhance from +${from} to +${to}: no priced path to get there.`
-                            : `Enhance from +${from} to +${to} for ${money(detail.gross)} — an expected cost over a random process, not a quote.`,
-                        '#888'
-                    )
-                );
-            } else if (to != null && detail.buys?.length) {
-                parts.push(
-                    line(
-                        `Buy the +${to} copy and sell back the +${from} you replace; the difference is the cost.`,
-                        '#888'
-                    )
-                );
-            }
-        }
-        const breakdown = this._renderCostBreakdown(detail, {
-            keptReason: candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH,
+        const checkedSwap = Boolean(candidate?.checkedSwap);
+        const keptReason = checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH;
+        const lines = compactCostLines(detail, {
+            basisTitle: COST_SOURCES[detail.source]?.title,
+            keptWhy: checkedSwap
+                ? 'a loadout this swap does not reach still wears it'
+                : 'the labyrinth needs every set',
+            keptTitle: `Resale is deliberately not credited ${keptReason}`,
+            fromLevel: candidate?.currentLevel ?? 0,
+            toLevel: candidate?.upgradeLevel,
+            isEnhancement: candidate?.type === 'enhancement',
         });
-        return `<div data-cost-explanation style="margin-top:6px;">${parts.join('')}${breakdown}</div>`;
+        if (lines.length === 0) return '';
+        const colors = { main: '#aaa', kept: '#8ab4f8', warn: '#ff9800' };
+        const html = lines
+            .map((entry) => {
+                const tip = entry.title ? ` title="${escapeHtmlAttribute(entry.title)}"` : '';
+                return `<div${tip} style="color:${colors[entry.tone] || '#aaa'}; font-size:11px; white-space:normal; line-height:1.4;">${entry.text}</div>`;
+            })
+            .join('');
+        return `<div data-cost-explanation style="margin-top:6px;">${html}</div>`;
     }
 
     /**
@@ -9674,7 +9664,7 @@ class LabSimUI {
                 const cells = cellsOf(r);
                 return {
                     actionsHtml: combatSimUI.upgradeRowActionsHtml(r),
-                    detailHtml: `${goldExactHtml(r.cost, null)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                    detailHtml: `${goldExactHtml(r.cost, null)}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
                     // The sampling-error note is about the attempts figures only
                     within: !cells.measured && (!lead || lead === 'attemptsDelta' || lead === 'perMillion'),
                     unpriced: !Number.isFinite(r.cost),
@@ -9789,7 +9779,7 @@ class LabSimUI {
             nameOf: (r) => r.candidate.description,
             keyOf: (r) => `level:${r.candidate.description}`,
             extra: (r) => ({
-                detailHtml: `${levelCellsOf(r).alongLine}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                detailHtml: `${levelCellsOf(r).alongLine}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
                 within: !levelCellsOf(r).measured && ['attemptsDelta', 'hoursPer', 'score'].includes(lead),
                 offerVerify: false,
             }),

@@ -3958,12 +3958,13 @@ describe('the budget plan when a pick pays for itself', () => {
                 })
             );
             expect(text).toContain('Exact: Cost 208,080,000 coins');
-            expect(text).toContain('Cost basis: sim');
-            expect(text).toContain('Enhance from +7 to +10 for 208.1M');
-            expect(text).toContain('expected cost');
-            expect(text).toContain('Enhance rates: Pro');
-            expect(text).toContain('Total 208,080,000');
+            expect(text).toContain('Enhanced, estimate: +7 → +10 = 208.1M.');
+            expect(text).not.toContain('Cost basis');
+            expect(text).not.toContain('Total');
             expect(text).not.toContain('could not be drawn');
+            const line = container.querySelector('[data-cost-explanation] div');
+            expect(line.getAttribute('title')).toContain('simulated');
+            expect(line.getAttribute('title')).toContain('Enhance rates: Pro');
         });
 
         test('an enhancement on a held copy says which copy it enhances', () => {
@@ -3989,8 +3990,8 @@ describe('the budget plan when a pick pays for itself', () => {
                     },
                 })
             );
-            expect(text).toContain('Enhance from +7 to +10 for 90.0M, on the copy you are wearing.');
-            expect(text).toContain('Cost basis: enh');
+            expect(text).toContain('Enhanced, expected: +7 → +10 on the copy you wear = 90.0M.');
+            expect(text).not.toContain('Cost basis');
         });
 
         test('a market buy names the purchase, the resale credit after tax and the total', () => {
@@ -4006,11 +4007,10 @@ describe('the budget plan when a pick pays for itself', () => {
                     source: 'market',
                 })
             );
-            expect(text).toContain('Cost basis: mkt');
-            expect(text).toContain('Buy Anchorbound Plate Legs +10');
-            expect(text).toContain('Sell Anchorbound Plate Legs +7');
-            expect(text).toContain('40,000,000 back');
-            expect(text).toContain('Total 100,000,000 − credit = 60,000,000');
+            expect(text).toContain(
+                'Market: buy Anchorbound Plate Legs +10 for 100.0M, sell your +7 for 40.0M after tax = 60.0M.'
+            );
+            expect(text).not.toContain('Cost basis');
         });
 
         test('kept armor says it is kept rather than sold, once', () => {
@@ -4027,8 +4027,12 @@ describe('the budget plan when a pick pays for itself', () => {
                     keptValue: 5_000_000,
                 })
             );
-            expect(text).toContain('Keeping Rough Legs +3');
-            expect(text.split('Keeping Rough Legs').length).toBe(2);
+            expect(text).toContain('Market: buy Anchorbound Plate Legs +10 for 100.0M.');
+            expect(text).toContain('Keeps Rough Legs +3 (5.0M resale not credited: the labyrinth needs every set).');
+            expect(text.split('Rough Legs').length).toBe(2);
+            expect(text).not.toContain('Total');
+            const kept = [...container.querySelectorAll('[data-cost-explanation] div')].pop();
+            expect(kept.getAttribute('title')).toContain('Keep gear the forced armor swaps replace');
         });
 
         test('an unpriced row says why it has no price', () => {
@@ -4044,9 +4048,80 @@ describe('the budget plan when a pick pays for itself', () => {
                     enhancementPath: true,
                 })
             );
-            expect(text).toContain('no priced path to get there');
+            expect(text).toContain('No price for Anchorbound Plate Legs');
             expect(text).toContain('Cost shows as');
-            expect(text).toContain('Anchorbound Plate Legs');
+        });
+
+        test('the explanation sits right under the Exact line, before the per-fight rows', () => {
+            ui._renderAllFightsResults(
+                rowWith(enhancement, 90_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 90_000_000,
+                    credit: 0,
+                    net: 90_000_000,
+                    unpriced: [],
+                    source: 'enhance',
+                    enhancementPath: true,
+                }),
+                container
+            );
+            const html = container.querySelector('[data-allfights-detail="0"]').innerHTML;
+            const exact = html.indexOf('data-exact-figures');
+            const explanation = html.indexOf('data-cost-explanation');
+            const fight = html.indexOf('Monster');
+            expect(exact).toBeGreaterThan(-1);
+            expect(explanation).toBeGreaterThan(exact);
+            if (fight > -1) expect(explanation).toBeLessThan(fight);
+        });
+
+        test('a held spare buys nothing and prints no zero-priced line', () => {
+            const text = detailText(
+                rowWith(enhancement, 0, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 0 }],
+                    credits: [],
+                    gross: 0,
+                    credit: 0,
+                    net: 0,
+                    unpriced: [],
+                    source: 'enhance',
+                    ladder: { fromLevel: 10, toLevel: 10, alreadyHeld: true, fresh: false },
+                })
+            );
+            expect(text).toContain('You already hold a +10 spare that meets +10: nothing to buy.');
+            expect(text).not.toMatch(/— 0|Buy /);
+        });
+
+        test('a mirror row says it builds, never buys, and folds the resale into one line', () => {
+            const text = detailText(
+                rowWith({ ...enhancement, upgradeLevel: 12 }, 10_369_584_310, {
+                    buys: [
+                        { hrid: LEGS, name: 'Grandmaster Magic Charm', enhancementLevel: 12, price: 15_089_584_310 },
+                    ],
+                    credits: [
+                        { hrid: LEGS, name: 'Grandmaster Magic Charm', enhancementLevel: 10, price: 4_720_000_000 },
+                    ],
+                    gross: 15_089_584_310,
+                    credit: 4_720_000_000,
+                    net: 10_369_584_310,
+                    unpriced: [],
+                    source: 'mirror',
+                    enhanceSource: { label: 'Manual', detail: 'manual params' },
+                    ladder: {
+                        fromLevel: 10,
+                        toLevel: 12,
+                        fresh: false,
+                        alreadyHeld: false,
+                        mirror: { mirrorPrice: 612_500_000, mirrorCount: 2 },
+                    },
+                })
+            );
+            expect(text).toContain(
+                "Mirror build, estimate: +11 and +10 copies + 2 Philosopher's Mirrors (612.5M each) = 15.1B"
+            );
+            expect(text).toContain('less 4.7B for your +10 sold = 10.4B');
+            expect(text).toContain('Manual enhance rates.');
+            expect(text).not.toMatch(/Buy |Total/);
         });
 
         test('a swap that buys nothing says so', () => {
