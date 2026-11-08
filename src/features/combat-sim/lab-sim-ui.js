@@ -8995,26 +8995,68 @@ class LabSimUI {
 
         // The per-fight breakdown under a row, the same for gear and combat levels
         const fightBreakdown = (r) => {
-            let fightRows = '';
+            // A win rate at or under the floor is a fight never won: its 1000
+            // tries is the floor's ceiling, not a measurement
+            const never = (winRate) => !(winRate > 0.001); // the floor expectedTries clamps at
+            const triesText = (winRate) => {
+                if (never(winRate)) return 'never won';
+                const tries = expectedTries(winRate);
+                return tries >= 10 ? String(Math.round(tries)) : tries.toFixed(1);
+            };
+            const changed = [];
+            const unchanged = [];
             for (let f = 0; f < r.fights.length; f++) {
                 const fight = r.fights[f];
                 const base = baseline.fights[f];
-                const triesBase = expectedTries(base.winRate);
-                const triesNew = expectedTries(fight.winRate);
-                // Untouched rooms are named rather than dropped: "this upgrade
-                // does nothing here" is an answer, and a fight missing from the
-                // list looks like a fight that was not run
+                // Changed means it shows as a non-zero number of points at one decimal
+                const isChanged = fight.applied !== false && Math.round((fight.winRateDelta || 0) * 1000) !== 0;
+                if (isChanged) changed.push({ fight, base });
+                else unchanged.push({ fight, base });
+            }
+            changed.sort((x, y) => (y.fight.winRateDelta || 0) - (x.fight.winRateDelta || 0));
+
+            let fightRows = '';
+            for (const { fight, base } of changed) {
+                const delta = fight.winRateDelta || 0;
+                const pts = `${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)} pts`;
+                const tries = `${triesText(base.winRate)} → ${triesText(fight.winRate)}${never(fight.winRate) ? '' : ' tries'}`;
                 const outcome =
-                    fight.applied === false
-                        ? `<span style="color:${GAME_COLORS.textDim};">${fight.skipReason || 'not in this loadout'} — ${pct(base.winRate)} unchanged</span>`
-                        : `${pct(base.winRate)} → ${pct(fight.winRate)}
-                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
-                        <span style="color:${GAME_COLORS.textDim};">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
-                          `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
-                fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+                    `${pct(base.winRate)} → ${pct(fight.winRate)}
+                        <span style="color:${deltaColor(delta)};">${pts}</span>
+                        <span style="color:${GAME_COLORS.textDim};">· ${tries}` +
+                    `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
+                fightRows += `<div data-fight-changed style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
+            }
+
+            // Untouched rooms are named rather than dropped: "this upgrade
+            // does nothing here" is an answer, and a fight missing from the
+            // list looks like a fight that was not run
+            if (unchanged.length) {
+                const entries = unchanged.map(({ fight, base }) => ({
+                    name: fight.monsterName,
+                    notInLoadout: fight.applied === false,
+                    status: fight.applied === false ? fight.skipReason || 'not in this loadout' : null,
+                    neverWon: never(base.winRate),
+                    rate: never(base.winRate) ? 'never won' : pct(base.winRate),
+                }));
+                const first = entries[0];
+                const allNever = entries.every((e) => e.neverWon);
+                const allSkipped = first.notInLoadout && entries.every((e) => e.status === first.status);
+                let shared = '';
+                let list;
+                if (allNever && !entries.some((e) => e.notInLoadout)) {
+                    shared = ' (never won)';
+                    list = entries.map((e) => e.name).join(', ');
+                } else if (allSkipped) {
+                    shared = ` (${first.status})`;
+                    list = entries.map((e) => `${e.name} ${e.rate}`).join(', ');
+                } else {
+                    list = entries.map((e) => `${e.name}${e.status ? ` (${e.status})` : ''} ${e.rate}`).join(', ');
+                }
+                fightRows += `<div data-fights-unchanged style="color:${GAME_COLORS.textDim}; padding:2px 0; white-space:normal; overflow-wrap:anywhere;">Unchanged in ${unchanged.length} ${unchanged.length === 1 ? 'fight' : 'fights'}${shared}: ${list}</div>`;
             }
             return fightRows;
         };

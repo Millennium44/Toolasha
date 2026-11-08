@@ -3930,6 +3930,93 @@ describe('the budget plan when a pick pays for itself', () => {
         );
     });
 
+    describe('the per-fight lines of an expanded row', () => {
+        const mk = (name, before, after, applied = true) => ({
+            base: { ...fight(0, before), monsterName: name },
+            fight: {
+                ...fight(0, after),
+                monsterName: name,
+                roomLevel: 281,
+                loadoutName: 'Melee - Stab Lab',
+                winRateDelta: after - before,
+                applied,
+            },
+        });
+        const detailOf = (specs, rowExtra = {}) => {
+            const data = analysis();
+            data.baseline.fights = specs.map((s) => s.base);
+            data.results[0] = {
+                ...data.results[0],
+                fights: specs.map((s) => s.fight),
+                ...rowExtra,
+            };
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-detail="0"]');
+            return { detail, text: detail.textContent.replace(/\s+/g, ' ') };
+        };
+
+        test('changed fights come biggest gain first with losses last, in points and tries', () => {
+            const { detail, text } = detailOf([
+                mk('Loser', 0.4, 0.35),
+                mk('Mantis', 0.057, 0.065),
+                mk('Scorpion', 0, 0.0053),
+                mk('Big', 0.2, 0.5),
+            ]);
+            expect(detail.textContent).not.toContain('could not be drawn');
+            const order = ['Big', 'Mantis', 'Scorpion', 'Loser'].map((n) => text.indexOf(n));
+            expect([...order].sort((a, b) => a - b)).toEqual(order);
+            expect(text).toContain('5.7% → 6.5% +0.8 pts · 18 → 15 tries');
+            expect(text).toContain('0.0% → 0.5% +0.5 pts · never won → 189 tries');
+            expect(text).toContain('20.0% → 50.0% +30.0 pts · 5.0 → 2.0 tries');
+            expect(text).toContain('-5.0 pts');
+            expect(text).not.toContain('1000');
+            expect(text).not.toContain('Unchanged');
+        });
+
+        test('a fight that falls to the floor ends in never won', () => {
+            const { text } = detailOf([mk('Fell', 0.3, 0)]);
+            expect(text).toContain('30.0% → 0.0% -30.0 pts · 3.3 → never won');
+        });
+
+        test('unchanged fights collapse to one short-named line with a shared status in the parenthesis', () => {
+            const { detail, text } = detailOf([mk('A', 0, 0), mk('B', 0, 0.0001), mk('C', 0, 0)]);
+            expect(detail.querySelectorAll('[data-fights-unchanged]').length).toBe(1);
+            expect(text).toContain('Unchanged in 3 fights (never won): A, B, C');
+            expect(text).not.toContain('Lv 281');
+        });
+
+        test('mixed unchanged fights list each rate, and a lone one is singular', () => {
+            const mixed = detailOf([mk('Siren', 0.319, 0.319), mk('Dryad', 0, 0), mk('Mimic', 0.373, 0.373)]).text;
+            expect(mixed).toContain('Unchanged in 3 fights: Siren 31.9%, Dryad never won, Mimic 37.3%');
+            expect(detailOf([mk('Siren', 0.319, 0.319)]).text).toContain('Unchanged in 1 fight: Siren 31.9%');
+        });
+
+        test('the live case: seven fights not in the loadout with differing rates, three barely moved', () => {
+            const skipped = [
+                ['Shadow Archer', 0.317],
+                ['Pyre Hunter', 0.321],
+                ['Frost Sniper', 0.312],
+                ['Giant Scorpion', 0.32],
+                ['Giant Mantis', 0.324],
+                ['Cyclops', 0.319],
+                ['Mimic', 0.373],
+            ].map(([n, r]) => mk(n, r, r, false));
+            const { text } = detailOf(
+                [...skipped, mk('Siren', 0.319, 0.32), mk('Salamander', 0.326, 0.328), mk('Dryad', 0.324, 0.326)],
+                { significant: false }
+            );
+            expect(text).toContain(
+                'Unchanged in 7 fights (not in this loadout): Shadow Archer 31.7%, Pyre Hunter 32.1%, Frost Sniper 31.2%, ' +
+                    'Giant Scorpion 32.0%, Giant Mantis 32.4%, Cyclops 31.9%, Mimic 37.3%'
+            );
+        });
+
+        test('a fight not in the loadout beside never-won ones is marked and keeps its rate', () => {
+            const { text } = detailOf([mk('Cyclops', 0.319, 0.319, false), mk('Dryad', 0, 0), mk('Big', 0.2, 0.5)]);
+            expect(text).toContain('Unchanged in 2 fights: Cyclops (not in this loadout) 31.9%, Dryad never won');
+        });
+    });
+
     describe('the expanded row explains its Cost cell', () => {
         const LEGS = '/items/anchorbound_plate_legs';
         const rowWith = (candidate, cost, costDetail, extra = {}) => {
@@ -5848,7 +5935,7 @@ describe('Check a swap', () => {
         row.click();
         expect(detail.style.display).toBe('table-row');
         expect(detail.textContent).toContain('29.5% → 31.9%');
-        expect(detail.textContent).toContain('not in this loadout — 60.0% unchanged');
+        expect(detail.textContent).toContain('(not in this loadout): Mimic 60.0%');
         expect(detail.textContent).toContain('Checked by hand.');
         // And it is a note, not the "on task" badge a task caveat draws
         expect(row.textContent).not.toContain('on task');
