@@ -293,10 +293,6 @@ const KNOWN_SAFE = {
     'src/features/chat/chat-commands.js#initialize':
         'The post-await `dataManager.on` sits behind a module-level `switchListenerRegistered` flag that ' +
         'is never cleared, so the listener is installed exactly once for the life of the tab.',
-    'src/features/combat/dungeon-tracker-chat-annotations.js#initialize':
-        'The tail unregisters the previous handler before installing its own ' +
-        '(`if (this.characterSwitchingHandler) dataManager.off(...)`), and `waitForChat()` is idempotent, ' +
-        'so a resumed tail replaces rather than orphans.',
     'src/features/enhancement/enhancement-feature.js#initialize':
         '`setupEnhancementHandlers()` registers `handleActionCompleted` through `webSocketHook.on`, which ' +
         'dedupes on `handlers.includes(handler)` — the same reference cannot be registered twice there. ' +
