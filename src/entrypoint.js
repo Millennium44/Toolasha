@@ -1685,16 +1685,6 @@ function registerFeatures() {
             async: false,
         },
         {
-            key: 'spawnCensus',
-            name: 'Spawn Census',
-            category: 'Combat',
-            module: Combat.spawnCensus,
-            async: true,
-            // Awaits only its own storage record, and nothing downstream is
-            // ordered against what it does afterwards — see initializeFeatures.
-            concurrent: true,
-        },
-        {
             key: 'combatBossEta',
             name: 'Combat Boss ETA',
             category: 'Combat',

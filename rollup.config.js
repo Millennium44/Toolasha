@@ -865,7 +865,6 @@ export const singletonOwnership = new Map([
         normalize(join(__dirname, 'src/features/combat/scroll-simulator.js')),
         { global: 'Toolasha.Combat.scrollSimulator' },
     ],
-    [normalize(join(__dirname, 'src/features/combat/spawn-census.js')), { global: 'Toolasha.Combat.spawnCensus' }],
     [
         normalize(join(__dirname, 'src/features/combat/labyrinth-run-ledger.js')),
         { global: 'Toolasha.Combat.labyrinthRunLedger' },
