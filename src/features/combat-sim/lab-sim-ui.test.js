@@ -3952,6 +3952,26 @@ describe('the budget plan when a pick pays for itself', () => {
         };
         const enhancement = { type: 'enhancement', currentHrid: LEGS, currentLevel: 7, upgradeLevel: 10 };
 
+        test('a house level is a construction bill, never "nothing to buy"', () => {
+            const breakdown = {
+                buys: [],
+                credits: [],
+                gross: 45_000_000,
+                credit: 0,
+                net: 45_000_000,
+                unpriced: [],
+                source: 'craft',
+            };
+            const house = { type: 'house', roomHrid: '/house_rooms/archery_range', currentLevel: 3, upgradeLevel: 4 };
+            const text = detailText(rowWith(house, 45_000_000, breakdown));
+            expect(text).toContain('House construction: coins and materials at market buy prices = 45.0M.');
+            expect(text).not.toMatch(/nothing to buy/i);
+            // Any other row with an empty buy list stays neutral rather than claiming nothing is bought
+            const other = detailText(rowWith({ type: 'drink' }, 45_000_000, breakdown));
+            expect(other).toContain('Cost 45.0M.');
+            expect(other).not.toMatch(/nothing to buy/i);
+        });
+
         test('an enhancement path names the levels, the basis and the rates, and its total is the Cost cell', () => {
             const text = detailText(
                 rowWith({ ...enhancement, slot: '/equipment_types/legs' }, 208_080_000, {

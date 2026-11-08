@@ -9567,6 +9567,7 @@ class LabSimUI {
             fromLevel: candidate?.currentLevel ?? 0,
             toLevel: candidate?.upgradeLevel,
             isEnhancement: candidate?.type === 'enhancement',
+            kind: candidate?.type,
         });
         if (lines.length === 0) return '';
         const colors = { main: '#aaa', kept: '#8ab4f8', warn: '#ff9800' };

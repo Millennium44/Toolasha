@@ -135,9 +135,13 @@ function creditClause(detail, market) {
  * @param {number} [options.fromLevel] - Candidate's current level, for a path with no ladder
  * @param {number} [options.toLevel] - Candidate's target level
  * @param {boolean} [options.isEnhancement] - The candidate enhances a piece
+ * @param {string} [options.kind] - The candidate's type (`house` gets its own wording)
  * @returns {Array<{text: string, title?: string, tone: string}>} Lines, tone one of main|warn|kept
  */
-export function compactCostLines(detail, { basisTitle, keptWhy, keptTitle, fromLevel, toLevel, isEnhancement } = {}) {
+export function compactCostLines(
+    detail,
+    { basisTitle, keptWhy, keptTitle, fromLevel, toLevel, isEnhancement, kind } = {}
+) {
     const lines = [];
     if (!detail) return lines;
     const ladder = detail.ladder;
@@ -234,8 +238,13 @@ export function compactCostLines(detail, { basisTitle, keptWhy, keptTitle, fromL
             )
             .join(' and ');
         main(`${label}: ${verb} ${what}${creditClause(detail, verb === 'buy')}.${ratesTail}`);
+    } else if (kind === 'house' && hasGross) {
+        // A house level lists no purchases, but its bill is coins plus materials at their buy prices, and
+        // materials already in the inventory are not taken off it: an empty buy list is not "nothing to buy"
+        main(`House construction: coins and materials at market buy prices = ${money(detail.gross)}.`);
     } else if (Number.isFinite(detail.net)) {
-        main(`Nothing to buy: Cost ${money(detail.net)}.`);
+        // Neutral: an empty buy list alone does not establish that nothing has to be bought
+        main(`Cost ${money(detail.net)}.`);
     }
 
     if (detail.kept?.length) {
