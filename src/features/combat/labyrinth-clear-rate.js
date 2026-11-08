@@ -5532,8 +5532,8 @@ class LabyrinthClearRate {
             overlay.style.borderStyle = 'dashed';
             // Dimmer than a beacon for now, but still plainly green: 0.08 fill under 0.45 opacity was about 4%
             // green and read as an empty room
-            overlay.style.opacity = isCenter ? '0.75' : '0.8';
-            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.15)';
+            overlay.style.opacity = '0.72';
+            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.14)';
         }
         if (label) {
             const tag = document.createElement('div');
