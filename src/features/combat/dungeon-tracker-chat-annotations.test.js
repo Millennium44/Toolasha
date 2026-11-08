@@ -1004,6 +1004,61 @@ describe('the run history read behind feature startup', () => {
         expect(game.scrubCalls).toBe(0);
         expect(annotations.initComplete).toBe(false);
     });
+
+    test('a startup load that lands after a refresh already loaded does not load again', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+        await annotations.initialize();
+        const startup = annotations._startupLoad;
+
+        // A Backfill, Clear or baseline press during the wait loads first
+        await annotations.loadRunCountsFromStorage();
+        expect(game.repairCalls).toBe(1);
+
+        open();
+        expect(await startup).toBe(true);
+        expect(game.repairCalls).toBe(1);
+    });
+
+    test('the setting turned off while a pass waits for the history labels nothing', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+        chatLog();
+        await annotations.initialize();
+
+        const pass = annotations.annotateAllMessages();
+        await vi.advanceTimersByTimeAsync(0);
+        game.settings.dungeonTrackerChatAnnotations = false;
+        open();
+        await pass;
+
+        expect(labels()).toEqual([]);
+        expect(document.querySelector('[data-processed="1"]')).toBeNull();
+    });
+
+    test('a redo marks the history not loaded until its reload lands', async () => {
+        game.allRuns = [];
+        chatLog();
+        await annotations.initialize();
+        await annotations._startupLoad;
+        expect(annotations.initComplete).toBe(true);
+
+        annotations._annotatedWithoutDungeonName = true;
+        const nameSource = vi.spyOn(annotations, 'hasDungeonNameSource').mockReturnValue(true);
+        let open;
+        game.runsGate = new Promise((resolve) => (open = resolve));
+        const redo = annotations.annotateAllMessages();
+        await vi.advanceTimersByTimeAsync(0);
+
+        // A second pass arriving now must wait rather than number the emptied state from chat alone
+        expect(annotations.initComplete).toBe(false);
+
+        game.runsGate = null;
+        open();
+        await redo;
+        expect(annotations.initComplete).toBe(true);
+        nameSource.mockRestore();
+    });
 });
 
 describe('annotating a chat log', () => {

@@ -4385,12 +4385,23 @@ describe('the remembered upgrade analysis across a character switch', () => {
             expect(ui._upgradeResultsData).toBeFalsy();
         });
 
-        test('a busy simulator during the wait does the same', async () => {
+        test('an upgrade run in progress during the wait does the same', async () => {
             await armed(() => {
-                vi.spyOn(ui, '_isBusy').mockReturnValue(true);
+                ui._upgradeRunning = true;
             });
             await ui._restoreUpgradeResults();
             expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Remembered run');
+            ui._upgradeRunning = false;
+        });
+
+        test('a Simulate or Seek busy during the wait still lets it restore: the restore never retries', async () => {
+            await armed(() => {
+                vi.spyOn(ui, '_isBusy').mockReturnValue(true);
+                ui._runStarting = true;
+            });
+            await ui._restoreUpgradeResults();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('Remembered run');
+            ui._runStarting = false;
         });
 
         test('a character switch during the wait draws nothing from the old key', async () => {
