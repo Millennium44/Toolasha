@@ -1663,11 +1663,11 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.dungeonTrackerChatAnnotations,
             async: false,
-            // Waits only on its own run store (a scrub plus a full read). What
-            // it installs afterwards is a chat observer and a batch pass, and
-            // the module already guards its own ordering rather than relying on
-            // the registry's: `annotateAllMessages` polls `initComplete` before
-            // it touches anything, messages carry `data-processed`, and
+            // Waits on nothing: the run history (a scrub plus a full read) is
+            // loaded after feature startup. What it installs is a chat observer
+            // and a batch pass, and the module already guards its own ordering
+            // rather than relying on the registry's: `annotateAllMessages` waits
+            // on that load before it touches anything, messages carry `data-processed`, and
             // `chatRunsInCumulative` decides double-counting from the totals
             // that exist now. It has to be order-agnostic anyway - the same
             // paths re-run on a character switch and on every party-tab click.

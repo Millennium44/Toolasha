@@ -44,6 +44,20 @@ const game = vi.hoisted(() => ({
     // and the tests for it want to set up exactly one team's newest run without
     // also wiring up the whole seed-from-storage machinery.
     newestRunForTeam: {},
+    // null = the store could not be read (getAllRunsOrNull answers null); a promise holds the read open
+    runsUnreadable: false,
+    runsGate: null,
+    // A promise the deferred startup work waits on, standing in for "feature startup is not done yet"
+    bgGate: null,
+    repairCalls: 0,
+    scrubCalls: 0,
+}));
+
+vi.mock('../../utils/background-work.js', () => ({
+    runInBackground: async (_name, work) => {
+        if (game.bgGate) await game.bgGate;
+        return work();
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -81,9 +95,19 @@ vi.mock('../chat/chat-profile-link.js', () => ({ markAsProfileLink: markAsProfil
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
-        repairSwappedDateRuns: async () => 0,
-        scrubOutlierRuns: async () => 0,
+        repairSwappedDateRuns: async () => {
+            game.repairCalls += 1;
+            return 0;
+        },
+        scrubOutlierRuns: async () => {
+            game.scrubCalls += 1;
+            return 0;
+        },
         getAllRuns: async () => game.allRuns,
+        getAllRunsOrNull: async () => {
+            if (game.runsGate) await game.runsGate;
+            return game.runsUnreadable ? null : game.allRuns;
+        },
         getTeamKey: (names) => [...names].sort().join(','),
         saveTeamRun: vi.fn(async () => true),
         getAverageBaselines: async () => game.averageBaselines,
@@ -162,7 +186,13 @@ beforeEach(() => {
     game.clearedAt = 0;
     game.characterId = 'char-a';
     game.newestRunForTeam = {};
+    game.runsUnreadable = false;
+    game.runsGate = null;
+    game.bgGate = null;
+    game.repairCalls = 0;
+    game.scrubCalls = 0;
 
+    annotations._startupLoad = null;
     annotations.cumulativeStatsByDungeon = {};
     annotations.storedRunDurations = {};
     annotations.averageBaselines = {};
@@ -797,15 +827,182 @@ describe('seeding from stored history', () => {
         });
     });
 
-    test('a storage failure still lets the pass go ahead', async () => {
+    test('an unreadable history is not an empty one: nothing is seeded and the load reports it', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.runsUnreadable = true;
+        annotations.initComplete = false;
+
+        expect(await annotations.loadRunCountsFromStorage()).toBe(false);
+
+        expect(annotations.initComplete).toBe(false);
+        expect(annotations.cumulativeStatsByDungeon).toEqual({});
+        warn.mockRestore();
+    });
+
+    test('a loader that throws leaves the history incomplete too', async () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-        game.allRuns = null; // for..of over null throws inside the loader
+        game.allRuns = [{ ...storedRun({ timestamp: 1, duration: 1000 }), team: null }];
+        game.averageBaselines = null;
+        annotations.initComplete = false;
+        const original = annotations.forgetChatRunsClearedBefore;
+        annotations.forgetChatRunsClearedBefore = () => {
+            throw new Error('boom');
+        };
 
-        await annotations.loadRunCountsFromStorage();
+        expect(await annotations.loadRunCountsFromStorage()).toBe(false);
 
-        expect(error).toHaveBeenCalled();
-        expect(annotations.initComplete).toBe(true);
+        annotations.forgetChatRunsClearedBefore = original;
+        expect(annotations.initComplete).toBe(false);
         error.mockRestore();
+    });
+});
+
+describe('the run history read behind feature startup', () => {
+    function chatLog() {
+        message('[08/04 10:00:00 AM]', 'Battle started: Chimerical Den');
+        message('[08/04 10:00:00 AM]', 'Key counts: [Alice - 12]');
+        message('[08/04 10:04:32 AM]', 'Key counts: [Alice - 11]');
+    }
+
+    beforeEach(() => {
+        annotations.initComplete = false;
+        annotations._generation = 0;
+    });
+
+    afterEach(() => {
+        annotations.cleanup();
+    });
+
+    test('initialize does not wait for the read', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+
+        await annotations.initialize();
+
+        expect(game.repairCalls).toBe(0);
+        expect(annotations.initComplete).toBe(false);
+        open();
+        await annotations._startupLoad;
+        expect(annotations.initComplete).toBe(true);
+        expect(game.repairCalls).toBe(1);
+        expect(game.scrubCalls).toBe(1);
+    });
+
+    test('a pass that runs first waits for the load and numbers from the stored runs', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+        game.allRuns = [
+            storedRun({ timestamp: aug4(9, 0, 0).toISOString(), duration: 240_000 }),
+            storedRun({ timestamp: aug4(9, 30, 0).toISOString(), duration: 240_000 }),
+        ];
+        chatLog();
+        await annotations.initialize();
+
+        const pass = annotations.annotateAllMessages();
+        // Past the old five-second poll: the pass is waiting on the load, not on a timer
+        await vi.advanceTimersByTimeAsync(20_000);
+        expect(labels()).toEqual([]);
+        open();
+        await pass;
+
+        expect(labels()[0]).toBe('[Run #3: 4m 32s]');
+    });
+
+    test('an unreadable history leaves the messages unlabeled and unmarked, and a later pass recovers', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        game.runsUnreadable = true;
+        game.allRuns = [storedRun({ timestamp: aug4(9, 0, 0).toISOString(), duration: 240_000 })];
+        chatLog();
+        await annotations.initialize();
+        await annotations._startupLoad;
+
+        await annotations.annotateAllMessages();
+
+        expect(labels()).toEqual([]);
+        expect(document.querySelector('[data-processed="1"]')).toBeNull();
+
+        game.runsUnreadable = false;
+        await annotations.annotateAllMessages();
+        expect(labels()[0]).toBe('[Run #2: 4m 32s]');
+        warn.mockRestore();
+    });
+
+    test('an empty but readable history is complete and numbers from chat alone', async () => {
+        game.allRuns = [];
+        chatLog();
+        await annotations.initialize();
+        await annotations._startupLoad;
+        expect(annotations.initComplete).toBe(true);
+
+        await annotations.annotateAllMessages();
+
+        expect(labels()[0]).toBe('[Run #1: 4m 32s]');
+    });
+
+    test('loads never overlap: a refresh during a read starts only after it', async () => {
+        let open;
+        game.runsGate = new Promise((resolve) => (open = resolve));
+        const first = annotations.loadRunCountsFromStorage();
+        const second = annotations.loadRunCountsFromStorage();
+        await vi.advanceTimersByTimeAsync(0);
+        // The first is parked on its read; the second has not begun its repair
+        expect(game.repairCalls).toBe(1);
+
+        game.runsGate = null;
+        open();
+        await Promise.all([first, second]);
+
+        expect(game.repairCalls).toBe(2);
+        expect(annotations._loadsInFlight).toBe(0);
+        expect(annotations.initComplete).toBe(true);
+    });
+
+    test('a switch during the wait stands the stale load down: no repair, no scrub, no state', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+        game.allRuns = [storedRun({ timestamp: aug4(9, 0, 0).toISOString(), duration: 240_000 })];
+        await annotations.initialize();
+        const startup = annotations._startupLoad;
+
+        annotations.cleanup();
+        open();
+        await startup;
+
+        expect(game.repairCalls).toBe(0);
+        expect(game.scrubCalls).toBe(0);
+        expect(annotations.initComplete).toBe(false);
+        expect(annotations.cumulativeStatsByDungeon).toEqual({});
+    });
+
+    test('a switch while the runs are being read discards what was read', async () => {
+        let open;
+        game.runsGate = new Promise((resolve) => (open = resolve));
+        game.allRuns = [storedRun({ timestamp: aug4(9, 0, 0).toISOString(), duration: 240_000 })];
+        const load = annotations.loadRunCountsFromStorage();
+        await vi.advanceTimersByTimeAsync(0);
+
+        annotations.cleanup();
+        open();
+
+        expect(await load).toBe(false);
+        expect(annotations.initComplete).toBe(false);
+        expect(annotations.cumulativeStatsByDungeon).toEqual({});
+        expect(annotations.storedRunNumbers).toEqual({});
+    });
+
+    test('a setting turned off during the wait does no repair and no scrub', async () => {
+        let open;
+        game.bgGate = new Promise((resolve) => (open = resolve));
+        await annotations.initialize();
+        const startup = annotations._startupLoad;
+
+        game.settings.dungeonTrackerChatAnnotations = false;
+        open();
+        await startup;
+
+        expect(game.repairCalls).toBe(0);
+        expect(game.scrubCalls).toBe(0);
+        expect(annotations.initComplete).toBe(false);
     });
 });
 

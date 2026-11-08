@@ -21,6 +21,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { gameDigitsSource } from '../../utils/number-parser.js';
 import { chatStampToDate, dashStampDayFirst } from '../../utils/locale-date-order.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
+import { runInBackground } from '../../utils/background-work.js';
 
 class DungeonTrackerChatAnnotations {
     constructor() {
@@ -46,6 +47,12 @@ class DungeonTrackerChatAnnotations {
         this.averageBaselines = {}; // statsKey → epoch ms the average is asked to start after
         this.processedMessages = new Map(); // Track processed messages to prevent duplicate counting
         this.initComplete = false; // Flag to ensure storage loads before annotation
+        // Bumped by cleanup(): a load that began before it belongs to a torn-down state and must not write into
+        // the next one
+        this._generation = 0;
+        this._loadChain = null; // Loads run one at a time, never two at once
+        this._loadsInFlight = 0;
+        this._startupLoad = null; // The load deferred behind feature startup, until it settles
         this.timerRegistry = createTimerRegistry();
         this.tabClickHandlers = new Map(); // Store tab click handlers for cleanup
         this._pendingAnnotateTimeout = null; // Debounce timer for annotateAllMessages
@@ -72,8 +79,20 @@ class DungeonTrackerChatAnnotations {
      * Initialize chat annotation monitor
      */
     async initialize() {
-        // Load run counts from storage to sync with UI
-        await this.loadRunCountsFromStorage();
+        // The stored run history is a large record, so it is read after feature startup rather than inside it.
+        // Anything that needs it waits on this promise (see whenHistoryLoaded), not on a timer, and a pass that
+        // runs first starts the same load itself rather than numbering from an empty history.
+        const generation = this._generation;
+        const startup = runInBackground('dungeonChatRunHistory', async () => {
+            // Torn down or switched during the wait: the arriving state starts its own load
+            if (generation !== this._generation) return false;
+            if (!this.enabled || !config.getSetting('dungeonTrackerChatAnnotations')) return false;
+            if (!config.isFeatureEnabled('dungeonTracker')) return false;
+            return this.loadRunCountsFromStorage();
+        }).finally(() => {
+            if (this._startupLoad === startup) this._startupLoad = null;
+        });
+        this._startupLoad = startup;
 
         // Wait for chat to be available
         this.waitForChat();
@@ -86,9 +105,48 @@ class DungeonTrackerChatAnnotations {
     }
 
     /**
-     * Load run counts from storage to keep chat and UI in sync
+     * Resolve once the stored run history has been read, or has failed to be.
+     *
+     * Waits on the load itself: the deferred startup one if it has not finished, any load in flight, and
+     * otherwise starts one. Never answers from an empty history it has not read.
+     *
+     * @returns {Promise<boolean>} Whether the history is loaded
      */
-    async loadRunCountsFromStorage() {
+    async whenHistoryLoaded() {
+        if (this.initComplete) return true;
+        const generation = this._generation;
+        if (this._startupLoad) await this._startupLoad;
+        if (this.initComplete) return true;
+        if (this._loadsInFlight > 0) {
+            await this._loadChain;
+            if (this.initComplete) return true;
+        }
+        // A teardown during the wait: the state this was waiting for is gone, and the arriving one loads itself
+        if (generation !== this._generation) return false;
+        // Nothing has read it (the deferred load stood down, or the last read failed): read it now
+        return this.loadRunCountsFromStorage();
+    }
+
+    /**
+     * Load run counts from storage to keep chat and UI in sync.
+     *
+     * Loads are queued behind one another rather than run together: the repair and the scrub write the stored
+     * runs, and a refresh after a backfill has to see the runs the backfill wrote, which a load already in
+     * flight would not.
+     *
+     * @returns {Promise<boolean>} True when the stored runs were really read and seeded; false when they could
+     *   not be read, or the state was torn down while reading
+     */
+    loadRunCountsFromStorage() {
+        this._loadsInFlight += 1;
+        const run = () => this._loadRunCounts().finally(() => (this._loadsInFlight -= 1));
+        this._loadChain = (this._loadChain || Promise.resolve()).then(run, run);
+        return this._loadChain;
+    }
+
+    /** @private */
+    async _loadRunCounts() {
+        const generation = this._generation;
         try {
             // Mend the runs a mm/dd-vs-dd/mm chat-stamp misread mangled — once
             // ever, and before the scrub, so a run that can be put right is not
@@ -99,7 +157,14 @@ class DungeonTrackerChatAnnotations {
             await dungeonTrackerStorage.scrubOutlierRuns();
 
             // Get all runs from unified storage
-            const allRuns = await dungeonTrackerStorage.getAllRuns();
+            // Null is a read that failed, which is not an empty history: seeding nothing and calling it done
+            // would number every chat run from #1 and mark the messages processed
+            const allRuns = await dungeonTrackerStorage.getAllRunsOrNull();
+            if (generation !== this._generation) return false;
+            if (!allRuns) {
+                console.warn('[Dungeon Tracker] Run history could not be read; chat runs are not numbered yet');
+                return false;
+            }
 
             // Group runs by statsKey (teamKey::dungeonName), sorted oldest→newest
             const groupedRuns = {};
@@ -153,7 +218,9 @@ class DungeonTrackerChatAnnotations {
 
             // The manual "average starts here" markers, read once per load beside
             // the runs they filter
-            this.averageBaselines = (await dungeonTrackerStorage.getAverageBaselines?.()) || {};
+            const baselines = (await dungeonTrackerStorage.getAverageBaselines?.()) || {};
+            if (generation !== this._generation) return false;
+            this.averageBaselines = baselines;
 
             // A "delete all history" forgets the runs it covers everywhere they
             // are held, and this is the other place they are held: a run this
@@ -167,9 +234,11 @@ class DungeonTrackerChatAnnotations {
             this.forgetChatRunsClearedBefore(dungeonTrackerStorage.clearedAt?.() ?? 0);
 
             this.initComplete = true;
+            return true;
         } catch (error) {
+            // Not complete: a pass must not number from a history it never read. The next pass retries.
             console.error('[Dungeon Tracker] Failed to load run counts from storage:', error);
-            this.initComplete = true; // Continue anyway
+            return false;
         }
     }
 
@@ -345,27 +414,14 @@ class DungeonTrackerChatAnnotations {
         // the totals the arriving character is rebuilding.
         const passCharacterId = this.currentCharacterId();
 
-        // Wait for initialization to complete to ensure run counts are loaded
+        // Wait for the run history itself. A history that could not be read leaves the messages unlabeled and
+        // unmarked, so a later pass (the next chat line, a tab click) labels them once it can be.
         if (!this.initComplete) {
-            await new Promise((resolve) => {
-                const checkInterval = setInterval(() => {
-                    if (this.initComplete) {
-                        clearInterval(checkInterval);
-                        resolve();
-                    }
-                }, 50);
-
-                this.timerRegistry.registerInterval(checkInterval);
-
-                // Timeout after 5 seconds
-                this.timerRegistry.scheduleTimeout(() => {
-                    clearInterval(checkInterval);
-                    resolve();
-                }, 5000);
-            });
+            await this.whenHistoryLoaded();
         }
 
         if (this.currentCharacterId() !== passCharacterId) return;
+        if (!this.initComplete) return;
 
         // Whenever the tracker can name a dungeon, remember it — even on a pass
         // with no new run to label. A pass fires on any new chat message, not
@@ -392,6 +448,7 @@ class DungeonTrackerChatAnnotations {
             this.resetAnnotationState();
             await this.loadRunCountsFromStorage();
             if (this.currentCharacterId() !== passCharacterId) return;
+            if (!this.initComplete) return;
         }
 
         const events = this.extractChatEvents();
@@ -1420,6 +1477,10 @@ class DungeonTrackerChatAnnotations {
         }
 
         this.timerRegistry.clearAll();
+
+        // A load still reading belongs to the state being torn down
+        this._generation += 1;
+        this._startupLoad = null;
 
         // Clear cached state
         this.lastSeenDungeonName = null;
