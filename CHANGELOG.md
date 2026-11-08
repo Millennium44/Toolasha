@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim whole-run rows explain their cost
+
+Expanding a row in the Lab Upgrade tab's whole-run table now says where its Cost comes from: the cost basis, the enhancement path (e.g. +7 to +10 as an expected cost) and the enhance rates used, or the purchase and after-tax resale credit.
+
 <!-- shipped in 3.81.0 -->
 
 ### Lab Sim Ability Lv modes work across several fights

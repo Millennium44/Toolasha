@@ -79,6 +79,7 @@ import {
     MAX_GUILD_SHRINE_LEVEL,
     getGuildShrineMaxLevel,
     candidateAssignmentKey,
+    COST_SOURCES,
 } from './upgrade-advisor.js';
 import {
     configureFightGroup,
@@ -163,6 +164,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
+import { ladderSentence } from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -9499,7 +9501,9 @@ class LabSimUI {
      */
     _renderAllFightsNotes(result) {
         const notes = [];
-        const kept = result.costDetail?.kept;
+        const explanation = this._renderAllFightsCostExplanation(result);
+        // The breakdown names what is kept rather than sold itself; the note below is for a row it could not draw
+        const kept = explanation ? null : result.costDetail?.kept;
         if (kept?.length) {
             const text = keptResaleText(
                 kept,
@@ -9512,13 +9516,74 @@ class LabSimUI {
         if (result.candidate?.caveat) notes.push(result.candidate.caveat);
         // How a hand-checked swap was priced: context, not a task caveat
         if (result.candidate?.pricingNote) notes.push(result.candidate.pricingNote);
-        if (!notes.length) return '';
-        return notes
+        const noteHtml = notes
             .map(
                 (note) =>
                     `<div style="color:#8ab4f8; margin-top:6px; white-space:normal; line-height:1.4;">${note}</div>`
             )
             .join('');
+        return explanation + noteHtml;
+    }
+
+    /**
+     * Where an all-fights row's Cost cell comes from: which basis priced it, the enhancement path or the
+     * purchase and resale behind it, and the total. Drawn from the row's own `costDetail`, and only when
+     * that detail lands on the same figure as the cell, because an explanation of a different number is
+     * worse than none.
+     * @param {Object} result - One all-fights result row
+     * @returns {string} HTML, empty where the row has nothing to explain
+     * @private
+     */
+    _renderAllFightsCostExplanation(result) {
+        const candidate = result?.candidate;
+        if (result?.costType === 'token') return '';
+        const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
+        if (candidate?.noPurchase) {
+            return `<div data-cost-explanation style="margin-top:6px;">${line(
+                'Buys nothing: this uses what you already have, so the cost is 0.',
+                '#888'
+            )}</div>`;
+        }
+        const detail = result?.costDetail;
+        if (!detail || detail.guild) return '';
+        const cost = result.cost;
+        const net = detail.net;
+        const agrees =
+            (net !== undefined && cost == null && net == null) ||
+            (Number.isFinite(cost) && Number.isFinite(net) && Math.abs(cost - net) <= 1);
+        if (!agrees) return '';
+
+        const parts = [];
+        const source = COST_SOURCES[detail.source];
+        if (source) parts.push(line(`Cost basis: ${source.label} — ${source.title}`));
+        const money = (value) => formatKMB(Math.round(value));
+        if (detail.ladder && (detail.gross != null || detail.ladder.alreadyHeld)) {
+            parts.push(line(ladderSentence(detail.ladder, detail.gross), '#888'));
+        } else if (detail.enhancementPath || candidate?.type === 'enhancement') {
+            const from = candidate?.currentLevel ?? 0;
+            const to = candidate?.upgradeLevel;
+            if (detail.enhancementPath && to != null) {
+                parts.push(
+                    line(
+                        detail.gross == null
+                            ? `Enhance from +${from} to +${to}: no priced path to get there.`
+                            : `Enhance from +${from} to +${to} for ${money(detail.gross)} — an expected cost over a random process, not a quote.`,
+                        '#888'
+                    )
+                );
+            } else if (to != null && detail.buys?.length) {
+                parts.push(
+                    line(
+                        `Buy the +${to} copy and sell back the +${from} you replace; the difference is the cost.`,
+                        '#888'
+                    )
+                );
+            }
+        }
+        const breakdown = this._renderCostBreakdown(detail, {
+            keptReason: candidate?.checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH,
+        });
+        return `<div data-cost-explanation style="margin-top:6px;">${parts.join('')}${breakdown}</div>`;
     }
 
     /**

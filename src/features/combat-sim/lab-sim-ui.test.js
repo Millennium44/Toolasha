@@ -3918,6 +3918,191 @@ describe('the budget plan when a pick pays for itself', () => {
             'Tokens 12,500 tokens'
         );
     });
+
+    describe('the expanded row explains its Cost cell', () => {
+        const LEGS = '/items/anchorbound_plate_legs';
+        const rowWith = (candidate, cost, costDetail, extra = {}) => {
+            const data = analysis();
+            data.results = [
+                {
+                    ...data.results[0],
+                    candidate: { description: 'Test row', ...candidate },
+                    cost,
+                    costDetail,
+                    ...extra,
+                },
+            ];
+            return data;
+        };
+        const detailText = (data) => {
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-detail="0"]');
+            return detail.textContent.replace(/\s+/g, ' ');
+        };
+        const enhancement = { type: 'enhancement', currentHrid: LEGS, currentLevel: 7, upgradeLevel: 10 };
+
+        test('an enhancement path names the levels, the basis and the rates, and its total is the Cost cell', () => {
+            const text = detailText(
+                rowWith({ ...enhancement, slot: '/equipment_types/legs' }, 208_080_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 208_080_000,
+                    credit: 0,
+                    net: 208_080_000,
+                    unpriced: [],
+                    creditApplied: false,
+                    source: 'sim',
+                    enhanceSource: { label: 'Pro', detail: 'the shipped professional kit' },
+                    enhancementPath: true,
+                    targetAsk: null,
+                })
+            );
+            expect(text).toContain('Exact: Cost 208,080,000 coins');
+            expect(text).toContain('Cost basis: sim');
+            expect(text).toContain('Enhance from +7 to +10 for 208.1M');
+            expect(text).toContain('expected cost');
+            expect(text).toContain('Enhance rates: Pro');
+            expect(text).toContain('Total 208,080,000');
+            expect(text).not.toContain('could not be drawn');
+        });
+
+        test('an enhancement on a held copy says which copy it enhances', () => {
+            const text = detailText(
+                rowWith(enhancement, 90_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 90_000_000,
+                    credit: 0,
+                    net: 90_000_000,
+                    unpriced: [],
+                    source: 'enhance',
+                    enhanceSource: null,
+                    enhancementPath: true,
+                    ladder: {
+                        fromLevel: 7,
+                        toLevel: 10,
+                        fresh: false,
+                        alreadyHeld: false,
+                        fromEquipped: true,
+                        isSelf: true,
+                        baseCost: 0,
+                    },
+                })
+            );
+            expect(text).toContain('Enhance from +7 to +10 for 90.0M, on the copy you are wearing.');
+            expect(text).toContain('Cost basis: enh');
+        });
+
+        test('a market buy names the purchase, the resale credit after tax and the total', () => {
+            const text = detailText(
+                rowWith(enhancement, 60_000_000, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 100_000_000 }],
+                    credits: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 7, price: 40_000_000 }],
+                    gross: 100_000_000,
+                    credit: 40_000_000,
+                    net: 60_000_000,
+                    unpriced: [],
+                    creditApplied: true,
+                    source: 'market',
+                })
+            );
+            expect(text).toContain('Cost basis: mkt');
+            expect(text).toContain('Buy Anchorbound Plate Legs +10');
+            expect(text).toContain('Sell Anchorbound Plate Legs +7');
+            expect(text).toContain('40,000,000 back');
+            expect(text).toContain('Total 100,000,000 − credit = 60,000,000');
+        });
+
+        test('kept armor says it is kept rather than sold, once', () => {
+            const text = detailText(
+                rowWith({ type: 'cross_slot', currentHrid: LEGS }, 100_000_000, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 100_000_000 }],
+                    credits: [],
+                    gross: 100_000_000,
+                    credit: 0,
+                    net: 100_000_000,
+                    unpriced: [],
+                    source: 'market',
+                    kept: [{ hrid: LEGS, name: 'Rough Legs', enhancementLevel: 3, price: 5_000_000, priced: true }],
+                    keptValue: 5_000_000,
+                })
+            );
+            expect(text).toContain('Keeping Rough Legs +3');
+            expect(text.split('Keeping Rough Legs').length).toBe(2);
+        });
+
+        test('an unpriced row says why it has no price', () => {
+            const text = detailText(
+                rowWith(enhancement, null, {
+                    buys: [],
+                    credits: [],
+                    gross: null,
+                    credit: 0,
+                    net: null,
+                    unpriced: ['Anchorbound Plate Legs'],
+                    source: 'sim',
+                    enhancementPath: true,
+                })
+            );
+            expect(text).toContain('no priced path to get there');
+            expect(text).toContain('Cost shows as');
+            expect(text).toContain('Anchorbound Plate Legs');
+        });
+
+        test('a swap that buys nothing says so', () => {
+            const text = detailText(
+                rowWith(
+                    { type: 'equipment', noPurchase: true, checkedSwap: true, pricingNote: 'You own this.' },
+                    0,
+                    null
+                )
+            );
+            expect(text).toContain('Buys nothing');
+            expect(text).toContain('You own this.');
+        });
+
+        test('a breakdown that lands on a different figure than the Cost cell is not shown', () => {
+            const text = detailText(
+                rowWith(enhancement, 5_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 9_000_000,
+                    credit: 0,
+                    net: 9_000_000,
+                    unpriced: [],
+                    source: 'sim',
+                    enhancementPath: true,
+                })
+            );
+            expect(text).toContain('Exact: Cost 5,000,000 coins');
+            expect(text).not.toContain('Cost basis');
+            expect(text).not.toContain('9,000,000');
+        });
+
+        test('a shrine row, which carries no breakdown, keeps its detail as it was', () => {
+            const text = detailText(rowWith({ type: 'guild_shrine' }, 1_000_000, null, { partialCost: true }));
+            expect(text).toContain('Exact: Cost 1,000,000 coins');
+            expect(text).not.toMatch(/Cost basis|Buys nothing|No cost breakdown/);
+        });
+
+        test('a token row has no coin explanation', () => {
+            const data = analysis();
+            data.results = [
+                {
+                    ...data.results[0],
+                    candidate: { type: 'labyrinth_buff', description: 'Token' },
+                    costType: 'token',
+                    cost: null,
+                    tokenCost: 100,
+                    attemptsSavedPerHundredTokens: 1,
+                },
+            ];
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-token-detail="0"]');
+            expect(detail.textContent).not.toContain('Cost basis');
+            expect(detail.textContent).not.toContain('Buys nothing');
+        });
+    });
 });
 
 describe('the budget plan when nothing is picked', () => {

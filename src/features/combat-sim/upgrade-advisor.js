@@ -6673,6 +6673,43 @@ export function buildModifiedCombatBuffs(baseBuffs, candidate) {
 }
 
 /**
+ * The cost breakdown an all-fights gold row carries, or null where it has nothing to break down: a token, a combat level (paid in experience), a
+ * shrine (its own field), an ability order (a re-ordering) or a swap that buys nothing. A failed
+ * read leaves the row without one rather than without a table.
+ * @param {Object} candidate - The row's candidate
+ * @param {Object} gameData - Game data payload
+ * @returns {Object|null}
+ */
+function allFightsCostDetail(candidate, gameData) {
+    if (candidate.noPurchase || candidate.abilityOrder) return null;
+    if (['guild_shrine', 'labyrinth_buff', 'combat_level'].includes(candidate.type)) return null;
+    try {
+        return explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false);
+    } catch (error) {
+        console.error('[UpgradeAdvisor] Reading the all-fights cost breakdown failed:', error);
+        return null;
+    }
+}
+
+/**
+ * A breakdown kept on an all-fights row only when it lands on the row's Cost. The Watch and Save buttons read
+ * a row's breakdown for their price, so one that disagrees with the Cost cell would watch a figure the table
+ * never showed. The forced-armor and hand-checked rows always carried theirs (their notes read it), and keep it.
+ * @param {Object|null} detail - From `allFightsCostDetail`
+ * @param {number|null} cost - The row's Cost
+ * @param {Object} candidate - The row's candidate
+ * @returns {Object|null}
+ */
+export function matchingCostDetail(detail, cost, candidate) {
+    if (!detail) return null;
+    if (candidate.keptItems?.length || candidate.checkedSwap) return detail;
+    const net = detail.net;
+    const agrees =
+        (cost == null && net == null) || (Number.isFinite(cost) && Number.isFinite(net) && Math.abs(cost - net) <= 1);
+    return agrees ? detail : null;
+}
+
+/**
  * Cost breakdown for a lab candidate, noting resale that was deliberately not
  * credited because the replaced gear is being kept for other floors.
  * @param {Object} candidate - Upgrade candidate
@@ -8860,18 +8897,14 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             // can be compared in — a token buff has no gold price at all.
             attemptsSavedPerHundredTokens:
                 isToken && candidate.tokenCost > 0 ? (attemptsSaved / candidate.tokenCost) * 100 : null,
-            // Only where there is something in the breakdown a price alone does
-            // not say — the forced armor sets, whose replaced pieces are kept
-            // rather than sold, so the row's coin figure is deliberately gross.
-            // Pricing every row would put a market lookup per piece behind a
-            // table that can run to hundreds of rows.
-            // A hand-checked swap carries whose copies priced it, so its breakdown
-            // reads the same inventory as its Cost cell. One that moves a copy already
-            // owned buys nothing, so it has no purchase to break down beside its zero
-            costDetail:
-                !candidate.noPurchase && (candidate.keptItems?.length || candidate.checkedSwap)
-                    ? explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false)
-                    : null,
+            // Every priced coin row explains where its Cost cell comes from: the purchase and the
+            // resale, an enhancement path from the level held to the target, which basis priced it.
+            // The forced armor sets and hand-checked swaps also say what was kept rather than sold.
+            // Built here with the row's own candidate, so it reads the same inventory and sale tax
+            // the Cost cell was priced with. A shrine row keeps its own cheap field below, a
+            // hand-checked ability order is a re-ordering with nothing to buy, and one that moves a
+            // copy already owned buys nothing so has no purchase to break down beside its zero
+            costDetail: matchingCostDetail(allFightsCostDetail(candidate, gameData), cost, candidate),
             // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
             // the guild tokens out. The one cheap field rather than a full costDetail per row
             ...(candidate.type === 'guild_shrine'
