@@ -3296,19 +3296,32 @@ if (combatSimulatorSite === 'metz') {
                 // this one) and the fingerprint (setting ids that vanished from
                 // the stored map between two loads of this same build, which
                 // only another script sharing the storage can do).
+                // Started here, so it reads the stored ids and this character's key before any feature runs,
+                // but not awaited: it only ever warns, and its read and immediate write queue behind startup's
+                // large storage writes. Awaited, it held every feature back by up to 8 s on a load.
+                let fingerprintKey = null;
+                let storedIdsRead = null;
                 try {
-                    const missing = await dualInstallGuard.checkSettingsFingerprint(
-                        Core.settingsStorage.getCharacterStorageKey(),
-                        await config.storedSettingIds(),
-                        Utils.scriptVersion.scriptVersion() || 'unknown',
-                        Core.getAllSettingIds()
-                    );
-                    if (dualInstallClaimed || dualInstallGuard.claimLost() || missing.length > 0) warnDualInstall();
+                    fingerprintKey = Core.settingsStorage.getCharacterStorageKey();
+                    storedIdsRead = config.storedSettingIds();
                 } catch (error) {
                     console.error('[Toolasha] Dual-install check failed:', error);
                 }
-                // One mark per wait between the settings load and the features, so a slow startup names its step
-                performanceMonitor.mark('startup:dualInstallChecked');
+                void (async () => {
+                    try {
+                        if (!storedIdsRead) return;
+                        const missing = await dualInstallGuard.checkSettingsFingerprint(
+                            fingerprintKey,
+                            await storedIdsRead,
+                            Utils.scriptVersion.scriptVersion() || 'unknown',
+                            Core.getAllSettingIds()
+                        );
+                        if (dualInstallClaimed || dualInstallGuard.claimLost() || missing.length > 0) warnDualInstall();
+                    } catch (error) {
+                        console.error('[Toolasha] Dual-install check failed:', error);
+                    }
+                    performanceMonitor.mark('startup:dualInstallChecked');
+                })();
 
                 // MWITools, checked here rather than at import time for the same
                 // reason as the signals above: its own public-api and
