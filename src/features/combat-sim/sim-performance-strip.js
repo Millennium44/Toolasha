@@ -63,10 +63,11 @@ export function clampTyped(text, min, max) {
  * Build the strip.
  * @param {Object} [options]
  * @param {boolean} [options.includeShorten=false] - Add the Lab-only "Shorten above N sims" box
+ * @param {boolean} [options.includeResim=true] - Show "Re-sim time cap" (only the Combat Sim Upgrade tab has that phase)
  * @param {string} [options.idPrefix='mwi-sim'] - Prefix for the element ids (one strip per panel)
  * @returns {HTMLElement} The strip, with `refresh()` on it to re-read every control
  */
-export function createPerformanceStrip({ includeShorten = false, idPrefix = 'mwi-sim' } = {}) {
+export function createPerformanceStrip({ includeShorten = false, includeResim = true, idPrefix = 'mwi-sim' } = {}) {
     const strip = document.createElement('div');
     strip.id = `${idPrefix}-perf`;
     strip.style.cssText = 'flex-shrink:0; border-bottom:1px solid #222; font-size:12px;';
@@ -84,27 +85,31 @@ export function createPerformanceStrip({ includeShorten = false, idPrefix = 'mwi
            </label>`
         : '';
 
+    const resim = includeResim
+        ? `<label style="${LABEL_CSS}" title="Longest the Upgrade tab's Re-sim close calls phase may run, in minutes. 0 = no time cap: it runs until the rows separate, its round limit or Stop.">
+                Re-sim time cap
+                ${numberBox('resim', RESIM_MAX_MINUTES_KEY, 0, Infinity, 1, 'Minutes. 0 = no cap.')}
+                min (0 = none)
+            </label>`
+        : '';
+
     strip.innerHTML = `
         <button type="button" id="${idPrefix}-perf-toggle" aria-expanded="false" style="background:none; border:none; color:#888; cursor:pointer; padding:3px 14px; font-size:11px; text-align:left;">⚙ Performance ▸</button>
         <div id="${idPrefix}-perf-body" style="display:none; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:4px 14px 8px;">
-            <label style="${LABEL_CSS}" title="Web Worker threads for simulations. 0 = auto (4, or fewer on a smaller machine). Normally clamped to your core count; tick Ignore caps to take it literally.">
+            <label style="${LABEL_CSS}" title="Web Worker threads for simulations. 0 = auto (4, or fewer on a smaller machine). Normally clamped to your core count; tick Ignore thread caps to take it literally (0 then means every core).">
                 Threads
                 ${numberBox('threads', THREADS_KEY, 0, MAX_THREADS, 1, 'Threads. 0 = auto.')}
                 <span id="${idPrefix}-perf-effective" style="color:${GAME_COLORS.textDim};"></span>
             </label>
-            <label style="${LABEL_CSS} cursor:pointer;" title="Take the thread number literally (no clamp to your core count) and lift the Sims at once limit. Each simulation holds its own copy of the game data, so this can use a lot of memory.">
-                <input type="checkbox" id="${idPrefix}-perf-uncap" style="margin:0; cursor:pointer;">
-                Ignore caps
-            </label>
-            <label id="${idPrefix}-perf-sims-label" style="${LABEL_CSS}" title="Most simulations one analysis runs together, never more than Threads allows. Ignored while Ignore caps is on.">
+            <label id="${idPrefix}-perf-sims-label" style="${LABEL_CSS}" title="Most simulations one analysis runs together, never more than Threads allows. Ignored while Ignore thread caps is on.">
                 Sims at once
                 ${numberBox('sims', MAX_CONCURRENT_SIMS_KEY, MIN_MAX_CONCURRENT_SIMS, MAX_MAX_CONCURRENT_SIMS, 1, 'Simulations at once, 1 to 32.')}
             </label>
-            <label style="${LABEL_CSS}" title="Longest the Upgrade tab's Re-sim close calls phase may run, in minutes. 0 = no time cap: it runs until the rows separate, its round limit or Stop.">
-                Re-sim time cap
-                ${numberBox('resim', RESIM_MAX_MINUTES_KEY, 0, Infinity, 1, 'Minutes. 0 = no cap.')}
-                min (0 = none)
+            <label style="${LABEL_CSS} cursor:pointer;" title="Lifts the core-count clamp on Threads (0 then means every core), the phone 2-thread limit, and Sims at once. It does NOT lift Max hrs, the re-sim time cap or Shorten above. Each simulation holds its own copy of the game data, so this can use a lot of memory.">
+                <input type="checkbox" id="${idPrefix}-perf-uncap" style="margin:0; cursor:pointer;">
+                Ignore thread caps
             </label>
+            ${resim}
             ${shorten}
         </div>
     `;
@@ -141,8 +146,8 @@ export function createPerformanceStrip({ includeShorten = false, idPrefix = 'mwi
         if (simsLabel) {
             simsLabel.style.opacity = uncapped ? '0.45' : '1';
             simsLabel.title = uncapped
-                ? 'Not used while Ignore caps is on: simulations run as many at once as Threads allows.'
-                : 'Most simulations one analysis runs together, never more than Threads allows. Ignored while Ignore caps is on.';
+                ? 'Not used while Ignore thread caps is on: simulations run as many at once as Threads allows.'
+                : 'Most simulations one analysis runs together, never more than Threads allows. Ignored while Ignore thread caps is on.';
         }
         const effective = $('effective');
         if (effective) effective.textContent = effectiveThreadsText();

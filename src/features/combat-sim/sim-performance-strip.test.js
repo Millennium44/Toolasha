@@ -56,6 +56,15 @@ describe('the Performance strip', () => {
         expect(strip.querySelector('#t-perf-effective').textContent).toBe('→ 4 of 16 cores');
     });
 
+    test('Re-sim time cap can be left out, and Ignore thread caps follows Sims at once', () => {
+        const strip = createPerformanceStrip({ includeResim: false, idPrefix: 't' });
+        expect(strip.querySelector('#t-perf-resim')).toBeNull();
+        expect(createPerformanceStrip({ idPrefix: 'u' }).querySelector('#u-perf-resim')).not.toBeNull();
+        const ids = [...strip.querySelectorAll('input')].map((el) => el.id);
+        expect(ids.indexOf('t-perf-uncap')).toBe(ids.indexOf('t-perf-sims') + 1);
+        expect(strip.textContent).toContain('Ignore thread caps');
+    });
+
     test('the shorten box exists only when asked for', () => {
         const strip = createPerformanceStrip({ idPrefix: 't' });
         expect(strip.querySelector('#t-perf-shorten')).toBeNull();
@@ -126,7 +135,7 @@ describe('the Performance strip', () => {
         uncap.dispatchEvent(new Event('change', { bubbles: true }));
         expect(store.writes).toEqual([['combatSim_uncapThreads', true]]);
         expect(strip.querySelector('#t-perf-sims').disabled).toBe(true);
-        expect(strip.querySelector('#t-perf-sims-label').title).toContain('Ignore caps');
+        expect(strip.querySelector('#t-perf-sims-label').title).toContain('Ignore thread caps');
         uncap.checked = false;
         uncap.dispatchEvent(new Event('change', { bubbles: true }));
         expect(strip.querySelector('#t-perf-sims').disabled).toBe(false);
