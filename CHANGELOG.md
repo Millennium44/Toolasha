@@ -22,6 +22,10 @@ The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakp
 
 A drop far above its expected count now reads "100×" instead of a cut-off "+9900…" in the vs exp. column; hover it for the exact percent.
 
+### Labyrinth beacon dots
+
+Every room a beacon will reveal gets a small teal dot in its corner (a ring for a later beacon), so coverage still shows under a planned path's border. Turn it off with "Beacon dots" in the grid's ⚙ menu.
+
 ### Labyrinth beacon tag shows beside Shroud?
 
 On a grid tile marked "Shroud?" the beacon tag (B1–B6) no longer hides under it; it sits on the right edge just below. Shroud marks now span the top of the tile, centered, and rooms a later beacon will reveal are a brighter green.
