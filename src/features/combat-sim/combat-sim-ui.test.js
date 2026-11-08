@@ -854,6 +854,8 @@ function selectZone() {
 // nobody has opened before.
 beforeEach(() => {
     mocks.store.clear();
+    // Held background jobs are closures over the panel and its results; left queued they pile up for the whole file
+    mocks.bgJobs.length = 0;
     ui._upgradeSort = null;
     ui._upgradeLevelSort = null;
     ui._unpricedSort = null;
