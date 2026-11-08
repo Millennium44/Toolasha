@@ -14994,8 +14994,9 @@ class CombatSimUI {
             const ownerId = dataManager.getCurrentCharacterId();
             const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
             // A run started while the read was out owns the table: a stopped or failed one must not
-            // leave the remembered table standing as its result. A switch means the key was another character's.
-            if (this._isBusy() || this._upgradeRunStarted) return;
+            // leave the remembered table standing as its result. Only an upgrade run: a Simulate or Seek does
+            // not draw this table, and the restore never retries. A switch means the key was another character's.
+            if (this._upgradeRunning || this._upgradeRunStarted) return;
             if (!this._stillSameCharacter(ownerId)) return;
             const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
             if (!payload) {

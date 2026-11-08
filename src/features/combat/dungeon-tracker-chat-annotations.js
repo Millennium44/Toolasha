@@ -88,6 +88,9 @@ class DungeonTrackerChatAnnotations {
             if (generation !== this._generation) return false;
             if (!this.enabled || !config.getSetting('dungeonTrackerChatAnnotations')) return false;
             if (!config.isFeatureEnabled('dungeonTracker')) return false;
+            // A pass or a refresh already loaded it: loading again would re-seed the totals and drop the chat-only
+            // runs that pass folded in, which are marked processed and would not be folded in again
+            if (this.initComplete) return true;
             return this.loadRunCountsFromStorage();
         }).finally(() => {
             if (this._startupLoad === startup) this._startupLoad = null;
@@ -422,6 +425,8 @@ class DungeonTrackerChatAnnotations {
 
         if (this.currentCharacterId() !== passCharacterId) return;
         if (!this.initComplete) return;
+        // Turned off during the wait, which can now last until startup has finished
+        if (!this.enabled || !config.getSetting('dungeonTrackerChatAnnotations')) return;
 
         // Whenever the tracker can name a dungeon, remember it — even on a pass
         // with no new run to label. A pass fires on any new chat message, not
@@ -446,6 +451,9 @@ class DungeonTrackerChatAnnotations {
         // source can name the dungeon, throw that pass away and redo the log.
         if (this._annotatedWithoutDungeonName && this.hasDungeonNameSource()) {
             this.resetAnnotationState();
+            // Not loaded until the reload lands: a pass arriving meanwhile must wait for it rather than number
+            // the emptied state from chat alone and mark those messages processed
+            this.initComplete = false;
             await this.loadRunCountsFromStorage();
             if (this.currentCharacterId() !== passCharacterId) return;
             if (!this.initComplete) return;
