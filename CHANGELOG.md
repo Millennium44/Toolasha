@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Spawn census removed
+
+The spawn census (the wave-roster recorder behind its settings switch, export button and divergence alert) is gone; its saved record is left untouched on this device.
+
+### Large saved histories load after the game opens
+
+The dungeon run history, labyrinth fight pool and Combat Sim's remembered Upgrade table now load once startup has finished, so dungeon run labels in chat can appear a moment later than before.
+
 ### Sync pulls do less work at once and name their slow steps
 
 A sync pull now hashes each download once instead of up to five times and checks it in slices, and the Performance panel names the pull step (download, merge, write…) that was running during a stall.
