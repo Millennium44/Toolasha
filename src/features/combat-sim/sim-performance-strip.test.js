@@ -5,6 +5,7 @@ const store = vi.hoisted(() => ({ values: {}, writes: [], workers: 4 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
+        getSettingValue: (key, fallback) => (key in store.values ? store.values[key] : fallback),
         getSetting: (key) => (key in store.values ? store.values[key] : false),
         setSettingValue: (key, value) => {
             store.writes.push([key, value]);
@@ -42,7 +43,7 @@ afterEach(() => {
     document.body.innerHTML = '';
 });
 
-describe('the Performance strip', () => {
+describe('the Sim settings strip', () => {
     test('builds collapsed, with defaults in every box and the effective thread count', () => {
         Object.defineProperty(navigator, 'hardwareConcurrency', { value: 16, configurable: true });
         const strip = createPerformanceStrip({ includeShorten: true, idPrefix: 't' });
@@ -139,6 +140,29 @@ describe('the Performance strip', () => {
         uncap.checked = false;
         uncap.dispatchEvent(new Event('change', { bubbles: true }));
         expect(strip.querySelector('#t-perf-sims').disabled).toBe(false);
+    });
+
+    test('Shared seed is checked when unset, reflects the setting and writes on change', () => {
+        const strip = createPerformanceStrip({ idPrefix: 't' });
+        document.body.appendChild(strip);
+        const seed = strip.querySelector('#t-perf-seed');
+        expect(seed.checked).toBe(true);
+        seed.checked = false;
+        seed.dispatchEvent(new Event('change', { bubbles: true }));
+        expect(store.writes).toEqual([['combatSim_sharedSeed', false]]);
+        expect(seed.checked).toBe(false);
+        store.values.combatSim_sharedSeed = true;
+        strip.querySelector('#t-perf-toggle').click();
+        expect(seed.checked).toBe(true);
+        expect(strip.textContent).toContain('Shared seed');
+    });
+
+    test('the toggle reads Sim settings', () => {
+        const strip = createPerformanceStrip({ idPrefix: 't' });
+        const toggle = strip.querySelector('#t-perf-toggle');
+        expect(toggle.textContent).toBe('⚙ Sim settings ▸');
+        toggle.click();
+        expect(toggle.textContent).toBe('⚙ Sim settings ▾');
     });
 
     test('the toggle opens and closes; opening re-reads the stored values', () => {

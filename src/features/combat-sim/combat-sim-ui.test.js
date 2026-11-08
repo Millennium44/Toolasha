@@ -1571,12 +1571,14 @@ describe('the panel', () => {
         q('#mwi-csim-equip-steps').value = '1';
     });
 
-    test('the panel carries a collapsed Performance strip (no Lab-only box) that shows the effective threads', () => {
+    test('the panel carries a collapsed Sim settings strip (no Lab-only box) that shows the effective threads', () => {
         const q = (id) => ui.panel.querySelector(id);
         expect(q('#mwi-csim-perf')).not.toBeNull();
         expect(q('#mwi-csim-perf-body').style.display).toBe('none');
         expect(q('#mwi-csim-perf-shorten')).toBeNull();
         expect(q('#mwi-csim-perf-effective').textContent).toContain('4');
+        expect(q('#mwi-csim-perf-seed')).not.toBeNull();
+        expect(q('#mwi-csim-perf-toggle').textContent).toContain('Sim settings');
         q('#mwi-csim-perf-toggle').click();
         expect(q('#mwi-csim-perf-body').style.display).toBe('flex');
     });

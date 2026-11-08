@@ -1,6 +1,6 @@
 /**
- * The "Performance" strip shared by the Combat Sim and Lab Sim panels: one collapsed line that opens to the
- * limits that decide how hard a simulation run leans on the machine.
+ * The "Sim settings" strip shared by the Combat Sim and Lab Sim panels: one collapsed line that opens to the
+ * limits that decide how hard a simulation run leans on the machine, plus the shared random seed.
  *
  * Every control is a player setting read when the strip is built or reopened and written on change; the
  * simulators themselves read the settings at run time, never from the strip. Nothing here throws on a missing
@@ -23,6 +23,7 @@ import {
 
 const THREADS_KEY = 'combatSim_maxThreads';
 const UNCAP_KEY = 'combatSim_uncapThreads';
+const SHARED_SEED_KEY = 'combatSim_sharedSeed';
 const MAX_THREADS = 32;
 
 const INPUT_CSS =
@@ -94,7 +95,7 @@ export function createPerformanceStrip({ includeShorten = false, includeResim = 
         : '';
 
     strip.innerHTML = `
-        <button type="button" id="${idPrefix}-perf-toggle" aria-expanded="false" style="background:none; border:none; color:#888; cursor:pointer; padding:3px 14px; font-size:11px; text-align:left;">⚙ Performance ▸</button>
+        <button type="button" id="${idPrefix}-perf-toggle" aria-expanded="false" style="background:none; border:none; color:#888; cursor:pointer; padding:3px 14px; font-size:11px; text-align:left;">⚙ Sim settings ▸</button>
         <div id="${idPrefix}-perf-body" style="display:none; flex-wrap:wrap; align-items:center; gap:6px 14px; padding:4px 14px 8px;">
             <label style="${LABEL_CSS}" title="Web Worker threads for simulations. 0 = auto (4, or fewer on a smaller machine). Normally clamped to your core count; tick Ignore thread caps to take it literally (0 then means every core).">
                 Threads
@@ -111,6 +112,10 @@ export function createPerformanceStrip({ includeShorten = false, includeResim = 
             </label>
             ${resim}
             ${shorten}
+            <label style="${LABEL_CSS} cursor:pointer;" title="Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior). On: the baseline and every candidate see the same random draws, so a small difference reflects the upgrade rather than luck. Off: every sim is independently random.">
+                <input type="checkbox" id="${idPrefix}-perf-seed" style="margin:0; cursor:pointer;">
+                Shared seed
+            </label>
         </div>
     `;
 
@@ -149,6 +154,8 @@ export function createPerformanceStrip({ includeShorten = false, includeResim = 
                 ? 'Not used while Ignore thread caps is on: simulations run as many at once as Threads allows.'
                 : 'Most simulations one analysis runs together, never more than Threads allows. Ignored while Ignore thread caps is on.';
         }
+        const seedBox = $('seed');
+        if (seedBox) seedBox.checked = Boolean(config.getSettingValue?.(SHARED_SEED_KEY, true) ?? true);
         const effective = $('effective');
         if (effective) effective.textContent = effectiveThreadsText();
     };
@@ -173,13 +180,18 @@ export function createPerformanceStrip({ includeShorten = false, includeResim = 
         refresh();
     });
 
+    $('seed')?.addEventListener('change', (event) => {
+        config.setSetting?.(SHARED_SEED_KEY, Boolean(event.target.checked));
+        refresh();
+    });
+
     const toggle = $('toggle');
     const body = $('body');
     toggle?.addEventListener('click', () => {
         const open = body?.style.display === 'none';
         if (body) body.style.display = open ? 'flex' : 'none';
         toggle.setAttribute('aria-expanded', String(open));
-        toggle.textContent = `⚙ Performance ${open ? '▾' : '▸'}`;
+        toggle.textContent = `⚙ Sim settings ${open ? '▾' : '▸'}`;
         if (open) refresh();
     });
 
