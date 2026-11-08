@@ -22,6 +22,10 @@ The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakp
 
 A drop far above its expected count now reads "100×" instead of a cut-off "+9900…" in the vs exp. column; hover it for the exact percent.
 
+### Item popups on a phone no longer cover the item
+
+On a phone, an item's popup now opens beside the item you pressed (narrowed to fit if needed), or above or below it when there's no room beside, and scrolls when it's taller than the screen.
+
 ### Labyrinth beacon dots
 
 Every room a beacon will reveal gets a small teal dot in its corner (a ring for a later beacon), so coverage still shows under a planned path's border. Turn it off with "Beacon dots" in the grid's ⚙ menu.
