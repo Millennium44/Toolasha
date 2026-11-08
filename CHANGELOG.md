@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Lab Sim Ability Lv modes work across several fights
 
-Target Lv and Next mult. of are no longer locked to +Levels when the Upgrade scope covers more than one fight. Ability levels are the same in every loadout, so each mode now means the same thing across the whole run.
+Target Lv and Next mult. of are no longer locked to +Levels when the Upgrade scope covers more than one fight. Ability levels are the same in every loadout, so each mode now means the same thing across the whole run. The Targets grid now opens at the typed Target Lv, and an ability kept in different slots across loadouts is ranked once instead of twice.
 
 <!-- shipped in 3.80.0 -->
 
