@@ -4359,6 +4359,55 @@ describe('the remembered upgrade analysis across a character switch', () => {
         expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('The alt’s own run');
     });
 
+    describe('a deferred restore that lands after the player acted', () => {
+        const KEY = 'combatExport:combatSimUpgradeResults_char1';
+
+        async function armed(duringRead) {
+            const { default: config } = await import('../../core/config.js');
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_rememberUpgradeResults' ? true : fallback
+            );
+            mocks.store.set(KEY, { data: { baseline: BASELINE, results: [row('Remembered run')] }, savedAt: 1 });
+            ui.buildPanel();
+            const realGet = mocks.store.get.bind(mocks.store);
+            vi.spyOn(mocks.store, 'get').mockImplementation((key) => {
+                if (key === KEY) duringRead();
+                return realGet(key);
+            });
+        }
+
+        test('an Analyze started during the wait keeps the remembered table off the page', async () => {
+            await armed(() => {
+                ui._upgradeRunStarted = true;
+            });
+            await ui._restoreUpgradeResults();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Remembered run');
+            expect(ui._upgradeResultsData).toBeFalsy();
+        });
+
+        test('a busy simulator during the wait does the same', async () => {
+            await armed(() => {
+                vi.spyOn(ui, '_isBusy').mockReturnValue(true);
+            });
+            await ui._restoreUpgradeResults();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Remembered run');
+        });
+
+        test('a character switch during the wait draws nothing from the old key', async () => {
+            await armed(() => {
+                mocks.characterId = 'char2';
+            });
+            await ui._restoreUpgradeResults();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).not.toContain('Remembered run');
+        });
+
+        test('with nothing happening during the wait it still restores', async () => {
+            await armed(() => {});
+            await ui._restoreUpgradeResults();
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-results').textContent).toContain('Remembered run');
+        });
+    });
+
     describe('remembered scroll pricing', () => {
         const stored = { value: 6800, itemHrid: '/items/pathseeker_lodestone', itemName: 'Pathseeker Lodestone' };
         const scrollRow = {
