@@ -225,7 +225,7 @@ async function reload() {
         // +5 under the bare hrid. Folded here, on the way in, so nothing below
         // ever sees the old shape — and so the first write back is already in
         // the new one
-        state.targets = migrateSavingsTargets(state.targets);
+        state.targets = foldLadderRoutes(migrateSavingsTargets(state.targets));
         // The pin is a key into that list, so it moves with it
         if (state.selected && !state.targets[state.selected]) {
             const moved = Object.entries(state.targets).find(([, target]) => target.itemHrid === state.selected);
@@ -359,7 +359,7 @@ function listStamp() {
     const targets = Object.entries(state.targets).map(
         ([key, target]) =>
             `${key}:${target.enhancementLevel || 0}:${target.noSell ?? ''}:${target.craft ?? ''}:` +
-            `${target.mode ?? ''}:${target.quotedCost ?? ''}`
+            `${target.mode ?? ''}:${target.route ?? ''}:${target.quotedCost ?? ''}`
     );
     const abilities = abilityGoals().map((goal) => `${goal.abilityHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
     const houses = houseGoals().map((goal) => `${goal.houseRoomHrid}:${goal.targetLevel}:${goal.cost ?? ''}`);
@@ -371,6 +371,7 @@ function listStamp() {
         state.selected ?? '',
         state.noSell ? 1 : 0,
         state.marketValue ? 1 : 0,
+        routePreference(),
     ].join('|');
 }
 
@@ -489,18 +490,129 @@ export function isLaddering(itemHrid, enhancementLevel = 0) {
     return state.targets[targetKey(itemHrid, enhancementLevel)]?.mode === 'ladder';
 }
 
+/** Every route a card can be costed along, in the order the table lists them */
+export const ROUTE_IDS = ['buy', 'craft', 'mirror', 'enhance', 'ladder'];
+
+/** The routes a chip can pin. Direct and ladder are `mode`'s alone, see {@link routePinOf} */
+const PINNABLE_ROUTES = ['buy', 'craft', 'mirror'];
+
+/** Short names, for the table and the chip */
+const ROUTE_LABELS = { buy: 'Buy', craft: 'Craft', mirror: 'Mirror', enhance: 'Enhance', ladder: 'Ladder' };
+
+/**
+ * Fold a stored `route` that says enhance or ladder into `mode`, which owns ladder-ness.
+ *
+ * An earlier, never-released build wrote ladder pins to `route`. Ladder and direct live in `mode`
+ * only (`'ladder'`, or absent for direct), the one field every build reads, so no two builds can
+ * disagree about it: a `route: 'ladder'` becomes `mode: 'ladder'`, and either value of `route` is
+ * dropped, whatever `mode` says.
+ *
+ * @param {Object} targets - The list as stored
+ * @returns {Object} The same list
+ */
+function foldLadderRoutes(targets) {
+    for (const target of Object.values(targets || {})) {
+        if (!target || (target.route !== 'ladder' && target.route !== 'enhance')) continue;
+        if (target.route === 'ladder' && target.mode !== 'ladder') target.mode = 'ladder';
+        delete target.route;
+    }
+    return targets;
+}
+
+/**
+ * The route a target is pinned to, if any: buy, craft or mirror. Null is Auto.
+ *
+ * Stored in two fields so an older build keeps working. `craft: true` is the old Crafting switch and
+ * is written for a craft pin; `route` carries buy and mirror (which an older build ignores, reading
+ * an unset `craft` as buying). This build never writes `craft` beside a different `route`, so when it
+ * finds one, an older build toggled Crafting on and that choice stands. A `route: 'craft'` whose
+ * `craft` is gone means an older build switched Crafting off: buying.
+ *
+ * Ladder and direct are not here: they are `mode` and nothing else.
+ *
+ * @param {Object|undefined} target - A stored target
+ * @returns {string|null} A route id, or null for Auto
+ */
+function routePinOf(target) {
+    if (!target) return null;
+    const route = PINNABLE_ROUTES.includes(target.route) ? target.route : null;
+    if (target.craft) return 'craft';
+    if (route === 'craft') return 'buy';
+    return route;
+}
+
+/**
+ * Pin a target to buy, craft or mirror, or back to Auto. Never touches `mode`.
+ * @param {string} itemHrid - The target
+ * @param {number} enhancementLevel - Which enhancement of it
+ * @param {string|null} route - 'buy', 'craft', 'mirror', or null for Auto
+ */
+export function setRoutePin(itemHrid, enhancementLevel = 0, route = null) {
+    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
+    if (!target) return;
+
+    if (PINNABLE_ROUTES.includes(route)) target.route = route;
+    else delete target.route;
+    // The old Crafting switch, kept in step so a rollback sees a craft pin as Crafting and the rest as Buying
+    if (route === 'craft') target.craft = true;
+    else delete target.craft;
+    persist();
+}
+
+/**
+ * Pin the ladder (`mode: 'ladder'`) or go back to the direct run (no `mode`).
+ * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ * @param {boolean} ladder - Whether to climb the ladder
+ */
+export function setLadder(itemHrid, enhancementLevel = 0, ladder = true) {
+    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
+    if (!target) return;
+
+    if (ladder) target.mode = 'ladder';
+    else delete target.mode;
+    persist();
+}
+
+/**
+ * The route pinned for a target, for the chip.
+ * @param {string} itemHrid - The target
+ * @param {number} [enhancementLevel] - Which enhancement of it
+ * @returns {string|null} A route id, or null for Auto
+ */
+export function routePin(itemHrid, enhancementLevel = 0) {
+    return routePinOf(state.targets[targetKey(itemHrid, enhancementLevel)]);
+}
+
+/**
+ * Step the chip: Auto, then each route offered on the card in turn, then Auto again.
+ * @param {string} itemHrid - The target
+ * @param {number} enhancementLevel - Which enhancement of it
+ * @param {Array<string>} offered - The route ids the card lists
+ */
+export function cycleRoutePin(itemHrid, enhancementLevel = 0, offered = []) {
+    const order = [null, ...PINNABLE_ROUTES.filter((id) => offered.includes(id))];
+    const at = order.indexOf(routePin(itemHrid, enhancementLevel));
+    // A pin to a route the card no longer lists starts the cycle over
+    setRoutePin(itemHrid, enhancementLevel, order[(at + 1) % order.length]);
+}
+
 /**
  * Cost this target along the ladder instead of the direct run, or back again.
  * @param {string} itemHrid - The target
  * @param {number} [enhancementLevel] - Which enhancement of it
  */
 export function toggleLaddering(itemHrid, enhancementLevel = 0) {
-    const target = state.targets[targetKey(itemHrid, enhancementLevel)];
-    if (!target) return;
+    setLadder(itemHrid, enhancementLevel, !isLaddering(itemHrid, enhancementLevel));
+}
 
-    if (target.mode === 'ladder') delete target.mode;
-    else target.mode = 'ladder';
-    persist();
+/**
+ * The global preference for cards whose chip is on Auto.
+ * @returns {string} 'auto', or a route id: 'buy', 'craft' or 'mirror'
+ */
+function routePreference() {
+    const value = config.getSettingValue?.('equipmentWatch_routePreference');
+    return value === 'buy' || value === 'craft' || value === 'mirror' ? value : 'auto';
 }
 
 /**
@@ -511,9 +623,8 @@ export function toggleCrafting(itemHrid, enhancementLevel = 0) {
     const target = state.targets[targetKey(itemHrid, enhancementLevel)];
     if (!target) return;
 
-    if (target.craft) delete target.craft;
-    else target.craft = true;
-    persist();
+    // The old Crafting switch is now a pin: Crafting pins craft, Buying pins buy
+    setRoutePin(itemHrid, enhancementLevel, target.craft ? 'buy' : 'craft');
 }
 
 /**
@@ -1516,6 +1627,8 @@ function conventionalCost(itemHrid, enhancementLevel) {
                 // it is the same piece, and it goes on your back either way
                 const tradeIn = worn?.itemHrid === itemHrid || noSell ? 0 : wornBid;
                 const direct = Math.max(0, run + baseAsk - tradeIn);
+                // Before any trade-in, for the real cost the route table compares on
+                const directGross = run + baseAsk;
                 // The safe way round the same run, priced beside it
                 const ladder = ladderOption(itemHrid, enhancementLevel);
                 // The mode stays stored even when the ladder is not currently
@@ -1534,6 +1647,7 @@ function conventionalCost(itemHrid, enhancementLevel) {
                     // Whichever one is not the basis is still worth a line, so
                     // the card always carries both
                     direct,
+                    directGross,
                     ask: 0,
                     crafted: false,
                     enhancing: true,
@@ -1546,7 +1660,7 @@ function conventionalCost(itemHrid, enhancementLevel) {
         }
     }
 
-    if (!isCrafting(itemHrid, enhancementLevel)) {
+    if (!isCrafting(itemHrid, enhancementLevel) || !craftMakesTarget(itemHrid, enhancementLevel)) {
         return {
             cost: upgradeCost({ targetAsk: ask, equippedBid: wornBid, noSell }),
             ask,
@@ -1576,6 +1690,34 @@ function conventionalCost(itemHrid, enhancementLevel) {
 }
 
 /**
+ * Whether crafting yields the target AT its level. A recipe that does not retain enhancement makes a
+ * +0, so for a +12 target it is not a route at all (pricing its materials would quote a +0's price
+ * for a +12). A +0 target needs only a recipe.
+ *
+ * @param {string} itemHrid - The target
+ * @param {number} enhancementLevel - The level wanted
+ * @returns {boolean}
+ */
+function craftMakesTarget(itemHrid, enhancementLevel) {
+    const recipe = recipeFor(itemHrid);
+    if (!recipe?.inputItems?.length) return false;
+    return !(enhancementLevel > 0) || Boolean(recipe.retainAllEnhancement);
+}
+
+/**
+ * Whether a crafting plan prices every leg. A total is only a price if no node under it is a purchase
+ * nobody quotes: a partial sum would read as a cheap craft.
+ *
+ * @param {Object|null} node - A plan node from the planner
+ * @returns {boolean}
+ */
+function planPriced(node) {
+    if (!node || !Number.isFinite(node.totalCost)) return false;
+    if (node.strategy === 'buy' && node.itemHrid !== '/items/coin' && !(node.buyPrice > 0)) return false;
+    return (node.children || []).every(planPriced);
+}
+
+/**
  * What making one costs, through the crafting planner where it is available.
  *
  * The planner is the better answer by a distance: it costs each ingredient at
@@ -1594,11 +1736,24 @@ function conventionalCost(itemHrid, enhancementLevel) {
  *   level its base was shopped for, or null when it cannot be priced
  */
 function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
+    return oncePerPass(`craftmat:${itemHrid}:${enhancementLevel}`, () =>
+        craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel)
+    );
+}
+
+/**
+ * The body of {@link craftMaterialsCost}, unmemoized.
+ * @param {string} itemHrid - The finished piece
+ * @param {Object|null} recipe - From `recipeFor`
+ * @param {number} enhancementLevel - The level the output is wanted at
+ * @returns {{cost: number, upgradeBaseLevel: number, consumed: Object|null}|null}
+ */
+function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
     const plannerBase = (hrid) => {
         if (planner) {
             const plan = planner(hrid, 1, 'ask');
-            if (plan && Number.isFinite(plan.totalCost)) return plan.totalCost;
+            if (planPriced(plan)) return plan.totalCost;
         }
         const ask = getItemPrices(hrid, 0)?.ask || 0;
         return ask > 0 ? ask : null;
@@ -1609,7 +1764,7 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
             let total = 0;
             for (const input of recipe.inputItems) {
                 const plan = planner(input.itemHrid, input.count || 0, 'ask');
-                if (!plan || !Number.isFinite(plan.totalCost)) return null;
+                if (!planPriced(plan)) return null;
                 total += plan.totalCost;
             }
 
@@ -1620,6 +1775,7 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
             return {
                 cost: total / (recipe.outputCount > 0 ? recipe.outputCount : 1),
                 upgradeBaseLevel: base.level,
+                consumed: upgradeBaseConsumed(recipe, enhancementLevel, base),
             };
         } catch (error) {
             console.error('[EquipmentSavings] The crafting planner failed, falling back to material asks:', error);
@@ -1636,7 +1792,55 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
         haveBase: true,
         upgradeAsk: 0,
     });
-    return flat === null ? null : { cost: flat + flatBase.cost, upgradeBaseLevel: flatBase.level };
+    return flat === null
+        ? null
+        : {
+              cost: flat + flatBase.cost,
+              upgradeBaseLevel: flatBase.level,
+              consumed: upgradeBaseConsumed(recipe, enhancementLevel, flatBase),
+          };
+}
+
+/**
+ * The owned copy of a recipe's base that the chosen base route uses up, if any.
+ *
+ * `upgradeBaseRoute` prices a base you hold at nothing, which is right for the coins to find and wrong
+ * for what the route really costs: the copy is consumed, so a sale is given up. This names it so the
+ * route's real cost can charge it. A plain recipe takes the lowest-level owned copy (the cheapest to
+ * give up); a retaining recipe takes the held copy at the level, or the best copy it enhances up.
+ *
+ * @param {Object|null} recipe - From `recipeFor`
+ * @param {number} enhancementLevel - The level the OUTPUT is wanted at
+ * @param {{cost: number|null, level: number}} route - From `upgradeBaseRoute`
+ * @returns {{itemHrid: string, level: number}|null} Null when nothing owned is used
+ */
+function upgradeBaseConsumed(recipe, enhancementLevel, route) {
+    const baseHrid = recipe?.upgradeItemHrid;
+    if (!baseHrid || route?.cost === null) return null;
+
+    const needsLevel = recipe.retainAllEnhancement ? enhancementLevel || 0 : 0;
+    const held = highestOwnedLevel(baseHrid);
+    if (held === null) return null;
+    if (needsLevel <= 0) return { itemHrid: baseHrid, level: lowestOwnedLevel(baseHrid) ?? held };
+    // Held at the level: used as it is. Held below it with the run chosen: the copy enhanced up. A
+    // bought listing leaves the held copy alone
+    if (held >= needsLevel || route.level === 0) return { itemHrid: baseHrid, level: held };
+    return null;
+}
+
+/**
+ * The lowest enhancement level at which a piece is held.
+ * @param {string} itemHrid - The piece
+ * @returns {number|null} Null when none is held
+ */
+function lowestOwnedLevel(itemHrid) {
+    let best = null;
+    for (const item of dataManager.getInventory?.() || []) {
+        if (item.itemHrid !== itemHrid || item.count === 0 || item.itemLocationHrid === LISTED_LOCATION) continue;
+        const level = item.enhancementLevel || 0;
+        if (best === null || level < best) best = level;
+    }
+    return best;
 }
 
 /**
@@ -1745,6 +1949,22 @@ function heldCopyAt(itemHrid, level, worn) {
 }
 
 /**
+ * What a Philosopher's Mirror costs to buy: the ASK, the same book side the build's inputs and the
+ * Buy route are priced on. Only when the book has no ask is the shared resolver's estimate used,
+ * and then it is flagged so the card shows it as an estimate rather than a firm price.
+ *
+ * @returns {{price: number, estimated: boolean}|null} Null when nothing prices the mirror
+ */
+function mirrorQuote() {
+    const ask = getItemPrices(MIRROR_ITEM_HRID, 0)?.ask || 0;
+    if (ask > 0) return { price: ask, estimated: false };
+
+    const guarded = priceMirror();
+    if (guarded?.price > 0 && !guarded.unpriced && !guarded.partial) return { price: guarded.price, estimated: true };
+    return null;
+}
+
+/**
  * The Philosopher's Mirror build for one target: a +L is made from a +(L-1) of the
  * piece itself and a +(L-2) of its base item (the unrefined one for a refined piece,
  * `baseItemHrids[0]`), plus a mirror. The same recipe the enhancement tooltip and the
@@ -1776,8 +1996,8 @@ function heldCopyAt(itemHrid, level, worn) {
 export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false } = {}) {
     if (!itemHrid || !(level >= MIRROR_FIRST_LEVEL)) return null;
 
-    const mirror = priceMirror();
-    if (!(mirror?.price > 0) || mirror.unpriced || mirror.partial) return null;
+    const mirror = mirrorQuote();
+    if (!mirror) return null;
 
     const details = dataManager.getItemDetails?.(itemHrid);
     const baseHrid =
@@ -1815,11 +2035,14 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
     return {
         inputs,
         mirrorPrice: mirror.price,
+        // No ask on the book: the price is the shared resolver's estimate, and the card says so
+        estimated: mirror.estimated,
         coins,
         forgone,
         wornConsumed,
         cash: Math.max(0, coins - (wornConsumed ? 0 : credit)),
-        real: Math.max(0, coins + forgone - credit),
+        // Not clamped: two routes that both net below the trade-in must still compare. Display clamps
+        real: coins + forgone - credit,
         bill: [
             ...inputs
                 .filter((input) => !input.owned)
@@ -1844,28 +2067,141 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
  * @returns {Object} `conventionalCost`'s fields plus `realCost`, `route` ('mirror' when the build wins)
  *   and `mirrorBuild` (the priced build, winning or not)
  */
-function costOf(itemHrid, enhancementLevel, { mirror: allowMirror = true } = {}) {
+function costOf(
+    itemHrid,
+    enhancementLevel,
+    { mirror: allowMirror = true, pin: routePinned = null, ladder: ladderPinned = false, preference = 'auto' } = {}
+) {
     const base = conventionalCost(itemHrid, enhancementLevel);
-    const plain = { ...base, realCost: base.cost, route: null, mirrorBuild: null };
-    // Enhancing a piece nobody sells is its own decision (direct against ladder)
-    if (base.enhancing) return plain;
-
     const worn = wornRivalOf(itemHrid);
     const noSell = targetNoSell(itemHrid, enhancementLevel);
-    const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
-    if (!build || build.unpriced) return plain;
-
-    const winning = allowMirror && (base.cost === null || build.real < base.cost);
-    if (!winning) return { ...plain, mirrorBuild: build };
-    return {
-        ...base,
-        cost: build.cash,
-        realCost: build.real,
-        route: 'mirror',
-        mirrorBuild: build,
-        // The craft route's listing no longer applies
-        upgradeBaseLevel: 0,
+    const wornBid = wornTradeIn(worn);
+    // The sale the baseline "buy it, sell the old piece" nets; every route's real cost is measured from it
+    const credit = noSell ? 0 : wornBid;
+    // What an owned copy a route uses up would have fetched. A copy nothing bids for gives up no sale
+    // only when it is untradable; a tradable copy with an empty book leaves the route unpriced (null),
+    // as the mirror does. Not clamped at zero: comparison must not hide a route that nets below the credit
+    const gives = (copy) => {
+        if (!copy) return 0;
+        const sale = wornTradeIn({ itemHrid: copy.itemHrid, enhancementLevel: copy.level });
+        if (sale > 0) return sale;
+        // The worn piece used up: its sale is the very trade-in the baseline nets (the same lookup), so the
+        // unknown cancels and the real cost is known after all
+        if (!noSell && heldCopyAt(copy.itemHrid, copy.level, worn)?.worn === true) return 0;
+        return dataManager.getItemDetails?.(copy.itemHrid)?.isTradable === false ? 0 : null;
     };
+    const realOf = (gross, copy) => {
+        const sale = gives(copy);
+        return sale === null ? null : gross + sale - credit;
+    };
+
+    const rows = [];
+    const add = (id, cash, real, extra = {}) =>
+        rows.push({ id, label: ROUTE_LABELS[id], cash, real, priced: cash !== null && real !== null, ...extra });
+
+    let eligible;
+    if (base.enhancing) {
+        // A piece nobody sells: the run at the anvil, directly or up a ladder
+        add(
+            'enhance',
+            base.direct,
+            base.direct === null
+                ? null
+                : realOf(base.directGross, base.ownsBase ? { itemHrid, level: base.fromLevel } : null)
+        );
+        if (base.ladder) {
+            const spare = base.ladder.spare ? { itemHrid, level: base.ladder.fromLevel } : null;
+            add('ladder', base.ladder.cost, realOf(base.ladder.cost, spare));
+        }
+        // Direct unless the ladder is pinned: Auto never climbs it on its own
+        eligible = ['enhance'];
+    } else {
+        if (base.ask > 0) {
+            const cash = upgradeCost({ targetAsk: base.ask, equippedBid: wornBid, noSell });
+            add('buy', cash, cash === null ? null : realOf(base.ask, null));
+        }
+        const recipe = recipeFor(itemHrid);
+        // A craft route exists only where there is a recipe to craft from
+        if (craftMakesTarget(itemHrid, enhancementLevel)) {
+            const materials = craftMaterialsCost(itemHrid, recipe, enhancementLevel);
+            if (materials === null) add('craft', null, null);
+            else {
+                // A craft that uses up the worn piece cannot also sell it, so no trade-in against the cash
+                const usesWorn =
+                    materials.consumed &&
+                    heldCopyAt(materials.consumed.itemHrid, materials.consumed.level, worn)?.worn === true;
+                add(
+                    'craft',
+                    noSell || usesWorn ? materials.cost : Math.max(0, materials.cost - wornBid),
+                    realOf(materials.cost, materials.consumed),
+                    { recipe, upgradeBaseLevel: materials.upgradeBaseLevel }
+                );
+            }
+        }
+        const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
+        if (build?.unpriced) add('mirror', null, null);
+        else if (build) add('mirror', build.cash, build.real, { build, estimated: build.estimated });
+        // Auto weighs every route there is
+        eligible = ['buy', 'craft', 'mirror'];
+    }
+
+    // The pin: on a piece nobody sells it is the ladder switch (`mode`), otherwise buy, craft or mirror
+    const pin = base.enhancing ? (ladderPinned ? 'ladder' : null) : routePinned;
+
+    const usable = (id) => rows.find((row) => row.id === id && row.priced && (allowMirror || id !== 'mirror'));
+    // A pin needs only its coins to find: real cost steers Auto and Prefer, and a pin is not steered
+    const standing = (id) => rows.find((row) => row.id === id && row.cash !== null && (allowMirror || id !== 'mirror'));
+    let chosen = null;
+    let pinNote = '';
+    if (pin) {
+        chosen = standing(pin) || null;
+        if (!chosen) {
+            const applies = rows.some((row) => row.id === pin && (allowMirror || pin !== 'mirror'));
+            pinNote = applies
+                ? `${ROUTE_LABELS[pin]} is pinned but has no price right now, so Auto is used.`
+                : `${ROUTE_LABELS[pin]} is pinned but doesn't apply to this item, so Auto is used.`;
+        }
+    }
+    // "Prefer X" is for cards left on Auto: X whenever it is priced and applicable
+    if (!chosen && !pin && preference !== 'auto') chosen = usable(preference) || null;
+    if (!chosen) {
+        for (const id of eligible) {
+            const row = usable(id);
+            if (row && (!chosen || row.real < chosen.real)) chosen = row;
+        }
+    }
+
+    const routes = rows.map(({ id, label, cash, real, priced, estimated }) => ({
+        id,
+        label,
+        cash,
+        real,
+        priced,
+        estimated: Boolean(estimated),
+        chosen: chosen?.id === id,
+    }));
+    const common = { routes, pin, pinNote, pinned: Boolean(pin && chosen?.id === pin) };
+    if (!chosen) return { ...base, ...common, realCost: base.cost, route: null, mirrorBuild: null };
+
+    const build = rows.find((row) => row.id === 'mirror')?.build || null;
+    const result = {
+        ...base,
+        ...common,
+        cost: chosen.cash,
+        realCost: chosen.real,
+        route: chosen.id,
+        mirrorBuild: build,
+    };
+    if (chosen.id === 'ladder') result.mode = 'ladder';
+    else if (chosen.id === 'enhance') result.mode = 'direct';
+    else if (chosen.id === 'craft') {
+        result.recipe = chosen.recipe || result.recipe;
+        result.upgradeBaseLevel = chosen.upgradeBaseLevel || 0;
+    } else {
+        // The craft route's listing no longer applies
+        result.upgradeBaseLevel = 0;
+    }
+    return result;
 }
 
 /**
@@ -1896,6 +2232,9 @@ function costEveryTarget() {
             realCost,
             route,
             mirrorBuild,
+            routes,
+            pin,
+            pinNote,
             ask,
             crafted,
             recipe,
@@ -1907,7 +2246,12 @@ function costEveryTarget() {
             mode,
             enhanceSource,
             upgradeBaseLevel,
-        } = costOf(itemHrid, enhancementLevel, { mirror: !hasQuote });
+        } = costOf(itemHrid, enhancementLevel, {
+            mirror: !hasQuote,
+            pin: routePinOf(target),
+            ladder: target.mode === 'ladder',
+            preference: routePreference(),
+        });
 
         const worn = wornRivalOf(itemHrid);
         const wornBid = wornTradeIn(worn);
@@ -1951,8 +2295,15 @@ function costEveryTarget() {
             // The cost with the sale value of any owned copy a route consumes counted in. Only
             // choosing between routes reads it; a quoted figure stands for itself
             realCost: quoted ?? realCost,
-            // 'mirror' when a Philosopher's Mirror build is the cheapest route, else null
+            // The route the figure is counted along: 'buy', 'craft', 'mirror', 'enhance' or 'ladder'
+            // (null when unpriced, or when an advisor quote supplies the figure)
             route: hasQuote ? null : route,
+            // Every route that applies, each with its cash and real cost and the chosen one marked;
+            // empty under a quote, which stands for itself
+            routes: hasQuote ? [] : routes,
+            // The route the card is pinned to (null = Auto), and why a pin is not in force
+            pin: pin || null,
+            pinNote: hasQuote ? '' : pinNote,
             // The priced build whether or not it won, for the card to name or offer
             mirrorBuild: mirrorBuild || null,
             // What this module would have said on its own, and who said
@@ -2535,32 +2886,11 @@ function targetCard(target) {
     });
     perTarget.appendChild(sell);
 
-    if (recipeFor(target.itemHrid)?.inputItems?.length) {
-        const craft = document.createElement('button');
-        craft.textContent = target.crafted ? 'Crafting' : 'Buying';
-        craft.dataset.targetCraft = target.itemHrid;
-        Object.assign(craft.style, {
-            background: target.crafted ? 'rgba(74, 222, 128, 0.18)' : 'rgba(255, 255, 255, 0.06)',
-            border: `1px solid ${target.crafted ? '#4ade80' : 'rgba(255, 255, 255, 0.12)'}`,
-            borderRadius: '3px',
-            color: target.crafted ? '#4ade80' : 'rgba(232, 236, 245, 0.55)',
-            cursor: 'pointer',
-            fontSize: '10px',
-            padding: '1px 7px',
-        });
-        craft.title =
-            'Price the materials rather than the finished piece.\n' +
-            'For an upgrade whose base you already hold, that is only the ingredients.';
-        craft.addEventListener('click', () => {
-            toggleCrafting(target.itemHrid, target.enhancementLevel);
-            equipmentSavingsPanel.render();
-        });
-        perTarget.appendChild(craft);
-    }
-
     // Only where there are two paths to choose between. A target with no second
     // copy and nowhere to get one has one run and no decision to offer.
     if (target.enhancing && target.ladder) perTarget.appendChild(ladderButton(target));
+    // The route chip: Auto, or the route this card is pinned to. Only where there is a choice to make
+    if (!target.enhancing && (target.routes.length > 1 || target.pin)) perTarget.appendChild(routeChip(target));
     card.appendChild(perTarget);
 
     if (target.route === 'mirror' && target.mirrorBuild) {
@@ -2600,7 +2930,7 @@ function targetCard(target) {
         );
         if (target.mode === 'ladder' && target.ladder) card.appendChild(directLine(target));
         else if (target.ladder) card.appendChild(ladderLine(target.ladder, target.enhancementLevel));
-    } else if (target.crafted) {
+    } else if (target.route === 'craft' || (target.route === null && target.crafted)) {
         card.appendChild(recipeLines(target));
         if (target.recipe?.actionHrid)
             card.appendChild(missingMatsButton(target.recipe.actionHrid, target.upgradeBaseLevel || 0));
@@ -2617,18 +2947,15 @@ function targetCard(target) {
         );
     }
 
-    // A mirror build that is priced but not the cheapest is still worth its figure: it is the
-    // alternative a player might take for a different reason (to keep a copy, say)
-    if (target.route !== 'mirror' && target.mirrorBuild && target.quotedCost == null) {
-        card.appendChild(
-            priceLine(
-                'Mirror build instead:',
-                formatWithSeparator(Math.round(target.mirrorBuild.real)),
-                ROW_COLORS.accent,
-                mirrorBuildSummary(target.mirrorBuild)
-            )
-        );
+    // Why a pin is not in force, then every route side by side
+    if (target.pinNote) {
+        const note = document.createElement('div');
+        note.textContent = target.pinNote;
+        note.dataset.routeNote = 'true';
+        Object.assign(note.style, { color: ROW_COLORS.accent, fontSize: '10px' });
+        card.appendChild(note);
     }
+    if (target.routes.length > 1) card.appendChild(routeTable(target));
 
     // The figure came from the sim rather than from here, so the card says so
     // rather than quietly presenting somebody else's number as its own — and
@@ -2728,6 +3055,98 @@ function mirrorInputName(input) {
 }
 
 /**
+ * The chip beside the sell and craft switches: Auto, or the route the card is pinned to.
+ * Clicking steps through Auto and each route the card lists. A pin that is not in force right now
+ * (the route has no price) keeps its label, so the player can see it is still set.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function routeChip(target) {
+    const button = document.createElement('button');
+    const pinned = Boolean(target.pin);
+    // Names the route actually in force, so the chip never says one thing while the card is counted
+    // along another: a pin that has fallen back to Auto still shows the pin, and the note says why
+    const inForce = target.route ? ROUTE_LABELS[target.route] : '';
+    button.textContent = pinned
+        ? `Pinned: ${ROUTE_LABELS[target.pin] || target.pin}`
+        : `Auto${inForce ? `: ${inForce}` : ''}`;
+    button.dataset.targetRoute = target.itemHrid;
+    Object.assign(button.style, {
+        background: pinned ? 'rgba(100, 149, 237, 0.22)' : 'rgba(255, 255, 255, 0.06)',
+        border: `1px solid ${pinned ? '#6495ed' : 'rgba(255, 255, 255, 0.12)'}`,
+        borderRadius: '3px',
+        color: pinned ? '#6495ed' : 'rgba(232, 236, 245, 0.55)',
+        cursor: 'pointer',
+        fontSize: '10px',
+        padding: '1px 7px',
+    });
+    button.title =
+        'Which route the cost, the bar and the countdown are counted along.\n' +
+        'Auto takes the lowest real cost (or the route preferred in settings).\n' +
+        'Click to pin a route; a pinned route with no price right now falls back to Auto.';
+    button.addEventListener('click', () => {
+        cycleRoutePin(
+            target.itemHrid,
+            target.enhancementLevel,
+            target.routes.map((route) => route.id)
+        );
+        equipmentSavingsPanel.render();
+    });
+    return button;
+}
+
+/**
+ * Every route that applies, side by side: the coins to find and the real cost, which also counts
+ * the sale value of the owned copies the route uses up. The route the card is counted along is
+ * marked. Short labels and KMB figures, to fit a phone.
+ *
+ * @param {Object} target - A costed target
+ * @returns {HTMLElement}
+ */
+function routeTable(target) {
+    const table = document.createElement('div');
+    table.dataset.routeTable = target.itemHrid;
+    Object.assign(table.style, {
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto auto',
+        columnGap: '10px',
+        rowGap: '1px',
+        fontSize: '10px',
+        marginTop: '2px',
+    });
+    table.title =
+        'Cash is the coins to find. Real cost also counts the sale value of any copy of yours the route ' +
+        'uses up, net of selling the piece it replaces. The marked row is the one the bar fills against.';
+
+    const cell = (text, { color = 'rgba(232, 236, 245, 0.55)', bold = false, right = true } = {}) => {
+        const element = document.createElement('span');
+        element.textContent = text;
+        Object.assign(element.style, {
+            color,
+            fontWeight: bold ? 'bold' : 'normal',
+            textAlign: right ? 'right' : 'left',
+            whiteSpace: 'nowrap',
+        });
+        return element;
+    };
+
+    table.append(cell('Route', { right: false }), cell('Cash'), cell('Real cost'));
+    for (const route of target.routes) {
+        const color = route.chosen ? ROW_COLORS.gold : route.priced ? ROW_COLORS.neutral : ROW_COLORS.bad;
+        // Display clamps at zero; the comparison does not. An estimated price is marked with a tilde
+        const figure = (value) =>
+            value === null ? 'no price' : `${route.estimated ? '~' : ''}${formatKMB(Math.max(0, value))}`;
+        table.append(
+            cell(`${route.chosen ? '▸ ' : ''}${route.label}`, { color, bold: route.chosen, right: false }),
+            cell(figure(route.cash), { color, bold: route.chosen }),
+            cell(figure(route.real), { color, bold: route.chosen })
+        );
+    }
+    return table;
+}
+
+/**
  * The mirror build in a sentence, for a tooltip.
  * @param {Object} build - From `mirrorBuildRoute`
  * @returns {string}
@@ -2738,7 +3157,7 @@ function mirrorBuildSummary(build) {
             ? `your ${mirrorInputName(input)} (gives up ${formatKMB(input.price)} sale)`
             : `a ${mirrorInputName(input)} (${formatKMB(input.price)})`
     );
-    return `Mirror build: ${parts.join(' + ')} + a Philosopher's Mirror (${formatKMB(build.mirrorPrice)}).`;
+    return `Mirror build: ${parts.join(' + ')} + a Philosopher's Mirror (${build.estimated ? '~' : ''}${formatKMB(build.mirrorPrice)}).`;
 }
 
 /**
@@ -2779,15 +3198,34 @@ function mirrorLines(target) {
         );
     }
     wrap.appendChild(
-        priceLine("Philosopher's Mirror", formatWithSeparator(Math.round(build.mirrorPrice)), ROW_COLORS.gold)
+        priceLine(
+            "Philosopher's Mirror",
+            `${build.estimated ? '~' : ''}${formatWithSeparator(Math.round(build.mirrorPrice))}`,
+            ROW_COLORS.gold
+        )
     );
 
-    // An owned copy that goes into the build is not free: it is a sale not made
-    if (owned.length) {
+    // The worn piece, while selling: every route nets its sale as the trade-in, so using it up adds nothing
+    const netted = owned.filter((input) => input.worn && !target.noSell);
+    const forgone = owned.filter((input) => !netted.includes(input));
+    for (const input of netted) {
         wrap.appendChild(
             priceLine(
-                `Uses your ${owned.map(mirrorInputName).join(' and ')} — gives up ${formatKMB(build.forgone)} sale`,
-                `real cost ${formatKMB(target.realCost ?? build.real)}`,
+                `Uses your worn ${mirrorInputName(input)} — its ${formatKMB(input.price)} sale is counted on every route`,
+                '',
+                ROW_COLORS.accent,
+                'Selling the piece you wear is netted against every route, so using it up here costs no more ' +
+                    'than the others.'
+            )
+        );
+    }
+    // Any other owned copy that goes into the build is not free: it is a sale not made
+    if (forgone.length) {
+        const sale = forgone.reduce((sum, input) => sum + input.price, 0);
+        wrap.appendChild(
+            priceLine(
+                `Uses your ${forgone.map(mirrorInputName).join(' and ')} — gives up ${formatKMB(sale)} sale`,
+                `real cost ${formatKMB(Math.max(0, target.realCost ?? build.real))}`,
                 ROW_COLORS.accent,
                 'The sale value counted is the bid after tax. The bar fills against the coins below; the route ' +
                     'was chosen on this real cost, so it never wins just because it needs less cash.'
@@ -3029,7 +3467,8 @@ function ladderButton(target) {
         'Direct takes the best copy you own, risking the one you are wearing.\n' +
         'Ladder takes a second copy up instead and leaves your kit alone.';
     button.addEventListener('click', () => {
-        toggleLaddering(target.itemHrid, target.enhancementLevel);
+        // Pins the other path, whichever Auto had picked
+        setLadder(target.itemHrid, target.enhancementLevel, !on);
         equipmentSavingsPanel.render();
     });
     return button;
