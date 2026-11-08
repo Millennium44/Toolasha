@@ -2013,12 +2013,15 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
     let bought = 0;
     let forgone = 0;
     let wornConsumed = false;
+    let saleKnown = true;
     for (const want of wanted) {
         const held = heldCopyAt(want.itemHrid, want.level, worn);
         if (held) {
-            // What selling it would have fetched, after tax. No bid is an unpriced route, not a free copy
+            // What selling it would have fetched, after tax. No bid is an unknown sale, never a free copy:
+            // the cash is still known (an owned copy costs no coins), so only the real cost goes unknown.
+            // The worn piece while selling is the exception: its sale is the trade-in every route nets
             const sale = wornTradeIn({ itemHrid: want.itemHrid, enhancementLevel: want.level });
-            if (!(sale > 0)) return { unpriced: true };
+            if (!(sale > 0) && !(held.worn && !noSell)) saleKnown = false;
             forgone += sale;
             if (held.worn) wornConsumed = true;
             inputs.push({ ...want, owned: true, worn: held.worn, price: sale });
@@ -2042,7 +2045,7 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
         wornConsumed,
         cash: Math.max(0, coins - (wornConsumed ? 0 : credit)),
         // Not clamped: two routes that both net below the trade-in must still compare. Display clamps
-        real: coins + forgone - credit,
+        real: saleKnown ? coins + forgone - credit : null,
         bill: [
             ...inputs
                 .filter((input) => !input.owned)
@@ -3225,7 +3228,9 @@ function mirrorLines(target) {
         wrap.appendChild(
             priceLine(
                 `Uses your ${forgone.map(mirrorInputName).join(' and ')} — gives up ${formatKMB(sale)} sale`,
-                `real cost ${formatKMB(Math.max(0, target.realCost ?? build.real))}`,
+                target.realCost === null || target.realCost === undefined
+                    ? 'real cost: no price'
+                    : `real cost ${formatKMB(Math.max(0, target.realCost))}`,
                 ROW_COLORS.accent,
                 'The sale value counted is the bid after tax. The bar fills against the coins below; the route ' +
                     'was chosen on this real cost, so it never wins just because it needs less cash.'

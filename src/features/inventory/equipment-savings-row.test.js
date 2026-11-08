@@ -2900,17 +2900,38 @@ describe("the Philosopher's Mirror build as a route", () => {
         expect(build.coins).toBe(2_320_000_000 + 940_000_000 + 612_500_000);
     });
 
-    test('unpriced: an owned copy with no bid, or a bought input with no ask, makes the route unpriced', () => {
+    test('a bought input with no ask makes the route unpriced', () => {
         own(REFINED, 12);
-        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 0 };
-        expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
-        watchTarget(REFINED, 13);
-        expect(only().route).toBe('buy');
-        expect(only().mirrorBuild).toBeNull();
-
-        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 2_080_000_000 };
         delete game.prices[`${PLAIN}:11`];
         expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
+    });
+
+    test('an owned copy with no bid keeps the cash, and only the real cost is unknown', () => {
+        // Codex's numbers: owned +12 with no bid, +11 asking 200, mirror asking 100
+        game.prices[`${REFINED}:12`] = { ask: 2_000, bid: 0 };
+        game.prices[`${PLAIN}:11`] = { ask: 200, bid: 100 };
+        game.prices[`${MIRROR}:0`] = { ask: 100, bid: 50 };
+        own(REFINED, 12);
+        const build = mirrorBuildRoute(REFINED, 13);
+        expect(build.cash).toBe(300);
+        expect(build.real).toBeNull();
+
+        watchTarget(REFINED, 13);
+        // Auto skips it for want of a real cost
+        expect(only().route).toBe('buy');
+        // A pin stands on the known cash
+        setRoutePin(REFINED, 13, 'mirror');
+        expect(only().route).toBe('mirror');
+        expect(only().cost).toBe(300);
+        expect(only().pinNote).toBe('');
+        expect(only().routes.find((route) => route.id === 'mirror')).toMatchObject({
+            cash: 300,
+            real: null,
+            priced: false,
+        });
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('no price');
+        expect(text()).not.toContain(FAILED);
     });
 
     test('not applicable: no mirror price, or a level the mirror cannot make', () => {
