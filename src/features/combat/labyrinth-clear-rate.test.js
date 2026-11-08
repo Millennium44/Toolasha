@@ -8215,10 +8215,50 @@ describe('labyrinth toolbar layout', () => {
 
         test('the listeners are removed on disable', () => {
             labyrinthClearRate.watchHalfSettings();
-            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(4);
+            expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(5);
             labyrinthClearRate.disable();
             expect(settingWatchers.filter((w) => w.key.startsWith('labyrinthBeacon'))).toHaveLength(0);
         });
+    });
+
+    test('the Beacon dots switch removes dots when off and restores them when on, without a replan', () => {
+        configMock.getSetting.mockImplementation(() => true);
+        labyrinthClearRate.injectTileControls();
+        const run = vi.spyOn(labyrinthClearRate, 'runBeaconCalculation').mockImplementation(() => {});
+        try {
+            const cellWith = (draw) => {
+                const cell = document.createElement('div');
+                document.body.appendChild(cell);
+                draw(cell);
+                return cell;
+            };
+            const dotOf = (cell) => cell.querySelector('[data-beacon-dot]');
+            const now = cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, ''));
+            const later = cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '', { later: true }));
+            const center = cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, true, 'B1'));
+            const button = q('beacon-dots');
+            expect(button.textContent).toBe('Beacon dots: on');
+
+            configMock.setSetting.mockImplementation((key, value) => {
+                configMock.getSetting.mockImplementation((k) => (k === key ? value : true));
+            });
+            button.click();
+            expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthBeaconDots', false);
+            expect(button.textContent).toBe('Beacon dots: off');
+            expect(dotOf(now)).toBeNull();
+            expect(dotOf(later)).toBeNull();
+
+            button.click();
+            expect(button.textContent).toBe('Beacon dots: on');
+            expect(dotOf(now).getAttribute('data-beacon-dot')).toBe('now');
+            expect(dotOf(later).getAttribute('data-beacon-dot')).toBe('later');
+            expect(dotOf(center)).toBeNull();
+            expect(run).not.toHaveBeenCalled();
+        } finally {
+            run.mockRestore();
+            configMock.setSetting.mockReset();
+            labyrinthClearRate.disable();
+        }
     });
 
     test('the plan follows the settings: fewest holes is what the beacon run plans with', () => {
@@ -8598,5 +8638,62 @@ describe('shroud mark spans the room', () => {
         }
         const short = labyrinthClearRate.buildPathTag('#57d08a', '?');
         expect(short.style.right).toBe('');
+    });
+});
+
+describe('beacon coverage corner dots', () => {
+    const setMobile = (on) => settings.map.set('mobileMode', on ? 'on' : 'off');
+    const cellWith = (draw) => {
+        const cell = document.createElement('div');
+        document.body.appendChild(cell);
+        draw(cell);
+        return cell;
+    };
+    const dotOf = (cell) => cell.querySelector('[data-beacon-dot]');
+
+    afterEach(() => {
+        settings.map.delete('mobileMode');
+        configMock.getSetting.mockImplementation(() => true);
+        document.body.innerHTML = '';
+        labyrinthClearRate._beaconPlanCells = null;
+    });
+
+    test('a room covered by a beacon placed now gets a filled dot at the bottom-left', () => {
+        const dot = dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '')));
+        expect(dot.getAttribute('data-beacon-dot')).toBe('now');
+        expect(dot.style.background).toBe('#26d0aa');
+        expect(dot.style.left).toBe('3px');
+        expect(dot.style.bottom).toBe('3px');
+    });
+
+    test('a room covered only by a later beacon gets a ring', () => {
+        const dot = dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '', { later: true })));
+        expect(dot.getAttribute('data-beacon-dot')).toBe('later');
+        expect(dot.style.borderWidth).toBe('2px');
+        expect(dot.style.background).toBe('transparent');
+    });
+
+    test('a beacon center gets no dot', () => {
+        expect(dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, true, 'B1')))).toBeNull();
+    });
+
+    test('desktop dots are 8 px with a 2 px ring; a phone gets 6 px with a 1.5 px ring', () => {
+        const desktop = dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '', { later: true })));
+        expect([desktop.style.width, desktop.style.height]).toEqual(['8px', '8px']);
+        setMobile(true);
+        const phone = dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '', { later: true })));
+        expect([phone.style.width, phone.style.left, phone.style.bottom]).toEqual(['6px', '2px', '2px']);
+        expect(phone.style.borderWidth).toBe('1.5px');
+    });
+
+    test('clearing the beacon overlays removes the dots with them', () => {
+        const cell = cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, ''));
+        labyrinthClearRate.clearBeaconOverlays();
+        expect(dotOf(cell)).toBeNull();
+    });
+
+    test('with the switch off, newly drawn coverage gets no dot', () => {
+        configMock.getSetting.mockImplementation((key) => key !== 'labyrinthBeaconDots');
+        expect(dotOf(cellWith((c) => labyrinthClearRate.appendBeaconOverlay(c, false, '')))).toBeNull();
     });
 });

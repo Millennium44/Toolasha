@@ -191,6 +191,8 @@ const AUTO_PATH_DELAY_MS = 900;
 /** The room tooltips' headline row: one label, so the combat and skilling cards match */
 const CLEAR_CHANCE_LABEL = 'Clear Chance';
 const BEACON_OVERLAY_CLASS = 'mwi-labyrinth-beacon-overlay';
+/** The corner dot a covered room carries so a beacon's reach reads through a path tile's own border */
+const BEACON_DOT_ATTR = 'data-beacon-dot';
 
 class LabyrinthClearRate {
     constructor() {
@@ -283,6 +285,11 @@ class LabyrinthClearRate {
             // Editable from the Settings page as well as the panel button
             config.onSettingChange('labyrinthAutoPathOnReveal', (value) => {
                 if (!value) this.withdrawRevealAutoPath();
+            }),
+            // Editable from the Settings page too: dots follow the setting, no replan
+            config.onSettingChange('labyrinthBeaconDots', () => {
+                this.syncBeaconDots();
+                this.syncBeaconDotsButton();
             }),
             // The stepper is built with the toolbar, which stays up while the setting flips
             config.onSettingChange('labyrinthGridScaleControl', () => this.syncGridSizeControl()),
@@ -3720,6 +3727,22 @@ class LabyrinthClearRate {
         settingsPanel.appendChild(revealPathButton);
         syncRevealPath();
 
+        // Corner dots on every room a beacon reveals; a display switch, so it never replans
+        const beaconDotsButton = document.createElement('button');
+        beaconDotsButton.type = 'button';
+        beaconDotsButton.className = `${TILE_CONTROLS_CLASS}-beacon-dots`;
+        beaconDotsButton.style.cssText = autoButton.style.cssText;
+        beaconDotsButton.title =
+            'A small dot in the corner of every room a beacon will reveal, so it still shows under a path tile. ' +
+            'Filled for a beacon placed now, a ring for one planned for later';
+        beaconDotsButton.addEventListener('click', () => {
+            config.setSetting('labyrinthBeaconDots', !this.beaconDotsOn());
+            this.syncBeaconDots();
+            this.syncBeaconDotsButton();
+        });
+        settingsPanel.appendChild(beaconDotsButton);
+        this.syncBeaconDotsButton(beaconDotsButton);
+
         // How the beacon planner ranks placements; any change redraws a plan on the map
         const beaconGroup = document.createElement('div');
         beaconGroup.className = `${TILE_CONTROLS_CLASS}-beacon-settings`;
@@ -5551,8 +5574,54 @@ class LabyrinthClearRate {
             }
             overlay.appendChild(tag);
         }
+        if (!isCenter && this.beaconDotsOn()) overlay.appendChild(this.createBeaconDot(later));
         cell.appendChild(overlay);
         this.placeBeaconTag(cell);
+    }
+
+    /** Whether covered rooms carry a corner dot (the Beacon dots switch; on unless turned off) */
+    beaconDotsOn() {
+        return !!config.getSetting('labyrinthBeaconDots');
+    }
+
+    /**
+     * The corner dot of a covered room: filled for a beacon placed now, a ring for a later one. It sits at the
+     * bottom-left: the top corners hold the path tag and the beacon tag, and the clear badge (bottom-right, or
+     * the full-width bottom strip) only exists on revealed rooms while coverage is drawn on unrevealed ones.
+     * 6 px on a phone's 32 px tiles, 8 px on a desktop's 46 px tiles.
+     * @param {boolean} later - A beacon planned for later in the floor
+     * @returns {HTMLElement}
+     */
+    createBeaconDot(later) {
+        const mobile = isMobileMode();
+        const size = mobile ? 6 : 8;
+        const inset = mobile ? 2 : 3;
+        const ring = mobile ? 1.5 : 2;
+        const dot = document.createElement('div');
+        dot.setAttribute(BEACON_DOT_ATTR, later ? 'later' : 'now');
+        dot.style.cssText =
+            `position:absolute; left:${inset}px; bottom:${inset}px; width:${size}px; height:${size}px; ` +
+            'border-radius:50%; z-index:9; pointer-events:none; box-sizing:border-box; ' +
+            (later ? `border:${ring}px solid #26d0aa; background:transparent;` : 'background:#26d0aa;');
+        return dot;
+    }
+
+    /** Put the dots on the map to match the Beacon dots switch: drawn again when on, removed when off. No replan */
+    syncBeaconDots() {
+        const on = this.beaconDotsOn();
+        document.querySelectorAll(`.${BEACON_OVERLAY_CLASS}:not([data-beacon-center])`).forEach((overlay) => {
+            const dot = overlay.querySelector(`[${BEACON_DOT_ATTR}]`);
+            if (!on) dot?.remove();
+            else if (!dot) overlay.appendChild(this.createBeaconDot(!!overlay.dataset.beaconLater));
+        });
+    }
+
+    syncBeaconDotsButton(button = document.querySelector(`.${TILE_CONTROLS_CLASS}-beacon-dots`)) {
+        if (!button) return;
+        const on = this.beaconDotsOn();
+        button.textContent = on ? 'Beacon dots: on' : 'Beacon dots: off';
+        button.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+        button.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
 
     /**

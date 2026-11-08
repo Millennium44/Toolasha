@@ -3094,6 +3094,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Needs Auto-path above. Also works out the path again when clearing a room lights up a new room beside it (no beacon spent). Turn this off to re-path only after a beacon.',
             },
+            labyrinthBeaconDots: {
+                id: 'labyrinthBeaconDots',
+                label: 'Labyrinth: Corner dot on rooms a beacon reveals',
+                type: 'checkbox',
+                default: true,
+                help: 'Marks every room a planned beacon will reveal with a small dot (filled for a beacon placed now, a ring for one planned for later), so the reach still shows under a path tile. Also in the labyrinth toolbar gear panel',
+            },
             combatBattleCounter: {
                 id: 'combatBattleCounter',
                 label: 'Show battle/wave counter in current action panel during combat',
