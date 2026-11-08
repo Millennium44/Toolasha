@@ -937,6 +937,24 @@ describe('crafting rather than buying', () => {
         expect(watchedTargets()[0].cost).toBe(30_000_000 - 40_000_000 > 0 ? 30_000_000 - 40_000_000 : 0);
     });
 
+    test('a base piece that is only on the auction is not in hand: the craft charges it', () => {
+        game.inventory.push({
+            itemHrid: '/items/plain_spear',
+            itemLocationHrid: '/item_locations/market_listing',
+            count: 1,
+        });
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+        const [target] = watchedTargets();
+
+        // 30M of shards plus the 300M spear to buy, less the 38.4M trade-in: not the shards alone
+        expect(target.cost).toBe(330_000_000 - 38_400_000);
+        expect(target.routes.find((route) => route.id === 'craft').real).toBe(330_000_000 - 38_400_000);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('listed on the market');
+        expect(text()).not.toContain(FAILED);
+    });
+
     test('a base piece you do not own is counted into the craft', () => {
         watchTarget('/items/refined_spear');
         toggleCrafting('/items/refined_spear');

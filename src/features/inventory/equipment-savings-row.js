@@ -1307,7 +1307,23 @@ function artisanBonus(action) {
  */
 function ownsBase(itemHrid) {
     if (!itemHrid) return true;
-    return (dataManager.getInventory?.() || []).some((item) => item.itemHrid === itemHrid && (item.count || 0) > 0);
+    // A copy on the auction is not in hand: it cannot be consumed
+    return (dataManager.getInventory?.() || []).some(
+        (item) => item.itemHrid === itemHrid && (item.count || 0) > 0 && item.itemLocationHrid !== LISTED_LOCATION
+    );
+}
+
+/**
+ * Whether the only copies of a piece are on the market, for a line that would otherwise say "you have
+ * one".
+ * @param {string} itemHrid - The piece
+ * @returns {boolean}
+ */
+function onlyListed(itemHrid) {
+    const copies = (dataManager.getInventory?.() || []).filter(
+        (item) => item.itemHrid === itemHrid && item.count !== 0
+    );
+    return copies.length > 0 && copies.every((item) => item.itemLocationHrid === LISTED_LOCATION);
 }
 
 /**
@@ -1479,7 +1495,7 @@ function highestOwnedLevel(itemHrid) {
         // inventory items do — requiring count > 0 dropped them, so the piece
         // on your back read as unowned. Skip only an explicit zero (a consumed
         // stack), matching highestOwnedEnhancements in loadout-snapshot.js.
-        if (item.itemHrid !== itemHrid || item.count === 0) continue;
+        if (item.itemHrid !== itemHrid || item.count === 0 || item.itemLocationHrid === LISTED_LOCATION) continue;
         const level = item.enhancementLevel || 0;
         if (best === null || level > best) best = level;
     }
@@ -1508,7 +1524,7 @@ function ladderStart(itemHrid) {
     for (const item of dataManager.getInventory?.() || []) {
         // Same equipped-copy caveat as highestOwnedLevel above: only an
         // explicit zero disqualifies an entry.
-        if (item.itemHrid !== itemHrid || item.count === 0) continue;
+        if (item.itemHrid !== itemHrid || item.count === 0 || item.itemLocationHrid === LISTED_LOCATION) continue;
         const level = item.enhancementLevel || 0;
         levels.push(level);
         // A stack of two is two copies, and the second one is the spare
@@ -3337,9 +3353,11 @@ function recipeLines(target) {
         const baseName = `${nameOf(recipe.upgradeItemHrid)}${needsLevel > 0 ? ` +${needsLevel}` : ''}`;
         const status = owned
             ? 'you have one'
-            : needsLevel > 0 && held !== null
-              ? `enhance yours (+${held}) up, counted in`
-              : 'not owned, counted in';
+            : held === null && onlyListed(recipe.upgradeItemHrid)
+              ? 'yours is listed on the market, counted in'
+              : needsLevel > 0 && held !== null
+                ? `enhance yours (+${held}) up, counted in`
+                : 'not owned, counted in';
         wrap.appendChild(priceLine(`Upgrades ${baseName}`, status, owned ? ROW_COLORS.good : ROW_COLORS.accent));
     }
 
