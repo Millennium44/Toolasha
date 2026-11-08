@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.80.0 -->
+
 ### Spawn census removed
 
 The spawn census (the wave-roster recorder behind its settings switch, export button and divergence alert) is gone; its saved record is left untouched on this device.
@@ -6934,6 +6936,73 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.80.0](https://github.com/Millennium44/Toolasha/compare/v3.79.0...v3.80.0) (2026-11-08)
+
+### Features
+
+- combat sim saves its Upgrade boxes as you type ([da3c28f](https://github.com/Millennium44/Toolasha/commit/da3c28fc036d248ea223c67707e15e1fb6707e57))
+- combat sim Upgrade tab remembers level, Steps, charm, equipment, hours and player boxes per character ([8ba2f99](https://github.com/Millennium44/Toolasha/commit/8ba2f99ed9a422579e2d13c17170c8e58be3c3ed))
+- command palette gets a sidebar entry and a Settings button ([6c18c41](https://github.com/Millennium44/Toolasha/commit/6c18c4168890f55634791941dc6cd8886390b5f2))
+- lab sim remembers its input boxes across a reload ([a40ac30](https://github.com/Millennium44/Toolasha/commit/a40ac30679be930a4d4bd519d3e473622a7346bc))
+- lab sim saves its boxes as you type ([8d685c9](https://github.com/Millennium44/Toolasha/commit/8d685c968cd586037f3df40bdd9cbf6123a20b39))
+- lab sim upgrade Steps for equipment, abilities, combat levels, houses and shrines ([8bcdf16](https://github.com/Millennium44/Toolasha/commit/8bcdf168c9dca3bfe71004ee8e09bc7e4bb66f69))
+- labyrinth beacon coverage shows a corner dot on every room it reveals ([45345e3](https://github.com/Millennium44/Toolasha/commit/45345e394882d5769ccaf7176e686e21ca311f53))
+- remove the spawn census ([ab888f5](https://github.com/Millennium44/Toolasha/commit/ab888f54782c01b5c87c8f155b612a72db7a6cd4))
+
+### Bug Fixes
+
+- chat run labels survive a late history load; sim remembered table survives a Simulate ([7504787](https://github.com/Millennium44/Toolasha/commit/7504787b1baf33bdc19ee98ead3027b7074d79f4))
+- combat sim says every house room is at max ([8b67b1a](https://github.com/Millennium44/Toolasha/commit/8b67b1ab69deccea65cc7c783c20db040c5c6ef9))
+- combat sim unfolds a minimized panel before switching tabs for the player ([eeae64c](https://github.com/Millennium44/Toolasha/commit/eeae64c908a0cc7716f67f92c3ddd767ed59cb17))
+- combat sim's remembered upgrade table no longer draws over a run started while it loaded ([7b228e8](https://github.com/Millennium44/Toolasha/commit/7b228e86f957d996b7b46fbafe8c17f20748fcc8))
+- desktop item tooltips keep the game's width limit ([440813a](https://github.com/Millennium44/Toolasha/commit/440813ac73f57d91bfcd4089fb37012602b16b2c))
+- lab sim keeps the ability target when it forces +Levels ([7f3d0f6](https://github.com/Millennium44/Toolasha/commit/7f3d0f6f0caf8d8503b30c80e1cd1d3b8000f32f))
+- lab sim saves a box even when its redraw fails ([c7c01bf](https://github.com/Millennium44/Toolasha/commit/c7c01bf21896385e78dd011093a5da8151989bc8))
+- lab sim saves Use Skip Levels when it is changed ([9d29fb5](https://github.com/Millennium44/Toolasha/commit/9d29fb531a41006211dce4f16a9ca2ebe8f01539))
+- lab sim Use Skip Levels unticked uses the live room level again ([4ca68d4](https://github.com/Millennium44/Toolasha/commit/4ca68d4f9e6f99c5bb1e6c981137ea086e7533a5))
+- labyrinth grid shows the beacon tag beside a Shroud? badge ([c5f351f](https://github.com/Millennium44/Toolasha/commit/c5f351f0f33ad7ff3a10238995f05e9841eb7fe0))
+- labyrinth rooms a later beacon reveals are a brighter green ([20796ae](https://github.com/Millennium44/Toolasha/commit/20796ae130a7b3b4702105f500895fc865961c60))
+- labyrinth shroud marks span the top of the room ([29a2238](https://github.com/Millennium44/Toolasha/commit/29a22382edc11d7f1149a0f2666b5f22166793e8))
+- on a phone the item tooltip goes beside the tapped item, squeezed to fit, before above or below ([197224f](https://github.com/Millennium44/Toolasha/commit/197224f966efcf7271800d4b6838a7b40b560a86))
+- on a phone the item tooltip sits above or below the tapped item and scrolls instead of covering it ([4ce9bea](https://github.com/Millennium44/Toolasha/commit/4ce9bea7690ccfefcb16da3be1dce9c35a7582a0))
+- sim input boxes never save defaults over a stored or pulled record ([6fd1b1f](https://github.com/Millennium44/Toolasha/commit/6fd1b1f61e10bc5aa05ad406405475c3690a0e65))
+- treasure panel shows a big beat over expected as a multiple ([6c6c645](https://github.com/Millennium44/Toolasha/commit/6c6c6457afc33c4716be2f9c06455ff8c81976ac))
+
+### Code Refactoring
+
+- the sims share their Steps help texts ([87bb657](https://github.com/Millennium44/Toolasha/commit/87bb65749ed3cc38e438b04701d92848047055d8))
+
+### Performance Improvements
+
+- dungeon chat annotations read the run history after feature startup ([f9c6065](https://github.com/Millennium44/Toolasha/commit/f9c6065a52b43d4f7773519a90bf9698a089b730))
+- startup marks each wait between the settings load and the features ([445bfef](https://github.com/Millennium44/Toolasha/commit/445bfef1487a1f8b2eee229fa1bde4878ba45fee))
+- startup no longer waits on the dual-install check ([d84b933](https://github.com/Millennium44/Toolasha/commit/d84b933f17d67e31988bfed56c632c4118510daf))
+- startup reads of the spawn census, fight pool, run history and sim results move behind feature startup ([ec4c2aa](https://github.com/Millennium44/Toolasha/commit/ec4c2aa54ea6458b8fbd9a68eb9d650ed3a32c97))
+- sync pull hashes its download once and names its phases in the stall ledger ([281884e](https://github.com/Millennium44/Toolasha/commit/281884e1be10e63fb81e8660aa22559d7b8cbea3))
+- sync pull hashes its download once and parses the download check in slices ([ca0060e](https://github.com/Millennium44/Toolasha/commit/ca0060e70aa045529425baa2fd90fab2c9511b29))
+- the stall ledger names each sync pull phase ([1bd35cf](https://github.com/Millennium44/Toolasha/commit/1bd35cf3a3ef8e3d9d74600e91aa1bcf9989211d))
+
+### Documentation
+
+- changelog for faster startup and palette buttons ([09f445e](https://github.com/Millennium44/Toolasha/commit/09f445eb66b7a553e88a9d9170c04506961a6bb4))
+- changelog for labyrinth beacon dots ([eefe8ac](https://github.com/Millennium44/Toolasha/commit/eefe8ac9863da9ae4aebc39b1199290b4e0924b1))
+- changelog for phone item popups ([f9816f8](https://github.com/Millennium44/Toolasha/commit/f9816f8e2535e0ce92bc42c544a0460192da45c6))
+- changelog for the sim leftovers fixes ([0c309be](https://github.com/Millennium44/Toolasha/commit/0c309be9097f41f7d25d6b1864a3ea1d153d671e))
+- changelog for the spawn census removal and deferred history loads ([f47d3d1](https://github.com/Millennium44/Toolasha/commit/f47d3d196aa56ca442226e15ec38e1b6a13c6bd4))
+- changelog for the sync pull stall work ([d55c286](https://github.com/Millennium44/Toolasha/commit/d55c28601419ce2afbc7ec840f12a0d9c37a808c))
+- changelog for the treasure and labyrinth grid fixes ([77c1b01](https://github.com/Millennium44/Toolasha/commit/77c1b01d8cfc5c520872a88c7ca0c19f9cb5ced6))
+
+### Tests
+
+- drop the chat annotations init-ownership exemption, its initialize no longer awaits ([a53e904](https://github.com/Millennium44/Toolasha/commit/a53e90482e227e9cb429c6d0b2fd2b30d933e4c9))
+- mocks use the names their modules really export ([cc90e7f](https://github.com/Millennium44/Toolasha/commit/cc90e7fbad054f3b9406017535cb1ecb0c608559))
+- unit test for readScopedChecked ([fd87829](https://github.com/Millennium44/Toolasha/commit/fd878298317ec558288ee92c9eee4936ea282c77))
+
+### Miscellaneous Chores
+
+- character switch records named timing marks ([91f7323](https://github.com/Millennium44/Toolasha/commit/91f732397f883ea6280784f555973d361905633a))
+- storage logs every read or write slower than 250 ms by key ([58952da](https://github.com/Millennium44/Toolasha/commit/58952da1963505c561484b26145c1a957cacc85f))
 
 ## [3.79.0](https://github.com/Millennium44/Toolasha/compare/v3.78.0...v3.79.0) (2026-11-07)
 
