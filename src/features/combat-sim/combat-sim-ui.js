@@ -14991,8 +14991,12 @@ class CombatSimUI {
     async _restoreUpgradeResults({ replace = false } = {}) {
         try {
             if (this._upgradeResultsData && !replace) return;
+            const ownerId = dataManager.getCurrentCharacterId();
             const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
-            if (replace && (this._isBusy() || this._upgradeRunStarted)) return;
+            // A run started while the read was out owns the table: a stopped or failed one must not
+            // leave the remembered table standing as its result. A switch means the key was another character's.
+            if (this._isBusy() || this._upgradeRunStarted) return;
+            if (!this._stillSameCharacter(ownerId)) return;
             const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
             if (!payload) {
                 if (replace && this._upgradeResultsData && container) {
