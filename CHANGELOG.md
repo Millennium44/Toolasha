@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.81.0 -->
+
 ### Lab Sim Ability Lv modes work across several fights
 
 Target Lv and Next mult. of are no longer locked to +Levels when the Upgrade scope covers more than one fight. Ability levels are the same in every loadout, so each mode now means the same thing across the whole run. The Targets grid now opens at the typed Target Lv, and an ability kept in different slots across loadouts is ranked once instead of twice.
@@ -6943,15 +6945,13 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.81.0](https://github.com/Millennium44/Toolasha/compare/v3.80.0...v3.81.0) (2026-11-08)
 
-
 ### Features
 
-* lab sim Target Lv and Next mult. of work across several fights ([95e9cfa](https://github.com/Millennium44/Toolasha/commit/95e9cfa4ec25add4bc88ea4620e8327490921c2c))
-
+- lab sim Target Lv and Next mult. of work across several fights ([95e9cfa](https://github.com/Millennium44/Toolasha/commit/95e9cfa4ec25add4bc88ea4620e8327490921c2c))
 
 ### Bug Fixes
 
-* lab sim Targets grid opens at Target Lv; one row per ability level across loadouts ([cd8247e](https://github.com/Millennium44/Toolasha/commit/cd8247ed378b67c317de9000abb2c612ef5ed721))
+- lab sim Targets grid opens at Target Lv; one row per ability level across loadouts ([cd8247e](https://github.com/Millennium44/Toolasha/commit/cd8247ed378b67c317de9000abb2c612ef5ed721))
 
 ## [3.80.0](https://github.com/Millennium44/Toolasha/compare/v3.79.0...v3.80.0) (2026-11-08)
 
