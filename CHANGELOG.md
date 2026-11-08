@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim whole-run fight lines are easier to read
+
+Each expanded row now lists only the fights an upgrade changes, biggest gain first, in points ("+0.8 pts") with whole tries and "never won" instead of 1000.0; every unchanged fight shares one line with its win rate.
+
+### Lab Sim whole-run rows explain their cost
+
+Expanding a row in the Lab Upgrade tab's whole-run table now says in a line or two, right under the exact Cost, where it comes from: the market buy and after-tax resale, the expected enhancement path, or the mirror build. Watch on those rows now uses the purchase price.
+
 ### Sim performance limits are editable in the panels
 
 Combat Sim and Lab Sim each have a ⚙ Performance strip for threads (with the real count in use), simulations at once, Ignore thread caps (Threads 0 then uses every core) and, in Combat Sim, the close-call re-sim time cap (0 = none). Big Lab whole-run analyses no longer cut each sim short; set "Shorten above N sims" in the strip to bring that back.

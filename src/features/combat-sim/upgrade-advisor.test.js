@@ -227,6 +227,7 @@ const {
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
     labAllFightsTrialBudget,
+    matchingCostDetail,
     analysisConcurrency,
     ALL_FIGHTS_SIM_BUDGET,
     MIN_TRIAL_FRACTION,
@@ -1557,6 +1558,67 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(meleeRow.runClearChance).toBeCloseTo(0.9 * 0.5, 5);
         expect(meleeRow.expectedAttempts).toBeCloseTo(1 / 0.9 + 1 / 0.5, 5);
         expect(meleeRow.attemptsDelta).toBeCloseTo(1 / 0.9 - 1 / 0.8, 5);
+    });
+
+    test('a priced enhancement row carries a breakdown that lands on its Cost cell; a combat level carries none', async () => {
+        const gameData = buildGameData();
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const wearingSword = (level) => ({
+            equipment: { [MAIN_HAND]: { hrid: '/items/fine_sword', enhancementLevel: level } },
+            staminaLevel: 50,
+            intelligenceLevel: 50,
+            attackLevel: 50,
+            meleeLevel: 50,
+            defenseLevel: 50,
+            rangedLevel: 50,
+            magicLevel: 50,
+        });
+        const enhance = {
+            type: 'enhancement',
+            slot: MAIN_HAND,
+            currentHrid: '/items/fine_sword',
+            currentLevel: 3,
+            upgradeHrid: '/items/fine_sword',
+            upgradeLevel: 7,
+            description: 'Fine Sword +3 → +7',
+            isSelf: true,
+        };
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: wearingSword(3) },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['combat_level'],
+                extraCandidates: [enhance],
+            },
+            null,
+            {}
+        );
+        const row = result.results.find((r) => r.candidate.type === 'enhancement');
+        expect(row.costDetail).not.toBeNull();
+        expect(row.costDetail.net ?? null).toBe(row.cost ?? null);
+        for (const level of result.results.filter((r) => r.candidate.type === 'combat_level')) {
+            expect(level.costDetail).toBeNull();
+        }
+    });
+
+    test('a breakdown that disagrees with the Cost cell is dropped, so Watch never prices off it', () => {
+        const detail = { net: 1000, gross: 1500 };
+        expect(matchingCostDetail(detail, 1000, { type: 'enhancement' })).toBe(detail);
+        expect(matchingCostDetail(detail, 1000.6, { type: 'enhancement' })).toBe(detail);
+        expect(matchingCostDetail(detail, 2000, { type: 'enhancement' })).toBeNull();
+        // Unknown agrees only with unknown, never with 0
+        expect(matchingCostDetail({ net: null }, null, { type: 'enhancement' })).toEqual({ net: null });
+        expect(matchingCostDetail({ net: 0 }, null, { type: 'enhancement' })).toBeNull();
+        // Forced-armor and hand-checked rows keep theirs, as they always did: their notes read it
+        expect(matchingCostDetail(detail, 2000, { keptItems: [{}] })).toBe(detail);
+        expect(matchingCostDetail(detail, 2000, { checkedSwap: true })).toBe(detail);
+        expect(matchingCostDetail(null, 1000, { type: 'enhancement' })).toBeNull();
     });
 
     test.each([

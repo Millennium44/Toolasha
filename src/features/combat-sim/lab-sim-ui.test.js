@@ -3929,6 +3929,373 @@ describe('the budget plan when a pick pays for itself', () => {
             'Tokens 12,500 tokens'
         );
     });
+
+    describe('the per-fight lines of an expanded row', () => {
+        const mk = (name, before, after, applied = true) => ({
+            base: { ...fight(0, before), monsterName: name },
+            fight: {
+                ...fight(0, after),
+                monsterName: name,
+                roomLevel: 281,
+                loadoutName: 'Melee - Stab Lab',
+                winRateDelta: after - before,
+                applied,
+            },
+        });
+        const detailOf = (specs, rowExtra = {}) => {
+            const data = analysis();
+            data.baseline.fights = specs.map((s) => s.base);
+            data.results[0] = {
+                ...data.results[0],
+                fights: specs.map((s) => s.fight),
+                ...rowExtra,
+            };
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-detail="0"]');
+            return { detail, text: detail.textContent.replace(/\s+/g, ' ') };
+        };
+
+        test('changed fights come biggest gain first with losses last, in points and tries', () => {
+            const { detail, text } = detailOf([
+                mk('Loser', 0.4, 0.35),
+                mk('Mantis', 0.057, 0.065),
+                mk('Scorpion', 0, 0.0053),
+                mk('Big', 0.2, 0.5),
+            ]);
+            expect(detail.textContent).not.toContain('could not be drawn');
+            const order = ['Big', 'Mantis', 'Scorpion', 'Loser'].map((n) => text.indexOf(n));
+            expect([...order].sort((a, b) => a - b)).toEqual(order);
+            expect(text).toContain('5.7% → 6.5% +0.8 pts · 18 → 15 tries');
+            expect(text).toContain('0.0% → 0.5% +0.5 pts · never won → 189 tries');
+            expect(text).toContain('20.0% → 50.0% +30.0 pts · 5.0 → 2.0 tries');
+            expect(text).toContain('-5.0 pts');
+            expect(text).not.toContain('1000');
+            expect(text).not.toContain('Unchanged');
+        });
+
+        test('a fight that falls to the floor ends in never won', () => {
+            const { text } = detailOf([mk('Fell', 0.3, 0)]);
+            expect(text).toContain('30.0% → 0.0% -30.0 pts · 3.3 → never won');
+        });
+
+        test('unchanged fights collapse to one short-named line with a shared status in the parenthesis', () => {
+            const { detail, text } = detailOf([mk('A', 0, 0), mk('B', 0, 0.0001), mk('C', 0, 0)]);
+            expect(detail.querySelectorAll('[data-fights-unchanged]').length).toBe(1);
+            expect(text).toContain('Unchanged in 3 fights (never won): A, B, C');
+            expect(text).not.toContain('Lv 281');
+        });
+
+        test('mixed unchanged fights list each rate, and a lone one is singular', () => {
+            const mixed = detailOf([mk('Siren', 0.319, 0.319), mk('Dryad', 0, 0), mk('Mimic', 0.373, 0.373)]).text;
+            expect(mixed).toContain('Unchanged in 3 fights: Siren 31.9%, Dryad never won, Mimic 37.3%');
+            expect(detailOf([mk('Siren', 0.319, 0.319)]).text).toContain('Unchanged in 1 fight: Siren 31.9%');
+        });
+
+        test('the live case: seven fights not in the loadout with differing rates, three barely moved', () => {
+            const skipped = [
+                ['Shadow Archer', 0.317],
+                ['Pyre Hunter', 0.321],
+                ['Frost Sniper', 0.312],
+                ['Giant Scorpion', 0.32],
+                ['Giant Mantis', 0.324],
+                ['Cyclops', 0.319],
+                ['Mimic', 0.373],
+            ].map(([n, r]) => mk(n, r, r, false));
+            const { text } = detailOf(
+                [...skipped, mk('Siren', 0.319, 0.32), mk('Salamander', 0.326, 0.328), mk('Dryad', 0.324, 0.326)],
+                { significant: false }
+            );
+            expect(text).toContain(
+                'Unchanged in 7 fights (not in this loadout): Shadow Archer 31.7%, Pyre Hunter 32.1%, Frost Sniper 31.2%, ' +
+                    'Giant Scorpion 32.0%, Giant Mantis 32.4%, Cyclops 31.9%, Mimic 37.3%'
+            );
+        });
+
+        test('a fight not in the loadout beside never-won ones is marked and keeps its rate', () => {
+            const { text } = detailOf([mk('Cyclops', 0.319, 0.319, false), mk('Dryad', 0, 0), mk('Big', 0.2, 0.5)]);
+            expect(text).toContain('Unchanged in 2 fights: Cyclops (not in this loadout) 31.9%, Dryad never won');
+        });
+    });
+
+    describe('the expanded row explains its Cost cell', () => {
+        const LEGS = '/items/anchorbound_plate_legs';
+        const rowWith = (candidate, cost, costDetail, extra = {}) => {
+            const data = analysis();
+            data.results = [
+                {
+                    ...data.results[0],
+                    candidate: { description: 'Test row', ...candidate },
+                    cost,
+                    costDetail,
+                    ...extra,
+                },
+            ];
+            return data;
+        };
+        const detailText = (data) => {
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-detail="0"]');
+            return detail.textContent.replace(/\s+/g, ' ');
+        };
+        const enhancement = { type: 'enhancement', currentHrid: LEGS, currentLevel: 7, upgradeLevel: 10 };
+
+        test('a house level is a construction bill, never "nothing to buy"', () => {
+            const breakdown = {
+                buys: [],
+                credits: [],
+                gross: 45_000_000,
+                credit: 0,
+                net: 45_000_000,
+                unpriced: [],
+                source: 'craft',
+            };
+            const house = { type: 'house', roomHrid: '/house_rooms/archery_range', currentLevel: 3, upgradeLevel: 4 };
+            const text = detailText(rowWith(house, 45_000_000, breakdown));
+            expect(text).toContain('House construction: coins and materials at market buy prices = 45.0M.');
+            expect(text).not.toMatch(/nothing to buy/i);
+            // Any other row with an empty buy list stays neutral rather than claiming nothing is bought
+            const other = detailText(rowWith({ type: 'drink' }, 45_000_000, breakdown));
+            expect(other).toContain('Cost 45.0M.');
+            expect(other).not.toMatch(/nothing to buy/i);
+        });
+
+        test('an enhancement path names the levels, the basis and the rates, and its total is the Cost cell', () => {
+            const text = detailText(
+                rowWith({ ...enhancement, slot: '/equipment_types/legs' }, 208_080_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 208_080_000,
+                    credit: 0,
+                    net: 208_080_000,
+                    unpriced: [],
+                    creditApplied: false,
+                    source: 'sim',
+                    enhanceSource: { label: 'Pro', detail: 'the shipped professional kit' },
+                    enhancementPath: true,
+                    targetAsk: null,
+                })
+            );
+            expect(text).toContain('Exact: Cost 208,080,000 coins');
+            expect(text).toContain('Enhanced, estimate: +7 → +10 = 208.1M.');
+            expect(text).not.toContain('Cost basis');
+            expect(text).not.toContain('Total');
+            expect(text).not.toContain('could not be drawn');
+            const line = container.querySelector('[data-cost-explanation] div');
+            expect(line.getAttribute('title')).toContain('simulated');
+            expect(line.getAttribute('title')).toContain('Enhance rates: Pro');
+        });
+
+        test('an enhancement on a held copy says which copy it enhances', () => {
+            const text = detailText(
+                rowWith(enhancement, 90_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 90_000_000,
+                    credit: 0,
+                    net: 90_000_000,
+                    unpriced: [],
+                    source: 'enhance',
+                    enhanceSource: null,
+                    enhancementPath: true,
+                    ladder: {
+                        fromLevel: 7,
+                        toLevel: 10,
+                        fresh: false,
+                        alreadyHeld: false,
+                        fromEquipped: true,
+                        isSelf: true,
+                        baseCost: 0,
+                    },
+                })
+            );
+            expect(text).toContain('Enhanced, expected: +7 → +10 on the copy you wear = 90.0M.');
+            expect(text).not.toContain('Cost basis');
+        });
+
+        test('a market buy names the purchase, the resale credit after tax and the total', () => {
+            const text = detailText(
+                rowWith(enhancement, 60_000_000, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 100_000_000 }],
+                    credits: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 7, price: 40_000_000 }],
+                    gross: 100_000_000,
+                    credit: 40_000_000,
+                    net: 60_000_000,
+                    unpriced: [],
+                    creditApplied: true,
+                    source: 'market',
+                })
+            );
+            expect(text).toContain(
+                'Market: buy Anchorbound Plate Legs +10 for 100.0M, sell your +7 for 40.0M after tax = 60.0M.'
+            );
+            expect(text).not.toContain('Cost basis');
+        });
+
+        test('kept armor says it is kept rather than sold, once', () => {
+            const text = detailText(
+                rowWith({ type: 'cross_slot', currentHrid: LEGS }, 100_000_000, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 100_000_000 }],
+                    credits: [],
+                    gross: 100_000_000,
+                    credit: 0,
+                    net: 100_000_000,
+                    unpriced: [],
+                    source: 'market',
+                    kept: [{ hrid: LEGS, name: 'Rough Legs', enhancementLevel: 3, price: 5_000_000, priced: true }],
+                    keptValue: 5_000_000,
+                })
+            );
+            expect(text).toContain('Market: buy Anchorbound Plate Legs +10 for 100.0M.');
+            expect(text).toContain('Keeps Rough Legs +3 (5.0M resale not credited: the labyrinth needs every set).');
+            expect(text.split('Rough Legs').length).toBe(2);
+            expect(text).not.toContain('Total');
+            const kept = [...container.querySelectorAll('[data-cost-explanation] div')].pop();
+            expect(kept.getAttribute('title')).toContain('Keep gear the forced armor swaps replace');
+        });
+
+        test('an unpriced row says why it has no price', () => {
+            const text = detailText(
+                rowWith(enhancement, null, {
+                    buys: [],
+                    credits: [],
+                    gross: null,
+                    credit: 0,
+                    net: null,
+                    unpriced: ['Anchorbound Plate Legs'],
+                    source: 'sim',
+                    enhancementPath: true,
+                })
+            );
+            expect(text).toContain('No price for Anchorbound Plate Legs');
+            expect(text).toContain('Cost shows as');
+        });
+
+        test('the explanation sits right under the Exact line, before the per-fight rows', () => {
+            ui._renderAllFightsResults(
+                rowWith(enhancement, 90_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 90_000_000,
+                    credit: 0,
+                    net: 90_000_000,
+                    unpriced: [],
+                    source: 'enhance',
+                    enhancementPath: true,
+                }),
+                container
+            );
+            const html = container.querySelector('[data-allfights-detail="0"]').innerHTML;
+            const exact = html.indexOf('data-exact-figures');
+            const explanation = html.indexOf('data-cost-explanation');
+            const fight = html.indexOf('Monster');
+            expect(exact).toBeGreaterThan(-1);
+            expect(explanation).toBeGreaterThan(exact);
+            if (fight > -1) expect(explanation).toBeLessThan(fight);
+        });
+
+        test('a held spare buys nothing and prints no zero-priced line', () => {
+            const text = detailText(
+                rowWith(enhancement, 0, {
+                    buys: [{ hrid: LEGS, name: 'Anchorbound Plate Legs', enhancementLevel: 10, price: 0 }],
+                    credits: [],
+                    gross: 0,
+                    credit: 0,
+                    net: 0,
+                    unpriced: [],
+                    source: 'enhance',
+                    ladder: { fromLevel: 10, toLevel: 10, alreadyHeld: true, fresh: false },
+                })
+            );
+            expect(text).toContain('You already hold a +10 spare that meets +10: nothing to buy.');
+            expect(text).not.toMatch(/— 0|Buy /);
+        });
+
+        test('a mirror row says it builds, never buys, and folds the resale into one line', () => {
+            const text = detailText(
+                rowWith({ ...enhancement, upgradeLevel: 12 }, 10_369_584_310, {
+                    buys: [
+                        { hrid: LEGS, name: 'Grandmaster Magic Charm', enhancementLevel: 12, price: 15_089_584_310 },
+                    ],
+                    credits: [
+                        { hrid: LEGS, name: 'Grandmaster Magic Charm', enhancementLevel: 10, price: 4_720_000_000 },
+                    ],
+                    gross: 15_089_584_310,
+                    credit: 4_720_000_000,
+                    net: 10_369_584_310,
+                    unpriced: [],
+                    source: 'mirror',
+                    enhanceSource: { label: 'Manual', detail: 'manual params' },
+                    ladder: {
+                        fromLevel: 10,
+                        toLevel: 12,
+                        fresh: false,
+                        alreadyHeld: false,
+                        mirror: { mirrorPrice: 612_500_000, mirrorCount: 2 },
+                    },
+                })
+            );
+            expect(text).toContain(
+                "Mirror build, estimate: +11 and +10 copies + 2 Philosopher's Mirrors (612.5M each) = 15.1B"
+            );
+            expect(text).toContain('less 4.7B for your +10 sold = 10.4B');
+            expect(text).toContain('Manual enhance rates.');
+            expect(text).not.toMatch(/Buy |Total/);
+        });
+
+        test('a swap that buys nothing says so', () => {
+            const text = detailText(
+                rowWith(
+                    { type: 'equipment', noPurchase: true, checkedSwap: true, pricingNote: 'You own this.' },
+                    0,
+                    null
+                )
+            );
+            expect(text).toContain('Buys nothing');
+            expect(text).toContain('You own this.');
+        });
+
+        test('a breakdown that lands on a different figure than the Cost cell is not shown', () => {
+            const text = detailText(
+                rowWith(enhancement, 5_000_000, {
+                    buys: [],
+                    credits: [],
+                    gross: 9_000_000,
+                    credit: 0,
+                    net: 9_000_000,
+                    unpriced: [],
+                    source: 'sim',
+                    enhancementPath: true,
+                })
+            );
+            expect(text).toContain('Exact: Cost 5,000,000 coins');
+            expect(text).not.toContain('Cost basis');
+            expect(text).not.toContain('9,000,000');
+        });
+
+        test('a shrine row, which carries no breakdown, keeps its detail as it was', () => {
+            const text = detailText(rowWith({ type: 'guild_shrine' }, 1_000_000, null, { partialCost: true }));
+            expect(text).toContain('Exact: Cost 1,000,000 coins');
+            expect(text).not.toMatch(/Cost basis|Buys nothing|No cost breakdown/);
+        });
+
+        test('a token row has no coin explanation', () => {
+            const data = analysis();
+            data.results = [
+                {
+                    ...data.results[0],
+                    candidate: { type: 'labyrinth_buff', description: 'Token' },
+                    costType: 'token',
+                    cost: null,
+                    tokenCost: 100,
+                    attemptsSavedPerHundredTokens: 1,
+                },
+            ];
+            ui._renderAllFightsResults(data, container);
+            const detail = container.querySelector('[data-allfights-token-detail="0"]');
+            expect(detail.textContent).not.toContain('Cost basis');
+            expect(detail.textContent).not.toContain('Buys nothing');
+        });
+    });
 });
 
 describe('the budget plan when nothing is picked', () => {
@@ -5568,7 +5935,7 @@ describe('Check a swap', () => {
         row.click();
         expect(detail.style.display).toBe('table-row');
         expect(detail.textContent).toContain('29.5% → 31.9%');
-        expect(detail.textContent).toContain('not in this loadout — 60.0% unchanged');
+        expect(detail.textContent).toContain('(not in this loadout): Mimic 60.0%');
         expect(detail.textContent).toContain('Checked by hand.');
         // And it is a note, not the "on task" badge a task caveat draws
         expect(row.textContent).not.toContain('on task');

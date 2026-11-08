@@ -80,6 +80,7 @@ import {
     MAX_GUILD_SHRINE_LEVEL,
     getGuildShrineMaxLevel,
     candidateAssignmentKey,
+    COST_SOURCES,
 } from './upgrade-advisor.js';
 import {
     configureFightGroup,
@@ -164,6 +165,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
+import { compactCostLines } from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -8993,26 +8995,68 @@ class LabSimUI {
 
         // The per-fight breakdown under a row, the same for gear and combat levels
         const fightBreakdown = (r) => {
-            let fightRows = '';
+            // A win rate at or under the floor is a fight never won: its 1000
+            // tries is the floor's ceiling, not a measurement
+            const never = (winRate) => !(winRate > 0.001); // the floor expectedTries clamps at
+            const triesText = (winRate) => {
+                if (never(winRate)) return 'never won';
+                const tries = expectedTries(winRate);
+                return tries >= 10 ? String(Math.round(tries)) : tries.toFixed(1);
+            };
+            const changed = [];
+            const unchanged = [];
             for (let f = 0; f < r.fights.length; f++) {
                 const fight = r.fights[f];
                 const base = baseline.fights[f];
-                const triesBase = expectedTries(base.winRate);
-                const triesNew = expectedTries(fight.winRate);
-                // Untouched rooms are named rather than dropped: "this upgrade
-                // does nothing here" is an answer, and a fight missing from the
-                // list looks like a fight that was not run
+                // Changed means it shows as a non-zero number of points at one decimal
+                const isChanged = fight.applied !== false && Math.round((fight.winRateDelta || 0) * 1000) !== 0;
+                if (isChanged) changed.push({ fight, base });
+                else unchanged.push({ fight, base });
+            }
+            changed.sort((x, y) => (y.fight.winRateDelta || 0) - (x.fight.winRateDelta || 0));
+
+            let fightRows = '';
+            for (const { fight, base } of changed) {
+                const delta = fight.winRateDelta || 0;
+                const pts = `${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)} pts`;
+                const tries = `${triesText(base.winRate)} → ${triesText(fight.winRate)}${never(fight.winRate) ? '' : ' tries'}`;
                 const outcome =
-                    fight.applied === false
-                        ? `<span style="color:${GAME_COLORS.textDim};">${fight.skipReason || 'not in this loadout'} — ${pct(base.winRate)} unchanged</span>`
-                        : `${pct(base.winRate)} → ${pct(fight.winRate)}
-                        <span style="color:${deltaColor(fight.winRateDelta)};">(${deltaPct(fight.winRateDelta)})</span>
-                        <span style="color:${GAME_COLORS.textDim};">| ${fmtAttempts(triesBase)} → ${fmtAttempts(triesNew)} tries` +
-                          `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
-                fightRows += `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
+                    `${pct(base.winRate)} → ${pct(fight.winRate)}
+                        <span style="color:${deltaColor(delta)};">${pts}</span>
+                        <span style="color:${GAME_COLORS.textDim};">· ${tries}` +
+                    `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
+                fightRows += `<div data-fight-changed style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
                     <span style="color:#aaa;">${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
+            }
+
+            // Untouched rooms are named rather than dropped: "this upgrade
+            // does nothing here" is an answer, and a fight missing from the
+            // list looks like a fight that was not run
+            if (unchanged.length) {
+                const entries = unchanged.map(({ fight, base }) => ({
+                    name: fight.monsterName,
+                    notInLoadout: fight.applied === false,
+                    status: fight.applied === false ? fight.skipReason || 'not in this loadout' : null,
+                    neverWon: never(base.winRate),
+                    rate: never(base.winRate) ? 'never won' : pct(base.winRate),
+                }));
+                const first = entries[0];
+                const allNever = entries.every((e) => e.neverWon);
+                const allSkipped = first.notInLoadout && entries.every((e) => e.status === first.status);
+                let shared = '';
+                let list;
+                if (allNever && !entries.some((e) => e.notInLoadout)) {
+                    shared = ' (never won)';
+                    list = entries.map((e) => e.name).join(', ');
+                } else if (allSkipped) {
+                    shared = ` (${first.status})`;
+                    list = entries.map((e) => `${e.name} ${e.rate}`).join(', ');
+                } else {
+                    list = entries.map((e) => `${e.name}${e.status ? ` (${e.status})` : ''} ${e.rate}`).join(', ');
+                }
+                fightRows += `<div data-fights-unchanged style="color:${GAME_COLORS.textDim}; padding:2px 0; white-space:normal; overflow-wrap:anywhere;">Unchanged in ${unchanged.length} ${unchanged.length === 1 ? 'fight' : 'fights'}${shared}: ${list}</div>`;
             }
             return fightRows;
         };
@@ -9076,7 +9120,7 @@ class LabSimUI {
                 const fightRows = fightBreakdown(r);
                 html += `<tr data-allfights-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${goldExactHtml(r.cost, null)}${fightRows}${this._renderAllFightsNotes(r)}</td>
+                    ${rowActionsDetailHtml(combatSimUI.upgradeRowActionsHtml(r))}${goldExactHtml(r.cost, null)}${this._renderAllFightsCostExplanation(r)}${fightRows}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
             });
 
@@ -9397,7 +9441,7 @@ class LabSimUI {
             </tr>
             <tr data-allfights-level-detail="${i}" style="display:none;">
                 <td colspan="7" style="padding:6px 12px; background:${GAME_COLORS.raised}; border-bottom:1px solid #222; font-size:11px;">
-                    ${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
+                    ${this._renderAllFightsCostExplanation(r)}${fightBreakdown(r)}${this._renderAllFightsNotes(r)}</td>
             </tr>`;
         });
         return html + '</tbody></table></div></div>';
@@ -9502,7 +9546,9 @@ class LabSimUI {
      */
     _renderAllFightsNotes(result) {
         const notes = [];
-        const kept = result.costDetail?.kept;
+        const explanation = this._renderAllFightsCostExplanation(result);
+        // The breakdown names what is kept rather than sold itself; the note below is for a row it could not draw
+        const kept = explanation ? null : result.costDetail?.kept;
         if (kept?.length) {
             const text = keptResaleText(
                 kept,
@@ -9515,13 +9561,65 @@ class LabSimUI {
         if (result.candidate?.caveat) notes.push(result.candidate.caveat);
         // How a hand-checked swap was priced: context, not a task caveat
         if (result.candidate?.pricingNote) notes.push(result.candidate.pricingNote);
-        if (!notes.length) return '';
-        return notes
+        const noteHtml = notes
             .map(
                 (note) =>
                     `<div style="color:#8ab4f8; margin-top:6px; white-space:normal; line-height:1.4;">${note}</div>`
             )
             .join('');
+        return noteHtml;
+    }
+
+    /**
+     * Where an all-fights row's Cost cell comes from: which basis priced it, the enhancement path or the
+     * purchase and resale behind it, and the total. Drawn from the row's own `costDetail`, and only when
+     * that detail lands on the same figure as the cell, because an explanation of a different number is
+     * worse than none.
+     * @param {Object} result - One all-fights result row
+     * @returns {string} HTML, empty where the row has nothing to explain
+     * @private
+     */
+    _renderAllFightsCostExplanation(result) {
+        const candidate = result?.candidate;
+        if (result?.costType === 'token') return '';
+        const line = (text, color = '#aaa') => `<div style="color:${color}; font-size:11px;">${text}</div>`;
+        if (candidate?.noPurchase) {
+            return `<div data-cost-explanation style="margin-top:6px;">${line(
+                'Buys nothing: this uses what you already have, so the cost is 0.',
+                '#888'
+            )}</div>`;
+        }
+        const detail = result?.costDetail;
+        if (!detail || detail.guild) return '';
+        const cost = result.cost;
+        const net = detail.net;
+        const agrees =
+            (net !== undefined && cost == null && net == null) ||
+            (Number.isFinite(cost) && Number.isFinite(net) && Math.abs(cost - net) <= 1);
+        if (!agrees) return '';
+
+        const checkedSwap = Boolean(candidate?.checkedSwap);
+        const keptReason = checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH;
+        const lines = compactCostLines(detail, {
+            basisTitle: COST_SOURCES[detail.source]?.title,
+            keptWhy: checkedSwap
+                ? 'a loadout this swap does not reach still wears it'
+                : 'the labyrinth needs every set',
+            keptTitle: `Resale is deliberately not credited ${keptReason}`,
+            fromLevel: candidate?.currentLevel ?? 0,
+            toLevel: candidate?.upgradeLevel,
+            isEnhancement: candidate?.type === 'enhancement',
+            kind: candidate?.type,
+        });
+        if (lines.length === 0) return '';
+        const colors = { main: '#aaa', kept: '#8ab4f8', warn: '#ff9800' };
+        const html = lines
+            .map((entry) => {
+                const tip = entry.title ? ` title="${escapeHtmlAttribute(entry.title)}"` : '';
+                return `<div${tip} style="color:${colors[entry.tone] || '#aaa'}; font-size:11px; white-space:normal; line-height:1.4;">${entry.text}</div>`;
+            })
+            .join('');
+        return `<div data-cost-explanation style="margin-top:6px;">${html}</div>`;
     }
 
     /**
@@ -9612,7 +9710,7 @@ class LabSimUI {
                 const cells = cellsOf(r);
                 return {
                     actionsHtml: combatSimUI.upgradeRowActionsHtml(r),
-                    detailHtml: `${goldExactHtml(r.cost, null)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                    detailHtml: `${goldExactHtml(r.cost, null)}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
                     // The sampling-error note is about the attempts figures only
                     within: !cells.measured && (!lead || lead === 'attemptsDelta' || lead === 'perMillion'),
                     unpriced: !Number.isFinite(r.cost),
@@ -9727,7 +9825,7 @@ class LabSimUI {
             nameOf: (r) => r.candidate.description,
             keyOf: (r) => `level:${r.candidate.description}`,
             extra: (r) => ({
-                detailHtml: `${levelCellsOf(r).alongLine}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
+                detailHtml: `${levelCellsOf(r).alongLine}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
                 within: !levelCellsOf(r).measured && ['attemptsDelta', 'hoursPer', 'score'].includes(lead),
                 offerVerify: false,
             }),
