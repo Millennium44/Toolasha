@@ -5048,8 +5048,12 @@ class LabyrinthClearRate {
     buildPathTag(color, label) {
         const mobile = isMobileMode();
         const tag = document.createElement('div');
+        // A shroud mark spans the top of the room, centered, so every shroud room reads alike; shorter marks
+        // keep to the corner
+        const fullWidth = /^Shroud/.test(String(label));
         tag.style.cssText =
-            `position:absolute; top:1px; left:1px; padding:${mobile ? '0 1px' : '0 3px'}; border-radius:3px; ` +
+            `position:absolute; top:1px; left:1px; ${fullWidth ? 'right:1px; text-align:center; ' : ''}` +
+            `padding:${mobile ? '0 1px' : '0 3px'}; border-radius:3px; ` +
             `background:${color}; color:#000; font-size:${mobile ? 6 : 8}px; font-weight:700; line-height:1.4; ` +
             'white-space:nowrap;';
         tag.textContent = label;
@@ -5526,8 +5530,10 @@ class LabyrinthClearRate {
         // A beacon planned for later in the floor: the same marker, dashed and dimmed
         if (later) {
             overlay.style.borderStyle = 'dashed';
-            overlay.style.opacity = isCenter ? '0.6' : '0.45';
-            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.08)';
+            // Dimmer than a beacon for now, but still plainly green: 0.08 fill under 0.45 opacity was about 4%
+            // green and read as an empty room
+            overlay.style.opacity = isCenter ? '0.75' : '0.8';
+            if (!isCenter) overlay.style.background = 'rgba(38,166,154,0.15)';
         }
         if (label) {
             const tag = document.createElement('div');

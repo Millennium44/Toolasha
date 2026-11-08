@@ -24,7 +24,7 @@ A drop far above its expected count now reads "100×" instead of a cut-off "+990
 
 ### Labyrinth beacon tag shows beside Shroud?
 
-On a grid tile marked "Shroud?" the beacon tag (B1–B6) no longer hides under it; it sits on the right edge just below.
+On a grid tile marked "Shroud?" the beacon tag (B1–B6) no longer hides under it; it sits on the right edge just below. Shroud marks now span the top of the tile, centered.
 
 ### Lab Sim keeps the ability target when it forces +Levels
 

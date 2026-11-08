@@ -8583,3 +8583,20 @@ describe('beacon tag beside a path tag', () => {
         expect(beaconTagOf(cell).style.top).toBe('1px');
     });
 });
+
+describe('shroud mark spans the room', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    test('Shroud and Shroud? span the top of the room, centered; a short mark keeps the corner', () => {
+        for (const label of ['Shroud', 'Shroud?']) {
+            const tag = labyrinthClearRate.buildPathTag('#ff5252', label);
+            expect(tag.style.left).toBe('1px');
+            expect(tag.style.right).toBe('1px');
+            expect(tag.style.textAlign).toBe('center');
+        }
+        const short = labyrinthClearRate.buildPathTag('#57d08a', '?');
+        expect(short.style.right).toBe('');
+    });
+});
