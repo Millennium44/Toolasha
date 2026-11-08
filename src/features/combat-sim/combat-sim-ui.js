@@ -40,6 +40,7 @@ import {
     rowActionsInlineHtml,
     rowActionsDetailHtml,
 } from './sim-phone-layout.js';
+import { createPerformanceStrip } from './sim-performance-strip.js';
 import { MARKET_MOBILE_QUERY } from '../market/market-mobile-layout.js';
 import { addStyles } from '../../utils/dom.js';
 import {
@@ -4143,7 +4144,7 @@ class CombatSimUI {
             ${UPGRADE_MODES.map(modeChipHtml).join('')}
             <label style="color:#888; font-size:12px;" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab.">Hours</label>
             <input id="mwi-csim-upgrade-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" title="Simulated hours per comparison. More hours means less noise but a slower run. Shared with the Hours box on the Configure tab." style="width:60px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;">
-            <label id="mwi-csim-upgrade-resim-label" title="After the first pass, rows within noise of the leader are simulated again at 2×, then 4× the hours (each against a baseline of the same length) until they separate. Capped at as long as the first pass took (30 s to 10 min); Stop ends it and keeps every finished figure. Rows that were not close are left as measured." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+            <label id="mwi-csim-upgrade-resim-label" title="After the first pass, rows within noise of the leader are simulated again at 2×, then 4× the hours (each against a baseline of the same length) until they separate. Capped at as long as the first pass took (at least 30 s, at most the re-sim time cap in Performance, 10 min by default; 0 there removes the cap); Stop ends it and keeps every finished figure. Rows that were not close are left as measured." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
                 <input type="checkbox" id="mwi-csim-upgrade-resim" checked style="margin:0; cursor:pointer;">
                 Re-sim close calls
             </label>
@@ -4298,6 +4299,8 @@ class CombatSimUI {
 
         this.panel.appendChild(header);
         this.panel.appendChild(tabBar);
+        const perfStrip = createPerformanceStrip({ idPrefix: 'mwi-csim' });
+        this.panel.appendChild(perfStrip);
         this.panel.appendChild(configureContent);
         this.panel.appendChild(resultsContent);
         this.panel.appendChild(seekContent);
@@ -4342,6 +4345,7 @@ class CombatSimUI {
             header,
             body: [
                 tabBar,
+                perfStrip,
                 configureContent,
                 resultsContent,
                 seekContent,
@@ -15869,7 +15873,7 @@ class CombatSimUI {
                 `<div data-upgrade-resim style="margin:0 0 8px; font-size:11px; color:${GAME_COLORS.textDim};" ` +
                 `title="Rows within noise of the leader are simulated again at 2×, then 4× the hours, each round against ` +
                 `a baseline of the same length, until they separate, the time limit (as long as the first pass took, ` +
-                `30 s to 10 min) is reached, or Stop.">${escapeAttribute(resimText)}</div>` +
+                `at least 30 s, at most the re-sim time cap in Performance; none if that is 0) is reached, or Stop.">${escapeAttribute(resimText)}</div>` +
                 html;
         }
         if (results.slotWarnings?.length) {

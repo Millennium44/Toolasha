@@ -2,7 +2,7 @@
  * Tests for Upgrade Advisor candidate generation
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach, onTestFinished } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 
@@ -227,6 +227,7 @@ const {
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
     labAllFightsTrialBudget,
+    analysisConcurrency,
     ALL_FIGHTS_SIM_BUDGET,
     MIN_TRIAL_FRACTION,
     generateSkillingEquipmentCandidates,
@@ -2381,6 +2382,48 @@ describe('swaps and forced armor sets across a whole labyrinth', () => {
     });
 });
 
+describe('how many simulations an analysis runs at once', () => {
+    // getMaxWorkers is mocked to 4 in this file
+    let active = null;
+    const withSettings = (values) => {
+        active?.mockRestore();
+        const realGetSetting = config.getSetting.bind(config);
+        active = vi
+            .spyOn(config, 'getSetting')
+            .mockImplementation((key, ...rest) => (key in values ? values[key] : realGetSetting(key, ...rest)));
+    };
+    afterEach(() => {
+        active?.mockRestore();
+        active = null;
+    });
+
+    test('unset, the default cap of 6 leaves the 4 workers alone', () => {
+        withSettings({});
+        expect(analysisConcurrency()).toBe(4);
+    });
+
+    test('the setting lowers it, and cannot raise it past the workers', () => {
+        withSettings({ combatSim_maxConcurrentSims: 2 });
+        expect(analysisConcurrency()).toBe(2);
+        withSettings({ combatSim_maxConcurrentSims: 32 });
+        expect(analysisConcurrency()).toBe(4);
+    });
+
+    test('a missing, non-number or out-of-range value never becomes 0', () => {
+        for (const bad of [undefined, null, false, 'abc', NaN, 0, -3]) {
+            withSettings({ combatSim_maxConcurrentSims: bad });
+            expect(analysisConcurrency()).toBeGreaterThanOrEqual(1);
+        }
+        withSettings({ combatSim_maxConcurrentSims: 'abc' });
+        expect(analysisConcurrency()).toBe(4);
+    });
+
+    test('ignoring the caps skips the setting', () => {
+        withSettings({ combatSim_maxConcurrentSims: 1, combatSim_uncapThreads: true });
+        expect(analysisConcurrency()).toBe(4);
+    });
+});
+
 describe('what a big whole-run analysis gives up to fit', () => {
     test('a small run is not shortened at all', () => {
         expect(labAllFightsTrialBudget(ALL_FIGHTS_SIM_BUDGET, 10)).toEqual({ scale: 1, hours: 10, reduced: false });
@@ -2399,6 +2442,48 @@ describe('what a big whole-run analysis gives up to fit', () => {
         expect(budget.hours).toBe(10 * MIN_TRIAL_FRACTION);
     });
 
+    test('a budget of 0 (or below) never shortens, however large the run', () => {
+        expect(labAllFightsTrialBudget(1_000_000, 10, 0)).toEqual({ scale: 1, hours: 10, reduced: false });
+        expect(labAllFightsTrialBudget(1_000_000, 10, -5)).toEqual({ scale: 1, hours: 10, reduced: false });
+    });
+
+    test('a custom budget moves the point where trials get shorter', () => {
+        expect(labAllFightsTrialBudget(100, 10, 100)).toEqual({ scale: 1, hours: 10, reduced: false });
+        const budget = labAllFightsTrialBudget(200, 10, 100);
+        expect(budget).toMatchObject({ reduced: true });
+        expect(budget.scale).toBeCloseTo(0.5, 5);
+        expect(labAllFightsTrialBudget(ALL_FIGHTS_SIM_BUDGET * 2, 10, 5000).reduced).toBe(false);
+    });
+
+    test('the setting is what a run uses: unset never shortens', async () => {
+        const fights = Array.from({ length: 100 }, (_, i) => ({
+            monsterHrid: `/monsters/m${i}`,
+            monsterName: `M${i}`,
+            roomLevel: 100,
+            dto: { staminaLevel: 50, meleeLevel: 50, equipment: {}, abilities: [] },
+        }));
+        buildGameDataPayload.mockReturnValue(buildGameData());
+        runLabyrinthSimulation.mockReset();
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        const seen = [];
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights,
+                crates: [],
+                hours: 10,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                abilityTargetLevel: 5,
+                modes: ['combat_level'],
+            },
+            (progress) => seen.push(progress),
+            {}
+        );
+        expect(seen[0].plan.sims).toBeGreaterThan(ALL_FIGHTS_SIM_BUDGET);
+        expect(seen[0].plan.reduced).toBe(false);
+        expect(result.budget).toMatchObject({ reduced: false, trialScale: 1 });
+    });
+
     test('the run says what it comes to before it starts, and shortens sims rather than dropping fights', async () => {
         // The rule the whole budget hangs on: a row's headline is attempts to
         // clear *every* fight, so a run that left fights out would be answering
@@ -2408,6 +2493,13 @@ describe('what a big whole-run analysis gives up to fit', () => {
         buildGameDataPayload.mockReturnValue(gameData);
         runLabyrinthSimulation.mockReset();
         runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        // The player's "Shorten above N sims" setting, set to the old fixed budget
+        const realGetSetting = config.getSetting.bind(config);
+        const spy = vi
+            .spyOn(config, 'getSetting')
+            .mockImplementation((key, ...rest) =>
+                key === 'labSim_allFightsSimBudget' ? ALL_FIGHTS_SIM_BUDGET : realGetSetting(key, ...rest)
+            );
 
         const fights = Array.from({ length: 100 }, (_, i) => ({
             monsterHrid: `/monsters/m${i}`,
@@ -2416,6 +2508,7 @@ describe('what a big whole-run analysis gives up to fit', () => {
             dto: { staminaLevel: 50, meleeLevel: 50, equipment: {}, abilities: [] },
         }));
         const seen = [];
+        onTestFinished(() => spy.mockRestore());
 
         const result = await runLabyrinthAllFightsAnalysis(
             {
@@ -3129,6 +3222,58 @@ describe('close-call re-sims', () => {
             expect(out).toMatchObject({ rounds: 0, reason: 'time-cap', budgetMs: 40_000 });
             expect(runRound).not.toHaveBeenCalled();
             expect(rows).toEqual(before);
+        });
+
+        test('a time cap of Infinity (the setting at 0) never refuses a round, however slow the first pass', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            const runRound = vi.fn(shrinking());
+            const out = await resimCloseCallRows(rows, {
+                ...context({ firstPassMs: 40_000 }),
+                maxBudgetMs: Infinity,
+                runRound,
+            });
+            expect(runRound).toHaveBeenCalled();
+            expect(out.reason).not.toBe('time-cap');
+            expect(out.budgetMs).toBe(Infinity);
+        });
+
+        test('a custom ceiling bounds the budget, and the 30 s floor still applies below it', async () => {
+            const rows = [row('A', 100, 2, 2), row('B', 101, 2, 2)];
+            const runRound = vi.fn();
+            const slow = await resimCloseCallRows(rows, {
+                ...context({ firstPassMs: 3_600_000 }),
+                maxBudgetMs: 2 * 60 * 1000,
+                runRound,
+            });
+            expect(slow.budgetMs).toBe(120_000);
+            const quick = await resimCloseCallRows(rows, {
+                ...context({ firstPassMs: 1000 }),
+                maxBudgetMs: 5 * 60 * 1000,
+                runRound,
+            });
+            expect(quick.budgetMs).toBe(RESIM_MIN_BUDGET_MS);
+        });
+
+        test('with no ceiling passed it reads the minutes setting (default 10, 0 = none)', async () => {
+            const realGetSetting = config.getSetting.bind(config);
+            let minutes;
+            const spy = vi
+                .spyOn(config, 'getSetting')
+                .mockImplementation((key, ...rest) =>
+                    key === 'combatSim_resimMaxMinutes' ? minutes : realGetSetting(key, ...rest)
+                );
+            onTestFinished(() => spy.mockRestore());
+            const run = (firstPassMs) =>
+                resimCloseCallRows([row('A', 100, 2, 2), row('B', 101, 2, 2)], {
+                    ...context({ firstPassMs }),
+                    runRound: vi.fn(),
+                });
+            minutes = undefined;
+            expect((await run(3_600_000)).budgetMs).toBe(10 * 60 * 1000);
+            minutes = 3;
+            expect((await run(3_600_000)).budgetMs).toBe(3 * 60 * 1000);
+            minutes = 0;
+            expect((await run(3_600_000)).budgetMs).toBe(Infinity);
         });
 
         test('the second round is refused once the first has used the budget', async () => {
