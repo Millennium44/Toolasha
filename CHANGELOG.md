@@ -6941,6 +6941,18 @@ The marketplace layout change gave the price row its own "Max" button and put it
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
 
+## [3.81.0](https://github.com/Millennium44/Toolasha/compare/v3.80.0...v3.81.0) (2026-11-08)
+
+
+### Features
+
+* lab sim Target Lv and Next mult. of work across several fights ([95e9cfa](https://github.com/Millennium44/Toolasha/commit/95e9cfa4ec25add4bc88ea4620e8327490921c2c))
+
+
+### Bug Fixes
+
+* lab sim Targets grid opens at Target Lv; one row per ability level across loadouts ([cd8247e](https://github.com/Millennium44/Toolasha/commit/cd8247ed378b67c317de9000abb2c612ef5ed721))
+
 ## [3.80.0](https://github.com/Millennium44/Toolasha/compare/v3.79.0...v3.80.0) (2026-11-08)
 
 ### Features
