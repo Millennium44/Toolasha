@@ -264,6 +264,19 @@ const TIMEOUT_EVENTS_KEPT = 20;
 /** How many lost-time windows are kept for `diagnostics()` */
 const LOST_WINDOWS_KEPT = 20;
 
+/**
+ * How long a single read or write must take before it is logged by key.
+ *
+ * The per-store histograms say a store was slow; they cannot say which key, or
+ * what else was in flight. A startup wait of several seconds (the dual-install
+ * check, 2026-11-07) was blamed on large writes nobody had measured by key.
+ * A quarter of a second is far past a healthy key read, so the log stays short.
+ */
+const SLOW_OP_THRESHOLD_MS = 250;
+
+/** How many slow operations, with their context, are kept for `diagnostics()` */
+const SLOW_OPS_KEPT = 40;
+
 /** How many distinct keys the write-rate census will track before it stops adding */
 const WRITE_RATE_KEYS_TRACKED = 400;
 
@@ -483,6 +496,8 @@ class Storage {
         this._nextOpId = 1;
         /** `store:key` → how many transactions that key has cost, for write amplification */
         this._writeCounts = new Map();
+        /** Reads and writes slower than `SLOW_OP_THRESHOLD_MS`, newest last: what, how long, and what else was in flight */
+        this._slowOps = [];
         /** The quota reading taken the first time an operation timed out */
         this._estimateAtFirstTimeout = null;
 
@@ -802,11 +817,53 @@ class Storage {
         const generation = this._connectionGeneration;
         const started = Boolean(this.db);
         const opId = this._beginOp('read', op, target, storeName);
+        const startedPerf = this._now();
         try {
             return await this._guardedReadBody(op, target, storeName, unreadable, run, generation, started);
         } finally {
             this._endOp(opId);
+            this._noteIfSlow('read', op, target, storeName, startedPerf, opId);
         }
+    }
+
+    /**
+     * Log one operation by key if it took longer than `SLOW_OP_THRESHOLD_MS`,
+     * with the operations that were still in flight when it finished. An
+     * operation queued behind a large write shows that write in `alongside`.
+     * Called after `_endOp`, so the operation does not list itself.
+     * @param {string} kind - 'read' or 'write'
+     * @param {string} op - Which operation, e.g. `get`
+     * @param {string} target - The key, or a description
+     * @param {string} storeName - Object store
+     * @param {number} startedPerf - `_now()` when it began
+     * @param {number} opId - Its census id; operations begun before it are listed as started earlier
+     * @private
+     */
+    _noteIfSlow(kind, op, target, storeName, startedPerf, opId) {
+        const ms = this._now() - startedPerf;
+        if (ms < SLOW_OP_THRESHOLD_MS) return;
+        const alongside = [];
+        for (const [id, entry] of this._outstanding) {
+            if (alongside.length >= 5) break;
+            alongside.push({
+                kind: entry.kind,
+                op: entry.op,
+                target: entry.target,
+                storeName: entry.storeName,
+                startedEarlier: id < opId,
+            });
+        }
+        this._slowOps.push({
+            kind,
+            op,
+            target,
+            storeName,
+            ms: Math.round(ms),
+            at: Date.now(),
+            sincePageStartMs: Math.round(startedPerf),
+            alongside,
+        });
+        if (this._slowOps.length > SLOW_OPS_KEPT) this._slowOps.shift();
     }
 
     /**
@@ -924,6 +981,7 @@ class Storage {
         } finally {
             this._recordDuration('write', storeName, this._now() - startedPerf);
             this._endOp(opId);
+            this._noteIfSlow('write', op, target, storeName, startedPerf, opId);
         }
         if (result !== WRITE_WEDGED) return result;
 
@@ -3678,6 +3736,10 @@ class Storage {
                 ageMs: now - entry.startedAt,
             })),
             writeRates,
+            slowOps: this._slowOps.map((entry) => ({
+                ...entry,
+                alongside: entry.alongside.map((other) => ({ ...other })),
+            })),
         };
     }
 }

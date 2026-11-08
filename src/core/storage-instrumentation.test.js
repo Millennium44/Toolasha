@@ -95,6 +95,7 @@ describe('what storage records when an operation does not come back', () => {
         storage._durations = new Map();
         storage._outstanding = new Map();
         storage._writeCounts = new Map();
+        storage._slowOps = [];
         storage._estimateAtFirstTimeout = null;
         storage.readTimeoutMs = 30;
         storage.writeTimeoutMs = 30;
@@ -202,6 +203,69 @@ describe('what storage records when an operation does not come back', () => {
         const [busiest] = storage.diagnostics().writeRates;
         expect(busiest).toEqual({ key: 'settings:chatHistory', count: 4 });
         expect(storage.diagnostics().writeRates).toHaveLength(2);
+    });
+
+    test('a slow read is logged by key, with the write it queued behind', async () => {
+        let clock = 1000;
+        vi.spyOn(storage, '_now').mockImplementation(() => clock);
+        let answerRead = null;
+        storage.db = {
+            objectStoreNames: ['settings'],
+            version: 20,
+            transaction() {
+                const store = {
+                    get(key) {
+                        const request = { onsuccess: null, onerror: null, result: undefined };
+                        answerRead = () => {
+                            request.result = `value-of-${key}`;
+                            request.onsuccess?.();
+                        };
+                        return request;
+                    },
+                    put: () => ({ onsuccess: null, onerror: null }), // never answers
+                };
+                return { objectStore: () => store, onabort: null, onerror: null, oncomplete: null };
+            },
+            close() {},
+        };
+
+        const write = storage.set('toolasha_big_blob', 'x', 'settings', true);
+        const read = storage.get('script_settingsMap_32030', 'settings', null);
+        await Promise.resolve();
+        clock += 400;
+        answerRead();
+        await read;
+
+        const [slow] = storage.diagnostics().slowOps;
+        expect(slow).toMatchObject({
+            kind: 'read',
+            op: 'get',
+            target: 'script_settingsMap_32030',
+            storeName: 'settings',
+            ms: 400,
+        });
+        expect(slow.alongside).toEqual([
+            { kind: 'write', op: 'set', target: 'toolasha_big_blob', storeName: 'settings', startedEarlier: true },
+        ]);
+
+        await write;
+        const slowOps = storage.diagnostics().slowOps;
+        expect(slowOps).toHaveLength(2);
+        expect(slowOps[1]).toMatchObject({ kind: 'write', target: 'toolasha_big_blob', alongside: [] });
+    });
+
+    test('a quick operation is not logged as slow, and the log is capped', async () => {
+        storage.db = createHealthyDb({ a: '1' });
+        await storage.get('a', 'settings', null);
+        await storage.set('a', '2', 'settings', true);
+        expect(storage.diagnostics().slowOps).toEqual([]);
+
+        let clock = 0;
+        vi.spyOn(storage, '_now').mockImplementation(() => (clock += 300));
+        for (let i = 0; i < 45; i += 1) await storage.get(`k${i}`, 'settings', null);
+        const slowOps = storage.diagnostics().slowOps;
+        expect(slowOps).toHaveLength(40);
+        expect(slowOps[39].target).toBe('k44');
     });
 
     test('the heartbeat runs without a document, and stops when asked', () => {
