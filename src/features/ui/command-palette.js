@@ -56,6 +56,7 @@ import { clickThroughReact } from '../../utils/react-click.js';
 import { isTypingTarget } from '../../utils/dom.js';
 import overlayPanel from './overlay-panel.js';
 import pformancePanel from '../dev/pformance-panel.js';
+import commandPaletteButtons from './command-palette-buttons.js';
 
 const PALETTE_ID = 'toolasha-command-palette';
 
@@ -669,12 +670,20 @@ class CommandPalette {
         // Captured, so the chord is seen before the game's own key handling and
         // before anything that stops propagation on its way up
         document.addEventListener('keydown', this.onKeyDown, true);
+
+        // The two touch openers (sidebar entry, Settings-page button); a failure must not cost the hotkey
+        try {
+            commandPaletteButtons.start(() => this.open());
+        } catch (error) {
+            console.error('[Command Palette] Starting the touch openers failed:', error);
+        }
     }
 
     cleanup() {
         try {
             for (const name of OWN_COMMANDS) unregisterCommand(name);
             document.removeEventListener('keydown', this.onKeyDown, true);
+            commandPaletteButtons.stop();
             this.close();
             this.initialized = false;
         } catch (error) {

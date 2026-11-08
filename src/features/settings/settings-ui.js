@@ -2491,8 +2491,43 @@ class SettingsUI {
         }
 
         this.addOverlayLauncherRecovery(buttonsDiv);
+        this.addPaletteNavEntryToggle(buttonsDiv);
 
         container.appendChild(buttonsDiv);
+    }
+
+    /**
+     * "Hide/Show the Search sidebar entry" - flips the `commandPaletteNavEntry` setting, which the
+     * palette's touch openers watch live. Mobile-only, like the entry itself. Unlike the Overlay
+     * entry's device-local flag this is an ordinary synced checkbox (also in the settings list).
+     *
+     * @param {HTMLElement} buttonsDiv - The utility-button row to add it to
+     */
+    addPaletteNavEntryToggle(buttonsDiv) {
+        if (!isMobileMode()) return;
+
+        const btn = document.createElement('button');
+        btn.className = 'toolasha-utility-button';
+        if (!config.getSetting('commandPalette')) {
+            btn.textContent = 'Search sidebar entry unavailable';
+            btn.disabled = true;
+            btn.title = 'Turn on the Command palette setting to use this.';
+            buttonsDiv.appendChild(btn);
+            return;
+        }
+
+        const syncLabel = () => {
+            const shown = config.getSetting('commandPaletteNavEntry') !== false;
+            btn.textContent = shown ? 'Hide the Search sidebar entry' : 'Show the Search sidebar entry';
+            btn.setAttribute('aria-pressed', String(shown));
+        };
+        btn.title = 'Shows or hides the Search entry (opens the command palette) in the left navigation on this phone.';
+        btn.addEventListener('click', () => {
+            config.setSetting('commandPaletteNavEntry', config.getSetting('commandPaletteNavEntry') === false);
+            syncLabel();
+        });
+        syncLabel();
+        buttonsDiv.appendChild(btn);
     }
 
     /**

@@ -3952,6 +3952,20 @@ export const settingsGroups = {
                 default: true,
                 help: 'Ctrl+K (or Cmd+K) opens a search box listing every panel, every overlay row, every saved overlay layout and every setting by name — arrow keys and Enter to choose, Escape to dismiss. Ignored while you are typing in chat or any other input',
             },
+            commandPaletteNavEntry: {
+                id: 'commandPaletteNavEntry',
+                label: 'Command palette sidebar entry (phone)',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Search entry to the left navigation on a phone, which has no Ctrl+K, that opens the command palette. Needs the Command palette above',
+            },
+            commandPaletteSettingsButton: {
+                id: 'commandPaletteSettingsButton',
+                label: 'Command palette button on the Settings page',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Command Palette button at the top of the game Settings page, beside Philo Gamba, that opens the command palette. Needs the Command palette above',
+            },
             goalPlanner: {
                 id: 'goalPlanner',
                 label: 'Goal Planner: Ordered steps, cost and time to reach a goal',
