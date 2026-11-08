@@ -6974,7 +6974,10 @@ class LabSimUI {
      */
     _prefillAbilityTargets(grid, playerSelector, levelSelector, typeSelector) {
         const boost = parseInt(this.panel.querySelector(levelSelector)?.value) || 5;
-        const nextMultiple = this.panel.querySelector(typeSelector)?.value === 'next_multiple';
+        const levelType = this.panel.querySelector(typeSelector)?.value;
+        const nextMultiple = levelType === 'next_multiple';
+        // Target Lv is already an absolute level; added to the current one it would open every box near the cap
+        const absoluteTarget = levelType === 'target';
         const typed = {};
         grid.querySelectorAll('[data-ability-target]').forEach((input) => {
             const value = parseInt(input.value, 10);
@@ -7009,7 +7012,11 @@ class LabSimUI {
                     const target = Math.min(
                         maxLevel(),
                         typed[entry.hrid] ||
-                            (nextMultiple ? nextMultipleLevel(highest, boost, maxLevel()) : highest + boost)
+                            (absoluteTarget
+                                ? boost
+                                : nextMultiple
+                                  ? nextMultipleLevel(highest, boost, maxLevel())
+                                  : highest + boost)
                     );
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">

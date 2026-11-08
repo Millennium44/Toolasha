@@ -1604,12 +1604,11 @@ describe('runLabyrinthAllFightsAnalysis', () => {
             {}
         );
 
-        const levels = (hrid) => [
-            ...new Set(
-                result.results.filter((r) => r.candidate.upgradeHrid === hrid).map((r) => r.candidate.upgradeLevel)
-            ),
-        ];
+        // One row per ability level, though each loadout keeps it in a different slot, and it applies to both fights
+        const levels = (hrid) =>
+            result.results.filter((r) => r.candidate.upgradeHrid === hrid).map((r) => r.candidate.upgradeLevel);
         expect([...levels('/abilities/fierce_aura'), ...levels('/abilities/cleave')]).toEqual(expected);
+        expect(result.results.every((r) => r.candidate.appliesTo?.every(Boolean))).toBe(true);
     });
 
     test('a checked swap that moves an owned copy carries no purchase breakdown beside its zero cost', async () => {

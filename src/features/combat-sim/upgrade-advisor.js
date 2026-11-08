@@ -8285,6 +8285,11 @@ function allFightsPoolKey(candidate) {
     if (candidate.type === 'ability_swap' && candidate.fillsFreeSlot) {
         return `ability_fill:${candidate.upgradeHrid}`;
     }
+    // Levelling an ability is one purchase whichever slot each loadout keeps it in, and the row is applied by
+    // the ability, not the slot — keyed by slot, an ability in slot 1 here and slot 3 there was ranked twice
+    if (candidate.type === 'ability_level' && candidate.upgradeHrid) {
+        return `ability_level:${candidate.upgradeHrid}@${candidate.upgradeLevel}`;
+    }
     return candidateAssignmentKey(candidate);
 }
 

@@ -3123,6 +3123,17 @@ describe('the ability target grid covers every fight it is being asked about', (
         expect(precision.value).toBe('49');
     });
 
+    test('Target Lv opens every box at the typed level, not that many levels past the current one', () => {
+        setScope('all');
+        const levelType = ui.panel.querySelector('#mwi-labsim-upgrade-level-type');
+        levelType.value = 'target';
+        levelType.dispatchEvent(new window.Event('change', { bubbles: true }));
+        ui.panel.querySelector('#mwi-labsim-upgrade-target-level').value = '60';
+        openGrid();
+
+        expect(grid().querySelector(`[data-ability-target="${PRECISION}"]`).value).toBe('60');
+    });
+
     test('a chosen subset covers only the loadouts it ticked', () => {
         setScope('selected');
         // The Eye Watcher alone, which is the sword loadout alone
