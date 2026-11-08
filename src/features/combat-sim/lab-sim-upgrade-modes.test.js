@@ -18,7 +18,6 @@ import {
     sanitizeLabUpgradeSelection,
     labScopeTargetCount,
     labDimensionAvailability,
-    labAbilityLevelTypeAvailability,
     estimateLabUpgradeSims,
     LAB_HEAVY_RUN_SIMS,
     LAB_LEVEL_SOURCE_KEYS,
@@ -155,13 +154,6 @@ describe('what a scope can be asked', () => {
         expect(labDimensionAvailability('all', 8).house).toEqual({ enabled: true, reason: '' });
         expect(labDimensionAvailability('selected', 1).house.enabled).toBe(true);
         expect(labDimensionAvailability('current', 1).house.enabled).toBe(true);
-    });
-
-    test('the per-ability target level is only meaningful for one loadout', () => {
-        expect(labAbilityLevelTypeAvailability('current', 1).enabled).toBe(true);
-        const multi = labAbilityLevelTypeAvailability('all', 4);
-        expect(multi.enabled).toBe(false);
-        expect(multi.reason).toMatch(/uniform/);
     });
 });
 

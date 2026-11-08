@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim Ability Lv modes work across several fights
+
+Target Lv and Next mult. of are no longer locked to +Levels when the Upgrade scope covers more than one fight. Ability levels are the same in every loadout, so each mode now means the same thing across the whole run.
+
 <!-- shipped in 3.80.0 -->
 
 ### Spawn census removed
