@@ -10,9 +10,14 @@
  * their 1,005 tests per run, a different set each time, measured 2026-11-06), and pass every time in
  * child processes. A folder entry (a glob ending in .test.js) covers every test file under that folder.
  *
+ * `combat-sim-ui.test.js` runs here for memory: it builds the Combat Sim panel hundreds of times and needs
+ * more heap than a worker thread gets. On threads it ran out at random on the CI runner (2 of 3 runs,
+ * 2026-11-08, on main as well as branches); the forks project gives its processes a larger heap.
+ *
  * `scripts/vitest-forks-files.test.js` fails if a test file sets TZ without being covered here.
  */
 export default [
+    'src/features/combat-sim/combat-sim-ui.test.js',
     'src/features/sync/**/*.test.js',
     'src/features/networth/day-row-retention.test.js',
     'src/features/networth/gold-sources.test.js',
