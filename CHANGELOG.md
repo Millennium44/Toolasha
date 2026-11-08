@@ -22,6 +22,14 @@ The Lab Sim's Upgrade tab gets the Combat Sim's Steps boxes: equipment by breakp
 
 A drop far above its expected count now reads "100×" instead of a cut-off "+9900…" in the vs exp. column; hover it for the exact percent.
 
+### Faster startup
+
+Toolasha's features no longer wait on the check for a second installed copy, which could hold the whole script back for several seconds on a load.
+
+### Search button for the command palette
+
+The Ctrl+K command palette now also opens from a "Search" entry in the phone sidebar and a "Command Palette" button beside Philo Gamba on the Settings page; each can be turned off in settings.
+
 ### Item popups on a phone no longer cover the item
 
 On a phone, an item's popup now opens beside the item you pressed (narrowed to fit if needed), or above or below it when there's no room beside, and scrolls when it's taller than the screen.
