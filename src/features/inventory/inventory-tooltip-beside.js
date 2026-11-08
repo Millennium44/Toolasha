@@ -43,6 +43,8 @@ const VIEWPORT_MARGIN = 8;
  * the tooltip is handed back to the game's placement for the rest of that hover.
  */
 const MAX_FLIPS = 6;
+/** The narrowest a phone tooltip is squeezed to so it can sit beside the tapped item */
+const PHONE_MIN_WIDTH = 160;
 const BURST_WINDOW_MS = 250;
 const MAX_PASSES_PER_WINDOW = 40;
 
@@ -55,6 +57,7 @@ const CSS = `
 }
 .${CLASS_NAME} .MuiTooltip-tooltip {
     max-height: var(--tl-tip-max, calc(100vh - ${VIEWPORT_MARGIN * 2}px));
+    max-width: var(--tl-tip-w, none);
     overflow-y: auto;
 }
 .${CLASS_NAME} .MuiTooltip-arrow,
@@ -113,24 +116,54 @@ export function placeClear(gameRect, tile, viewport) {
 }
 
 /**
- * Where a tooltip goes on a phone, or null to keep the game's placement. A phone has no room beside a tile
- * (the tooltip is nearly the screen wide), so it goes above or below the tile, whichever side has more
- * room (the game's side wins when the tooltip fits there), never over the tile. A tooltip taller than that
- * room is capped to it and scrolls. A tooltip that already clears the tile and fits the screen is left alone.
+ * Where a tooltip goes on a phone, or null to keep the game's placement. Beside the tapped tile first, to the
+ * right when the tooltip fits there, else to the left, else squeezed (down to PHONE_MIN_WIDTH) into the roomier
+ * side; only when neither side has that much room does it go above or below the tile, on the side with more
+ * room. Never over the tile. A tooltip taller than the room is capped to it and scrolls. A tooltip that already
+ * clears the tile and fits the screen is left alone.
  * @param {DOMRect|Object} gameRect - Where the game placed the tooltip
  * @param {DOMRect|Object} tile - Tapped tile rect
  * @param {{width: number, height: number}} viewport - Viewport size
- * @returns {{x: number, y: number, maxHeight: number}|null} maxHeight is 0 when no cap is needed
+ * @returns {{x: number, y: number, maxHeight: number, maxWidth: number}|null} maxHeight and maxWidth are 0 when
+ *   no cap is needed
  */
 export function placePhone(gameRect, tile, viewport) {
     const width = gameRect.width;
     const height = gameRect.height;
     if (!(width > 0)) return null;
+    const viewHeight = viewport.height - VIEWPORT_MARGIN * 2;
     const gameBottom = gameRect.top + height;
     const fitsScreen = gameRect.top >= VIEWPORT_MARGIN && gameBottom <= viewport.height - VIEWPORT_MARGIN;
     if (fitsScreen && !rectsOverlap(gameRect, tile)) return null;
 
+    const tileRight = Number.isFinite(tile.right) ? tile.right : tile.left + (tile.width || 0);
     const tileBottom = Number.isFinite(tile.bottom) ? tile.bottom : tile.top + (tile.height || 0);
+    const rightRoom = Math.floor(viewport.width - VIEWPORT_MARGIN - tileRight - PANEL_GAP);
+    const leftRoom = Math.floor(tile.left - PANEL_GAP - VIEWPORT_MARGIN);
+
+    let side = null;
+    if (width <= rightRoom) side = 'right';
+    else if (width <= leftRoom) side = 'left';
+    else if (Math.max(rightRoom, leftRoom) >= PHONE_MIN_WIDTH) side = rightRoom >= leftRoom ? 'right' : 'left';
+    if (side) {
+        const room = side === 'right' ? rightRoom : leftRoom;
+        const squeezed = width > room;
+        const shownWidth = squeezed ? room : width;
+        // A squeezed tooltip wraps taller: estimate by area, and cap to the screen either way
+        const estimate = squeezed ? Math.ceil((height * width) / shownWidth) : height;
+        const shownHeight = Math.min(estimate, viewHeight);
+        let y = tile.top;
+        if (y + shownHeight > viewport.height - VIEWPORT_MARGIN) y = viewport.height - VIEWPORT_MARGIN - shownHeight;
+        if (y < VIEWPORT_MARGIN) y = VIEWPORT_MARGIN;
+        const x = side === 'right' ? tileRight + PANEL_GAP : tile.left - PANEL_GAP - shownWidth;
+        return {
+            x: Math.round(x),
+            y: Math.round(y),
+            maxHeight: estimate > viewHeight ? viewHeight : 0,
+            maxWidth: squeezed ? shownWidth : 0,
+        };
+    }
+
     const roomBelow = viewport.height - VIEWPORT_MARGIN - tileBottom;
     const roomAbove = tile.top - VIEWPORT_MARGIN;
     let below;
@@ -144,7 +177,7 @@ export function placePhone(gameRect, tile, viewport) {
     const y = below ? tileBottom : tile.top - shownHeight;
     const maxX = Math.max(VIEWPORT_MARGIN, viewport.width - VIEWPORT_MARGIN - width);
     const x = Math.min(Math.max(gameRect.left, VIEWPORT_MARGIN), maxX);
-    return { x: Math.round(x), y: Math.round(y), maxHeight: shownHeight < height ? room : 0 };
+    return { x: Math.round(x), y: Math.round(y), maxHeight: shownHeight < height ? room : 0, maxWidth: 0 };
 }
 
 /**
@@ -347,6 +380,9 @@ class InventoryTooltipBeside {
         const cap = spot.maxHeight ? `${spot.maxHeight}px` : '';
         if (cap && popper.style.getPropertyValue('--tl-tip-max') !== cap) popper.style.setProperty('--tl-tip-max', cap);
         else if (!cap && popper.style.getPropertyValue('--tl-tip-max')) popper.style.removeProperty('--tl-tip-max');
+        const wide = spot.maxWidth ? `${spot.maxWidth}px` : '';
+        if (wide && popper.style.getPropertyValue('--tl-tip-w') !== wide) popper.style.setProperty('--tl-tip-w', wide);
+        else if (!wide && popper.style.getPropertyValue('--tl-tip-w')) popper.style.removeProperty('--tl-tip-w');
         popper.classList.add(CLASS_NAME);
         return true;
     }
@@ -358,6 +394,7 @@ class InventoryTooltipBeside {
         if (popper.style.getPropertyValue('--tl-tip-x')) popper.style.removeProperty('--tl-tip-x');
         if (popper.style.getPropertyValue('--tl-tip-y')) popper.style.removeProperty('--tl-tip-y');
         if (popper.style.getPropertyValue('--tl-tip-max')) popper.style.removeProperty('--tl-tip-max');
+        if (popper.style.getPropertyValue('--tl-tip-w')) popper.style.removeProperty('--tl-tip-w');
     }
 
     /** Stop tracking a tooltip and hand it back to the game's placement. */

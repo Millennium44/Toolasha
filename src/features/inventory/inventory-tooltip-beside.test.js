@@ -75,42 +75,75 @@ describe('placeClear', () => {
 });
 
 describe('placePhone', () => {
-    const vp = { width: 412, height: 800 };
-    const tile = { left: 100, top: 400, width: 44, height: 44 };
-    const overlaps = (r) => r.left < 144 && 100 < r.left + r.width && r.top < 444 && 400 < r.top + r.height;
-    it('never covers the tapped tile, above or below, with or without a cap', () => {
-        for (const height of [200, 360, 500, 900]) {
-            for (const top of [100, 380, 500]) {
-                const spot = placePhone({ left: 10, top, width: 380, height }, tile, vp);
-                const shown = spot ? spot.maxHeight || height : 0;
-                const at = spot || { x: 10, y: top };
-                expect(overlaps({ left: at.x, top: at.y, width: 380, height: shown || height })).toBe(false);
-                if (spot) {
+    const overlaps = (r, t) =>
+        r.left < t.left + t.width && t.left < r.left + r.width && r.top < t.top + t.height && t.top < r.top + r.height;
+
+    describe('beside the tile', () => {
+        const vp = { width: 412, height: 924 };
+        it('the live Regal Sword geometry: squeezed to the right of the tile, capped, never over it', () => {
+            const tile = { left: 181, top: 446, width: 42, height: 42 };
+            const spot = placePhone({ left: 89, top: 9, width: 226, height: 480 }, tile, vp);
+            expect(spot).toEqual({ x: 223, y: 316, maxHeight: 0, maxWidth: 181 });
+            const shown = Math.min(Math.ceil((480 * 226) / 181), 908);
+            expect(overlaps({ left: spot.x, top: spot.y, width: 181, height: shown }, tile)).toBe(false);
+            expect(spot.y + shown).toBeLessThanOrEqual(916);
+        });
+        it('prefers the right when the whole tooltip fits there, keeping its width', () => {
+            const tile = { left: 20, top: 300, width: 42, height: 42 };
+            expect(placePhone({ left: 0, top: 200, width: 226, height: 300 }, tile, vp)).toEqual({
+                x: 62,
+                y: 300,
+                maxHeight: 0,
+                maxWidth: 0,
+            });
+        });
+        it('uses the left when only the left fits whole', () => {
+            const tile = { left: 300, top: 300, width: 42, height: 42 };
+            expect(placePhone({ left: 200, top: 200, width: 226, height: 300 }, tile, vp)).toEqual({
+                x: 74,
+                y: 300,
+                maxHeight: 0,
+                maxWidth: 0,
+            });
+        });
+        it('caps a tooltip taller than the screen to the screen and pins it to the top', () => {
+            const tile = { left: 20, top: 300, width: 42, height: 42 };
+            const spot = placePhone({ left: 0, top: 0, width: 226, height: 1400 }, tile, vp);
+            expect(spot).toEqual({ x: 62, y: 8, maxHeight: 908, maxWidth: 0 });
+        });
+    });
+
+    describe('above or below, when neither side has room', () => {
+        const vp = { width: 320, height: 800 };
+        const tile = { left: 140, top: 400, width: 44, height: 44 };
+        it('never covers the tapped tile, with or without a cap', () => {
+            for (const height of [200, 360, 500, 900]) {
+                for (const top of [100, 380, 500]) {
+                    const spot = placePhone({ left: 10, top, width: 300, height }, tile, vp) || { x: 10, y: top };
+                    const shown = spot.maxHeight || height;
+                    expect(overlaps({ left: spot.x, top: spot.y, width: 300, height: shown }, tile)).toBe(false);
                     expect(spot.y).toBeGreaterThanOrEqual(8);
                     expect(spot.y + shown).toBeLessThanOrEqual(792);
                 }
             }
-        }
-    });
-    it('places a short tooltip that fits without a cap', () => {
-        const spot = placePhone({ left: 10, top: 380, width: 380, height: 200 }, tile, vp);
-        expect(spot).toEqual({ x: 10, y: 200, maxHeight: 0 });
-    });
-    it('goes above when below has no room, capped when taller than the room', () => {
-        const low = { ...tile, top: 700 };
-        expect(placePhone({ left: 10, top: 600, width: 380, height: 300 }, low, vp)).toEqual({
-            x: 10,
-            y: 400,
-            maxHeight: 0,
         });
-        expect(placePhone({ left: 10, top: 600, width: 380, height: 900 }, low, vp).maxHeight).toBe(692);
-    });
-    it('leaves a tooltip that clears the tile and fits the screen to the game', () => {
-        expect(placePhone({ left: 10, top: 450, width: 380, height: 300 }, tile, vp)).toBeNull();
-    });
-    it('caps a tooltip that clears the tile but runs off the screen', () => {
-        const spot = placePhone({ left: 10, top: 450, width: 380, height: 500 }, tile, vp);
-        expect(spot).toMatchObject({ y: 8, maxHeight: 392 });
+        it('goes above when below has no room, capped when taller than the room', () => {
+            const low = { ...tile, top: 700 };
+            expect(placePhone({ left: 10, top: 600, width: 300, height: 300 }, low, vp)).toEqual({
+                x: 10,
+                y: 400,
+                maxHeight: 0,
+                maxWidth: 0,
+            });
+            expect(placePhone({ left: 10, top: 600, width: 300, height: 900 }, low, vp).maxHeight).toBe(692);
+        });
+        it('leaves a tooltip that clears the tile and fits the screen to the game', () => {
+            expect(placePhone({ left: 10, top: 450, width: 300, height: 300 }, tile, vp)).toBeNull();
+        });
+        it('caps a tooltip that clears the tile but runs off the screen', () => {
+            const spot = placePhone({ left: 10, top: 450, width: 300, height: 500 }, tile, vp);
+            expect(spot).toMatchObject({ y: 8, maxHeight: 392 });
+        });
     });
 });
 
@@ -245,16 +278,19 @@ describe('InventoryTooltipBeside', () => {
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(false);
     });
 
-    it('on a phone, moves a tooltip covering the tapped item below it and caps its height', () => {
+    it('on a phone, moves a tooltip covering the tapped item beside it, squeezed and capped', () => {
         h.mobile = true;
         window.innerWidth = 412;
-        window.innerHeight = 800;
-        const popper = build({ tileLeft: 100, tileTop: 100 });
-        popper.getBoundingClientRect = () => rect({ left: 10, top: 50, width: 380, height: 900 });
+        window.innerHeight = 924;
+        const popper = build({ tileLeft: 181, tileTop: 446 });
+        document.querySelector('.Item_itemContainer__y').getBoundingClientRect = () =>
+            rect({ left: 181, top: 446, width: 42, height: 42 });
+        popper.getBoundingClientRect = () => rect({ left: 89, top: 9, width: 226, height: 480 });
         h.callback(popper, 'opened', ITEM_INFO);
         expect(popper.classList.contains('toolasha-tip-beside')).toBe(true);
-        expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('160px');
-        expect(popper.style.getPropertyValue('--tl-tip-max')).toBe('632px');
+        expect(popper.style.getPropertyValue('--tl-tip-x')).toBe('223px');
+        expect(popper.style.getPropertyValue('--tl-tip-y')).toBe('316px');
+        expect(popper.style.getPropertyValue('--tl-tip-w')).toBe('181px');
     });
 
     it('cleanup hands open tooltips back and removes the stylesheet', () => {
