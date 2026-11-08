@@ -48,7 +48,7 @@ const PHONE_MIN_WIDTH = 160;
 const BURST_WINDOW_MS = 250;
 const MAX_PASSES_PER_WINDOW = 40;
 
-const CSS = `
+export const CSS = `
 .${CLASS_NAME} {
     position: fixed !important;
     inset: 0 auto auto 0 !important;
@@ -57,8 +57,12 @@ const CSS = `
 }
 .${CLASS_NAME} .MuiTooltip-tooltip {
     max-height: var(--tl-tip-max, calc(100vh - ${VIEWPORT_MARGIN * 2}px));
-    max-width: var(--tl-tip-w, none);
     overflow-y: auto;
+}
+/* Only a phone placement that squeezed the tooltip narrows it; otherwise the game's own max-width stands
+   (a 'none' fallback here lifted it, and desktop tooltips ran the width of the screen) */
+.${CLASS_NAME}[style*="--tl-tip-w"] .MuiTooltip-tooltip {
+    max-width: var(--tl-tip-w);
 }
 .${CLASS_NAME} .MuiTooltip-arrow,
 .${CLASS_NAME} [data-popper-arrow] {

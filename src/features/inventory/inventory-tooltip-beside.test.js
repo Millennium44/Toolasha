@@ -21,6 +21,7 @@ const {
     placeClear,
     placePhone,
     InventoryTooltipBeside,
+    CSS: TOOLTIP_CSS,
 } = await import('./inventory-tooltip-beside.js');
 
 const rect = (o) => ({ left: 0, top: 0, width: 0, height: 0, ...o });
@@ -468,5 +469,15 @@ describe('InventoryTooltipBeside bounded work', () => {
         expect(inst.tracked.has(popper)).toBe(false);
         expect(warn).toHaveBeenCalledTimes(1);
         inst.release(popper);
+    });
+});
+
+describe('tooltip width', () => {
+    it('leaves the game its own max-width unless a phone placement squeezed the tooltip', () => {
+        // A `none` fallback lifted the game's limit, and desktop tooltips ran the width of the screen
+        expect(TOOLTIP_CSS).not.toMatch(/max-width:\s*var\(--tl-tip-w,\s*none\)/);
+        const rules = TOOLTIP_CSS.split('}').filter((r) => /max-width/.test(r));
+        expect(rules).toHaveLength(1);
+        expect(rules[0]).toContain('[style*="--tl-tip-w"]');
     });
 });
