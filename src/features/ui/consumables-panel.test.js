@@ -35,6 +35,15 @@ const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
 /** Who is logged in, and the data manager's event bus */
 const bus = vi.hoisted(() => ({ characterId: 'char1', handlers: {} }));
 
+// Background work waits on a gate the test holds, the stand-in for "feature startup has not finished"
+const background = vi.hoisted(() => ({ gate: null }));
+vi.mock('../../utils/background-work.js', () => ({
+    runInBackground: async (_name, work) => {
+        if (background.gate) await background.gate;
+        return work();
+    },
+}));
+
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 1100,
@@ -1845,5 +1854,62 @@ describe('the labyrinth burn trend', () => {
             if (previousBridge === undefined) delete window.Toolasha;
             else window.Toolasha = previousBridge;
         }
+    });
+});
+
+describe('the dungeon run history is read after startup', () => {
+    const clear = (name) => ({ dungeonName: name, duration: 300000, result: 'clear' });
+    let open;
+    let pending;
+
+    /** Hold the gate and start the deferred read, as loadSettings does at import */
+    const startHeld = () => {
+        background.gate = new Promise((resolve) => {
+            open = resolve;
+        });
+        pending = consumablesPanel._loadDungeonHistoryLater();
+    };
+    const release = async () => {
+        open();
+        background.gate = null;
+        await pending;
+    };
+
+    afterEach(() => {
+        background.gate = null;
+        delete store.data.allRuns;
+    });
+
+    test('loadSettings does not read it, and the held read then fills it', async () => {
+        store.data.allRuns = [clear('Den')];
+        background.gate = new Promise((resolve) => {
+            open = resolve;
+        });
+        await consumablesPanel.loadSettings();
+        expect(consumablesPanel._dungeonHistory).toEqual([]);
+
+        open();
+        background.gate = null;
+        await vi.waitFor(() => expect(consumablesPanel._dungeonHistory).toEqual([clear('Den')]));
+    });
+
+    test('a panel refresh that landed first is not overwritten by the older held read', async () => {
+        store.data.allRuns = [clear('Old')];
+        startHeld();
+        store.data.allRuns = [clear('New')];
+        await consumablesPanel._refreshStoredReadings();
+        store.data.allRuns = [clear('Old')];
+
+        await release();
+        expect(consumablesPanel._dungeonHistory).toEqual([clear('New')]);
+    });
+
+    test('an unreadable history leaves the held one, rather than emptying it', async () => {
+        consumablesPanel._dungeonHistory = [clear('Den')];
+        delete store.data.allRuns;
+        startHeld();
+
+        await release();
+        expect(consumablesPanel._dungeonHistory).toEqual([clear('Den')]);
     });
 });
