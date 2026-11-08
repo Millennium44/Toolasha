@@ -813,16 +813,16 @@ describe('the Upgrade tab asks two questions instead of one', () => {
         expect(describeArchetypes([{ loadoutName: 'Lab', archetype: 'wark', label: null }])).toContain('Lab → wark');
     });
 
-    test('the per-ability Target Lv rule is disabled where it cannot be honoured', () => {
+    test('the per-ability Target Lv rule stays open at every scope', () => {
+        // Ability levels are character-wide, so a target means the same thing in every loadout
         const levelType = ui.panel.querySelector('#mwi-labsim-upgrade-level-type');
         check('ability_level', true);
-        expect(levelType.disabled).toBe(false);
+        levelType.value = 'target';
 
         setScope('all');
 
-        expect(levelType.disabled).toBe(true);
-        expect(levelType.value).toBe('increment');
-        expect(levelType.title).toMatch(/uniform/);
+        expect(levelType.disabled).toBe(false);
+        expect(levelType.value).toBe('target');
     });
 
     test('the options for a set only show while that set is checked', () => {
@@ -3097,7 +3097,7 @@ describe('the ability target grid covers every fight it is being asked about', (
         expect(grid().textContent).not.toContain('Precision (40–44) [');
     });
 
-    test('Next multiple of: the single-fight grid prefills the next multiple, and the several-fight scope refuses the mode', () => {
+    test('Next multiple of: the single-fight grid prefills the next multiple, and the several-fight scope keeps the mode', () => {
         const levelType = ui.panel.querySelector('#mwi-labsim-upgrade-level-type');
         expect([...levelType.options].map((o) => o.value)).toContain('next_multiple');
         levelType.value = 'next_multiple';
@@ -3109,11 +3109,10 @@ describe('the ability target grid covers every fight it is being asked about', (
         // Fireball 48 -> 50
         expect(grid().querySelector(`[data-ability-target="${FIREBALL}"]`).value).toBe('50');
 
-        // Several fights: a next multiple would be a different boost per loadout, so the mode is put back
+        // Several fights: every loadout holds the same character-wide levels, so the mode stays
         setScope('all');
-        expect(levelType.disabled).toBe(true);
-        expect(levelType.value).toBe('increment');
-        expect(levelType.title).toMatch(/next multiple/);
+        expect(levelType.disabled).toBe(false);
+        expect(levelType.value).toBe('next_multiple');
     });
 
     test('the target opens off the highest level it is held at, so the boost is a boost everywhere', () => {
@@ -8793,7 +8792,7 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         expect(q('allfights-useskip').checked).toBe(false);
     });
 
-    test('a Target Lv forced to +Levels by a wider scope does not stay in the box as +80 levels', async () => {
+    test('a Target Lv survives a wider scope, box and saved inputs unchanged', async () => {
         game.monsters = [
             { hrid: '/monsters/mimic', name: 'Mimic' },
             { hrid: '/monsters/ghoul', name: 'Ghoul' },
@@ -8810,10 +8809,10 @@ describe('the Lab Sim Upgrade Steps controls', () => {
         scope.value = 'all';
         change(scope);
         await settle();
-        expect(q('upgrade-level-type').disabled).toBe(true);
-        expect(q('upgrade-level-type').value).toBe('increment');
-        expect(q('upgrade-target-level').value).toBe('5');
-        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ abilityType: 'increment', abilityLevel: '5' });
+        expect(q('upgrade-level-type').disabled).toBe(false);
+        expect(q('upgrade-level-type').value).toBe('target');
+        expect(q('upgrade-target-level').value).toBe('80');
+        expect(storage.written.labSimUpgradeInputs_me).toMatchObject({ abilityType: 'target', abilityLevel: '80' });
         expect(ui._readUpgradeSteps(new Set(['ability_level']))).toMatchObject({ abilitySteps: 1 });
     });
 

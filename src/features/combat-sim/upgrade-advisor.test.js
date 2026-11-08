@@ -1558,6 +1558,60 @@ describe('runLabyrinthAllFightsAnalysis', () => {
         expect(meleeRow.attemptsDelta).toBeCloseTo(1 / 0.9 - 1 / 0.8, 5);
     });
 
+    test.each([
+        // Lv42 and Lv66: Target Lv 70 takes both to 70; Next mult. of 5 to 45 and 70; +5 to 47 and 71
+        ['target', 70, [70, 70]],
+        ['next_multiple', 5, [45, 70]],
+        ['increment', 5, [47, 71]],
+    ])('a multi-fight run honours the %s ability level mode in every loadout', async (type, value, expected) => {
+        const gameData = buildGameData();
+        gameData.abilityDetailMap = {
+            '/abilities/fierce_aura': { name: 'Fierce Aura' },
+            '/abilities/cleave': { name: 'Cleave' },
+        };
+        buildGameDataPayload.mockReturnValue(gameData);
+        runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+        // Two loadouts holding the same character-wide levels, Cleave in a different slot in each
+        const loadout = (abilities) => ({ equipment: {}, staminaLevel: 50, abilities });
+        const aura = { hrid: '/abilities/fierce_aura', level: 42 };
+        const cleave = { hrid: '/abilities/cleave', level: 66 };
+
+        const result = await runLabyrinthAllFightsAnalysis(
+            {
+                fights: [
+                    {
+                        monsterHrid: '/monsters/goblin',
+                        monsterName: 'Goblin',
+                        roomLevel: 100,
+                        dto: loadout([aura, cleave]),
+                    },
+                    {
+                        monsterHrid: '/monsters/wisp',
+                        monsterName: 'Wisp',
+                        roomLevel: 110,
+                        dto: loadout([cleave, aura]),
+                    },
+                ],
+                crates: [],
+                hours: 1,
+                communityBuffs: {},
+                labyrinthCombatBuffs: [],
+                modes: ['ability_level'],
+                abilityTargetLevel: value,
+                abilityLevelType: type,
+            },
+            null,
+            {}
+        );
+
+        const levels = (hrid) => [
+            ...new Set(
+                result.results.filter((r) => r.candidate.upgradeHrid === hrid).map((r) => r.candidate.upgradeLevel)
+            ),
+        ];
+        expect([...levels('/abilities/fierce_aura'), ...levels('/abilities/cleave')]).toEqual(expected);
+    });
+
     test('a checked swap that moves an owned copy carries no purchase breakdown beside its zero cost', async () => {
         buildGameDataPayload.mockReturnValue(buildGameData());
         runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });

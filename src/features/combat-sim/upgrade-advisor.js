@@ -8470,7 +8470,7 @@ export function labAllFightsTrialBudget(sims, hours) {
  * always simulated.
  *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
- *   abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType, combatLevelBoost, combatLevelSteps,
+ *   abilityLevelType ('increment' | 'target' | 'next_multiple', default 'increment'), abilitySteps, enhancementSteps, enhancementStepKind, combatLevelType, combatLevelBoost, combatLevelSteps,
  *   houseSteps, guildShrineSteps (the Upgrade tab's Steps boxes; each defaults to 1 candidate, as before),
  *   combatLevelTargets, auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
  *   guildShrineTargets, guildShrineCapToGuild, tokenLevels, claimLoadouts }
@@ -8493,6 +8493,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         communityBuffs,
         labyrinthCombatBuffs = [],
         abilityTargetLevel,
+        abilityLevelType = 'increment',
         abilitySteps = 1,
         enhancementSteps = 1,
         enhancementStepKind = 'breakpoints',
@@ -8561,7 +8562,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 gameData,
                 mode,
                 abilityTargetLevel,
-                'increment',
+                // Ability levels are character-wide, so every loadout holds the same ones and the mode means the
+                // same thing in each
+                abilityLevelType,
                 false,
                 combatLevelTargets,
                 abilityTargets,

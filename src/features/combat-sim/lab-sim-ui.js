@@ -120,7 +120,6 @@ import {
     resolveLabTargetLevel,
     labScopeTargetCount,
     labDimensionAvailability,
-    labAbilityLevelTypeAvailability,
     estimateLabUpgradeSims,
     planLabUpgradeRun,
 } from './lab-sim-upgrade-modes.js';
@@ -2659,24 +2658,11 @@ class LabSimUI {
         const levelGroup = this.panel.querySelector('#mwi-labsim-upgrade-level-group');
         if (levelGroup) levelGroup.style.display = isLevelMode ? 'inline-flex' : 'none';
 
+        // Every type works at every scope: ability levels are character-wide, so each loadout carries the same
+        // ones and a Target Lv or Next mult. of asks the same thing of all of them
         const levelType = this.panel.querySelector('#mwi-labsim-upgrade-level-type');
-        const levelTypeState = labAbilityLevelTypeAvailability(scopeMode, targetCount);
-        if (levelType) {
-            levelType.style.display = isLevelMode ? '' : 'none';
-            levelType.disabled = !levelTypeState.enabled;
-            levelType.title = levelTypeState.reason;
-            if (!levelTypeState.enabled && levelType.value !== 'increment') {
-                // Forced to +Levels: the number box gets the rewrite the type select's own change makes, or a
-                // Target Lv (80) left in it would be read as +80 levels
-                levelType.value = 'increment';
-                try {
-                    this._syncAbilityLevelBox('increment');
-                } finally {
-                    void this._saveUpgradeInputs();
-                }
-            }
-        }
-        // The Steps box follows the (possibly just reset) type
+        if (levelType) levelType.style.display = isLevelMode ? '' : 'none';
+        // The Steps box follows the type
         this._syncAbilityStepsBox();
 
         const abilityGrid = this.panel.querySelector('#mwi-labsim-ability-targets');
@@ -5855,6 +5841,7 @@ class LabSimUI {
                             communityBuffs,
                             labyrinthCombatBuffs,
                             abilityTargetLevel,
+                            abilityLevelType,
                             ...stepOptions,
                             combatLevelTargets,
                             abilityTargets,
