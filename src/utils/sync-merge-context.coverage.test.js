@@ -535,12 +535,6 @@ const FIXTURES = {
         a: { entries: [{ hrid: '/items/milk', level: 0 }], zones: {}, chests: {} },
         b: { entries: [{ hrid: '/items/holy_sword', level: 3 }], zones: {}, chests: {} },
     },
-    'Zone tiers last run': {
-        store: 'settings',
-        key: `combatZoneTiers_${CHAR}`,
-        a: { '/actions/combat/fly': { tier: 2, at: EARLIER } },
-        b: { '/actions/combat/rat': { tier: 3, at: LATER } },
-    },
 };
 
 /*

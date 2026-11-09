@@ -185,7 +185,7 @@ describe('Zone Task Progress section', () => {
         zoneRow.onclick();
 
         expect(taskStatistics.overlay).toBe(null);
-        expect(h.openZone).toHaveBeenCalledWith('/actions/combat/zone_a', 2, { count: 126 }); // 120 plus the default 5% flat buffer (no kill rate on this row)
+        expect(h.openZone).toHaveBeenCalledWith('/actions/combat/zone_a', 2, { count: 126, keepTier: true }); // 120 plus the default 5% flat buffer (no kill rate on this row)
     });
 
     test('clicking a stochastic zone pads the fight count with the Go flow settings', async () => {

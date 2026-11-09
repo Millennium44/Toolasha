@@ -133,6 +133,15 @@ const SIM = {
     encounters: 120,
 };
 
+/** The game's own Difficulty pick for the zone (null: none), kept in the page's localStorage */
+function stubGamePick(tier) {
+    dataManager.currentCharacterId = 'char-a';
+    const map = new Map(
+        tier === null ? [] : [['lastSelectedActionDifficultyMap_char-a', JSON.stringify({ [ZONE]: tier })]]
+    );
+    vi.stubGlobal('localStorage', { getItem: (key) => (map.has(key) ? map.get(key) : null) });
+}
+
 beforeEach(() => {
     dataManager.initClientData = gameData();
     buildGameDataPayload.mockReturnValue(dataManager.initClientData);
@@ -148,6 +157,7 @@ afterEach(() => {
     document.body.innerHTML = '';
     taskProfitDisplay._zoneSimCache?.clear?.();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     runSimulation.mockReset();
 });
 
@@ -174,7 +184,7 @@ describe('Go fills the fights the zone summary quotes', () => {
     ];
 
     test('the stored zone figure is the quoted one, and it exceeds this card own kills', async () => {
-        dataManager.characterActions = [{ actionHrid: ZONE, difficultyTier: 3, isDone: false, ordinal: 0 }];
+        stubGamePick(3);
         const { container, estimate } = await runCardEstimate(BOARD, SIM);
 
         const quoted = quotedFights(container);
@@ -188,7 +198,7 @@ describe('Go fills the fights the zone summary quotes', () => {
     });
 
     test('Go opens the estimate tier and types the quoted count, not the card own padded count', async () => {
-        dataManager.characterActions = [{ actionHrid: ZONE, difficultyTier: 3, isDone: false, ordinal: 0 }];
+        stubGamePick(3);
         const { container, estimate } = await runCardEstimate(BOARD, SIM);
         const { input, combobox } = detailPanel('Gobo Planet', 3);
 
@@ -207,7 +217,7 @@ describe('Go fills the fights the zone summary quotes', () => {
     });
 
     test('a progress change redraws the stored figure with the board', async () => {
-        dataManager.characterActions = [{ actionHrid: ZONE, difficultyTier: 3, isDone: false, ordinal: 0 }];
+        stubGamePick(3);
         const { container, firstCard, estimate } = await runCardEstimate(BOARD, SIM);
         const before = estimate.zoneFights;
 
@@ -226,12 +236,12 @@ describe('Go fills the fights the zone summary quotes', () => {
         expect(after.zoneFights).toBe(quotedFights(container));
     });
 
-    test('a zone nowhere in the queue stays T0, says so on the line, and still fills the quoted count', async () => {
-        dataManager.characterActions = [];
+    test('a zone the game has no pick for stays T0, says so on the line, and still fills the quoted count', async () => {
+        stubGamePick(null);
         const { container, estimate } = await runCardEstimate(BOARD, SIM);
         expect(estimate.tier).toBe(0);
         const line = [...container.children].find((c) => c.textContent.startsWith('Gobo Planet'));
-        expect(line.title).toContain('no recorded tier');
+        expect(line.title).toContain("the game's default");
         expect(estimate.zoneFights).toBe(quotedFights(container));
     });
 
@@ -285,7 +295,7 @@ describe('Go pads the zone count as well as quoting it', () => {
 
     async function goFill(percentile, extra = {}) {
         settings({ percentile, ...extra });
-        dataManager.characterActions = [{ actionHrid: ZONE, difficultyTier: 3, isDone: false, ordinal: 0 }];
+        stubGamePick(3);
         const { container, estimate } = await runCardEstimate(BOARD, SIM);
         const { input } = detailPanel('Gobo Planet', 3);
         await taskProfitDisplay._applyGoEstimate(estimate);

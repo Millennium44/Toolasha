@@ -97,7 +97,23 @@ afterEach(() => {
     dataManager.isCharacterSwitching = false;
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
 });
+
+/** Pin `taskCombatGoTier` ('game' is the default, 'best' sets the box), leaving every other setting at its fallback. */
+function setGoTierMode(mode) {
+    return vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) => {
+        if (key === 'taskCombatGoTier') return mode;
+        return fallback;
+    });
+}
+
+/** The game's own per-zone Difficulty pick, as it keeps it in the page's localStorage */
+function stubGamePicks(picks, characterId = 'char-a') {
+    dataManager.currentCharacterId = characterId;
+    const map = new Map([[`lastSelectedActionDifficultyMap_${characterId}`, JSON.stringify(picks)]]);
+    vi.stubGlobal('localStorage', { getItem: (key) => (map.has(key) ? map.get(key) : null) });
+}
 
 describe('_pickZoneForMonster', () => {
     test('a single task from a multi-zone monster honors zone deterministically', () => {
@@ -407,7 +423,33 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
         expect(input.value).toBe('210');
     });
 
-    test('switches the Difficulty combobox to T0 first, then fills, when the panel was left on another tier', async () => {
+    test("keeps the player's Difficulty pick and fills nothing when the panel shows another tier than the estimate", async () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/bear_with_it',
+                name: 'Bear With It',
+                category: '/categories/bear',
+                sortIndex: 1,
+                monsters: ['/monsters/panda'],
+            },
+        ]);
+        // The estimate's zone is already open at T3 (the player's own pick); the estimate simulated T0
+        const { input, combobox } = buildDetailPanel('Bear With It', 3);
+        const retier = vi.spyOn(taskProfitDisplay, '_retierOpenCombatEstimates').mockImplementation(() => {});
+
+        await taskProfitDisplay._applyGoEstimate({
+            zoneHrid: '/actions/combat/bear_with_it',
+            predictedFights: 40,
+            tier: 0,
+        });
+
+        expect(combobox.textContent).toBe('T3'); // never written
+        expect(input.value).toBe('');
+        expect(retier).toHaveBeenCalled();
+    });
+
+    test('Best Score: switches the Difficulty combobox to the estimate tier first, then fills', async () => {
+        setGoTierMode('best');
         vi.useFakeTimers();
         try {
             dataManager.initClientData = buildGameData([
@@ -488,6 +530,8 @@ describe('_applyGoEstimate (Go opens the estimate zone and fills the count)', ()
             },
         ]);
         dataManager.currentCharacterId = 'char-a';
+        // Best Score confirms (and may set) the tier through an await; the game-pick path fills synchronously
+        setGoTierMode('best');
         const { input } = buildDetailPanel('Bear With It', 0);
 
         const applyPromise = taskProfitDisplay._applyGoEstimate({
@@ -617,40 +661,43 @@ describe('_resolveGoEstimate: what a Go click on this card would do', () => {
 });
 
 describe('_resolveEstimateTier: the tier a combat estimate simulates at, and Go later opens', () => {
-    test('a zone queued (or running) at a non-zero tier is honored, not T0', () => {
+    test("the game's own pick for the zone is honored, not T0", () => {
+        stubGamePicks({ '/actions/combat/gobo_planet': 3 });
+
+        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/gobo_planet')).toMatchObject({
+            tier: 3,
+            known: true,
+            source: 'selected',
+        });
+    });
+
+    test('the action queue no longer decides: a zone queued at T3 with no game pick is T0', () => {
+        stubGamePicks({});
         dataManager.characterActions = [
             { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 3, isDone: false, ordinal: 0 },
         ];
 
         expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/gobo_planet')).toMatchObject({
-            tier: 3,
-            known: true,
-        });
-    });
-
-    test('a zone the player queues at T0 is a known T0, not "unknown"', () => {
-        dataManager.characterActions = [{ actionHrid: '/actions/combat/fly_zone', isDone: false, ordinal: 0 }];
-
-        expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/fly_zone')).toMatchObject({
             tier: 0,
             known: true,
+            source: 'default',
         });
     });
 
-    test('the zone is nowhere in the queue: falls back to T0 and says so, never a guessed tier', () => {
-        dataManager.characterActions = [
-            { actionHrid: '/actions/combat/pirate_cove', difficultyTier: 4, isDone: false, ordinal: 0 },
-        ];
+    test("a pick for another zone is not this zone's: T0, the game's default", () => {
+        stubGamePicks({ '/actions/combat/pirate_cove': 4 });
 
         expect(taskProfitDisplay._resolveEstimateTier('/actions/combat/gobo_planet')).toMatchObject({
             tier: 0,
-            known: false,
+            known: true,
+            source: 'default',
         });
     });
 });
 
 describe('Go honors the tier the estimate actually simulated', () => {
-    test('a non-zero estimate.tier moves the Difficulty combobox off T0', async () => {
+    test('Best Score: a non-zero estimate.tier moves the Difficulty combobox off its tier', async () => {
+        setGoTierMode('best');
         vi.useFakeTimers();
         try {
             dataManager.initClientData = buildGameData([
@@ -770,7 +817,7 @@ describe('Go honors the tier the estimate actually simulated', () => {
 });
 
 describe('_runCombatSimEstimate: the estimate itself simulates at the last-used tier', () => {
-    test('a zone queued at T3 is simulated at T3, and the estimate + card carry T3', async () => {
+    test('a zone the game has at T3 is simulated at T3, and the estimate + card carry T3', async () => {
         dataManager.initClientData = {
             ...buildGameData([
                 {
@@ -783,11 +830,9 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
             ]),
             combatMonsterDetailMap: { '/monsters/gobo': { name: 'Gobo' } },
         };
-        // This is the honest source `_resolveEstimateTier` reads: the player
-        // has this zone queued at T3 right now.
-        dataManager.characterActions = [
-            { actionHrid: '/actions/combat/gobo_planet', difficultyTier: 3, isDone: false, ordinal: 0 },
-        ];
+        // This is the honest source `_resolveEstimateTier` reads: the game's own
+        // Difficulty pick for this zone is T3 right now.
+        stubGamePicks({ '/actions/combat/gobo_planet': 3 });
 
         buildGameDataPayload.mockReturnValue(dataManager.initClientData);
         buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
@@ -868,7 +913,7 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
         settingSpy.mockRestore();
     });
 
-    test('a zone nowhere in the queue simulates at T0 and the card says the tier is not recorded', async () => {
+    test('a zone the game has no pick for simulates at T0 and the card says it is the default', async () => {
         dataManager.initClientData = {
             ...buildGameData([
                 {
@@ -881,7 +926,7 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
             ]),
             combatMonsterDetailMap: { '/monsters/gobo': { name: 'Gobo' } },
         };
-        dataManager.characterActions = []; // Nothing queued for this zone at all
+        stubGamePicks({}); // The game has no Difficulty pick for this zone
 
         buildGameDataPayload.mockReturnValue(dataManager.initClientData);
         buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
@@ -908,7 +953,7 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
         const estimate = taskProfitDisplay._cardEstimates.get(cardTaskNode);
         expect(estimate).toMatchObject({ zoneHrid: '/actions/combat/gobo_planet', tier: 0 });
 
-        expect(container.innerHTML).toContain('no recorded tier');
+        expect(container.innerHTML).toContain("the game's default for this zone");
     });
 });
 

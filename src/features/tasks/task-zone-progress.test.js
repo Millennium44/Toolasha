@@ -124,9 +124,12 @@ describe('computeAllZoneProgress', () => {
         expect(row.taskCount).toBe(2);
     });
 
-    test('simulates at the zone last-used tier with per-monster task damage, without preempting', async () => {
+    test("simulates at the tier the game's Difficulty box has for the zone, with per-monster task damage, without preempting", async () => {
         h.quests = [quest('/monsters/imp')];
-        h.actions = [{ actionHrid: ZONE_B, difficultyTier: 3, ordinal: 1 }];
+        // The game's own per-zone pick, as it keeps it in the page's localStorage
+        const picks = new Map([['lastSelectedActionDifficultyMap_char-1', JSON.stringify({ [ZONE_B]: 3 })]]);
+        vi.stubGlobal('localStorage', { getItem: (key) => (picks.has(key) ? picks.get(key) : null) });
+        h.actions = [{ actionHrid: ZONE_B, difficultyTier: 5, ordinal: 1 }]; // the queue no longer decides
         h.runSimulation.mockResolvedValue({ deaths: { '/monsters/imp': 10 }, encounters: 10 });
 
         const [row] = await computeAllZoneProgress();
@@ -135,6 +138,7 @@ describe('computeAllZoneProgress', () => {
         expect(params).toMatchObject({ zoneHrid: ZONE_B, difficultyTier: 3, taskDamageMode: 'perMonster', hours: 1 });
         expect(options).toEqual({ preempt: false });
         expect(row.tier).toBe(3);
+        vi.unstubAllGlobals();
     });
 
     test('a bottleneck monster never killed gives Infinity, sorted last', async () => {

@@ -79,9 +79,20 @@ describe('_applyGoEstimate: Zone mode picks a zone Go did not land on', () => {
 
         expect(openCombatZoneAtTierSequence).toHaveBeenCalledTimes(1);
         // 105 = 100 + the default 5% flat buffer (no kill rate on the estimate)
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 2, { count: 105 }, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 2, { count: 105, keepTier: true }, 'char-a');
         // The landed panel is never filled by hand
         expect(input.value).toBe('');
+    });
+
+    test('Best Score: opens the picked zone and sets the tier (no keepTier)', async () => {
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) =>
+            key === 'taskCombatGoTier' ? 'best' : fallback
+        );
+        buildDetailPanel('Own Zone', 0);
+
+        await taskProfitDisplay._applyGoEstimate({ zoneHrid: PLANET, predictedFights: 100, tier: 2, mode: 'zone' });
+
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 2, { count: 105, keepTier: false }, 'char-a');
     });
 
     test('already on the picked zone: fills only, no navigation', async () => {

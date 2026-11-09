@@ -4,7 +4,7 @@
  * Go on a combat task card while its estimate is being redone for a new zone tier. A tier-change redo
  * clears the card's estimate when it starts; Go then found nothing and the game's own Go opened the
  * monster's default zone instead of the planet the estimate named. The redo only changes tier and
- * count, so Go keeps the zone (and the remembered tier) and fills no count until the redo finishes.
+ * count, so Go keeps the zone (and the game's tier) and fills no count until the redo finishes.
  */
 
 import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
@@ -41,7 +41,7 @@ import { openCombatZoneAtTierSequence } from '../../utils/combat-zone-open.js';
 const PLANET = '/actions/combat/gobo_planet';
 const SMASHY_OWN = '/actions/combat/smashy_own';
 const SIM = { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
-const T3 = { tier: 3, known: true, source: 'remembered', pending: false };
+const T3 = { tier: 3, known: true, source: 'selected', pending: false };
 
 function zone(name, spawns, category = '/categories/gobo') {
     return {
@@ -176,7 +176,7 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-/** Draw the card in Zone mode at T0, then the player runs the zone and its remembered tier becomes T3. */
+/** Draw the card in Zone mode at T0, then the player runs the zone and the game's pick becomes T3. */
 async function drawThenTierChanges(card) {
     await estimateAt(card);
     expect(estimateOf(card)).toMatchObject({ zoneHrid: PLANET, mode: 'zone', tier: 0 });
@@ -205,7 +205,7 @@ describe('Go while the card is being redone for a new zone tier', () => {
         expect(openCombatZoneAtTierSequence.mock.calls[0].slice(0, 2)).toEqual([PLANET, 0]);
     });
 
-    test('redo in flight: Go still opens the planet, at the remembered tier, with no count', async () => {
+    test('redo in flight: Go still opens the planet, at the game pick tier, with no count', async () => {
         const card = mountCard();
         await drawThenTierChanges(card);
         expect(estimateOf(card)).toBeUndefined(); // the fresh record is gone for the run
@@ -214,7 +214,7 @@ describe('Go while the card is being redone for a new zone tier', () => {
         await pressGo(card);
 
         expect(openCombatZoneAtTierSequence).toHaveBeenCalledTimes(1);
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, {}, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, { keepTier: true }, 'char-a');
     });
 
     test('redo in flight: Go on a panel already on the planet confirms the tier and fills nothing', async () => {
@@ -399,7 +399,12 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
             'char-a'
         );
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(SMASHY_OWN, 0, { count: 240 }, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(
+            SMASHY_OWN,
+            0,
+            { count: 240, keepTier: true },
+            'char-a'
+        );
     });
 
     function landOn(zoneName) {
@@ -455,7 +460,7 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
             'char-a'
         );
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 0, {}, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 0, { keepTier: true }, 'char-a');
         spy.mockRestore();
     });
 
@@ -503,7 +508,12 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
             'char-a'
         );
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(SMASHY_OWN, 0, { count: 20 }, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(
+            SMASHY_OWN,
+            0,
+            { count: 20, keepTier: true },
+            'char-a'
+        );
     });
 
     test('the merge handler stands down when an estimate resolves, so its raw write cannot land', async () => {
@@ -527,7 +537,7 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
         expect(root).toHaveBeenCalledWith('root');
     });
 
-    test('a redo in flight on a merged card opens the planet at the remembered tier and fills no count', async () => {
+    test('a redo in flight on a merged card opens the planet at the game pick tier and fills no count', async () => {
         const card = mountCard();
         await drawThenTierChanges(card);
         fourSmashy();
@@ -535,7 +545,7 @@ describe('Go with taskGoMerge and several tasks on one monster (Smashy x4)', () 
 
         await pressGo(card);
 
-        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, {}, 'char-a');
+        expect(openCombatZoneAtTierSequence).toHaveBeenCalledWith(PLANET, 3, { keepTier: true }, 'char-a');
     });
 
     test('a merged card with no estimate at all leaves Go to the game and the merge fill', () => {
