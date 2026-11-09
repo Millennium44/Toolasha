@@ -1083,7 +1083,7 @@ class TaskProfitDisplay {
                     zoneHrid: stale.zoneHrid,
                     mode: stale.mode,
                     monsterHrid: stale.monsterHrid,
-                    tier: this._resolveEstimateTier(stale.zoneHrid).tier,
+                    tier: this._resolveEstimateTier(stale.zoneHrid, stale.monsterHrid, stale.mode).tier,
                     predictedFights: null,
                     countless: true,
                 };
@@ -1832,9 +1832,30 @@ class TaskProfitDisplay {
      * @returns {{tier: number, known: boolean, source: string, pending: boolean}}
      * @private
      */
-    _resolveEstimateTier(zoneHrid) {
-        const { tier, known, source, pending } = resolveZoneTier(zoneHrid);
+    _resolveEstimateTier(zoneHrid, monsterHrid = null, mode = 'zone') {
+        const { tier, known, source, pending } = resolveZoneTier(this._tierActionHrid(zoneHrid, monsterHrid, mode));
         return { tier, known, source, pending };
+    }
+
+    /**
+     * Whose Difficulty pick a card's tier follows. A Solo card's Go lands on the monster's own fight
+     * (Eye, not Planet Of The Eyes), and the game remembers a separate pick for it, so a Solo estimate
+     * follows that fight's pick; Zone mode and a boss target follow the zone's.
+     * @param {string} zoneHrid
+     * @param {string|null} monsterHrid
+     * @param {string} mode - 'solo' or 'zone'
+     * @returns {string} An action hrid
+     * @private
+     */
+    _tierActionHrid(zoneHrid, monsterHrid, mode) {
+        if (mode === 'zone' || !monsterHrid) return zoneHrid;
+        const actions = dataManager.getInitClientData()?.actionDetailMap || {};
+        const bosses = actions[zoneHrid]?.combatZoneInfo?.fightInfo?.bossSpawns || [];
+        if (bosses.some((spawn) => spawn.combatMonsterHrid === monsterHrid)) return zoneHrid;
+        for (const [hrid, action] of Object.entries(actions)) {
+            if (isMonsterOwnFight(action, monsterHrid)) return hrid;
+        }
+        return zoneHrid;
     }
 
     /** Give combat estimate controls a separate row on a narrow task card. */
@@ -2000,7 +2021,7 @@ class TaskProfitDisplay {
         // The tier this estimate simulates at, and the tier Go later opens the
         // zone at — see `_resolveEstimateTier`. Resolved once, up front, and
         // carried on the estimate record rather than re-read at Go time.
-        let resolvedTier = this._resolveEstimateTier(zoneHrid);
+        let resolvedTier = this._resolveEstimateTier(zoneHrid, monsterHrid, mode);
         let estimateTier = resolvedTier.tier;
         // "Best Score" searches every tier of the zone instead (below)
         const searchTiers = goTierMode() === GO_TIER_BEST;
@@ -2171,7 +2192,7 @@ class TaskProfitDisplay {
             // where the record arrives after the card drew. A card with no finished result is skipped by
             // `_retierOpenCombatEstimates`, so the check lives here: a different tier is a different
             // fight, so simulate again; the same tier only takes the latest note on where it came from.
-            const latestTier = searchTiers ? resolvedTier : this._resolveEstimateTier(zoneHrid);
+            const latestTier = searchTiers ? resolvedTier : this._resolveEstimateTier(zoneHrid, monsterHrid, mode);
             if (latestTier.tier !== estimateTier) {
                 if (retierDepth < MAX_RETIER_RERUNS) {
                     return this._runCombatSimEstimate(
@@ -2485,6 +2506,7 @@ class TaskProfitDisplay {
             attempts: 0,
             characterId: dataManager.getCurrentCharacterId(),
             zoneHrid: cached?.zoneHrid,
+            monsterHrid: cached?.monsterHrid ?? null,
             fromTier: cached?.estimateTier,
             description: cached?.description,
             loadoutName: cached?.loadoutName ?? '',
@@ -2519,7 +2541,12 @@ class TaskProfitDisplay {
             const taskNode = container.isConnected ? container.closest(GAME.TASK_INFO) : null;
             const taskData = taskNode ? this.parseTaskData(taskNode) : null;
             if (!entry.zoneHrid || !taskData || taskData.description !== entry.description) continue;
-            if (!entry.force && this._resolveEstimateTier(entry.zoneHrid).tier === entry.fromTier) continue;
+            if (
+                !entry.force &&
+                this._resolveEstimateTier(entry.zoneHrid, entry.monsterHrid, entry.mode).tier === entry.fromTier
+            ) {
+                continue;
+            }
 
             this._retierActive = container;
             this._retierActiveForce = false;
@@ -2575,7 +2602,7 @@ class TaskProfitDisplay {
             const taskData = this.parseTaskData(taskNode);
             if (!taskData || taskData.description !== cached.description) continue;
 
-            const now = this._resolveEstimateTier(cached.zoneHrid);
+            const now = this._resolveEstimateTier(cached.zoneHrid, cached.monsterHrid, cached.mode);
             if (all || now.tier !== cached.estimateTier) {
                 this._enqueueRetier(container, all);
             } else if (now.source !== cached.estimateTierSource || now.pending !== cached.estimateTierPending) {

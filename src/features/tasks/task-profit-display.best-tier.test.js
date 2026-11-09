@@ -289,6 +289,74 @@ describe('_searchBestTier: which tier the Best Score search keeps', () => {
     });
 });
 
+describe("a Solo card follows the monster's own fight pick", () => {
+    const EYE_FIGHT = '/actions/combat/eye';
+    const PLANET = '/actions/combat/planet_of_the_eyes';
+    const BOSS_ZONE = '/actions/combat/boss_zone';
+    beforeEach(() => {
+        // The game's shapes: a planet spawning several monsters, the monster's own one-slot fight, and a
+        // zone where the monster is the boss
+        dataManager.initClientData = {
+            actionDetailMap: {
+                [PLANET]: {
+                    hrid: PLANET,
+                    combatZoneInfo: {
+                        fightInfo: {
+                            randomSpawnInfo: {
+                                maxSpawnCount: 3,
+                                spawns: [
+                                    { combatMonsterHrid: '/monsters/eye' },
+                                    { combatMonsterHrid: '/monsters/eyes' },
+                                ],
+                            },
+                            bossSpawns: [],
+                        },
+                    },
+                },
+                [EYE_FIGHT]: {
+                    hrid: EYE_FIGHT,
+                    combatZoneInfo: {
+                        fightInfo: {
+                            randomSpawnInfo: { maxSpawnCount: 1, spawns: [{ combatMonsterHrid: '/monsters/eye' }] },
+                            bossSpawns: [],
+                        },
+                    },
+                },
+                [BOSS_ZONE]: {
+                    hrid: BOSS_ZONE,
+                    combatZoneInfo: {
+                        fightInfo: {
+                            randomSpawnInfo: { maxSpawnCount: 3, spawns: [{ combatMonsterHrid: '/monsters/eyes' }] },
+                            bossSpawns: [{ combatMonsterHrid: '/monsters/eye' }],
+                        },
+                    },
+                },
+            },
+        };
+        tierMode = 'game';
+        const picks = new Map([
+            ['lastSelectedActionDifficultyMap_char-a', JSON.stringify({ [EYE_FIGHT]: 2, [PLANET]: 4 })],
+        ]);
+        vi.stubGlobal('localStorage', { getItem: (key) => (picks.has(key) ? picks.get(key) : null) });
+    });
+
+    test("Solo reads the Eye fight's pick (where Go lands), not the planet's", () => {
+        expect(taskProfitDisplay._resolveEstimateTier(PLANET, '/monsters/eye', 'solo')).toMatchObject({
+            tier: 2,
+            source: 'selected',
+        });
+    });
+
+    test("Zone mode reads the planet's pick", () => {
+        expect(taskProfitDisplay._resolveEstimateTier(PLANET, '/monsters/eye', 'zone').tier).toBe(4);
+    });
+
+    test("a boss target follows its zone's pick, and a monster with no own fight the zone's", () => {
+        expect(taskProfitDisplay._tierActionHrid(BOSS_ZONE, '/monsters/eye', 'solo')).toBe(BOSS_ZONE);
+        expect(taskProfitDisplay._tierActionHrid(PLANET, '/monsters/eyes', 'solo')).toBe(PLANET);
+    });
+});
+
 describe('_retierOpenCombatEstimates in Best Score mode', () => {
     async function drawn() {
         installTiers(ladder());
