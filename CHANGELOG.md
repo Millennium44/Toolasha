@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.82.0 -->
+
 ### Task Go keeps the combat tier you picked in the game
 
 A combat task's estimate and Go now use the tier the zone's own Difficulty box already has, and Go never changes it (it used to reset zones with no recorded run to T0). The new "Combat estimate: tier" setting can instead simulate every tier and pick the best Combat Sim Score, skipping tiers where you die.
@@ -6969,52 +6971,45 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.82.0](https://github.com/Millennium44/Toolasha/compare/v3.81.0...v3.82.0) (2026-11-09)
 
-
 ### Features
 
-* combat task estimate picks its tier from the game's pick or the best Score ([6b06719](https://github.com/Millennium44/Toolasha/commit/6b06719b8c00e3b742f12bf6f4e5e5d311bdbbb7))
-* edit sim performance limits from the Lab and Combat sim panels ([5d1f278](https://github.com/Millennium44/Toolasha/commit/5d1f2783a1e2e09f37aff0767e8ce127d794de7b))
-* equipment watch compares buying, crafting and a Philosopher's Mirror build ([8314005](https://github.com/Millennium44/Toolasha/commit/831400542d3a895dcaf9aa016f3901ea4662acb1))
-* equipment watch compares every route in a table and lets a card pin one ([6e0486d](https://github.com/Millennium44/Toolasha/commit/6e0486dccb7710b5cb192468ab675b0a9424bb5b))
-* equipment watch prices a Philosopher's Mirror build as a route ([dd2ed24](https://github.com/Millennium44/Toolasha/commit/dd2ed244433084d173db0f3d2bd4b103bc1bc88b))
-* lab sim all-fights rows explain where their cost comes from ([b8cb11e](https://github.com/Millennium44/Toolasha/commit/b8cb11e423899f8f0176e9a1ccdd56d2875456ce))
-* lab sim all-fights rows explain where their cost comes from ([0569864](https://github.com/Millennium44/Toolasha/commit/05698643798cf1ed54c48f173a25837db2647f35))
-* shared random seed checkbox in the sim settings strip ([e02043c](https://github.com/Millennium44/Toolasha/commit/e02043ca4d4896b6ce7b1ac082aa71929deb7df7))
-* shared random seed checkbox in the sim settings strip ([c58f19b](https://github.com/Millennium44/Toolasha/commit/c58f19b78a17e9d38598c0141ec9faaeb4ef1486))
-* task Go keeps the combat tier picked in the game ([b55e055](https://github.com/Millennium44/Toolasha/commit/b55e0550dafef8ca649a3d6b80818ecec0a38328))
-
+- combat task estimate picks its tier from the game's pick or the best Score ([6b06719](https://github.com/Millennium44/Toolasha/commit/6b06719b8c00e3b742f12bf6f4e5e5d311bdbbb7))
+- edit sim performance limits from the Lab and Combat sim panels ([5d1f278](https://github.com/Millennium44/Toolasha/commit/5d1f2783a1e2e09f37aff0767e8ce127d794de7b))
+- equipment watch compares buying, crafting and a Philosopher's Mirror build ([8314005](https://github.com/Millennium44/Toolasha/commit/831400542d3a895dcaf9aa016f3901ea4662acb1))
+- equipment watch compares every route in a table and lets a card pin one ([6e0486d](https://github.com/Millennium44/Toolasha/commit/6e0486dccb7710b5cb192468ab675b0a9424bb5b))
+- equipment watch prices a Philosopher's Mirror build as a route ([dd2ed24](https://github.com/Millennium44/Toolasha/commit/dd2ed244433084d173db0f3d2bd4b103bc1bc88b))
+- lab sim all-fights rows explain where their cost comes from ([b8cb11e](https://github.com/Millennium44/Toolasha/commit/b8cb11e423899f8f0176e9a1ccdd56d2875456ce))
+- shared random seed checkbox in the sim settings strip ([e02043c](https://github.com/Millennium44/Toolasha/commit/e02043ca4d4896b6ce7b1ac082aa71929deb7df7))
+- task Go keeps the combat tier picked in the game ([b55e055](https://github.com/Millennium44/Toolasha/commit/b55e0550dafef8ca649a3d6b80818ecec0a38328))
 
 ### Bug Fixes
 
-* a combat estimate running when the tier setting changes finishes in the new mode ([1d71ba3](https://github.com/Millennium44/Toolasha/commit/1d71ba39009cda5bd0bb485a58337a57ee637d7b))
-* a Solo combat estimate follows the monster's own fight tier pick ([244fe26](https://github.com/Millennium44/Toolasha/commit/244fe26c566571be032c8fbc34e94cec0e23fe97))
-* Best Score judges the local character and market-bounded profit ([31b660d](https://github.com/Millennium44/Toolasha/commit/31b660df1622abe485b158df3b5563159afd0a0c))
-* Best Score tier search stops on a switch and keeps the old tier record's sync merge ([ecf5ce5](https://github.com/Millennium44/Toolasha/commit/ecf5ce5d79fe0aa9266ce56782d359e09b673b29))
-* Best Score tier ties go to the tier that finishes the task fastest ([5065c75](https://github.com/Millennium44/Toolasha/commit/5065c755c949fd8fd118c501209a790b133869c2))
-* equipment watch keeps a mirror build cash when an owned input has no bid ([b594d68](https://github.com/Millennium44/Toolasha/commit/b594d6819d6022e69853b10c171d5eac79e7b84f))
-* equipment watch no longer counts a piece listed on the market as in hand ([0688d79](https://github.com/Millennium44/Toolasha/commit/0688d7992fae7dfd51abda17e5fd0ffff5d5b4c3))
-* lab sim whole-run Cost explanation is shorter and sits under the Exact line ([3dd7a31](https://github.com/Millennium44/Toolasha/commit/3dd7a316be97512b2a7a4d5f5a57ebf15798b3b4))
-* lab sim whole-run fight lines show points, tries and never won, and collapse unchanged fights ([b4e8a7a](https://github.com/Millennium44/Toolasha/commit/b4e8a7a93596e47dbb00537934d9f428417766f8))
-* lab whole-run cost explanation never says "nothing to buy" for a house level ([1a07b64](https://github.com/Millennium44/Toolasha/commit/1a07b64b42cc813a6ab6c81ad26741b999257882))
-* sim performance strip: Ignore thread caps makes Threads 0 mean every core ([05b3aac](https://github.com/Millennium44/Toolasha/commit/05b3aacf29224358c9b1e574db968439b685e94d))
-* Task Statistics zone row keeps the tier picked in the game ([383d0f2](https://github.com/Millennium44/Toolasha/commit/383d0f21774c4dadef41cd657d8c96e1cdb49441))
-
+- a combat estimate running when the tier setting changes finishes in the new mode ([1d71ba3](https://github.com/Millennium44/Toolasha/commit/1d71ba39009cda5bd0bb485a58337a57ee637d7b))
+- a Solo combat estimate follows the monster's own fight tier pick ([244fe26](https://github.com/Millennium44/Toolasha/commit/244fe26c566571be032c8fbc34e94cec0e23fe97))
+- Best Score judges the local character and market-bounded profit ([31b660d](https://github.com/Millennium44/Toolasha/commit/31b660df1622abe485b158df3b5563159afd0a0c))
+- Best Score tier search stops on a switch and keeps the old tier record's sync merge ([ecf5ce5](https://github.com/Millennium44/Toolasha/commit/ecf5ce5d79fe0aa9266ce56782d359e09b673b29))
+- Best Score tier ties go to the tier that finishes the task fastest ([5065c75](https://github.com/Millennium44/Toolasha/commit/5065c755c949fd8fd118c501209a790b133869c2))
+- equipment watch keeps a mirror build cash when an owned input has no bid ([b594d68](https://github.com/Millennium44/Toolasha/commit/b594d6819d6022e69853b10c171d5eac79e7b84f))
+- equipment watch no longer counts a piece listed on the market as in hand ([0688d79](https://github.com/Millennium44/Toolasha/commit/0688d7992fae7dfd51abda17e5fd0ffff5d5b4c3))
+- lab sim whole-run Cost explanation is shorter and sits under the Exact line ([3dd7a31](https://github.com/Millennium44/Toolasha/commit/3dd7a316be97512b2a7a4d5f5a57ebf15798b3b4))
+- lab sim whole-run fight lines show points, tries and never won, and collapse unchanged fights ([b4e8a7a](https://github.com/Millennium44/Toolasha/commit/b4e8a7a93596e47dbb00537934d9f428417766f8))
+- lab whole-run cost explanation never says "nothing to buy" for a house level ([1a07b64](https://github.com/Millennium44/Toolasha/commit/1a07b64b42cc813a6ab6c81ad26741b999257882))
+- sim performance strip: Ignore thread caps makes Threads 0 mean every core ([05b3aac](https://github.com/Millennium44/Toolasha/commit/05b3aacf29224358c9b1e574db968439b685e94d))
+- Task Statistics zone row keeps the tier picked in the game ([383d0f2](https://github.com/Millennium44/Toolasha/commit/383d0f21774c4dadef41cd657d8c96e1cdb49441))
 
 ### Documentation
 
-* changelog entry covers the game-pick and Best Score tier options ([e508cc5](https://github.com/Millennium44/Toolasha/commit/e508cc5e3417047c12aa5983677862bfc0040c8c))
-
+- changelog entry covers the game-pick and Best Score tier options ([e508cc5](https://github.com/Millennium44/Toolasha/commit/e508cc5e3417047c12aa5983677862bfc0040c8c))
 
 ### Tests
 
-* cover the game-pick and Best Score combat tier ([dc8fc9e](https://github.com/Millennium44/Toolasha/commit/dc8fc9e84c4ac6f63fabe788933efe44eed379b6))
-* run combat-sim-ui.test.js in its own process with a 4 GB heap ([b657bb8](https://github.com/Millennium44/Toolasha/commit/b657bb8809455cb5fc2ddd07f70d5a5bd5f4ab2d))
-* stop combat-sim-ui.test.js retaining every queued background job ([bb951b7](https://github.com/Millennium44/Toolasha/commit/bb951b7d3484cd263f95d7420652f1b5fe8c521a))
-
+- cover the game-pick and Best Score combat tier ([dc8fc9e](https://github.com/Millennium44/Toolasha/commit/dc8fc9e84c4ac6f63fabe788933efe44eed379b6))
+- run combat-sim-ui.test.js in its own process with a 4 GB heap ([b657bb8](https://github.com/Millennium44/Toolasha/commit/b657bb8809455cb5fc2ddd07f70d5a5bd5f4ab2d))
+- stop combat-sim-ui.test.js retaining every queued background job ([bb951b7](https://github.com/Millennium44/Toolasha/commit/bb951b7d3484cd263f95d7420652f1b5fe8c521a))
 
 ### Miscellaneous Chores
 
-* merge main into feat/lab-allfights-cost-basis ([251934b](https://github.com/Millennium44/Toolasha/commit/251934bd33a31f40d23d28ab98245a7c89fbd3ae))
+- merge main into feat/lab-allfights-cost-basis ([251934b](https://github.com/Millennium44/Toolasha/commit/251934bd33a31f40d23d28ab98245a7c89fbd3ae))
 
 ## [3.81.0](https://github.com/Millennium44/Toolasha/compare/v3.80.0...v3.81.0) (2026-11-08)
 
