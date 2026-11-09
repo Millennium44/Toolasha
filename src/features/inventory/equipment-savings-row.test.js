@@ -1282,16 +1282,14 @@ describe('targets nobody is selling at that level', () => {
         expect(text()).toContain('Enhancement Cost (Yours)');
     });
 
-    test('a card showing an advisor’s quote does not claim the quote came off this bench', () => {
-        // That figure was costed somewhere else; the advisor's own breakdown is
-        // where it names its bench
+    test('a card added from the advisor names its own bench, and the quote only as a reference', () => {
         watchTarget('/items/sinister_cape', 7, { cost: 12_345_678, costSource: 'sim' });
         equipmentSavingsPanel.show();
 
-        expect(text()).toContain('Enhancement Cost');
-        expect(text()).not.toContain('Enhancement Cost (');
-        // The derived figure beside it is this module's own, and says so
-        expect(text()).toContain('Priced here at (Yours):');
+        // The headline figure is this module's own, so it names whose bench it ran on
+        expect(text()).toContain('Enhancement Cost (Yours)');
+        expect(text()).toContain('Upgrade advisor when added (sim):');
+        expect(text()).not.toContain('Priced here at');
     });
 
     test('it costs the run at your own bench, not the simulator settings', () => {
@@ -2563,26 +2561,26 @@ describe('two levels of one piece are two targets', () => {
     });
 });
 
-describe('the price the advisor quoted is the price the card shows', () => {
-    test('a quoted cost is what the bar fills against', () => {
-        // The savings module and the upgrade advisor price a piece with
-        // different models. Two surfaces quoting two numbers for one target
-        // leaves the reader to work out which of them is lying.
+describe('a card added from the upgrade advisor', () => {
+    test('is costed live like any card, and keeps the quote only for reference', () => {
+        // The quote was frozen when Watch was pressed and ignored the route chip
         watchTarget('/items/holy_sword', 0, { cost: 44_000_000, costSource: 'market' });
 
         const [target] = watchedTargets();
-        expect(target.cost).toBe(44_000_000);
-        // What this module would have said on its own is kept beside it
-        expect(target.derivedCost).toBe(61_600_000);
+        expect(target.cost).toBe(61_600_000);
+        expect(target.quotedCost).toBe(44_000_000);
         expect(target.quotedFrom).toBe('market');
+        expect(target.route).toBe('buy');
+        expect(target.routes.length).toBeGreaterThan(0);
     });
 
-    test('the card says whose number it is showing', () => {
+    test('the card names the advisor figure as the one from when it was added', () => {
         watchTarget('/items/holy_sword', 0, { cost: 44_000_000, costSource: 'market' });
         equipmentSavingsPanel.show();
 
-        expect(text()).toContain('Upgrade advisor (market)');
+        expect(text()).toContain('Upgrade advisor when added (market)');
         expect(text()).toContain('44,000,000');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-target-route]')).toBeTruthy();
         expect(text()).not.toContain(FAILED);
     });
 
@@ -2995,12 +2993,13 @@ describe("the Philosopher's Mirror build as a route", () => {
         ]);
     });
 
-    test('an advisor quote stands for itself: no mirror route replaces it', () => {
+    test('an advisor quote does not stop the routes being compared', () => {
         watchTarget(REFINED, 13, { cost: 1_000_000_000, costSource: 'Lab' });
         const target = only();
 
-        expect(target.route).toBeNull();
-        expect(target.cost).toBe(1_000_000_000);
+        expect(target.route).toBe('mirror');
+        expect(target.cost).not.toBe(1_000_000_000);
+        expect(target.quotedCost).toBe(1_000_000_000);
     });
 
     describe('the route table, the chip and the preference', () => {
@@ -3036,7 +3035,9 @@ describe("the Philosopher's Mirror build as a route", () => {
             delete game.actions['/actions/refine_furious'];
             delete game.prices[`${MIRROR}:0`];
             watchTarget(REFINED, 13);
-            expect(only().routes.map((route) => route.id)).toEqual(['buy']);
+            // Craft has no recipe and is left out; the mirror applies at +13 and is listed unpriced
+            expect(only().routes.map((route) => route.id)).toEqual(['buy', 'mirror']);
+            expect(row(only(), 'mirror')).toMatchObject({ cash: null, real: null, priced: false });
 
             game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 560_000_000 };
             delete game.prices[`${PLAIN}:11`];
@@ -3046,6 +3047,19 @@ describe("the Philosopher's Mirror build as a route", () => {
             equipmentSavingsPanel.show();
             expect(text()).toContain('no price');
             expect(text()).not.toContain(FAILED);
+        });
+
+        test('a craftable target nobody is selling still lists Buy and Mirror, unpriced', () => {
+            addRefine();
+            delete game.prices[`${REFINED}:13`];
+            delete game.prices[`${MIRROR}:0`];
+            watchTarget(REFINED, 13);
+            const target = only();
+
+            expect(target.routes.map((route) => route.id)).toEqual(['buy', 'craft', 'mirror']);
+            expect(row(target, 'buy').priced).toBe(false);
+            expect(row(target, 'mirror').priced).toBe(false);
+            expect(target.route).toBe('craft');
         });
 
         test('Auto takes the lowest real cost, not the lowest cash', () => {
@@ -3269,6 +3283,44 @@ describe("the Philosopher's Mirror build as a route", () => {
             expect(row(target, 'mirror').cash).toBe(0);
             expect(row(target, 'mirror').real).toBeLessThan(row(target, 'buy').real);
             expect(target.route).toBe('mirror');
+        });
+
+        test('a one-route card keeps its chip after a carried-over craft pin is cleared', () => {
+            // A +1 with no recipe sits below the mirror's first level, so the listing is its only route
+            game.prices[`${PLAIN}:1`] = { ask: 50_000_000, bid: 40_000_000 };
+            watchTarget(PLAIN, 1);
+            // The old Crafting switch, as an earlier build stored it
+            setRoutePin(PLAIN, 1, 'craft');
+            const offered = only().routes.map((route) => route.id);
+            expect(offered).toEqual(['buy']);
+
+            equipmentSavingsPanel.show();
+            const chip = () => equipmentSavingsPanel.panel.querySelector('[data-target-route]');
+            expect(chip().textContent).toBe('Pinned: Craft');
+            chip().click();
+            expect(routePin(PLAIN, 1)).toBeNull();
+            expect(chip().textContent).toBe('Auto: Buy');
+            chip().click();
+            expect(routePin(PLAIN, 1)).toBe('buy');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('All routes to Auto unpins every card and then hides itself', () => {
+            game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+            game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 3_700_000_000 };
+            watchTarget(REFINED, 13);
+            watchTarget(PLAIN, 13);
+            setRoutePin(REFINED, 13, 'craft');
+            setRoutePin(PLAIN, 13, 'buy');
+
+            equipmentSavingsPanel.show();
+            const reset = () => equipmentSavingsPanel.panel.querySelector('[data-routes-reset]');
+            expect(reset()).toBeTruthy();
+            reset().click();
+            expect(routePin(REFINED, 13)).toBeNull();
+            expect(routePin(PLAIN, 13)).toBeNull();
+            expect(reset()).toBeNull();
+            expect(text()).not.toContain(FAILED);
         });
 
         test('the chip names the route in force, and a pin that cannot apply says so', () => {
