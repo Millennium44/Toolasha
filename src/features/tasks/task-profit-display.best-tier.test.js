@@ -416,4 +416,20 @@ describe('_retierOpenCombatEstimates in Best Score mode', () => {
         await vi.waitFor(() => expect(runSimulation).toHaveBeenCalled());
         expect(runSimulation.mock.calls[0][0]).toMatchObject({ difficultyTier: 0 });
     });
+
+    test('the setting switched to the game pick while a Best Score search runs: the card ends in the new mode', async () => {
+        const tiers = ladder();
+        stubGamePick(1);
+        runSimulation.mockImplementation(async ({ difficultyTier }) => {
+            // Switched mid-search, before the run has a result the setting handler could find
+            if (difficultyTier === 0) tierMode = 'game';
+            return tiers[difficultyTier];
+        });
+        const card = mountCard();
+
+        const record = await estimate(card);
+
+        expect(record.tier).toBe(1);
+        expect(card.container.innerHTML).toContain('T1 (the tier selected in the game)');
+    });
 });
