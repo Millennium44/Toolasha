@@ -257,6 +257,36 @@ describe('_searchBestTier: which tier the Best Score search keeps', () => {
         expect(runSimulation).toHaveBeenCalledTimes(4);
         expect(record.tier).toBe(2);
     });
+
+    test('a character switch mid-search stops it, and nothing is cached under the new character', async () => {
+        const tiers = ladder();
+        runSimulation.mockImplementation(async ({ difficultyTier }) => {
+            if (difficultyTier === 1) dataManager.currentCharacterId = 'char-b';
+            return tiers[difficultyTier];
+        });
+        const card = mountCard();
+
+        const record = await estimate(card, 'zone');
+
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(record).toBeUndefined();
+        const keys = [...taskProfitDisplay._zoneSimCache.keys()];
+        expect(keys.length).toBeGreaterThan(0);
+        expect(keys.every((key) => key.startsWith('char-a|'))).toBe(true);
+    });
+
+    test('a card removed mid-search stops it', async () => {
+        const tiers = ladder();
+        const card = mountCard();
+        runSimulation.mockImplementation(async ({ difficultyTier }) => {
+            if (difficultyTier === 0) document.body.innerHTML = '';
+            return tiers[difficultyTier];
+        });
+
+        await estimate(card);
+
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('_retierOpenCombatEstimates in Best Score mode', () => {

@@ -290,6 +290,9 @@ const corpus = [
     { store: 'networthHistory', key: `prodIncomeRec_${CHAR}_2026-01-15`, label: 'ProductionIncome records' },
     { store: 'networthHistory', key: `prodIncome_${CHAR}`, label: 'ProductionIncome legacy key' },
 
+    // utils/zone-tier-memory.js — the tier last run in each combat zone
+    { store: 'settings', key: `combatZoneTiers_${CHAR}`, label: 'Zone tiers last run' },
+
     // tasks/task-completion-tracker.js — chunked, weekly buckets
     { store: 'rerollSpending', key: `taskCompletionRec_${CHAR}_2026-W03`, label: 'TaskCompletionTracker records' },
     { store: 'rerollSpending', key: `taskCompletions_${CHAR}`, label: 'TaskCompletionTracker legacy key' },
