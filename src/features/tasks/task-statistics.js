@@ -27,7 +27,6 @@ import { computeAllZoneProgress } from './task-zone-progress.js';
 import { createMedianHint, formatPercentSuffix, paddedZoneFights } from './task-zone-estimate-percentile.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
 import { padFightCount } from '../../utils/fight-confidence.js';
-import { resolveZoneTier, ZONE_TIER_MEMORY_EVENT } from '../../utils/zone-tier-memory.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { analyzeTaskPayouts, MIN_CLAIMS } from '../../utils/task-payout-analysis.js';
 import { calendarDaysBefore } from '../../utils/calendar-days.js';
@@ -67,9 +66,7 @@ class TaskStatistics {
         this.overlay = null;
         this.zoneRun = null;
         /** The open popup's zone section, and the rows last drawn, for a redraw when a zone's tier changes */
-        this._zoneView = null;
         this._zoneRows = [];
-        this._zoneTierHandler = null;
         /** Bumped by every close, so a popup build that awaited across one knows it was superseded */
         this._popupGeneration = 0;
         this.unregisterHandlers = [];
@@ -696,7 +693,6 @@ class TaskStatistics {
         this.cancelZoneProgress();
         const run = { cancelled: false };
         this.zoneRun = run;
-        this._watchZoneTiers(section, textColor);
 
         try {
             const rows = await computeAllZoneProgress({
@@ -715,32 +711,8 @@ class TaskStatistics {
         }
     }
 
-    /**
-     * Redraw the open popup's zone rows when a zone's tier changes or the remembered tiers arrive: the
-     * rows were simulated at whatever tier was known when they started, which is T0 when the popup is
-     * opened before the record loads. Removed when the popup closes.
-     * @param {HTMLElement} section
-     * @param {string} textColor
-     */
-    _watchZoneTiers(section, textColor) {
-        this._zoneView = { section, textColor };
-        if (this._zoneTierHandler) return;
-        this._zoneTierHandler = () => {
-            const view = this._zoneView;
-            if (!this.overlay || !view) return;
-            const stale = this.zoneRun || this._zoneRows.some((row) => resolveZoneTier(row.zoneHrid).tier !== row.tier);
-            if (!stale) return;
-            this.renderZoneProgressRows(view.section, null, view.textColor);
-            this.startZoneProgress(view.section, view.textColor);
-        };
-        dataManager.on(ZONE_TIER_MEMORY_EVENT, this._zoneTierHandler);
-    }
-
-    /** Stop watching zone tiers (popup closed, or the feature disabled). */
+    /** Forget the drawn zone rows (popup closed, or the feature disabled). */
     _unwatchZoneTiers() {
-        if (this._zoneTierHandler) dataManager.off(ZONE_TIER_MEMORY_EVENT, this._zoneTierHandler);
-        this._zoneTierHandler = null;
-        this._zoneView = null;
         this._zoneRows = [];
     }
 
@@ -840,22 +812,20 @@ class TaskStatistics {
     }
 
     /**
-     * Open a zone row's zone at the tier it simulated and fill its padded count. When the game's own
-     * Difficulty pick for the zone has moved since (`taskCombatGoTier` "game"), the player's pick is kept
-     * and no count is filled, since the row's count was simulated for another tier.
+     * Open a zone row's zone and fill its padded count. The row simulated the tier the game opens the zone
+     * at, and the Difficulty box is never changed: when the game shows another tier (a pick changed since
+     * the row was drawn), the zone opens at the player's pick and no count is filled, since the row's
+     * count was simulated for another tier.
      * @param {Object} zone - Row from computeAllZoneProgress
      * @param {boolean} finite - Whether the row has a fight count
      * @returns {Promise<Object>} What `openCombatZoneAtTier` reports
      */
     _openZoneRow(zone, finite) {
-        let tier = zone.tier ?? 0;
-        let count = finite ? this.paddedZoneFightCount(zone) : null;
-        const current = resolveZoneTier(zone.zoneHrid);
-        if (current.source === 'selected' && current.tier !== tier) {
-            tier = current.tier;
-            count = null;
-        }
-        return openCombatZoneAtTier(zone.zoneHrid, tier, count === null ? {} : { count });
+        const count = finite ? this.paddedZoneFightCount(zone) : null;
+        return openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, {
+            ...(count === null ? {} : { count }),
+            keepTier: true,
+        });
     }
 
     /**

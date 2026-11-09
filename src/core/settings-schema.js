@@ -3795,19 +3795,21 @@ export const settingsGroups = {
             },
             taskCombatGoTier: {
                 id: 'taskCombatGoTier',
-                label: 'Combat estimate: tier for Go',
+                label: 'Combat estimate: tier',
                 type: 'select',
                 default: 'game',
                 options: [
-                    { value: 'game', label: 'Keep the tier selected in the game' },
-                    { value: 'lastRun', label: 'The tier queued or last run' },
+                    { value: 'game', label: 'The tier selected in the game' },
+                    { value: 'best', label: 'Best Score (simulates every tier)' },
                 ],
                 help:
-                    'Which difficulty tier a combat task estimate simulates and Go opens the zone at. "Keep the ' +
-                    'tier selected in the game" uses the tier the zone\'s own Difficulty box already has, so Go ' +
-                    'never changes it (zones you have never picked a tier for fall back to the tier queued or last ' +
-                    'run). "The tier queued or last run" sets the box to the tier in your action queue, else the ' +
-                    'tier you last fought the zone at, else T0.',
+                    'Which difficulty tier a combat task estimate simulates and Go opens the zone at. "The tier ' +
+                    'selected in the game" uses the tier the zone\'s own Difficulty box already has (T0 if you have ' +
+                    'never picked one), and Go never changes it. "Best Score" simulates every tier of the zone and ' +
+                    'picks the best Combat Sim Score (XP/hr and Profit/day, ladder position), leaving out tiers where ' +
+                    'you die or never kill the task monster; Go then sets the box to that tier. It runs one ' +
+                    'simulation per tier, so estimates take several times longer. Task Statistics zone rows always ' +
+                    'use the tier selected in the game.',
             },
             taskCombatGoBuffer: {
                 id: 'taskCombatGoBuffer',

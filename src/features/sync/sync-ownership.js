@@ -245,7 +245,8 @@ export const OWNED_KEY_PREFIXES = [
     'waveGapTally',
     'tickPeriodTally',
     'bestiaryPointsTarget',
-    // The tier last run in each combat zone (`utils/zone-tier-memory.js`); later change wins per zone
+    // The tier last run in each combat zone, recorded by 3.81.0 and earlier; nothing reads it now, but an
+    // older build on another device still syncs it, so it stays owned for a rollback
     'combatZoneTiers',
     'combatProfitView',
     'combatIncomeNetSalesTax',

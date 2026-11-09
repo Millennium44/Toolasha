@@ -175,6 +175,7 @@ import * as testerShopNav from '../utils/tester-shop-nav.js';
 import * as bestiary from '../utils/bestiary.js';
 import * as bestiaryTarget from '../utils/bestiary-target.js';
 import * as zoneTierMemory from '../utils/zone-tier-memory.js';
+import * as zoneScore from '../utils/zone-score.js';
 import * as gameText from '../utils/game-text.js';
 import * as guildCreditPricing from '../utils/guild-credit-pricing.js';
 import * as itemIcon from '../utils/item-icon.js';
@@ -355,6 +356,7 @@ toolashaRoot.Utils = {
     bestiary,
     bestiaryTarget,
     zoneTierMemory,
+    zoneScore,
     gameText,
     guildCreditPricing,
     itemIcon,
