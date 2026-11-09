@@ -166,7 +166,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
-import { compactCostLines } from './cost-basis-text.js';
+import { compactCostLines, acquisitionComparisonText } from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -9603,6 +9603,7 @@ class LabSimUI {
         const checkedSwap = Boolean(candidate?.checkedSwap);
         const keptReason = checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH;
         const lines = compactCostLines(detail, {
+            showAcquisitionComparison: config.getSettingValue('upgradeAdvisor_compareRoutes', false),
             basisTitle: COST_SOURCES[detail.source]?.title,
             keptWhy: checkedSwap
                 ? 'a loadout this swap does not reach still wears it'
@@ -9618,7 +9619,8 @@ class LabSimUI {
         const html = lines
             .map((entry) => {
                 const tip = entry.title ? ` title="${escapeHtmlAttribute(entry.title)}"` : '';
-                return `<div${tip} style="color:${colors[entry.tone] || '#aaa'}; font-size:11px; white-space:normal; line-height:1.4;">${entry.text}</div>`;
+                const text = entry.plainText ? escapeHtmlAttribute(entry.text) : entry.text;
+                return `<div${tip} style="color:${colors[entry.tone] || '#aaa'}; font-size:11px; white-space:normal; line-height:1.4;">${text}</div>`;
             })
             .join('');
         return `<div data-cost-explanation style="margin-top:6px;">${html}</div>`;
@@ -10926,6 +10928,11 @@ class LabSimUI {
         if (!detail) {
             return line('No cost breakdown available for this candidate.', GAME_COLORS.textDim);
         }
+
+        const comparison = config.getSettingValue('upgradeAdvisor_compareRoutes', false)
+            ? acquisitionComparisonText(detail.acquisitionComparison)
+            : '';
+        if (comparison) parts.push(line(escapeHtmlAttribute(comparison), '#ff9800'));
 
         // A shrine level is bought with guild credits and guild tokens. Credits
         // have a gold value (the cheapest items that convert into them); tokens

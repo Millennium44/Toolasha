@@ -4445,6 +4445,38 @@ describe('the budget plan when nothing is picked', () => {
 });
 
 describe('the cost breakdown', () => {
+    test('labels shared route comparisons without replacing the existing cost breakdown', () => {
+        const setting = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'upgradeAdvisor_compareRoutes' ? true : fallback));
+        const html = ui._renderCostBreakdown({
+            buys: [],
+            credits: [],
+            gross: 180,
+            net: 180,
+            acquisitionComparison: { status: 'priced', route: 'craft', real: 170, cash: 100 },
+        });
+        expect(html).toContain('Shared routes: Craft, real cost 170, cash 100');
+        expect(html).toContain('ranking and shopping actions are unchanged');
+        const unsupported = ui._renderCostBreakdown({
+            buys: [],
+            credits: [],
+            acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' },
+        });
+        expect(unsupported).toContain('&lt;img');
+        expect(unsupported).not.toContain('<img');
+        const compact = ui._renderAllFightsCostExplanation({
+            cost: 10,
+            candidate: {},
+            costDetail: { net: 10, acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' } },
+        });
+        expect(compact).toContain('&lt;img');
+        expect(compact).not.toContain('<img');
+        setting.mockRestore();
+        expect(
+            ui._renderCostBreakdown({ buys: [], credits: [], acquisitionComparison: { status: 'unknown' } })
+        ).not.toContain('Shared routes');
+    });
     test('a sweep-priced buy names whose enhancing stats it ran on', () => {
         // Nothing is listed at that enhancement, so half the figure is a
         // simulated path — and the same path costs different money on different

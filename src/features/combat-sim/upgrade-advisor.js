@@ -6,6 +6,15 @@
  */
 
 import config from '../../core/config.js';
+import { compareAdvisorAcquisition } from './upgrade-route-comparison.js';
+import { acquisitionBookPrice } from '../../utils/acquisition-route.js';
+import { patientTickPrice } from '../../utils/patient-tick.js';
+import { calculateArtisanBonus } from '../../utils/material-calculator.js';
+import {
+    actionStartEligibility,
+    craftPlanEligibility,
+    combineCraftEligibility,
+} from '../../utils/craft-start-eligibility.js';
 import {
     maxConcurrentSims,
     resimMaxBudgetMs,
@@ -32,12 +41,12 @@ import { profitScale } from './trigger-tuning.js';
 import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
-import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
+import { labyrinthClearRate, craftingPlanCalculator } from '../../utils/bundle-bridge.js';
 import { outputTaxRate, resolveItemPrice } from '../../utils/profit-helpers.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { priceAtLevel, priceBase, priceMirror } from '../../utils/enhancement-input-pricing.js';
 import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
@@ -46,7 +55,7 @@ import { MIRROR_FIRST_LEVEL, cheapestWithMirror } from '../../utils/mirror-route
 import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { findProducingAction } from '../../utils/production-index.js';
-import { copiesForPricing, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
+import { copiesForPricing, heldCopies, isSelfEnhancedItem, planSelfEnhance } from './self-enhance-ladder.js';
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { createWorkEstimator } from '../../utils/progress-eta.js';
@@ -3662,9 +3671,16 @@ function completeBuyPrice(priced) {
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
  * @param {number} [options.minLevel] - Lowest level worth offering (the refine route only considers a +5 or better base)
+ * @param {boolean} [options.compareOnly] - Return a priced comparison even when the ordinary route is cheaper
+ * @param {Function|null} [options.directPrice] - Explicit fresh-input quote service for the read-only experiment
  * @returns {{baseCost: number, mirrorPrice: number}|null} Null when no mirror route beats the ordinary one
  */
-function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_LEVEL, held = [] } = {}) {
+function resolveMirrorBase(
+    baseHrid,
+    level,
+    gameData,
+    { minLevel = MIRROR_FIRST_LEVEL, held = [], compareOnly = false, directPrice = null } = {}
+) {
     if (level < Math.max(MIRROR_FIRST_LEVEL, minLevel) || testerShopEnabled()) return null;
     const mirrorPrice = completePrice(priceMirror());
     if (!(mirrorPrice > 0)) return null;
@@ -3675,7 +3691,9 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
     const ordinary = [];
     const ordinarySource = [];
     for (let k = 0; k <= level; k++) {
-        const direct = resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false });
+        const direct = directPrice
+            ? directPrice(k)
+            : resolveUpgradeBuyPriceDirect(baseHrid, k, gameData, { isSelf: false });
         ordinary[k] = direct.price;
         ordinarySource[k] = direct.source;
     }
@@ -3734,7 +3752,7 @@ function resolveMirrorBase(baseHrid, level, gameData, { minLevel = MIRROR_FIRST_
             ].filter(Boolean),
         };
     }
-    if (!Number.isFinite(plan.pay) || !(plan.pay + plan.forfeit < viaOrdinary)) return null;
+    if (!Number.isFinite(plan.pay) || (!compareOnly && !(plan.pay + plan.forfeit < viaOrdinary))) return null;
 
     // The base copies the route buys, for the Market bill. A level the mirror builds is built from its
     // two inputs in turn, so the leaves are what is bought: a listed level at its own level, and a level
@@ -4519,7 +4537,196 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
  * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
-    return withSaleTaxOf(candidate, () => explainUpgradeCostAtTax(candidate, gameData, isSelf));
+    return withSaleTaxOf(candidate, () => {
+        const detail = explainUpgradeCostAtTax(candidate, gameData, isSelf);
+        if (!config.getSettingValue('upgradeAdvisor_compareRoutes', false)) return detail;
+        try {
+            const comparison = advisorRouteComparison(candidate, gameData, isSelf);
+            return comparison ? { ...detail, acquisitionComparison: comparison } : detail;
+        } catch (error) {
+            console.error('[UpgradeAdvisor] Shared route comparison unavailable:', error);
+            return {
+                ...detail,
+                acquisitionComparison: { status: 'unsupported', reason: 'Comparison data could not be read.' },
+            };
+        }
+    });
+}
+
+/**
+ * Snapshot a single local acquisition for the optional comparison. Never use the
+ * local bag or crafting setup for a party member. Multi-item allocations and
+ * untradable ladders keep their existing quote until their adapters are verified.
+ * @param {Object} candidate - Candidate being explained
+ * @param {Object} gameData - Simulation game data
+ * @param {boolean} isSelf - Explicit ownership context
+ * @returns {Object|null} Shared comparison, or null for a non-equipment row
+ */
+function advisorRouteComparison(candidate, gameData, isSelf) {
+    const itemHrid = candidate.upgradeHrid || (candidate.type === 'enhancement' ? candidate.currentHrid : null);
+    if (
+        !candidate.addedSlots &&
+        (!itemHrid?.startsWith('/items/') || !gameData?.itemDetailMap?.[itemHrid]?.equipmentDetail)
+    )
+        return null;
+    const unsupported = !isSelf
+        ? 'Party inventory and crafting setup are not known.'
+        : candidate.addedSlots || candidate.freedItems?.length || removedPieces(candidate).length > 1
+          ? 'Multi-item copy allocation is not enabled for this comparison.'
+          : testerShopEnabled()
+            ? 'Tester shop routes retain the existing advisor model.'
+            : isSelfEnhancedItem(itemHrid, gameData?.itemDetailMap)
+              ? 'Untradable ladders retain the existing advisor model.'
+              : null;
+    if (unsupported) return compareAdvisorAcquisition({ unsupported }, {});
+    const inventory = dataManager.getInventory?.();
+    if (!Array.isArray(inventory))
+        return compareAdvisorAcquisition({ unsupported: 'Local inventory is not loaded.' }, {});
+    const level = Math.max(0, Math.floor(Number(candidate.upgradeLevel) || 0));
+    const producer = findProducingAction(itemHrid, { actionDetailMap: gameData?.actionDetailMap });
+    const action = producer?.action;
+    const artisan = action ? calculateArtisanBonus(action) || 0 : 0;
+    const recipe = action
+        ? {
+              upgradeItemHrid: action.upgradeItemHrid,
+              retainAllEnhancement: Boolean(action.retainAllEnhancement),
+              outputCount: producer.output?.count || 1,
+              inputItems: (action.inputItems || []).map((input) => ({
+                  ...input,
+                  count: (input.count || 0) * (1 - artisan),
+              })),
+          }
+        : null;
+    const quote = (hrid, atLevel, transaction) =>
+        acquisitionBookPrice(
+            getItemPrices(hrid, atLevel),
+            {
+                itemHrid: hrid,
+                level: atLevel,
+                transaction,
+                side: getPricingMode('profit', transaction) === 'bid' ? 'bid' : 'ask',
+            },
+            patientTickPrice
+        );
+    const buy = (hrid, atLevel) => quote(hrid, atLevel, 'buy') || null;
+    const sale = (hrid, atLevel) => {
+        const vendor = atLevel === 0 ? Number(gameData?.itemDetailMap?.[hrid]?.sellPrice) || 0 : 0;
+        const market = afterSaleTax(quote(hrid, atLevel, 'sell'));
+        const value = Math.max(vendor, market);
+        return value > 0 ? value : gameData?.itemDetailMap?.[hrid]?.isTradable === false ? 0 : null;
+    };
+    const hrids = new Set(
+        [itemHrid, recipe?.upgradeItemHrid, ...removedPieces(candidate).map((piece) => piece.hrid)].filter(Boolean)
+    );
+    const copies = [];
+    for (const hrid of hrids) {
+        const marked = markTakenCopies(
+            heldCopies(
+                hrid,
+                inventory.filter((item) => item.itemLocationHrid !== '/item_locations/market_listing')
+            ),
+            hrid,
+            candidate
+        );
+        for (const [index, copy] of marked.entries()) {
+            copies.push({
+                id: `${hrid}:${index}`,
+                itemHrid: hrid,
+                level: copy.level,
+                sale: sale(hrid, copy.level),
+                taken: copy.taken,
+                // An equipped item not replaced by this candidate must stay equipped.
+                usable: !copy.equipped || copy.taken,
+            });
+        }
+    }
+    // A simulated future piece is not proof of a physical copy. Do not invent
+    // its sale or allow it to become a second input beside the real inventory.
+    if (
+        removedPieces(candidate).some(
+            (piece) => !copies.some((copy) => copy.taken && copy.itemHrid === piece.hrid && copy.level === piece.level)
+        )
+    )
+        return compareAdvisorAcquisition(
+            { unsupported: 'The simulated replaced copy is not verified in local inventory.' },
+            {}
+        );
+    const context = {
+        target: { itemHrid, level },
+        recipe,
+        copies,
+        sellIds: copies.filter((copy) => copy.taken).map((copy) => copy.id),
+        eligibility: action ? actionStartEligibility(action) : { status: 'unknown' },
+        preference: config.getSettingValue('equipmentWatch_routePreference', 'auto'),
+        notes: itemHrid.endsWith('_refined')
+            ? ['Refined Mirror paths remain in the existing advisor quote; this comparison covers Buy and Craft.']
+            : [
+                  'Mirror comparison uses listed input levels; enhancement/craft-built inputs remain in the original advisor quote.',
+              ],
+    };
+    const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
+    const complete = (node) =>
+        node &&
+        Number.isFinite(node.totalCost) &&
+        !(node.strategy === 'buy' && node.itemHrid !== '/items/coin' && !(node.buyPrice > 0)) &&
+        (node.children || []).every(complete);
+    const material = (hrid, count) => {
+        if (planner) {
+            const plan = planner(
+                hrid,
+                count,
+                config.getSettingValue('profitCalc_pricingMode', 'hybrid'),
+                new Set(),
+                new Map(),
+                0,
+                undefined,
+                false,
+                false,
+                0,
+                false,
+                false,
+                undefined,
+                'current',
+                true
+            );
+            return { cost: complete(plan) ? plan.totalCost : null, eligibility: craftPlanEligibility(plan) };
+        }
+        const price = hrid === '/items/coin' ? 1 : buy(hrid, 0);
+        return { cost: price === null ? null : price * count, eligibility: { status: 'available' } };
+    };
+    return compareAdvisorAcquisition(context, {
+        buy,
+        material,
+        combineEligibility: combineCraftEligibility,
+        enhance: (hrid, from, to) => calculateDirectEnhancementCost(hrid, from, to, gameData),
+        mirror: itemHrid.endsWith('_refined')
+            ? null
+            : () => {
+                  const held = copies
+                      .filter((copy) => copy.itemHrid === itemHrid && copy.usable && copy.sale !== null)
+                      .map((copy) => ({
+                          level: copy.level,
+                          forfeit: copy.sale,
+                          piece: { hrid: itemHrid, level: copy.level, id: copy.id },
+                      }));
+                  const build = resolveMirrorBase(itemHrid, level, gameData, {
+                      held,
+                      compareOnly: true,
+                      // A legacy production estimate says nothing about whether its
+                      // recipe can start. Restrict this comparison to listed leaves;
+                      // recursive Mirror/Blessed Tea arithmetic remains the same.
+                      directPrice: (atLevel) => ({ price: buy(itemHrid, atLevel), source: 'market' }),
+                  });
+                  return build
+                      ? {
+                            gross: build.baseCost,
+                            consumed: build.consumed,
+                            mirrorCount: build.mirrorCount,
+                            boughtCopies: build.boughtCopies,
+                        }
+                      : null;
+              },
+    });
 }
 
 /**
@@ -10389,7 +10596,19 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
         for (const note of capped.notes) if (!notes.includes(note)) notes.push(note);
         return capped.items;
     };
-    const withNotes = (detail) => (detail && notes.length ? { ...detail, ownershipNotes: [...notes] } : detail);
+    const withNotes = (detail) => {
+        if (!detail) return detail;
+        if (!notes.length && !(members.length > 1 && detail.acquisitionComparison)) return detail;
+        const comparison =
+            members.length > 1 && detail.acquisitionComparison
+                ? { status: 'unsupported', reason: 'Merged acquisitions need a complete multi-item allocation.' }
+                : detail.acquisitionComparison;
+        return {
+            ...detail,
+            ...(notes.length ? { ownershipNotes: [...notes] } : {}),
+            ...(comparison ? { acquisitionComparison: comparison } : {}),
+        };
+    };
     const removedItems = distinct(members.map((r) => r.candidate));
     const keptItems = members.flatMap((r) => r.candidate.keptItems || []);
     const { members: _parts, skillKeys: _skills, merged: _merged, ...rest } = first;

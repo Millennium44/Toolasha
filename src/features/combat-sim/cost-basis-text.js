@@ -136,11 +136,12 @@ function creditClause(detail, market) {
  * @param {number} [options.toLevel] - Candidate's target level
  * @param {boolean} [options.isEnhancement] - The candidate enhances a piece
  * @param {string} [options.kind] - The candidate's type (`house` gets its own wording)
+ * @param {boolean} [options.showAcquisitionComparison=false] - Current opt-in; hides saved comparisons when off
  * @returns {Array<{text: string, title?: string, tone: string}>} Lines, tone one of main|warn|kept
  */
 export function compactCostLines(
     detail,
-    { basisTitle, keptWhy, keptTitle, fromLevel, toLevel, isEnhancement, kind } = {}
+    { basisTitle, keptWhy, keptTitle, fromLevel, toLevel, isEnhancement, kind, showAcquisitionComparison = false } = {}
 ) {
     const lines = [];
     if (!detail) return lines;
@@ -257,6 +258,23 @@ export function compactCostLines(
         }
         if (resale) lines.push({ text: `Keeps ${names} (${resale}: ${keptWhy}).`, title: keptTitle, tone: 'kept' });
     }
+    if (showAcquisitionComparison && detail.acquisitionComparison)
+        lines.push({ text: acquisitionComparisonText(detail.acquisitionComparison), tone: 'warn', plainText: true });
     for (const note of detail.ownershipNotes || []) lines.push({ text: note, tone: 'warn' });
     return lines;
+}
+
+/**
+ * Plain-text explanation of the experimental comparison; never a replacement cost.
+ * @param {Object|null} comparison - Optional read-only snapshot
+ * @returns {string} Explicit comparison status and scope, or empty text
+ */
+export function acquisitionComparisonText(comparison) {
+    if (!comparison) return '';
+    const unchanged = 'Comparison only; Cost, ranking and shopping actions are unchanged.';
+    if (comparison.status === 'unsupported') return `Shared routes: ${comparison.reason} ${unchanged}`;
+    if (comparison.status !== 'priced') return `Shared routes: no fully priced eligible route. ${unchanged}`;
+    const note = (comparison.notes || []).join(' ');
+    const route = comparison.route.charAt(0).toUpperCase() + comparison.route.slice(1);
+    return `Shared routes: ${route}, real cost ${formatKMB(comparison.real)}, cash ${formatKMB(comparison.cash)}. ${unchanged}${note ? ` ${note}` : ''}`;
 }

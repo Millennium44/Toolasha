@@ -2513,6 +2513,20 @@ describe('a retaining craft compares both base routes by real cost', () => {
         expect(craftRow()).toMatchObject({ cash: 0, real: -30 * M });
     });
 
+    test('kept worn base without a sale quote retains unknown real cost after shared accounting', () => {
+        game.inventory = [{ itemHrid: BASE, enhancementLevel: 12, itemLocationHrid: '/item_locations/main_hand' }];
+        game.equipment = new Map([['/item_locations/main_hand', { itemHrid: BASE, enhancementLevel: 12 }]]);
+        game.prices[`${BASE}:12`].bid = 0;
+        game.prices[`${BASE}:13`].ask = 0;
+        setNoSell(true);
+        expect(watchedTargets()[0]).toMatchObject({ route: 'buy', cost: 180 * M });
+        expect(craftRow()).toMatchObject({ cash: 100 * M, real: null, priced: false });
+        game.routePreference = 'craft';
+        expect(watchedTargets()[0].route).toBe('buy');
+        setRoutePin(TARGET, 13, 'craft');
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 100 * M, realCost: null });
+    });
+
     test('an unknown owned sale does not hide a fully priced bought-base craft', () => {
         game.prices[`${BASE}:12`].bid = 0;
         expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 170 * M, realCost: 170 * M });

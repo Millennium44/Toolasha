@@ -19,6 +19,9 @@ const CHAR = 161296;
 
 const state = vi.hoisted(() => ({
     books: {},
+    compareRoutes: false,
+    blessedChance: 0,
+    inventory: [],
     custom: {},
     craftingSetting: false,
     // The profit mode's book side per transaction side; null is the conservative default (buy ask, sell bid)
@@ -69,7 +72,7 @@ const ACTION_DETAIL_MAP = {
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
-        getInventory: () => [],
+        getInventory: () => state.inventory,
         getInitClientData: () => ({ itemDetailMap: ITEM_DETAIL_MAP, actionDetailMap: ACTION_DETAIL_MAP }),
         getCurrentCharacterId: () => CHAR,
         getGuildBuildingLevel: () => 0,
@@ -84,7 +87,12 @@ vi.mock('../../core/config.js', () => ({
     default: {
         isFeatureEnabled: (key) => key === 'enhanceSim_baseItemCraftingCost' && state.craftingSetting,
         getSetting: () => false,
-        getSettingValue: (key, fallback) => (key === 'untradableCapeBaseValue' ? state.capeMode : fallback),
+        getSettingValue: (key, fallback) =>
+            key === 'upgradeAdvisor_compareRoutes'
+                ? state.compareRoutes
+                : key === 'untradableCapeBaseValue'
+                  ? state.capeMode
+                  : fallback,
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { on: () => {}, getPrice: () => null } }));
@@ -150,7 +158,10 @@ vi.mock('../../utils/tester-shop.js', () => ({ testerShopEnabled: () => false, t
 // The sweep's own arithmetic has its suite; here the enhance run adds nothing to the base
 vi.mock('./direct-enhancement-cost.js', () => ({
     calculateDirectEnhancementCost: () => 0,
-    enhancementSweepParams: () => ({}),
+    enhancementSweepParams: () => ({
+        teas: { blessed: state.blessedChance > 0 },
+        blessedTeaBonus: state.blessedChance,
+    }),
 }));
 vi.mock('../enhancement/enhancement-params-source.js', () => ({
     describeEnhancementSource: () => ({ detail: '' }),
@@ -164,7 +175,8 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 vi.mock('../../utils/tea-parser.js', () => ({ parseArtisanBonus: () => 0, getDrinkConcentration: () => 0 }));
 
-const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf } = await import('./upgrade-advisor.js');
+const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf, priceMergedAcquisition } =
+    await import('./upgrade-advisor.js');
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
 
 const gameData = { itemDetailMap: ITEM_DETAIL_MAP };
@@ -181,6 +193,9 @@ const enhancingConfig = {
 };
 
 beforeEach(() => {
+    state.compareRoutes = false;
+    state.blessedChance = 0;
+    state.inventory = [];
     globalThis.math = mathjs;
     state.books = {
         // A wide book: the ask is over 1.3x the bid and nothing crafts it, so the guarded price is the bid
@@ -509,5 +524,126 @@ describe('a refined untradable cape in the advisor follows the cape setting', ()
             expect(row.price).toBe(4_000_000);
             expect(row.ladder.baseStonesOnly).toBeUndefined();
         }
+    });
+});
+
+describe('opt-in shared route comparison leaves legacy pricing intact', () => {
+    test('adds a comparison without changing numeric cost or the old breakdown', () => {
+        const candidate = tier(0);
+        const before = explainUpgradeCost(candidate, gameData);
+        const cost = calculateUpgradeCost(candidate, gameData);
+        state.compareRoutes = true;
+        const after = explainUpgradeCost(candidate, gameData);
+        const { acquisitionComparison, ...legacy } = after;
+        expect(legacy).toEqual(before);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
+        expect(acquisitionComparison).toMatchObject({ status: 'priced', route: 'buy' });
+        state.compareRoutes = false;
+        expect(explainUpgradeCost(candidate, gameData)).toEqual(before);
+    });
+    test('party and multi-slot rows are explicitly unsupported, not priced from the local bag', () => {
+        state.compareRoutes = true;
+        expect(explainUpgradeCost(tier(0), gameData, false).acquisitionComparison).toMatchObject({
+            status: 'unsupported',
+            reason: expect.stringContaining('Party'),
+        });
+        const cross = {
+            type: 'cross_slot',
+            addedSlots: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 0 } },
+            removedItems: [],
+        };
+        expect(explainUpgradeCost(cross, gameData).acquisitionComparison).toMatchObject({
+            status: 'unsupported',
+            reason: expect.stringContaining('Multi-item'),
+        });
+    });
+    test('does not invent a replaced copy from a future simulated build', () => {
+        state.compareRoutes = true;
+        const candidate = { ...tier(0), currentHrid: OLD_SWORD, currentLevel: 13, removedItems: undefined };
+        expect(explainUpgradeCost(candidate, gameData).acquisitionComparison).toMatchObject({
+            status: 'unsupported',
+            reason: expect.stringContaining('not verified'),
+        });
+    });
+
+    test.each([0, 0.2])('keeps recursive Mirror and Blessed Tea costs unchanged (chance %s)', (blessed) => {
+        state.blessedChance = blessed;
+        state.books[`${SWORD}:0`] = { ask: 100_000, bid: 100_000 };
+        state.books[`${SWORD}:1`] = { ask: 100_000, bid: 100_000 };
+        state.books[`${SWORD}:2`] = { ask: 200_000, bid: 150_000 };
+        state.books[`${SWORD}:3`] = { ask: 3_000_000, bid: 400_000 };
+        state.books[`${SWORD}:4`] = { ask: 4_000_000, bid: 800_000 };
+        state.books[`${SWORD}:5`] = { ask: 5_000_000, bid: 3_000_000 };
+        state.books[`${MIRROR}:0`] = { ask: 100_000, bid: 100_000 };
+        const candidate = tier(5);
+        const before = explainUpgradeCost(candidate, gameData);
+        const cost = calculateUpgradeCost(candidate, gameData);
+        expect(before.source).toBe('mirror');
+        expect(before.ladder.mirror.mirrorCount).toBeGreaterThan(1);
+        state.compareRoutes = true;
+        const { acquisitionComparison, ...after } = explainUpgradeCost(candidate, gameData);
+        expect(after).toEqual(before);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
+        expect(acquisitionComparison).toMatchObject({ status: 'priced' });
+        expect(acquisitionComparison.routes.find((row) => row.id === 'mirror').mirrorCount).toBe(
+            before.ladder.mirror.mirrorCount
+        );
+    });
+    test('an unloaded inventory cannot verify an enhancement candidate copy', () => {
+        state.compareRoutes = true;
+        state.inventory = null;
+        const candidate = {
+            type: 'enhancement',
+            currentHrid: SWORD,
+            currentLevel: 4,
+            upgradeHrid: SWORD,
+            upgradeLevel: 5,
+        };
+        expect(explainUpgradeCost(candidate, gameData).acquisitionComparison).toMatchObject({
+            status: 'unsupported',
+            reason: expect.stringContaining('not loaded'),
+        });
+    });
+
+    test.each([0, 5])('a merged acquisition invalidates member comparison even with credit %s', (credit) => {
+        const comparison = { status: 'priced', route: 'buy', cash: 20, real: 20 };
+        state.inventory = [{ itemHrid: OLD_SWORD, enhancementLevel: 0, count: 1 }];
+        const member = {
+            candidate: {
+                type: 'enhancement',
+                currentHrid: SWORD,
+                currentLevel: 3,
+                upgradeHrid: SWORD,
+                upgradeLevel: 5,
+            },
+            cost: 20,
+            costDetail: { net: 20, gross: 20, credit: 0, credits: [], acquisitionComparison: comparison },
+        };
+        const other = {
+            candidate: { type: 'tier', currentHrid: OLD_SWORD, upgradeHrid: SWORD, upgradeLevel: 5 },
+            cost: 100,
+        };
+        const result = priceMergedAcquisition([member, other], gameData, {
+            price: (candidate) =>
+                100 - credit * (candidate.removedItems || []).filter((item) => item.hrid === OLD_SWORD).length,
+            explain: () => ({ net: 100 }),
+        });
+        expect(result.costDetail.acquisitionComparison).toMatchObject({
+            status: 'unsupported',
+            reason: expect.stringContaining('Merged'),
+        });
+        expect(member.costDetail.acquisitionComparison).toBe(comparison);
+        expect(result.cost).toBe(20 - credit);
+    });
+    test('comparison Mirror cannot borrow a craft-valued fresh input without a listing', () => {
+        state.compareRoutes = true;
+        // Legacy priceBase may value a +0 from a custom/production fallback.
+        // Comparison leaf inputs must instead exist on the same book as Watch.
+        state.books = { [`${SWORD}:5`]: { ask: 5000, bid: 5000 }, [`${MIRROR}:0`]: { ask: 100, bid: 100 } };
+        state.custom[`${SWORD}:0:buy`] = 10;
+        const result = explainUpgradeCost(tier(5), gameData).acquisitionComparison;
+        expect(result).toMatchObject({ status: 'priced', route: 'buy' });
+        expect(result.routes.some((route) => route.id === 'mirror')).toBe(false);
+        expect(result.notes.join(' ')).toContain('listed input levels');
     });
 });

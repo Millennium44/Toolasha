@@ -107,7 +107,7 @@ import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
 import { MIRROR_ITEM_HRID, mirrorsToBuy } from '../../utils/mirror-route.js';
-import { ladderSentence } from './cost-basis-text.js';
+import { ladderSentence, acquisitionComparisonText } from './cost-basis-text.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -12953,6 +12953,10 @@ class CombatSimUI {
         const parts = [];
         const source = COST_SOURCES[r.costSource];
         const detail = r.costDetail;
+        const comparison = config.getSettingValue('upgradeAdvisor_compareRoutes', false)
+            ? acquisitionComparisonText(detail?.acquisitionComparison)
+            : '';
+        if (comparison) parts.push(`<span style="color:#ff9800;">${escapeAttribute(comparison)}</span>`);
 
         if (source) parts.push(`<span style="color:#aaa;">Cost basis: ${source.label} — ${source.title}</span>`);
 

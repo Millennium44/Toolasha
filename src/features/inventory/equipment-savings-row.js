@@ -58,6 +58,12 @@ import {
     craftPlanEligibility,
     combineCraftEligibility,
 } from '../../utils/craft-start-eligibility.js';
+import {
+    selectAcquisitionRoute,
+    chooseCraftAcquisition,
+    priceAcquisitionRoute,
+    acquisitionBookPrice,
+} from '../../utils/acquisition-route.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
@@ -394,18 +400,10 @@ function sellPrice(itemHrid, level = 0) {
  * @returns {number} Coins, 0 when that side has no price
  */
 function sidePrice(itemHrid, level, transaction, side) {
-    const prices = getItemPrices(itemHrid, level);
-    const value = Number(prices?.[side]) || 0;
-    if (!(value > 0) || prices.source || prices[`${side}Estimated`]) return value;
-    return (
-        patientTickPrice(value, transaction, side, {
-            ask: prices.ask,
-            bid: prices.bid,
-            askEstimated: prices.askEstimated,
-            bidEstimated: prices.bidEstimated,
-            itemHrid,
-            enhancementLevel: level,
-        }) || value
+    return acquisitionBookPrice(
+        getItemPrices(itemHrid, level),
+        { itemHrid, level, transaction, side },
+        patientTickPrice
     );
 }
 
@@ -2282,22 +2280,16 @@ function costOf(
         const options = materials.alternatives.map((option) => {
             const usesWorn =
                 option.consumed && heldCopyAt(option.consumed.itemHrid, option.consumed.level, worn)?.worn === true;
-            return {
-                ...option,
-                cash: noSell || usesWorn ? option.cost : Math.max(0, option.cost - wornBid),
-                real: realOf(option.cost, option.consumed),
-            };
+            const copies = [{ id: 'worn', sale: usesWorn ? gives(option.consumed) : wornBid }];
+            const consumedId = usesWorn ? 'worn' : 'base';
+            if (option.consumed && !usesWorn) copies.push({ id: 'base', sale: gives(option.consumed) });
+            const quote = priceAcquisitionRoute(
+                { gross: option.cost, consumed: option.consumed ? [{ id: consumedId }] : [] },
+                { copies, sellIds: ['worn'], keep: noSell }
+            );
+            return { ...option, cash: quote.cash, real: quote.real };
         });
-        const startable = options.filter((option) =>
-            requireAvailable ? option.eligibility.status === 'available' : option.eligibility.status !== 'blocked'
-        );
-        // Keep a blocked hypothetical bill visible only when no executable base option exists.
-        const candidates = startable.length ? startable : requireAvailable ? [] : options;
-        if (!candidates.length) return null;
-        const priced = candidates.filter((option) => option.real !== null);
-        return priced.length
-            ? priced.reduce((best, option) => (option.real < best.real ? option : best))
-            : candidates.reduce((best, option) => (option.cash < best.cash ? option : best));
+        return chooseCraftAcquisition(options, requireAvailable);
     };
 
     const rows = [];
@@ -2398,31 +2390,18 @@ function costOf(
     // The pin: on a piece nobody sells it is the ladder switch (`mode`), otherwise buy, craft or mirror
     const pin = base.enhancing ? (ladderPinned ? 'ladder' : null) : routePinned;
 
-    const usable = (id) =>
-        rows.find(
-            (row) =>
-                row.id === id && row.priced && row.eligibility?.status !== 'blocked' && (allowMirror || id !== 'mirror')
-        );
-    // A pin needs only its coins to find: real cost steers Auto and Prefer, and a pin is not steered
-    const standing = (id) => rows.find((row) => row.id === id && row.cash !== null && (allowMirror || id !== 'mirror'));
-    let chosen = null;
+    const { chosen, pinUnavailable } = selectAcquisitionRoute(rows, {
+        pin,
+        preference,
+        eligible,
+        allowMirror,
+    });
     let pinNote = '';
-    if (pin) {
-        chosen = standing(pin) || null;
-        if (!chosen) {
-            const applies = rows.some((row) => row.id === pin && (allowMirror || pin !== 'mirror'));
-            pinNote = applies
-                ? `${ROUTE_LABELS[pin]} is pinned but has no price right now, so Auto is used.`
-                : `${ROUTE_LABELS[pin]} is pinned but doesn't apply to this item, so Auto is used.`;
-        }
-    }
-    // "Prefer X" is for cards left on Auto: X whenever it is priced and applicable
-    if (!chosen && !pin && preference !== 'auto') chosen = usable(preference) || null;
-    if (!chosen) {
-        for (const id of eligible) {
-            const row = usable(id);
-            if (row && (!chosen || row.real < chosen.real)) chosen = row;
-        }
+    if (pinUnavailable) {
+        const applies = rows.some((row) => row.id === pin && (allowMirror || pin !== 'mirror'));
+        pinNote = applies
+            ? `${ROUTE_LABELS[pin]} is pinned but has no price right now, so Auto is used.`
+            : `${ROUTE_LABELS[pin]} is pinned but doesn't apply to this item, so Auto is used.`;
     }
 
     const routes = rows.map(({ id, label, cash, real, priced, estimated, eligibility, alternatives }) => ({

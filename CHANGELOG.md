@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 
+### Compare acquisition routes beside advisor costs
+
+An experimental, off-by-default setting adds a Buy/Craft/Mirror comparison to Combat and Lab upgrade details, separating cash from real cost and honoring Equipment Watch's preferred route. Existing rankings and shopping actions stay unchanged; unsupported ownership and route contexts are labeled.
+
 ### Craft routes respect skill levels and teas
 
 Equipment Watch avoids craft routes the selected setup cannot start, including intermediate recipes, and shows Ultra Tea or no-Artisan alternatives with recalculated material costs. Crafting and Goal Planners report recipe requirements, and the Tea Optimizer can consider recipes unlocked by skill teas.

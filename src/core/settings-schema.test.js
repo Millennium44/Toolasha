@@ -401,3 +401,14 @@ describe('net-of-tax inventory setting', () => {
         expect(getSettingDefinition('invSort_netOfTax').requires).toBeUndefined();
     });
 });
+
+describe('shared acquisition comparison default', () => {
+    test('is an opt-in diagnostic, not a silent advisor ranking change', () => {
+        const setting = getSettingDefinition('upgradeAdvisor_compareRoutes');
+        expect(setting.type).toBe('checkbox');
+        expect(setting.default).toBe(false);
+        expect(setting.help).toContain('read-only');
+        expect(setting.help).toContain('ranking and actions are unchanged');
+        expect(setting.help).toContain('Rerun the analysis');
+    });
+});

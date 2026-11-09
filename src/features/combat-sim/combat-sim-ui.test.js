@@ -11712,6 +11712,34 @@ describe('remembered-run banner', () => {
 });
 
 describe('the cost basis detail', () => {
+    test('labels shared route comparisons without replacing the existing cost basis', async () => {
+        const { default: config } = await import('../../core/config.js');
+        const setting = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'upgradeAdvisor_compareRoutes' ? true : fallback));
+        const html = ui._renderUpgradeCostBasis({
+            costSource: 'market',
+            candidate: {},
+            costDetail: {
+                gross: 180,
+                credit: 0,
+                acquisitionComparison: { status: 'priced', route: 'craft', real: 170, cash: 100 },
+            },
+        });
+        expect(html).toContain('Shared routes: Craft, real cost 170, cash 100');
+        expect(html).toContain('ranking and shopping actions are unchanged');
+        expect(html).toContain('Buys 180');
+        const unsupported = ui._renderUpgradeCostBasis({
+            costDetail: { acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' } },
+            candidate: {},
+        });
+        expect(unsupported).toContain('&lt;img');
+        expect(unsupported).not.toContain('<img');
+        setting.mockRestore();
+        expect(
+            ui._renderUpgradeCostBasis({ candidate: {}, costDetail: { acquisitionComparison: { status: 'unknown' } } })
+        ).not.toContain('Shared routes');
+    });
     test('an incremental enhancement path does not describe buying and reselling the same item', () => {
         const html = ui._renderUpgradeCostBasis({
             costSource: 'sim',

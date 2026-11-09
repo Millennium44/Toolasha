@@ -324,6 +324,10 @@ const ALLOWLIST = new Map([
         'stateless attribute stamp; no module state to share',
     ],
     [
+        'src/utils/acquisition-route.js',
+        'pure explicit-context acquisition accounting and selection; no module state to share',
+    ],
+    [
         'src/utils/mirror-route.js',
         // Two constants and one pure function over its arguments (the Philosopher's Mirror
         // ladder arithmetic): no module state, so the enhancement panel's copy and the

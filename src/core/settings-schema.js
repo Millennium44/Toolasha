@@ -821,6 +821,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Save for / Stop saving button beside Sell when you click a piece of equipment, which is how a target gets onto the Equipment Savings list. Off by default because it changes a menu you use for other things',
             },
+            upgradeAdvisor_compareRoutes: {
+                id: 'upgradeAdvisor_compareRoutes',
+                label: 'Upgrade advisors: Compare shared acquisition routes (experimental)',
+                type: 'checkbox',
+                default: false,
+                help: "Adds a read-only Buy/Craft/Mirror comparison beside the existing Combat and Lab advisor cost. Uses Equipment Watch's preferred route and compares real cost separately from cash. Existing ranking and actions are unchanged. Local single-item tradable targets only; party, multi-item and untradable paths retain the existing model. Refined targets compare Buy/Craft while the original advisor retains its deeper Mirror paths. Rerun the analysis after changing this setting or route preference.",
+            },
             equipmentWatch_routePreference: {
                 id: 'equipmentWatch_routePreference',
                 label: 'Equipment Watch: Preferred route',
