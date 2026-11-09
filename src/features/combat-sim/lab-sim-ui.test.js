@@ -2106,6 +2106,30 @@ describe('the upgrade table reads like the combat sim’s', () => {
         ui.destroy();
     });
 
+    test.each(['table', 'cards'])('local item requirements stay visible in %s view', async (view) => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const details = vi.spyOn(dm, 'getItemDetails').mockReturnValue({
+            name: 'Refined Boots',
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        });
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        const previousView = ui._viewChoices;
+        try {
+            ui._viewChoices = { wide: view, narrow: view };
+            const result = analysis();
+            result.results[0].candidate.upgradeHrid = '/items/lab_boots_refined';
+            result.results[0].candidate.upgradeLevel = 12;
+            ui._renderUpgradeResults(result, container);
+            const warning = container.querySelector('[data-item-requirement-hrid]');
+            expect(warning?.textContent).toBe('For you: Needs Defense 95 (you: 88)');
+            expect(warning.closest('[style*="display:none"], [style*="display: none"]')).toBeNull();
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+            ui._viewChoices = previousView;
+        }
+    });
+
     test('every row carries whatever the shared builder emits, in both tables', () => {
         ui._renderUpgradeResults(analysis(), container);
 
@@ -2627,6 +2651,30 @@ describe('a Skilling gear row unfolds into what it is buying', () => {
     afterEach(() => {
         container.remove();
         ui.destroy();
+    });
+
+    test.each(['table', 'cards'])('local item requirements stay visible in %s view', async (view) => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const details = vi.spyOn(dm, 'getItemDetails').mockReturnValue({
+            name: 'Refined Boots',
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        });
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        const previousView = ui._viewChoices;
+        try {
+            ui._viewChoices = { wide: view, narrow: view };
+            const result = geared();
+            result.results[0].candidate.upgradeHrid = '/items/lab_boots_refined';
+            result.results[0].candidate.upgradeLevel = 12;
+            ui._renderSkillingUpgradeResults(result, container);
+            const warning = container.querySelector('[data-item-requirement-hrid]');
+            expect(warning?.textContent).toBe('For you: Needs Defense 95 (you: 88)');
+            expect(warning.closest('[style*="display:none"], [style*="display: none"]')).toBeNull();
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+            ui._viewChoices = previousView;
+        }
     });
 
     test('the detail is folded away until the row is clicked', () => {
@@ -3879,6 +3927,30 @@ describe('the budget plan when a pick pays for itself', () => {
         ui._allFightsBudgetText = '';
         host.remove();
         ui.destroy();
+    });
+
+    test.each(['table', 'cards'])('local item requirements stay visible in %s view', async (view) => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const details = vi.spyOn(dm, 'getItemDetails').mockReturnValue({
+            name: 'Refined Boots',
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        });
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        const previousView = ui._viewChoices;
+        try {
+            ui._viewChoices = { wide: view, narrow: view };
+            const result = analysis();
+            result.results[0].candidate.upgradeHrid = '/items/lab_boots_refined';
+            result.results[0].candidate.upgradeLevel = 12;
+            ui._renderAllFightsResults(result, container);
+            const warning = container.querySelector('[data-item-requirement-hrid]');
+            expect(warning?.textContent).toBe('For you: Needs Defense 95 (you: 88)');
+            expect(warning.closest('[style*="display:none"], [style*="display: none"]')).toBeNull();
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+            ui._viewChoices = previousView;
+        }
     });
 
     test('a typed budget of 0 still plans the refunding pick; an empty box shows nothing', () => {

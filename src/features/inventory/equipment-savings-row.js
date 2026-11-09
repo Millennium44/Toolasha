@@ -60,6 +60,7 @@ import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
 import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { patientTickPrice } from '../../utils/patient-tick.js';
+import { itemRequirementHtml } from '../../utils/item-requirements.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -2971,6 +2972,8 @@ function targetCard(target) {
 
     heading.append(eye, icon, name, cost, remove);
     card.appendChild(heading);
+    const requirement = itemRequirementHtml(target.itemHrid);
+    if (requirement) card.insertAdjacentHTML('beforeend', requirement);
 
     // Per-target switches, because both genuinely differ per piece: the sword
     // being replaced gets sold and the second ring replaces nothing, and one

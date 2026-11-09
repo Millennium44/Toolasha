@@ -111,6 +111,10 @@ const ALLOWLIST = new Map([
         'stateless HTML escaping; no runtime identity or state to share',
     ],
     [
+        'src/utils/item-requirements.js',
+        'Stateless local-character requirement reads and markup; no module state or import-time side effects.',
+    ],
+    [
         'src/utils/enhancement-steps.js',
         // A constant table and two pure functions, no imports and no module state: the game's enhancement
         // step count and the task speed a worn item gives. Core's data manager and the utils bundle both read it.

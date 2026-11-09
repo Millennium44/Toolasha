@@ -61,6 +61,7 @@ const game = vi.hoisted(() => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => game.inventory,
+        getSkills: () => game.skills || null,
         getEquipment: () => game.equipment,
         getItemDetails: (hrid) => game.details[hrid],
         getLearnedAbilities: () => game.abilities,
@@ -3686,5 +3687,28 @@ describe('the pricing mode setting decides which side of the book each price is 
             game.profitMode = 'patientBuy';
             expect(mirrorBuildRoute(REFINED, 13)).not.toEqual({ unpriced: true });
         });
+    });
+});
+
+describe('Equipment Watch item requirement warnings', () => {
+    test('warns beside the target even when affordable, then clears when the requirement is reached', () => {
+        game.skills = [{ skillHrid: '/skills/defense', level: 88 }];
+        game.prices['/items/holy_sword:12'] = { ask: 1_000_000, bid: 900_000 };
+        game.details['/items/holy_sword'].equipmentDetail.levelRequirements = [
+            { skillHrid: '/skills/defense', level: 95 },
+        ];
+        try {
+            watchTarget('/items/holy_sword', 12);
+            expect(watchedTargets()[0].affordable).toBe(true);
+            equipmentSavingsPanel.show();
+            expect(text()).toContain('Needs Defense 95 (you: 88)');
+            expect(text()).not.toContain(FAILED);
+            game.skills[0].level = 95;
+            equipmentSavingsPanel.render();
+            expect(text()).not.toContain('Needs Defense');
+            expect(text()).not.toContain(FAILED);
+        } finally {
+            game.skills = null;
+        }
     });
 });

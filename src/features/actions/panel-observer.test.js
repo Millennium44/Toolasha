@@ -65,7 +65,12 @@ vi.mock('../../utils/game-lookups.js', () => ({
     getItemHridFromIconHref: vi.fn(() => null),
     getIconHref: vi.fn(() => null),
 }));
-vi.mock('../../utils/action-panel-helper.js', () => ({ onActionTile: vi.fn(() => vi.fn()) }));
+vi.mock('../../utils/action-panel-helper.js', () => ({
+    onActionTile: vi.fn(() => vi.fn()),
+    onDetailPanel: vi.fn(() => vi.fn()),
+    PANEL_SELECTOR: '[class*="SkillActionDetail_skillActionDetail"]',
+    resolveDetailPanel: vi.fn(() => ({})),
+}));
 vi.mock('../../utils/enhancement-config.js', () => ({ getEnhancingParams: vi.fn() }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({ calculateEnhancementPath: vi.fn() }));
 
@@ -110,6 +115,14 @@ describe('late-rendered enhancement protection slot', () => {
         vi.useRealTimers();
         disablePanelObserver();
         document.body.innerHTML = '';
+    });
+
+    test('initializes and cleans up equipment output warnings with the action observer', async () => {
+        const { onDetailPanel } = await import('../../utils/action-panel-helper.js');
+        expect(onDetailPanel).toHaveBeenCalledOnce();
+        const detach = onDetailPanel.mock.results[0].value;
+        disablePanelObserver();
+        expect(detach).toHaveBeenCalledOnce();
     });
 
     test('a translated item name resolves through the output icon, not the name', async () => {
