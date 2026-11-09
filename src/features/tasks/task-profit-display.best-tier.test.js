@@ -225,6 +225,21 @@ describe('_searchBestTier: which tier the Best Score search keeps', () => {
         expect(record.tier).toBe(1);
     });
 
+    test('XP and profit pulling opposite ways tie on Score; the tier that kills the task monster fastest wins', async () => {
+        // Measured shape on the test server (Eye, Solo): T0 best profit, T2 best XP, all three Score 50
+        installTiers({
+            0: simResult({ xp: 1000, net: 90_000, stabbyKills: 100 }),
+            1: simResult({ xp: 2000, net: 40_000, stabbyKills: 300 }),
+            2: simResult({ xp: 3000, net: 10_000, stabbyKills: 200 }),
+            3: simResult({ xp: 500, net: 5_000, playerDeaths: 4 }),
+        });
+        const card = mountCard();
+
+        const record = await estimate(card);
+
+        expect(record.tier).toBe(1);
+    });
+
     test('a zone with no maxDifficulty is a single T0 run', async () => {
         dataManager.initClientData = gameData(null);
         buildGameDataPayload.mockReturnValue(dataManager.initClientData);
