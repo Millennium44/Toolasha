@@ -2272,7 +2272,7 @@ class TaskProfitDisplay {
      * "Best Score": simulate every tier of the zone, one after another, and keep the tier with the best
      * All Zones Score (ladder position in XP/hr and Profit/day, `utils/zone-score.js`). A tier where the
      * player died or the task monster was never killed cannot finish the task, so it is left out unless
-     * every tier is; the lowest tier wins a tie.
+     * every tier is. A tie on Score goes to the most task-monster kills per hour, then the lowest tier.
      * @param {Element} container - The card's estimate container, for progress text
      * @param {string} zoneHrid
      * @param {string} monsterHrid - The task monster
@@ -2311,12 +2311,17 @@ class TaskProfitDisplay {
                 totalXP: Object.values(xp).reduce((sum, v) => sum + v, 0) / hours,
                 profitDay: (Number(netPerHour) || 0) * 24,
                 finishes: !(simResult.deaths?.[playerHrid] > 0) && simResult.deaths?.[monsterHrid] > 0,
+                killsPerHour: (Number(simResult.deaths?.[monsterHrid]) || 0) / hours,
             });
         }
         const finishing = rows.filter((row) => row.finishes);
         const pool = finishing.length > 0 ? finishing : rows;
         ladderScoreRows(pool);
-        const best = pool.reduce((a, b) => (b.score > a.score ? b : a));
+        // XP and profit often pull opposite ways, so several tiers can share the top Score; the one that
+        // finishes the task soonest wins those, then the lowest
+        const best = pool.reduce((a, b) =>
+            b.score > a.score || (b.score === a.score && b.killsPerHour > a.killsPerHour) ? b : a
+        );
         return { tier: best.tier, simResult: best.simResult, rows };
     }
 
