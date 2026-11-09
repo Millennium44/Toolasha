@@ -34,6 +34,7 @@
  * task cards and the Task Statistics rows all read the one in-memory record.
  */
 
+import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import { createPersistedRecord } from './persisted-record.js';
 import { registerSyncMerge } from './sync-merge-registry.js';
@@ -139,16 +140,57 @@ export function rememberedTier(zoneHrid) {
     return validEntry(entry) ? entry.tier : null;
 }
 
+/** The game's own per-zone Difficulty selection: `localStorage[<base>_<characterId>]` = `{ [zoneHrid]: tier }` */
+export const GAME_SELECTED_TIERS_KEY = 'lastSelectedActionDifficultyMap';
+
+/** `taskCombatGoTier` values */
+export const GO_TIER_GAME = 'game';
+export const GO_TIER_LAST_RUN = 'lastRun';
+
+/**
+ * The tier the game's own Difficulty box will show for a zone when it opens — the game remembers the
+ * player's last pick per zone, per character, in the page's localStorage (read only; the game owns it).
+ * @param {string} zoneHrid
+ * @returns {number|null} Null when the game has no pick for this zone or it cannot be read
+ */
+export function gameSelectedTier(zoneHrid) {
+    const who = dataManager.getCurrentCharacterId?.();
+    if (!zoneHrid || !who) return null;
+    try {
+        const raw = globalThis.localStorage?.getItem(`${GAME_SELECTED_TIERS_KEY}_${who}`);
+        if (!raw) return null;
+        const tier = JSON.parse(raw)?.[zoneHrid];
+        return Number.isInteger(tier) && tier >= 0 ? tier : null;
+    } catch {
+        return null;
+    }
+}
+
+/** @returns {string} The `taskCombatGoTier` setting */
+function goTierMode() {
+    try {
+        return config.getSettingValue?.('taskCombatGoTier', GO_TIER_GAME) || GO_TIER_GAME;
+    } catch {
+        return GO_TIER_GAME;
+    }
+}
+
 /**
  * The tier a combat estimate (and Go) should use for a zone, and where it came from.
  *
- * Order: the zone in the character's action queue, then the tier last run there, then T0.
+ * Order: with `taskCombatGoTier` on "game" (the default), the tier the game's own Difficulty box has for
+ * the zone first, so Go never changes it; then the zone in the character's action queue, then the tier
+ * last run there, then T0.
  * @param {string} zoneHrid
  * @param {Array<Object>} [actions] - The action queue; defaults to the data manager's
- * @returns {{tier: number, known: boolean, source: 'queue'|'remembered'|'default', pending: boolean}}
+ * @returns {{tier: number, known: boolean, source: 'selected'|'queue'|'remembered'|'default', pending: boolean}}
  *   `pending` is true only for the default when the remembered tiers have not loaded yet
  */
 export function resolveZoneTier(zoneHrid, actions = dataManager.getCurrentActions?.() || []) {
+    if (goTierMode() === GO_TIER_GAME) {
+        const selected = gameSelectedTier(zoneHrid);
+        if (selected !== null) return { tier: selected, known: true, source: 'selected', pending: false };
+    }
     const queued = lastUsedTierForZone(actions, zoneHrid);
     if (queued !== null) return { tier: queued, known: true, source: 'queue', pending: false };
     const remembered = rememberedTier(zoneHrid);
@@ -163,6 +205,7 @@ export function resolveZoneTier(zoneHrid, actions = dataManager.getCurrentAction
  * @returns {string} For example "T3 (the tier you last ran here)"
  */
 export function describeZoneTier(tier, resolved) {
+    if (resolved.source === 'selected') return `T${tier} (the tier selected in the game)`;
     if (resolved.source === 'remembered') return `T${tier} (the tier you last ran here)`;
     if (resolved.source === 'queue') return `T${tier}`;
     return `T${tier}, no recorded tier for this zone${resolved.pending ? ' yet' : ''}`;
