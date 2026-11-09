@@ -11,6 +11,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 const game = vi.hoisted(() => ({
     inventory: [],
@@ -99,7 +100,12 @@ vi.mock('../../core/config.js', () => ({
             if (!settingChangeCallbacks[key]) return;
             settingChangeCallbacks[key] = settingChangeCallbacks[key].filter((cb) => cb !== callback);
         },
-        getSettingValue: (key) => (key === 'profitCalc_pricingMode' ? game.profitMode : 'full'),
+        getSettingValue: (key) =>
+            key === 'profitCalc_pricingMode'
+                ? game.profitMode
+                : key === 'equipmentWatch_routePreference'
+                  ? (game.routePreference ?? 'auto')
+                  : 'full',
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
@@ -226,6 +232,11 @@ const {
     enhancementCost,
     upgradeBaseCost,
     upgradeBaseRoute,
+    mirrorBuildRoute,
+    setRoutePin,
+    setLadder,
+    routePin,
+    cycleRoutePin,
     resetEquipmentSavings,
     setLocked,
     watchAbility,
@@ -246,6 +257,7 @@ const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 beforeEach(() => {
     game.customVersion = 0;
     game.profitMode = 'hybrid';
+    game.routePreference = 'auto';
     game.inventory = [
         { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', count: 60_000_000 },
         // Coins turn up under more than one location; only the inventory one is
@@ -916,11 +928,31 @@ describe('crafting rather than buying', () => {
             count: 1,
         });
         watchTarget('/items/refined_spear');
+        // Auto weighs every route and would craft; the buy route is read by pinning it
+        setRoutePin('/items/refined_spear', 0, 'buy');
         expect(watchedTargets()[0].cost).toBe(900_000_000 - 38_400_000);
 
         toggleCrafting('/items/refined_spear');
         // 30 shards at 1M, less the 40M for the sword being replaced
         expect(watchedTargets()[0].cost).toBe(30_000_000 - 40_000_000 > 0 ? 30_000_000 - 40_000_000 : 0);
+    });
+
+    test('a base piece that is only on the auction is not in hand: the craft charges it', () => {
+        game.inventory.push({
+            itemHrid: '/items/plain_spear',
+            itemLocationHrid: '/item_locations/market_listing',
+            count: 1,
+        });
+        watchTarget('/items/refined_spear');
+        toggleCrafting('/items/refined_spear');
+        const [target] = watchedTargets();
+
+        // 30M of shards plus the 300M spear to buy, less the 38.4M trade-in: not the shards alone
+        expect(target.cost).toBe(330_000_000 - 38_400_000);
+        expect(target.routes.find((route) => route.id === 'craft').real).toBe(330_000_000 - 38_400_000);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('listed on the market');
+        expect(text()).not.toContain(FAILED);
     });
 
     test('a base piece you do not own is counted into the craft', () => {
@@ -970,7 +1002,12 @@ describe('crafting rather than buying', () => {
         watchTarget('/items/refined_spear');
         toggleCrafting('/items/refined_spear');
 
-        expect(watchedTargets()[0].cost).toBeNull();
+        // The craft route has no price, so it is never quoted as cheap: the pin falls back to Auto
+        const [target] = watchedTargets();
+        expect(target.routes.find((route) => route.id === 'craft')).toMatchObject({ cash: null, priced: false });
+        expect(target.route).toBe('buy');
+        expect(target.cost).toBe(900_000_000 - 38_400_000);
+        expect(target.pinNote).toContain('no price');
     });
 
     test('a piece with no recipe offers no craft switch', () => {
@@ -1027,6 +1064,7 @@ describe('the order of the list', () => {
         game.prices['/items/holy_sword:0'] = { ask: 340_000_000, bid: 300_000_000 };
         watchTarget('/items/holy_sword');
         watchTarget('/items/refined_spear');
+        setRoutePin('/items/refined_spear', 0, 'buy');
         watchTarget('/items/rough_boots');
 
         expect(watchedTargets().map((target) => target.name)).toEqual(['Rough Boots', 'Holy Sword', 'Refined Spear']);
@@ -1114,6 +1152,67 @@ describe('targets nobody is selling at that level', () => {
         // sell the thing you are about to enhance.
         watchTarget('/items/sinister_cape', 7);
         expect(watchedTargets()[0].cost).toBe(40 * 2 * 1_000_000 + 5 * 2_000_000);
+    });
+
+    test('real cost charges the owned copy an enhance uses up, and Auto still never climbs the ladder', () => {
+        // The +5 on your back is worth 1B at the bid. Keeping the old piece, enhancing it gives that sale up
+        game.prices['/items/sinister_cape:5'] = { ask: 0, bid: 1_000_000_000 };
+        game.details['/items/sinister_cape'].isTradable = true;
+        setNoSell(true);
+        watchTarget('/items/sinister_cape', 7);
+        const target = watchedTargets()[0];
+        const run = 40 * 2 * 1_000_000 + 5 * 2_000_000;
+        const direct = target.routes.find((route) => route.id === 'enhance');
+        const ladder = target.routes.find((route) => route.id === 'ladder');
+
+        // Cash is the run, as it always was; the real cost adds the sale of the +5
+        expect(direct.cash).toBe(run);
+        expect(direct.real).toBe(run + Math.floor(calculatePriceAfterTax(1_000_000_000)));
+        // The ladder starts from a bought +0 and consumes nothing of yours
+        expect(ladder.real).toBe(ladder.cash);
+        // The ladder is dearer in cash but cheaper in real cost, and Auto still stays on the direct run:
+        // it is climbed only when pinned, so no card changes on its own
+        expect(ladder.real).toBeLessThan(direct.real);
+        expect(target.route).toBe('enhance');
+        expect(target.cost).toBe(run);
+        setLadder('/items/sinister_cape', 7, true);
+        expect(watchedTargets()[0].route).toBe('ladder');
+        expect(watchedTargets()[0].cost).toBe(ladder.cash);
+    });
+
+    test('a tradable copy with an empty book leaves the enhance unpriced; an untradable one costs nothing', () => {
+        // No bid at +5. Tradable: the sale given up is unknown, so the route has no real cost to compare
+        game.details['/items/sinister_cape'].isTradable = true;
+        // Keeping the old piece: with a sale in the baseline the worn cape's unknown sale would cancel
+        setNoSell(true);
+        watchTarget('/items/sinister_cape', 7);
+        const unknown = watchedTargets()[0].routes.find((route) => route.id === 'enhance');
+        expect(unknown).toMatchObject({ real: null, priced: false });
+
+        game.details['/items/sinister_cape'].isTradable = false;
+        const known = watchedTargets()[0].routes.find((route) => route.id === 'enhance');
+        expect(known.priced).toBe(true);
+        expect(known.real).toBe(known.cash);
+    });
+
+    test('a pinned ladder stands on its cash when the spare has no bid, with no fallback note', () => {
+        game.details['/items/sinister_cape'].isTradable = true;
+        game.inventory.push({
+            itemHrid: '/items/sinister_cape',
+            itemLocationHrid: '/item_locations/inventory',
+            count: 1,
+            enhancementLevel: 2,
+        });
+        watchTarget('/items/sinister_cape', 7);
+        setLadder('/items/sinister_cape', 7, true);
+        const target = watchedTargets()[0];
+        const ladder = target.routes.find((route) => route.id === 'ladder');
+
+        // The sale the spare gives up is unknown, so its real cost is; the pin does not need it
+        expect(ladder.real).toBeNull();
+        expect(target.route).toBe('ladder');
+        expect(target.cost).toBe(ladder.cash);
+        expect(target.pinNote).toBe('');
     });
 
     test('with none owned, it buys a base and enhances that', () => {
@@ -2671,4 +2770,696 @@ describe('what one redraw costs', () => {
         // run, and the chip naming the bench on the card
         expect(benches).toBeLessThanOrEqual(2);
     }, 30_000);
+});
+
+describe("the Philosopher's Mirror build as a route", () => {
+    // The maintainer's case: Furious Spear ★ +13. The game makes a ★+13 from the ★+12 it runs on, an
+    // unrefined Furious Spear +11 (baseItemHrids[0]) and a mirror. Prices are the ones off the enhancement tooltip.
+    const REFINED = '/items/furious_spear_refined';
+    const PLAIN = '/items/furious_spear';
+    const MIRROR = '/items/philosophers_mirror';
+    const bills = [];
+    const craftBills = [];
+
+    // What the game's sale tax leaves of a bid, floored to whole coins (the repo's own rate, not a copy of it)
+    const afterTax = (bid) => Math.floor(calculatePriceAfterTax(bid));
+
+    beforeEach(() => {
+        bills.length = 0;
+        craftBills.length = 0;
+        window.Toolasha = {
+            Actions: {
+                missingMaterialsButton: {
+                    openMaterialsList: (...args) => bills.push(args),
+                    openMissingMaterials: (...args) => craftBills.push(args),
+                },
+            },
+        };
+        game.equipment = new Map();
+        game.details[PLAIN] = { name: 'Furious Spear', equipmentDetail: { type: '/equipment_types/main_hand' } };
+        game.details[REFINED] = {
+            name: 'Furious Spear ★',
+            equipmentDetail: { type: '/equipment_types/main_hand' },
+            baseItemHrids: [PLAIN],
+        };
+        game.details[MIRROR] = { name: "Philosopher's Mirror" };
+        game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 560_000_000 };
+        game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+        game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 2_080_000_000 };
+        game.prices[`${PLAIN}:11`] = { ask: 940_000_000, bid: 900_000_000 };
+        game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 3_700_000_000 };
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    // The refinement that makes a ★ from a plain piece at the same level: a craft route for the card
+    const addRefine = () => {
+        game.actions['/actions/refine_furious'] = {
+            outputItems: [{ itemHrid: REFINED, count: 1 }],
+            inputItems: [{ itemHrid: '/items/shard', count: 266 }],
+            upgradeItemHrid: PLAIN,
+            retainAllEnhancement: true,
+        };
+    };
+    const own = (itemHrid, enhancementLevel, location = '/item_locations/inventory') =>
+        game.inventory.push({ itemHrid, enhancementLevel, count: 1, itemLocationHrid: location });
+    const only = () => watchedTargets()[0];
+
+    test('neither input owned: both bought at ask, the mirror wins when the listing is dearer', () => {
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        expect(target.route).toBe('mirror');
+        expect(target.cost).toBe(2_320_000_000 + 940_000_000 + 612_500_000);
+        expect(target.realCost).toBe(target.cost);
+        expect(target.mirrorBuild.inputs.map((input) => input.owned)).toEqual([false, false]);
+    });
+
+    test('it loses when the listing is cheaper, and the card still offers it as the alternative', () => {
+        game.prices[`${REFINED}:13`] = { ask: 3_000_000_000, bid: 2_800_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        expect(target.route).toBe('buy');
+        expect(target.cost).toBe(3_000_000_000);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Mirror');
+        expect(text()).toContain('▸ Buy');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('an owned copy it consumes is charged at its after-tax bid, never as free', () => {
+        own(REFINED, 12);
+        game.prices[`${REFINED}:13`] = { ask: 3_500_000_000, bid: 3_000_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        const sale = afterTax(2_080_000_000);
+        // 940M + 612.5M of coins is far under the 3.5B listing, but the build gives up the +12 sale
+        // (2.04B) too: 3.59B of real cost, dearer than the listing, so the listing stands
+        expect(target.mirrorBuild.coins).toBe(940_000_000 + 612_500_000);
+        expect(target.mirrorBuild.forgone).toBe(sale);
+        expect(target.mirrorBuild.real).toBe(940_000_000 + 612_500_000 + sale);
+        expect(target.route).toBe('buy');
+        expect(target.cost).toBe(3_500_000_000);
+    });
+
+    test('when it wins with an owned copy, cost is the coins to find and realCost counts the sale', () => {
+        own(REFINED, 12);
+        game.prices[`${REFINED}:13`] = { ask: 3_800_000_000, bid: 3_500_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+        const sale = afterTax(2_080_000_000);
+
+        expect(target.route).toBe('mirror');
+        expect(target.cost).toBe(940_000_000 + 612_500_000);
+        expect(target.realCost).toBe(940_000_000 + 612_500_000 + sale);
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Mirror build:');
+        expect(text()).toContain('gives up');
+        expect(text()).toContain('real cost');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('both inputs owned: only the mirror is bought, both sales are given up', () => {
+        own(REFINED, 12);
+        own(PLAIN, 11);
+        watchTarget(REFINED, 13);
+        const build = only().mirrorBuild;
+
+        expect(build.coins).toBe(612_500_000);
+        expect(build.forgone).toBe(afterTax(2_080_000_000) + afterTax(900_000_000));
+        expect(build.bill).toEqual([{ itemHrid: MIRROR, count: 1 }]);
+    });
+
+    test('a worn piece the build consumes is not also traded in', () => {
+        own(REFINED, 12, '/item_locations/main_hand');
+        const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+        game.equipment = new Map([['/item_locations/main_hand', worn]]);
+        const build = mirrorBuildRoute(REFINED, 13, { worn });
+
+        expect(build.wornConsumed).toBe(true);
+        // No trade-in credit against the coins: the worn piece cannot be sold and mirrored
+        expect(build.cash).toBe(940_000_000 + 612_500_000);
+        // Selling it is the baseline the listing route nets, so it cancels out of the real cost
+        expect(build.real).toBe(940_000_000 + 612_500_000);
+        // Keeping the old piece: no baseline sale, so the consumed copy is a real charge
+        const keeping = mirrorBuildRoute(REFINED, 13, { worn, noSell: true });
+        expect(keeping.real).toBe(940_000_000 + 612_500_000 + afterTax(2_080_000_000));
+    });
+
+    test('a listed copy cannot be consumed, so the input is bought', () => {
+        own(REFINED, 12, '/item_locations/market_listing');
+        const build = mirrorBuildRoute(REFINED, 13);
+
+        expect(build.inputs[0].owned).toBe(false);
+        expect(build.coins).toBe(2_320_000_000 + 940_000_000 + 612_500_000);
+    });
+
+    test('a bought input with no ask makes the route unpriced', () => {
+        own(REFINED, 12);
+        delete game.prices[`${PLAIN}:11`];
+        expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
+    });
+
+    test('an owned copy with no bid keeps the cash, and only the real cost is unknown', () => {
+        // Codex's numbers: owned +12 with no bid, +11 asking 200, mirror asking 100
+        game.prices[`${REFINED}:12`] = { ask: 2_000, bid: 0 };
+        game.prices[`${PLAIN}:11`] = { ask: 200, bid: 100 };
+        game.prices[`${MIRROR}:0`] = { ask: 100, bid: 50 };
+        own(REFINED, 12);
+        const build = mirrorBuildRoute(REFINED, 13);
+        expect(build.cash).toBe(300);
+        expect(build.real).toBeNull();
+
+        watchTarget(REFINED, 13);
+        // Auto skips it for want of a real cost
+        expect(only().route).toBe('buy');
+        // A pin stands on the known cash
+        setRoutePin(REFINED, 13, 'mirror');
+        expect(only().route).toBe('mirror');
+        expect(only().cost).toBe(300);
+        expect(only().pinNote).toBe('');
+        expect(only().routes.find((route) => route.id === 'mirror')).toMatchObject({
+            cash: 300,
+            real: null,
+            priced: false,
+        });
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('no price');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('not applicable: no mirror price, or a level the mirror cannot make', () => {
+        expect(mirrorBuildRoute(REFINED, 2)).toBeNull();
+        delete game.prices[`${MIRROR}:0`];
+        expect(mirrorBuildRoute(REFINED, 13)).toBeNull();
+        watchTarget(REFINED, 13);
+        expect(only().route).toBe('buy');
+        expect(only().cost).toBe(5_000_000_000);
+    });
+
+    test('a plain piece mirrors from its own +(L-1) and +(L-2)', () => {
+        game.prices[`${PLAIN}:12`] = { ask: 1_000_000_000, bid: 900_000_000 };
+        const build = mirrorBuildRoute(PLAIN, 13);
+
+        expect(build.inputs.map((input) => [input.itemHrid, input.level])).toEqual([
+            [PLAIN, 12],
+            [PLAIN, 11],
+        ]);
+    });
+
+    test('a crafted card names the mirror route and Missing Mats shops its inputs', async () => {
+        own(REFINED, 12);
+        addRefine();
+        game.prices['/items/shard:0'] = { ask: 2_380_000, bid: 2_000_000 };
+        watchTarget(REFINED, 13);
+        const target = only();
+
+        // 266 shards (633M) plus a +13 base at 4B is the refine route; the mirror build beats it
+        expect(target.routes.map((route) => route.id)).toEqual(['buy', 'craft', 'mirror']);
+        expect(target.route).toBe('mirror');
+
+        equipmentSavingsPanel.show();
+        const button = equipmentSavingsPanel.panel.querySelector('[data-mirror-bill]');
+        expect(button).toBeTruthy();
+        button.click();
+        await Promise.resolve();
+
+        expect(bills).toHaveLength(1);
+        expect(bills[0][0]).toEqual([
+            { itemHrid: PLAIN, enhancementLevel: 11, count: 1 },
+            { itemHrid: MIRROR, count: 1 },
+        ]);
+    });
+
+    test('an advisor quote stands for itself: no mirror route replaces it', () => {
+        watchTarget(REFINED, 13, { cost: 1_000_000_000, costSource: 'Lab' });
+        const target = only();
+
+        expect(target.route).toBeNull();
+        expect(target.cost).toBe(1_000_000_000);
+    });
+
+    describe('the route table, the chip and the preference', () => {
+        const row = (target, id) => target.routes.find((route) => route.id === id);
+        // Two shards a craft: 266 of them at 2.38M is 633M, and the +13 base is 4B
+        const withShards = () => {
+            addRefine();
+            game.prices['/items/shard:0'] = { ask: 2_380_000, bid: 2_000_000 };
+        };
+
+        test('every route that applies is a row, with cash and real cost, and the chosen one is marked', () => {
+            withShards();
+            own(REFINED, 12);
+            game.prices[`${REFINED}:13`] = { ask: 3_800_000_000, bid: 3_500_000_000 };
+            watchTarget(REFINED, 13);
+            const target = only();
+
+            expect(target.routes.map((route) => route.id)).toEqual(['buy', 'craft', 'mirror']);
+            expect(row(target, 'buy')).toMatchObject({ cash: 3_800_000_000, real: 3_800_000_000, chosen: false });
+            // Cash is what the mirror needs in coins; real adds the +12 sale it gives up
+            expect(row(target, 'mirror').cash).toBe(940_000_000 + 612_500_000);
+            expect(row(target, 'mirror').real).toBe(row(target, 'mirror').cash + afterTax(2_080_000_000));
+            expect(row(target, 'mirror').chosen).toBe(true);
+
+            equipmentSavingsPanel.show();
+            expect(text()).toContain('Real cost');
+            expect(text()).toContain('▸ Mirror');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('a route that does not apply is left out, and one with no price says so', () => {
+            // No recipe, no mirror price
+            delete game.actions['/actions/refine_furious'];
+            delete game.prices[`${MIRROR}:0`];
+            watchTarget(REFINED, 13);
+            expect(only().routes.map((route) => route.id)).toEqual(['buy']);
+
+            game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 560_000_000 };
+            delete game.prices[`${PLAIN}:11`];
+            watchTarget(REFINED, 13);
+            const target = only();
+            expect(row(target, 'mirror')).toMatchObject({ cash: null, real: null, priced: false });
+            equipmentSavingsPanel.show();
+            expect(text()).toContain('no price');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('Auto takes the lowest real cost, not the lowest cash', () => {
+            own(REFINED, 12);
+            game.prices[`${REFINED}:13`] = { ask: 3_500_000_000, bid: 3_000_000_000 };
+            watchTarget(REFINED, 13);
+            const target = only();
+
+            // The mirror needs far less cash, but its real cost is above the listing
+            expect(row(target, 'mirror').cash).toBeLessThan(row(target, 'buy').cash);
+            expect(row(target, 'mirror').real).toBeGreaterThan(row(target, 'buy').real);
+            expect(target.route).toBe('buy');
+        });
+
+        test('Prefer buying, crafting or mirror overrides Auto when that route is priced', () => {
+            withShards();
+            game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+            watchTarget(REFINED, 13);
+            expect(only().route).toBe('mirror');
+
+            game.routePreference = 'buy';
+            expect(only().route).toBe('buy');
+            expect(only().cost).toBe(5_000_000_000);
+
+            game.routePreference = 'craft';
+            expect(only().route).toBe('craft');
+
+            // An unpriced preference falls back to Auto
+            game.routePreference = 'craft';
+            delete game.prices['/items/shard:0'];
+            expect(only().route).toBe('mirror');
+        });
+
+        test('a card pinned to a route overrides the preference', () => {
+            game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+            watchTarget(REFINED, 13);
+            game.routePreference = 'mirror';
+            setRoutePin(REFINED, 13, 'buy');
+
+            expect(only().route).toBe('buy');
+            expect(only().pin).toBe('buy');
+        });
+
+        test('a pinned route with no price falls back to Auto with a note, and keeps the pin', () => {
+            addRefine();
+            watchTarget(REFINED, 13);
+            // No shards priced, so the craft route has no price
+            delete game.prices['/items/shard:0'];
+            setRoutePin(REFINED, 13, 'craft');
+            const target = only();
+
+            expect(row(target, 'craft').priced).toBe(false);
+            expect(target.route).toBe('mirror');
+            expect(target.pinNote).toContain('Craft');
+            expect(routePin(REFINED, 13)).toBe('craft');
+
+            equipmentSavingsPanel.show();
+            expect(equipmentSavingsPanel.panel.querySelector('[data-route-note]')).toBeTruthy();
+            expect(equipmentSavingsPanel.panel.querySelector('[data-target-route]').textContent).toBe('Pinned: Craft');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('the chip steps through Auto and the listed routes', () => {
+            addRefine();
+            watchTarget(REFINED, 13);
+            const offered = only().routes.map((route) => route.id);
+            expect(offered).toEqual(['buy', 'craft', 'mirror']);
+
+            cycleRoutePin(REFINED, 13, offered);
+            expect(routePin(REFINED, 13)).toBe('buy');
+            cycleRoutePin(REFINED, 13, offered);
+            cycleRoutePin(REFINED, 13, offered);
+            expect(routePin(REFINED, 13)).toBe('mirror');
+            cycleRoutePin(REFINED, 13, offered);
+            expect(routePin(REFINED, 13)).toBeNull();
+        });
+
+        test('buy, craft and mirror pins live in `route`/`craft`; ladder and direct are `mode` alone', async () => {
+            const saved = async () => {
+                await flushSavingsWrites();
+                return game.writes.at(-1).value.targets[`${REFINED}::13`];
+            };
+            watchTarget(REFINED, 13);
+
+            setRoutePin(REFINED, 13, 'mirror');
+            expect(await saved()).toMatchObject({ route: 'mirror' });
+            expect((await saved()).craft).toBeUndefined();
+
+            // A craft pin keeps the old Crafting switch, so an older build still reads it
+            setRoutePin(REFINED, 13, 'craft');
+            expect(await saved()).toMatchObject({ route: 'craft', craft: true });
+
+            setRoutePin(REFINED, 13, 'buy');
+            expect((await saved()).craft).toBeUndefined();
+
+            // The ladder never goes through `route`
+            setLadder(REFINED, 13, true);
+            expect(await saved()).toMatchObject({ mode: 'ladder' });
+            expect(['buy', 'craft', 'mirror']).toContain((await saved()).route);
+            setRoutePin(REFINED, 13, null);
+            expect((await saved()).route).toBeUndefined();
+            expect((await saved()).mode).toBe('ladder');
+        });
+
+        test('an older build toggling Crafting is obeyed, either way', async () => {
+            game.stored = {
+                targets: {
+                    [`${REFINED}::13`]: { itemHrid: REFINED, enhancementLevel: 13, route: 'mirror', craft: true },
+                    '/items/holy_sword': { itemHrid: '/items/holy_sword', enhancementLevel: 0, route: 'craft' },
+                },
+            };
+            await Promise.all((game.gameListeners.character_initialized || []).map((handler) => handler({})));
+            await flushSavingsWrites();
+
+            // craft: true beside another route: an older build switched Crafting on
+            expect(routePin(REFINED, 13)).toBe('craft');
+            // route: craft with craft gone: an older build switched Crafting off
+            expect(routePin('/items/holy_sword', 0)).toBe('buy');
+        });
+
+        test('a stored route of ladder or enhance folds into mode, and an older build toggling mode round-trips', async () => {
+            const load = async (targets) => {
+                game.stored = { targets };
+                await Promise.all((game.gameListeners.character_initialized || []).map((handler) => handler({})));
+                await flushSavingsWrites();
+            };
+            const sword = { itemHrid: '/items/holy_sword', enhancementLevel: 5 };
+
+            // What the never-released build wrote: the ladder in `route`, and `mode` beside it or not
+            await load({ '/items/holy_sword::5': { ...sword, route: 'ladder' } });
+            expect(isLaddering('/items/holy_sword', 5)).toBe(true);
+            await load({ '/items/holy_sword::5': { ...sword, route: 'enhance' } });
+            expect(isLaddering('/items/holy_sword', 5)).toBe(false);
+
+            // The old build toggles the ladder off and on again by `mode` alone; the new build obeys each time
+            await load({ '/items/holy_sword::5': { ...sword, route: 'ladder', mode: 'ladder' } });
+            expect(isLaddering('/items/holy_sword', 5)).toBe(true);
+            await load({ '/items/holy_sword::5': { ...sword } });
+            expect(isLaddering('/items/holy_sword', 5)).toBe(false);
+            await load({ '/items/holy_sword::5': { ...sword, mode: 'ladder' } });
+            expect(isLaddering('/items/holy_sword', 5)).toBe(true);
+            // Nothing is left in `route` to disagree with it
+            toggleLaddering('/items/holy_sword', 5);
+            await flushSavingsWrites();
+            expect(game.writes.at(-1).value.targets['/items/holy_sword::5'].route).toBeUndefined();
+            expect(game.writes.at(-1).value.targets['/items/holy_sword::5'].mode).toBeUndefined();
+        });
+
+        test('Missing Mats follows the chosen route, pinned or Auto', async () => {
+            withShards();
+            game.prices[`${REFINED}:13`] = { ask: 5_000_000_000, bid: 4_500_000_000 };
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'craft');
+            equipmentSavingsPanel.show();
+
+            const button = Array.from(equipmentSavingsPanel.panel.querySelectorAll('button')).find(
+                (element) => element.textContent === 'Missing Mats Marketplace'
+            );
+            button.click();
+            await Promise.resolve();
+
+            // The refine recipe's own bill, at the level it was costed for, and not the mirror's
+            expect(craftBills).toHaveLength(1);
+            expect(craftBills[0][0]).toBe('/actions/refine_furious');
+            expect(bills).toHaveLength(0);
+            expect(only().cost).toBe(row(only(), 'craft').cash);
+        });
+
+        test('the mirror is priced on the ask, and an estimate is marked as one', () => {
+            // Ask and bid apart: the build's inputs and the Buy route are asks, so the mirror is too
+            game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 100_000_000 };
+            expect(mirrorBuildRoute(REFINED, 13)).toMatchObject({ mirrorPrice: 612_500_000, estimated: false });
+
+            // No ask on the book: only the resolver's estimate is left, and it is flagged
+            game.prices[`${MIRROR}:0`] = { ask: 0, bid: 500_000_000 };
+            watchTarget(REFINED, 13);
+            expect(mirrorBuildRoute(REFINED, 13)).toMatchObject({ mirrorPrice: 500_000_000, estimated: true });
+            equipmentSavingsPanel.show();
+            expect(text()).toContain('~');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('Auto weighs every route, so a craft is found without the old Crafting switch', () => {
+            addRefine();
+            game.prices['/items/shard:0'] = { ask: 100_000, bid: 90_000 };
+            // The +13 base is on hand and barely bid, so crafting costs 26.6M of shards and a small sale
+            game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 100_000_000 };
+            own(PLAIN, 13);
+            watchTarget(REFINED, 13);
+
+            expect(only().route).toBe('craft');
+            expect(only().cost).toBe(266 * 100_000);
+        });
+
+        test('Auto never climbs the ladder; the old Crafting switch reads as a craft pin', async () => {
+            game.stored = {
+                targets: { [`${REFINED}::13`]: { itemHrid: REFINED, enhancementLevel: 13, craft: true } },
+            };
+            await Promise.all((game.gameListeners.character_initialized || []).map((handler) => handler({})));
+            await flushSavingsWrites();
+            addRefine();
+            game.prices['/items/shard:0'] = { ask: 2_380_000, bid: 2_000_000 };
+
+            expect(routePin(REFINED, 13)).toBe('craft');
+            expect(only().route).toBe('craft');
+        });
+
+        test('real cost is not clamped at zero, so two routes under the trade-in still compare', () => {
+            // A worn sword worth 86.4M after tax; the listing is 50M and the mirror build 30M
+            const worn = { itemHrid: '/items/holy_sword', enhancementLevel: 0 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            game.prices[`${REFINED}:13`] = { ask: 50_000_000, bid: 40_000_000 };
+            game.prices[`${REFINED}:12`] = { ask: 10_000_000, bid: 9_000_000 };
+            game.prices[`${PLAIN}:11`] = { ask: 10_000_000, bid: 9_000_000 };
+            game.prices[`${MIRROR}:0`] = { ask: 10_000_000, bid: 9_000_000 };
+            watchTarget(REFINED, 13);
+            const target = only();
+
+            // Both cost nothing in cash, but the mirror nets further below the trade-in
+            expect(row(target, 'buy').cash).toBe(0);
+            expect(row(target, 'mirror').cash).toBe(0);
+            expect(row(target, 'mirror').real).toBeLessThan(row(target, 'buy').real);
+            expect(target.route).toBe('mirror');
+        });
+
+        test('the chip names the route in force, and a pin that cannot apply says so', () => {
+            watchTarget(REFINED, 13);
+            equipmentSavingsPanel.show();
+            const chip = () => equipmentSavingsPanel.panel.querySelector('[data-target-route]');
+            expect(chip().textContent).toBe('Auto: Mirror');
+            expect(text()).not.toContain('Crafting');
+
+            // No refine recipe at all: pinning craft cannot apply, which is not the same as being unpriced
+            setRoutePin(REFINED, 13, 'craft');
+            const target = only();
+            expect(target.route).toBe('mirror');
+            expect(target.pinNote).toContain("doesn't apply");
+            expect(target.pinNote).not.toContain('no price');
+        });
+
+        test('a craft that uses up the worn piece does not also subtract its trade-in from the cash', () => {
+            withShards();
+            // Wearing the +13 spear the refine would consume
+            const worn = { itemHrid: PLAIN, enhancementLevel: 13 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            game.inventory.push({
+                itemHrid: PLAIN,
+                enhancementLevel: 13,
+                count: 1,
+                itemLocationHrid: '/item_locations/main_hand',
+            });
+            game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 3_700_000_000 };
+            watchTarget(REFINED, 13);
+
+            // 266 shards at 2.38M, in full: the worn piece goes into the craft and cannot be sold too
+            expect(row(only(), 'craft').cash).toBe(266 * 2_380_000);
+        });
+
+        test('a pinned craft stands on its cash when the consumed copy has no bid', () => {
+            withShards();
+            // A spare +13 base in the bag, tradable, with nothing bid for it
+            own(PLAIN, 13);
+            game.prices[`${PLAIN}:13`] = { ask: 4_000_000_000, bid: 0 };
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'craft');
+            const target = only();
+
+            expect(row(target, 'craft').real).toBeNull();
+            expect(target.route).toBe('craft');
+            expect(target.cost).toBe(266 * 2_380_000);
+            expect(target.pinNote).toBe('');
+        });
+
+        test('the worn piece a craft uses up: its unknown sale cancels against the trade-in', () => {
+            withShards();
+            // Wearing the +5 plain spear that the refine to a ★+5 consumes, and nothing bids at +5
+            const worn = { itemHrid: PLAIN, enhancementLevel: 5 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            game.inventory.push({
+                itemHrid: PLAIN,
+                enhancementLevel: 5,
+                count: 1,
+                itemLocationHrid: '/item_locations/main_hand',
+            });
+            game.prices[`${REFINED}:5`] = { ask: 900_000_000, bid: 0 };
+            game.prices[`${PLAIN}:5`] = { ask: 0, bid: 0 };
+            game.stored = {
+                targets: { [`${REFINED}::5`]: { itemHrid: REFINED, enhancementLevel: 5, craft: true } },
+            };
+            return Promise.all((game.gameListeners.character_initialized || []).map((handler) => handler({}))).then(
+                async () => {
+                    await flushSavingsWrites();
+                    const target = only();
+
+                    expect(routePin(REFINED, 5)).toBe('craft');
+                    expect(row(target, 'craft').real).not.toBeNull();
+                    expect(target.route).toBe('craft');
+                    expect(target.cost).toBe(266 * 2_380_000);
+                    expect(target.pinNote).toBe('');
+                }
+            );
+        });
+
+        test('a worn piece the mirror uses up reads as netted while selling, and as given up while keeping', () => {
+            const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            own(REFINED, 12, '/item_locations/main_hand');
+            game.prices[`${REFINED}:13`] = { ask: 9_000_000_000, bid: 8_000_000_000 };
+            watchTarget(REFINED, 13);
+            equipmentSavingsPanel.show();
+
+            // Selling: every route nets this sale, so no "real cost" is tacked on
+            expect(text()).toContain('Uses your worn Furious Spear ★ +12');
+            expect(text()).toContain('sale is counted on every route');
+            expect(text()).not.toContain('gives up');
+            expect(text()).not.toContain('real cost');
+
+            // Keeping the old piece: the sale really is forgone
+            setNoSell(true);
+            equipmentSavingsPanel.render();
+            expect(text()).toContain('gives up');
+            expect(text()).toContain('real cost');
+            expect(text()).not.toContain('worn Furious Spear');
+            expect(text()).not.toContain(FAILED);
+        });
+
+        test('real cost charges the owned base a refine uses up', () => {
+            withShards();
+            own(PLAIN, 13);
+            watchTarget(REFINED, 13);
+            const craft = row(only(), 'craft');
+
+            // The +13 base is held, so it adds no cash; its sale is what the refine gives up
+            expect(craft.real).toBe(craft.cash + afterTax(3_700_000_000));
+        });
+    });
+});
+
+describe('a craft route that cannot make the target, or cannot be priced', () => {
+    // The live card: Grandmaster Magic Charm +12. The recipe takes two Master Magic Charms (nothing lists
+    // them) and upgrades a third; it does not retain enhancement, so it makes a +0.
+    const GRAND = '/items/grandmaster_magic_charm';
+    const MASTER = '/items/master_magic_charm';
+    const MIRROR = '/items/philosophers_mirror';
+
+    beforeEach(() => {
+        game.equipment = new Map();
+        game.details[GRAND] = { name: 'Grandmaster Magic Charm', equipmentDetail: { type: '/equipment_types/charm' } };
+        game.details[MASTER] = { name: 'Master Magic Charm', equipmentDetail: { type: '/equipment_types/charm' } };
+        game.details[MIRROR] = { name: "Philosopher's Mirror" };
+        game.actions['/actions/upgrade_grandmaster_magic_charm'] = {
+            outputItems: [{ itemHrid: GRAND, count: 1 }],
+            inputItems: [{ itemHrid: MASTER, count: 2 }],
+            upgradeItemHrid: MASTER,
+        };
+        game.prices[`${GRAND}:12`] = { ask: 18_000_000_000, bid: 16_000_000_000 };
+        game.prices[`${GRAND}:11`] = { ask: 6_000_000_000, bid: 5_000_000_000 };
+        game.prices[`${GRAND}:10`] = { ask: 3_000_000_000, bid: 2_500_000_000 };
+        game.prices[`${MIRROR}:0`] = { ask: 1_400_000_000, bid: 1_000_000_000 };
+        window.Toolasha = {};
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test('a recipe that does not retain enhancement is no route to a +12, even pinned', () => {
+        // Priced as a +0's materials, it would have quoted a fraction of the 18B listing
+        game.prices[`${MASTER}:0`] = { ask: 324_000_000, bid: 300_000_000 };
+        watchTarget(GRAND, 12);
+        setRoutePin(GRAND, 12, 'craft');
+        const [target] = watchedTargets();
+
+        expect(target.routes.map((route) => route.id)).toEqual(['buy', 'mirror']);
+        expect(target.route).not.toBe('craft');
+        expect(target.pinNote).toContain("doesn't apply");
+        expect(target.cost).toBeGreaterThan(648_000_000);
+        equipmentSavingsPanel.show();
+        expect(text()).not.toContain('Upgrades Master Magic Charm');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the same recipe is a route to the +0, where it does make the target', () => {
+        game.prices[`${MASTER}:0`] = { ask: 324_000_000, bid: 300_000_000 };
+        game.prices[`${GRAND}:0`] = { ask: 2_000_000_000, bid: 1_800_000_000 };
+        watchTarget(GRAND, 0);
+
+        expect(watchedTargets()[0].routes.map((route) => route.id)).toContain('craft');
+    });
+
+    test('a craft with a leg nobody quotes is unpriced, never a partial sum', () => {
+        game.prices[`${GRAND}:0`] = { ask: 2_000_000_000, bid: 1_800_000_000 };
+        // The planner totals 648M but one leg under it is a purchase with no price
+        window.Toolasha = {
+            Actions: {
+                craftingPlanCalculator: {
+                    computeBestCraftingPlan: (itemHrid) => ({
+                        itemHrid,
+                        strategy: 'craft',
+                        totalCost: 648_000_000,
+                        buyPrice: null,
+                        children: [
+                            { itemHrid: MASTER, strategy: 'buy', buyPrice: null, totalCost: 648_000_000, children: [] },
+                        ],
+                    }),
+                },
+            },
+        };
+        watchTarget(GRAND, 0);
+        const [target] = watchedTargets();
+        const craft = target.routes.find((route) => route.id === 'craft');
+
+        expect(craft).toMatchObject({ cash: null, real: null, priced: false });
+        expect(target.route).toBe('buy');
+        expect(target.cost).toBe(2_000_000_000);
+    });
 });

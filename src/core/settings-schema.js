@@ -821,6 +821,19 @@ export const settingsGroups = {
                 default: false,
                 help: 'Puts a Save for / Stop saving button beside Sell when you click a piece of equipment, which is how a target gets onto the Equipment Savings list. Off by default because it changes a menu you use for other things',
             },
+            equipmentWatch_routePreference: {
+                id: 'equipmentWatch_routePreference',
+                label: 'Equipment Watch: Preferred route',
+                type: 'select',
+                default: 'auto',
+                options: [
+                    { value: 'auto', label: 'Auto (lowest real cost)' },
+                    { value: 'buy', label: 'Prefer buying' },
+                    { value: 'craft', label: 'Prefer crafting' },
+                    { value: 'mirror', label: 'Prefer mirror' },
+                ],
+                help: 'Applies to Equipment Watch cards whose route chip is on Auto: the preferred route is used whenever it is priced and applicable for that card, otherwise the card falls back to Auto, which takes the lowest real cost (coins plus the sale value of any copy of yours the route uses up). A card pinned to a route ignores this',
+            },
             combatText_floating: {
                 id: 'combatText_floating',
                 label: 'Floating Combat Text: Damage numbers over the units taking them',

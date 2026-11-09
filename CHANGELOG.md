@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Equipment Watch compares buying, crafting and a Philosopher's Mirror build
+
+Each card lists every route with the cash you need and its real cost (cash plus the sale you give up on any copy it uses up), and Auto picks the cheapest; pin a route on the card, or set a preference in settings. The bar still counts the cash you need.
+
 ### Lab Sim whole-run fight lines are easier to read
 
 Each expanded row now lists only the fights an upgrade changes, biggest gain first, in points ("+0.8 pts") with whole tries and "never won" instead of 1000.0; every unchanged fight shares one line with its win rate.
