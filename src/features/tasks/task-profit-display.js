@@ -2192,8 +2192,11 @@ class TaskProfitDisplay {
             // where the record arrives after the card drew. A card with no finished result is skipped by
             // `_retierOpenCombatEstimates`, so the check lives here: a different tier is a different
             // fight, so simulate again; the same tier only takes the latest note on where it came from.
+            // The tier setting itself can change while this ran: the card would otherwise finish in the old
+            // mode, since the setting's handler finds only cards with a finished result
+            const modeChanged = (goTierMode() === GO_TIER_BEST) !== searchTiers;
             const latestTier = searchTiers ? resolvedTier : this._resolveEstimateTier(zoneHrid, monsterHrid, mode);
-            if (latestTier.tier !== estimateTier) {
+            if (modeChanged || latestTier.tier !== estimateTier) {
                 if (retierDepth < MAX_RETIER_RERUNS) {
                     return this._runCombatSimEstimate(
                         container,
