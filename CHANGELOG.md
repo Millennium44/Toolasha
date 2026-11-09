@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Task Go keeps the combat tier you picked in the game
 
-A combat task's estimate and Go now use the tier the zone's own Difficulty box already has, so Go no longer resets your per-zone picks (it set T0 on zones with no recorded run). "Combat estimate: tier for Go" in Tasks switches back to the tier queued or last run.
+A combat task's estimate and Go now use the tier the zone's own Difficulty box already has, and Go never changes it (it used to reset zones with no recorded run to T0). The new "Combat estimate: tier" setting can instead simulate every tier and pick the best Combat Sim Score, skipping tiers where you die.
 
 ### Equipment Watch compares buying, crafting and a Philosopher's Mirror build
 
