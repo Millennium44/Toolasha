@@ -3525,6 +3525,28 @@ describe('a craft route that cannot make the target, or cannot be priced', () =>
         expect(target.route).toBe('buy');
         expect(target.cost).toBe(2_000_000_000);
     });
+
+    test('the planner is handed the pricing mode by name, so it applies the patient tick itself', () => {
+        game.prices[`${GRAND}:0`] = { ask: 2_000_000_000, bid: 1_800_000_000 };
+        game.profitMode = 'optimistic';
+        const modes = [];
+        window.Toolasha = {
+            Actions: {
+                craftingPlanCalculator: {
+                    computeBestCraftingPlan: (itemHrid, quantity, mode) => {
+                        modes.push(mode);
+                        return { itemHrid, strategy: 'buy', totalCost: 1, buyPrice: 1, children: [] };
+                    },
+                },
+            },
+        };
+        watchTarget(GRAND, 0);
+        watchedTargets();
+
+        // A bare 'bid' would be taken as an explicit side, and the planner skips the tick for those
+        expect(modes.length).toBeGreaterThan(0);
+        expect(new Set(modes)).toEqual(new Set(['optimistic']));
+    });
 });
 
 describe('the pricing mode setting decides which side of the book each price is read on', () => {

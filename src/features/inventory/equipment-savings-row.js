@@ -1859,9 +1859,13 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
  */
 function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
+    // The mode's own name, not the side it resolves to: the planner then prices through the profit
+    // context and applies the patient tick, where a bare 'ask'/'bid' is taken as an explicit side and
+    // skips it (the same call the action panel's cost summary makes)
+    const plannerMode = config.getSettingValue?.('profitCalc_pricingMode') || 'hybrid';
     const plannerBase = (hrid) => {
         if (planner) {
-            const plan = planner(hrid, 1, buySide());
+            const plan = planner(hrid, 1, plannerMode);
             if (planPriced(plan)) return plan.totalCost;
         }
         const ask = buyPrice(hrid, 0);
@@ -1872,7 +1876,7 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         try {
             let total = 0;
             for (const input of recipe.inputItems) {
-                const plan = planner(input.itemHrid, input.count || 0, buySide());
+                const plan = planner(input.itemHrid, input.count || 0, plannerMode);
                 if (!planPriced(plan)) return null;
                 total += plan.totalCost;
             }
