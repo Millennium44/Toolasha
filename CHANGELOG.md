@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Equipment Watch follows the pricing mode
+
+Equipment Watch now buys and sells on the sides your pricing mode setting picks, like the rest of Toolasha's profit figures, instead of always buying at ask and selling at bid. The price labels on its cards name the side in use.
+
 ### Equipment Watch always lists Buy and Mirror, and the route chip no longer vanishes
 
 Buy and Mirror now stay in a card's route table as "no price" when nobody is selling or the mirror is unpriced, rather than disappearing and leaving Craft alone. The chip stays after you set a card back to Auto, and a new "All routes to Auto" button unpins every card at once. Cards added from an upgrade advisor are now costed live like any other, with the advisor's figure kept as a reference line.
