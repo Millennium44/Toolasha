@@ -6,9 +6,15 @@ const game = vi.hoisted(() => ({
     characterData: { character: { id: 'char-1' } },
     snapshots: [],
     resolveScore: null,
+    extraAuras: true,
 }));
 
-vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true), onSettingChange: vi.fn() } }));
+vi.mock('../../core/config.js', () => ({
+    default: {
+        getSetting: vi.fn((key) => (key === 'characterCard_extraAuras' ? game.extraAuras : true)),
+        onSettingChange: vi.fn(),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         get characterData() {
@@ -40,6 +46,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
 
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
+import { buildCharacterSheetLink } from './character-sheet.js';
 
 function addModal() {
     const modal = document.createElement('div');
@@ -56,6 +63,9 @@ describe('character card button', () => {
         game.characterId = 'char-1';
         game.snapshots = [];
         game.resolveScore = null;
+        game.characterData = { character: { id: 'char-1' } };
+        game.extraAuras = true;
+        vi.clearAllMocks();
         window.open = vi.fn();
     });
 
@@ -146,5 +156,53 @@ describe('character card button', () => {
         loadoutSnapshot.resolveEquipment = origResolve;
         expect(resolveEquipment).toHaveBeenCalledTimes(1);
         expect(resolveEquipment.mock.calls[0][0].id).toBe('b');
+    });
+
+    test('enriches only a verified own shared profile with current learned abilities and loadouts', async () => {
+        game.characterData.characterAbilities = [{ abilityHrid: '/abilities/speed_aura', level: 30 }];
+        game.characterData.characterLoadoutMap = { 1: { abilityMap: { 1: '/abilities/speed_aura' } } };
+        const own = { profile: { sharableCharacter: { id: 'char-1', name: 'Me' }, equippedAbilities: [] } };
+        const pending = handleViewCardClick(own);
+        game.resolveScore({ total: 123 });
+        await pending;
+        const [, , card, , , , options] = buildCharacterSheetLink.mock.calls[0];
+        expect(card.characterAbilities).toBe(game.characterData.characterAbilities);
+        expect(card.characterLoadoutMap).toBe(game.characterData.characterLoadoutMap);
+        expect(card.equippedAbilities).toBe(own.profile.equippedAbilities);
+        expect(own.profile).not.toHaveProperty('characterAbilities');
+        expect(options).toEqual({ includeLoadoutAuras: true });
+    });
+
+    test.each(['other', undefined])('never borrows local auras for a shared profile with id %s', async (id) => {
+        game.characterData.character.name = 'Same';
+        game.characterData.characterAbilities = [{ abilityHrid: '/abilities/speed_aura', level: 99 }];
+        game.characterData.characterLoadoutMap = { 1: { abilityMap: { 1: '/abilities/speed_aura' } } };
+        const other = { profile: { sharableCharacter: { id, name: 'Same' }, equippedAbilities: [] } };
+        const pending = handleViewCardClick(other);
+        game.resolveScore({ total: 1 });
+        await pending;
+        expect(buildCharacterSheetLink.mock.calls[0][2]).toBe(other.profile);
+        expect(buildCharacterSheetLink.mock.calls[0][2]).not.toHaveProperty('characterAbilities');
+    });
+
+    test('checks the extra-aura setting again after the score await', async () => {
+        const pending = handleViewCardClick();
+        game.extraAuras = false;
+        game.resolveScore({ total: 1 });
+        await pending;
+        expect(buildCharacterSheetLink.mock.calls[0][6]).toEqual({ includeLoadoutAuras: false });
+    });
+
+    test('snapshot exports preserve the current character’s learned/loadout data for extra auras', async () => {
+        game.characterData.characterAbilities = [{ abilityHrid: '/abilities/mystic_aura', level: 30 }];
+        game.characterData.characterLoadoutMap = { 1: { abilityMap: { 1: '/abilities/mystic_aura' } } };
+        game.snapshots = [{ id: 1, name: 'Main', equipment: [], abilities: [], food: [], drinks: [] }];
+        const pending = handleViewCardFromSnapshot('Main', 1);
+        game.resolveScore({ total: 1 });
+        await pending;
+        const [, , card, , , , options] = buildCharacterSheetLink.mock.calls[0];
+        expect(card.characterAbilities).toBe(game.characterData.characterAbilities);
+        expect(card.characterLoadoutMap).toBe(game.characterData.characterLoadoutMap);
+        expect(options).toEqual({ includeLoadoutAuras: true });
     });
 });

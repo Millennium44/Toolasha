@@ -9,14 +9,73 @@
  */
 
 /**
+ * Extra learned auras used by this character's saved combat or all-skills loadouts.
+ * Read the server loadout map, not the optional snapshot feature's storage/cache: the
+ * card must still work with snapshots disabled, and must never borrow another player's data.
+ * @param {Object} characterData - The character being exported
+ * @param {Object} clientData - Ability definitions
+ * @param {Array<Object>} equippedAbilities - Abilities already represented on the card
+ * @returns {Array<Object>} At most three additional auras, in saved loadout order
+ */
+function savedLoadoutAuras(characterData, clientData, equippedAbilities) {
+    const characterId =
+        characterData.sharableCharacter?.id ||
+        characterData.character?.id ||
+        characterData.characterSkills?.[0]?.characterID;
+    if (!characterId) return [];
+
+    const belongsToCharacter = (entry) =>
+        entry?.characterID == null || String(entry.characterID) === String(characterId);
+    const learned = new Map();
+    for (const ability of characterData.characterAbilities || []) {
+        if (!belongsToCharacter(ability) || !Number.isInteger(ability?.level) || ability.level < 1) continue;
+        learned.set(ability.abilityHrid, ability);
+    }
+    const seen = new Set(equippedAbilities.filter(Boolean).map((ability) => ability.abilityHrid));
+    const extras = [];
+    const loadouts = Object.values(characterData.characterLoadoutMap || {})
+        .filter(
+            (loadout) =>
+                loadout &&
+                belongsToCharacter(loadout) &&
+                (!loadout.actionTypeHrid || loadout.actionTypeHrid === '/action_types/combat')
+        )
+        .sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0));
+    for (const loadout of loadouts) {
+        for (const hrid of Object.values(loadout.abilityMap || {})) {
+            if (
+                typeof hrid !== 'string' ||
+                !/^\/abilities\/[a-z0-9_]+$/.test(hrid) ||
+                seen.has(hrid) ||
+                !clientData?.abilityDetailMap?.[hrid]?.isSpecialAbility ||
+                !learned.has(hrid)
+            ) {
+                continue;
+            }
+            seen.add(hrid);
+            extras.push(learned.get(hrid));
+            if (extras.length === 3) return extras;
+        }
+    }
+    return extras;
+}
+
+/**
  * Build character sheet segments from cached character data
  * @param {Object} characterData - Character data from dataManager or profile cache
  * @param {Object} clientData - Init client data for lookups
  * @param {Object} consumablesData - Optional character data containing consumables (for profile_shared data)
  * @param {number} combatScore - Optional combat score to include in the URL
+ * @param {Object} options - Card options; includeLoadoutAuras adds learned auras in slots 6–8
  * @returns {Object} Character sheet segments
  */
-export function buildSegmentsFromCharacterData(characterData, clientData, consumablesData = null, combatScore = null) {
+export function buildSegmentsFromCharacterData(
+    characterData,
+    clientData,
+    consumablesData = null,
+    combatScore = null,
+    options = {}
+) {
     if (!characterData) {
         throw new Error('Character data is required');
     }
@@ -219,6 +278,12 @@ export function buildSegmentsFromCharacterData(characterData, clientData, consum
         }
         orderedAbilities.push(specialAbility);
 
+        // Slots 1–5 describe the equipped bar. The external viewer has three more
+        // tiles but no equipped/unequipped styling flag; keep extras after the bar.
+        if (options.includeLoadoutAuras) {
+            orderedAbilities.push(...savedLoadoutAuras(characterData, clientData, abilities));
+        }
+
         orderedAbilities.forEach((ability, i) => {
             if (!ability) return;
             const abilityId = ability.abilityHrid.replace('/abilities/', '');
@@ -379,6 +444,7 @@ export function formatFoodData(foodSlots, drinkSlots) {
  * @param {Object} clientData - Init client data for lookups
  * @param {Object} consumablesData - Optional character data containing consumables (for profile_shared data)
  * @param {number} combatScore - Optional combat score to include in the URL
+ * @param {Object} options - Card options forwarded to the segment builder
  * @returns {string} Character sheet URL
  */
 export function buildCharacterSheetLink(
@@ -387,13 +453,14 @@ export function buildCharacterSheetLink(
     characterData = null,
     clientData = null,
     consumablesData = null,
-    combatScore = null
+    combatScore = null,
+    options = {}
 ) {
     let segments;
 
     // Prefer cached character data over DOM parsing
     if (characterData && clientData) {
-        segments = buildSegmentsFromCharacterData(characterData, clientData, consumablesData, combatScore);
+        segments = buildSegmentsFromCharacterData(characterData, clientData, consumablesData, combatScore, options);
     } else {
         // DOM parsing fallback not yet implemented
         throw new Error('Character data and client data are required (DOM parsing not implemented)');

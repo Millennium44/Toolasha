@@ -2778,7 +2778,15 @@ export const settingsGroups = {
                 label: 'Profile panel: Show View Card button',
                 type: 'checkbox',
                 default: true,
-                help: 'Adds button to open character sheet in external viewer',
+                help: 'Adds a button to send the displayed character build to tib-san.gitlab.io and open its character sheet viewer.',
+            },
+            characterCard_extraAuras: {
+                id: 'characterCard_extraAuras',
+                label: 'Character card: Include saved-loadout auras',
+                type: 'checkbox',
+                default: true,
+                requires: 'characterCard',
+                help: 'Adds up to three other learned auras to tib-san.gitlab.io cards, in saved combat/all-skills loadout order, at their current levels. Slots 1–5 remain equipped; slots 6–8 are extras. The external viewer does not label or dim the extras. Other players need their own learned/loadout data; yours is never used for them.',
             },
             eliteAchievementReminder: {
                 id: 'eliteAchievementReminder',

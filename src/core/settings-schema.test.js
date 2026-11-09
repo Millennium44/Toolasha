@@ -12,6 +12,18 @@ import process from 'node:process';
 import { describe, test, expect } from 'vitest';
 import { getSettingDefinition } from './settings-schema.js';
 
+describe('character card extra auras', () => {
+    test('the setting names the external host, equipped slots, cap, and renderer limitation', () => {
+        const setting = getSettingDefinition('characterCard_extraAuras');
+        expect(setting.default).toBe(true);
+        expect(setting.requires).toBe('characterCard');
+        expect(setting.help).toContain('tib-san.gitlab.io');
+        expect(setting.help).toContain('three');
+        expect(setting.help).toContain('Slots 1–5 remain equipped');
+        expect(setting.help).toContain('does not label or dim');
+    });
+});
+
 describe('guild trial defaults', () => {
     test('the raw diagnostic trace is opt-in, and its help states the cost plainly', () => {
         const setting = getSettingDefinition('guildTrialDiagnosticTrace');

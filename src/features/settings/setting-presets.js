@@ -136,6 +136,7 @@ const COMBAT_EXTRAS = [
     'abilitiesTriggers',
     'abilities_dictionaryButton',
     'characterCard',
+    'characterCard_extraAuras',
     'loadoutSnapshot',
     'manaTracker',
     'lootLogStats',

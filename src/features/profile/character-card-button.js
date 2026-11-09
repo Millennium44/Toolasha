@@ -129,14 +129,37 @@ export async function handleViewCardClick(profileData) {
             return;
         }
 
+        // A shared profile omits the learned list/loadouts even when it is ours.
+        // Enrich only on a verified id match, never on the displayed name. Keep
+        // this export-only data out of the build score and equipped ability list.
+        const profileCharacterId =
+            characterData.sharableCharacter?.id ||
+            characterData.character?.id ||
+            characterData.characterSkills?.[0]?.characterID;
+        const ownCharacter = dataManager.characterData;
+        const isOwnProfile =
+            profileData?.profile &&
+            startCharacterId != null &&
+            profileCharacterId != null &&
+            String(profileCharacterId) === String(startCharacterId) &&
+            String(ownCharacter?.character?.id) === String(startCharacterId);
+        const cardCharacterData = isOwnProfile
+            ? {
+                  ...characterData,
+                  characterAbilities: ownCharacter.characterAbilities,
+                  characterLoadoutMap: ownCharacter.characterLoadoutMap,
+              }
+            : characterData;
+
         // Build character sheet link using cached data (preferred) or DOM fallback
         const url = buildCharacterSheetLink(
             _modal,
             'https://tib-san.gitlab.io/mwi-character-sheet/',
-            characterData,
+            cardCharacterData,
             clientData,
             consumablesData,
-            combatScore
+            combatScore,
+            { includeLoadoutAuras: config.getSetting('characterCard_extraAuras') === true }
         );
 
         // Open in new tab
@@ -255,7 +278,8 @@ export async function handleViewCardFromSnapshot(snapshotName, snapshotId) {
             syntheticCharacterData,
             clientData,
             consumablesData,
-            combatScore
+            combatScore,
+            { includeLoadoutAuras: config.getSetting('characterCard_extraAuras') === true }
         );
 
         window.open(url, '_blank', 'noopener');

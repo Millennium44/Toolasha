@@ -54,6 +54,10 @@ While you fought solo waiting for a party to ready, each new fight made the Comb
 
 Replay, cohort selection, Save pool and Sanitized exports now wait for saved fights to finish loading, avoiding incomplete results during startup. Failed loads can be retried, and resetting a large history remains protected from old entries returning.
 
+### Character cards include saved-loadout auras
+
+Character cards can now include up to three other learned auras from saved combat or all-skills loadouts, at their current levels. Turn this off in the card settings; equipped abilities keep the first five tiles, while the external viewer’s final three tiles hold extras without separate styling.
+
 ### Equipment Watch follows the pricing mode
 
 Equipment Watch now buys and sells on the sides your pricing mode setting picks, like the rest of Toolasha's profit figures, instead of always buying at ask and selling at bid. The price labels on its cards name the side in use.

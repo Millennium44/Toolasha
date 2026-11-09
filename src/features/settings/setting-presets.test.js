@@ -245,6 +245,7 @@ describe('what a preset resolves to', () => {
 
     test('Combat turns the simulators on and leaves the market off', () => {
         const values = resolvePresetValues(getPreset('combat'));
+        expect(values.characterCard_extraAuras).toBe(true);
         expect(values.combatSim).toBe(true);
         expect(values.labSim).toBe(true);
         expect(values.damageTracker).toBe(true);
