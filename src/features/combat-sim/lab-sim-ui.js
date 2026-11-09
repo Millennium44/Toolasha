@@ -13119,7 +13119,7 @@ export function describeAllFightsPlan(plan) {
     return (
         `${head}. Big enough that each one runs ${Math.round(plan.trialScale * 100)}% of the ${plan.requestedHours}h ` +
         'asked for — every fight is still simulated, the win rates are just noisier ' +
-        '(Performance: "Shorten above N sims"). Stop cancels at any point.'
+        '(Sim settings: "Shorten above N sims"). Stop cancels at any point.'
     );
 }
 

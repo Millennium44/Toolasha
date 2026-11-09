@@ -14,9 +14,13 @@ Each expanded row now lists only the fights an upgrade changes, biggest gain fir
 
 Expanding a row in the Lab Upgrade tab's whole-run table now says in a line or two, right under the exact Cost, where it comes from: the market buy and after-tax resale, the expected enhancement path, or the mirror build. Watch on those rows now uses the purchase price.
 
+### Shared seed switch in the sims, strip renamed Sim settings
+
+The strip in Combat Sim and Lab Sim is now "⚙ Sim settings" and adds a Shared seed checkbox: on, the baseline and every upgrade see the same random draws so small differences reflect the upgrade rather than luck.
+
 ### Sim performance limits are editable in the panels
 
-Combat Sim and Lab Sim each have a ⚙ Performance strip for threads (with the real count in use), simulations at once, Ignore thread caps (Threads 0 then uses every core) and, in Combat Sim, the close-call re-sim time cap (0 = none). Big Lab whole-run analyses no longer cut each sim short; set "Shorten above N sims" in the strip to bring that back.
+Combat Sim and Lab Sim each have a ⚙ Sim settings strip for threads (with the real count in use), simulations at once, Ignore thread caps (Threads 0 then uses every core) and, in Combat Sim, the close-call re-sim time cap (0 = none). Big Lab whole-run analyses no longer cut each sim short; set "Shorten above N sims" in the strip to bring that back.
 
 <!-- shipped in 3.81.0 -->
 
