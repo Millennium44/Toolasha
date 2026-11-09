@@ -67,6 +67,7 @@ import { capProfitRateCached } from '../../utils/liquidity-cap.js';
 import { resolveZoneTier, describeZoneTier, goTierMode, GO_TIER_BEST } from '../../utils/zone-tier-memory.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
+import { stableStringify } from '../../utils/stable-stringify.js';
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
@@ -594,9 +595,9 @@ class TaskProfitDisplay {
         this._estimateLayouts = new Map();
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
-        // `character|zoneHrid|loadout` → {promise, t} shared full-zone sims. Keyed by
-        // character because a switch changes the gear the sim was run with, and
-        // expired entries are dropped as they are met rather than kept forever.
+        // Shared full-zone sims, keyed by character, zone, tier, loadout and the
+        // effective player/buff inputs. Expired entries are dropped as they are
+        // met rather than kept forever; replaced game tables also invalidate a hit.
         this._zoneSimCache = new Map();
         // taskNode → { zoneHrid, predictedFights }, the last successfully completed
         // estimate for that card. Cleared the instant a new run starts (config
@@ -2148,14 +2149,16 @@ class TaskProfitDisplay {
             const sharedZoneSim = mode === 'zone' || isBossTarget;
             const playerHrid = selfDTO?.hrid || 'player1';
             const simAtTier = async (tier) => {
+                const communityBuffs = getCommunityBuffs();
                 if (sharedZoneSim) {
-                    // Tier is part of the cache key: a shared sim result is only
-                    // interchangeable between cards simulating the same zone at
-                    // the same tier — strength scales with tier, so a T3 result
-                    // reused for a T0 estimate (or vice versa) would be wrong.
-                    const cacheKey = `${simCharacterId || ''}|${zoneHrid}|${tier}|${loadoutName || ''}`;
+                    // A reroll, remaining kill count, edited snapshot or party change
+                    // can change the fight without changing the zone/loadout name.
+                    // Key the applied DTOs (including each player's own task damage
+                    // targets/counts) and buffs, preserving sharing for identical cards.
+                    const inputKey = stableStringify({ players, communityBuffs });
+                    const cacheKey = `${simCharacterId || ''}|${zoneHrid}|${tier}|${loadoutName || ''}|${inputKey}`;
                     const cached = this._zoneSimCache.get(cacheKey);
-                    if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
+                    if (cached && cached.clientData === initClientData && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
                         return cached.promise;
                     } else {
                         // Anything past its time is dropped on the way through, so a
@@ -2169,7 +2172,7 @@ class TaskProfitDisplay {
                                 zoneHrid,
                                 difficultyTier: tier,
                                 hours: SIM_HOURS,
-                                communityBuffs: getCommunityBuffs(),
+                                communityBuffs,
                                 // The Tasks panel is a task estimate by definition, so
                                 // it never consults the general task-damage setting —
                                 // an estimate of how long a task takes must model the
@@ -2181,11 +2184,15 @@ class TaskProfitDisplay {
                             },
                             ...simArgs
                         );
-                        this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
+                        this._zoneSimCache.set(cacheKey, { promise, t: Date.now(), clientData: initClientData });
                         try {
                             return await promise;
                         } catch (error) {
-                            this._zoneSimCache.delete(cacheKey);
+                            // A replacement may already be running after expiry or
+                            // fresh game data. An older failure only owns its entry.
+                            if (this._zoneSimCache.get(cacheKey)?.promise === promise) {
+                                this._zoneSimCache.delete(cacheKey);
+                            }
                             throw error;
                         }
                     }
@@ -2197,7 +2204,7 @@ class TaskProfitDisplay {
                             zoneHrid,
                             difficultyTier: tier,
                             hours: SIM_HOURS,
-                            communityBuffs: getCommunityBuffs(),
+                            communityBuffs,
                             // The same per-monster rule as the zone sim above, and for
                             // the same reason. Solo mode has already narrowed the spawn
                             // table to this card's task monster, so "every fight counts"
@@ -2239,9 +2246,9 @@ class TaskProfitDisplay {
 
             // The sim took a while, and the card may have progressed under it
             // (or been queued from an auto-estimate, or a Re-run, holding the
-            // progress of when the card was first drawn). Remaining kills are
-            // read off the card as it is now; the sim result does not depend
-            // on them.
+            // progress of when the card was first drawn). Remaining-time figures
+            // read the card as it is now; the simulation models the board snapshot
+            // captured at startup. A new estimate rebuilds that snapshot.
             // The remembered tiers (or the queue) can have moved while this simulated — the login case,
             // where the record arrives after the card drew. A card with no finished result is skipped by
             // `_retierOpenCombatEstimates`, so the check lives here: a different tier is a different
@@ -2287,9 +2294,8 @@ class TaskProfitDisplay {
             // Task completion rewards (one-time: coins + token value + Purple's Gift)
             const rewardValue = calculateTaskRewardValue(liveTaskData.coinReward, liveTaskData.taskTokenReward);
 
-            // Everything the result rests on that does not change as the task
-            // progresses, so a progress change can redraw the figures that do
-            // (remaining kills, time, totals, the zone summary, Go's count)
+            // Keep the completed simulation and pricing snapshot so progress can
+            // redraw remaining kills, time, totals, the zone summary and Go's count
             // without simulating again or dropping the chosen loadout and mode.
             const cached = {
                 description: liveTaskData.description,
