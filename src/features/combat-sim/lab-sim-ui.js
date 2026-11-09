@@ -10185,8 +10185,8 @@ class LabSimUI {
                           reachesTarget: levels.reachesTarget,
                       }
                     : {}),
+                result: r,
                 desc: r.candidate?.description || '',
-                requirementHtml: upgradeRequirementHtml(r),
                 candidate: r.candidate,
                 actions: combatSimUI.upgradeRowActionsHtml(r),
                 // Unpriced sorts last rather than as the cheapest thing on the
@@ -10201,7 +10201,6 @@ class LabSimUI {
                 deltaColor,
                 goldPerPct,
                 goldPerPctStr: goldPerPctCell(r.cost, delta),
-                detailHtml: this._renderUpgradeCostDetail(r, analysisResult?.baseline),
                 // The cells print the short form; sorting above reads `cost` and `goldPerPct`, never these
                 exactHtml: goldExactHtml(r.cost, goldPerPct),
             };
@@ -10651,6 +10650,12 @@ class LabSimUI {
             });
 
         const renderAll = () => {
+            // Local levels and the route-comparison opt-in can change without a new analysis.
+            // Refresh display-only fields for both views; keep the analyzed costs and scores.
+            for (const row of goldRows) {
+                row.requirementHtml = upgradeRequirementHtml(row.result);
+                row.detailHtml = this._renderUpgradeCostDetail(row.result, analysisResult?.baseline);
+            }
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(communityRows, sortState.community.key, sortState.community.dir);
@@ -11996,7 +12001,6 @@ class LabSimUI {
                 deltaColor,
                 goldPerPct,
                 goldPerPctStr: goldPerPctCell(r.cost, deltaVal),
-                requirementHtml: upgradeRequirementHtml(r),
                 // Whatever handoff buttons the shared builder emits — the same
                 // ones the combat Upgrade tab's gear rows carry, since a
                 // skilling tool is bought in exactly the same marketplace
@@ -12030,10 +12034,6 @@ class LabSimUI {
                                   ', '
                               )} is combat gear you keep in a loadout, so its resale is deliberately not credited — selling it to fund skilling gear is not a trade anybody makes.`
                     : '',
-                // The same click-to-expand the combat tab's gold rows carry. A
-                // Cost column with no way to ask what is behind it is exactly
-                // where a dash reads as free and a kept-gear price reads as wrong
-                detailHtml: this._renderClearRateCostDetail(r, baseline),
                 exactHtml: goldExactHtml(r.cost, goldPerPct),
             };
         });
@@ -12673,6 +12673,12 @@ class LabSimUI {
             });
 
         const renderAll = () => {
+            // Local levels and the route-comparison opt-in can change without a new analysis.
+            // Refresh display-only fields for both views; keep the analyzed costs and scores.
+            for (const row of goldRows) {
+                row.requirementHtml = upgradeRequirementHtml(row.result);
+                row.detailHtml = this._renderClearRateCostDetail(row.result, baseline);
+            }
             sortRows(tokenRows, sortState.token.key, sortState.token.dir);
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(guildRows, sortState.guild.key, sortState.guild.dir);

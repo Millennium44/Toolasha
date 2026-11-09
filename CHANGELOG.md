@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 
+### Lab upgrade details stay current
+
+Sorting or switching Lab upgrade views now keeps wear warnings in step with your current levels and hides shared-route comparisons when the experiment is turned off. Item icons and the analyzed costs and scores stay intact.
+
 ### Mirror shopping reserves owned inputs
 
 Equipment Watch now reserves and rechecks owned inputs used by a Mirror build while its shopping list is open, so another bill or an inventory change cannot silently reuse them.

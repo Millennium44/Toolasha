@@ -18120,3 +18120,65 @@ describe('Combat Sim item icons (#862)', () => {
         }
     });
 });
+
+describe('combined UI audit: Combat redraw', () => {
+    test('keeps current wear warning, icons and comparison setting across repeated table/card switches', async () => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const { default: config } = await import('../../core/config.js');
+        const details = vi.spyOn(dm, 'getItemDetails').mockImplementation((hrid) => ({
+            name: hrid.split('/').pop(),
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        }));
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        let enabled = true;
+        const setting = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'upgradeAdvisor_compareRoutes' ? enabled : fallback));
+        const sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        document.body.append(sprite);
+        resetSpriteSheetCache();
+        ui.buildPanel();
+        try {
+            const upgrade = row('old_ring +7 → new_ring +9', {
+                slot: '/equipment_types/ring',
+                cost: 100,
+                profitGain: 50,
+            });
+            upgrade.candidate.currentHrid = '/items/old_ring';
+            upgrade.candidate.upgradeHrid = '/items/new_ring';
+            upgrade.costDetail = {
+                gross: 100,
+                net: 100,
+                credit: 0,
+                buys: [],
+                credits: [],
+                acquisitionComparison: { status: 'priced', route: 'craft', real: 90, cash: 80 },
+            };
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [upgrade], food: null });
+            const host = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            expect(host.querySelector('[data-item-requirement-hrid]').textContent).toContain('you: 88');
+            expect(host.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+            expect(host.textContent).toContain('Shared routes:');
+            skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+            const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+            refreshItemRequirementWarnings(host);
+            enabled = false;
+            for (const view of ['cards', 'table', 'cards']) {
+                host.querySelector(`[data-card-view="${view}"]`).click();
+                expect(host.querySelector('[data-item-requirement-hrid]').hidden).toBe(true);
+                expect(host.textContent).not.toContain('you: 88');
+                expect(host.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+                expect(host.textContent).not.toContain('Shared routes:');
+            }
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+            setting.mockRestore();
+            ui.destroy();
+            sprite.remove();
+            resetSpriteSheetCache();
+        }
+    });
+});

@@ -3954,6 +3954,58 @@ describe('the budget plan when a pick pays for itself', () => {
         }
     });
 
+    test('combined UI audit: all-fights redraw keeps current warning, icons and comparison setting', async () => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const details = vi.spyOn(dm, 'getItemDetails').mockImplementation((hrid) => ({
+            name: hrid.split('/').pop(),
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        }));
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        let enabled = true;
+        const setting = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'upgradeAdvisor_compareRoutes' ? enabled : fallback));
+        const sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        document.body.append(sprite);
+        resetSpriteSheetCache();
+        try {
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            const result = analysis();
+            result.results[0].candidate.upgradeHrid = '/items/new_ring';
+            result.results[0].candidate.description = 'new_ring +9';
+            result.results[0].cost = 1000;
+            result.results[0].costDetail = {
+                buys: [],
+                credits: [],
+                gross: 1000,
+                net: 1000,
+                acquisitionComparison: { status: 'priced', route: 'craft', real: 900, cash: 800 },
+            };
+            ui._renderAllFightsResults(result, container);
+            expect(container.querySelector('[data-item-requirement-hrid]').textContent).toContain('you: 88');
+            expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+            expect(container.textContent).toContain('Shared routes:');
+            skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+            const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+            refreshItemRequirementWarnings(container);
+            enabled = false;
+            for (const view of ['cards', 'table', 'cards']) {
+                ui._pickLabView(view);
+                expect(container.querySelector('[data-item-requirement-hrid]').hidden).toBe(true);
+                expect(container.textContent).not.toContain('you: 88');
+                expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+                expect(container.textContent).not.toContain('Shared routes:');
+            }
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+            setting.mockRestore();
+            sprite.remove();
+            resetSpriteSheetCache();
+        }
+    });
+
     test('a typed budget of 0 still plans the refunding pick; an empty box shows nothing', () => {
         ui._allFightsBudget = 0;
         ui._allFightsBudgetText = '0';
@@ -9530,4 +9582,222 @@ describe('Lab Sim item icons (#862)', () => {
         expect(container.textContent).toContain('Buy New ring +9 — no price found');
         expect(container.textContent).toContain('Sell Old ring +7 — 50 back');
     });
+});
+
+describe('Lab upgrade redraws: warnings, icons and shared route comparisons', () => {
+    let container;
+    let sprite;
+    let details;
+    let skills;
+    let setting;
+    let comparisonEnabled;
+    const warningSelector = '[data-item-requirement-hrid]';
+    const fixture = () => ({
+        baseline: { winRate: 0.5, clearRate: 0.5 },
+        results: [
+            {
+                candidate: {
+                    type: 'tier',
+                    currentHrid: '/items/old_ring',
+                    upgradeHrid: '/items/new_ring',
+                    upgradeLevel: 9,
+                    currentLevel: 7,
+                    description: 'old_ring +7 → new_ring +9',
+                },
+                costType: 'gold',
+                cost: 1000,
+                winRate: 0.6,
+                winRateDelta: 0.1,
+                clearRate: 0.6,
+                clearRateDelta: 0.1,
+                metricType: 'winRate',
+                costDetail: {
+                    gross: 1000,
+                    net: 1000,
+                    credit: 0,
+                    buys: [{ hrid: '/items/new_ring', name: 'new_ring', enhancementLevel: 9, price: 1000 }],
+                    credits: [],
+                    acquisitionComparison: { status: 'priced', route: 'craft', real: 900, cash: 800 },
+                },
+            },
+        ],
+    });
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.buildPanel();
+        await settle();
+        container = document.createElement('div');
+        sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        document.body.append(sprite, container);
+        resetSpriteSheetCache();
+        const dm = (await import('../../core/data-manager.js')).default;
+        details = vi.spyOn(dm, 'getItemDetails').mockImplementation((hrid) => ({
+            name: hrid.split('/').pop(),
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        }));
+        skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        comparisonEnabled = true;
+        setting = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) =>
+                key === 'upgradeAdvisor_compareRoutes' ? comparisonEnabled : fallback
+            );
+        ui._viewChoices = { wide: 'table', narrow: 'table' };
+    });
+    afterEach(() => {
+        details.mockRestore();
+        skills.mockRestore();
+        setting.mockRestore();
+        ui.destroy();
+        container.remove();
+        sprite.remove();
+        resetSpriteSheetCache();
+    });
+    const renderers = [
+        { label: 'single-fight', method: '_renderUpgradeResults' },
+        { label: 'skilling', method: '_renderSkillingUpgradeResults' },
+        { label: 'checked skilling', method: '_renderSkillingUpgradeResults', options: { checked: true } },
+    ];
+    test.each(renderers)(
+        '$label keeps all three features together through table/card switches',
+        ({ method, options }) => {
+            const result = fixture();
+            ui[method](result, container, options);
+            for (const view of ['cards', 'table', 'cards']) {
+                ui._pickLabView(view);
+                expect(container.querySelector(warningSelector)?.textContent).toBe(
+                    'For you: Needs Defense 95 (you: 88)'
+                );
+                expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+                expect(container.textContent).toContain('Shared routes: Craft, real cost 900, cash 800');
+                expect(container.textContent).not.toContain('could not be drawn');
+            }
+            expect(result.results[0].cost).toBe(1000);
+            expect(result.results[0].candidate.description).toBe('old_ring +7 → new_ring +9');
+        }
+    );
+    test.each(renderers)(
+        '$label does not restore a cleared wear warning after sorting',
+        async ({ method, options }) => {
+            ui[method](fixture(), container, options);
+            skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+            const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+            refreshItemRequirementWarnings(container);
+            expect(container.querySelector(warningSelector).hidden).toBe(true);
+            container.querySelector('th[data-sort-key="desc"][data-table="gold"]').click();
+            expect(container.querySelector(warningSelector).hidden).toBe(true);
+            expect(container.textContent).not.toContain('you: 88');
+        }
+    );
+    test.each(renderers)('$label keeps wear warnings current after changing to cards', async ({ method, options }) => {
+        ui[method](fixture(), container, options);
+        skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+        const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+        refreshItemRequirementWarnings(container);
+        expect(container.querySelector(warningSelector).hidden).toBe(true);
+        ui._pickLabView('cards');
+        expect(container.querySelector(warningSelector).hidden).toBe(true);
+        expect(container.textContent).not.toContain('you: 88');
+    });
+    test.each(renderers)(
+        '$label keeps late skill data through sorting and repeated view changes',
+        async ({ method, options }) => {
+            const result = fixture();
+            skills.mockReturnValue([]);
+            ui[method](result, container, options);
+            expect(container.querySelector(warningSelector).hidden).toBe(true);
+            skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+            const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+            refreshItemRequirementWarnings(container);
+            expect(container.querySelector(warningSelector).hidden).toBe(false);
+            container.querySelector('th[data-sort-key="desc"][data-table="gold"]').click();
+            expect(container.querySelector(warningSelector).hidden).toBe(false);
+            for (const view of ['cards', 'table', 'cards']) {
+                ui._pickLabView(view);
+                expect(container.querySelector(warningSelector).hidden).toBe(false);
+                expect(container.querySelector(warningSelector).textContent).toContain('Needs Defense 95 (you: 88)');
+                expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+            }
+        }
+    );
+    test.each(renderers)('$label refreshes all targets in a multi-slot swap', async ({ method, options }) => {
+        const result = fixture();
+        result.results[0].candidate.description = 'old_ring +7 → new_ring +9 + new_body +7 + new_legs +7';
+        result.results[0].candidate.addedSlots = {
+            '/equipment_types/off_hand': { hrid: '/items/new_ring', enhancementLevel: 9 },
+            '/equipment_types/body': { hrid: '/items/new_body', enhancementLevel: 7 },
+            '/equipment_types/legs': { hrid: '/items/new_legs', enhancementLevel: 7 },
+        };
+        const original = JSON.parse(JSON.stringify(result));
+        ui[method](result, container, options);
+        expect(container.querySelectorAll(`${warningSelector}:not([hidden])`)).toHaveLength(3);
+        skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+        const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
+        refreshItemRequirementWarnings(container);
+        for (const view of ['cards', 'table', 'cards']) {
+            ui._pickLabView(view);
+            expect(container.querySelectorAll(warningSelector)).toHaveLength(3);
+            expect(container.querySelectorAll(`${warningSelector}:not([hidden])`)).toHaveLength(0);
+            for (const hrid of ['/items/new_ring', '/items/new_body', '/items/new_legs']) {
+                expect(container.querySelector(`[data-sim-item-icon="${hrid}"]`)).not.toBeNull();
+            }
+        }
+        expect(result).toEqual(original);
+    });
+    test.each(renderers)('$label hides disabled route comparisons after switching to cards', ({ method, options }) => {
+        const result = fixture();
+        const original = JSON.parse(JSON.stringify(result));
+        ui[method](result, container, options);
+        expect(container.textContent).toContain('Shared routes:');
+        comparisonEnabled = false;
+        ui._pickLabView('cards');
+        expect(container.textContent).not.toContain('Shared routes:');
+        expect(container.querySelector(warningSelector).hidden).toBe(false);
+        expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+        comparisonEnabled = true;
+        ui._pickLabView('table');
+        expect(container.textContent).toContain('Shared routes: Craft, real cost 900, cash 800');
+        expect(result).toEqual(original);
+    });
+    test.each(renderers)('$label reevaluates route opt-in on every sort without reanalyzing', ({ method, options }) => {
+        const result = fixture();
+        const original = JSON.parse(JSON.stringify(result));
+        comparisonEnabled = false;
+        ui[method](result, container, options);
+        expect(container.textContent).not.toContain('Shared routes:');
+        for (const enabled of [true, false, true]) {
+            comparisonEnabled = enabled;
+            container.querySelector('th[data-sort-key="desc"][data-table="gold"]').click();
+            expect(container.textContent.includes('Shared routes:')).toBe(enabled);
+            expect(container.querySelector(warningSelector).hidden).toBe(false);
+            expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+        }
+        expect(result).toEqual(original);
+    });
+    test.each(renderers)(
+        '$label does not fabricate comparison data on re-enable or reprice unknown costs',
+        ({ method, options }) => {
+            const result = fixture();
+            delete result.results[0].costDetail.acquisitionComparison;
+            result.results[0].cost = null;
+            result.results[0].costDetail.gross = null;
+            result.results[0].costDetail.net = null;
+            result.results[0].costDetail.buys[0].price = null;
+            const original = JSON.parse(JSON.stringify(result));
+            comparisonEnabled = false;
+            ui[method](result, container, options);
+            comparisonEnabled = true;
+            for (const view of ['cards', 'table', 'cards']) {
+                ui._pickLabView(view);
+                expect(container.textContent).not.toContain('Shared routes:');
+                expect(container.textContent).toContain('no price found');
+                expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
+            }
+            expect(result).toEqual(original);
+        }
+    );
 });
