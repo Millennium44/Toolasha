@@ -49,6 +49,15 @@ vi.mock('../../core/storage.js', () => ({
             if (hold) await hold;
             return result;
         },
+        updateMany: async (storeName, keys, mutate) => {
+            if (game.unreadable || game.writeFails) return null;
+            const stored = structuredClone(game.saved[storeName] || {});
+            const entries = mutate(Object.fromEntries(keys.map((key) => [key, stored[key]])));
+            const written = Object.keys(entries || {});
+            for (const key of written) game.writes.push([key, true]);
+            game.saved[storeName] = { ...stored, ...structuredClone(entries) };
+            return { values: game.saved[storeName], written };
+        },
         getJSON: async (key, storeName, defaultValue) => game.saved[storeName]?.[key] ?? defaultValue,
         setJSON: async (key, value, storeName, immediate = false) => {
             game.writes.push([key, immediate]);
@@ -401,12 +410,12 @@ describe('saveTeamRun', () => {
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(5);
     });
 
-    test('a deferred save still takes the store’s own write debounce', async () => {
+    test('a deferred save commits atomically after the owner’s coalescing window', async () => {
         seedRuns([]);
         await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
         await new Promise((resolve) => setTimeout(resolve, PERSIST_COALESCE_MS + 20));
 
-        expect(game.writes.map(([, immediate]) => immediate)).toEqual([false]);
+        expect(game.writes.map(([, immediate]) => immediate)).toEqual([true]);
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
     });
 
@@ -872,11 +881,10 @@ describe('deleting runs', () => {
 
         await dungeonTrackerStorage.deleteRun('A,B|2026-01-01T00:00:00Z|500');
 
-        // The tombstone goes out first, so a crash between the two writes
-        // leaves the removal recorded rather than the run gone with no reason
+        // The tombstone and remaining list commit in the same transaction
         expect(game.writes).toEqual([
-            ['allRunsDeleted', true],
             ['allRuns', true],
+            ['allRunsDeleted', true],
         ]);
         expect(game.saved.unifiedRuns.allRuns.map((r) => r.timestamp)).toEqual(['2026-01-02T00:00:00Z']);
         // The duplicate check no longer sees the deleted run either
@@ -891,11 +899,11 @@ describe('deleting runs', () => {
         await dungeonTrackerStorage.clearAllRuns();
 
         // The clear epoch beside the emptied list, so a pull cannot undo it,
-        // and the tombstone set pruned against it in between
+        // and the tombstone set pruned against it in the same transaction
         expect(game.writes).toEqual([
-            ['allRunsClearedAt', true],
-            ['allRunsDeleted', true],
             ['allRuns', true],
+            ['allRunsDeleted', true],
+            ['allRunsClearedAt', true],
         ]);
         expect(game.saved.unifiedRuns.allRuns).toEqual([]);
         expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
@@ -1857,7 +1865,7 @@ describe('repairSwappedDateRuns', () => {
         seedRuns([misreadRun()]);
         game.unreadable = true;
 
-        expect(await dungeonTrackerStorage.repairSwappedDateRuns()).toBe(0);
+        expect(await dungeonTrackerStorage.repairSwappedDateRuns()).toBeNull();
 
         game.unreadable = false;
         expect(game.saved.unifiedRuns.allRuns[0].duration).not.toBe(CLEAR_MS);

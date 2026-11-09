@@ -50,6 +50,8 @@ const game = vi.hoisted(() => ({
     // A promise the deferred startup work waits on, standing in for "feature startup is not done yet"
     bgGate: null,
     repairCalls: 0,
+    repairResult: 0,
+    repairGate: null,
     scrubCalls: 0,
 }));
 
@@ -97,7 +99,8 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     default: {
         repairSwappedDateRuns: async () => {
             game.repairCalls += 1;
-            return 0;
+            if (game.repairGate) await game.repairGate;
+            return game.repairResult;
         },
         scrubOutlierRuns: async () => {
             game.scrubCalls += 1;
@@ -190,6 +193,8 @@ beforeEach(() => {
     game.runsGate = null;
     game.bgGate = null;
     game.repairCalls = 0;
+    game.repairResult = 0;
+    game.repairGate = null;
     game.scrubCalls = 0;
 
     annotations._startupLoad = null;
@@ -837,6 +842,29 @@ describe('seeding from stored history', () => {
         expect(annotations.initComplete).toBe(false);
         expect(annotations.cumulativeStatsByDungeon).toEqual({});
         warn.mockRestore();
+    });
+
+    test('an uncommitted repair is retryable and never feeds the original to the outlier scrub', async () => {
+        game.repairResult = null;
+        annotations.initComplete = false;
+        expect(await annotations.loadRunCountsFromStorage()).toBe(false);
+        expect(game.scrubCalls).toBe(0);
+        expect(annotations.initComplete).toBe(false);
+        game.repairResult = 1;
+        expect(await annotations.loadRunCountsFromStorage()).toBe(true);
+        expect(game.scrubCalls).toBe(1);
+    });
+
+    test('a teardown while repair commits cannot start a stale outlier scrub', async () => {
+        let finish;
+        game.repairGate = new Promise((resolve) => (finish = resolve));
+        const loading = annotations.loadRunCountsFromStorage();
+        await Promise.resolve();
+        await Promise.resolve();
+        annotations.cleanup();
+        finish();
+        expect(await loading).toBe(false);
+        expect(game.scrubCalls).toBe(0);
     });
 
     test('a loader that throws leaves the history incomplete too', async () => {

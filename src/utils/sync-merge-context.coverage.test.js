@@ -262,6 +262,22 @@ const FIXTURES = {
     },
     'Dungeon run history clear': { store: 'unifiedRuns', key: 'allRunsClearedAt', a: EARLIER, b: LATER },
     'Dungeon run date-order repair': { store: 'unifiedRuns', key: 'allRunsDateOrderRepairedAt', a: EARLIER, b: LATER },
+    'Dungeon run date-order repair backups': {
+        store: 'unifiedRuns',
+        key: 'allRunsDateOrderRepairBackups',
+        a: [
+            {
+                original: { id: `A,B|${new Date(EARLIER).toISOString()}|2592853000`, at: EARLIER },
+                replacement: { ...dungeonRun(EARLIER), teamKey: 'A,B' },
+            },
+        ],
+        b: [
+            {
+                original: { id: `A,B|${new Date(LATER).toISOString()}|2592853000`, at: LATER },
+                replacement: { ...dungeonRun(LATER), teamKey: 'A,B' },
+            },
+        ],
+    },
     'Dungeon average baselines': {
         store: 'unifiedRuns',
         key: 'dungeonAverageBaselines',

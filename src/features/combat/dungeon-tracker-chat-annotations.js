@@ -154,7 +154,8 @@ class DungeonTrackerChatAnnotations {
             // Mend the runs a mm/dd-vs-dd/mm chat-stamp misread mangled — once
             // ever, and before the scrub, so a run that can be put right is not
             // thrown away as an outlier first
-            await dungeonTrackerStorage.repairSwappedDateRuns();
+            const repaired = await dungeonTrackerStorage.repairSwappedDateRuns();
+            if (generation !== this._generation || repaired === null) return false;
 
             // Scrub outlier runs before seeding averages
             await dungeonTrackerStorage.scrubOutlierRuns();

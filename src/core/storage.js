@@ -1850,6 +1850,117 @@ class Storage {
     }
 
     /**
+     * Read related keys and commit their next values in one readwrite transaction.
+     *
+     * Unlike independent per-key folds, the synchronous callback sees one coherent
+     * snapshot. It returns only the keys to change, or undefined for no change.
+     * A failed read, callback, put or commit returns null and aborts every change.
+     * There is no fallback write when the callback fails.
+     *
+     * This deliberately does not take over debounced writes: a pending value is
+     * not a committed snapshot. Those writes keep their timers and dirty state,
+     * and the caller can retry after they settle. Owners must serialize their
+     * own writes while this operation runs, just as they do around `update`.
+     * @param {string} storeName - Object store name
+     * @param {Array<string>} keys - Every key the callback may read or change
+     * @param {(values: Record<string, *>) => Record<string, *>|undefined} mutate - Synchronous update
+     * @returns {Promise<{values: Record<string, *>, written: Array<string>}|null>} Committed outcome, or null
+     */
+    async updateMany(storeName, keys, mutate) {
+        if (!Array.isArray(keys) || keys.length === 0 || typeof mutate !== 'function') return null;
+        keys = [...new Set(keys)];
+        const refused = () =>
+            this._closingForTeardown ||
+            keys.some(
+                (key) =>
+                    this._refuseDuringRestore(key, storeName, 'save') || this.pendingWrites.has(`${storeName}:${key}`)
+            );
+        if (refused()) return null;
+        if (!this.db && !(await this._awaitConnection())) return null;
+        if (refused()) return null;
+        this._emitWrite(storeName, keys, 'local');
+        return this._guardedWrite('updateMany', `${keys.length} keys`, storeName, null, () =>
+            this._runUpdateMany(storeName, keys, mutate)
+        );
+    }
+
+    /**
+     * @param {string} storeName - Object store name
+     * @param {Array<string>} keys - Keys forming the coherent snapshot
+     * @param {Function} mutate - See `updateMany`
+     * @returns {Promise<object|null>} See `updateMany`
+     * @private
+     */
+    _runUpdateMany(storeName, keys, mutate) {
+        const failuresAtStart = this._quotaFailures;
+        return new Promise((resolve) => {
+            let transaction;
+            let failed = false;
+            let written = [];
+            const values = Object.create(null);
+            const fail = (error) => {
+                if (failed) return;
+                failed = true;
+                console.warn(`[Storage] Atomic update failed for ${storeName}:`, error);
+                if (this._isQuotaError(error)) this._handleQuotaExceeded(keys[0], storeName, error);
+                // In particular, a synchronous put exception after earlier puts
+                // must roll those requests back rather than let them commit.
+                try {
+                    transaction?.abort();
+                } catch {
+                    // Already aborted or no transaction was opened.
+                }
+                resolve(null);
+            };
+            try {
+                transaction = this.db.transaction([storeName], 'readwrite');
+                const store = transaction.objectStore(storeName);
+                let remaining = keys.length;
+                transaction.onabort = () => fail(transaction.error);
+                transaction.onerror = () => fail(transaction.error);
+                transaction.oncomplete = () => {
+                    if (failed) return;
+                    if (written.length > 0) {
+                        this._noteWriteCommitted(failuresAtStart);
+                        this._announceCommit(storeName, written);
+                    }
+                    resolve({ values, written });
+                };
+                const readKey = (key) => {
+                    const request = store.get(key);
+                    request.onerror = () => fail(request.error);
+                    request.onsuccess = () => {
+                        if (failed) return;
+                        values[key] = request.result;
+                        if (--remaining > 0) return;
+                        try {
+                            const entries = mutate({ ...values });
+                            if (entries === undefined) return;
+                            if (!entries || typeof entries !== 'object' || typeof entries.then === 'function') {
+                                throw new TypeError('Atomic update must return synchronous entries');
+                            }
+                            written = Object.keys(entries);
+                            if (written.some((entryKey) => !keys.includes(entryKey))) {
+                                throw new TypeError('Atomic update cannot write an unread key');
+                            }
+                            for (const entryKey of written) {
+                                const write = store.put(entries[entryKey], entryKey);
+                                write.onerror = () => fail(write.error);
+                                values[entryKey] = entries[entryKey];
+                            }
+                        } catch (error) {
+                            fail(error);
+                        }
+                    };
+                };
+                for (const key of keys) readKey(key);
+            } catch (error) {
+                fail(error);
+            }
+        });
+    }
+
+    /**
      * Whether an error is the browser saying "no room".
      *
      * Chromium throws `QuotaExceededError`, Firefox has historically used

@@ -81,6 +81,17 @@ export const AVERAGE_BASELINE_KEY = 'dungeonAverageBaselines';
 export const RUNS_DATE_REPAIR_KEY = 'allRunsDateOrderRepairedAt';
 
 /**
+ * Durable replacement copies for the one-time date repair. An older tab can
+ * still overwrite allRuns with a snapshot from before repair, or prune that
+ * stale snapshot to empty after reading the new tombstones. This independent
+ * key lets updated readers recover the replacement in either case. Explicit
+ * deletion of the replacement and clear epochs still win and retire its copy.
+ * Existing readers ignore the additional key; all existing record shapes stay
+ * unchanged. Entries are `{original: {id, at}, replacement: run}`.
+ */
+export const RUNS_DATE_REPAIR_BACKUPS_KEY = 'allRunsDateOrderRepairBackups';
+
+/**
  * Runs are stored once for the whole account, not once per character.
  *
  * A team run is the same run whichever of your characters was in the party, and
@@ -446,6 +457,34 @@ export function mergeDeletedRuns(local, incoming) {
 }
 
 /**
+ * Union durable date-repair copies without dropping fields on the same run.
+ * Different replacement identities are retained rather than guessing away data.
+ * @param {*} local - Existing backup entries
+ * @param {*} incoming - Downloaded or newly created entries
+ * @returns {Array<{original: {id: string, at: number|null}, replacement: Object}>} Backup entries
+ */
+export function mergeRunRepairBackups(local, incoming) {
+    const entries = new Map();
+    for (const list of [local, incoming]) {
+        for (const entry of Array.isArray(list) ? list : []) {
+            const original = toTombstoneMap([entry?.original]);
+            const replacement = entry?.replacement;
+            if (original.size !== 1 || runTime(replacement) === null || !(Number(replacement?.duration) > 0)) continue;
+            const [[id, at]] = original;
+            const replacementId = runIdentity(replacement);
+            if (id === replacementId) continue;
+            const key = `${id}\n${replacementId}`;
+            const previous = entries.get(key);
+            entries.set(key, {
+                original: { id, at },
+                replacement: previous ? fillMissingRunFields(previous.replacement, replacement) : { ...replacement },
+            });
+        }
+    }
+    return [...entries.keys()].sort().map((key) => entries.get(key));
+}
+
+/**
  * Drop the tombstones a "delete all history" at `clearedAt` has superseded.
  *
  * This is what bounds the set. A clear drops every run stamped at or before
@@ -695,6 +734,9 @@ class DungeonTrackerStorage {
          * session and written only when it changes.
          */
         this._runs = null;
+        this._cacheGeneration = 0;
+        this._repairing = null;
+        this._runsDirty = false;
         /** The read in flight, so concurrent callers share one instead of each indexing its own copy */
         this._loading = null;
         /** teamKey → that team's runs (the same objects), for the duplicate check */
@@ -753,9 +795,8 @@ class DungeonTrackerStorage {
      * object: nothing has reached the store, so `storage.flushAll()` — which
      * the switch path and the store's own unload handling call — has nothing
      * of ours to drain. A tab closed, hidden or switched inside that window
-     * lost the run outright. These handlers turn the armed save into an
-     * immediate one first, which is the only point at which `flushAll` can
-     * see it.
+     * lost the run outright. The pre-teardown listener opens our atomic write
+     * before storage closes; other lifecycle flushes also retry failed saves.
      *
      * `pagehide` is the reliable one on mobile Safari, `beforeunload`
      * elsewhere, and `visibilitychange` catches a tab that is backgrounded and
@@ -767,6 +808,18 @@ class DungeonTrackerStorage {
         const flush = () => {
             this.flushPendingSave();
         };
+
+        storage.onBeforeTeardown?.(() => {
+            if (!this._runsDirty && this._pendingTimer === null) return;
+            if (this._pendingTimer !== null) {
+                clearTimeout(this._pendingTimer);
+                this._pendingTimer = null;
+            }
+            // Open NOW, before storage closes. IndexedDB serializes this after
+            // any already-open transaction, so no promise continuation needs
+            // to open a new transaction on a close-pending connection.
+            this._persistNow(true, true);
+        });
 
         if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
             window.addEventListener('pagehide', flush);
@@ -794,6 +847,8 @@ class DungeonTrackerStorage {
      * @private
      */
     async _loadRuns() {
+        // Do not combine a pre-repair run read with post-repair tombstones.
+        if (this._repairing) await this._repairing;
         if (this._runs) return this._runs;
         // Only the *result* used to be memoised, not the read itself. Several
         // consumers ask for the history as their panels come up, so on a cold
@@ -815,33 +870,26 @@ class DungeonTrackerStorage {
                 }
                 const clearedProbe = await storage.tryGet(RUNS_CLEARED_KEY, this.unifiedStoreName);
                 const deletedProbe = await storage.tryGet(RUNS_DELETED_KEY, this.unifiedStoreName);
-                // A reset landing inside the read means this list is no longer
-                // the one anyone asked for; indexing it would revive it
+                const backupsProbe = await storage.tryGet(RUNS_DATE_REPAIR_BACKUPS_KEY, this.unifiedStoreName);
                 if (this._loading !== read) return null;
-                this._clearedAt = clearedProbe === null ? 0 : Number(clearedProbe.value) || 0;
-                if (deletedProbe === null) {
-                    // Not "nothing was ever removed": a read that failed. The
-                    // set stays as it is, and the merging write folds the
-                    // stored one back in rather than writing an empty one over
-                    // it, so a failed read here costs suppression and not data.
-                    console.warn('[DungeonTrackerStorage] Removed-run tombstones could not be read');
-                } else {
-                    const held = toTombstoneMap(deletedProbe.value);
-                    this._adoptTombstones(mergeDeletedRuns(this._deleted, held));
-                    // Either the prune dropped superseded entries or this
-                    // session removed a run before the read landed; both want
-                    // writing back
-                    if (this._deleted.size !== held.size) this._deletedDirty = true;
-                }
-                const stored = Array.isArray(probe.value) ? probe.value : [];
-                const kept = applyTombstones(applyClearEpoch(stored, this._clearedAt), this._deleted);
-                this._index(kept);
-                // A pull unioned runs the clear had already forgotten — or ones
-                // removed one at a time — back into the stored key. Pruning
-                // memory alone would leave them there to be re-read, and pushed
-                // back out, so the prune is written.
-                if (kept.length !== stored.length) await this._persistReplace();
-                if (this._deletedDirty) await this._persistDeleted();
+                // Recovery must see removal evidence too; an unreadable set is
+                // not permission to restore a backup the user may have deleted.
+                if (clearedProbe === null || deletedProbe === null || backupsProbe === null) return null;
+                const stored = {
+                    [RUNS_KEY]: probe.value,
+                    [RUNS_CLEARED_KEY]: clearedProbe.value,
+                    [RUNS_DELETED_KEY]: deletedProbe.value,
+                    [RUNS_DATE_REPAIR_BACKUPS_KEY]: backupsProbe.value,
+                };
+                // Preserve the loaded list's existing shape (including legacy
+                // duplicates); only repaired identities are deduplicated by the
+                // repair itself. The fold below adds any missing backup copies.
+                this._index(Array.isArray(probe.value) ? probe.value : []);
+                this._adoptCommittedRuns(stored);
+                // Both pruning and recovery fold again inside the write's own
+                // transaction. A newer clear/delete or another tab's append
+                // wins over any stale part of the initial read above.
+                if (this._runsDirty || this._deletedDirty) await this._persistReplace();
                 return this._runs;
             } finally {
                 if (this._loading === read) this._loading = null;
@@ -849,24 +897,6 @@ class DungeonTrackerStorage {
         })();
         this._loading = read;
         return read;
-    }
-
-    /**
-     * Take a folded tombstone list as the in-memory truth.
-     *
-     * Pruned against the clear epoch — a clear supersedes every tombstone it
-     * already covers — and with anything recorded again since dropped, so the
-     * fold that unions the stored and downloaded sets in cannot reinstate a
-     * removal the user has undone by running the dungeon again.
-     *
-     * @param {Array<{id: string, at: number|null}>} entries - The folded set
-     * @returns {Array<{id: string, at: number|null}>} What was adopted
-     * @private
-     */
-    _adoptTombstones(entries) {
-        const kept = pruneTombstones(entries, this._clearedAt).filter((entry) => !this._revived.has(entry.id));
-        this._deleted = toTombstoneMap(kept);
-        return kept;
     }
 
     /**
@@ -897,23 +927,87 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Write the tombstones out, folding in whatever storage holds now.
-     *
-     * The same read-fold-write every other key here takes, for the same
-     * reason: a second tab may have removed a run this copy has never heard
-     * of, and a whole-key write would undo it.
-     * @returns {Promise<boolean>} Whether the write landed
+     * Fold this session into a coherent stored snapshot, without changing memory.
+     * Both sides obey the latest clear and tombstones, including a repair another
+     * tab committed after this session loaded the original history.
+     * @param {Record<string, *>} stored - Related keys from one transaction
+     * @returns {{runs: Array, deleted: Map, clearedAt: number, backups: Array}} Folded state
      * @private
      */
-    async _persistDeleted() {
-        const probe = await storage.tryGet(RUNS_DELETED_KEY, this.unifiedStoreName);
-        if (probe === null) {
-            console.warn('[DungeonTrackerStorage] Tombstones not saved: the stored set could not be read first');
-            return false;
+    _mergeStoredRunState(stored) {
+        const clearedAt = mergeClearEpochs(stored[RUNS_CLEARED_KEY], this._clearedAt);
+        const deleted = toTombstoneMap(
+            pruneTombstones(mergeDeletedRuns(stored[RUNS_DELETED_KEY], this._deleted), clearedAt).filter(
+                (entry) => !this._revived.has(entry.id)
+            )
+        );
+        const backups = mergeRunRepairBackups(stored[RUNS_DATE_REPAIR_BACKUPS_KEY], null);
+        for (const { original } of backups) {
+            if (original.at === null || original.at > clearedAt) deleted.set(original.id, original.at);
         }
-        const merged = this._adoptTombstones(mergeDeletedRuns(probe.value, this._deleted));
-        this._deletedDirty = false;
-        return storage.setJSON(RUNS_DELETED_KEY, merged, this.unifiedStoreName, true);
+        const retained = backups.filter(
+            ({ original, replacement }) =>
+                !deleted.has(runIdentity(replacement)) &&
+                !(clearedAt > 0 && original.at !== null && original.at <= clearedAt) &&
+                applyClearEpoch([replacement], clearedAt).length > 0
+        );
+        const visible = (runs) => applyTombstones(applyClearEpoch(runs, clearedAt), deleted);
+        const runs = mergeRuns(visible(this._runs), visible(stored[RUNS_KEY]));
+        const current = new Map(runs.map((run) => [runIdentity(run), run]));
+        // A later sighting can fill the tier/dungeon/wave fields the original
+        // chat record lacked. Keep that enrichment in the recovery copy too.
+        const refreshed = retained.map((entry) => {
+            const latest = current.get(runIdentity(entry.replacement));
+            return latest ? { ...entry, replacement: fillMissingRunFields(entry.replacement, latest) } : entry;
+        });
+        return {
+            runs: mergeRuns(runs, visible(refreshed.map((entry) => entry.replacement))),
+            deleted,
+            clearedAt,
+            backups: refreshed,
+        };
+    }
+
+    /**
+     * Keys that must land together to preserve a folded history.
+     * @param {Record<string, *>} stored - Current transactional snapshot
+     * @param {Object} state - Output of `_mergeStoredRunState`
+     * @param {boolean} [writeRuns] - An ordinary save explicitly requested the run write
+     * @returns {Record<string, *>} Changed keys
+     * @private
+     */
+    _entriesForRunState(stored, state, writeRuns = false) {
+        const entries = {};
+        if (writeRuns || JSON.stringify(state.runs) !== JSON.stringify(stored[RUNS_KEY] || [])) {
+            entries[RUNS_KEY] = state.runs;
+        }
+        const deleted = mergeDeletedRuns(state.deleted, null);
+        if (this._deletedDirty || JSON.stringify(deleted) !== JSON.stringify(stored[RUNS_DELETED_KEY] || [])) {
+            entries[RUNS_DELETED_KEY] = deleted;
+        }
+        if (JSON.stringify(state.backups) !== JSON.stringify(stored[RUNS_DATE_REPAIR_BACKUPS_KEY] || [])) {
+            entries[RUNS_DATE_REPAIR_BACKUPS_KEY] = state.backups;
+        }
+        if (state.clearedAt !== (Number(stored[RUNS_CLEARED_KEY]) || 0)) entries[RUNS_CLEARED_KEY] = state.clearedAt;
+        return entries;
+    }
+
+    /**
+     * Publish committed state while retaining local changes made during commit.
+     * @param {Record<string, *>} stored - The committed related keys
+     * @private
+     */
+    _adoptCommittedRuns(stored) {
+        const state = this._mergeStoredRunState(stored);
+        this._clearedAt = state.clearedAt;
+        this._deleted = state.deleted;
+        this._deletedDirty =
+            JSON.stringify(mergeDeletedRuns(state.deleted, null)) !==
+            JSON.stringify(mergeDeletedRuns(stored[RUNS_DELETED_KEY], null));
+        this._index(state.runs);
+        this._runsDirty =
+            JSON.stringify(state.runs) !== JSON.stringify(stored[RUNS_KEY] || []) ||
+            JSON.stringify(state.backups) !== JSON.stringify(stored[RUNS_DATE_REPAIR_BACKUPS_KEY] || []);
     }
 
     /**
@@ -944,12 +1038,12 @@ class DungeonTrackerStorage {
      * `allRuns` is a single account-wide key, so a second tab (or a second
      * character in the same party) writes it too. Taking memory for the whole
      * truth threw those runs away on the next save; the list is re-read and
-     * merged first (see {@link mergeRuns}), which costs one read per save and
-     * is the only thing that makes two tabs safe.
+     * merged with its removal/repair evidence in one transaction (see
+     * {@link mergeRuns}), so another tab cannot land between read and write.
      *
      * A read that could not be made skips the write rather than overwriting
      * with a copy that may be missing runs — the same rule the load follows.
-     * The merge is what costs: one `tryGet` plus a full sort of the history per
+     * The merge is what costs: a transaction plus a full sort of the history per
      * call. A chat backfill appends runs one at a time and asked for a save
      * after each, so N recovered runs paid for N reads and N sorts of a list
      * that was growing as it went. A deferred save is *coalesced* instead —
@@ -958,13 +1052,14 @@ class DungeonTrackerStorage {
      * of the runs already in memory. An immediate save (a delete, a scrub)
      * still runs at once, and takes the armed one with it.
      *
-     * @param {boolean} immediate - Skip the coalescing window and the write debounce
+     * @param {boolean} immediate - Skip the owner's coalescing window
      * @returns {Promise<boolean>} Whether the write was issued — a deferred save
      *   answers true as soon as it is armed, since awaiting the timer would
      *   stall an append loop by the coalescing window on every run
      * @private
      */
     async _persist(immediate) {
+        this._runsDirty = true;
         if (!immediate) {
             if (this._pendingTimer === null) {
                 this._pendingTimer = setTimeout(() => {
@@ -984,45 +1079,49 @@ class DungeonTrackerStorage {
 
     /**
      * Read the stored list, merge memory into it and write it back, now.
-     * @param {boolean} immediate - Passed through to the store's write debounce
+     * @param {boolean} _immediate - The owner's coalescing window has already been handled
+     * @param {boolean} [beforeTeardown] - Open synchronously before core storage closes
      * @returns {Promise<boolean>} Whether the write was issued
      * @private
      */
-    _persistNow(immediate) {
+    _persistNow(_immediate, beforeTeardown = false) {
+        this._runsDirty = true;
+        const generation = this._cacheGeneration;
         const run = async () => {
-            // Before the runs, so a crash between the two writes leaves the
-            // removal recorded and the run still listed — which the next load
-            // puts right — rather than the run gone with nothing saying why
-            if (this._deletedDirty) await this._persistDeleted();
-            const probe = await storage.tryGet(RUNS_KEY, this.unifiedStoreName);
-            if (probe === null) {
-                console.warn('[DungeonTrackerStorage] Runs not saved: the stored history could not be read first');
-                return false;
-            }
-            const stored = applyClearEpoch(Array.isArray(probe.value) ? probe.value : [], this._clearedAt);
-            const merged = mergeRuns(this._runs || [], stored, this._deleted);
-            this._index(merged);
-            const write = storage.setJSON(RUNS_KEY, merged, this.unifiedStoreName, immediate);
-            // A debounced write resolves when its timer fires; awaiting it
-            // would stall a backfill loop for the debounce delay on every run
-            return immediate ? write : true;
+            if (generation !== this._cacheGeneration) return false;
+            const result = await storage.updateMany(
+                this.unifiedStoreName,
+                [RUNS_KEY, RUNS_DELETED_KEY, RUNS_CLEARED_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY],
+                (stored) => {
+                    if (generation !== this._cacheGeneration) throw new Error('Run history was reset');
+                    const state = this._mergeStoredRunState(stored);
+                    return this._entriesForRunState(stored, state, true);
+                }
+            );
+            if (!result) return false;
+            if (generation !== this._cacheGeneration) return false;
+            this._adoptCommittedRuns(result.values);
+            return true;
         };
-        this._persistChain = (this._persistChain || Promise.resolve()).then(run, run);
-        return this._persistChain;
+        const pending = beforeTeardown ? run() : (this._persistChain || Promise.resolve()).then(run, run);
+        const chain = pending.finally(() => {
+            if (this._persistChain === chain) this._persistChain = null;
+        });
+        this._persistChain = chain;
+        return chain;
     }
 
     /**
-     * Write the in-memory list out as the whole truth, without merging.
+     * Persist a clear or cold-load prune against the latest stored snapshot.
      *
-     * Only "forget everything" wants this: a clear that merged would read back
-     * the very runs it was asked to drop.
+     * Replacing a pre-read whole array could erase another tab's repair or new
+     * run. The clear epoch and tombstones name what to remove; everything else
+     * still merges, even when this session's resulting list is empty.
      * @returns {Promise<boolean>} Whether the write landed
      * @private
      */
     async _persistReplace() {
-        const run = () => storage.setJSON(RUNS_KEY, this._runs, this.unifiedStoreName, true);
-        this._persistChain = (this._persistChain || Promise.resolve()).then(run, run);
-        return this._persistChain;
+        return this._persistNow(true);
     }
 
     /**
@@ -1030,6 +1129,9 @@ class DungeonTrackerStorage {
      * @returns {void}
      */
     _resetCache() {
+        this._cacheGeneration += 1;
+        this._repairing = null;
+        this._runsDirty = false;
         if (this._pendingTimer !== null) {
             clearTimeout(this._pendingTimer);
             this._pendingTimer = null;
@@ -1046,15 +1148,16 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Run an armed deferred save now, if there is one.
+     * Run an armed deferred save now, or retry unsaved state after a failure.
      *
      * For a caller that has to know the history is on its way out — and for a
      * test that would otherwise have to advance a timer.
      * @returns {Promise<boolean>} Whether a write was issued
      */
     async flushPendingSave() {
-        if (this._pendingTimer === null) return this._persistChain ? this._persistChain : false;
-        return this._persist(true);
+        if (this._pendingTimer !== null) return this._persist(true);
+        if (this._persistChain) return this._persistChain;
+        return this._runsDirty || this._deletedDirty ? this._persist(true) : false;
     }
 
     /**
@@ -1525,12 +1628,10 @@ class DungeonTrackerStorage {
         // clear will push its whole history back, and the union that folds it in
         // has nothing else to tell those runs from ones recorded since.
         this._clearedAt = Date.now();
-        await storage.setJSON(RUNS_CLEARED_KEY, this._clearedAt, this.unifiedStoreName, true);
         // The clear supersedes every tombstone it covers, which is why the set
         // is pruned here rather than emptied: a tombstone for a run the epoch
         // cannot place is still the only thing keeping that run away.
         this._deletedDirty = true;
-        await this._persistDeleted();
         return this._persistReplace();
     }
 
@@ -1699,53 +1800,123 @@ class DungeonTrackerStorage {
      * One pass ever, guarded by {@link RUNS_DATE_REPAIR_KEY}: a second pass
      * over already-correct records could only ever make them wrong.
      *
-     * @returns {Promise<number>} How many runs were re-derived
+     * The replacement, old-identity tombstones and completion marker commit
+     * together. A failed attempt leaves the original readable and retries later.
+     * @returns {Promise<number|null>} Committed repairs, or null when the pass could not complete
      */
     async repairSwappedDateRuns() {
-        const marker = await storage.tryGet(RUNS_DATE_REPAIR_KEY, this.unifiedStoreName);
-        if (marker === null) {
-            // A repair that cannot read its own marker cannot know it has not
-            // already run, and running twice is the one thing it must not do
-            console.warn('[DungeonTrackerStorage] Date-order repair skipped: its marker could not be read');
-            return 0;
-        }
-        if (Number(marker.value) > 0) return 0;
+        if (this._repairing) return this._repairing;
+        const attempt = this._repairSwappedDateRuns().finally(() => {
+            if (this._repairing === attempt) this._repairing = null;
+        });
+        this._repairing = attempt;
+        return attempt;
+    }
 
-        const allRuns = await this._loadRuns();
-        if (!allRuns) {
-            console.warn('[DungeonTrackerStorage] Date-order repair skipped: the stored history could not be read');
-            return 0;
-        }
-
-        let repaired = 0;
-        let leftAlone = 0;
-        for (const run of allRuns) {
-            const fixed = rederiveSwappedRun(run);
-            if (!fixed) {
-                if (!isPlausibleDuration(Number(run?.duration), RECOVERY_FALLBACK_MAX_MS)) leftAlone++;
-                continue;
+    /** @private */
+    async _repairSwappedDateRuns() {
+        // Finish any cold load before joining the write chain: its pruning writes
+        // use that same chain. No repaired state is published by this load.
+        const generation = this._cacheGeneration;
+        if (this._loading) await this._loading;
+        if (generation !== this._cacheGeneration) return null;
+        const run = async () => {
+            if (generation !== this._cacheGeneration) return null;
+            let repaired = 0;
+            let leftAlone = 0;
+            let considered = 0;
+            const replacements = new Map();
+            const result = await storage.updateMany(
+                this.unifiedStoreName,
+                [RUNS_KEY, RUNS_DELETED_KEY, RUNS_CLEARED_KEY, RUNS_DATE_REPAIR_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY],
+                (stored) => {
+                    if (generation !== this._cacheGeneration) throw new Error('Run history was reset');
+                    const state = this._mergeStoredRunState(stored);
+                    const hasBackups =
+                        Array.isArray(stored[RUNS_DATE_REPAIR_BACKUPS_KEY]) &&
+                        stored[RUNS_DATE_REPAIR_BACKUPS_KEY].length > 0;
+                    if (Number(stored[RUNS_DATE_REPAIR_KEY]) > 0) {
+                        return hasBackups ? this._entriesForRunState(stored, state) : undefined;
+                    }
+                    const { runs: allRuns, deleted, clearedAt } = state;
+                    const visible = (runs) => applyTombstones(applyClearEpoch(runs, clearedAt), deleted);
+                    considered = allRuns.length;
+                    const backups = [];
+                    const corrected = allRuns.map((original) => {
+                        const fixed = rederiveSwappedRun(original);
+                        if (!fixed) {
+                            if (!isPlausibleDuration(Number(original?.duration), RECOVERY_FALLBACK_MAX_MS)) leftAlone++;
+                            return original;
+                        }
+                        const tombstone = tombstoneFor(original);
+                        deleted.set(tombstone.id, tombstone.at);
+                        replacements.set(tombstone.id, fixed);
+                        repaired++;
+                        const replacement = { ...original, ...fixed };
+                        backups.push({ original: tombstone, replacement });
+                        return replacement;
+                    });
+                    const entries = {
+                        ...(hasBackups ? this._entriesForRunState(stored, state) : {}),
+                        [RUNS_DATE_REPAIR_KEY]: Date.now(),
+                    };
+                    if (repaired > 0) {
+                        // A corrected identity may already have been recorded or
+                        // removed by a different tab. Keep that evidence too.
+                        entries[RUNS_KEY] = mergeRuns([], visible(corrected));
+                        entries[RUNS_DELETED_KEY] = mergeDeletedRuns(deleted, null);
+                        entries[RUNS_DATE_REPAIR_BACKUPS_KEY] = mergeRunRepairBackups(
+                            stored[RUNS_DATE_REPAIR_BACKUPS_KEY],
+                            backups
+                        );
+                    }
+                    return entries;
+                }
+            );
+            if (!result) {
+                console.warn('[DungeonTrackerStorage] Date-order repair did not commit; leaving it retryable');
+                return null;
             }
-            // The identity is the (team, timestamp, duration) triple, so a
-            // repair changes it: the pre-repair identity has to be tombstoned
-            // or the merging write would read the broken copy straight back in
-            // beside the mended one.
-            this._tombstone(run);
-            run.timestamp = fixed.timestamp;
-            run.duration = fixed.duration;
-            repaired++;
-        }
-
-        // Written whatever happened, and only after the pass: the point of the
-        // marker is that this never runs a second time.
-        if (repaired > 0) await this._persist(true);
-        await storage.setJSON(RUNS_DATE_REPAIR_KEY, Date.now(), this.unifiedStoreName, true);
-
-        console.log(
-            `[DungeonTrackerStorage] Date-order repair: re-derived ${repaired} run(s); ` +
-                `left ${leftAlone} implausible run(s) as recorded (an endpoint was not swappable, ` +
-                `or the swap was no more plausible); ${allRuns.length - repaired - leftAlone} were already plausible`
-        );
-        return repaired;
+            // A cache reset during commit belongs to the next reader. It must
+            // not receive a late snapshot from the cache that was discarded.
+            if (generation !== this._cacheGeneration) return null;
+            if (repaired > 0) {
+                this._clearedAt = mergeClearEpochs(this._clearedAt, result.values[RUNS_CLEARED_KEY]);
+                // Local recorders may have added runs or enriched fields while
+                // the transaction committed. Carry those changes forward, and
+                // translate a concurrent removal of an original to its repaired
+                // identity before any queued deletion write can run.
+                for (const [id, fixed] of replacements) {
+                    if (!this._deleted.has(id)) continue;
+                    const replacementId = `${id.split('|')[0]}|${fixed.timestamp}|${fixed.duration}`;
+                    this._deleted.set(replacementId, new Date(fixed.timestamp).getTime());
+                    this._deletedDirty = true;
+                }
+                const current = (this._runs || []).map((original) => {
+                    const fixed = replacements.get(runIdentity(original));
+                    return fixed ? { ...original, ...fixed } : original;
+                });
+                this._index(current);
+            }
+            // Even a completed marker or a no-op may belong to another tab's
+            // repair/clear/delete. Its coherent snapshot must replace stale
+            // cache evidence before the caller starts the outlier scrub.
+            this._adoptCommittedRuns(result.values);
+            if (result.written.length > 0) {
+                console.log(
+                    `[DungeonTrackerStorage] Date-order repair: re-derived ${repaired} run(s); ` +
+                        `left ${leftAlone} implausible run(s) as recorded (an endpoint was not swappable, ` +
+                        `or the swap was no more plausible); ${considered - repaired - leftAlone} were already plausible`
+                );
+            }
+            return repaired;
+        };
+        const pending = (this._persistChain || Promise.resolve()).then(run, run);
+        const chain = pending.finally(() => {
+            if (this._persistChain === chain) this._persistChain = null;
+        });
+        this._persistChain = chain;
+        return chain;
     }
 
     /**
@@ -1934,6 +2105,13 @@ registerSyncMerge({
  * this device's marker and set the pass going again — over records it has
  * already mended, which is the one input it was never designed for.
  */
+registerSyncMerge({
+    store: RUNS_STORE,
+    key: RUNS_DATE_REPAIR_BACKUPS_KEY,
+    merge: mergeRunRepairBackups,
+    label: 'Dungeon run date-order repair backups',
+});
+
 registerSyncMerge({
     store: RUNS_STORE,
     key: RUNS_DATE_REPAIR_KEY,

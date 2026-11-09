@@ -149,6 +149,9 @@ Guided crafting steps now match exact item IDs, so similarly named items do not 
 ### Sync preserves concurrent edits and failed merges
 
 Automatic sync keeps choices recreated in another tab. If a record cannot be combined, its store stays untouched and sync reports a retry instead of replacing local data; pull summaries now reflect what actually committed.
+### Dungeon history repairs survive interrupted saves
+
+Correcting old dungeon run dates now preserves a recovery copy, so failed saves and stale browser tabs cannot permanently lose the repaired run. Unfinished repairs retry before history cleanup, and deleting a repaired run or clearing history removes its recovery copy too.
 
 ### Equipment Watch follows the pricing mode
 

@@ -75,6 +75,13 @@ vi.mock('../../core/storage.js', () => ({
             const raw = world.saved[storeName]?.[key];
             return raw == null ? { found: false, value: null } : { found: true, value: structuredClone(raw) };
         },
+        updateMany: async (storeName, keys, mutate) => {
+            if (world.unreadable) return null;
+            const stored = structuredClone(world.saved[storeName] || {});
+            const entries = mutate(Object.fromEntries(keys.map((key) => [key, stored[key]])));
+            world.saved[storeName] = { ...stored, ...structuredClone(entries) };
+            return { values: world.saved[storeName], written: Object.keys(entries || {}) };
+        },
         getJSON: async (key, storeName, defaultValue) => world.saved[storeName]?.[key] ?? defaultValue,
         setJSON: async () => true,
     },
