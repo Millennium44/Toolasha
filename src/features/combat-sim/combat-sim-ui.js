@@ -218,6 +218,7 @@ import {
     triggerRunSignature,
 } from './trigger-result-cache.js';
 import storage from '../../core/storage.js';
+import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { ladderScoreRows } from '../../utils/zone-score.js';
 import {
     createPricingQuickSettings,
@@ -1251,7 +1252,7 @@ const ROW_NOTE_STYLE = 'font-size:9px; margin-left:4px; padding:0 3px; border-ra
  * @returns {string} HTML, empty when the row needs no qualifier
  */
 export function upgradeRowNotesHtml(result) {
-    const notes = [];
+    const notes = [upgradeRequirementHtml(result)];
     const candidate = result?.candidate || {};
 
     // No "within noise" chip here. It used to sit in the collapsed row title,

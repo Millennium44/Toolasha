@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Equipment level warnings
+
+Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now warn when your current skill levels are too low to equip an item. Advisor warnings explicitly refer to your character, even when you are simulating a party member or future levels.
+
 ### Combat Sim sees your party before everyone readies up
 
 While you fought solo waiting for a party to ready, each new fight made the Combat Sim think you were alone, so Reset to Party and fetching party loadouts stayed greyed out. The party you are in now counts until it starts fighting together.

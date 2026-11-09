@@ -17988,3 +17988,29 @@ describe('Upgrade tab inputs are remembered per character', () => {
         expect(q('#mwi-csim-hours').value).toBe('55');
     });
 });
+
+describe('local equipment requirement notes', () => {
+    test('an advisor row labels local levels even for a party or future build', async () => {
+        const dm = (await import('../../core/data-manager.js')).default;
+        const details = vi.spyOn(dm, 'getItemDetails').mockReturnValue({
+            name: 'Refined Boots',
+            equipmentDetail: { levelRequirements: [{ skillHrid: '/skills/defense', level: 95 }] },
+        });
+        const skills = vi.spyOn(dm, 'getSkills').mockReturnValue([{ skillHrid: '/skills/defense', level: 88 }]);
+        try {
+            const result = {
+                candidate: { type: 'tier', upgradeHrid: '/items/lab_boots_refined', upgradeLevel: 12, isSelf: false },
+            };
+            const host = document.createElement('div');
+            host.innerHTML = upgradeRowNotesHtml(result);
+            expect(host.textContent).toBe('For you: Needs Defense 95 (you: 88)');
+            skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
+            host.innerHTML = upgradeRowNotesHtml(result);
+            expect(host.textContent).toBe('');
+            expect(host.querySelector('[data-item-requirement-hrid]').hidden).toBe(true);
+        } finally {
+            details.mockRestore();
+            skills.mockRestore();
+        }
+    });
+});

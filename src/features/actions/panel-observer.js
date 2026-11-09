@@ -20,6 +20,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
 import actionFilter from './action-filter.js';
+import { initializeItemRequirementWarnings, cleanupItemRequirementWarnings } from './item-requirement-warnings.js';
 import {
     getActionHridFromName,
     getItemHridFromName,
@@ -116,6 +117,7 @@ const SELECTORS = {
  * Sets up MutationObserver on document.body to watch for action panels
  */
 export function initActionPanelObserver() {
+    initializeItemRequirementWarnings();
     setupMutationObserver();
 
     // Check for existing enhancing panel (may already be on page)
@@ -773,6 +775,7 @@ function setupInputObservers(panel, itemHrid) {
  * Disconnects MutationObserver and clears pending timeouts
  */
 export function disablePanelObserver() {
+    cleanupItemRequirementWarnings();
     // Unregister dom observers
     unregisterHandlers.forEach((unregister) => unregister());
     unregisterHandlers = [];

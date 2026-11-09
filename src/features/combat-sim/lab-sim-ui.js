@@ -7,6 +7,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { upgradeRequirementHtml } from '../../utils/item-requirements.js';
 import { characterKey, readScoped, readScopedChecked, writeScoped } from '../../utils/character-key.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { SKILLING_LOADOUTS_KEY } from './lab-skilling-loadouts.js';
@@ -9104,7 +9105,7 @@ class LabSimUI {
                 const { isBest, cost, reach, total, perGold, measured, noise } = cellsOf(r);
                 const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${upgradeRequirementHtml(r)}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
                     checked ? '' : this._verifyRowHtml('all', this._allRowKey(r), 'data-af-verify', i, verifyLive)
                 }</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
@@ -9709,6 +9710,7 @@ class LabSimUI {
                 const verdict = checked ? null : this._verify.all.get(rowKey) || null;
                 const cells = cellsOf(r);
                 return {
+                    notesHtml: upgradeRequirementHtml(r),
                     actionsHtml: combatSimUI.upgradeRowActionsHtml(r),
                     detailHtml: `${goldExactHtml(r.cost, null)}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
                     // The sampling-error note is about the attempts figures only
@@ -10177,6 +10179,7 @@ class LabSimUI {
                       }
                     : {}),
                 desc: r.candidate?.description || '',
+                requirementHtml: upgradeRequirementHtml(r),
                 actions: combatSimUI.upgradeRowActionsHtml(r),
                 // Unpriced sorts last rather than as the cheapest thing on the
                 // table, which is where `r.cost || 0` put a combat level
@@ -10280,7 +10283,7 @@ class LabSimUI {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;${hasDetail ? ' cursor:pointer;' : ''}"${
                     hasDetail ? ` class="mwi-ract-row" data-token-row="${i}"` : ''
                 }>
-                    <td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}</td>
+                    <td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.rateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -10324,7 +10327,7 @@ class LabSimUI {
 
             goldRows.forEach((row, i) => {
                 html += `<tr data-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;" title="Click for the cost breakdown">
-                    <td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}</td>
+                    <td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.winRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -10468,6 +10471,7 @@ class LabSimUI {
               ]
             : [];
         const rowExtra = (row) => ({
+            notesHtml: row.requirementHtml || '',
             actionsHtml: row.actions || '',
             detailHtml: `${row.exactHtml || ''}${row.detailHtml || ''}`,
         });
@@ -11964,6 +11968,7 @@ class LabSimUI {
                 deltaColor,
                 goldPerPct,
                 goldPerPctStr: goldPerPctCell(r.cost, deltaVal),
+                requirementHtml: upgradeRequirementHtml(r),
                 // Whatever handoff buttons the shared builder emits — the same
                 // ones the combat Upgrade tab's gear rows carry, since a
                 // skilling tool is bought in exactly the same marketplace
@@ -12306,7 +12311,7 @@ class LabSimUI {
             goldRows.forEach((row, i) => {
                 const note = ` title="${escapeHtmlAttribute(row.keptNote || 'Click for the cost breakdown')}"`;
                 html += `<tr data-skilling-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;"${note}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${rowActionsInlineHtml(row.actions)}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -12428,7 +12433,7 @@ class LabSimUI {
                     fallbackHead,
                     nameOf: (row) => row.desc,
                     keyOf: (row) => `${table}:${row.desc}`,
-                    extra: (row) => ({ notesHtml: pickHtml(row), ...extra(row) }),
+                    extra: (row) => ({ ...extra(row), notesHtml: pickHtml(row) + (row.requirementHtml || '') }),
                 }),
             }) +
             noteHtml;
@@ -12581,6 +12586,7 @@ class LabSimUI {
                     { key: 'triesDelta', label: '\u0394Tries' },
                 ],
                 extra: (row) => ({
+                    notesHtml: row.requirementHtml || '',
                     actionsHtml: row.actions || '',
                     unpriced: !Number.isFinite(row.cost),
                     detailHtml:
