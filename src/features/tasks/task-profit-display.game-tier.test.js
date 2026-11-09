@@ -1,15 +1,15 @@
 /**
  * @vitest-environment happy-dom
  *
- * A task card's combat estimate uses the tier the character last RAN the zone at when the zone is no
- * longer in the action queue (`utils/zone-tier-memory.js`), says where the tier came from, and redoes
- * itself when the remembered tiers arrive after it was drawn at T0.
+ * A task card's combat estimate uses the tier the game's own Difficulty box has for the zone
+ * (`utils/zone-tier-memory.js`; T0 when the game has no pick), says where the tier came from, and
+ * redoes itself when the player changes that pick after the card was drawn.
  */
 
 import { describe, test, expect, afterEach, beforeEach, vi } from 'vitest';
 
 const tierMock = vi.hoisted(() => ({
-    resolved: { tier: 0, known: false, source: 'default', pending: false },
+    resolved: { tier: 0, known: true, source: 'default', pending: false },
 }));
 
 vi.mock('../../utils/zone-tier-memory.js', async (importOriginal) => {
@@ -87,7 +87,7 @@ beforeEach(() => {
     buildGameDataPayload.mockReturnValue(dataManager.initClientData);
     buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
     runSimulation.mockResolvedValue({ deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 });
-    tierMock.resolved = { tier: 0, known: false, source: 'default', pending: false };
+    tierMock.resolved = { tier: 0, known: true, source: 'default', pending: false };
     taskProfitDisplay.isInitialized = true;
 });
 
@@ -106,61 +106,68 @@ async function estimate(container, info, mode = 'solo') {
 }
 
 describe('the estimate tier', () => {
-    test('a remembered T3 is simulated, carried to Go, and named on the card', async () => {
-        tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
+    test("the game's T3 is simulated, carried to Go, and named on the card", async () => {
+        tierMock.resolved = { tier: 3, known: true, source: 'selected', pending: false };
         const { container, info } = mountCard();
 
         const record = await estimate(container, info);
 
         expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 3 }));
         expect(record.tier).toBe(3);
-        expect(container.innerHTML).toContain('T3 (the tier you last ran here)');
+        expect(container.innerHTML).toContain('T3 (the tier selected in the game)');
     });
 
-    test('nothing queued, nothing remembered: T0 and the card says so', async () => {
+    test('no pick in the game: T0 and the card says it is the default', async () => {
         const { container, info } = mountCard();
         const record = await estimate(container, info);
         expect(record.tier).toBe(0);
-        expect(container.innerHTML).toContain('no recorded tier for this zone');
+        expect(container.innerHTML).toContain("T0 (the game's default for this zone)");
     });
 
-    test('a T0 drawn while the remembered tiers loaded is simulated again at the remembered tier', async () => {
-        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+    test('a pick changed in the game after the card drew is simulated again at the new tier', async () => {
         const { container, info } = mountCard();
         await estimate(container, info);
-        expect(container.innerHTML).toContain('yet');
         runSimulation.mockClear();
 
-        tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
+        tierMock.resolved = { tier: 3, known: true, source: 'selected', pending: false };
         taskProfitDisplay._retierOpenCombatEstimates();
         await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
         expect(runSimulation).toHaveBeenCalledWith(expect.objectContaining({ difficultyTier: 3 }), undefined, {
             preempt: false,
         });
         await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(info)?.tier).toBe(3));
-        expect(container.innerHTML).toContain('T3 (the tier you last ran here)');
+        expect(container.innerHTML).toContain('T3 (the tier selected in the game)');
     });
 
-    test('the record arriving with nothing for this zone redraws the note without simulating again', async () => {
-        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+    test('the pick unchanged: retiering simulates nothing', async () => {
         const { container, info } = mountCard();
         await estimate(container, info);
         runSimulation.mockClear();
 
-        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: false };
         taskProfitDisplay._retierOpenCombatEstimates();
 
         expect(runSimulation).not.toHaveBeenCalled();
-        expect(container.innerHTML).toContain('no recorded tier for this zone');
-        expect(container.innerHTML).not.toContain('yet');
+        expect(container.innerHTML).toContain("the game's default for this zone");
     });
 
-    test('a zone-mode result at a remembered tier is cached under that tier, not the T0 result', async () => {
+    test('T0 picked in the game after a default T0 only redraws the note, with no simulation', async () => {
+        const { container, info } = mountCard();
+        await estimate(container, info);
+        runSimulation.mockClear();
+
+        tierMock.resolved = { tier: 0, known: true, source: 'selected', pending: false };
+        taskProfitDisplay._retierOpenCombatEstimates();
+
+        expect(runSimulation).not.toHaveBeenCalled();
+        expect(container.innerHTML).toContain('T0 (the tier selected in the game)');
+    });
+
+    test('a zone-mode result at another tier is cached under that tier, not the T0 result', async () => {
         const { container, info } = mountCard();
         await estimate(container, info, 'zone');
         const zoneRuns = runSimulation.mock.calls.length;
 
-        tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
+        tierMock.resolved = { tier: 3, known: true, source: 'selected', pending: false };
         await estimate(container, info, 'zone');
 
         expect(runSimulation.mock.calls.length).toBe(zoneRuns + 1);
@@ -169,10 +176,10 @@ describe('the estimate tier', () => {
 });
 
 describe('a tier that moves while the estimate is simulating', () => {
-    test('is simulated again at the new tier (login with Tasks open: the record lands mid-run)', async () => {
-        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+    test('is simulated again at the new tier (the player picks another tier while the sim runs)', async () => {
+        tierMock.resolved = { tier: 0, known: true, source: 'default', pending: false };
         runSimulation.mockImplementationOnce(async () => {
-            tierMock.resolved = { tier: 3, known: true, source: 'remembered', pending: false };
+            tierMock.resolved = { tier: 3, known: true, source: 'selected', pending: false };
             return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
         });
         const { container, info } = mountCard();
@@ -182,27 +189,26 @@ describe('a tier that moves while the estimate is simulating', () => {
         expect(runSimulation).toHaveBeenCalledTimes(2);
         expect(runSimulation).toHaveBeenLastCalledWith(expect.objectContaining({ difficultyTier: 3 }));
         expect(record.tier).toBe(3);
-        expect(container.innerHTML).toContain('T3 (the tier you last ran here)');
+        expect(container.innerHTML).toContain('T3 (the tier selected in the game)');
     });
 
-    test('the same tier arriving with a better note only updates the note, with no second simulation', async () => {
-        tierMock.resolved = { tier: 0, known: false, source: 'default', pending: true };
+    test('the same tier arriving with a different note only updates the note, with no second simulation', async () => {
         runSimulation.mockImplementationOnce(async () => {
-            tierMock.resolved = { tier: 0, known: false, source: 'default', pending: false };
+            tierMock.resolved = { tier: 0, known: true, source: 'selected', pending: false };
             return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
         });
         const { container, info } = mountCard();
         await estimate(container, info);
 
         expect(runSimulation).toHaveBeenCalledTimes(1);
-        expect(container.innerHTML).not.toContain('yet');
+        expect(container.innerHTML).toContain('T0 (the tier selected in the game)');
     });
 
     test('a tier that keeps moving cannot loop: the re-runs are bounded', async () => {
         let tier = 0;
         runSimulation.mockImplementation(async () => {
             tier += 1;
-            tierMock.resolved = { tier, known: true, source: 'remembered', pending: false };
+            tierMock.resolved = { tier, known: true, source: 'selected', pending: false };
             return { deaths: { '/monsters/stabby': 100, '/monsters/smashy': 60 }, encounters: 120 };
         });
         const { container, info } = mountCard();

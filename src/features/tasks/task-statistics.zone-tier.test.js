@@ -1,9 +1,8 @@
 /** @vitest-environment happy-dom */
 
 /**
- * The Zone Task Progress rows follow the zone tiers: opened before the remembered tiers loaded, they
- * were simulated at T0 and stayed there. They redraw when a zone's tier changes or the record arrives,
- * stop listening when the popup closes, and a row's click never fills less than the figure it quotes.
+ * A Zone Task Progress row click opens the zone at the tier the row simulated and never changes the
+ * game's own Difficulty pick (`keepTier`), and never fills less than the figure the row quotes.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -74,13 +73,7 @@ vi.mock('./task-slot-forecast.js', async (importOriginal) => ({
 }));
 vi.mock('./task-zone-progress.js', () => ({ computeAllZoneProgress: h.compute }));
 vi.mock('../../utils/combat-zone-open.js', () => ({ openCombatZoneAtTier: vi.fn(async () => ({ opened: true })) }));
-vi.mock('../../utils/zone-tier-memory.js', async (importOriginal) => ({
-    ...(await importOriginal()),
-    resolveZoneTier: vi.fn(() => ({ tier: h.tier, known: true, source: 'remembered', pending: false })),
-}));
-
 const { default: taskStatistics } = await import('./task-statistics.js');
-const { ZONE_TIER_MEMORY_EVENT } = await import('../../utils/zone-tier-memory.js');
 
 const ZONE = '/actions/combat/gobo_planet';
 
@@ -98,79 +91,26 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-function watch() {
-    const section = document.createElement('div');
-    const start = vi.spyOn(taskStatistics, 'startZoneProgress').mockImplementation(async () => {});
-    taskStatistics._watchZoneTiers(section, '#fff');
-    return { section, start };
-}
-
-describe('zone rows follow the zone tiers', () => {
-    test('a row drawn at T0 is redrawn when the zone turns out to be remembered at T3', () => {
-        const { section, start } = watch();
-        taskStatistics._zoneRows = [{ zoneHrid: ZONE, tier: 0 }];
-
-        h.tier = 3;
-        h.dm.emit(ZONE_TIER_MEMORY_EVENT, {});
-
-        expect(start).toHaveBeenCalledTimes(1);
-        expect(start).toHaveBeenCalledWith(section, '#fff');
-    });
-
-    test('rows already at the right tier are left alone', () => {
-        const { start } = watch();
-        taskStatistics._zoneRows = [{ zoneHrid: ZONE, tier: 3 }];
-        h.tier = 3;
-        h.dm.emit(ZONE_TIER_MEMORY_EVENT, {});
-        expect(start).not.toHaveBeenCalled();
-    });
-
-    test('a run still computing is restarted, since its first zone may have started at T0', () => {
-        const { start } = watch();
-        taskStatistics._zoneRows = [];
-        taskStatistics.zoneRun = { cancelled: false };
-        h.dm.emit(ZONE_TIER_MEMORY_EVENT, {});
-        expect(start).toHaveBeenCalledTimes(1);
-        taskStatistics.zoneRun = null;
-    });
-
-    test('closing the popup removes the listener', () => {
-        const { start } = watch();
-        taskStatistics._zoneRows = [{ zoneHrid: ZONE, tier: 0 }];
-        taskStatistics.closePopup();
-        expect(h.listeners.get(ZONE_TIER_MEMORY_EVENT)?.size ?? 0).toBe(0);
-
-        h.tier = 3;
-        h.dm.emit(ZONE_TIER_MEMORY_EVENT, {});
-        expect(start).not.toHaveBeenCalled();
-    });
-
-    test('watching twice adds one listener', () => {
-        watch();
-        taskStatistics._watchZoneTiers(document.createElement('div'), '#fff');
-        expect(h.listeners.get(ZONE_TIER_MEMORY_EVENT).size).toBe(1);
-    });
-});
-
 describe("a row click and the game's own Difficulty pick", () => {
-    const row = { zoneHrid: ZONE, tier: 2, fightsNeeded: 100 };
-
-    test('a pick moved since the row simulated is kept, and no count simulated for another tier is filled', async () => {
+    test('opens at the tier the row simulated with keepTier, so the game pick is never written', async () => {
         const { openCombatZoneAtTier } = await import('../../utils/combat-zone-open.js');
-        const { resolveZoneTier } = await import('../../utils/zone-tier-memory.js');
         openCombatZoneAtTier.mockClear();
-        resolveZoneTier.mockReturnValueOnce({ tier: 5, known: true, source: 'selected', pending: false });
-        await taskStatistics._openZoneRow(row, true);
-        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 5, {});
+        await taskStatistics._openZoneRow({ zoneHrid: ZONE, tier: 2, fightsNeeded: 100 }, true);
+        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 2, { count: expect.any(Number), keepTier: true });
     });
 
-    test('a pick that matches opens at that tier with the padded count', async () => {
+    test('a row with no finite count opens with no count, still keepTier', async () => {
         const { openCombatZoneAtTier } = await import('../../utils/combat-zone-open.js');
-        const { resolveZoneTier } = await import('../../utils/zone-tier-memory.js');
         openCombatZoneAtTier.mockClear();
-        resolveZoneTier.mockReturnValueOnce({ tier: 2, known: true, source: 'selected', pending: false });
-        await taskStatistics._openZoneRow(row, true);
-        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 2, { count: expect.any(Number) });
+        await taskStatistics._openZoneRow({ zoneHrid: ZONE, tier: 2 }, false);
+        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 2, { keepTier: true });
+    });
+
+    test('a row with no tier opens T0', async () => {
+        const { openCombatZoneAtTier } = await import('../../utils/combat-zone-open.js');
+        openCombatZoneAtTier.mockClear();
+        await taskStatistics._openZoneRow({ zoneHrid: ZONE }, false);
+        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 0, { keepTier: true });
     });
 });
 

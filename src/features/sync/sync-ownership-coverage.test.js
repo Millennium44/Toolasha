@@ -1405,10 +1405,12 @@ describe('registry coverage', () => {
             (prefix) => !written.some((value) => value && (value.startsWith(prefix) || prefix.startsWith(value)))
         );
 
-        // Empty today: every registered prefix answers to a write somewhere in
-        // `src/`. A legacy name kept for accounts that still hold one belongs
-        // here with a line saying so — a name that turns up here without one is
-        // a typo, and a typo'd prefix covers nothing.
-        expect(unused).toEqual([]);
+        // Every other registered prefix answers to a write somewhere in `src/`.
+        // A legacy name kept for accounts that still hold one belongs here with
+        // a line saying so — a name that turns up here without one is a typo,
+        // and a typo'd prefix covers nothing.
+        // combatZoneTiers: no build writes it any more, but an older build on
+        // another device still does, and keeping it owned lets a rollback sync it.
+        expect(unused).toEqual(['combatZoneTiers']);
     });
 });
