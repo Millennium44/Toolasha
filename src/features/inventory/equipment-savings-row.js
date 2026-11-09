@@ -53,6 +53,11 @@
  * Toolasha's own.
  */
 
+import {
+    actionStartEligibility,
+    craftPlanEligibility,
+    combineCraftEligibility,
+} from '../../utils/craft-start-eligibility.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
@@ -1336,8 +1341,8 @@ export function spendable() {
  * @param {string} itemHrid - The finished piece
  * @returns {Object|null} `{inputItems, upgradeItemHrid, outputCount}`
  */
-export function recipeFor(itemHrid) {
-    return oncePerPass(`recipe:${itemHrid}`, () => {
+export function recipeFor(itemHrid, variant = 'current') {
+    return oncePerPass(`recipe:${itemHrid}:${variant}`, () => {
         // The shared reverse index rather than a scan of the whole action table.
         // `production-index.js` exists because several features answered this
         // question by walking every action in the game; this one walked it once
@@ -1353,7 +1358,7 @@ export function recipeFor(itemHrid) {
         // its printed cost is priced for somebody else's tea. The game's own
         // panel says 88.9 shards where the recipe says 100; quoting the 100 is
         // an eleven per cent overcharge on every craft this card prices.
-        const saved = artisanBonus(action);
+        const saved = variant.includes('no-artisan') ? 0 : artisanBonus(action);
 
         return {
             actionHrid,
@@ -1845,9 +1850,9 @@ function planPriced(node) {
  * @returns {{cost: number, upgradeBaseLevel: number, alternatives: Array<Object>}|null} The
  *   cheapest cash route, plus every base alternative for the real-cost comparison
  */
-function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
-    return oncePerPass(`craftmat:${itemHrid}:${enhancementLevel}`, () =>
-        craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel)
+function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0, variant = 'current', respectEligibility = false) {
+    return oncePerPass(`craftmat:${itemHrid}:${enhancementLevel}:${variant}:${respectEligibility}`, () =>
+        craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, respectEligibility)
     );
 }
 
@@ -1858,16 +1863,48 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
  * @param {number} enhancementLevel - The level the output is wanted at
  * @returns {{cost: number, upgradeBaseLevel: number, consumed: Object|null, alternatives: Array<Object>}|null}
  */
-function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
+function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, respectEligibility) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
     // The mode's own name, not the side it resolves to: the planner then prices through the profit
     // context and applies the patient tick, where a bare 'ask'/'bid' is taken as an explicit side and
     // skips it (the same call the action panel's cost summary makes)
     const plannerMode = config.getSettingValue?.('profitCalc_pricingMode') || 'hybrid';
+    const checks = [
+        actionStartEligibility(dataManager.getInitClientData()?.actionDetailMap?.[recipe?.actionHrid], variant),
+    ];
+    const planFor = (hrid, count) =>
+        variant === 'current' && !respectEligibility
+            ? planner(hrid, count, plannerMode)
+            : planner(
+                  hrid,
+                  count,
+                  plannerMode,
+                  new Set(),
+                  new Map(),
+                  0,
+                  undefined,
+                  false,
+                  false,
+                  0,
+                  false,
+                  false,
+                  undefined,
+                  variant,
+                  respectEligibility
+              );
+    let baseEligibility = null;
+    const eligibility = (base) =>
+        combineCraftEligibility([
+            ...checks,
+            ...(baseEligibility && base.level === 0 && base.cost > 0 ? [baseEligibility] : []),
+        ]);
     const plannerBase = (hrid) => {
         if (planner) {
-            const plan = planner(hrid, 1, plannerMode);
-            if (planPriced(plan)) return plan.totalCost;
+            const plan = planFor(hrid, 1);
+            if (planPriced(plan)) {
+                baseEligibility = craftPlanEligibility(plan, variant);
+                return plan.totalCost;
+            }
         }
         const ask = buyPrice(hrid, 0);
         return ask > 0 ? ask : null;
@@ -1881,9 +1918,14 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
             .map((base) => ({
                 cost: (materials + base.cost) / outputCount,
                 upgradeBaseLevel: base.level,
+                eligibility: eligibility(base),
                 consumed: upgradeBaseConsumed(recipe, enhancementLevel, base),
             }));
-        if (!alternatives.length) return null;
+        if (!alternatives.length) {
+            return respectEligibility
+                ? craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, false)
+                : null;
+        }
         const cheapest = alternatives.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
         return { ...cheapest, alternatives };
     };
@@ -1892,8 +1934,15 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         try {
             let total = 0;
             for (const input of recipe.inputItems) {
-                const plan = planner(input.itemHrid, input.count || 0, plannerMode);
-                if (!planPriced(plan)) return null;
+                const plan = planFor(input.itemHrid, input.count || 0);
+                checks.push(craftPlanEligibility(plan, variant));
+                if (!planPriced(plan)) {
+                    // A locked, unbuyable intermediate still has a hypothetical craft
+                    // value. Keep that value and its blocked reason on the row, never Auto.
+                    return respectEligibility
+                        ? craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, false)
+                        : null;
+                }
                 total += plan.totalCost;
             }
 
@@ -1903,6 +1952,8 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         }
     }
 
+    checks.splice(1);
+    baseEligibility = null;
     const flat = craftCost({
         inputItems: recipe?.inputItems,
         priceOf: (hrid) => buyPrice(hrid, 0),
@@ -2226,6 +2277,29 @@ function costOf(
         return sale === null ? null : gross + sale - credit;
     };
 
+    const chooseCraft = (materials, requireAvailable = false) => {
+        if (!materials) return null;
+        const options = materials.alternatives.map((option) => {
+            const usesWorn =
+                option.consumed && heldCopyAt(option.consumed.itemHrid, option.consumed.level, worn)?.worn === true;
+            return {
+                ...option,
+                cash: noSell || usesWorn ? option.cost : Math.max(0, option.cost - wornBid),
+                real: realOf(option.cost, option.consumed),
+            };
+        });
+        const startable = options.filter((option) =>
+            requireAvailable ? option.eligibility.status === 'available' : option.eligibility.status !== 'blocked'
+        );
+        // Keep a blocked hypothetical bill visible only when no executable base option exists.
+        const candidates = startable.length ? startable : requireAvailable ? [] : options;
+        if (!candidates.length) return null;
+        const priced = candidates.filter((option) => option.real !== null);
+        return priced.length
+            ? priced.reduce((best, option) => (option.real < best.real ? option : best))
+            : candidates.reduce((best, option) => (option.cash < best.cash ? option : best));
+    };
+
     const rows = [];
     const add = (id, cash, real, extra = {}) =>
         rows.push({ id, label: ROUTE_LABELS[id], cash, real, priced: cash !== null && real !== null, ...extra });
@@ -2257,27 +2331,60 @@ function costOf(
         const recipe = recipeFor(itemHrid);
         // A craft route exists only where there is a recipe to craft from
         if (craftMakesTarget(itemHrid, enhancementLevel)) {
-            const materials = craftMaterialsCost(itemHrid, recipe, enhancementLevel);
-            if (materials === null) add('craft', null, null);
+            const materials = craftMaterialsCost(itemHrid, recipe, enhancementLevel, 'current', true);
+            const craft = chooseCraft(materials);
+            const eligibility =
+                craft?.eligibility ||
+                combineCraftEligibility([
+                    actionStartEligibility(dataManager.getInitClientData()?.actionDetailMap?.[recipe.actionHrid]),
+                    { status: 'unknown' },
+                ]);
+            const alternatives = [];
+            if (eligibility.status === 'blocked') {
+                for (const [variant, label] of [
+                    ['ultra', 'Ultra skill teas'],
+                    ['no-artisan', 'Without Artisan'],
+                    ['ultra-no-artisan', 'Ultra skill teas, without Artisan'],
+                ]) {
+                    const alternative = craftMaterialsCost(
+                        itemHrid,
+                        recipeFor(itemHrid, variant),
+                        enhancementLevel,
+                        variant,
+                        true
+                    );
+                    const choice = chooseCraft(alternative, true);
+                    if (!choice) continue;
+                    alternatives.push({
+                        label: choice.eligibility.requiredTeas?.length
+                            ? `Requires ${choice.eligibility.requiredTeas.map(nameOf).join(' + ')}${variant.includes('no-artisan') ? ', without Artisan' : ''}`
+                            : variant.includes('no-artisan')
+                              ? 'Without Artisan'
+                              : label,
+                        materialsCost: choice.cost,
+                        realCost: choice.real,
+                    });
+                }
+                for (let index = alternatives.length - 1; index >= 0; index--) {
+                    if (
+                        alternatives.findIndex(
+                            (entry) =>
+                                entry.label === alternatives[index].label &&
+                                entry.materialsCost === alternatives[index].materialsCost
+                        ) !== index
+                    )
+                        alternatives.splice(index, 1);
+                }
+                alternatives.sort((a, b) => (a.realCost ?? Infinity) - (b.realCost ?? Infinity));
+            }
+            if (materials === null) add('craft', null, null, { eligibility, alternatives });
             else {
-                const alternatives = materials.alternatives.map((option) => {
-                    // A consumed worn copy cannot also be sold. Buying the base leaves it available.
-                    const usesWorn =
-                        option.consumed &&
-                        heldCopyAt(option.consumed.itemHrid, option.consumed.level, worn)?.worn === true;
-                    return {
-                        cash: noSell || usesWorn ? option.cost : Math.max(0, option.cost - wornBid),
-                        real: realOf(option.cost, option.consumed),
-                        upgradeBaseLevel: option.upgradeBaseLevel,
-                    };
+                add('craft', craft.cash, craft.real, {
+                    recipe,
+                    upgradeBaseLevel: craft.upgradeBaseLevel,
+                    eligibility,
+                    alternatives,
                 });
-                // Choose a fully priced real cost before any cash-only fallback. The latter still
-                // lets a craft pin stand when every owned alternative has an unknown sale value.
-                const priced = alternatives.filter((option) => option.real !== null);
-                const craft = priced.length
-                    ? priced.reduce((best, option) => (option.real < best.real ? option : best))
-                    : alternatives.reduce((best, option) => (option.cash < best.cash ? option : best));
-                add('craft', craft.cash, craft.real, { recipe, upgradeBaseLevel: craft.upgradeBaseLevel });
             }
         }
         const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
@@ -2291,7 +2398,11 @@ function costOf(
     // The pin: on a piece nobody sells it is the ladder switch (`mode`), otherwise buy, craft or mirror
     const pin = base.enhancing ? (ladderPinned ? 'ladder' : null) : routePinned;
 
-    const usable = (id) => rows.find((row) => row.id === id && row.priced && (allowMirror || id !== 'mirror'));
+    const usable = (id) =>
+        rows.find(
+            (row) =>
+                row.id === id && row.priced && row.eligibility?.status !== 'blocked' && (allowMirror || id !== 'mirror')
+        );
     // A pin needs only its coins to find: real cost steers Auto and Prefer, and a pin is not steered
     const standing = (id) => rows.find((row) => row.id === id && row.cash !== null && (allowMirror || id !== 'mirror'));
     let chosen = null;
@@ -2314,17 +2425,29 @@ function costOf(
         }
     }
 
-    const routes = rows.map(({ id, label, cash, real, priced, estimated }) => ({
+    const routes = rows.map(({ id, label, cash, real, priced, estimated, eligibility, alternatives }) => ({
         id,
         label,
         cash,
         real,
         priced,
         estimated: Boolean(estimated),
+        eligibility,
+        alternatives,
         chosen: chosen?.id === id,
     }));
     const common = { routes, pin, pinNote, pinned: Boolean(pin && chosen?.id === pin) };
-    if (!chosen) return { ...base, ...common, realCost: base.cost, route: null, mirrorBuild: null };
+    if (!chosen) {
+        const blockedCraft = rows.some((row) => row.id === 'craft' && row.eligibility?.status === 'blocked');
+        return {
+            ...base,
+            ...common,
+            cost: blockedCraft ? null : base.cost,
+            realCost: blockedCraft ? null : base.cost,
+            route: null,
+            mirrorBuild: null,
+        };
+    }
 
     const build = rows.find((row) => row.id === 'mirror')?.build || null;
     const result = {
@@ -3091,6 +3214,22 @@ function targetCard(target) {
         card.appendChild(note);
     }
     if (target.routes.length > 1) card.appendChild(routeTable(target));
+    const craftRoute = target.routes.find((route) => route.id === 'craft');
+    if (craftRoute?.eligibility) {
+        const availability = document.createElement('div');
+        availability.dataset.craftAvailability = craftRoute.eligibility.status;
+        availability.textContent = craftRoute.eligibility.message;
+        availability.style.cssText = 'font-size: 0.85em; white-space: normal; overflow-wrap: anywhere;';
+        card.appendChild(availability);
+        for (const alternative of craftRoute.alternatives || []) {
+            const line = document.createElement('div');
+            line.textContent =
+                `${alternative.label}: ${formatKMB(alternative.materialsCost)} materials` +
+                `; real cost ${alternative.realCost === null ? 'unknown' : formatKMB(Math.max(0, alternative.realCost))}. Tea purchase/use cost excluded; suggestion only.`;
+            line.style.cssText = availability.style.cssText;
+            card.appendChild(line);
+        }
+    }
 
     // A card added from the upgrade advisor names the figure the advisor gave then, for reference.
     // The card itself is costed live, like every other

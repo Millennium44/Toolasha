@@ -15,6 +15,9 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     inventory: [],
+    eligibility: { status: 'unknown', message: 'Craft availability unknown' },
+    gameListeners: {},
+    loadoutListeners: new Set(),
     plan: null,
     missing: [],
     useActualMissing: false,
@@ -53,9 +56,20 @@ vi.mock('../../core/data-manager.js', () => ({
             itemDetailMap: {},
         }),
         getInventory: () => state.inventory,
+        on: (event, handler) => {
+            (state.gameListeners[event] ||= new Set()).add(handler);
+        },
+        off: (event, handler) => state.gameListeners[event]?.delete(handler),
         getItemDetails: () => ({ isTradable: true }),
         getSkills: () => ({}),
         getEquipment: () => ({}),
+    },
+}));
+vi.mock('../../utils/craft-start-eligibility.js', () => ({ craftPlanEligibility: () => state.eligibility }));
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: {
+        onUpdate: (handler) => state.loadoutListeners.add(handler),
+        offUpdate: (handler) => state.loadoutListeners.delete(handler),
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -232,6 +246,7 @@ const { mergedMissingRoot } = await import('./task-crafting-train.js');
 // each describe's own beforeEach. The pre-existing doubles (state, ledger,
 // walk) keep their own per-describe resets below, unchanged.
 beforeEach(() => {
+    state.eligibility = { status: 'unknown', message: 'Craft availability unknown' };
     panels.inputValue = '2';
     panels.resolvedActionHrid = null;
     panels.attachCalls = [];
@@ -1613,5 +1628,52 @@ describe('rebuilding on a pricing change made elsewhere', () => {
 
         expect(state.settingListeners.profitCalc_pricingMode).toHaveLength(1);
         expect(state.settingListeners.profitCalc_patientTickBuy).toHaveLength(1);
+    });
+});
+
+describe('craft availability warnings', () => {
+    beforeEach(() => {
+        state.plan = craftPlanBuying('/items/wood', 'Wood', 3);
+        state.settings = {};
+    });
+    afterEach(() => {
+        craftingPlanDisplay.disable();
+    });
+    test('labels a blocked recursive craft as hypothetical rather than an executable optimum', () => {
+        state.eligibility = { status: 'blocked', message: 'Intermediate needs crafting 90; selected setup has 80' };
+        const section = buildPlanUI('/actions/crafting/wooden_bow');
+        expect(section.textContent).toContain('Hypothetical craft');
+        expect(section.querySelector('[data-craft-availability="blocked"]').textContent).toContain(
+            'Intermediate needs crafting 90'
+        );
+    });
+    test('keeps missing skill or tea data distinct from a blocked craft', () => {
+        const section = buildPlanUI('/actions/crafting/wooden_bow');
+        expect(section.querySelector('[data-craft-availability="unknown"]').textContent).toBe(
+            'Craft availability unknown'
+        );
+    });
+    test('subscribes once and removes skill, inventory and tea refresh listeners on disable', async () => {
+        state.settings.actionPanel_bestCraftingPlan = true;
+        const events = ['skills_updated', 'consumables_updated', 'items_updated', 'buffs_updated'];
+        const before = Object.fromEntries(events.map((event) => [event, state.gameListeners[event]?.size || 0]));
+        craftingPlanDisplay.initialize();
+        craftingPlanDisplay.initialize();
+        const panel = document.createElement('div');
+        const rebuild = vi.fn();
+        craftingPlanDisplay.activePanels.add(panel);
+        craftingPlanDisplay.rebuildFns.set(panel, rebuild);
+        for (const event of ['skills_updated', 'consumables_updated', 'items_updated', 'buffs_updated']) {
+            expect(state.gameListeners[event].size).toBe(before[event] + 1);
+            for (const handler of state.gameListeners[event]) handler();
+        }
+        expect(state.loadoutListeners.size).toBe(1);
+        for (const handler of state.loadoutListeners) handler();
+        for (const handler of state.settingListeners.loadoutSnapshot || []) handler();
+        await craftingPlanDisplay._pendingPricingRebuild;
+        expect(rebuild).toHaveBeenCalledTimes(1);
+        craftingPlanDisplay.disable();
+        for (const event of events) expect(state.gameListeners[event].size).toBe(before[event]);
+        expect(state.loadoutListeners.size).toBe(0);
     });
 });

@@ -1935,3 +1935,17 @@ describe('a skill target - level efficiency below the effective requirement', ()
         expect(hoursFor({ teaSkillLevelBonus: 0, actionLevelBonus: 0 })).toBeCloseTo(direct(0), 9);
     });
 });
+
+test('missing craft availability is warned without inventing a level-zero training prerequisite', () => {
+    const plan = planGoal(
+        { type: 'equipment', itemHrid: '/items/sinister_cape', enhancementLevel: 0 },
+        context({
+            gold: 10000,
+            acquire: () => ({ strategy: 'craft', totalCost: 100, requires: [], eligibility: { status: 'unknown' } }),
+        })
+    );
+    expect(plan.warnings.some((warning) => warning.includes('Craft availability') && warning.includes('unknown'))).toBe(
+        true
+    );
+    expect(plan.steps.some((row) => row.kind === 'train')).toBe(false);
+});

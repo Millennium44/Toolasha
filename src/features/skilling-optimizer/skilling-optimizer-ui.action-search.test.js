@@ -195,3 +195,22 @@ describe('picker outside-click listener', () => {
         }
     });
 });
+
+test('a tea-unlocked recipe is selectable and says it requires a skill tea', () => {
+    const action = {
+        hrid: '/actions/wc/unlocked',
+        name: 'Tea unlocked tree',
+        requiredLevel: 58,
+        available: true,
+        requiresTea: true,
+    };
+    engine.actions.push(action);
+    try {
+        const { rows } = openPicker();
+        const row = rows.find((entry) => entry.textContent.includes('Tea unlocked tree'));
+        expect(row.textContent).toContain('requires skill tea');
+        expect(row.querySelector('input').disabled).toBe(false);
+    } finally {
+        engine.actions.pop();
+    }
+});

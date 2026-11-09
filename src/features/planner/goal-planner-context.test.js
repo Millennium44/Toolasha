@@ -1380,3 +1380,46 @@ describe('route rates — every action of a skill, locked ones included', () => 
         expect(calls - afterReprice).toBe(1);
     });
 });
+
+describe('recursive craft eligibility prerequisites', () => {
+    afterEach(() => {
+        craft.plan = null;
+    });
+    test('includes the highest requirement of repeated intermediate crafts once per skill', async () => {
+        game.skills = [{ skillHrid: '/skills/cooking', level: 5 }];
+        for (const level of [20, 40, 30]) {
+            game.actionDetailMap[`/actions/cooking/intermediate_${level}`] = {
+                type: '/action_types/cooking',
+                name: `Ingredient ${level}`,
+                levelRequirement: { skillHrid: '/skills/cooking', level },
+            };
+        }
+        craft.plan = {
+            strategy: 'craft',
+            totalCost: 100,
+            unitCost: 100,
+            actionHrid: '/actions/cooking/stew',
+            children: [20, 40, 30].map((level) => ({
+                strategy: 'craft',
+                actionHrid: `/actions/cooking/intermediate_${level}`,
+                children: [],
+            })),
+        };
+        const context = await buildPlannerContext();
+        expect(context.acquire('/items/stew').requires).toEqual([
+            { skillHrid: '/skills/cooking', level: 40, teaSkillLevelBonus: 0, actionLevelBonus: 0 },
+        ]);
+        expect(context.acquire('/items/stew').eligibility.status).toBe('blocked');
+    });
+    test('does not require levels for a purchased intermediate', async () => {
+        craft.plan = {
+            strategy: 'craft',
+            totalCost: 100,
+            unitCost: 100,
+            actionHrid: '/actions/cooking/stew',
+            children: [{ strategy: 'buy', actionHrid: '/actions/unknown' }],
+        };
+        const context = await buildPlannerContext();
+        expect(context.acquire('/items/stew').eligibility.status).toBe('available');
+    });
+});

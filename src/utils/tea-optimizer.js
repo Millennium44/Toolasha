@@ -277,6 +277,19 @@ function parseTeaBuffs(teaHrids, itemDetailMap, drinkConcentration) {
     return buffs;
 }
 
+/** Potential skill-tea reach for the action picker and missing-price checks. */
+function maxSkillTeaBonus(skillName, itemDetailMap, concentration) {
+    return Math.max(
+        0,
+        ...['', 'super_', 'ultra_'].map(
+            (prefix) =>
+                parseTeaBuffs([`/items/${prefix}${skillName}_tea`], itemDetailMap, concentration).skillLevels[
+                    skillName
+                ] || 0
+        )
+    );
+}
+
 /**
  * Calculate XP/hour for an action with a specific tea combination
  * @param {Object} actionDetails - Action details from game data
@@ -906,7 +919,9 @@ export function skillGoldHasUnpricedMaterials(skillName, playerLevel, selectedAc
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return false;
 
-    const { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
+    const concentration = getDrinkConcentration(dataManager.getEquipment(), gameData.itemDetailMap || {});
+    const maxBonus = maxSkillTeaBonus(normalizedSkill, gameData.itemDetailMap || {}, concentration);
+    const { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids, maxBonus);
     return actions.some((action) => actionHasUnpricedMaterials(action, isGathering, gameData));
 }
 
@@ -967,7 +982,7 @@ export function actionHasUnpricedMaterials(actionDetails, isGathering, gameData)
  * @param {number} playerLevel - Player's skill level
  * @returns {Object} { available: [], excluded: [] } with exclusion reasons
  */
-function getActionsForSkill(skillName, playerLevel, selectedActionHrids = null) {
+function getActionsForSkill(skillName, playerLevel, selectedActionHrids = null, skillBonus = 0) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return { available: [], excluded: [] };
 
@@ -982,7 +997,7 @@ function getActionsForSkill(skillName, playerLevel, selectedActionHrids = null) 
         if (selectedActionHrids && !selectedActionHrids.has(hrid)) continue;
 
         const requiredLevel = action.levelRequirement?.level || 1;
-        if (playerLevel >= requiredLevel) {
+        if (Math.floor(playerLevel + skillBonus) >= requiredLevel) {
             available.push(action);
         } else {
             excluded.push({ action, reason: 'level', requiredLevel });
@@ -1001,13 +1016,18 @@ function getActionsForSkill(skillName, playerLevel, selectedActionHrids = null) 
  * @param {number} playerLevel
  * @returns {Array<{ hrid, name, requiredLevel, available, sortIndex }>} Sorted by sortIndex
  */
-export function getSkillActionsForDisplay(skillName, playerLevel) {
+export function getSkillActionsForDisplay(skillName, playerLevel, equipment = dataManager.getEquipment()) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return [];
 
     const actionType = SKILL_TO_ACTION_TYPE[skillName.toLowerCase()];
     if (!actionType) return [];
 
+    const maxBonus = maxSkillTeaBonus(
+        skillName.toLowerCase(),
+        gameData.itemDetailMap || {},
+        getDrinkConcentration(equipment, gameData.itemDetailMap || {})
+    );
     const result = [];
     for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
         if (action.type !== actionType) continue;
@@ -1016,7 +1036,8 @@ export function getSkillActionsForDisplay(skillName, playerLevel) {
             hrid,
             name: action.name,
             requiredLevel,
-            available: playerLevel >= requiredLevel,
+            available: Math.floor(playerLevel + maxBonus) >= requiredLevel,
+            requiresTea: playerLevel < requiredLevel && Math.floor(playerLevel + maxBonus) >= requiredLevel,
             sortIndex: action.sortIndex ?? 0,
         });
     }
@@ -1257,7 +1278,16 @@ export function findOptimalTeas(
     );
 
     // Get actions for this skill (available and excluded)
-    const actionData = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
+    // Discover recipes any candidate can unlock, then score each candidate's
+    // own skill-unlocked set. Artisan's penalty is still checked per action.
+    const maxSkillBonus = Math.max(
+        0,
+        ...combinations.map(
+            (combo) =>
+                parseTeaBuffs(combo, gameData.itemDetailMap, drinkConcentration).skillLevels[normalizedSkill] || 0
+        )
+    );
+    const actionData = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids, maxSkillBonus);
     let actions = actionData.available;
     let excludedActions = actionData.excluded;
 
@@ -1386,8 +1416,8 @@ export function findOptimalTeas(
                 let score = 0;
                 // A combo suggesting Artisan Tea is exactly the case that can block the
                 // action it is being scored for: the Action Level buff raises the start
-                // requirement, and `actions` was only filtered against the bare skill
-                // level (see getActionsForSkill). A combo that would not let the action
+                // requirement; the shared action universe includes tea-unlocked recipes
+                // (see getActionsForSkill). A combo that would not let the action
                 // start scores it 0 rather than crediting a rate the game would refuse.
                 const canStart = canStartAction({
                     requiredLevel: action.levelRequirement?.level || 1,
@@ -1449,8 +1479,17 @@ export function findOptimalTeas(
         // actually counted for something; a wholly unprofitable combo does not become the pick.
         if (goal === 'gold' && profitableCount > 0 && teaCostPerHour.hasMissingPrices) hasMissingPrices = true;
 
-        // For gold, average across profitable actions only; for XP, average across all
-        const avgDivisor = goal === 'gold' ? profitableCount || 1 : alchemyContext ? 1 : actions.length;
+        // Average XP over this combo's skill-unlocked recipes, including zero
+        // for any Artisan blocks. A hypothetical Ultra on another combo must not
+        // dilute this one's rates. This matches calculateSkillPerformance.
+        const skillUnlockedCount = actions.filter((action) =>
+            canStartAction({
+                requiredLevel: action.levelRequirement?.level || 1,
+                skillLevel: playerLevel,
+                teaSkillLevelBonus: buffs.skillLevels[normalizedSkill] || 0,
+            })
+        ).length;
+        const avgDivisor = goal === 'gold' ? profitableCount || 1 : alchemyContext ? 1 : skillUnlockedCount || 1;
 
         results.push({
             teas: combo,
@@ -1467,8 +1506,8 @@ export function findOptimalTeas(
     // Sort by average score (descending) — every caller headlines avgScore
     // ("Gold/hr", "XP/hr": tea-recommendation.js, skilling-optimizer-ui.js),
     // never totalScore, so that is what "optimal" has to mean. For XP this is
-    // the same order totalScore gives (avgDivisor is actions.length for every
-    // combo, a constant, so the two are proportional). For gold it is not:
+    // the average over each combo's skill-unlocked set, with Artisan-blocked
+    // recipes still counted as zero. For gold the divisor is different too:
     // avgDivisor is profitableCount, which varies combo to combo — sorting by
     // the sum instead of the average could pick a combo that makes more
     // actions marginally profitable over one with a smaller, more profitable
@@ -1998,12 +2037,16 @@ export function calculateSkillPerformance(
     const actionType = SKILL_TO_ACTION_TYPE[normalizedSkill];
     if (!actionType) return empty;
 
-    const { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
-    if (!actions.length) return empty;
-
     const filteredTeas = (teaHrids || []).filter(Boolean);
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
     const buffs = parseTeaBuffs(filteredTeas, gameData.itemDetailMap, drinkConcentration);
+    const { available: actions } = getActionsForSkill(
+        normalizedSkill,
+        playerLevel,
+        selectedActionHrids,
+        buffs.skillLevels[normalizedSkill] || 0
+    );
+    if (!actions.length) return empty;
 
     const otherEfficiency = getOtherEfficiencySources(actionType, houseRoomLevels);
     if (isGathering) {
@@ -2094,8 +2137,8 @@ export function calculateSkillPerformance(
     }
 
     return {
-        // Same divisor as findOptimalTeas (every action offered), so the current setup and a
-        // recommendation are averaged over the same set; a blocked action counts as 0 in both
+        // Same divisor as findOptimalTeas for these teas: every skill-unlocked
+        // action, including zero for recipes blocked by Artisan's action-level buff.
         xpPerHour: totalXp / actions.length,
         goldPerHour: goldCount > 0 ? totalGold / goldCount : 0,
         teaCostPerHour: teaCost.total,

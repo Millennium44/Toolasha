@@ -623,7 +623,7 @@ class SkillingSimulatorUI {
         actionBtn.style.cssText = inputCss + ' flex: 1; cursor: pointer; text-align: left;';
 
         const getActionLabel = () => {
-            const all = getSkillActionsForDisplay(this.currentSkill, this.currentLevel);
+            const all = getSkillActionsForDisplay(this.currentSkill, this.currentLevel, this.equipment);
             const avail = all.filter((a) => a.available);
             if (!this.selectedActionHrids) return `All (${avail.length})`;
             const n = [...this.selectedActionHrids].filter((h) => avail.some((a) => a.hrid === h)).length;
@@ -1076,7 +1076,7 @@ class SkillingSimulatorUI {
     _openActionPicker(anchorBtn, getBtnLabel) {
         this._closePicker();
 
-        const actions = getSkillActionsForDisplay(this.currentSkill, this.currentLevel);
+        const actions = getSkillActionsForDisplay(this.currentSkill, this.currentLevel, this.equipment);
         const available = actions.filter((a) => a.available);
 
         const popup = document.createElement('div');
@@ -1160,7 +1160,11 @@ class SkillingSimulatorUI {
         for (const action of actions) {
             const isChecked =
                 action.available && (this.selectedActionHrids === null || this.selectedActionHrids.has(action.hrid));
-            const label = action.available ? action.name : `${action.name} (lv ${action.requiredLevel})`;
+            const label = action.requiresTea
+                ? `${action.name} (lv ${action.requiredLevel}, requires skill tea)`
+                : action.available
+                  ? action.name
+                  : `${action.name} (lv ${action.requiredLevel})`;
             const { row, cb } = makeRow(label, isChecked, !action.available, (checked) => {
                 if (this.selectedActionHrids === null) {
                     this.selectedActionHrids = new Set(available.map((a) => a.hrid));

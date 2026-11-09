@@ -37,6 +37,7 @@
  * with three steps against the same item asks once.
  */
 
+import { craftPlanEligibility } from '../../utils/craft-start-eligibility.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -1015,27 +1016,25 @@ function acquisitionFor(itemHrid) {
     const plan = computeBestCraftingPlan(itemHrid, 1, 'ask');
     if (!plan || !Number.isFinite(plan.totalCost)) return null;
 
-    const requires = [];
-    if (plan.strategy === 'craft' && plan.actionHrid) {
-        const action = dataManager.getActionDetails(plan.actionHrid);
-        const requirement = action?.levelRequirement;
-        if (requirement?.skillHrid) {
-            // The same start rule the game and the crafted price use: an Action Level tea (Artisan) raises
-            // the requirement and a skill-level tea lifts the level, so the bare skill level is not the test
-            let bonuses = { teaSkillLevelBonus: 0, actionLevelBonus: 0 };
-            try {
-                const itemDetailMap = dataManager.getInitClientData()?.itemDetailMap;
-                if (action?.type && itemDetailMap) bonuses = startBonuses(action, itemDetailMap);
-            } catch (error) {
-                console.error('[GoalPlanner] Reading the start bonuses for a craft failed:', error);
-            }
-            if (requirement.level > 1 || Math.trunc(bonuses.actionLevelBonus) > 0) {
-                requires.push({ skillHrid: requirement.skillHrid, level: requirement.level, ...bonuses });
-            }
+    const eligibility = craftPlanEligibility(plan);
+    // Every chosen intermediate is a prerequisite too, not just the final recipe.
+    const bySkill = new Map();
+    for (const requirement of eligibility.requirements) {
+        const { skillHrid, level, teaSkillLevelBonus, actionLevelBonus } = requirement;
+        if (level <= 1 && Math.trunc(actionLevelBonus) <= 0) continue;
+        const needed = level + Math.trunc(actionLevelBonus) - teaSkillLevelBonus;
+        const previous = bySkill.get(skillHrid);
+        if (
+            !previous ||
+            needed > previous.level + Math.trunc(previous.actionLevelBonus) - previous.teaSkillLevelBonus
+        ) {
+            bySkill.set(skillHrid, { skillHrid, level, teaSkillLevelBonus, actionLevelBonus });
         }
     }
+    const requires = [...bySkill.values()];
 
     return {
+        eligibility,
         strategy: plan.strategy,
         totalCost: plan.totalCost,
         unitCost: plan.unitCost,

@@ -12,6 +12,7 @@ import { findProducingAction } from '../../utils/production-index.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { actionStartEligibility } from '../../utils/craft-start-eligibility.js';
 import { resolveActionContext } from '../../utils/action-context.js';
 import { INVENTORY_LOCATION } from '../../utils/inventory-reservations.js';
 import { artisanInputTotal, getArtisanMaterialMode, usesWorstCaseRounding } from '../../utils/artisan-material-mode.js';
@@ -86,7 +87,8 @@ function findProductionAction(itemHrid) {
  * @param {string} actionType - e.g. '/action_types/brewing'
  * @returns {number} Reduction as decimal (e.g. 0.112 for 11.2%)
  */
-export function getArtisanBonus(actionType) {
+export function getArtisanBonus(actionType, variant = 'current') {
+    if (variant.includes('no-artisan')) return 0;
     try {
         const gameData = dataManager.getInitClientData();
         const itemDetailMap = gameData?.itemDetailMap || {};
@@ -147,6 +149,8 @@ function memoChildQuantity(template, quantity, outputCount) {
  *   it is permitted by the other modes. Acts only on a positive signal; falls through to the buy when mooket has no
  *   depth for the item.
  * @param {Function} [getAskQty=defaultGetAskQty] - (itemHrid) => number|null; best-ask size lookup, injectable for tests
+ * @param {string} [variant='current'] - Explicit material-cost scenario; no-artisan removes the discount at every tier
+ * @param {boolean} [respectEligibility=false] - Buy known-blocked crafts instead; valuations leave this off
  * @returns {CraftingPlanNode}
  */
 export function computeBestCraftingPlan(
@@ -162,8 +166,13 @@ export function computeBestCraftingPlan(
     timeCostPerHour = 0,
     skipProcessing = false,
     thinMarket = false,
-    getAskQty = defaultGetAskQty
+    getAskQty = defaultGetAskQty,
+    variant = 'current',
+    respectEligibility = false
 ) {
+    // Keep executable scenarios and no-Artisan alternatives out of valuation memo entries.
+    const memoKey =
+        variant === 'current' && !respectEligibility ? itemHrid : `${variant}:${respectEligibility}:${itemHrid}`;
     const itemDetails = dataManager.getItemDetails(itemHrid);
     const itemName = itemDetails?.name || itemHrid.split('/').pop();
     const isTradable = itemDetails?.isTradable ?? false;
@@ -231,13 +240,13 @@ export function computeBestCraftingPlan(
     // through to a full recompute so the leg is crafted. A cached 'craft' is
     // already the more-available path and is reused as-is.
     const memoThinReroute =
-        memo.has(itemHrid) &&
+        memo.has(memoKey) &&
         thinMarket &&
-        memo.get(itemHrid).strategy === 'buy' &&
-        memo.get(itemHrid).craftCost !== null &&
+        memo.get(memoKey).strategy === 'buy' &&
+        memo.get(memoKey).craftCost !== null &&
         isThinForLeg(itemHrid, quantity, getAskQty);
-    if (memo.has(itemHrid) && !memoThinReroute) {
-        const cachedUnitCost = memo.get(itemHrid);
+    if (memo.has(memoKey) && !memoThinReroute) {
+        const cachedUnitCost = memo.get(memoKey);
         return {
             itemHrid,
             itemName,
@@ -271,7 +280,9 @@ export function computeBestCraftingPlan(
                               timeCostPerHour,
                               skipProcessing,
                               thinMarket,
-                              getAskQty
+                              getAskQty,
+                              variant,
+                              respectEligibility
                           ),
                           // Lets collectMissingMaterials re-derive an owned-intermediate
                           // remainder's exact input count under the artisan mode's own
@@ -290,7 +301,7 @@ export function computeBestCraftingPlan(
         // No recipe — must buy. Use Infinity like the other buy-only paths so an
         // unpriceable item propagates as "unknown cost" instead of a free material.
         const unitCost = buyPrice ?? Infinity;
-        memo.set(itemHrid, {
+        memo.set(memoKey, {
             strategy: 'buy',
             unitCost,
             craftCost: null,
@@ -320,7 +331,7 @@ export function computeBestCraftingPlan(
         production.action.category?.endsWith('/material') || production.action.category?.endsWith('/lumber');
     if (skipProcessing && isProcessingAction) {
         const unitCost = buyPrice ?? Infinity;
-        memo.set(itemHrid, {
+        memo.set(memoKey, {
             strategy: 'buy',
             unitCost,
             craftCost: null,
@@ -352,7 +363,7 @@ export function computeBestCraftingPlan(
     // Recurse into crafting
     visited.add(itemHrid);
     const { actionHrid, action, outputCount } = production;
-    const artisanBonus = getArtisanBonus(action.type);
+    const artisanBonus = getArtisanBonus(action.type, variant);
     const artisanMode = getArtisanMaterialMode();
     const actionsForOne = 1 / outputCount; // actions per 1 output item
 
@@ -387,7 +398,9 @@ export function computeBestCraftingPlan(
                 timeCostPerHour,
                 skipProcessing,
                 thinMarket,
-                getAskQty
+                getAskQty,
+                variant,
+                respectEligibility
             );
 
             craftCostPerUnit += childPlan.unitCost * qtyPerUnit;
@@ -417,7 +430,9 @@ export function computeBestCraftingPlan(
             timeCostPerHour,
             skipProcessing,
             thinMarket,
-            getAskQty
+            getAskQty,
+            variant,
+            respectEligibility
         );
 
         craftCostPerUnit += upgradePlan.unitCost * qtyPerUnit;
@@ -445,8 +460,10 @@ export function computeBestCraftingPlan(
     // Buy vs craft decision
     // When buyRawOnly is true, always craft (we only reach here if a recipe exists)
     // When forceRootCraft is true and depth === 0, always craft the root item
+    const blocked = respectEligibility && actionStartEligibility(action, variant).status === 'blocked';
     const normalShouldBuy =
-        !buyRawOnly && !(forceRootCraft && depth === 0) && buyPrice !== null && buyPrice <= craftCostPerUnit;
+        blocked ||
+        (!buyRawOnly && !(forceRootCraft && depth === 0) && buyPrice !== null && buyPrice <= craftCostPerUnit);
 
     // Thin-market re-route. Reaching this decision at all means crafting THIS
     // item is permitted: buyRawOnly and forceRootCraft@0 make normalShouldBuy
@@ -458,18 +475,18 @@ export function computeBestCraftingPlan(
     // depth/visited-guarded path, so a re-route cannot loop and terminates at
     // raw materials; the re-routed leg is costed at that craft cost, not the
     // unachievable buy price.
-    const thinReroute = normalShouldBuy && thinMarket && isThinForLeg(itemHrid, quantity, getAskQty);
+    const thinReroute = !blocked && normalShouldBuy && thinMarket && isThinForLeg(itemHrid, quantity, getAskQty);
     const shouldBuy = normalShouldBuy && !thinReroute;
     const strategy = shouldBuy ? 'buy' : 'craft';
-    const unitCost = shouldBuy ? buyPrice : craftCostPerUnit;
+    const unitCost = shouldBuy ? (buyPrice ?? Infinity) : craftCostPerUnit;
 
     // Cache the NORMAL (quantity-independent) decision, never the thin re-route:
     // the re-route depends on this leg's quantity, so caching it would force the
     // same craft (or the same buy) onto another leg with a different need. Each
     // leg re-applies the thin check itself, on the memo path above and here.
-    memo.set(itemHrid, {
+    memo.set(memoKey, {
         strategy: normalShouldBuy ? 'buy' : 'craft',
-        unitCost: normalShouldBuy ? buyPrice : craftCostPerUnit,
+        unitCost: normalShouldBuy ? (buyPrice ?? Infinity) : craftCostPerUnit,
         craftCost: craftCostPerUnit,
         actionHrid: normalShouldBuy ? null : actionHrid,
         outputCount,
@@ -499,7 +516,9 @@ export function computeBestCraftingPlan(
                         timeCostPerHour,
                         skipProcessing,
                         thinMarket,
-                        getAskQty
+                        getAskQty,
+                        variant,
+                        respectEligibility
                     ),
                     // Lets collectMissingMaterials re-derive an owned-intermediate
                     // remainder's exact input count under the artisan mode's own
@@ -523,7 +542,9 @@ export function computeBestCraftingPlan(
                     timeCostPerHour,
                     skipProcessing,
                     thinMarket,
-                    getAskQty
+                    getAskQty,
+                    variant,
+                    respectEligibility
                 ),
                 isUpgradeItem: true,
             });

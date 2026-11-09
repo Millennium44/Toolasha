@@ -984,6 +984,9 @@ function planEquipmentGoal(goal, context) {
     // A craft the character cannot yet perform is a level goal hiding inside an
     // equipment goal; it has to be said out loud or the plan quotes a cost for
     // something that cannot be started.
+    if (!haveBase && acquisition?.strategy === 'craft' && acquisition.eligibility?.status === 'unknown') {
+        warnings.push(`Craft availability for ${name} is unknown because skill or tea data is missing.`);
+    }
     const requires = Array.isArray(acquisition?.requires) ? acquisition.requires : [];
     const unmet = [];
     for (const requirement of requires) {

@@ -4,8 +4,11 @@
  * Shows a summary comparison plus a shopping list of materials to buy.
  */
 
+import { craftPlanEligibility } from '../../utils/craft-start-eligibility.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { openBillOwner, openMaterialsList } from '../actions/missing-materials-button.js';
 import { computeBestCraftingPlan, collectMissingMaterials } from './crafting-plan-calculator.js';
 import craftingPlanWalk, { buildWalkSteps, WALK_KEY_ATTRIBUTE } from './crafting-plan-walk.js';
@@ -408,6 +411,18 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
         </div>
     `;
     content.appendChild(summary);
+    const eligibility = craftPlanEligibility(plan);
+    if (plan.strategy === 'craft') {
+        const warning = document.createElement('div');
+        warning.dataset.craftAvailability = eligibility.status;
+        warning.textContent = eligibility.message;
+        warning.style.cssText = 'margin-bottom: 6px; white-space: normal;';
+        summary.firstElementChild.firstElementChild.textContent =
+            eligibility.status === 'blocked'
+                ? 'Hypothetical craft (cannot start selected setup)'
+                : 'Optimal: Craft from materials';
+        content.appendChild(warning);
+    }
 
     // === Pricing mode toggle ===
     // Steps through PRICING_MODE_CYCLE/nextPricingMode. (The action-panel toolbar and the
@@ -921,6 +936,18 @@ class CraftingPlanDisplay {
             if (rebuild) rebuild();
         });
         this.unregisterHandlers.push(unregisterRefresh);
+
+        const snapshots = loadoutSnapshot() || bundledLoadoutSnapshot;
+        const refreshLoadout = () => this._scheduleRebuildAll();
+        snapshots.onUpdate?.(refreshLoadout);
+        this.unregisterHandlers.push(() => snapshots.offUpdate?.(refreshLoadout));
+        this.unregisterHandlers.push(config.onSettingChange('loadoutSnapshot', refreshLoadout));
+
+        for (const event of ['skills_updated', 'consumables_updated', 'items_updated', 'buffs_updated']) {
+            const refresh = () => this._scheduleRebuildAll();
+            dataManager.on?.(event, refresh);
+            this.unregisterHandlers.push(() => dataManager.off?.(event, refresh));
+        }
 
         // The pricing mode, its display naming, and either patient tick all
         // change the numbers (and the mode label) an open plan is showing —

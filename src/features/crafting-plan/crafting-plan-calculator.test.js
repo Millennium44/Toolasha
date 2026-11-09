@@ -17,6 +17,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     initClientData: null,
     itemDetails: {},
+    blockedActions: new Set(),
 }));
 
 const market = vi.hoisted(() => ({
@@ -32,6 +33,9 @@ const buffs = vi.hoisted(() => ({
 
 const settings = vi.hoisted(() => ({ values: {} }));
 
+vi.mock('../../utils/craft-start-eligibility.js', () => ({
+    actionStartEligibility: (action) => ({ status: game.blockedActions.has(action) ? 'blocked' : 'available' }),
+}));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.values[key],
@@ -87,6 +91,7 @@ const LEATHER = '/items/rough_leather';
 const BOOTS = '/items/leather_boots';
 
 beforeEach(() => {
+    game.blockedActions.clear();
     settings.values = {};
     buffs.artisanBonus = 0;
     buffs.actionStats = { actionTime: 10, totalEfficiency: 100 };
@@ -1223,4 +1228,98 @@ describe('thin-market re-route', () => {
         expect(p.children[0].strategy).toBe('craft');
         expect(p.children[0].thinMarketRerouted).toBeUndefined(); // crafted by the mode, not the re-route
     });
+});
+
+describe('explicit no-Artisan material scenarios', () => {
+    test('recalculates the root and recursive intermediates without changing default valuations', () => {
+        buffs.artisanBonus = 0.5;
+        const current = computeBestCraftingPlan(BOOTS, 3);
+        const without = computeBestCraftingPlan(
+            BOOTS,
+            3,
+            'ask',
+            new Set(),
+            new Map(),
+            0,
+            undefined,
+            false,
+            false,
+            0,
+            false,
+            false,
+            undefined,
+            'no-artisan'
+        );
+        expect(current.totalCost).toBe(135);
+        expect(without.totalCost).toBe(540);
+        expect(without.children[0].quantity).toBe(18);
+        expect(without.children[0].children[0].quantity).toBe(54);
+        expect(computeBestCraftingPlan(BOOTS, 3).totalCost).toBe(135);
+    });
+});
+
+describe('opt-in executable acquisition plans', () => {
+    const executable = (hrid = BOOTS, thin = false) =>
+        computeBestCraftingPlan(
+            hrid,
+            1,
+            'ask',
+            new Set(),
+            new Map(),
+            0,
+            undefined,
+            false,
+            false,
+            0,
+            false,
+            thin,
+            () => 1,
+            'current',
+            true
+        );
+    test('buys a blocked intermediate while retaining an available parent craft', () => {
+        game.blockedActions.add(game.initClientData.actionDetailMap['/actions/tailoring/rough_leather']);
+        const plan = executable();
+        expect(plan).toMatchObject({ strategy: 'craft', totalCost: 300 });
+        expect(plan.children[0].strategy).toBe('buy');
+        expect(computeBestCraftingPlan(BOOTS).totalCost).toBe(180);
+    });
+    test('thin-market routing does not override a known blocked recipe', () => {
+        game.blockedActions.add(game.initClientData.actionDetailMap['/actions/tailoring/rough_leather']);
+        expect(executable(BOOTS, true).children[0].strategy).toBe('buy');
+    });
+    test('an unpriced blocked intermediate never becomes free or an executable craft', () => {
+        game.blockedActions.add(game.initClientData.actionDetailMap['/actions/tailoring/rough_leather']);
+        delete market.prices[LEATHER];
+        expect(executable(LEATHER)).toMatchObject({ strategy: 'buy', totalCost: Infinity });
+        expect(executable()).toMatchObject({ strategy: 'buy', totalCost: 500 });
+    });
+});
+
+test('a shared memo cannot mix valuation, executable and no-Artisan scenarios', () => {
+    game.blockedActions.add(game.initClientData.actionDetailMap['/actions/tailoring/rough_leather']);
+    buffs.artisanBonus = 0.5;
+    const memo = new Map();
+    const calculate = (variant, respect) =>
+        computeBestCraftingPlan(
+            BOOTS,
+            1,
+            'ask',
+            new Set(),
+            memo,
+            0,
+            undefined,
+            false,
+            false,
+            0,
+            false,
+            false,
+            undefined,
+            variant,
+            respect
+        );
+    expect(calculate('current', false).totalCost).toBe(45);
+    expect(calculate('current', true).totalCost).toBe(150);
+    expect(calculate('no-artisan', true).totalCost).toBe(300);
+    expect(calculate('current', false).totalCost).toBe(45);
 });

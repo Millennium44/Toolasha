@@ -21,6 +21,8 @@ const game = vi.hoisted(() => ({
     actions: {},
     shops: {},
     artisan: 0,
+    skills: [],
+    drinks: [],
     // What `networthHistory.recentSeries` hands back — empty by default, so
     // tests that are not about the fallback see the same "nothing measured"
     // behaviour they did before it existed
@@ -62,6 +64,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInventory: () => game.inventory,
         getSkills: () => game.skills || null,
+        getActionDrinkSlots: () => game.drinks,
         getEquipment: () => game.equipment,
         getItemDetails: (hrid) => game.details[hrid],
         getLearnedAbilities: () => game.abilities,
@@ -264,6 +267,8 @@ const {
 const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
+    game.skills = [];
+    game.drinks = [];
     game.customVersion = 0;
     game.profitMode = 'conservative';
     game.routePreference = 'auto';
@@ -2530,6 +2535,45 @@ describe('a retaining craft compares both base routes by real cost', () => {
         });
     });
 
+    test('tea alternatives preserve the cheapest real base route, not the cheapest cash route', () => {
+        Object.assign(game.actions['/actions/refine'], {
+            type: '/action_types/cheesesmithing',
+            levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 60 },
+        });
+        game.skills = [{ skillHrid: '/skills/cheesesmithing', level: 65 }];
+        game.details['/items/artisan_tea'] = {
+            consumableDetail: {
+                buffs: [
+                    { typeHrid: '/buff_types/action_level', flatBoost: 6 },
+                    { typeHrid: '/buff_types/artisan', flatBoost: 0.1 },
+                ],
+            },
+        };
+        game.details['/items/ultra_cheesesmithing_tea'] = {
+            name: 'Ultra Cheesesmithing Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+        };
+        game.details['/items/pouch'] = { equipmentDetail: { combatStats: { drinkSlots: 2 } } };
+        game.equipment.set('/item_locations/pouch', { itemHrid: '/items/pouch' });
+        game.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory.push({ itemHrid: '/items/artisan_tea', count: 3 });
+        game.artisan = 0.1;
+
+        const [target] = watchedTargets();
+        expect(target.route).toBe('buy');
+        expect(craftRow()).toMatchObject({ cash: 168 * M, real: 168 * M, eligibility: { status: 'blocked' } });
+        expect(craftRow().alternatives).toEqual([
+            expect.objectContaining({
+                label: 'Requires Ultra Cheesesmithing Tea',
+                materialsCost: 168 * M,
+                realCost: 168 * M,
+            }),
+            expect.objectContaining({ label: 'Without Artisan', materialsCost: 170 * M, realCost: 170 * M }),
+        ]);
+        setRoutePin(TARGET, 13, 'craft');
+        expect(watchedTargets()[0]).toMatchObject({ cost: 168 * M, upgradeBaseLevel: 13 });
+    });
+
     test('without a base listing, a pinned unpriced owned run retains its known cash', () => {
         game.prices[`${BASE}:13`].ask = 0;
         game.prices[`${BASE}:12`].bid = 0;
@@ -3845,6 +3889,179 @@ describe('the pricing mode setting decides which side of the book each price is 
             expect(mirrorBuildRoute(REFINED, 13)).not.toEqual({ unpriced: true });
         });
     });
+});
+
+describe('craft routes distinguish availability from price', () => {
+    beforeEach(() => {
+        game.equipment = new Map();
+        game.actions['/actions/refine'].name = 'Refined Spear';
+        game.actions['/actions/refine'].type = '/action_types/cheesesmithing';
+        game.actions['/actions/refine'].levelRequirement = { skillHrid: '/skills/cheesesmithing', level: 60 };
+        game.skills = [{ skillHrid: '/skills/cheesesmithing', level: 65 }];
+        game.details['/items/artisan_tea'] = {
+            consumableDetail: {
+                buffs: [
+                    { typeHrid: '/buff_types/action_level', flatBoost: 6 },
+                    { typeHrid: '/buff_types/artisan', flatBoost: 0.1 },
+                ],
+            },
+        };
+        game.details['/items/ultra_cheesesmithing_tea'] = {
+            name: 'Ultra Cheesesmithing Tea',
+            consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+        };
+        game.drinks = [{ itemHrid: '/items/artisan_tea' }];
+        game.inventory.push({ itemHrid: '/items/artisan_tea', count: 5 });
+        game.artisan = 0.1;
+        watchTarget('/items/refined_spear');
+    });
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+    test('Auto excludes a known blocked craft while preserving its hypothetical price', () => {
+        const [target] = watchedTargets();
+        expect(target.route).toBe('buy');
+        expect(target.routes.find((row) => row.id === 'craft')).toMatchObject({
+            cash: 327_000_000,
+            eligibility: { status: 'blocked' },
+        });
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('needs cheesesmithing 66');
+        expect(text()).not.toContain(FAILED);
+    });
+    test('removing Artisan recalculates the material bill and remains a suggestion', () => {
+        const [target] = watchedTargets();
+        const craft = target.routes.find((row) => row.id === 'craft');
+        expect(craft.alternatives).toContainEqual(
+            expect.objectContaining({ label: 'Without Artisan', materialsCost: 330_000_000 })
+        );
+        expect(target.route).toBe('buy');
+    });
+    test('offers the exact Ultra tea when an equipment slot allows it', () => {
+        game.details['/items/pouch'] = { equipmentDetail: { combatStats: { drinkSlots: 2 } } };
+        game.equipment.set('/item_locations/pouch', { itemHrid: '/items/pouch' });
+        const craft = watchedTargets()[0].routes.find((row) => row.id === 'craft');
+        expect(craft.alternatives).toContainEqual(
+            expect.objectContaining({ label: 'Requires Ultra Cheesesmithing Tea', materialsCost: 327_000_000 })
+        );
+    });
+    test('an explicit craft pin retains its price and its warning', () => {
+        setRoutePin('/items/refined_spear', 0, 'craft');
+        const [target] = watchedTargets();
+        expect(target.route).toBe('craft');
+        expect(target.routes.find((row) => row.id === 'craft').eligibility.status).toBe('blocked');
+    });
+    test('unknown levels are labeled separately and do not suppress valuation', () => {
+        game.skills = [];
+        const [target] = watchedTargets();
+        expect(target.route).toBe('craft');
+        expect(target.routes.find((row) => row.id === 'craft').eligibility.status).toBe('unknown');
+    });
+    test('a locked intermediate excludes an otherwise startable root route', () => {
+        game.skills[0].level = 100;
+        game.actions['/actions/shard'] = {
+            name: 'Shard',
+            type: '/action_types/crafting',
+            levelRequirement: { skillHrid: '/skills/crafting', level: 90 },
+        };
+        game.skills.push({ skillHrid: '/skills/crafting', level: 1 });
+        window.Toolasha = {
+            Actions: {
+                craftingPlanCalculator: {
+                    computeBestCraftingPlan: (hrid) => ({
+                        itemHrid: hrid,
+                        strategy: 'craft',
+                        actionHrid: '/actions/shard',
+                        totalCost: 100,
+                        children: [],
+                    }),
+                },
+            },
+        };
+        const [target] = watchedTargets();
+        expect(target.route).toBe('buy');
+        expect(target.routes.find((row) => row.id === 'craft').eligibility.message).toContain('Shard needs crafting');
+    });
+});
+
+test('an unbuyable locked intermediate retains its hypothetical cost and blocked reason without winning Auto', () => {
+    game.equipment = new Map();
+    game.skills = [
+        { skillHrid: '/skills/cheesesmithing', level: 100 },
+        { skillHrid: '/skills/crafting', level: 1 },
+    ];
+    Object.assign(game.actions['/actions/refine'], {
+        type: '/action_types/cheesesmithing',
+        levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 60 },
+        upgradeItemHrid: null,
+    });
+    game.actions['/actions/shard'] = {
+        name: 'Shard',
+        type: '/action_types/crafting',
+        levelRequirement: { skillHrid: '/skills/crafting', level: 90 },
+    };
+    window.Toolasha = {
+        Actions: {
+            craftingPlanCalculator: {
+                computeBestCraftingPlan: (...args) =>
+                    args[14]
+                        ? { itemHrid: args[0], strategy: 'buy', totalCost: Infinity, buyPrice: null, children: [] }
+                        : {
+                              itemHrid: args[0],
+                              strategy: 'craft',
+                              actionHrid: '/actions/shard',
+                              totalCost: 100,
+                              children: [],
+                          },
+            },
+        },
+    };
+    try {
+        watchTarget('/items/refined_spear');
+        let [target] = watchedTargets();
+        expect(target.route).toBe('buy');
+        expect(target.routes.find((row) => row.id === 'craft')).toMatchObject({
+            cash: 100,
+            eligibility: { status: 'blocked' },
+        });
+        delete game.prices['/items/refined_spear:0'];
+        [target] = watchedTargets();
+        expect(target.cost).toBeNull();
+        expect(target.route).toBeNull();
+        expect(target.routes.find((row) => row.id === 'craft').eligibility.message).toContain('Shard needs crafting');
+    } finally {
+        delete window.Toolasha;
+    }
+});
+
+test('Watch requests executable intermediates and can still choose the valid parent craft', () => {
+    game.equipment = new Map();
+    game.skills = [{ skillHrid: '/skills/cheesesmithing', level: 100 }];
+    Object.assign(game.actions['/actions/refine'], {
+        type: '/action_types/cheesesmithing',
+        levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 60 },
+        upgradeItemHrid: null,
+    });
+    const calls = [];
+    window.Toolasha = {
+        Actions: {
+            craftingPlanCalculator: {
+                computeBestCraftingPlan: (...args) => {
+                    calls.push(args);
+                    return { itemHrid: args[0], strategy: 'buy', totalCost: 100, buyPrice: 100, children: [] };
+                },
+            },
+        },
+    };
+    try {
+        watchTarget('/items/refined_spear');
+        const [target] = watchedTargets();
+        expect(target.route).toBe('craft');
+        expect(target.routes.find((row) => row.id === 'craft').eligibility.status).toBe('available');
+        expect(calls.some((args) => args[13] === 'current' && args[14] === true)).toBe(true);
+    } finally {
+        delete window.Toolasha;
+    }
 });
 
 describe('Equipment Watch item requirement warnings', () => {

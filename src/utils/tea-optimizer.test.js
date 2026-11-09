@@ -1873,3 +1873,133 @@ describe('processing conversion lookup and drop pricing across a tea search', ()
         expect(prices.calls['/items/cheese'] || 0).toBeLessThanOrEqual(3);
     });
 });
+
+describe('Ultra Tea can unlock recipes above the base skill level', () => {
+    beforeEach(() => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/ultra_cheesesmithing_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+                },
+                '/items/efficiency_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+                },
+                '/items/cheese_sword': {},
+            },
+            actionDetailMap: {
+                '/actions/cheesesmithing/cheese_sword': {
+                    type: '/action_types/cheesesmithing',
+                    name: 'Cheese Sword',
+                    baseTimeCost: 10e9,
+                    levelRequirement: { skillHrid: '/skills/cheesesmithing', level: 60 },
+                    experienceGain: { skillHrid: '/skills/cheesesmithing', value: 100 },
+                    outputItems: [{ itemHrid: '/items/cheese_sword', count: 1 }],
+                },
+            },
+        };
+        state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 52 }];
+        prices.byHrid = {
+            '/items/cheese_sword': 1000,
+            '/items/ultra_cheesesmithing_tea': 1,
+            '/items/efficiency_tea': 1,
+        };
+    });
+    test('search considers the unlocked recipe and does not credit a non-unlocking combo', () => {
+        const result = findOptimalTeas('cheesesmithing', 'xp');
+        expect(result.error).toBeUndefined();
+        expect(result.optimal.teas.map((tea) => tea.hrid)).toContain('/items/ultra_cheesesmithing_tea');
+        expect(result.optimal.avgScore).toBeGreaterThan(0);
+        const withoutUltra = result.allResults.find((row) => !row.teas.includes('/items/ultra_cheesesmithing_tea'));
+        expect(withoutUltra.avgScore).toBe(0);
+    });
+    test('the performance calculator agrees at the exact boosted boundary', () => {
+        expect(
+            calculateSkillPerformance('cheesesmithing', new Map(), ['/items/ultra_cheesesmithing_tea'], 52).xpPerHour
+        ).toBeGreaterThan(0);
+        expect(
+            calculateSkillPerformance('cheesesmithing', new Map(), ['/items/ultra_cheesesmithing_tea'], 51).xpPerHour
+        ).toBe(0);
+        expect(calculateSkillPerformance('cheesesmithing', new Map(), [], 52).xpPerHour).toBe(0);
+    });
+    test('a banned Ultra or pinned non-unlocking tea does not make the recipe available', () => {
+        const constraints = {
+            pinned: new Set(['/items/efficiency_tea']),
+            banned: new Set(['/items/ultra_cheesesmithing_tea']),
+        };
+        expect(findOptimalTeas('cheesesmithing', 'xp', null, null, constraints).error).toContain(
+            'No actions available'
+        );
+    });
+});
+
+test('current performance and a tea search average over the same newly unlockable recipes', () => {
+    state.gameData = {
+        itemDetailMap: {
+            '/items/ultra_cheesesmithing_tea': {
+                consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+            },
+            '/items/efficiency_tea': {
+                consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+            },
+        },
+        actionDetailMap: Object.fromEntries(
+            [1, 60].map((level) => [
+                `/actions/cheesesmithing/test_${level}`,
+                {
+                    type: '/action_types/cheesesmithing',
+                    name: `Recipe ${level}`,
+                    baseTimeCost: 10e9,
+                    levelRequirement: { skillHrid: '/skills/cheesesmithing', level },
+                    experienceGain: { skillHrid: '/skills/cheesesmithing', value: 100 },
+                },
+            ])
+        ),
+    };
+    state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 52 }];
+    const current = calculateSkillPerformance('cheesesmithing', new Map(), ['/items/efficiency_tea'], 52);
+    const search = findOptimalTeas('cheesesmithing', 'xp');
+    const candidate = search.allResults.find((row) => row.teas.includes('/items/efficiency_tea'));
+    expect(current.xpPerHour).toBeCloseTo(candidate.avgScore);
+    expect(current.actionsOffered).toBe(1);
+    expect(current.blockedActionCount).toBe(0);
+    expect(getSkillActionsForDisplay('cheesesmithing', 52).find((row) => row.requiredLevel === 60)).toMatchObject({
+        available: true,
+        requiresTea: true,
+    });
+});
+
+test('drink concentration with no skill tea does not dilute XP by admitting hypothetical Ultra recipes', () => {
+    state.gameData = {
+        itemDetailMap: {
+            '/items/ultra_cheesesmithing_tea': {
+                consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+            },
+            '/items/pouch': {
+                equipmentDetail: { combatStats: { drinkSlots: 2 }, noncombatStats: { drinkConcentration: 0.125 } },
+            },
+        },
+        actionDetailMap: Object.fromEntries(
+            [1, 61].map((level) => [
+                `/actions/cheesesmithing/test_${level}`,
+                {
+                    type: '/action_types/cheesesmithing',
+                    name: `Recipe ${level}`,
+                    baseTimeCost: 10e9,
+                    levelRequirement: { skillHrid: '/skills/cheesesmithing', level },
+                    experienceGain: { skillHrid: '/skills/cheesesmithing', value: 100 },
+                },
+            ])
+        ),
+    };
+    state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 52 }];
+    const gear = new Map([['/item_locations/pouch', { itemHrid: '/items/pouch', enhancementLevel: 0 }]]);
+    const bare = calculateSkillPerformance('cheesesmithing', new Map(), [], 52);
+    const withPouch = calculateSkillPerformance('cheesesmithing', gear, [], 52);
+    expect(withPouch.xpPerHour).toBe(bare.xpPerHour);
+    expect(withPouch.actionsOffered).toBe(1);
+    const search = findOptimalTeas('cheesesmithing', 'xp', null, null, null, null, gear, null, 52, {
+        includeEmpty: true,
+    });
+    const noTea = search.allResults.find((row) => row.teas.length === 0);
+    expect(noTea.avgScore).toBe(bare.xpPerHour);
+});
