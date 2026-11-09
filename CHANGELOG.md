@@ -57,6 +57,9 @@ Replay, cohort selection, Save pool and Sanitized exports now wait for saved fig
 ### Character cards include saved-loadout auras
 
 Character cards can now include up to three other learned auras from saved combat or all-skills loadouts, at their current levels; cards built from a skilling loadout get none. Turn this off in the card settings; equipped abilities keep the first five tiles, while the external viewer’s final three tiles hold extras without separate styling.
+### Automatic combat task estimates leave your simulations running
+
+Automatic combat task estimates, including Best Score searches, no longer cancel simulations you start. They skip cards that have changed or closed, and return to the Estimate controls if repeatedly interrupted.
 
 ### Equipment Watch follows the pricing mode
 

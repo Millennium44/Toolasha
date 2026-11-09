@@ -121,8 +121,8 @@ const COMBAT_ESTIMATE_RESULT_CLASS = 'mwi-combat-est-result';
 /** How many times one estimate restarts because the zone's tier changed while it simulated */
 const MAX_RETIER_RERUNS = 2;
 
-/** How many times a tier-change redo cancelled by the player's own simulation is queued again */
-const MAX_RETIER_ATTEMPTS = 3;
+/** How many attempts an automatic estimate gets when the player's own simulation cancels it */
+const MAX_AUTOMATIC_ATTEMPTS = 3;
 
 /**
  * Fallback tier for a combat task estimate when the zone is nowhere in the
@@ -1552,21 +1552,7 @@ class TaskProfitDisplay {
                     estimateContainer.style.cssText = 'margin-top: 4px; font-size: 0.75rem;';
 
                     if (config.getSetting('combatSim_autoEstimate')) {
-                        const defaultLoadout = config.getSettingValue('combatSim_defaultLoadout', '');
-                        this._simQueue = this._simQueue
-                            .then(() =>
-                                this._runCombatSimEstimate(
-                                    estimateContainer,
-                                    taskData,
-                                    defaultLoadout,
-                                    this._estimateMode
-                                )
-                            )
-                            .catch((error) => {
-                                // Keep the queue alive — an uncaught rejection would poison
-                                // every subsequent combat estimate
-                                console.error('[TaskProfitDisplay] Combat sim estimate failed:', error);
-                            });
+                        this._simQueue = this._runQueuedAutoEstimate(this._simQueue, estimateContainer, taskData);
                     } else {
                         this._renderCombatEstimateConfig(estimateContainer, taskData);
                     }
@@ -1946,6 +1932,56 @@ class TaskProfitDisplay {
     }
 
     /**
+     * Run an auto-estimate after the preceding card, without interrupting a simulation the player
+     * started. Recheck the card, character and settings when its turn arrives and between tiers. A
+     * cancellation retries a bounded number of times, then returns the manual Estimate controls.
+     * @param {Promise<void>} preceding - The preceding queued estimate
+     * @param {Element} container - The card's estimate container
+     * @param {Object} taskData - The task that was queued
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _runQueuedAutoEstimate(preceding, container, taskData) {
+        const generation = this._renderGeneration;
+        const characterId = dataManager.getCurrentCharacterId();
+        const isStale = () =>
+            generation !== this._renderGeneration ||
+            characterIdentityChanged(characterId) ||
+            !container.isConnected ||
+            !this._liveTaskData(container.closest(GAME.TASK_INFO), taskData);
+        const shouldStop = () =>
+            isStale() || !config.getSetting('taskCombatEstimate') || !config.getSetting('combatSim_autoEstimate');
+        try {
+            await preceding;
+            if (isStale() || !config.getSetting('taskCombatEstimate')) return;
+            const loadoutName = config.getSettingValue('combatSim_defaultLoadout', '');
+            const mode = this._estimateMode;
+            for (let attempt = 0; attempt < MAX_AUTOMATIC_ATTEMPTS; attempt++) {
+                if (shouldStop()) break;
+                const outcome = await this._runCombatSimEstimate(
+                    container,
+                    taskData,
+                    loadoutName,
+                    mode,
+                    0,
+                    true,
+                    shouldStop
+                );
+                if (shouldStop()) break;
+                if (outcome !== 'cancelled') return;
+            }
+            // Switching auto-estimate off or repeatedly starting another sim must not leave a card
+            // stuck on "Simulating". A manual Estimate remains available when the card is still valid.
+            if (!isStale() && config.getSetting('taskCombatEstimate')) {
+                this._renderCombatEstimateConfig(container, taskData);
+            }
+        } catch (error) {
+            // Keep the queue alive: one rejected estimate must not poison later cards.
+            console.error('[TaskProfitDisplay] Combat sim estimate failed:', error);
+        }
+    }
+
+    /**
      * Run the combat sim to estimate task completion time.
      * @param {Element} container - Container element to render into
      * @param {Object} taskData - Parsed task data
@@ -1953,13 +1989,29 @@ class TaskProfitDisplay {
      * @param {string} mode - 'solo' (single monster) or 'zone' (full spawn table)
      * @param {number} [retierDepth] - How many times this run has already restarted because the zone's
      *   tier changed while it simulated (bounded, so a tier that keeps moving cannot loop)
-     * @param {boolean} [automatic] - Started by Toolasha rather than the player (a tier-change redo): it
+     * @param {boolean} [automatic] - Started by Toolasha rather than the player (auto-estimate or tier redo): it
      *   does not preempt other simulations, and being cancelled by one is not a failure; the call
      *   resolves 'cancelled' (leaving the card on "Simulating...") for the caller to run it again
+     * @param {function(): boolean} [shouldStop] - Whether the queued request is no longer wanted
      * @returns {Promise<'cancelled'|undefined>}
      * @private
      */
-    async _runCombatSimEstimate(container, taskData, loadoutName, mode = 'solo', retierDepth = 0, automatic = false) {
+    async _runCombatSimEstimate(
+        container,
+        taskData,
+        loadoutName,
+        mode = 'solo',
+        retierDepth = 0,
+        automatic = false,
+        shouldStop = () => false
+    ) {
+        // Capture ownership before building player DTOs, which can await a party roster. A switch
+        // during that await must not cache the old character's figures under the new character.
+        const simCharacterId = dataManager.getCurrentCharacterId();
+        const generation = this._renderGeneration;
+        const isStale = () =>
+            generation !== this._renderGeneration || characterIdentityChanged(simCharacterId) || shouldStop();
+        if (isStale()) return;
         // A new run starting invalidates whatever this card's Go button was
         // primed with — filled only from a currently-valid estimate, never a
         // stale one left over from before a re-run.
@@ -2029,7 +2081,7 @@ class TaskProfitDisplay {
 
         container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
 
-        // An automatic run (a tier-change redo) never preempts: it must not kill the run of another card
+        // An automatic run never preempts: it must not kill the run of another card
         // or of the player, and the player's own run is free to preempt it
         const simArgs = automatic ? [undefined, { preempt: false }] : [];
 
@@ -2038,9 +2090,7 @@ class TaskProfitDisplay {
             if (!gameData) throw new Error('No game data');
 
             const { players, selfHrid } = await buildAllPlayerDTOs();
-            // Whose these runs are: a Best Score search spans several, and a switch in between must not
-            // cache this character's figures under the next one's id
-            const simCharacterId = dataManager.getCurrentCharacterId();
+            if (isStale()) return;
             if (!players.length) throw new Error('No player data');
 
             // The roster keeps party order, so the local character need not be first
@@ -2174,7 +2224,7 @@ class TaskProfitDisplay {
                     // The card went, its task changed, or the character switched: the rest of the search
                     // would only hold up other estimates
                     () =>
-                        characterIdentityChanged(simCharacterId) ||
+                        isStale() ||
                         !container.isConnected ||
                         (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null)
                 );
@@ -2185,6 +2235,7 @@ class TaskProfitDisplay {
             } else {
                 simResult = await simAtTier(estimateTier);
             }
+            if (isStale()) return;
 
             // The sim took a while, and the card may have progressed under it
             // (or been queued from an auto-estimate, or a Re-run, holding the
@@ -2207,7 +2258,8 @@ class TaskProfitDisplay {
                         loadoutName,
                         mode,
                         retierDepth + 1,
-                        automatic
+                        automatic,
+                        shouldStop
                     );
                 }
                 console.warn('[TaskProfit] The zone tier kept changing while estimating; showing the tier simulated');
@@ -2261,6 +2313,7 @@ class TaskProfitDisplay {
             };
             this._drawCachedCombatEstimate(container, cached, liveTaskData, figures);
         } catch (e) {
+            if (isStale()) return;
             // Cancelled by a simulation the player started: not a failure, and the caller runs it again
             if (automatic && /cancel/i.test(String(e?.message || ''))) return 'cancelled';
             console.error('[TaskProfit] Combat estimate failed:', e);
@@ -2303,8 +2356,8 @@ class TaskProfitDisplay {
         const maxTier = Math.max(0, Math.floor(Number(simGameData.actionDetailMap?.[zoneHrid]?.maxDifficulty) || 0));
         const rows = [];
         for (let tier = 0; tier <= maxTier; tier++) {
-            container.innerHTML = `<span style="color:#888; font-size:11px;">⏳ Simulating T${tier} of T0–T${maxTier}…</span>`;
             if (isStale()) return null;
+            container.innerHTML = `<span style="color:#888; font-size:11px;">⏳ Simulating T${tier} of T0–T${maxTier}…</span>`;
             const simResult = await simAtTier(tier);
             if (isStale()) return null;
             // One time base for both figures: the span this run actually simulated
@@ -2551,7 +2604,7 @@ class TaskProfitDisplay {
      * Run the queued tier-change redos, one after another. An entry is dropped when its card has gone,
      * its task changed, it no longer needs a redo, or the character changed (which ends the queue). A
      * run cancelled by a simulation the player started goes to the back of the queue, up to
-     * {@link MAX_RETIER_ATTEMPTS} times, and then reports a failure like any other.
+     * {@link MAX_AUTOMATIC_ATTEMPTS} times, and then reports a failure like any other.
      * @private
      */
     async _drainRetierQueue() {
@@ -2592,7 +2645,7 @@ class TaskProfitDisplay {
             if (outcome !== 'cancelled') continue;
             if (characterIdentityChanged(entry.characterId) || !container.isConnected) continue;
             entry.attempts += 1;
-            if (entry.attempts < MAX_RETIER_ATTEMPTS) {
+            if (entry.attempts < MAX_AUTOMATIC_ATTEMPTS) {
                 this._retierQueue.push(entry);
             } else {
                 const failedNode = container.closest(GAME.TASK_INFO);
