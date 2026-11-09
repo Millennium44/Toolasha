@@ -139,6 +139,7 @@ import * as refinedItemCost from '../utils/refined-item-cost.js';
 // from two or more production bundles, so it must be exported here (and mapped
 // in utilsExternalGlobals) or every bundle silently carries its own copy.
 import * as actionContext from '../utils/action-context.js';
+import * as craftStartEligibility from '../utils/craft-start-eligibility.js';
 import * as adoptionConsent from '../utils/adoption-consent.js';
 import * as alchemyFees from '../utils/alchemy-fees.js';
 import * as alchemyShopValue from '../utils/alchemy-shop-value.js';
@@ -323,6 +324,7 @@ toolashaRoot.Utils = {
     keyCost,
     refinedItemCost,
     actionContext,
+    craftStartEligibility,
     adoptionConsent,
     alchemyFees,
     alchemyShopValue,

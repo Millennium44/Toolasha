@@ -250,6 +250,7 @@ const utilsExternalGlobals = new Map([
     // last won. The stateless ones are here for weight: the combat and ui
     // bundles both sit near the bundle-size ceiling.
     [normalize(join(__dirname, 'src/utils/action-context.js')), 'Toolasha.Utils.actionContext'],
+    [normalize(join(__dirname, 'src/utils/craft-start-eligibility.js')), 'Toolasha.Utils.craftStartEligibility'],
     [normalize(join(__dirname, 'src/utils/adoption-consent.js')), 'Toolasha.Utils.adoptionConsent'],
     [normalize(join(__dirname, 'src/utils/alchemy-fees.js')), 'Toolasha.Utils.alchemyFees'],
     [normalize(join(__dirname, 'src/utils/alchemy-shop-value.js')), 'Toolasha.Utils.alchemyShopValue'],
