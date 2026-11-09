@@ -101,11 +101,13 @@ vi.mock('../../core/config.js', () => ({
             settingChangeCallbacks[key] = settingChangeCallbacks[key].filter((cb) => cb !== callback);
         },
         getSettingValue: (key) =>
-            key === 'profitCalc_pricingMode'
-                ? game.profitMode
-                : key === 'equipmentWatch_routePreference'
-                  ? (game.routePreference ?? 'auto')
-                  : 'full',
+            key === 'profitCalc_patientTickBuy' || key === 'profitCalc_patientTickSell'
+                ? game.patientTick?.[key] === true
+                : key === 'profitCalc_pricingMode'
+                  ? game.profitMode
+                  : key === 'equipmentWatch_routePreference'
+                    ? (game.routePreference ?? 'auto')
+                    : 'full',
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
@@ -3554,6 +3556,20 @@ describe('the pricing mode setting decides which side of the book each price is 
         game.profitMode = 'optimistic';
         watchTarget('/items/holy_sword');
         expect(cost()).toBe(90_000_000 - afterTax(45_000_000));
+    });
+
+    test('the patient tick moves a buy at the bid up a step and a sale at the ask down a step', () => {
+        game.profitMode = 'optimistic';
+        watchTarget('/items/holy_sword');
+        const plain = cost();
+        game.patientTick = { profitCalc_patientTickBuy: true, profitCalc_patientTickSell: true };
+        const ticked = cost();
+        delete game.patientTick;
+
+        // A step more to pay for the sword, a step less for the old one: the cost rises, but stays
+        // inside the ask and the bid the book offers
+        expect(ticked).toBeGreaterThan(plain);
+        expect(ticked).toBeLessThan(100_000_000 - afterTax(40_000_000));
     });
 
     test('a changed mode changes the figure on the very next read, with no stale memo', () => {

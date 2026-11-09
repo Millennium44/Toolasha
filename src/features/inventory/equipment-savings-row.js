@@ -59,6 +59,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
 import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
+import { patientTickPrice } from '../../utils/patient-tick.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -363,7 +364,7 @@ const sellSide = () => bookSide('sell');
  * @returns {number} Coins, 0 when the buy side has no price
  */
 function buyPrice(itemHrid, level = 0) {
-    return Number(getItemPrices(itemHrid, level)?.[buySide()]) || 0;
+    return sidePrice(itemHrid, level, 'buy', buySide());
 }
 
 /**
@@ -373,7 +374,33 @@ function buyPrice(itemHrid, level = 0) {
  * @returns {number} Coins, 0 when the sell side has no price
  */
 function sellPrice(itemHrid, level = 0) {
-    return Number(getItemPrices(itemHrid, level)?.[sellSide()]) || 0;
+    return sidePrice(itemHrid, level, 'sell', sellSide());
+}
+
+/**
+ * One side of the book for one transaction, with the patient +1 tick the profit settings ask for (a buy
+ * at the bid steps up a tick, a sale at the ask steps down), exactly as `getItemPrice` applies it.
+ * Only a live listing is ticked: an estimated side, or an Iron Cow value, has no queue to jump.
+ * @param {string} itemHrid - The item
+ * @param {number} level - Enhancement level
+ * @param {'buy'|'sell'} transaction - Which transaction
+ * @param {'ask'|'bid'} side - The book side the mode picked
+ * @returns {number} Coins, 0 when that side has no price
+ */
+function sidePrice(itemHrid, level, transaction, side) {
+    const prices = getItemPrices(itemHrid, level);
+    const value = Number(prices?.[side]) || 0;
+    if (!(value > 0) || prices.source || prices[`${side}Estimated`]) return value;
+    return (
+        patientTickPrice(value, transaction, side, {
+            ask: prices.ask,
+            bid: prices.bid,
+            askEstimated: prices.askEstimated,
+            bidEstimated: prices.bidEstimated,
+            itemHrid,
+            enhancementLevel: level,
+        }) || value
+    );
 }
 
 /** The label for the buy price on the card: the ask when buying off the sellers, the bid when waiting */
