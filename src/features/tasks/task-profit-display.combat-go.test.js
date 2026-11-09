@@ -735,6 +735,38 @@ describe('Go honors the tier the estimate actually simulated', () => {
         expect(combobox.textContent).toBe('T3');
         expect(input.value).toBe('42'); // ceil(40 * 1.05)
     });
+
+    test("a tier picked in the game's Difficulty box after the estimate is kept: no reset, no count, a redo", async () => {
+        dataManager.initClientData = buildGameData([
+            {
+                hrid: '/actions/combat/gobo_planet',
+                name: 'Gobo Planet',
+                category: '/categories/gobo',
+                sortIndex: 1,
+                monsters: ['/monsters/gobo'],
+            },
+        ]);
+        // The game opens the zone at the player's own pick, T5; the estimate simulated T3
+        const { input, combobox } = buildDetailPanel('Gobo Planet', 5);
+        const resolve = vi
+            .spyOn(taskProfitDisplay, '_resolveEstimateTier')
+            .mockReturnValue({ tier: 5, known: true, source: 'selected', pending: false });
+        const retier = vi.spyOn(taskProfitDisplay, '_retierOpenCombatEstimates').mockImplementation(() => {});
+        try {
+            await taskProfitDisplay._applyGoEstimate({
+                zoneHrid: '/actions/combat/gobo_planet',
+                predictedFights: 40,
+                tier: 3,
+            });
+
+            expect(combobox.textContent).toBe('T5');
+            expect(input.value).not.toBe('42'); // a T3 count is not filled against a T5 fight
+            expect(retier).toHaveBeenCalled();
+        } finally {
+            resolve.mockRestore();
+            retier.mockRestore();
+        }
+    });
 });
 
 describe('_runCombatSimEstimate: the estimate itself simulates at the last-used tier', () => {

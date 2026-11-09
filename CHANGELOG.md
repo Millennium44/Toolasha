@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task Go keeps the combat tier you picked in the game
+
+A combat task's estimate and Go now use the tier the zone's own Difficulty box already has, so Go no longer resets your per-zone picks (it set T0 on zones with no recorded run). "Combat estimate: tier for Go" in Tasks switches back to the tier queued or last run.
+
 ### Equipment Watch compares buying, crafting and a Philosopher's Mirror build
 
 Each card lists every route with the cash you need and its real cost (cash plus the sale you give up on any copy it uses up), and Auto picks the cheapest; pin a route on the card, or set a preference in settings. The bar still counts the cash you need.

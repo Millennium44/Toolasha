@@ -642,6 +642,9 @@ class TaskProfitDisplay {
             }
         });
 
+        // Which tier an estimate uses changed: redo the open ones at the tier it now picks
+        config.onSettingChange('taskCombatGoTier', () => this._retierOpenCombatEstimates());
+
         // An open zone result's summary quotes this coverage; redraw it from
         // the cached sim, the same way a progress change does
         config.onSettingChange('taskCombatEstimatePercentile', () => {
@@ -1181,7 +1184,13 @@ class TaskProfitDisplay {
         if (characterIdentityChanged(characterId)) return;
 
         const panel = document.querySelector(PANEL_SELECTOR);
-        const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
+        let tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
+        // The game's own Difficulty pick for the zone changed after this estimate simulated: keep the
+        // player's pick rather than setting the box back, fill no count simulated for another tier, and
+        // redo the estimate at the new one (below)
+        const current = this._resolveEstimateTier(estimate.zoneHrid);
+        const pickedElsewhere = current.source === 'selected' && current.tier !== tier;
+        if (pickedElsewhere) tier = current.tier;
 
         const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
@@ -1303,6 +1312,11 @@ class TaskProfitDisplay {
         if (ownFight) {
             fillsCount = mergedKills !== null;
             if (fillsCount) fights = mergedKills;
+        }
+        // Summed kills on the monster's own fight are exact at any tier; a simulated count is not
+        if (pickedElsewhere) {
+            if (!ownFight) fillsCount = false;
+            this._retierOpenCombatEstimates();
         }
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most

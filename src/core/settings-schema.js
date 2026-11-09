@@ -3793,6 +3793,22 @@ export const settingsGroups = {
                 default: true,
                 help: 'When clicking Go on a task, combines the required amounts of all in-progress tasks for the same action into a single pre-filled count',
             },
+            taskCombatGoTier: {
+                id: 'taskCombatGoTier',
+                label: 'Combat estimate: tier for Go',
+                type: 'select',
+                default: 'game',
+                options: [
+                    { value: 'game', label: 'Keep the tier selected in the game' },
+                    { value: 'lastRun', label: 'The tier queued or last run' },
+                ],
+                help:
+                    'Which difficulty tier a combat task estimate simulates and Go opens the zone at. "Keep the ' +
+                    'tier selected in the game" uses the tier the zone\'s own Difficulty box already has, so Go ' +
+                    'never changes it (zones you have never picked a tier for fall back to the tier queued or last ' +
+                    'run). "The tier queued or last run" sets the box to the tier in your action queue, else the ' +
+                    'tier you last fought the zone at, else T0.',
+            },
             taskCombatGoBuffer: {
                 id: 'taskCombatGoBuffer',
                 label: 'Combat estimate: Go count buffer %',

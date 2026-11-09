@@ -93,6 +93,7 @@ vi.mock('./adoption-consent.js', () => ({
 }));
 
 const mem = await import('./zone-tier-memory.js');
+const config = (await import('../core/config.js')).default;
 const { announceSyncPullApplied } = await import('./sync-merge-registry.js');
 
 const GOBO = '/actions/combat/gobo_planet';
@@ -487,5 +488,60 @@ describe('a change in flight across a character switch', () => {
         expect(stored('char-a')[FLY]).toMatchObject({ tier: 1 });
         expect(mem.rememberedTier(GOBO)).toBeNull();
         expect(stored('char-b') ?? {}).not.toHaveProperty(GOBO);
+    });
+});
+
+describe("the game's own Difficulty pick", () => {
+    let mode;
+    beforeEach(() => {
+        mode = 'game';
+        vi.spyOn(config, 'getSettingValue').mockImplementation((key, fallback) =>
+            key === 'taskCombatGoTier' ? mode : fallback
+        );
+        const map = new Map([
+            // The game's shape, read off the test server: { zoneHrid: tier } under the character id
+            ['lastSelectedActionDifficultyMap_char-a', JSON.stringify({ [GOBO]: 4, [FLY]: 0 })],
+            ['lastSelectedActionDifficultyMap_char-b', JSON.stringify({ [GOBO]: 1 })],
+        ]);
+        vi.stubGlobal('localStorage', { getItem: (key) => (map.has(key) ? map.get(key) : null) });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    test('wins over the queue and the last run, so Go keeps what the game shows', async () => {
+        dm.actions = [combat(GOBO, 3)];
+        mem.startZoneTierMemory();
+        await settle();
+        expect(mem.resolveZoneTier(GOBO)).toEqual({ tier: 4, known: true, source: 'selected', pending: false });
+        // T0 picked in the game is a real pick, not a missing one
+        expect(mem.resolveZoneTier(FLY, [])).toMatchObject({ tier: 0, source: 'selected' });
+        expect(mem.describeZoneTier(4, { source: 'selected', known: true })).toBe('T4 (the tier selected in the game)');
+    });
+
+    test('is read for the current character only', () => {
+        dm.characterId = 'char-b';
+        expect(mem.gameSelectedTier(GOBO)).toBe(1);
+        expect(mem.gameSelectedTier(FLY)).toBeNull();
+    });
+
+    test('a zone the game has no pick for falls back to the queue', () => {
+        const OTHER = '/actions/combat/swamp_planet';
+        expect(mem.resolveZoneTier(OTHER, [combat(OTHER, 2)])).toMatchObject({ tier: 2, source: 'queue' });
+    });
+
+    test('the "queued or last run" setting ignores the game pick, as before', () => {
+        mode = 'lastRun';
+        expect(mem.resolveZoneTier(GOBO, [combat(GOBO, 3)])).toMatchObject({ tier: 3, source: 'queue' });
+        expect(mem.resolveZoneTier(GOBO, [])).toMatchObject({ tier: 0, source: 'default' });
+    });
+
+    test('an unreadable map is no pick', () => {
+        vi.stubGlobal('localStorage', {
+            getItem: () => {
+                throw new Error('denied');
+            },
+        });
+        expect(mem.gameSelectedTier(GOBO)).toBeNull();
+        vi.stubGlobal('localStorage', { getItem: () => '{not json' });
+        expect(mem.gameSelectedTier(GOBO)).toBeNull();
     });
 });
