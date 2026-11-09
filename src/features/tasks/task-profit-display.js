@@ -63,6 +63,7 @@ import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { ladderScoreRows } from '../../utils/zone-score.js';
+import { capProfitRateCached } from '../../utils/liquidity-cap.js';
 import { resolveZoneTier, describeZoneTier, goTierMode, GO_TIER_BEST } from '../../utils/zone-tier-memory.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
@@ -2036,14 +2037,16 @@ class TaskProfitDisplay {
             const gameData = buildGameDataPayload();
             if (!gameData) throw new Error('No game data');
 
-            const { players } = await buildAllPlayerDTOs();
+            const { players, selfHrid } = await buildAllPlayerDTOs();
             // Whose these runs are: a Best Score search spans several, and a switch in between must not
             // cache this character's figures under the next one's id
             const simCharacterId = dataManager.getCurrentCharacterId();
             if (!players.length) throw new Error('No player data');
 
+            // The roster keeps party order, so the local character need not be first
+            const selfDTO = players.find((p) => p?.hrid === selfHrid) || players[0];
             if (loadoutName) {
-                applyLoadoutSnapshotToDTO(players[0], loadoutName, gameData);
+                applyLoadoutSnapshotToDTO(selfDTO, loadoutName, gameData);
             }
 
             const zoneAction = gameData.actionDetailMap[zoneHrid];
@@ -2093,7 +2096,7 @@ class TaskProfitDisplay {
             // task cards for the same zone+loadout, so every card in a zone
             // reports identical numbers instead of independent RNG rolls
             const sharedZoneSim = mode === 'zone' || isBossTarget;
-            const playerHrid = players[0]?.hrid || 'player1';
+            const playerHrid = selfDTO?.hrid || 'player1';
             const simAtTier = async (tier) => {
                 if (sharedZoneSim) {
                     // Tier is part of the cache key: a shared sim result is only
@@ -2307,12 +2310,25 @@ class TaskProfitDisplay {
             // One time base for both figures: the span this run actually simulated
             const hours = (simResult.simulatedTime || 0) / (3600 * 1e9) || simHours;
             const xp = simResult.experienceGained?.[playerHrid] || {};
-            const { netPerHour } = calculateSimRevenue(simResult, simGameData, playerHrid, hours);
+            const { netPerHour, dropEntries } = calculateSimRevenue(simResult, simGameData, playerHrid, hours);
+            // Bounded by market volume the way the All Zones table bounds a row before its Score, from
+            // volumes already cached (never a lookup per tier)
+            let profitPerHour = Number(netPerHour) || 0;
+            try {
+                profitPerHour = capProfitRateCached({
+                    goldPerHour: profitPerHour,
+                    sells: (dropEntries || [])
+                        .filter((entry) => entry?.itemHrid && Number(entry.countPerHour) > 0)
+                        .map((entry) => ({ itemHrid: entry.itemHrid, unitsPerHour: entry.countPerHour })),
+                }).goldPerHour;
+            } catch (error) {
+                console.error('[TaskProfit] Bounding a tier by market volume failed:', error);
+            }
             rows.push({
                 tier,
                 simResult,
                 totalXP: Object.values(xp).reduce((sum, v) => sum + v, 0) / hours,
-                profitDay: (Number(netPerHour) || 0) * 24,
+                profitDay: profitPerHour * 24,
                 finishes: !(simResult.deaths?.[playerHrid] > 0) && simResult.deaths?.[monsterHrid] > 0,
                 killsPerHour: (Number(simResult.deaths?.[monsterHrid]) || 0) / hours,
             });

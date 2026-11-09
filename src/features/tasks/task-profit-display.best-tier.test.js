@@ -24,6 +24,15 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     })),
 }));
 
+const capMock = vi.hoisted(() => ({ cap: null }));
+vi.mock('../../utils/liquidity-cap.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    // Market volume bounds a rate only where the test says so (by tier, through the fixture's own rate)
+    capProfitRateCached: vi.fn(({ goldPerHour }) =>
+        capMock.cap ? capMock.cap(goldPerHour) : { goldPerHour, capped: false, limit: null }
+    ),
+}));
+
 import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
@@ -151,6 +160,7 @@ afterEach(() => {
     dataManager.currentCharacterId = null;
     document.body.innerHTML = '';
     runSimulation.mockReset();
+    capMock.cap = null;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
 });
@@ -301,6 +311,39 @@ describe('_searchBestTier: which tier the Best Score search keeps', () => {
         await estimate(card);
 
         expect(runSimulation).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('Best Score judges the local character and sellable profit', () => {
+    test('in a party listed with someone else first, deaths and XP are read for the local character', async () => {
+        // Party member first in the roster; the local character is PLAYER, second. T2 kills the local
+        // character, so it must lose though the member survives it.
+        buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player2' }, { hrid: PLAYER }], selfHrid: PLAYER });
+        installTiers({ ...ladder(), 2: simResult({ xp: 9000, net: 900_000, playerDeaths: 3 }) });
+        const card = mountCard();
+
+        const record = await estimate(card);
+
+        expect(record.tier).toBe(3);
+    });
+
+    test('a tier whose loot cannot be sold at that pace is ranked on the market-bounded profit', async () => {
+        // T2 leads on raw profit, but market volume bounds it below every other tier's
+        installTiers({
+            0: simResult({ xp: 1000, net: 10_000 }),
+            1: simResult({ xp: 2000, net: 40_000 }),
+            2: simResult({ xp: 2100, net: 900_000 }),
+            3: simResult({ xp: 2500, net: 60_000 }),
+        });
+        capMock.cap = (goldPerHour) =>
+            goldPerHour === 900_000
+                ? { goldPerHour: 1_000, capped: true, limit: {} }
+                : { goldPerHour, capped: false, limit: null };
+        const card = mountCard();
+
+        const record = await estimate(card);
+
+        expect(record.tier).toBe(3);
     });
 });
 
