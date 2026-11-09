@@ -364,13 +364,8 @@ function getProtectionItemHrid(action) {
         return null;
     }
 
-    // Extract protection item from secondaryItemHash (Ultimate Tracker method)
-    if (action.secondaryItemHash) {
-        const parts = action.secondaryItemHash.split('::');
-        if (parts.length >= 3 && parts[2].startsWith('/items/')) {
-            return parts[2];
-        }
-    }
+    const { itemHrid } = parseItemHash(action.secondaryItemHash);
+    if (itemHrid) return itemHrid;
 
     // Fallback: check if there's a direct enhancingProtectionItemHrid field
     if (action.enhancingProtectionItemHrid) {

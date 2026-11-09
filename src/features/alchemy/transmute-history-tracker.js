@@ -22,6 +22,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
@@ -862,22 +863,12 @@ class TransmuteHistoryTracker {
 
     /**
      * Extract item HRID from a primaryItemHash string
-     * Format: "characterId::/item_locations/inventory::/items/item_name::0"
+     * Accepts the shared item-hash formats, including hashes without a character id or level.
      * @param {string} hash - Primary item hash
      * @returns {string|null} Item HRID or null
      */
     extractItemHrid(hash) {
-        if (!hash) {
-            return null;
-        }
-
-        const parts = hash.split('::');
-        if (parts.length < 3) {
-            return null;
-        }
-
-        const hrid = parts[2];
-        return hrid.startsWith('/items/') ? hrid : null;
+        return parseItemHash(hash).itemHrid;
     }
 
     /**

@@ -32,6 +32,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { getInventoryCount } from '../../utils/house-cost-calculator.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { navigateToAction, navigateToAlchemyItem } from '../../utils/item-navigation.js';
 import { selectAlchemyTab } from '../../utils/alchemy-navigation.js';
 import { readAlchemyTabType } from '../alchemy/alchemy-tabs.js';
@@ -792,7 +793,7 @@ class CraftingPlanWalk {
                 .filter(
                     (row) =>
                         row?.actionHrid === actionHrid &&
-                        (!requiresItemHrid || row.primaryItemHash?.includes(requiresItemHrid))
+                        (!requiresItemHrid || parseItemHash(row.primaryItemHash).itemHrid === requiresItemHrid)
                 )
                 .map((row) => row.id)
         );
@@ -824,7 +825,7 @@ class CraftingPlanWalk {
             !this.queuedBefore.has(row.id) &&
             // One alchemy action covers every item in the game, so the action
             // alone does not say this step was the one pressed.
-            (!step.requiresItemHrid || row.primaryItemHash?.includes(step.requiresItemHrid));
+            (!step.requiresItemHrid || parseItemHash(row.primaryItemHash).itemHrid === step.requiresItemHrid);
         const added = rows.find(isThisStep);
         if (!added) {
             // A row for this action but another item is not this step's press; say what happened
@@ -836,7 +837,7 @@ class CraftingPlanWalk {
                     row.primaryItemHash
             );
             if (other) {
-                const hrid = String(other.primaryItemHash).split('::')[2];
+                const { itemHrid: hrid } = parseItemHash(other.primaryItemHash);
                 const name = (hrid && dataManager.getItemDetails?.(hrid)?.name) || 'another item';
                 step.warn = `${name} was queued instead of ${step.itemName}; it does not count for this step`;
                 this._render();

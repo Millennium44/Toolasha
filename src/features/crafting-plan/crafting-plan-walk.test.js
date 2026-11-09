@@ -945,3 +945,41 @@ describe('turning Crafting Plan off while another surface walks', () => {
         expect(craftingPlanWalk.steps).toHaveLength(1);
     });
 });
+
+describe('alchemy queue matching uses exact item identity', () => {
+    const actionHrid = '/actions/alchemy/decompose';
+    const itemHrid = '/items/enchanted_cloak';
+
+    test('the baseline includes exact matches, not similarly named refined items', () => {
+        mocks.currentActions = [
+            { id: 1, actionHrid, primaryItemHash: `1::/item_locations/inventory::${itemHrid}::5` },
+            { id: 2, actionHrid, primaryItemHash: `1::/item_locations/inventory::${itemHrid}_refined::5` },
+            { id: 3, actionHrid, primaryItemHash: `/item_locations/inventory::${itemHrid}::7` },
+            { id: 4, actionHrid, primaryItemHash: null },
+        ];
+        expect([...craftingPlanWalk._queuedIdsFor(actionHrid, itemHrid)]).toEqual([1, 3]);
+    });
+
+    test('a similarly named item does not complete the step, but the exact short hash does', () => {
+        const current = { ...step(actionHrid), requiresItemHrid: itemHrid };
+        craftingPlanWalk.queuedBefore = new Set();
+        const spy = vi.spyOn(craftingPlanWalk, 'currentStep').mockReturnValue(current);
+        try {
+            craftingPlanWalk._onActionsUpdated({
+                endCharacterActions: [
+                    { id: 1, actionHrid, primaryItemHash: `1::/item_locations/inventory::${itemHrid}_refined::5` },
+                ],
+            });
+            expect(current.done).not.toBe(true);
+            expect(current.warn).toContain('does not count for this step');
+            craftingPlanWalk._onActionsUpdated({
+                endCharacterActions: [
+                    { id: 2, actionHrid, primaryItemHash: `/item_locations/inventory::${itemHrid}::5` },
+                ],
+            });
+            expect(current.done).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});

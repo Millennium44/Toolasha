@@ -1155,3 +1155,21 @@ describe('a session saved before attempts carried their action id', () => {
         expect(state.calls).toContainEqual(['finalize', 50_000]);
     });
 });
+
+describe('compact protection item hashes', () => {
+    test.each(['/item_locations/inventory::/items/mirror_of_protection::0', '/items/mirror_of_protection'])(
+        'charges the selected protection from %s',
+        async (hash) => {
+            state.prices['/items/mirror_of_protection:0'] = { ask: 40_000, bid: 35_000 };
+            for (const [level, count] of [
+                [5, 78],
+                [4, 79],
+            ]) {
+                const message = attempt(level, count);
+                message.endCharacterAction.secondaryItemHash = hash;
+                await state.handlers.action_completed(message);
+            }
+            expect(state.calls).toContainEqual(['prot', '/items/mirror_of_protection', 40_000]);
+        }
+    );
+});

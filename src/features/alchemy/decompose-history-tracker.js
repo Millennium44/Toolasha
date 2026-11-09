@@ -26,6 +26,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
 import { predictedSuccessStamp } from './alchemy-success-stamp.js';
@@ -801,22 +802,12 @@ class DecomposeHistoryTracker {
 
     /**
      * Extract item HRID from a primaryItemHash string
-     * Format: "characterId::/item_locations/inventory::/items/item_name::N"
+     * Accepts the shared item-hash formats, including hashes without a character id or level.
      * @param {string} hash - Primary item hash
      * @returns {string|null} Item HRID or null
      */
     extractItemHrid(hash) {
-        if (!hash) {
-            return null;
-        }
-
-        const parts = hash.split('::');
-        if (parts.length < 3) {
-            return null;
-        }
-
-        const hrid = parts[2];
-        return hrid.startsWith('/items/') ? hrid : null;
+        return parseItemHash(hash).itemHrid;
     }
 
     /**
@@ -826,21 +817,8 @@ class DecomposeHistoryTracker {
      * @returns {number} Enhancement level (0 if not present or not a number)
      */
     extractEnhancementLevel(hash) {
-        if (!hash) {
-            return 0;
-        }
-
-        const parts = hash.split('::');
-        const last = parts[parts.length - 1];
-
-        if (last && !last.startsWith('/')) {
-            const parsed = parseInt(last, 10);
-            if (!isNaN(parsed) && parsed >= 0) {
-                return parsed;
-            }
-        }
-
-        return 0;
+        // History has always treated a negative level as an unenhanced input.
+        return Math.max(0, parseItemHash(hash).level);
     }
 
     /**

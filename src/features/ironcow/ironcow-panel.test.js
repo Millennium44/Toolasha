@@ -58,6 +58,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentActions: () => queue.actions,
         getOfflineHourCap: () => queue.capHours,
         getActionDetails: (hrid) => queue.details[hrid] ?? null,
+        getItemDetails: (hrid) => queue.details[hrid] ?? null,
         on: (event, fn) => {
             if (!events.listeners.has(event)) events.listeners.set(event, new Set());
             events.listeners.get(event).add(fn);
@@ -2170,5 +2171,21 @@ describe('the queue helper', () => {
 
         expect(text()).toContain('Cost the loop to size a batch');
         expect(text()).not.toContain(FAILED);
+    });
+});
+
+describe('queued action item labels', () => {
+    test('uses the selected item from a compact hash without confusing similar items', () => {
+        queue.details['/actions/alchemy/decompose'] = { name: 'Decompose' };
+        queue.details['/items/enchanted_cloak'] = { name: 'Enchanted Cloak' };
+        queue.details['/items/enchanted_cloak_refined'] = { name: 'Refined Enchanted Cloak' };
+        expect(
+            ironCowFarmPanel._actionLabel({
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: '/item_locations/inventory::/items/enchanted_cloak_refined::5',
+            })
+        ).toBe('Decompose: Refined Enchanted Cloak');
+        expect(ironCowFarmPanel._actionLabel({ actionHrid: '/actions/alchemy/decompose' })).toBe('Decompose');
+        expect(ironCowFarmPanel._actionLabel({ actionHrid: '/actions/missing' })).toBeNull();
     });
 });

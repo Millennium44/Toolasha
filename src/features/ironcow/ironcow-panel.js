@@ -30,6 +30,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable, panelHeightCap } from '../../utils/floating-panel.js';
@@ -1949,7 +1950,7 @@ class IronCowFarmPanel {
     _actionLabel(action) {
         const name = dataManager.getActionDetails?.(action?.actionHrid)?.name;
         if (!name) return null;
-        const itemHrid = String(action.primaryItemHash || '').split('::')[2];
+        const { itemHrid } = parseItemHash(action.primaryItemHash);
         const itemName = itemHrid ? dataManager.getItemDetails?.(itemHrid)?.name : null;
         return itemName ? `${name}: ${itemName}` : name;
     }

@@ -14,6 +14,7 @@
 import { COWBELLS_PER_BAG } from './coin-reserve.js';
 import { formatDateTime, formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
 import { compareActionQueueOrder } from '../../utils/combat-actions.js';
+import { parseItemHash } from '../../utils/item-hash.js';
 
 /** The alchemy actions the loop uses; the item is chosen in the slot, so it is read off the hash */
 export const DECOMPOSE_ACTION = '/actions/alchemy/decompose';
@@ -80,17 +81,6 @@ export function stoppedNote(stoppedAt) {
 }
 
 /**
- * The item a queued action names in its primary slot.
- * @param {string|null|undefined} hash - `characterId::location::itemHrid::level`
- * @returns {string|null} The item hrid, or null
- */
-function itemFromHash(hash) {
-    if (typeof hash !== 'string') return null;
-    const parts = hash.split('::');
-    return parts.length >= 4 ? parts[2] : null;
-}
-
-/**
  * Which leg of the loop an action (or a walked stage) is.
  * @param {{actionHrid?: string, itemHrid?: string|null, primaryItemHash?: string}|null} entry - A
  *   queued action, or a stage from `walkQueueCoins` (which carries `itemHrid`)
@@ -100,7 +90,7 @@ function itemFromHash(hash) {
 export function loopLegOf(entry, loopItems) {
     if (!entry?.actionHrid || !loopItems?.forageActionHrid) return null;
     if (entry.actionHrid === loopItems.forageActionHrid) return 'forage';
-    const item = entry.itemHrid ?? itemFromHash(entry.primaryItemHash);
+    const item = entry.itemHrid ?? parseItemHash(entry.primaryItemHash).itemHrid;
     if (entry.actionHrid === DECOMPOSE_ACTION && item && item === loopItems.starfruitHrid) return 'decompose';
     if (entry.actionHrid === COINIFY_ACTION && item && item === loopItems.essenceHrid) return 'coinify';
     return null;
@@ -256,7 +246,7 @@ export function queuedLegCounts(
     // The walk lists the rows in this same order, one stage per row, up to the row it stopped at
     const haveWalk = Boolean(walked && Array.isArray(walked.stages));
     const stoppedIndex = haveWalk && walked.stoppedAt ? walked.stages.length : Infinity;
-    const itemOf = (action) => String(action?.primaryItemHash || '').split('::')[2];
+    const itemOf = (action) => parseItemHash(action?.primaryItemHash).itemHrid;
     for (const [index, action] of rows.entries()) {
         const leg = loopLegOf(action, loopItems);
         // Repeat ∞ on an alchemy leg is limited by its materials (the queue shows "mat 184K"): it runs for

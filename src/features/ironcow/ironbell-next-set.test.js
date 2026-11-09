@@ -465,3 +465,19 @@ describe('the keep-cash switch is a registered key', () => {
         expect(OWNED_KEY_PREFIXES).toContain(KEEP_BATCH_CASH_KEY);
     });
 });
+
+describe('Iron Bell item hash formats', () => {
+    test.each([
+        `1::/item_locations/inventory::${FRUIT}::5`,
+        `/item_locations/inventory::${FRUIT}::5`,
+        `/item_locations/inventory::${FRUIT}`,
+        FRUIT,
+    ])('recognizes the queued fruit leg for %s', (primaryItemHash) => {
+        const queued = queuedLegCounts(
+            [row('/actions/alchemy/decompose', FRUIT, { primaryItemHash, maxCount: 3 })],
+            items,
+            stock(1000)
+        );
+        expect(queued.decompose).toEqual({ count: 3, performed: 3 });
+    });
+});
