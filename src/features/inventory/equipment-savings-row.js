@@ -585,6 +585,28 @@ export function routePin(itemHrid, enhancementLevel = 0) {
 }
 
 /**
+ * Whether any watched target is pinned to a route, for the panel's reset button.
+ * @returns {boolean}
+ */
+export function anyRoutePinned() {
+    return Object.values(state.targets).some((target) => routePinOf(target) !== null);
+}
+
+/**
+ * Put every watched target back on Auto. Never touches `mode`, so ladder choices stay.
+ */
+export function clearAllRoutePins() {
+    let changed = false;
+    for (const target of Object.values(state.targets)) {
+        if (!target || routePinOf(target) === null) continue;
+        delete target.route;
+        delete target.craft;
+        changed = true;
+    }
+    if (changed) persist();
+}
+
+/**
  * Step the chip: Auto, then each route offered on the card in turn, then Auto again.
  * @param {string} itemHrid - The target
  * @param {number} enhancementLevel - Which enhancement of it
@@ -2138,6 +2160,9 @@ function costOf(
         if (base.ask > 0) {
             const cash = upgradeCost({ targetAsk: base.ask, equippedBid: wornBid, noSell });
             add('buy', cash, cash === null ? null : realOf(base.ask, null));
+        } else {
+            // Nobody selling one right now: still a route, listed as unpriced so the card shows it is missing
+            add('buy', null, null);
         }
         const recipe = recipeFor(itemHrid);
         // A craft route exists only where there is a recipe to craft from
@@ -2158,7 +2183,8 @@ function costOf(
             }
         }
         const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
-        if (build?.unpriced) add('mirror', null, null);
+        // From +MIRROR_FIRST_LEVEL up a mirror build always applies; no build means the mirror itself has no price
+        if (build?.unpriced || (!build && enhancementLevel >= MIRROR_FIRST_LEVEL)) add('mirror', null, null);
         else if (build) add('mirror', build.cash, build.real, { build, estimated: build.estimated });
         // Auto weighs every route there is
         eligible = ['buy', 'craft', 'mirror'];
@@ -2243,9 +2269,6 @@ function costEveryTarget() {
     const targets = Object.entries(state.targets).map(([key, target]) => {
         const itemHrid = target.itemHrid || key;
         const enhancementLevel = target.enhancementLevel || 0;
-        // A figure the caller costed wins over one derived here (see below), and an advisor quote
-        // already models mirrors, so a mirror build only competes when this module does the costing
-        const hasQuote = Number.isFinite(target.quotedCost);
         const {
             cost,
             realCost,
@@ -2266,7 +2289,6 @@ function costEveryTarget() {
             enhanceSource,
             upgradeBaseLevel,
         } = costOf(itemHrid, enhancementLevel, {
-            mirror: !hasQuote,
             pin: routePinOf(target),
             ladder: target.mode === 'ladder',
             preference: routePreference(),
@@ -2275,15 +2297,10 @@ function costEveryTarget() {
         const worn = wornRivalOf(itemHrid);
         const wornBid = wornTradeIn(worn);
 
-        // A figure the caller costed wins over one derived here. Not because it
-        // is the better number — it is a different model — but because it is
-        // the number the player was looking at when they pressed the button,
-        // and a savings row quoting a second one leaves them to work out which
-        // of the two surfaces is wrong. The derived figure is kept beside it,
-        // so the card can still say what the market alone would ask.
+        // An advisor's figure is only a reference: it was frozen when Watch was pressed, and it
+        // ignored the route chip. Every card is costed here, live, along its route
         const quoted = Number.isFinite(target.quotedCost) ? target.quotedCost : null;
-        const settled = quoted ?? cost;
-        const progress = savingsProgress(settled, coins);
+        const progress = savingsProgress(cost, coins);
 
         return {
             key,
@@ -2310,24 +2327,21 @@ function costEveryTarget() {
             ownNoSell: target.noSell !== undefined,
             worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
             // Coins to find: what the bar, the countdown, the sort and the totals fill against
-            cost: settled,
+            cost,
             // The cost with the sale value of any owned copy a route consumes counted in. Only
-            // choosing between routes reads it; a quoted figure stands for itself
-            realCost: quoted ?? realCost,
+            // choosing between routes reads it
+            realCost,
             // The route the figure is counted along: 'buy', 'craft', 'mirror', 'enhance' or 'ladder'
-            // (null when unpriced, or when an advisor quote supplies the figure)
-            route: hasQuote ? null : route,
-            // Every route that applies, each with its cash and real cost and the chosen one marked;
-            // empty under a quote, which stands for itself
-            routes: hasQuote ? [] : routes,
+            // (null when unpriced)
+            route,
+            // Every route that applies, each with its cash and real cost and the chosen one marked
+            routes,
             // The route the card is pinned to (null = Auto), and why a pin is not in force
             pin: pin || null,
-            pinNote: hasQuote ? '' : pinNote,
+            pinNote,
             // The priced build whether or not it won, for the card to name or offer
             mirrorBuild: mirrorBuild || null,
-            // What this module would have said on its own, and who said
-            // otherwise — the card needs both to explain the figure it shows
-            derivedCost: cost,
+            // The advisor's figure from when the card was added, shown beside the live one
             quotedCost: quoted,
             quotedFrom: quoted === null ? '' : target.quotedFrom || '',
             ...progress,
@@ -2908,8 +2922,9 @@ function targetCard(target) {
     // Only where there are two paths to choose between. A target with no second
     // copy and nowhere to get one has one run and no decision to offer.
     if (target.enhancing && target.ladder) perTarget.appendChild(ladderButton(target));
-    // The route chip: Auto, or the route this card is pinned to. Only where there is a choice to make
-    if (!target.enhancing && (target.routes.length > 1 || target.pin)) perTarget.appendChild(routeChip(target));
+    // The route chip: Auto, or the route this card is pinned to. Shown on every card with a route, even
+    // a lone one, so pressing it never makes it vanish and leave the player unsure what it was set to
+    if (!target.enhancing && (target.routes.length > 0 || target.pin)) perTarget.appendChild(routeChip(target));
     card.appendChild(perTarget);
 
     if (target.route === 'mirror' && target.mirrorBuild) {
@@ -2937,13 +2952,10 @@ function targetCard(target) {
         // thing on both. A card showing an advisor's quote says nothing here:
         // that figure came off another bench, and the advisor's own breakdown
         // is where it names it.
-        const derivedHere = target.quotedCost === null || target.quotedCost === undefined;
         card.appendChild(
             priceLine(
                 target.ownsBase ? 'Not sold at this level' : 'Buy a +0 and enhance it',
-                derivedHere && target.enhanceSource
-                    ? `Enhancement Cost (${target.enhanceSource.label})`
-                    : 'Enhancement Cost',
+                target.enhanceSource ? `Enhancement Cost (${target.enhanceSource.label})` : 'Enhancement Cost',
                 'rgba(232, 236, 245, 0.55)'
             )
         );
@@ -2976,25 +2988,15 @@ function targetCard(target) {
     }
     if (target.routes.length > 1) card.appendChild(routeTable(target));
 
-    // The figure came from the sim rather than from here, so the card says so
-    // rather than quietly presenting somebody else's number as its own — and
-    // says what this module would have made it, since the two differing is
-    // information rather than an error
+    // A card added from the upgrade advisor names the figure the advisor gave then, for reference.
+    // The card itself is costed live, like every other
     if (target.quotedCost !== null && target.quotedCost !== undefined) {
-        const from = target.quotedFrom ? `Upgrade advisor (${target.quotedFrom}):` : 'Upgrade advisor:';
-        card.appendChild(priceLine(from, formatWithSeparator(Math.round(target.quotedCost)), ROW_COLORS.gold));
-        if (target.derivedCost !== null && Math.round(target.derivedCost) !== Math.round(target.quotedCost)) {
-            // The two differing is information, and part of *why* they differ is
-            // which bench each ran on — so the derived figure names its own here
-            // exactly as the advisor's line above names the advisor
-            card.appendChild(
-                priceLine(
-                    target.enhanceSource ? `Priced here at (${target.enhanceSource.label}):` : 'Priced here at:',
-                    formatWithSeparator(Math.round(target.derivedCost)),
-                    'rgba(232, 236, 245, 0.55)'
-                )
-            );
-        }
+        const from = target.quotedFrom
+            ? `Upgrade advisor when added (${target.quotedFrom}):`
+            : 'Upgrade advisor when added:';
+        card.appendChild(
+            priceLine(from, formatWithSeparator(Math.round(target.quotedCost)), 'rgba(232, 236, 245, 0.55)')
+        );
     }
 
     const bar = document.createElement('div');
@@ -4473,6 +4475,29 @@ export const equipmentSavingsPanel = createPanel({
             equipmentSavingsPanel.render();
         });
         switches.appendChild(lock);
+
+        // One press undoes every route pin, including ones carried over from the old Crafting switch
+        if (anyRoutePinned()) {
+            const reset = document.createElement('button');
+            reset.textContent = 'All routes to Auto';
+            reset.dataset.routesReset = 'true';
+            Object.assign(reset.style, {
+                background: 'rgba(255, 255, 255, 0.06)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: '3px',
+                color: 'rgba(232, 236, 245, 0.75)',
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '2px 9px',
+            });
+            reset.title =
+                'Unpin every card, so each is counted along its cheapest route (or the one preferred in settings).';
+            reset.addEventListener('click', () => {
+                clearAllRoutePins();
+                equipmentSavingsPanel.render();
+            });
+            switches.appendChild(reset);
+        }
 
         // Two shapes, one switch. Locked is a reading list — what you are saving
         // for and how far along — which is what the panel is for almost all of
