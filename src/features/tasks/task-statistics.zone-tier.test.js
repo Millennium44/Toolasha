@@ -152,6 +152,28 @@ describe('zone rows follow the zone tiers', () => {
     });
 });
 
+describe("a row click and the game's own Difficulty pick", () => {
+    const row = { zoneHrid: ZONE, tier: 2, fightsNeeded: 100 };
+
+    test('a pick moved since the row simulated is kept, and no count simulated for another tier is filled', async () => {
+        const { openCombatZoneAtTier } = await import('../../utils/combat-zone-open.js');
+        const { resolveZoneTier } = await import('../../utils/zone-tier-memory.js');
+        openCombatZoneAtTier.mockClear();
+        resolveZoneTier.mockReturnValueOnce({ tier: 5, known: true, source: 'selected', pending: false });
+        await taskStatistics._openZoneRow(row, true);
+        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 5, {});
+    });
+
+    test('a pick that matches opens at that tier with the padded count', async () => {
+        const { openCombatZoneAtTier } = await import('../../utils/combat-zone-open.js');
+        const { resolveZoneTier } = await import('../../utils/zone-tier-memory.js');
+        openCombatZoneAtTier.mockClear();
+        resolveZoneTier.mockReturnValueOnce({ tier: 2, known: true, source: 'selected', pending: false });
+        await taskStatistics._openZoneRow(row, true);
+        expect(openCombatZoneAtTier).toHaveBeenCalledWith(ZONE, 2, { count: expect.any(Number) });
+    });
+});
+
 describe('a row click fills at least the figure the row quotes', () => {
     test('at the median the padded count would be smaller; the quoted figure is the floor', () => {
         const zone = {

@@ -807,8 +807,7 @@ class TaskStatistics {
             row.title = 'Open this zone';
             row.onclick = () => {
                 this.closePopup();
-                const count = finite ? this.paddedZoneFightCount(zone) : null;
-                openCombatZoneAtTier(zone.zoneHrid, zone.tier ?? 0, count === null ? {} : { count }).catch((error) =>
+                this._openZoneRow(zone, finite).catch((error) =>
                     console.error('[TaskStatistics] Could not open zone:', error)
                 );
             };
@@ -838,6 +837,25 @@ class TaskStatistics {
             );
         }
         if (stillComputing) section.appendChild(this.createRow('Status', 'Computing…', config.COLOR_TEXT_SECONDARY));
+    }
+
+    /**
+     * Open a zone row's zone at the tier it simulated and fill its padded count. When the game's own
+     * Difficulty pick for the zone has moved since (`taskCombatGoTier` "game"), the player's pick is kept
+     * and no count is filled, since the row's count was simulated for another tier.
+     * @param {Object} zone - Row from computeAllZoneProgress
+     * @param {boolean} finite - Whether the row has a fight count
+     * @returns {Promise<Object>} What `openCombatZoneAtTier` reports
+     */
+    _openZoneRow(zone, finite) {
+        let tier = zone.tier ?? 0;
+        let count = finite ? this.paddedZoneFightCount(zone) : null;
+        const current = resolveZoneTier(zone.zoneHrid);
+        if (current.source === 'selected' && current.tier !== tier) {
+            tier = current.tier;
+            count = null;
+        }
+        return openCombatZoneAtTier(zone.zoneHrid, tier, count === null ? {} : { count });
     }
 
     /**
