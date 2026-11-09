@@ -291,6 +291,18 @@ function findDifficultyCombobox(panel) {
 }
 
 /**
+ * The tier the zone detail panel's Difficulty combobox shows now. Reads only.
+ * @param {HTMLElement|null} panel
+ * @returns {number|null} Null when there is no panel or no readable combobox
+ */
+export function readDifficultyTier(panel) {
+    if (!panel) return null;
+    const combobox = findDifficultyCombobox(panel);
+    const match = combobox ? /^T(\d+)$/.exec((combobox.textContent || '').trim()) : null;
+    return match ? Number(match[1]) : null;
+}
+
+/**
  * Set the zone detail panel's Difficulty combobox to `tier`, verifying the
  * change actually landed rather than trusting the click.
  *
@@ -703,7 +715,9 @@ function waitForReachableZoneTile(zoneList, zoneHrid, timeout) {
  * @param {number} tier - Difficulty tier to open at (0+)
  * @param {Object} [options]
  * @param {number|string} [options.count] - Fight (or dungeon clear) count to fill; omit to fill nothing
- * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
+ * @param {boolean} [options.keepTier] - Never change the Difficulty box: fill `count` only when the box
+ *   already shows `tier`. The result then also carries `shownTier`, what the box showed (null: unread).
+ * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean, shownTier: (number|null|undefined)}>}
  */
 export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
     // Captured HERE, at the press, not inside the sequence. The sequence does
@@ -734,7 +748,7 @@ export async function openCombatZoneAtTier(zoneHrid, tier, options = {}) {
  * @returns {Promise<{opened: boolean, tierConfirmed: boolean, filled: boolean}>}
  */
 export async function openCombatZoneAtTierSequence(zoneHrid, tier, options, characterId) {
-    const { count } = options;
+    const { count, keepTier = false } = options;
     const result = { opened: false, tierConfirmed: false, filled: false };
 
     const zoneName = dataManager.getInitClientData()?.actionDetailMap?.[zoneHrid]?.name;
@@ -789,7 +803,18 @@ export async function openCombatZoneAtTierSequence(zoneHrid, tier, options, char
 
     const panel = await waitForElement(PANEL_SELECTOR, PANEL_TIMEOUT_MS);
     if (characterIdentityChanged(characterId)) return result;
-    const tierConfirmed = await ensureZoneAndTier(panel, zoneHrid, tier, characterId);
+    if (keepTier) {
+        // Leave the player's own Difficulty pick as the game opened it; fill only when it is the tier the
+        // count was worked out for. A panel left on another tier is still the zone the player asked for.
+        if (!panel || resolveDetailPanel(panel).actionHrid !== zoneHrid) {
+            restoreCombatTabs(previousGroupTab, previousPageTab, characterId);
+            return result;
+        }
+        result.shownTier = readDifficultyTier(panel);
+        result.tierConfirmed = result.shownTier === tier;
+        if (!result.tierConfirmed) return result;
+    }
+    const tierConfirmed = keepTier || (await ensureZoneAndTier(panel, zoneHrid, tier, characterId));
     result.tierConfirmed = tierConfirmed;
     if (!tierConfirmed) {
         restoreCombatTabs(previousGroupTab, previousPageTab, characterId);

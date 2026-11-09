@@ -218,6 +218,7 @@ import {
     triggerRunSignature,
 } from './trigger-result-cache.js';
 import storage from '../../core/storage.js';
+import { ladderScoreRows } from '../../utils/zone-score.js';
 import {
     createPricingQuickSettings,
     PRICING_QUICK_SETTINGS_KEYS,
@@ -2227,26 +2228,10 @@ export function scoreAllZoneRows(rows, scale = DEFAULT_ZONES_SCORE_SCALE) {
         return list;
     }
 
-    const fractions = new Map(list.map((row) => [row, []]));
-    for (const metric of ALL_ZONES_SCORE_METRICS) {
-        const values = list.map((row) => (Number.isFinite(row[metric.key]) ? row[metric.key] : 0));
-        // Best first, duplicates collapsed, so equal figures share a position
-        const ladder = [...new Set(values)].sort((a, b) => b - a);
-        if (ladder.length < 2) {
-            for (const row of list) fractions.get(row).push(1);
-            continue;
-        }
-        list.forEach((row, i) => {
-            const place = ladder.indexOf(values[i]);
-            fractions.get(row).push(1 - place / (ladder.length - 1));
-        });
-    }
-
-    for (const row of list) {
-        const parts = fractions.get(row);
-        row.score = Math.round((100 * parts.reduce((sum, value) => sum + value, 0)) / parts.length);
-    }
-    return list;
+    return ladderScoreRows(
+        list,
+        ALL_ZONES_SCORE_METRICS.map((metric) => metric.key)
+    );
 }
 
 /**

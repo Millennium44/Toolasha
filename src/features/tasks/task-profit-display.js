@@ -15,6 +15,7 @@ import { findActionInput, resolveDetailPanel, PANEL_SELECTOR } from '../../utils
 import { padFightCount } from '../../utils/fight-confidence.js';
 import {
     ensureZoneAndTier,
+    readDifficultyTier,
     characterIdentityChanged,
     runZoneOpenExclusive,
     openCombatZoneAtTierSequence,
@@ -61,7 +62,8 @@ import {
 import loadoutSnapshotLocal from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { runningAction } from '../../utils/combat-actions.js';
-import { resolveZoneTier, describeZoneTier, ZONE_TIER_MEMORY_EVENT } from '../../utils/zone-tier-memory.js';
+import { ladderScoreRows } from '../../utils/zone-score.js';
+import { resolveZoneTier, describeZoneTier, goTierMode, GO_TIER_BEST } from '../../utils/zone-tier-memory.js';
 import { PATIENT_TICK_SETTING_KEYS } from '../../utils/patient-tick.js';
 import { IRONCOW_VALUATION_SETTING } from '../../utils/ironcow-valuation.js';
 function getLoadoutSnapshot() {
@@ -643,7 +645,7 @@ class TaskProfitDisplay {
         });
 
         // Which tier an estimate uses changed: redo the open ones at the tier it now picks
-        config.onSettingChange('taskCombatGoTier', () => this._retierOpenCombatEstimates());
+        config.onSettingChange('taskCombatGoTier', () => this._retierOpenCombatEstimates({ all: true }));
 
         // An open zone result's summary quotes this coverage; redraw it from
         // the cached sim, the same way a progress change does
@@ -814,12 +816,6 @@ class TaskProfitDisplay {
             if (this._actionsTimer) clearTimeout(this._actionsTimer);
             this._actionsTimer = null;
         });
-
-        // The remembered tiers arrived, or a zone's tier changed: an open estimate that used T0 while they
-        // loaded (or an older tier) redoes itself at the tier it should have had
-        const tierMemoryHandler = () => this._retierOpenCombatEstimates();
-        dataManager.on(ZONE_TIER_MEMORY_EVENT, tierMemoryHandler);
-        this.unregisterHandlers.push(() => dataManager.off(ZONE_TIER_MEMORY_EVENT, tierMemoryHandler));
 
         // Refresh materials badges when inventory changes. Inventory updates
         // arrive several to the second while crafting; one pass per burst.
@@ -1184,13 +1180,12 @@ class TaskProfitDisplay {
         if (characterIdentityChanged(characterId)) return;
 
         const panel = document.querySelector(PANEL_SELECTOR);
-        let tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
-        // The game's own Difficulty pick for the zone changed after this estimate simulated: keep the
-        // player's pick rather than setting the box back, fill no count simulated for another tier, and
-        // redo the estimate at the new one (below)
-        const current = this._resolveEstimateTier(estimate.zoneHrid);
-        const pickedElsewhere = current.source === 'selected' && current.tier !== tier;
-        if (pickedElsewhere) tier = current.tier;
+        const tier = Number.isFinite(estimate.tier) ? estimate.tier : GO_ESTIMATE_TIER;
+        // "Tier selected in the game": Go never writes the Difficulty box. It fills only when the box shows
+        // the tier this count was simulated for; a pick changed since keeps, and the estimate is redone.
+        // "Best Score" moves the box to the tier the search found. A redo in flight has no count and no
+        // tier of its own, so it leaves the box alone in either mode.
+        const keepTier = estimate.countless || goTierMode() !== GO_TIER_BEST;
 
         const bufferDefault = getSettingDefinition('taskCombatGoBuffer')?.default ?? 5;
         const bufferPercent = config.getSettingValue('taskCombatGoBuffer', bufferDefault);
@@ -1313,11 +1308,6 @@ class TaskProfitDisplay {
             fillsCount = mergedKills !== null;
             if (fillsCount) fights = mergedKills;
         }
-        // Summed kills on the monster's own fight are exact at any tier; a simulated count is not
-        if (pickedElsewhere) {
-            if (!ownFight) fillsCount = false;
-            this._retierOpenCombatEstimates();
-        }
         // Zone mode can pick a zone the game's own Go did not open: Go opens
         // the monster's own zone, while the estimate simulated the zone most
         // of the active tasks share. When the panel Go landed on is a
@@ -1328,9 +1318,14 @@ class TaskProfitDisplay {
             const result = await openCombatZoneAtTierSequence(
                 estimate.zoneHrid,
                 tier,
-                fillsCount ? { count: fights } : {},
+                { ...(fillsCount ? { count: fights } : {}), keepTier },
                 characterId
             );
+            if (keepTier && result.opened && Number.isInteger(result.shownTier) && result.shownTier !== tier) {
+                // The game showed another pick: kept, and the estimate is redone at it
+                if (!estimate.countless) this._retierOpenCombatEstimates();
+                return;
+            }
             if (!result.filled && !characterIdentityChanged(characterId)) {
                 console.warn(
                     '[TaskProfitDisplay] Go could not open the estimate zone; leaving the game landing as is:',
@@ -1341,13 +1336,19 @@ class TaskProfitDisplay {
             return;
         }
 
-        const tierConfirmed = await ensureZoneAndTier(
-            panel,
-            ownFight ? landedHrid : estimate.zoneHrid,
-            tier,
-            characterId
-        );
-        if (!tierConfirmed) return;
+        const targetHrid = ownFight ? landedHrid : estimate.zoneHrid;
+        let tierConfirmed;
+        if (keepTier) {
+            if (!panel || resolveDetailPanel(panel).actionHrid !== targetHrid) return;
+            const shown = readDifficultyTier(panel);
+            tierConfirmed = shown === tier;
+            if (!tierConfirmed && shown !== null && !estimate.countless) this._retierOpenCombatEstimates();
+            // Summed kills on the monster's own fight are exact at any tier; a simulated count is not
+            if (!tierConfirmed && !(ownFight && fillsCount)) return;
+        } else {
+            tierConfirmed = await ensureZoneAndTier(panel, targetHrid, tier, characterId);
+            if (!tierConfirmed) return;
+        }
         if (characterIdentityChanged(characterId)) return;
 
         if (!fillsCount) return;
@@ -1823,21 +1824,9 @@ class TaskProfitDisplay {
     }
 
     /**
-     * The difficulty tier a combat task estimate for `zoneHrid` should
-     * simulate — and the tier Go should later open the zone at.
-     *
-     * Reads `lastUsedTierForZone` (`utils/combat-actions.js`) over the
-     * player's own action queue: a queued or running copy of this zone
-     * carries the tier the player themselves last set it to, which is the
-     * only honest source of "the tier they actually fight this zone at" —
-     * there is no persisted history of tiers once a zone leaves the queue,
-     * and nothing here invents one.
-     *
-     * Order: the zone in the queue, then the tier the character last RAN it
-     * at (`utils/zone-tier-memory.js`), then {@link GO_ESTIMATE_TIER} (T0)
-     * with `known` false and the card saying so rather than presenting a
-     * guess as fact. `pending` is true for that T0 while the remembered
-     * tiers are still loading.
+     * The tier the game opens `zoneHrid` at: its own remembered Difficulty pick for the zone, or T0 for a
+     * zone it has none for (`utils/zone-tier-memory.js`). A "Best Score" estimate searches the tiers
+     * itself and uses this only as where the search starts its note from.
      * @param {string} zoneHrid
      * @returns {{tier: number, known: boolean, source: string, pending: boolean}}
      * @private
@@ -2011,7 +2000,9 @@ class TaskProfitDisplay {
         // zone at — see `_resolveEstimateTier`. Resolved once, up front, and
         // carried on the estimate record rather than re-read at Go time.
         let resolvedTier = this._resolveEstimateTier(zoneHrid);
-        const estimateTier = resolvedTier.tier;
+        let estimateTier = resolvedTier.tier;
+        // "Best Score" searches every tier of the zone instead (below)
+        const searchTiers = goTierMode() === GO_TIER_BEST;
 
         container.innerHTML = '<span style="color:#888; font-size:11px;">⏳ Simulating…</span>';
 
@@ -2077,67 +2068,87 @@ class TaskProfitDisplay {
             // task cards for the same zone+loadout, so every card in a zone
             // reports identical numbers instead of independent RNG rolls
             const sharedZoneSim = mode === 'zone' || isBossTarget;
-            let simResult;
-            if (sharedZoneSim) {
-                // Tier is part of the cache key: a shared sim result is only
-                // interchangeable between cards simulating the same zone at
-                // the same tier — strength scales with tier, so a T3 result
-                // reused for a T0 estimate (or vice versa) would be wrong.
-                const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${estimateTier}|${loadoutName || ''}`;
-                const cached = this._zoneSimCache.get(cacheKey);
-                if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
-                    simResult = await cached.promise;
+            const playerHrid = players[0]?.hrid || 'player1';
+            const simAtTier = async (tier) => {
+                if (sharedZoneSim) {
+                    // Tier is part of the cache key: a shared sim result is only
+                    // interchangeable between cards simulating the same zone at
+                    // the same tier — strength scales with tier, so a T3 result
+                    // reused for a T0 estimate (or vice versa) would be wrong.
+                    const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${tier}|${loadoutName || ''}`;
+                    const cached = this._zoneSimCache.get(cacheKey);
+                    if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
+                        return cached.promise;
+                    } else {
+                        // Anything past its time is dropped on the way through, so a
+                        // long session does not accumulate a sim result per zone per
+                        // loadout for the rest of the day
+                        this._pruneZoneSimCache();
+                        const promise = runSimulation(
+                            {
+                                gameData: simGameData,
+                                playerDTOs: players,
+                                zoneHrid,
+                                difficultyTier: tier,
+                                hours: SIM_HOURS,
+                                communityBuffs: getCommunityBuffs(),
+                                // The Tasks panel is a task estimate by definition, so
+                                // it never consults the general task-damage setting —
+                                // an estimate of how long a task takes must model the
+                                // gear you are wearing for it. Zone mode covers the
+                                // whole spawn table, so the honest rule here is the
+                                // per-monster one: the bonus pays on the monsters your
+                                // own board names and on no others.
+                                taskDamageMode: TASK_DAMAGE_PER_MONSTER,
+                            },
+                            ...simArgs
+                        );
+                        this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
+                        try {
+                            return await promise;
+                        } catch (error) {
+                            this._zoneSimCache.delete(cacheKey);
+                            throw error;
+                        }
+                    }
                 } else {
-                    // Anything past its time is dropped on the way through, so a
-                    // long session does not accumulate a sim result per zone per
-                    // loadout for the rest of the day
-                    this._pruneZoneSimCache();
-                    const promise = runSimulation(
+                    return runSimulation(
                         {
                             gameData: simGameData,
                             playerDTOs: players,
                             zoneHrid,
-                            difficultyTier: estimateTier,
+                            difficultyTier: tier,
                             hours: SIM_HOURS,
                             communityBuffs: getCommunityBuffs(),
-                            // The Tasks panel is a task estimate by definition, so
-                            // it never consults the general task-damage setting —
-                            // an estimate of how long a task takes must model the
-                            // gear you are wearing for it. Zone mode covers the
-                            // whole spawn table, so the honest rule here is the
-                            // per-monster one: the bonus pays on the monsters your
-                            // own board names and on no others.
+                            // The same per-monster rule as the zone sim above, and for
+                            // the same reason. Solo mode has already narrowed the spawn
+                            // table to this card's task monster, so "every fight counts"
+                            // would reach the same answer — but only by a different
+                            // route, and it would be wrong the moment the table is not
+                            // narrowed. One code path, and it is the honest one.
                             taskDamageMode: TASK_DAMAGE_PER_MONSTER,
                         },
                         ...simArgs
                     );
-                    this._zoneSimCache.set(cacheKey, { promise, t: Date.now() });
-                    try {
-                        simResult = await promise;
-                    } catch (error) {
-                        this._zoneSimCache.delete(cacheKey);
-                        throw error;
-                    }
                 }
-            } else {
-                simResult = await runSimulation(
-                    {
-                        gameData: simGameData,
-                        playerDTOs: players,
-                        zoneHrid,
-                        difficultyTier: estimateTier,
-                        hours: SIM_HOURS,
-                        communityBuffs: getCommunityBuffs(),
-                        // The same per-monster rule as the zone sim above, and for
-                        // the same reason. Solo mode has already narrowed the spawn
-                        // table to this card's task monster, so "every fight counts"
-                        // would reach the same answer — but only by a different
-                        // route, and it would be wrong the moment the table is not
-                        // narrowed. One code path, and it is the honest one.
-                        taskDamageMode: TASK_DAMAGE_PER_MONSTER,
-                    },
-                    ...simArgs
+            };
+
+            let simResult;
+            if (searchTiers) {
+                const best = await this._searchBestTier(
+                    container,
+                    zoneHrid,
+                    monsterHrid,
+                    simGameData,
+                    playerHrid,
+                    SIM_HOURS,
+                    simAtTier
                 );
+                simResult = best.simResult;
+                estimateTier = best.tier;
+                resolvedTier = { tier: best.tier, known: true, source: 'best', pending: false };
+            } else {
+                simResult = await simAtTier(estimateTier);
             }
 
             // The sim took a while, and the card may have progressed under it
@@ -2149,7 +2160,7 @@ class TaskProfitDisplay {
             // where the record arrives after the card drew. A card with no finished result is skipped by
             // `_retierOpenCombatEstimates`, so the check lives here: a different tier is a different
             // fight, so simulate again; the same tier only takes the latest note on where it came from.
-            const latestTier = this._resolveEstimateTier(zoneHrid);
+            const latestTier = searchTiers ? resolvedTier : this._resolveEstimateTier(zoneHrid);
             if (latestTier.tier !== estimateTier) {
                 if (retierDepth < MAX_RETIER_RERUNS) {
                     return this._runCombatSimEstimate(
@@ -2180,7 +2191,6 @@ class TaskProfitDisplay {
                 );
             }
 
-            const playerHrid = players[0]?.hrid || 'player1';
             const { netPerHour, dropEntries, consumableEntries, unpricedDrops, unpricedConsumables } =
                 calculateSimRevenue(simResult, simGameData, playerHrid, SIM_HOURS);
 
@@ -2224,6 +2234,45 @@ class TaskProfitDisplay {
             retry.addEventListener('click', () => this._renderCombatEstimateConfig(container, taskData));
             container.appendChild(retry);
         }
+    }
+
+    /**
+     * "Best Score": simulate every tier of the zone, one after another, and keep the tier with the best
+     * All Zones Score (ladder position in XP/hr and Profit/day, `utils/zone-score.js`). A tier where the
+     * player died or the task monster was never killed cannot finish the task, so it is left out unless
+     * every tier is; the lowest tier wins a tie.
+     * @param {Element} container - The card's estimate container, for progress text
+     * @param {string} zoneHrid
+     * @param {string} monsterHrid - The task monster
+     * @param {Object} simGameData - The game data the runs simulate
+     * @param {string} playerHrid - The player in the sim
+     * @param {number} simHours - The span each run simulates
+     * @param {function(number): Promise<Object>} simAtTier - Runs (or reuses) one tier's simulation
+     * @returns {Promise<{tier: number, simResult: Object, rows: Array<Object>}>}
+     * @private
+     */
+    async _searchBestTier(container, zoneHrid, monsterHrid, simGameData, playerHrid, simHours, simAtTier) {
+        const maxTier = Math.max(0, Math.floor(Number(simGameData.actionDetailMap?.[zoneHrid]?.maxDifficulty) || 0));
+        const rows = [];
+        for (let tier = 0; tier <= maxTier; tier++) {
+            container.innerHTML = `<span style="color:#888; font-size:11px;">⏳ Simulating T${tier} of T0–T${maxTier}…</span>`;
+            const simResult = await simAtTier(tier);
+            const hours = (simResult.simulatedTime || 0) / (3600 * 1e9) || simHours;
+            const xp = simResult.experienceGained?.[playerHrid] || {};
+            const { netPerHour } = calculateSimRevenue(simResult, simGameData, playerHrid, simHours);
+            rows.push({
+                tier,
+                simResult,
+                totalXP: Object.values(xp).reduce((sum, v) => sum + v, 0) / hours,
+                profitDay: (Number(netPerHour) || 0) * 24,
+                finishes: !(simResult.deaths?.[playerHrid] > 0) && simResult.deaths?.[monsterHrid] > 0,
+            });
+        }
+        const finishing = rows.filter((row) => row.finishes);
+        const pool = finishing.length > 0 ? finishing : rows;
+        ladderScoreRows(pool);
+        const best = pool.reduce((a, b) => (b.score > a.score ? b : a));
+        return { tier: best.tier, simResult: best.simResult, rows };
     }
 
     /**
@@ -2389,9 +2438,10 @@ class TaskProfitDisplay {
      * being cancelled by each other. A card already waiting (or being redone) is not queued twice, so a
      * second tier change while the queue runs adds to it rather than starting another.
      * @param {Element} container - The estimate container
+     * @param {boolean} [force] - Redo it even if the game's tier still matches (the method changed)
      * @private
      */
-    _enqueueRetier(container) {
+    _enqueueRetier(container, force = false) {
         if (this._retierQueue.some((entry) => entry.container === container)) return;
         if (this._retierActive === container) return;
         // What the redo needs, kept with the entry: a run that is cancelled has already cleared the
@@ -2406,6 +2456,7 @@ class TaskProfitDisplay {
             description: cached?.description,
             loadoutName: cached?.loadoutName ?? '',
             mode: cached?.mode ?? 'solo',
+            force,
         });
         if (this._retierRunning) return;
         this._retierRunning = true;
@@ -2435,7 +2486,7 @@ class TaskProfitDisplay {
             const taskNode = container.isConnected ? container.closest(GAME.TASK_INFO) : null;
             const taskData = taskNode ? this.parseTaskData(taskNode) : null;
             if (!entry.zoneHrid || !taskData || taskData.description !== entry.description) continue;
-            if (this._resolveEstimateTier(entry.zoneHrid).tier === entry.fromTier) continue;
+            if (!entry.force && this._resolveEstimateTier(entry.zoneHrid).tier === entry.fromTier) continue;
 
             this._retierActive = container;
             const outcome = await this._runCombatSimEstimate(
@@ -2468,11 +2519,14 @@ class TaskProfitDisplay {
     /**
      * Bring every open combat estimate to the tier it should now use (see `resolveZoneTier`). A different
      * tier is a different fight, so that estimate is simulated again with the loadout and mode it had; a
-     * change only in where the same tier came from just redraws the note.
+     * change only in where the same tier came from just redraws the note. Under "Best Score" the tier is
+     * the search's, not the game's, so only `all` (the setting itself changed) redoes anything.
+     * @param {{all?: boolean}} [options] - `all`: redo every open estimate, whatever its tier
      * @private
      */
-    _retierOpenCombatEstimates() {
+    _retierOpenCombatEstimates({ all = false } = {}) {
         if (!this.isInitialized) return;
+        if (!all && goTierMode() === GO_TIER_BEST) return;
         for (const container of document.querySelectorAll(`.${COMBAT_ESTIMATE_RESULT_CLASS}`)) {
             const cached = container._mwiCombatEstimate;
             if (!cached?.zoneHrid) continue;
@@ -2482,8 +2536,8 @@ class TaskProfitDisplay {
             if (!taskData || taskData.description !== cached.description) continue;
 
             const now = this._resolveEstimateTier(cached.zoneHrid);
-            if (now.tier !== cached.estimateTier) {
-                this._enqueueRetier(container);
+            if (all || now.tier !== cached.estimateTier) {
+                this._enqueueRetier(container, all);
             } else if (now.source !== cached.estimateTierSource || now.pending !== cached.estimateTierPending) {
                 container._mwiCombatEstimate = {
                     ...cached,
