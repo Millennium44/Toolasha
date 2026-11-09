@@ -58,7 +58,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import networthHistory from '../networth/networth-history.js';
-import { getItemPrices } from '../../utils/market-data.js';
+import { getItemPrices, getPricingMode } from '../../utils/market-data.js';
 import { getItemHridFromName } from '../../utils/game-lookups.js';
 import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -335,6 +335,50 @@ function oncePerPass(key, compute) {
     const value = compute();
     passMemo.set(key, value);
     return value;
+}
+
+/**
+ * Which side of the book a buy and a sale are priced on: Toolasha's own profit pricing mode
+ * (`profitCalc_pricingMode`), through the shared resolver, so this card agrees with every other
+ * figure Toolasha draws. Conservative buys at the ask and sells into the bid; Patient Buy buys at
+ * the bid and sells into the bid; Hybrid asks on both; Optimistic buys at the bid and sells at the ask.
+ * @param {'buy'|'sell'} transaction - Which transaction
+ * @returns {'ask'|'bid'} The book side
+ */
+function bookSide(transaction) {
+    return getPricingMode('profit', transaction) === 'bid' ? 'bid' : 'ask';
+}
+
+/** The side a purchase is priced on (see {@link bookSide}) */
+const buySide = () => bookSide('buy');
+
+/** The side a sale is priced on (see {@link bookSide}) */
+const sellSide = () => bookSide('sell');
+
+/**
+ * What buying one costs: the book's price on the buy side. Zero means no quote on that side, which every
+ * caller treats as unpriced, never as free.
+ * @param {string} itemHrid - The item
+ * @param {number} [level=0] - Enhancement level
+ * @returns {number} Coins, 0 when the buy side has no price
+ */
+function buyPrice(itemHrid, level = 0) {
+    return Number(getItemPrices(itemHrid, level)?.[buySide()]) || 0;
+}
+
+/**
+ * What selling one fetches before tax: the book's price on the sell side. Zero means no quote.
+ * @param {string} itemHrid - The item
+ * @param {number} [level=0] - Enhancement level
+ * @returns {number} Coins, 0 when the sell side has no price
+ */
+function sellPrice(itemHrid, level = 0) {
+    return Number(getItemPrices(itemHrid, level)?.[sellSide()]) || 0;
+}
+
+/** The label for the buy price on the card: the ask when buying off the sellers, the bid when waiting */
+function buyLabel() {
+    return buySide() === 'ask' ? 'Ask Price:' : 'Bid Price:';
 }
 
 /**
@@ -949,7 +993,7 @@ export function houseUpgradeCost(houseRoomHrid, targetLevel) {
                 continue;
             }
 
-            const ask = getItemPrices(material.itemHrid, 0)?.ask;
+            const ask = buyPrice(material.itemHrid, 0);
             if (!(ask > 0)) return null;
             total += ask * count;
         }
@@ -1206,7 +1250,7 @@ function nameOf(itemHrid) {
 function wornTradeIn(worn) {
     if (!worn) return 0;
     const level = worn.enhancementLevel || 0;
-    const bid = getItemPrices(worn.itemHrid, level)?.bid || 0;
+    const bid = sellPrice(worn.itemHrid, level);
     // The game floors the after-tax price of a sale to whole coins per unit
     const market = bid > 0 ? Math.floor(calculatePriceAfterTax(bid)) : 0;
     const vendor = level === 0 ? Number(dataManager.getItemDetails?.(worn.itemHrid)?.sellPrice) || 0 : 0;
@@ -1620,7 +1664,7 @@ function ladderOption(itemHrid, enhancementLevel) {
  */
 function basePrice(itemHrid) {
     return oncePerPass(`base:${itemHrid}`, () => {
-        const ask = getItemPrices(itemHrid, 0)?.ask || 0;
+        const ask = buyPrice(itemHrid, 0);
         if (ask > 0) return ask;
 
         // The shop walk below prices every line in the shop to value the token
@@ -1640,7 +1684,7 @@ function basePrice(itemHrid) {
  * @returns {{cost: number|null, ask: number, crafted: boolean, recipe: Object|null}}
  */
 function conventionalCost(itemHrid, enhancementLevel) {
-    const ask = getItemPrices(itemHrid, enhancementLevel)?.ask || 0;
+    const ask = buyPrice(itemHrid, enhancementLevel);
     const worn = wornRivalOf(itemHrid);
     const wornBid = wornTradeIn(worn);
     const noSell = targetNoSell(itemHrid, enhancementLevel);
@@ -1790,10 +1834,10 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
     const plannerBase = (hrid) => {
         if (planner) {
-            const plan = planner(hrid, 1, 'ask');
+            const plan = planner(hrid, 1, buySide());
             if (planPriced(plan)) return plan.totalCost;
         }
-        const ask = getItemPrices(hrid, 0)?.ask || 0;
+        const ask = buyPrice(hrid, 0);
         return ask > 0 ? ask : null;
     };
 
@@ -1801,7 +1845,7 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         try {
             let total = 0;
             for (const input of recipe.inputItems) {
-                const plan = planner(input.itemHrid, input.count || 0, 'ask');
+                const plan = planner(input.itemHrid, input.count || 0, buySide());
                 if (!planPriced(plan)) return null;
                 total += plan.totalCost;
             }
@@ -1824,7 +1868,7 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
     if (flatBase.cost === null) return null;
     const flat = craftCost({
         inputItems: recipe?.inputItems,
-        priceOf: (hrid) => getItemPrices(hrid, 0)?.ask || 0,
+        priceOf: (hrid) => buyPrice(hrid, 0),
         outputCount: recipe?.outputCount,
         // The base is priced level-aware above, never inside craftCost
         haveBase: true,
@@ -1937,7 +1981,7 @@ export function upgradeBaseRoute(recipe, enhancementLevel, priceBase) {
     if (held !== null && held >= needsLevel) return { cost: 0, level: needsLevel };
 
     const candidates = [];
-    const directAsk = getItemPrices(baseHrid, needsLevel)?.ask || 0;
+    const directAsk = buyPrice(baseHrid, needsLevel);
     if (directAsk > 0) candidates.push({ cost: directAsk, level: needsLevel });
 
     const run = enhancementCost(baseHrid, needsLevel, held ?? 0);
@@ -1994,7 +2038,7 @@ function heldCopyAt(itemHrid, level, worn) {
  * @returns {{price: number, estimated: boolean}|null} Null when nothing prices the mirror
  */
 function mirrorQuote() {
-    const ask = getItemPrices(MIRROR_ITEM_HRID, 0)?.ask || 0;
+    const ask = buyPrice(MIRROR_ITEM_HRID, 0);
     if (ask > 0) return { price: ask, estimated: false };
 
     const guarded = priceMirror();
@@ -2009,7 +2053,8 @@ function mirrorQuote() {
  * upgrade advisor price (see `utils/mirror-route.js`).
  *
  * An input already owned is CONSUMED, so it is not free: it is charged at what selling it
- * would have fetched (its bid after tax). An input not owned is bought at its ask. Three
+ * would have fetched (its sell-side price after tax). An input not owned is bought at its buy-side price (the ask in
+ * Conservative mode, per `profitCalc_pricingMode`). Three
  * figures come out, because they answer three questions:
  *
  * - `cash`: coins to find. Bought inputs and the mirror, less the worn piece's trade-in when
@@ -2064,7 +2109,7 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
             if (held.worn) wornConsumed = true;
             inputs.push({ ...want, owned: true, worn: held.worn, price: sale });
         } else {
-            const ask = getItemPrices(want.itemHrid, want.level)?.ask || 0;
+            const ask = buyPrice(want.itemHrid, want.level);
             if (!(ask > 0)) return { unpriced: true };
             bought += ask;
             inputs.push({ ...want, owned: false, worn: false, price: ask });
@@ -2523,7 +2568,7 @@ function enhancementButtons() {
     Object.assign(wrap.style, { display: 'flex', flexWrap: 'wrap', gap: '3px' });
 
     for (let level = 0; level <= maxEnhancementLevel(); level++) {
-        const ask = editing.itemHrid ? getItemPrices(editing.itemHrid, level)?.ask || 0 : 0;
+        const ask = editing.itemHrid ? buyPrice(editing.itemHrid, level) : 0;
         const sold = ask > 0;
         const chosen = level === editing.enhancementLevel && Boolean(editing.itemHrid);
 
@@ -2594,7 +2639,11 @@ function costPreview(itemHrid, enhancementLevel) {
         if (ladder) wrap.appendChild(ladderLine(ladder, enhancementLevel));
     } else {
         wrap.appendChild(
-            priceLine(crafted ? 'Materials:' : 'Lowest Ask:', formatWithSeparator(Math.round(ask)), ROW_COLORS.gold)
+            priceLine(
+                crafted ? 'Materials:' : buySide() === 'ask' ? 'Lowest Ask:' : 'Highest Bid:',
+                formatWithSeparator(Math.round(ask)),
+                ROW_COLORS.gold
+            )
         );
     }
     wrap.appendChild(
@@ -2966,7 +3015,7 @@ function targetCard(target) {
         if (target.recipe?.actionHrid)
             card.appendChild(missingMatsButton(target.recipe.actionHrid, target.upgradeBaseLevel || 0));
     } else if (target.ask > 0) {
-        card.appendChild(priceLine('Ask Price:', formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
+        card.appendChild(priceLine(buyLabel(), formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
         // What it costs after the trade-in, which is the figure the bar fills
         // against — the ask alone is not what you have to find
         card.appendChild(
@@ -3250,8 +3299,8 @@ function mirrorLines(target) {
                     ? 'real cost: no price'
                     : `real cost ${formatKMB(Math.max(0, target.realCost))}`,
                 ROW_COLORS.accent,
-                'The sale value counted is the bid after tax. The bar fills against the coins below; the route ' +
-                    'was chosen on this real cost, so it never wins just because it needs less cash.'
+                `The sale value counted is the ${sellSide()} after tax. The bar fills against the coins below; the route ` +
+                    `was chosen on this real cost, so it never wins just because it needs less cash.`
             )
         );
     }
@@ -3319,7 +3368,7 @@ function recipeLines(target) {
     }
 
     for (const input of recipe.inputItems) {
-        const price = getItemPrices(input.itemHrid, 0)?.ask || 0;
+        const price = buyPrice(input.itemHrid, 0);
         const count = input.count || 0;
         // One decimal once the tea has taken its cut, because the saving is
         // fractional and 88.9 rounded to 89 hides the very thing being shown
@@ -3573,9 +3622,12 @@ function slotSection(slot, targets) {
     });
 
     const bid = document.createElement('span');
-    bid.textContent = wornBid > 0 ? formatWithSeparator(Math.round(wornBid)) : 'No bid';
+    bid.textContent = wornBid > 0 ? formatWithSeparator(Math.round(wornBid)) : `No ${sellSide()}`;
     bid.style.color = wornBid > 0 ? ROW_COLORS.gold : 'rgba(232, 236, 245, 0.4)';
-    bid.title = wornBid > 0 ? 'What selling this would put towards an upgrade.' : 'Nothing bidding on this.';
+    bid.title =
+        wornBid > 0
+            ? 'What selling this would put towards an upgrade.'
+            : `Nothing is quoted on the ${sellSide()} side for this.`;
 
     heading.append(label, name, bid);
     wrap.appendChild(heading);

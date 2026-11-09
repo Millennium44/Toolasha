@@ -55,7 +55,7 @@ const game = vi.hoisted(() => ({
     // The override store's own counter, which the tile's version() reads
     customVersion: 0,
     // The profit pricing mode the mocked config answers with
-    profitMode: 'hybrid',
+    profitMode: 'conservative',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -172,7 +172,13 @@ vi.mock('../networth/networth-history.js', () => ({
     default: { recentSeries: (hours) => game.networthSeries(hours) },
 }));
 vi.mock('../../utils/market-data.js', () => ({
-    getPricingMode: () => 'ask',
+    getPricingMode: (_context, side = 'sell') => {
+        const mode = game.profitMode;
+        if (mode === 'hybrid') return 'ask';
+        if (mode === 'patientBuy') return 'bid';
+        if (mode === 'optimistic') return side === 'buy' ? 'bid' : 'ask';
+        return side === 'buy' ? 'ask' : 'bid';
+    },
     // The profit resolver's book read: a one-sided quote fills the other side
     getItemPriceInfo: (hrid) => {
         const quote = game.prices[`${hrid}:0`];
@@ -256,7 +262,7 @@ const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
     game.customVersion = 0;
-    game.profitMode = 'hybrid';
+    game.profitMode = 'conservative';
     game.routePreference = 'auto';
     game.inventory = [
         { itemHrid: '/items/coin', itemLocationHrid: '/item_locations/inventory', count: 60_000_000 },
@@ -1230,6 +1236,9 @@ describe('targets nobody is selling at that level', () => {
         game.inventory = game.inventory.filter((item) => item.itemHrid !== '/items/sinister_cape');
         game.equipment.delete('/item_locations/back');
         game.prices['/items/sinister_cape:0'] = null;
+        // The token is valued by the shared shop rule on the sell side; Hybrid values it at the ask, which is
+        // what the 5M-a-token figure below is
+        game.profitMode = 'hybrid';
         game.shops.shopItemDetailMap = {
             cape: { itemHrid: '/items/sinister_cape', costs: [{ itemHrid: '/items/token', count: 10 }] },
             // What the token is worth: the best coins any line in this shop
@@ -3513,5 +3522,131 @@ describe('a craft route that cannot make the target, or cannot be priced', () =>
         expect(craft).toMatchObject({ cash: null, real: null, priced: false });
         expect(target.route).toBe('buy');
         expect(target.cost).toBe(2_000_000_000);
+    });
+});
+
+describe('the pricing mode setting decides which side of the book each price is read on', () => {
+    // 100M ask / 90M bid for the sword bought; 45M ask / 40M bid for the worn cheese sword traded in.
+    // The trade-in is a sale, so it reaches the player after the 4% tax, floored.
+    const afterTax = (price) => Math.floor(calculatePriceAfterTax(price));
+    const cost = () => watchedTargets()[0].cost;
+
+    test('Conservative buys at the ask and sells the old piece into the bid', () => {
+        game.profitMode = 'conservative';
+        watchTarget('/items/holy_sword');
+        expect(cost()).toBe(100_000_000 - afterTax(40_000_000));
+        expect(watchedTargets()[0].worn.bid).toBe(afterTax(40_000_000));
+    });
+
+    test('Patient Buy buys at the bid and still sells into the bid', () => {
+        game.profitMode = 'patientBuy';
+        watchTarget('/items/holy_sword');
+        expect(cost()).toBe(90_000_000 - afterTax(40_000_000));
+    });
+
+    test('Hybrid buys at the ask and sells the old piece at the ask', () => {
+        game.profitMode = 'hybrid';
+        watchTarget('/items/holy_sword');
+        expect(cost()).toBe(100_000_000 - afterTax(45_000_000));
+    });
+
+    test('Optimistic buys at the bid and sells the old piece at the ask', () => {
+        game.profitMode = 'optimistic';
+        watchTarget('/items/holy_sword');
+        expect(cost()).toBe(90_000_000 - afterTax(45_000_000));
+    });
+
+    test('a changed mode changes the figure on the very next read, with no stale memo', () => {
+        watchTarget('/items/holy_sword');
+        game.profitMode = 'conservative';
+        const before = cost();
+        game.profitMode = 'patientBuy';
+        expect(cost()).not.toBe(before);
+    });
+
+    test('a buy side with no quote leaves the target unpriced, never free', () => {
+        // The ask is the side Conservative reads; there is none, though a bid exists
+        game.prices['/items/holy_sword:0'] = { ask: 0, bid: 90_000_000 };
+        game.profitMode = 'conservative';
+        watchTarget('/items/holy_sword');
+        expect(cost()).not.toBe(0);
+        expect(watchedTargets()[0].ask).toBe(0);
+
+        // The same book under Patient Buy has a bid to buy at
+        game.profitMode = 'patientBuy';
+        expect(cost()).toBe(90_000_000 - afterTax(40_000_000));
+    });
+
+    test('a worn piece with no quote on the sell side trades in for nothing, not for its other side', () => {
+        game.prices['/items/cheese_sword:0'] = { ask: 45_000_000, bid: 0 };
+        game.profitMode = 'conservative';
+        watchTarget('/items/holy_sword');
+        expect(watchedTargets()[0].worn.bid).toBe(0);
+        expect(cost()).toBe(100_000_000);
+
+        // Hybrid sells at the ask, which is quoted
+        game.profitMode = 'hybrid';
+        expect(watchedTargets()[0].worn.bid).toBe(afterTax(45_000_000));
+    });
+
+    test('the card labels the buy price by the side it was read on', () => {
+        game.profitMode = 'conservative';
+        watchTarget('/items/holy_sword');
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('Ask Price:');
+
+        game.profitMode = 'patientBuy';
+        equipmentSavingsPanel.render();
+        expect(text()).toContain('Bid Price:');
+        expect(text()).not.toContain('Ask Price:');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    describe("a Philosopher's Mirror build", () => {
+        const REFINED = '/items/furious_spear_refined';
+        const PLAIN = '/items/furious_spear';
+        const MIRROR = '/items/philosophers_mirror';
+
+        beforeEach(() => {
+            game.equipment = new Map();
+            game.details[PLAIN] = { name: 'Furious Spear', equipmentDetail: { type: '/equipment_types/main_hand' } };
+            game.details[REFINED] = {
+                name: 'Furious Spear refined',
+                equipmentDetail: { type: '/equipment_types/main_hand' },
+                baseItemHrids: [PLAIN],
+            };
+            game.details[MIRROR] = { name: "Philosopher's Mirror" };
+            game.prices[`${MIRROR}:0`] = { ask: 612_500_000, bid: 560_000_000 };
+            game.prices[`${REFINED}:12`] = { ask: 2_320_000_000, bid: 2_080_000_000 };
+            game.prices[`${PLAIN}:11`] = { ask: 940_000_000, bid: 900_000_000 };
+        });
+
+        test('bought inputs and the mirror follow the buy side, owned copies the sell side', () => {
+            game.inventory.push({
+                itemHrid: REFINED,
+                enhancementLevel: 12,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+            });
+
+            game.profitMode = 'conservative';
+            const conservative = mirrorBuildRoute(REFINED, 13);
+            expect(conservative.coins).toBe(940_000_000 + 612_500_000);
+            expect(conservative.forgone).toBe(afterTax(2_080_000_000));
+
+            game.profitMode = 'optimistic';
+            const optimistic = mirrorBuildRoute(REFINED, 13);
+            expect(optimistic.coins).toBe(900_000_000 + 560_000_000);
+            expect(optimistic.forgone).toBe(afterTax(2_320_000_000));
+        });
+
+        test('a bought input with no quote on the buy side leaves the build unpriced, not cheaper', () => {
+            game.prices[`${PLAIN}:11`] = { ask: 0, bid: 900_000_000 };
+            game.profitMode = 'conservative';
+            expect(mirrorBuildRoute(REFINED, 13)).toEqual({ unpriced: true });
+
+            game.profitMode = 'patientBuy';
+            expect(mirrorBuildRoute(REFINED, 13)).not.toEqual({ unpriced: true });
+        });
     });
 });
