@@ -619,6 +619,7 @@ class TaskProfitDisplay {
         this._retierQueue = [];
         this._retierRunning = false;
         this._retierActive = null;
+        this._retierActiveForce = false;
         // One pending refresh per source, so a burst of messages runs it once
         this._questsTimer = null;
         this._actionsTimer = null;
@@ -2015,6 +2016,9 @@ class TaskProfitDisplay {
             if (!gameData) throw new Error('No game data');
 
             const { players } = await buildAllPlayerDTOs();
+            // Whose these runs are: a Best Score search spans several, and a switch in between must not
+            // cache this character's figures under the next one's id
+            const simCharacterId = dataManager.getCurrentCharacterId();
             if (!players.length) throw new Error('No player data');
 
             if (loadoutName) {
@@ -2075,7 +2079,7 @@ class TaskProfitDisplay {
                     // interchangeable between cards simulating the same zone at
                     // the same tier — strength scales with tier, so a T3 result
                     // reused for a T0 estimate (or vice versa) would be wrong.
-                    const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${tier}|${loadoutName || ''}`;
+                    const cacheKey = `${simCharacterId || ''}|${zoneHrid}|${tier}|${loadoutName || ''}`;
                     const cached = this._zoneSimCache.get(cacheKey);
                     if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
                         return cached.promise;
@@ -2142,8 +2146,15 @@ class TaskProfitDisplay {
                     simGameData,
                     playerHrid,
                     SIM_HOURS,
-                    simAtTier
+                    simAtTier,
+                    // The card went, its task changed, or the character switched: the rest of the search
+                    // would only hold up other estimates
+                    () =>
+                        characterIdentityChanged(simCharacterId) ||
+                        !container.isConnected ||
+                        (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null)
                 );
+                if (!best) return;
                 simResult = best.simResult;
                 estimateTier = best.tier;
                 resolvedTier = { tier: best.tier, known: true, source: 'best', pending: false };
@@ -2248,18 +2259,31 @@ class TaskProfitDisplay {
      * @param {string} playerHrid - The player in the sim
      * @param {number} simHours - The span each run simulates
      * @param {function(number): Promise<Object>} simAtTier - Runs (or reuses) one tier's simulation
-     * @returns {Promise<{tier: number, simResult: Object, rows: Array<Object>}>}
+     * @param {function(): boolean} [isStale] - Checked between tiers; true stops the search
+     * @returns {Promise<{tier: number, simResult: Object, rows: Array<Object>}|null>} Null when stopped
      * @private
      */
-    async _searchBestTier(container, zoneHrid, monsterHrid, simGameData, playerHrid, simHours, simAtTier) {
+    async _searchBestTier(
+        container,
+        zoneHrid,
+        monsterHrid,
+        simGameData,
+        playerHrid,
+        simHours,
+        simAtTier,
+        isStale = () => false
+    ) {
         const maxTier = Math.max(0, Math.floor(Number(simGameData.actionDetailMap?.[zoneHrid]?.maxDifficulty) || 0));
         const rows = [];
         for (let tier = 0; tier <= maxTier; tier++) {
             container.innerHTML = `<span style="color:#888; font-size:11px;">⏳ Simulating T${tier} of T0–T${maxTier}…</span>`;
+            if (isStale()) return null;
             const simResult = await simAtTier(tier);
+            if (isStale()) return null;
+            // One time base for both figures: the span this run actually simulated
             const hours = (simResult.simulatedTime || 0) / (3600 * 1e9) || simHours;
             const xp = simResult.experienceGained?.[playerHrid] || {};
-            const { netPerHour } = calculateSimRevenue(simResult, simGameData, playerHrid, simHours);
+            const { netPerHour } = calculateSimRevenue(simResult, simGameData, playerHrid, hours);
             rows.push({
                 tier,
                 simResult,
@@ -2442,8 +2466,17 @@ class TaskProfitDisplay {
      * @private
      */
     _enqueueRetier(container, force = false) {
-        if (this._retierQueue.some((entry) => entry.container === container)) return;
-        if (this._retierActive === container) return;
+        const queued = this._retierQueue.find((entry) => entry.container === container);
+        if (queued) {
+            // A setting change asks for a redo whatever the tier; a waiting tier redo takes that on
+            if (force) queued.force = true;
+            return;
+        }
+        if (this._retierActive === container) {
+            // Being redone in the old mode right now: run it once more when it finishes
+            if (force) this._retierActiveForce = true;
+            return;
+        }
         // What the redo needs, kept with the entry: a run that is cancelled has already cleared the
         // card's cached result, so a second attempt could not read it back from the card
         const cached = container._mwiCombatEstimate;
@@ -2489,6 +2522,7 @@ class TaskProfitDisplay {
             if (!entry.force && this._resolveEstimateTier(entry.zoneHrid).tier === entry.fromTier) continue;
 
             this._retierActive = container;
+            this._retierActiveForce = false;
             const outcome = await this._runCombatSimEstimate(
                 container,
                 taskData,
@@ -2498,6 +2532,12 @@ class TaskProfitDisplay {
                 true
             );
             this._retierActive = null;
+            if (this._retierActiveForce && outcome !== 'cancelled' && container.isConnected) {
+                // The tier setting changed while this ran: it was simulated the old way
+                this._retierActiveForce = false;
+                this._retierQueue.push({ ...entry, attempts: 0, force: true });
+                continue;
+            }
             if (outcome !== 'cancelled') continue;
             if (characterIdentityChanged(entry.characterId) || !container.isConnected) continue;
             entry.attempts += 1;
