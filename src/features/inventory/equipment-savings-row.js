@@ -1394,23 +1394,6 @@ function artisanBonus(action) {
 }
 
 /**
- * Whether the piece a recipe upgrades is already in hand.
- *
- * Worn counts as owned — an upgrade consumes the piece you are wearing just as
- * happily as one in the bag, and that is the usual case here.
- *
- * @param {string} itemHrid - The piece the recipe consumes
- * @returns {boolean}
- */
-function ownsBase(itemHrid) {
-    if (!itemHrid) return true;
-    // A copy on the auction is not in hand: it cannot be consumed
-    return (dataManager.getInventory?.() || []).some(
-        (item) => item.itemHrid === itemHrid && (item.count || 0) > 0 && item.itemLocationHrid !== LISTED_LOCATION
-    );
-}
-
-/**
  * Whether the only copies of a piece are on the market, for a line that would otherwise say "you have
  * one".
  * @param {string} itemHrid - The piece
@@ -1429,7 +1412,7 @@ function onlyListed(itemHrid) {
  * Keyed by the calculator object rather than held in one table so a reloaded
  * bundle — or a suite standing its own calculator up — never reads answers the
  * previous one produced.
- * @type {WeakMap<Function, Map<string, number|null>>}
+ * @type {WeakMap<Function, Map<string, Object|null>>}
  */
 const sweptRuns = new WeakMap();
 
@@ -1456,6 +1439,11 @@ const SWEPT_RUN_LIMIT = 400;
  * @returns {number|null} Coins, or null when the run cannot be modelled
  */
 export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
+    return enhancementPlan(itemHrid, targetLevel, startLevel)?.cost ?? null;
+}
+
+/** The priced sweep, retained so shopping uses the same attempts and protection. */
+function enhancementPlan(itemHrid, targetLevel, startLevel = 0) {
     if (!(targetLevel > startLevel) || targetLevel > ENHANCEMENT_SOLVER_MAX_LEVEL) return null;
 
     // The character's own gear, skill and teas — always. This path only fires when the
@@ -1566,8 +1554,9 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
         // an unbounded table for. A failed sweep is not cached — the next draw
         // should try it again rather than repeat the failure.
         if (swept.size >= SWEPT_RUN_LIMIT) swept.clear();
-        swept.set(key, cost);
-        return cost;
+        const priced = cost === null ? null : { ...plan, cost };
+        swept.set(key, priced);
+        return priced;
     } catch (error) {
         console.error('[EquipmentSavings] Costing an enhancement run failed:', error);
         return null;
@@ -1585,7 +1574,7 @@ export function enhancementCost(itemHrid, targetLevel, startLevel = 0) {
  * @param {string} itemHrid - The piece
  * @returns {number|null} Its enhancement level, or null when none is held
  */
-function highestOwnedLevel(itemHrid) {
+function highestOwnedLevel(itemHrid, maximum = Infinity) {
     let best = null;
     for (const item of dataManager.getInventory?.() || []) {
         // Equipped copies don't reliably carry a count field the way stacked
@@ -1594,7 +1583,7 @@ function highestOwnedLevel(itemHrid) {
         // stack), matching highestOwnedEnhancements in loadout-snapshot.js.
         if (item.itemHrid !== itemHrid || item.count === 0 || item.itemLocationHrid === LISTED_LOCATION) continue;
         const level = item.enhancementLevel || 0;
-        if (best === null || level > best) best = level;
+        if (level <= maximum && (best === null || level > best)) best = level;
     }
     return best;
 }
@@ -1916,6 +1905,7 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, resp
             .map((base) => ({
                 cost: (materials + base.cost) / outputCount,
                 upgradeBaseLevel: base.level,
+                upgradeBaseAcquisition: base.acquisition,
                 eligibility: eligibility(base),
                 consumed: upgradeBaseConsumed(recipe, enhancementLevel, base),
             }));
@@ -1979,6 +1969,10 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel, variant, resp
 function upgradeBaseConsumed(recipe, enhancementLevel, route) {
     const baseHrid = recipe?.upgradeItemHrid;
     if (!baseHrid || route?.cost === null) return null;
+    if (route.acquisition)
+        return route.acquisition.kind.startsWith('owned')
+            ? { itemHrid: baseHrid, level: route.acquisition.startLevel }
+            : null;
 
     const needsLevel = recipe.retainAllEnhancement ? enhancementLevel || 0 : 0;
     const held = highestOwnedLevel(baseHrid);
@@ -2047,7 +2041,8 @@ export function upgradeBaseCost(recipe, enhancementLevel, priceBase) {
 export function upgradeBaseRoute(recipe, enhancementLevel, priceBase) {
     const candidates = upgradeBaseRoutes(recipe, enhancementLevel, priceBase);
     // This cash-only helper stays compatible with callers that are not comparing real costs.
-    return candidates.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
+    const chosen = candidates.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
+    return { cost: chosen.cost, level: chosen.level };
 }
 
 /**
@@ -2065,25 +2060,73 @@ function upgradeBaseRoutes(recipe, enhancementLevel, priceBase) {
     if (!baseHrid) return [{ cost: 0, level: 0 }];
 
     const needsLevel = recipe.retainAllEnhancement ? enhancementLevel || 0 : 0;
+    const acquisition = (kind, startLevel, plan = null) => ({
+        kind,
+        itemHrid: baseHrid,
+        startLevel,
+        targetLevel: needsLevel,
+        ...(kind.startsWith('owned')
+            ? {
+                  sourceLocation:
+                      (dataManager.getInventory?.() || [])
+                          .filter(
+                              (item) =>
+                                  item.itemHrid === baseHrid &&
+                                  (item.enhancementLevel || 0) === startLevel &&
+                                  item.count !== 0 &&
+                                  item.itemLocationHrid !== LISTED_LOCATION
+                          )
+                          .sort(
+                              (a, b) =>
+                                  Number(Boolean(a.itemLocationHrid && a.itemLocationHrid !== BAG_LOCATION)) -
+                                  Number(Boolean(b.itemLocationHrid && b.itemLocationHrid !== BAG_LOCATION))
+                          )[0]?.itemLocationHrid || BAG_LOCATION,
+              }
+            : {}),
+        ...(plan
+            ? {
+                  protectFrom: plan.protectFrom,
+                  protectionItemHrid: plan.protectionItemHrid,
+                  enhancementMaterials: [
+                      ...(dataManager.getItemDetails(baseHrid)?.enhancementCosts || [])
+                          .filter((input) => input.itemHrid !== '/items/coin')
+                          .map((input) => ({
+                              itemHrid: input.itemHrid,
+                              count: Math.ceil(input.count * Math.ceil(plan.attempts - 1e-9)),
+                          })),
+                      ...(plan.protections > 0 && plan.protectionItemHrid
+                          ? [{ itemHrid: plan.protectionItemHrid, count: Math.ceil(plan.protections - 1e-9) }]
+                          : []),
+                  ],
+              }
+            : {}),
+    });
     if (needsLevel <= 0) {
-        if (ownsBase(baseHrid)) return [{ cost: 0, level: 0 }];
-        return [{ cost: priceBase(baseHrid), level: 0 }];
+        const held = lowestOwnedLevel(baseHrid);
+        if (held !== null) return [{ cost: 0, level: 0, acquisition: acquisition('owned', held) }];
+        return [{ cost: priceBase(baseHrid), level: 0, acquisition: acquisition('buy', 0) }];
     }
 
-    const held = highestOwnedLevel(baseHrid);
+    const held = highestOwnedLevel(baseHrid, needsLevel);
     // Already in the bag at the level: nothing to buy, but the bill is still
     // ABOUT that level, and a tab reading "sufficient" against +0 copies while
     // the +12 sits unspent would be the same lie the other way round
-    if (held !== null && held >= needsLevel) return [{ cost: 0, level: needsLevel }];
+    if (held === needsLevel) return [{ cost: 0, level: needsLevel, acquisition: acquisition('owned', held) }];
 
     const candidates = [];
     const directAsk = buyPrice(baseHrid, needsLevel);
-    if (directAsk > 0) candidates.push({ cost: directAsk, level: needsLevel });
+    if (directAsk > 0)
+        candidates.push({ cost: directAsk, level: needsLevel, acquisition: acquisition('buy', needsLevel) });
 
-    const run = enhancementCost(baseHrid, needsLevel, held ?? 0);
+    const run = enhancementPlan(baseHrid, needsLevel, held ?? 0);
     if (run !== null) {
         const fresh = held !== null ? 0 : priceBase(baseHrid);
-        if (fresh !== null) candidates.push({ cost: run + fresh, level: 0 });
+        if (fresh !== null)
+            candidates.push({
+                cost: run.cost + fresh,
+                level: 0,
+                acquisition: acquisition(held !== null ? 'owned-enhance' : 'fresh-enhance', held ?? 0, run),
+            });
     }
 
     return candidates.length ? candidates : [{ cost: null, level: needsLevel }];
@@ -2287,7 +2330,7 @@ function costOf(
                 { gross: option.cost, consumed: option.consumed ? [{ id: consumedId }] : [] },
                 { copies, sellIds: ['worn'], keep: noSell }
             );
-            return { ...option, cash: quote.cash, real: quote.real };
+            return { ...option, cash: quote.cash, real: quote.real, wornConsumed: Boolean(usesWorn) };
         });
         return chooseCraftAcquisition(options, requireAvailable);
     };
@@ -2374,6 +2417,8 @@ function costOf(
                 add('craft', craft.cash, craft.real, {
                     recipe,
                     upgradeBaseLevel: craft.upgradeBaseLevel,
+                    upgradeBaseAcquisition: craft.upgradeBaseAcquisition,
+                    wornConsumed: craft.wornConsumed,
                     eligibility,
                     alternatives,
                 });
@@ -2436,12 +2481,14 @@ function costOf(
         realCost: chosen.real,
         route: chosen.id,
         mirrorBuild: build,
+        wornConsumed: chosen.id === 'mirror' ? build?.wornConsumed === true : chosen.wornConsumed === true,
     };
     if (chosen.id === 'ladder') result.mode = 'ladder';
     else if (chosen.id === 'enhance') result.mode = 'direct';
     else if (chosen.id === 'craft') {
         result.recipe = chosen.recipe || result.recipe;
         result.upgradeBaseLevel = chosen.upgradeBaseLevel || 0;
+        result.upgradeBaseAcquisition = chosen.upgradeBaseAcquisition;
     } else {
         // The craft route's listing no longer applies
         result.upgradeBaseLevel = 0;
@@ -2488,6 +2535,8 @@ function costEveryTarget() {
             mode,
             enhanceSource,
             upgradeBaseLevel,
+            upgradeBaseAcquisition,
+            wornConsumed,
         } = costOf(itemHrid, enhancementLevel, {
             pin: routePinOf(target),
             ladder: target.mode === 'ladder',
@@ -2523,6 +2572,8 @@ function costEveryTarget() {
             // Which listing the craft's base was costed at, so the Missing Mats
             // button opens that one rather than always the +0
             upgradeBaseLevel: upgradeBaseLevel || 0,
+            upgradeBaseAcquisition,
+            wornConsumed: Boolean(wornConsumed),
             noSell: targetNoSell(itemHrid, enhancementLevel),
             ownNoSell: target.noSell !== undefined,
             worn: worn ? { ...worn, name: nameOf(worn.itemHrid), bid: wornBid } : null,
@@ -3105,7 +3156,18 @@ function targetCard(target) {
     Object.assign(perTarget.style, { display: 'flex', gap: '5px', flexWrap: 'wrap' });
 
     const sell = document.createElement('button');
-    sell.textContent = target.ownNoSell ? (target.noSell ? 'Keeping' : 'Selling') : 'Follows panel';
+    const mirrorUsesOwned = target.route === 'mirror' && target.mirrorBuild?.inputs.some((input) => input.owned);
+    const usesOwned = target.wornConsumed || (mirrorUsesOwned && !target.worn);
+    const sellsOther = mirrorUsesOwned && target.worn && !target.wornConsumed && !target.noSell;
+    sell.textContent = usesOwned
+        ? 'Used in build'
+        : sellsOther
+          ? 'Selling other gear'
+          : target.ownNoSell
+            ? target.noSell
+                ? 'Keeping'
+                : 'Selling'
+            : 'Follows panel';
     sell.dataset.targetSell = target.itemHrid;
     Object.assign(sell.style, {
         background: 'rgba(255, 255, 255, 0.06)',
@@ -3118,7 +3180,10 @@ function targetCard(target) {
     });
     sell.title =
         'Whether the piece this replaces is sold towards it.\n' +
-        'Cycles: follows the panel switch, always sells, always keeps.';
+        'Cycles: follows the panel switch, always sells, always keeps.' +
+        (usesOwned
+            ? `\nThe selected build consumes this copy; it cannot also be sold. Alternative routes currently ${target.noSell ? 'keep' : 'sell'} the replaced gear. Click to change that comparison preference.`
+            : '');
     sell.addEventListener('click', () => {
         cycleTargetNoSell(target.itemHrid, target.enhancementLevel);
         equipmentSavingsPanel.render();
@@ -3170,7 +3235,9 @@ function targetCard(target) {
     } else if (target.route === 'craft' || (target.route === null && target.crafted)) {
         card.appendChild(recipeLines(target));
         if (target.recipe?.actionHrid)
-            card.appendChild(missingMatsButton(target.recipe.actionHrid, target.upgradeBaseLevel || 0));
+            card.appendChild(
+                missingMatsButton(target.recipe.actionHrid, target.upgradeBaseLevel || 0, target.upgradeBaseAcquisition)
+            );
     } else if (target.ask > 0) {
         card.appendChild(priceLine(buyLabel(), formatWithSeparator(Math.round(target.ask)), ROW_COLORS.gold));
         // What it costs after the trade-in, which is the figure the bar fills
@@ -3257,6 +3324,7 @@ function targetCard(target) {
  * than rebuilding the marketplace tabs here, so the two cannot drift apart.
  *
  * @param {string} actionHrid - The craft
+ * @param {Object|null} [upgradeBaseAcquisition] - Source/target levels and the chosen enhancement inputs
  * @param {number} [upgradeBaseLevel] - The enhancement level the craft's base piece was
  *   costed at, from `upgradeBaseRoute`. A refinement that retains enhancement is made
  *   FROM a base already at the output's level, and the card counted buying one — so the
@@ -3264,7 +3332,7 @@ function targetCard(target) {
  *   did. 0 (the default, and every plain craft) opens the +0 listing as before.
  * @returns {HTMLElement}
  */
-function missingMatsButton(actionHrid, upgradeBaseLevel = 0) {
+function missingMatsButton(actionHrid, upgradeBaseLevel = 0, upgradeBaseAcquisition = null) {
     const button = document.createElement('button');
     button.textContent = 'Missing Mats Marketplace';
     styleGameButton(button, 'primary', true);
@@ -3279,10 +3347,16 @@ function missingMatsButton(actionHrid, upgradeBaseLevel = 0) {
         }
         button.textContent = 'Opening…';
         try {
-            await open(actionHrid, 1, { upgradeItemLevel: upgradeBaseLevel });
+            await open(actionHrid, 1, {
+                upgradeItemLevel: upgradeBaseLevel,
+                ...(upgradeBaseAcquisition ? { upgradeBaseAcquisition } : {}),
+            });
         } catch (error) {
             console.error('[EquipmentSavings] Opening the missing materials failed:', error);
-            button.textContent = 'Could not open the marketplace';
+            button.textContent =
+                error?.code === 'BASE_UNAVAILABLE'
+                    ? 'Base unavailable. Refresh this route.'
+                    : 'Could not open the marketplace';
         }
     });
     return button;
@@ -3448,17 +3522,28 @@ function mirrorLines(target) {
         )
     );
 
+    if (!target.noSell && target.worn && !build.wornConsumed) {
+        wrap.appendChild(
+            priceLine(
+                `Sells your worn ${target.worn.name} +${target.worn.enhancementLevel || 0}`,
+                `−${formatKMB(target.worn.bid)} cash`,
+                ROW_COLORS.good,
+                'This is a separate equipped copy, not the owned copy used in the Mirror build. Keeping removes only this sale credit.'
+            )
+        );
+    }
+
     // The worn piece, while selling: every route nets its sale as the trade-in, so using it up adds nothing
     const netted = owned.filter((input) => input.worn && !target.noSell);
     const forgone = owned.filter((input) => !netted.includes(input));
     for (const input of netted) {
         wrap.appendChild(
             priceLine(
-                `Uses your worn ${mirrorInputName(input)} — its ${formatKMB(input.price)} sale is counted on every route`,
+                `Uses your worn ${mirrorInputName(input)} — not sold; no cash sale credit`,
                 '',
                 ROW_COLORS.accent,
-                'Selling the piece you wear is netted against every route, so using it up here costs no more ' +
-                    'than the others.'
+                `The real-cost comparison subtracts the same ${formatKMB(input.price)} baseline sale from every route. ` +
+                    'This build consumes the worn copy, so its cash total never includes that sale.'
             )
         );
     }
@@ -3514,7 +3599,10 @@ function mirrorBillButton(bill) {
             await open(bill);
         } catch (error) {
             console.error('[EquipmentSavings] Opening the missing materials failed:', error);
-            button.textContent = 'Could not open the marketplace';
+            button.textContent =
+                error?.code === 'BASE_UNAVAILABLE'
+                    ? 'Base unavailable. Refresh this route.'
+                    : 'Could not open the marketplace';
         }
     });
     return button;
@@ -3575,15 +3663,21 @@ function recipeLines(target) {
         const held = highestOwnedLevel(recipe.upgradeItemHrid);
         const owned = needsLevel > 0 ? held !== null && held >= needsLevel : held !== null;
         const baseName = `${nameOf(recipe.upgradeItemHrid)}${needsLevel > 0 ? ` +${needsLevel}` : ''}`;
-        const status = owned
-            ? 'you have one'
-            : held === null && onlyListed(recipe.upgradeItemHrid)
-              ? 'yours is listed on the market, counted in'
-              : needsLevel > 0 && target.upgradeBaseLevel === needsLevel
-                ? `buy a +${needsLevel} base, counted in`
-                : needsLevel > 0 && held !== null
-                  ? `enhance yours (+${held}) up, counted in`
-                  : 'not owned, counted in';
+        const acquisition = target.upgradeBaseAcquisition;
+        const status =
+            acquisition?.kind === 'owned-enhance'
+                ? `enhance owned +${acquisition.startLevel} to +${acquisition.targetLevel}; enhancement inputs included`
+                : acquisition?.kind === 'fresh-enhance'
+                  ? `buy +0 and enhance to +${acquisition.targetLevel}; enhancement inputs included`
+                  : owned
+                    ? 'you have one'
+                    : held === null && onlyListed(recipe.upgradeItemHrid)
+                      ? 'yours is listed on the market, counted in'
+                      : needsLevel > 0 && target.upgradeBaseLevel === needsLevel
+                        ? `buy a +${needsLevel} base, counted in`
+                        : needsLevel > 0 && held !== null
+                          ? `enhance yours (+${held}) up, counted in`
+                          : 'not owned, counted in';
         wrap.appendChild(priceLine(`Upgrades ${baseName}`, status, owned ? ROW_COLORS.good : ROW_COLORS.accent));
     }
 

@@ -4689,7 +4689,25 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
                 'current',
                 true
             );
-            return { cost: complete(plan) ? plan.totalCost : null, eligibility: craftPlanEligibility(plan) };
+            // Keep the executable plan's choices. Only an unpriced buy leaf can
+            // hide a blocked recipe; revaluing the whole tree could invent a
+            // blocker for a different intermediate the plan can simply buy.
+            const checks = [craftPlanEligibility(plan)];
+            const missingLeaves = (node) => {
+                if (!node) return;
+                if (node.strategy === 'buy') {
+                    if (node.itemHrid !== '/items/coin' && !(node.buyPrice > 0)) {
+                        const producer = findProducingAction(node.itemHrid, {
+                            actionDetailMap: gameData.actionDetailMap,
+                        });
+                        if (producer?.action) checks.push(actionStartEligibility(producer.action));
+                    }
+                    return;
+                }
+                for (const child of node.children || []) missingLeaves(child);
+            };
+            if (!complete(plan)) missingLeaves(plan);
+            return { cost: complete(plan) ? plan.totalCost : null, eligibility: combineCraftEligibility(checks) };
         }
         const price = hrid === '/items/coin' ? 1 : buy(hrid, 0);
         return { cost: price === null ? null : price * count, eligibility: { status: 'available' } };

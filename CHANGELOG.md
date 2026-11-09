@@ -10,6 +10,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 
+### Equipment Watch shops the selected base route
+
+Missing Mats keeps owned, bought, and enhanced bases distinct, includes enhancement and protection inputs, and shows the preparation required before crafting. Unavailable or reserved owned copies no longer turn into an unpriced replacement purchase.
+
+### Equipment Watch explains Mirror sales
+
+Mirror builds identify consumed worn copies and name any different piece sold toward the upgrade. Craft-route diagnostics retain the reason an unbuyable intermediate cannot be crafted.
+
 ### Compare acquisition routes beside advisor costs
 
 An experimental, off-by-default setting adds a Buy/Craft/Mirror comparison to Combat and Lab upgrade details, separating cash from real cost and honoring Equipment Watch's preferred route. Existing rankings and shopping actions stay unchanged; unsupported ownership and route contexts are labeled.

@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
     queuedInputs: new Map(),
     dataListeners: [],
     ignoreQueue: false,
+    characterId: 'char1',
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -48,7 +49,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: () => null,
         getItemDetails: (hrid) => state.items[hrid] || null,
         getCurrentActions: () => state.currentActions,
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => state.characterId,
         on: (event, handler) => state.dataListeners.push({ event, handler }),
         off: (event, handler) => {
             state.dataListeners = state.dataListeners.filter((l) => !(l.event === event && l.handler === handler));
@@ -129,9 +130,12 @@ vi.mock('../../utils/react-input.js', () => ({
  * are asking for and give it back on the way out, and that a bill built with
  * no owner at all is the bill this file has always asserted.
  */
-const ledger = vi.hoisted(() => ({ claims: {}, reserved: [], released: [] }));
+const ledger = vi.hoisted(() => ({ claims: {}, reserved: [], released: [], listeners: new Set() }));
 vi.mock('../../utils/inventory-reservations.js', () => ({
-    onReservationsChanged: () => () => {},
+    onReservationsChanged: (listener) => {
+        ledger.listeners.add(listener);
+        return () => ledger.listeners.delete(listener);
+    },
     INVENTORY_LOCATION: '/item_locations/inventory',
     reservedElsewhere: (itemHrid, level, { excludeOwner } = {}) => {
         let total = 0;
@@ -768,6 +772,187 @@ describe('the marketplace clear-all control', () => {
         expect(handleGoToMarketplace).toHaveBeenCalledWith('/items/cedar_lumber', 0);
     });
 
+    test('an unavailable owned base rejects the route without opening replacement shopping tabs', async () => {
+        const { container } = buildMarketplaceDom();
+        state.actionMaterials = [{ itemHrid: '/items/sword', required: 1, missing: 1, acquisitionUnavailable: true }];
+        const upgradeBaseAcquisition = {
+            kind: 'owned-enhance',
+            itemHrid: '/items/sword',
+            startLevel: 12,
+            targetLevel: 13,
+        };
+        await expect(openMissingMaterials('/actions/refine', 1, { upgradeBaseAcquisition })).rejects.toMatchObject({
+            code: 'BASE_UNAVAILABLE',
+        });
+        expect(state.calcCalls.at(-1)[3]).toMatchObject({ upgradeBaseAcquisition });
+        expect(container.querySelector('[data-item-hrid]')).toBeNull();
+    });
+    test('live inventory updates retain base preparation metadata and close an invalidated bill', async () => {
+        const { container } = buildMarketplaceDom();
+        state.items = { '/items/shard': { name: 'Shard', isTradable: true } };
+        state.actionMaterials = [
+            { itemHrid: '/items/shard', itemName: 'Shard', required: 10, missing: 10, isTradeable: true },
+        ];
+        const upgradeBaseAcquisition = {
+            kind: 'owned-enhance',
+            itemHrid: '/items/sword',
+            startLevel: 12,
+            targetLevel: 13,
+        };
+        await openMissingMaterials('/actions/refine', 1, { upgradeBaseAcquisition });
+        expect(container.querySelector('[data-item-hrid]')).not.toBeNull();
+        const handler = state.wsOn.mock.calls.find(([event]) => event === '*')[1];
+        state.actionMaterials.push({ itemHrid: '/items/sword', required: 1, missing: 1, acquisitionUnavailable: true });
+        handler({ type: 'item_updated' });
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(state.calcCalls.at(-1)[3]).toMatchObject({ upgradeBaseAcquisition });
+        expect(container.querySelector('[data-item-hrid]')).toBeNull();
+    });
+
+    test.each(['reservation', 'queue'])(
+        'an owned source newly claimed by a %s closes its bill without an item event',
+        async (source) => {
+            const { container } = buildMarketplaceDom();
+            state.items = { '/items/shard': { name: 'Shard', isTradable: true } };
+            state.actionMaterials = [
+                { itemHrid: '/items/shard', itemName: 'Shard', required: 10, missing: 10, isTradeable: true },
+            ];
+            await openMissingMaterials('/actions/refine', 1, {
+                upgradeBaseAcquisition: {
+                    kind: 'owned-enhance',
+                    itemHrid: '/items/sword',
+                    startLevel: 12,
+                    targetLevel: 13,
+                },
+            });
+            const reservedBefore = ledger.reserved.length;
+            // A notification caused by this panel's own claim must only validate, never write another claim.
+            for (const handler of ledger.listeners) handler();
+            expect(ledger.reserved).toHaveLength(reservedBefore);
+            expect(container.querySelector('[data-item-hrid]')).not.toBeNull();
+            state.actionMaterials.push({
+                itemHrid: '/items/sword',
+                required: 1,
+                missing: 1,
+                acquisitionUnavailable: true,
+            });
+            if (source === 'reservation') for (const handler of ledger.listeners) handler();
+            else
+                for (const listener of state.dataListeners.filter((listener) => listener.event === 'actions_updated'))
+                    listener.handler();
+            expect(container.querySelector('[data-item-hrid]')).toBeNull();
+            expect(ledger.listeners.size).toBe(0);
+        }
+    );
+
+    test('the marketplace keeps enhancement preparation visible and Return opens that stage, not the final craft', async () => {
+        const { container } = buildMarketplaceDom();
+        state.items = {
+            '/items/sword': { name: 'Sword', isTradable: true },
+            '/items/scroll': { name: 'Scroll', isTradable: true },
+        };
+        state.actionMaterials = [
+            {
+                itemHrid: '/items/sword',
+                itemName: 'Sword',
+                required: 1,
+                missing: 0,
+                isTradeable: false,
+                acquisition: { kind: 'owned-enhance' },
+            },
+        ];
+        const game = { handleEnhanceItem: vi.fn(), handleGoToAction: vi.fn() };
+        const root = document.createElement('div');
+        root.id = 'root';
+        root._reactRootContainer = { current: { stateNode: game } };
+        document.body.appendChild(root);
+        state.inventory = [
+            {
+                itemHrid: '/items/sword',
+                enhancementLevel: 12,
+                count: 1,
+                itemLocationHrid: '/item_locations/inventory',
+                hash: 'source-hash',
+            },
+        ];
+        await openMissingMaterials('/actions/refine', 1, {
+            upgradeBaseAcquisition: {
+                kind: 'owned-enhance',
+                itemHrid: '/items/sword',
+                startLevel: 12,
+                targetLevel: 13,
+                protectFrom: 10,
+                protectionItemHrid: '/items/scroll',
+            },
+        });
+        expect(container.textContent).toContain('enhance to +13 before crafting');
+        expect(container.textContent).toContain('Protection: Scroll from +10');
+        expect(container.textContent).not.toContain('Not Tradeable');
+        const returnTab = [...container.querySelectorAll('button')].find((tab) => tab.textContent.includes('Return'));
+        returnTab.click();
+        expect(game.handleEnhanceItem).toHaveBeenCalledWith('source-hash');
+        expect(game.handleGoToAction).not.toHaveBeenCalled();
+        missingMaterials.cleanup();
+    });
+    test('an older delayed bill cannot replace the newer bill or its reservation', async () => {
+        vi.useFakeTimers();
+        try {
+            const { container } = buildMarketplaceDom();
+            container.remove(); // First request waits for marketplace navigation.
+            state.actionMaterials = [
+                { itemHrid: '/items/old', itemName: 'Old', required: 1, missing: 1, isTradeable: true },
+            ];
+            const old = openMissingMaterials('/actions/old', 1, {
+                upgradeBaseAcquisition: {
+                    kind: 'owned-enhance',
+                    itemHrid: '/items/sword',
+                    startLevel: 12,
+                    targetLevel: 13,
+                },
+            });
+            await vi.advanceTimersByTimeAsync(50);
+            document.body.appendChild(container);
+            state.actionMaterials = [
+                { itemHrid: '/items/new', itemName: 'New', required: 2, missing: 2, isTradeable: true },
+            ];
+            const fresh = openMissingMaterials('/actions/new', 1);
+            await vi.advanceTimersByTimeAsync(500);
+            await Promise.all([old, fresh]);
+            expect(container.querySelector('[data-item-hrid="/items/old"]')).toBeNull();
+            expect(container.querySelector('[data-item-hrid="/items/new"]')).not.toBeNull();
+            expect(ledger.reserved.at(-1).lines).toEqual([{ itemHrid: '/items/new', count: 2, enhancementLevel: 0 }]);
+        } finally {
+            missingMaterials.cleanup();
+            vi.useRealTimers();
+        }
+    });
+    test('a character switch before navigation completes leaves no stale shopping tabs', async () => {
+        vi.useFakeTimers();
+        try {
+            const { container } = buildMarketplaceDom();
+            state.actionMaterials = [
+                { itemHrid: '/items/old', itemName: 'Old', required: 1, missing: 1, isTradeable: true },
+            ];
+            const opening = openMissingMaterials('/actions/refine', 1, {
+                upgradeBaseAcquisition: {
+                    kind: 'owned-enhance',
+                    itemHrid: '/items/sword',
+                    startLevel: 12,
+                    targetLevel: 13,
+                },
+            });
+            await vi.advanceTimersByTimeAsync(50);
+            state.characterId = 'char2';
+            await vi.advanceTimersByTimeAsync(500);
+            await opening;
+            expect(container.querySelector('[data-item-hrid]')).toBeNull();
+        } finally {
+            state.characterId = 'char1';
+            missingMaterials.cleanup();
+            vi.useRealTimers();
+        }
+    });
+
     test('an upgrade item wanted at a level is counted, named and opened at that level', async () => {
         const { container } = buildMarketplaceDom();
         const handleGoToMarketplace = vi.fn();
@@ -810,6 +995,26 @@ describe('the marketplace clear-all control', () => {
         spearTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
         expect(handleGoToMarketplace).toHaveBeenCalledWith('/items/furious_spear', 12);
+    });
+
+    test('buying a +13 base clears its own live badge and autofill without changing a +0 line', async () => {
+        const { container } = buildMarketplaceDom();
+        const itemHrid = '/items/furious_spear';
+        state.items = { [itemHrid]: { name: 'Furious Spear', isTradable: true } };
+        state.actionMaterials = [
+            { itemHrid, itemName: 'Furious Spear', enhancementLevel: 13, required: 1, missing: 1, isTradeable: true },
+            { itemHrid, itemName: 'Furious Spear', required: 2, missing: 2, isTradeable: true },
+        ];
+        await openMissingMaterials('/actions/refine', 1, { upgradeItemLevel: 13 });
+        const baseTab = container.querySelector('[data-enhancement-level="13"]');
+        expect(baseTab).not.toBeNull();
+        state.actionMaterials[0] = { ...state.actionMaterials[0], missing: 0, have: 1, available: 1 };
+        state.wsOn.mock.calls.at(-1)[1]({ type: 'items_updated' });
+        expect(baseTab.getAttribute('data-missing-quantity')).toBe('0');
+        expect(container.querySelector('[data-enhancement-level="0"]').getAttribute('data-missing-quantity')).toBe('2');
+        baseTab.click();
+        expect(state.autofill.setPendingCalculation.mock.calls.at(-1)[0]()).toBe(0);
+        missingMaterials.cleanup();
     });
 
     test('a levelled line keeps the queue deduction the calculator applied', async () => {

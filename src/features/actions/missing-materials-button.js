@@ -59,6 +59,7 @@ import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.j
 import { findTesterTab, setShopFilter, openTesterShopPage } from '../../utils/tester-shop-nav.js';
 import {
     effectiveInventory,
+    onReservationsChanged,
     INVENTORY_LOCATION,
     release,
     reserve,
@@ -100,6 +101,9 @@ let processedPanels = new WeakSet();
 let processedEnhancingPanels = new WeakSet();
 let enhancingPanelWatchers = [];
 let inventoryUpdateHandler = null;
+let unsubscribeBaseReservations = null;
+let baseQueueHandler = null;
+let billGeneration = 0;
 let storedActionHrid = null;
 let storedNumActions = 0;
 let storedEnhancementContext = null;
@@ -120,6 +124,7 @@ const ADJUST_GUARD = 1e9;
 /** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
 let storedMaterialList = null;
 /** The level the open bill's upgrade item is wanted at, kept so live updates do not lose it */
+let storedUpgradeBaseAcquisition = null;
 let storedUpgradeItemLevel = 0; // null: the panel's upgrade slot was empty
 /**
  * The Alchemy panel's bill, kept for live updates and the Return tab:
@@ -893,6 +898,8 @@ async function handleEnhancementMissingMaterialsClick(
         strategyInfo,
         copies,
     };
+    billGeneration++;
+    storedUpgradeBaseAcquisition = null;
     storedActionHrid = null;
     storedNumActions = 0;
     storedUpgradeItemLevel = 0;
@@ -1163,6 +1170,8 @@ function updateAlchemyButton(panel) {
  *   the panel was set to, the what-if catalyst included as it was when clicked
  */
 async function handleAlchemyMissingMaterialsClick(ctx) {
+    billGeneration++;
+    storedUpgradeBaseAcquisition = null;
     storedActionHrid = null;
     storedNumActions = 0;
     storedEnhancementContext = null;
@@ -1242,27 +1251,61 @@ function createMissingMaterialsButton(missingMaterials, actionHrid, numActions, 
  * @param {string} actionHrid - Action HRID for recalculating materials
  * @param {number} numActions - Number of actions for recalculating materials
  */
-async function handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLevel = 0) {
-    // Store context for live updates
-    storedActionHrid = actionHrid;
-    storedNumActions = numActions;
-    storedEnhancementContext = null;
-    storedMaterialList = null;
-    storedAlchemyContext = null;
-    // null is an empty upgrade slot: it holds nothing, which is not the same as +0
-    storedUpgradeItemLevel = upgradeItemLevel === null ? null : Math.max(0, Math.floor(Number(upgradeItemLevel) || 0));
-
-    // Recalculate materials fresh (inventory may have changed since button was rendered)
+async function handleMissingMaterialsClick(
+    actionHrid,
+    numActions,
+    upgradeItemLevel = 0,
+    upgradeBaseAcquisition = null
+) {
+    // Validate before changing the open bill. A rejected stale Watch route must
+    // leave any existing shopping context and reservation untouched.
+    const characterId = dataManager.getCurrentCharacterId?.();
+    const acquisition = upgradeBaseAcquisition ? structuredClone(upgradeBaseAcquisition) : null;
+    const level = upgradeItemLevel === null ? null : Math.max(0, Math.floor(Number(upgradeItemLevel) || 0));
     const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
     const accountForQueue = !ignoreQueue;
     const freshMaterials = calculateMaterialRequirements(actionHrid, numActions, accountForQueue, {
         ownerId: RESERVATION_OWNER,
-        upgradeItemLevel: storedUpgradeItemLevel,
+        upgradeItemLevel: level,
+        upgradeBaseAcquisition: acquisition,
     });
+    if (freshMaterials.some((line) => line.acquisitionUnavailable)) {
+        const error = new Error('The owned base is no longer available. Refresh the Equipment Watch route.');
+        error.code = 'BASE_UNAVAILABLE';
+        throw error;
+    }
+    billGeneration++;
+    storedActionHrid = actionHrid;
+    storedNumActions = numActions;
+    storedUpgradeBaseAcquisition = acquisition;
+    storedEnhancementContext = null;
+    storedMaterialList = null;
+    storedAlchemyContext = null;
+    storedUpgradeItemLevel = level;
 
     if (!(await openWhereBought(freshMaterials))) return;
 
+    if (acquisition) {
+        if (storedUpgradeBaseAcquisition !== acquisition || dataManager.getCurrentCharacterId?.() !== characterId)
+            return;
+        const current = calculateMaterialRequirements(actionHrid, numActions, accountForQueue, {
+            ownerId: RESERVATION_OWNER,
+            upgradeItemLevel: level,
+            upgradeBaseAcquisition: acquisition,
+        });
+        if (current.some((line) => line.acquisitionUnavailable)) {
+            handleMarketplaceCleanup();
+            const error = new Error('The owned base changed while opening the marketplace. Refresh this route.');
+            error.code = 'BASE_UNAVAILABLE';
+            throw error;
+        }
+    }
     await claimOpenBill(freshMaterials);
+    if (
+        acquisition &&
+        (storedUpgradeBaseAcquisition !== acquisition || dataManager.getCurrentCharacterId?.() !== characterId)
+    )
+        return;
 
     // Setup inventory listener for live updates
     setupInventoryListener();
@@ -1401,6 +1444,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     attachRegularTabClearListener(tabsContainer, () => autofillManager.clearQuantity());
 
     for (const material of missingMaterials) {
+        if (material.acquisition?.kind.startsWith('owned')) continue;
         const sold = testerShopCoinCost(material.itemHrid) > 0;
         const tabRef = { tab: null };
         const handler = sold
@@ -1422,12 +1466,19 @@ function createTesterShopTabs(missingMaterials, testerTab) {
               }
             : makeMaterialClickHandler(tabRef);
         const tab = createMaterialTab(material, testerTab, handler, { owner: TAB_OWNER });
+        tab.setAttribute('data-enhancement-level', String(material.enhancementLevel || 0));
         tabRef.tab = tab;
         tab.setAttribute('data-tester-sold', sold ? 'true' : 'false');
         tab.setAttribute('data-item-name', material.itemName || '');
         if (!sold) tab.title = 'Not sold in the Tester shop — opens the marketplace';
         tabsContainer.appendChild(tab);
         currentMaterialsTabs.push(tab);
+    }
+
+    const preparation = createBasePreparationIndicator();
+    if (preparation) {
+        tabsContainer.appendChild(preparation);
+        currentMaterialsTabs.push(preparation);
     }
 
     // One press, one purchase: the next line still short, bought for what it
@@ -1651,8 +1702,12 @@ async function buyOneFromTesterShop(itemName, quantity) {
  * @returns {Promise<boolean>} Whether a page opened and tabs were drawn
  */
 async function openWhereBought(materials, strategyInfo = null) {
+    const generation = billGeneration;
+    const characterId = dataManager.getCurrentCharacterId?.();
+    const isCurrent = () => generation === billGeneration && dataManager.getCurrentCharacterId?.() === characterId;
     if (wantsTesterShop(materials)) {
         const testerTab = await openTesterShopPage();
+        if (!isCurrent()) return false;
         if (testerTab) {
             createTesterShopTabs(materials, testerTab);
             return true;
@@ -1661,6 +1716,7 @@ async function openWhereBought(materials, strategyInfo = null) {
     }
 
     const success = await openMarketplacePage();
+    if (!isCurrent()) return false;
     if (!success) {
         console.error('[MissingMats] Failed to navigate to marketplace');
         return false;
@@ -1668,8 +1724,37 @@ async function openWhereBought(materials, strategyInfo = null) {
     await new Promise((resolve) => {
         timerRegistry.scheduleTimeout(resolve, 200);
     });
+    if (!isCurrent()) return false;
     createMissingMaterialTabs(materials, strategyInfo);
     return true;
+}
+
+/** The required enhancement stage is not a ready-to-craft base, even after its inputs are bought. */
+function createBasePreparationIndicator() {
+    const acquisition = storedUpgradeBaseAcquisition;
+    if (!acquisition) return null;
+    const enhancing = acquisition.kind.endsWith('-enhance');
+    if (!enhancing && !acquisition.kind.startsWith('owned')) return null;
+    const indicator = document.createElement('div');
+    indicator.dataset.mwiCustomTab = 'true';
+    indicator.dataset.mwiTabOwner = TAB_OWNER;
+    indicator.dataset.basePreparation = 'true';
+    indicator.style.cssText = 'padding: 6px 12px; color: #ffc75f; font-size: 12px; max-width: 420px;';
+    const name = dataManager.getItemDetails(acquisition.itemHrid)?.name || acquisition.itemHrid.split('/').pop();
+    const source = acquisition.kind.startsWith('owned') ? 'Use owned' : 'Buy';
+    indicator.textContent = enhancing
+        ? `${source} ${name} +${acquisition.startLevel}; enhance to +${acquisition.targetLevel} before crafting. `
+        : `Use owned ${name} +${acquisition.startLevel} for this craft. `;
+    if (acquisition.kind.startsWith('owned')) indicator.textContent += 'Unequip first if worn. ';
+    if (enhancing) {
+        const protection =
+            dataManager.getItemDetails(acquisition.protectionItemHrid)?.name || acquisition.protectionItemHrid;
+        indicator.textContent +=
+            acquisition.protectFrom > 0
+                ? `Protection: ${protection} from +${acquisition.protectFrom}.`
+                : 'No protection in this estimate.';
+    }
+    return indicator;
 }
 
 /**
@@ -1743,7 +1828,10 @@ function getGameObject() {
 function createReturnTab(referenceTab) {
     let displayName;
 
-    if (storedActionHrid) {
+    if (storedUpgradeBaseAcquisition?.kind.endsWith('-enhance')) {
+        const acquisition = storedUpgradeBaseAcquisition;
+        displayName = `Enhance +${acquisition.startLevel} → +${acquisition.targetLevel} before crafting`;
+    } else if (storedActionHrid) {
         const details = dataManager.getActionDetails(storedActionHrid);
         displayName = details?.name || storedActionHrid.split('/').pop();
         if (storedNumActions > 0) displayName += ` (\u00d7${formatWithSeparator(storedNumActions)})`;
@@ -1834,12 +1922,20 @@ async function handleReturnToAction() {
     // Captured before navigating: leaving the marketplace runs the cleanup that
     // clears the stored context, and the count is restored after that
     const alchemyContext = storedAlchemyContext;
-    const restoreCount = storedActionHrid ? storedNumActions : alchemyContext ? alchemyContext.numActions : 0;
+    const restoreCount = storedUpgradeBaseAcquisition?.kind.endsWith('-enhance')
+        ? 0
+        : storedActionHrid
+          ? storedNumActions
+          : alchemyContext
+            ? alchemyContext.numActions
+            : 0;
     const inputSelector = alchemyContext
         ? `${ALCHEMY_PANEL_SELECTOR} [class*="maxActionCountInput"] input`
         : '[class*="maxActionCountInput"] input';
 
-    if (storedActionHrid) {
+    if (storedUpgradeBaseAcquisition?.kind.endsWith('-enhance')) {
+        openEnhancingPanel(game, storedUpgradeBaseAcquisition);
+    } else if (storedActionHrid) {
         game.handleGoToAction(storedActionHrid);
     } else if (storedEnhancementContext) {
         openEnhancingPanel(game, storedEnhancementContext);
@@ -1944,15 +2040,22 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     }
 
     for (const material of missingMaterials) {
+        if (material.acquisition?.kind.startsWith('owned')) continue;
         const tabRef = { tab: null };
         const handler = makeMaterialClickHandler(tabRef);
         const tab = createMaterialTab(material, referenceTab, handler, { owner: TAB_OWNER });
+        tab.setAttribute('data-enhancement-level', String(material.enhancementLevel || 0));
         tabRef.tab = tab;
         tabsContainer.appendChild(tab);
         currentMaterialsTabs.push(tab);
     }
 
     // Add "Return to Action" tab at the end
+    const preparation = createBasePreparationIndicator();
+    if (preparation) {
+        tabsContainer.appendChild(preparation);
+        currentMaterialsTabs.push(preparation);
+    }
     const returnTab = createReturnTab(referenceTab);
     if (returnTab) {
         tabsContainer.appendChild(returnTab);
@@ -1997,6 +2100,32 @@ function setupInventoryListener() {
     };
 
     webSocketHook.on('*', inventoryUpdateHandler);
+    unsubscribeBaseReservations?.();
+    unsubscribeBaseReservations = null;
+    if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
+    baseQueueHandler = null;
+    if (storedUpgradeBaseAcquisition) {
+        // Checking ownership writes nothing. Calling the full tab update here
+        // would reserve again and recursively trigger this same notification.
+        const validateBase = () => {
+            if (!storedUpgradeBaseAcquisition || !storedActionHrid) return;
+            const lines = calculateMaterialRequirements(
+                storedActionHrid,
+                storedNumActions,
+                !config.getSetting('actions_missingMaterialsButton_ignoreQueue'),
+                {
+                    ownerId: RESERVATION_OWNER,
+                    upgradeItemLevel: storedUpgradeItemLevel,
+                    upgradeBaseAcquisition: storedUpgradeBaseAcquisition,
+                }
+            );
+            if (lines.some((line) => line.acquisitionUnavailable)) handleMarketplaceCleanup();
+        };
+        unsubscribeBaseReservations = onReservationsChanged(validateBase);
+        baseQueueHandler = validateBase;
+        dataManager.on('actions_updated', baseQueueHandler);
+        validateBase();
+    }
 }
 
 /**
@@ -2031,12 +2160,20 @@ function updateTabsOnInventoryChange() {
         updatedMaterials = calculateMaterialRequirements(storedActionHrid, storedNumActions, accountForQueue, {
             ownerId: RESERVATION_OWNER,
             upgradeItemLevel: storedUpgradeItemLevel,
+            upgradeBaseAcquisition: storedUpgradeBaseAcquisition,
         });
     } else if (storedAlchemyContext) {
         updatedMaterials = alchemyMaterials(storedAlchemyContext);
     } else if (storedMaterialList) {
         updatedMaterials = materialsFromList(storedMaterialList.lines, storedMaterialList.ownerId || RESERVATION_OWNER);
     } else {
+        return;
+    }
+
+    if (updatedMaterials.some((line) => line.acquisitionUnavailable)) {
+        // The assumed copy was spent, listed or reserved elsewhere. Close this
+        // stale shopping plan rather than offer a replacement it never priced.
+        handleMarketplaceCleanup();
         return;
     }
 
@@ -2051,7 +2188,8 @@ function updateTabsOnInventoryChange() {
     // Update each existing tab
     currentMaterialsTabs.forEach((tab) => {
         const itemHrid = tab.getAttribute('data-item-hrid');
-        const material = updatedMaterials.find((m) => m.itemHrid === itemHrid);
+        const level = Number(tab.getAttribute('data-enhancement-level')) || 0;
+        const material = updatedMaterials.find((m) => m.itemHrid === itemHrid && (m.enhancementLevel || 0) === level);
 
         if (material) {
             updateTabBadge(tab, material);
@@ -2093,11 +2231,18 @@ function handleMarketplaceCleanup() {
         inventoryUpdateHandler = null;
     }
 
+    unsubscribeBaseReservations?.();
+    unsubscribeBaseReservations = null;
+    if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
+    baseQueueHandler = null;
+
     // The tabs are the panel: leaving the marketplace closes it, and a
     // transient claim does not outlive what made it
     release(RESERVATION_OWNER);
 
     // Clear stored context — only when genuinely leaving the marketplace
+    billGeneration++;
+    storedUpgradeBaseAcquisition = null;
     storedActionHrid = null;
     storedNumActions = 0;
     storedEnhancementContext = null;
@@ -2211,6 +2356,8 @@ export async function openMaterialsList(lines, { ownerId = null } = {}) {
     const wanted = (lines || []).filter((line) => line?.itemHrid && Number(line.count) > 0);
     if (!wanted.length) return false;
 
+    billGeneration++;
+    storedUpgradeBaseAcquisition = null;
     storedActionHrid = null;
     storedNumActions = 0;
     storedEnhancementContext = null;
@@ -2259,14 +2406,20 @@ export function openBillOwner() {
  * @param {string} actionHrid - The action whose inputs are wanted
  * @param {number} [numActions] - How many of it
  * @param {Object} [options] - Options
+ * @param {Object|null} [options.upgradeBaseAcquisition] - Watch's transient source/target levels and
+ *   enhancement bill. An owned source is revalidated before shopping and on inventory changes.
  * @param {number} [options.upgradeItemLevel] - The enhancement level the action's upgrade item
  *   is wanted at. A refinement that retains enhancement is made FROM a base already at the
  *   output's level, so a caller saving towards a ★+12 needs the +12 listing rather than the
  *   +0 one. Defaults to 0, which is every action panel and every plain craft — unchanged.
  * @returns {Promise<void>}
  */
-export async function openMissingMaterials(actionHrid, numActions = 1, { upgradeItemLevel = 0 } = {}) {
-    await handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLevel);
+export async function openMissingMaterials(
+    actionHrid,
+    numActions = 1,
+    { upgradeItemLevel = 0, upgradeBaseAcquisition = null } = {}
+) {
+    await handleMissingMaterialsClick(actionHrid, numActions, upgradeItemLevel, upgradeBaseAcquisition);
 }
 
 /**

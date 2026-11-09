@@ -830,3 +830,110 @@ describe('material requirements and the reservation ledger', () => {
         expect(plank(materials).available).toBe(50);
     });
 });
+
+describe('route-aware owned base preparation', () => {
+    const action = '/actions/crafting/table';
+    const base = '/items/table';
+    const ownerId = 'missing-materials-panel';
+    const upgradeBaseAcquisition = {
+        kind: 'owned-enhance',
+        itemHrid: base,
+        startLevel: 12,
+        targetLevel: 13,
+        enhancementMaterials: [
+            { itemHrid: '/items/plank', count: 10 },
+            { itemHrid: '/items/protection_scroll', count: 2 },
+        ],
+    };
+    const options = { ownerId, upgradeBaseAcquisition };
+    beforeEach(() => {
+        state.gameData.actionDetailMap[action].upgradeItemHrid = base;
+        state.inventory = [
+            { itemHrid: base, enhancementLevel: 12, count: 3, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: '/items/plank', count: 9 },
+            { itemHrid: '/items/protection_scroll', count: 1 },
+        ];
+    });
+    test('merges shared recipe/enhancement inputs once and keeps protection separate', () => {
+        const lines = calculateMaterialRequirements(action, 1, false, options);
+        expect(lines.filter((line) => line.itemHrid === '/items/plank')).toHaveLength(1);
+        expect(lines.find((line) => line.itemHrid === '/items/plank')).toMatchObject({
+            required: 14,
+            recipeRequired: 4,
+            enhancementRequired: 10,
+            have: 9,
+            missing: 5,
+        });
+        expect(lines.find((line) => line.itemHrid === '/items/protection_scroll')).toMatchObject({
+            required: 2,
+            recipeRequired: 0,
+            enhancementRequired: 2,
+            have: 1,
+            missing: 1,
+        });
+        expect(lines.find((line) => line.itemHrid === base)).toMatchObject({
+            required: 1,
+            have: 3,
+            missing: 0,
+            enhancementLevel: 12,
+            requiresEnhancement: true,
+        });
+    });
+    test('reserved bag copies cannot be substituted with the distinct worn copy priced as sold', () => {
+        state.inventory.push({ itemHrid: base, enhancementLevel: 12, itemLocationHrid: '/item_locations/main_hand' });
+        ledger.claims = { other: { [base]: 3 } };
+        expect(
+            calculateMaterialRequirements(action, 1, false, {
+                ...options,
+                upgradeBaseAcquisition: { ...upgradeBaseAcquisition, sourceLocation: '/item_locations/inventory' },
+            }).find((line) => line.itemHrid === base)
+        ).toMatchObject({ have: 3, missing: 1, acquisitionUnavailable: true });
+    });
+    test('another plan reserving all three source copies invalidates ownership instead of adding a purchase', () => {
+        ledger.claims = { other: { [base]: 3 } };
+        expect(
+            calculateMaterialRequirements(action, 1, false, options).find((line) => line.itemHrid === base)
+        ).toMatchObject({
+            have: 3,
+            available: 0,
+            missing: 1,
+            acquisitionUnavailable: true,
+            isTradeable: false,
+        });
+    });
+    test('the open panel does not subtract its own base claim a second time', () => {
+        ledger.claims = { [ownerId]: { [base]: 3 } };
+        expect(
+            calculateMaterialRequirements(action, 1, false, options).find((line) => line.itemHrid === base)
+        ).toMatchObject({
+            available: 3,
+            missing: 0,
+            acquisitionUnavailable: false,
+        });
+    });
+    test('queued crafts consume the exact source level before this route can claim it', () => {
+        state.currentActions = [
+            {
+                actionHrid: action,
+                hasMaxCount: true,
+                maxCount: 3,
+                currentCount: 0,
+                primaryItemHash: '1::/item_locations/inventory::/items/table::12',
+            },
+        ];
+        expect(
+            calculateMaterialRequirements(action, 1, true, options).find((line) => line.itemHrid === base)
+        ).toMatchObject({
+            queued: 3,
+            missing: 1,
+            acquisitionUnavailable: true,
+        });
+    });
+    test('the descriptor for another action cannot suppress this recipe base', () => {
+        expect(
+            calculateMaterialRequirements(action, 1, false, {
+                upgradeBaseAcquisition: { ...upgradeBaseAcquisition, itemHrid: '/items/nail' },
+            }).find((line) => line.itemHrid === base)
+        ).toMatchObject({ missing: 1 });
+    });
+});

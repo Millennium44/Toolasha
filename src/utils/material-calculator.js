@@ -155,6 +155,8 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
  *   is how every caller that predates the ledger calls this, and it must go on meaning
  *   "the ledger is not part of this figure" — so no claim is deducted without one, and
  *   none is deducted with one either while the ledger is switched off
+ * @param {Object|null} [options.upgradeBaseAcquisition] - Explicit owned/bought preparation route.
+ *   Its source level is counted separately from the final recipe level; enhancement inputs are added.
  * @param {number|null} [options.upgradeItemLevel=0] - Enhancement level of the stack the panel's
  *   upgrade slot shows; 0 (the default) is the +0 stack, `null` an empty slot (nothing held)
  * @returns {Array<Object>} Array of material requirement objects (includes upgrade items)
@@ -236,7 +238,16 @@ function reservationFields(missing, itemHrid, required, have, queued, reserved, 
 function buildMaterialLine(
     itemHrid,
     totalRequired,
-    { inventory, queuedMaterialsMap, ownerId, isUpgradeItem, claimedByItem, upgradeItemLevel = 0 }
+    {
+        inventory,
+        queuedMaterialsMap,
+        ownerId,
+        isUpgradeItem,
+        claimedByItem,
+        upgradeItemLevel = 0,
+        ownedBase = false,
+        sourceLocation = null,
+    }
 ) {
     const gameData = dataManager.getInitClientData();
     const itemDetails = gameData.itemDetailMap[itemHrid];
@@ -248,9 +259,23 @@ function buildMaterialLine(
     const slotEmpty = isUpgradeItem && upgradeItemLevel === null;
     const level = isUpgradeItem && upgradeItemLevel > 0 ? upgradeItemLevel : 0;
     const claimKey = level > 0 ? `${itemHrid}@${level}` : itemHrid;
+    const ownedCount = ownedBase
+        ? inventory
+              .filter(
+                  (item) =>
+                      item.itemHrid === itemHrid &&
+                      (item.enhancementLevel || 0) === level &&
+                      item.itemLocationHrid !== '/item_locations/market_listing' &&
+                      (!sourceLocation || (item.itemLocationHrid || INVENTORY_LOCATION) === sourceLocation) &&
+                      item.count !== 0
+              )
+              .reduce((sum, item) => sum + (item.count ?? 1), 0)
+        : 0;
     const have = slotEmpty
         ? 0
-        : (level > 0 ? 0 : unclaimedBoughtCount(itemHrid)) + heldInBag(inventory, itemHrid, level);
+        : ownedBase
+          ? ownedCount
+          : (level > 0 ? 0 : unclaimedBoughtCount(itemHrid)) + heldInBag(inventory, itemHrid, level);
     const queued = slotEmpty ? 0 : queuedMaterialsMap.get(claimKey) || 0;
     const reserved = ownerId ? reservedElsewhere(itemHrid, level, { excludeOwner: ownerId }) : 0;
     const claimed = claimedByItem.get(claimKey) || 0;
@@ -279,7 +304,7 @@ export function calculateMaterialRequirements(
     actionHrid,
     numActions,
     accountForQueue = false,
-    { ownerId = null, upgradeItemLevel = 0 } = {}
+    { ownerId = null, upgradeItemLevel = 0, upgradeBaseAcquisition = null } = {}
 ) {
     const actionDetails = dataManager.getActionDetails(actionHrid);
     const inventory = dataManager.getInventory() || [];
@@ -288,6 +313,12 @@ export function calculateMaterialRequirements(
         return [];
     }
 
+    // This transient descriptor is supplied only by route-aware callers. It names
+    // the physical input, not a promise that a lower copy already meets the recipe.
+    const acquisition =
+        upgradeBaseAcquisition?.itemHrid === actionDetails.upgradeItemHrid ? upgradeBaseAcquisition : null;
+    const ownedBase = acquisition?.kind === 'owned' || acquisition?.kind === 'owned-enhance';
+    if (acquisition) upgradeItemLevel = acquisition.startLevel;
     const artisanMode = getArtisanMaterialMode();
 
     // Calculate artisan bonus (material reduction from Artisan Tea)
@@ -338,10 +369,63 @@ export function calculateMaterialRequirements(
             isUpgradeItem: true,
             claimedByItem,
             upgradeItemLevel,
+            ownedBase,
+            sourceLocation: acquisition?.sourceLocation,
         });
-        if (line) materials.push(line);
+        if (line) {
+            if (acquisition) {
+                line.acquisition = {
+                    kind: acquisition.kind,
+                    startLevel: acquisition.startLevel,
+                    targetLevel: acquisition.targetLevel,
+                };
+                line.requiresEnhancement = acquisition.kind.endsWith('-enhance');
+                // An owned copy disappearing/being reserved invalidates this route.
+                // Never silently replace it with a purchase absent from its quote.
+                if (ownedBase) {
+                    line.acquisitionUnavailable = line.missing > 0;
+                    line.isTradeable = false;
+                }
+            }
+            materials.push(line);
+        }
     }
 
+    for (const input of acquisition?.enhancementMaterials || []) {
+        if (!(input.count > 0) || input.itemHrid === '/items/coin') continue;
+        const required = input.count * numActions;
+        const existing = materials.find((line) => line.itemHrid === input.itemHrid && !(line.enhancementLevel > 0));
+        if (existing) {
+            // Recipe and enhancement may spend the same shard or +0 protection.
+            // Count stock once, and retain the two stages for the explanation.
+            existing.recipeRequired ??= existing.required;
+            existing.enhancementRequired = (existing.enhancementRequired || 0) + required;
+            existing.required += required;
+            existing.missing = Math.max(0, existing.required - existing.available);
+            const reserved = ownerId ? reservedElsewhere(input.itemHrid, 0, { excludeOwner: ownerId }) : 0;
+            Object.assign(
+                existing,
+                reservationFields(
+                    existing.missing,
+                    input.itemHrid,
+                    existing.required,
+                    existing.have,
+                    existing.queued,
+                    reserved,
+                    ownerId
+                )
+            );
+        } else {
+            const line = buildMaterialLine(input.itemHrid, required, {
+                inventory,
+                queuedMaterialsMap,
+                ownerId,
+                isUpgradeItem: false,
+                claimedByItem,
+            });
+            if (line) materials.push({ ...line, recipeRequired: 0, enhancementRequired: required });
+        }
+    }
     return materials;
 }
 

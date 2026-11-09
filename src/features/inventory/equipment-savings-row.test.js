@@ -2290,7 +2290,7 @@ describe('the marketplace a watched enhancement opens', () => {
         clickMissingMats();
 
         await vi.waitFor(() => expect(openCalls).toHaveLength(1));
-        expect(openCalls[0]).toEqual(['/actions/refine', 1, { upgradeItemLevel: 12 }]);
+        expect(openCalls[0]).toMatchObject(['/actions/refine', 1, { upgradeItemLevel: 12 }]);
     });
 
     test('a plain craft still opens the +0 bill it always did', async () => {
@@ -2301,7 +2301,7 @@ describe('the marketplace a watched enhancement opens', () => {
         clickMissingMats();
 
         await vi.waitFor(() => expect(openCalls).toHaveLength(1));
-        expect(openCalls[0]).toEqual(['/actions/refine', 1, { upgradeItemLevel: 0 }]);
+        expect(openCalls[0]).toMatchObject(['/actions/refine', 1, { upgradeItemLevel: 0 }]);
     });
 
     test('the icon and the name open the level the row is about, not the base item', () => {
@@ -2483,7 +2483,7 @@ describe('a retaining craft compares both base routes by real cost', () => {
         expect(button).toBeTruthy();
         button.click();
         await vi.waitFor(() => expect(bills).toHaveLength(1));
-        expect(bills[0]).toEqual(['/actions/refine', 1, { upgradeItemLevel: 13 }]);
+        expect(bills[0]).toMatchObject(['/actions/refine', 1, { upgradeItemLevel: 13 }]);
     });
 
     test('the craft caption names the selected bought base, then the owned enhance route', () => {
@@ -2493,7 +2493,7 @@ describe('a retaining craft compares both base routes by real cost', () => {
         expect(text()).not.toContain('enhance yours');
         game.prices[`${BASE}:12`].bid = 10 * M;
         equipmentSavingsPanel.render();
-        expect(text()).toContain('enhance yours (+12) up, counted in');
+        expect(text()).toContain('enhance owned +12 to +13; enhancement inputs included');
         expect(text()).not.toContain('buy a +13 base');
         expect(text()).not.toContain(FAILED);
     });
@@ -3638,7 +3638,7 @@ describe("the Philosopher's Mirror build as a route", () => {
 
             // Selling: every route nets this sale, so no "real cost" is tacked on
             expect(text()).toContain('Uses your worn Furious Spear ★ +12');
-            expect(text()).toContain('sale is counted on every route');
+            expect(text()).toContain('not sold; no cash sale credit');
             expect(text()).not.toContain('gives up');
             expect(text()).not.toContain('real cost');
 
@@ -3649,6 +3649,75 @@ describe("the Philosopher's Mirror build as a route", () => {
             expect(text()).toContain('real cost');
             expect(text()).not.toContain('worn Furious Spear');
             expect(text()).not.toContain(FAILED);
+        });
+
+        test('screenshot-sized sale toggle credits a different worn copy, never the +12 Mirror input', () => {
+            own(REFINED, 12);
+            game.prices[`${PLAIN}:11`].ask = 920_000_000;
+            const worn = { itemHrid: PLAIN, enhancementLevel: 10 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            own(PLAIN, 10, '/item_locations/main_hand');
+            game.prices[`${PLAIN}:10`] = { ask: 300_000_000, bid: 280_000_000 };
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'mirror');
+            const selling = only();
+            expect(selling.cost).toBe(1_263_700_000);
+            expect(selling.mirrorBuild.wornConsumed).toBe(false);
+            expect(selling.mirrorBuild.inputs.find((input) => input.level === 12)).toMatchObject({
+                owned: true,
+                worn: false,
+            });
+            equipmentSavingsPanel.show();
+            expect(text()).toContain('Selling other gear');
+            expect(text()).toContain('Sells your worn Furious Spear +10');
+            expect(text()).toContain('268.8M');
+            setNoSell(true);
+            equipmentSavingsPanel.render();
+            const keeping = only();
+            expect(keeping.cost).toBe(1_532_500_000);
+            expect(keeping.cost - selling.cost).toBe(afterTax(280_000_000));
+            expect(keeping.realCost - selling.realCost).toBe(afterTax(280_000_000));
+            expect(text()).not.toContain('Sells your worn');
+        });
+        test('the consumed worn copy has no cash sale credit and the chip says Used in build', () => {
+            game.prices[`${MIRROR}:0`].ask = 610_000_000;
+            game.prices[`${PLAIN}:11`].ask = 920_000_000;
+            game.prices[`${REFINED}:13`].ask = 3_600_000_000;
+            const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            own(REFINED, 12, '/item_locations/main_hand');
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'mirror');
+            const selling = only();
+            equipmentSavingsPanel.show();
+            expect(selling.wornConsumed).toBe(true);
+            expect(selling.cost).toBe(1_530_000_000);
+            expect(selling.routes.find((route) => route.id === 'buy').cash).toBe(1_603_200_000);
+            expect(equipmentSavingsPanel.panel.querySelector('[data-target-sell]').textContent).toBe('Used in build');
+            setNoSell(true);
+            expect(only().cost).toBe(selling.cost);
+            expect(only().realCost - selling.realCost).toBe(afterTax(2_080_000_000));
+        });
+        test('a three-copy bag stack can supply one Mirror input while the distinct worn copy is sold once', () => {
+            const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+            game.equipment = new Map([['/item_locations/main_hand', worn]]);
+            own(REFINED, 12, '/item_locations/main_hand');
+            game.inventory.push({
+                itemHrid: REFINED,
+                enhancementLevel: 12,
+                count: 3,
+                itemLocationHrid: '/item_locations/inventory',
+            });
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'mirror');
+            const selling = only();
+            expect(selling.mirrorBuild.wornConsumed).toBe(false);
+            expect(selling.mirrorBuild.inputs.find((input) => input.level === 12)).toMatchObject({
+                owned: true,
+                worn: false,
+            });
+            expect(selling.cost).toBe(Math.max(0, selling.mirrorBuild.coins - afterTax(2_080_000_000)));
+            expect(game.inventory.at(-1).count).toBe(3);
         });
 
         test('real cost charges the owned base a refine uses up', () => {
