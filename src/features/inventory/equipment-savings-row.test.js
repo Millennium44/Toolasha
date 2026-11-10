@@ -3119,6 +3119,25 @@ describe("the Philosopher's Mirror build as a route", () => {
         expect(build.bill).toEqual([{ itemHrid: MIRROR, count: 1 }]);
     });
 
+    test('Mirror prerequisites distinguish a consumed bag stack from a separately sold worn copy', () => {
+        const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+        game.inventory = [
+            { ...worn, count: 3, itemLocationHrid: '/item_locations/inventory' },
+            { ...worn, itemLocationHrid: '/item_locations/main_hand' },
+            { itemHrid: PLAIN, enhancementLevel: 11, count: 3, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const original = structuredClone(game.inventory);
+        const build = mirrorBuildRoute(REFINED, 13, { worn });
+        expect(build.ownedInputs).toEqual([
+            { itemHrid: REFINED, enhancementLevel: 12, count: 1, sourceLocation: '/item_locations/inventory' },
+            { itemHrid: PLAIN, enhancementLevel: 11, count: 1, sourceLocation: '/item_locations/inventory' },
+        ]);
+        expect(build.wornConsumed).toBe(false);
+        expect(build.cash).toBe(Math.max(0, build.coins - afterTax(2_080_000_000)));
+        expect(build.real).toBe(build.coins + afterTax(900_000_000));
+        expect(game.inventory).toEqual(original);
+    });
+
     test('a worn piece the build consumes is not also traded in', () => {
         own(REFINED, 12, '/item_locations/main_hand');
         const worn = { itemHrid: REFINED, enhancementLevel: 12 };
@@ -3126,6 +3145,14 @@ describe("the Philosopher's Mirror build as a route", () => {
         const build = mirrorBuildRoute(REFINED, 13, { worn });
 
         expect(build.wornConsumed).toBe(true);
+        expect(build.ownedInputs).toEqual([
+            {
+                itemHrid: REFINED,
+                enhancementLevel: 12,
+                count: 1,
+                sourceLocation: '/item_locations/main_hand',
+            },
+        ]);
         // No trade-in credit against the coins: the worn piece cannot be sold and mirrored
         expect(build.cash).toBe(940_000_000 + 612_500_000);
         // Selling it is the baseline the listing route nets, so it cancels out of the real cost
@@ -3218,6 +3245,16 @@ describe("the Philosopher's Mirror build as a route", () => {
             { itemHrid: PLAIN, enhancementLevel: 11, count: 1 },
             { itemHrid: MIRROR, count: 1 },
         ]);
+        expect(bills[0][1]).toEqual({
+            ownedInputs: [
+                {
+                    itemHrid: REFINED,
+                    enhancementLevel: 12,
+                    count: 1,
+                    sourceLocation: '/item_locations/inventory',
+                },
+            ],
+        });
     });
 
     test('an advisor quote does not stop the routes being compared', () => {

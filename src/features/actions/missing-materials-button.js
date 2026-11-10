@@ -103,6 +103,7 @@ let enhancingPanelWatchers = [];
 let inventoryUpdateHandler = null;
 let unsubscribeBaseReservations = null;
 let baseQueueHandler = null;
+let ownedListCharacterHandler = null;
 let billGeneration = 0;
 let storedActionHrid = null;
 let storedNumActions = 0;
@@ -1418,7 +1419,7 @@ function makeMaterialClickHandler(tabRef) {
  */
 function wantsTesterShop(materials) {
     if (!testerShopEnabled()) return false;
-    return (materials || []).some((material) => testerShopCoinCost(material?.itemHrid) > 0);
+    return (materials || []).some((material) => !material.ownedInput && testerShopCoinCost(material?.itemHrid) > 0);
 }
 
 /**
@@ -1435,7 +1436,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     const tabsContainer = testerTab?.parentElement;
     if (!tabsContainer) {
         console.error('[MissingMats] Tester tab strip not found');
-        return;
+        return false;
     }
     removeMaterialTabs({ owner: TAB_OWNER });
     currentMaterialsTabs.length = 0;
@@ -1444,7 +1445,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     attachRegularTabClearListener(tabsContainer, () => autofillManager.clearQuantity());
 
     for (const material of missingMaterials) {
-        if (material.acquisition?.kind.startsWith('owned')) continue;
+        if (material.ownedInput || material.acquisition?.kind.startsWith('owned')) continue;
         const sold = testerShopCoinCost(material.itemHrid) > 0;
         const tabRef = { tab: null };
         const handler = sold
@@ -1494,8 +1495,8 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     });
     tabsContainer.appendChild(clearAllControl);
     currentMaterialsTabs.push(clearAllControl);
+    return true;
 }
-
 /**
  * The "Buy next" control for the Tester strip.
  *
@@ -1709,8 +1710,7 @@ async function openWhereBought(materials, strategyInfo = null) {
         const testerTab = await openTesterShopPage();
         if (!isCurrent()) return false;
         if (testerTab) {
-            createTesterShopTabs(materials, testerTab);
-            return true;
+            return createTesterShopTabs(materials, testerTab);
         }
         // The shop could not be reached: the marketplace is still a place to buy
     }
@@ -1725,13 +1725,29 @@ async function openWhereBought(materials, strategyInfo = null) {
         timerRegistry.scheduleTimeout(resolve, 200);
     });
     if (!isCurrent()) return false;
-    createMissingMaterialTabs(materials, strategyInfo);
-    return true;
+    return createMissingMaterialTabs(materials, strategyInfo);
 }
 
 /** The required enhancement stage is not a ready-to-craft base, even after its inputs are bought. */
 function createBasePreparationIndicator() {
     const acquisition = storedUpgradeBaseAcquisition;
+    if (!acquisition && storedMaterialList?.ownedInputs?.length) {
+        const indicator = document.createElement('div');
+        indicator.dataset.mwiCustomTab = 'true';
+        indicator.dataset.mwiTabOwner = TAB_OWNER;
+        indicator.dataset.ownedInputs = 'true';
+        indicator.style.cssText = 'padding: 6px 12px; color: #ffc75f; font-size: 12px; max-width: 420px;';
+        indicator.textContent =
+            'Use owned: ' +
+            storedMaterialList.ownedInputs
+                .map((input) => {
+                    const name = dataManager.getItemDetails(input.itemHrid)?.name || input.itemHrid.split('/').pop();
+                    return `${input.count} × ${name} +${input.enhancementLevel || 0}`;
+                })
+                .join(', ') +
+            '. These inputs are consumed, not sold.';
+        return indicator;
+    }
     if (!acquisition) return null;
     const enhancing = acquisition.kind.endsWith('-enhance');
     if (!enhancing && !acquisition.kind.startsWith('owned')) return null;
@@ -2003,7 +2019,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
 
     if (!tabsContainer) {
         console.error('[MissingMats] Tabs container not found');
-        return;
+        return false;
     }
 
     // Remove any existing custom tabs first (preserve stored context — we're recreating, not leaving)
@@ -2015,7 +2031,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
 
     if (!referenceTab) {
         console.error('[MissingMats] Reference tab not found');
-        return;
+        return false;
     }
 
     // Enable flex wrapping for multiple rows (like game's native tabs)
@@ -2040,7 +2056,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     }
 
     for (const material of missingMaterials) {
-        if (material.acquisition?.kind.startsWith('owned')) continue;
+        if (material.ownedInput || material.acquisition?.kind.startsWith('owned')) continue;
         const tabRef = { tab: null };
         const handler = makeMaterialClickHandler(tabRef);
         const tab = createMaterialTab(material, referenceTab, handler, { owner: TAB_OWNER });
@@ -2069,8 +2085,8 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     });
     tabsContainer.appendChild(clearAllControl);
     currentMaterialsTabs.push(clearAllControl);
+    return true;
 }
-
 /**
  * Setup inventory listener for live tab updates
  * Listens for inventory changes via websocket and updates tabs accordingly
@@ -2104,10 +2120,17 @@ function setupInventoryListener() {
     unsubscribeBaseReservations = null;
     if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
     baseQueueHandler = null;
-    if (storedUpgradeBaseAcquisition) {
+    if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
+    ownedListCharacterHandler = null;
+    if (storedUpgradeBaseAcquisition || storedMaterialList?.ownedInputs?.length) {
         // Checking ownership writes nothing. Calling the full tab update here
         // would reserve again and recursively trigger this same notification.
         const validateBase = () => {
+            if (storedMaterialList?.ownedInputs?.length) {
+                if (listMaterials(storedMaterialList).some((line) => line.acquisitionUnavailable))
+                    handleMarketplaceCleanup();
+                return;
+            }
             if (!storedUpgradeBaseAcquisition || !storedActionHrid) return;
             const lines = calculateMaterialRequirements(
                 storedActionHrid,
@@ -2124,6 +2147,10 @@ function setupInventoryListener() {
         unsubscribeBaseReservations = onReservationsChanged(validateBase);
         baseQueueHandler = validateBase;
         dataManager.on('actions_updated', baseQueueHandler);
+        if (storedMaterialList?.ownedInputs?.length) {
+            ownedListCharacterHandler = handleMarketplaceCleanup;
+            dataManager.on('character_switching', ownedListCharacterHandler);
+        }
         validateBase();
     }
 }
@@ -2165,7 +2192,7 @@ function updateTabsOnInventoryChange() {
     } else if (storedAlchemyContext) {
         updatedMaterials = alchemyMaterials(storedAlchemyContext);
     } else if (storedMaterialList) {
-        updatedMaterials = materialsFromList(storedMaterialList.lines, storedMaterialList.ownerId || RESERVATION_OWNER);
+        updatedMaterials = listMaterials(storedMaterialList);
     } else {
         return;
     }
@@ -2235,6 +2262,8 @@ function handleMarketplaceCleanup() {
     unsubscribeBaseReservations = null;
     if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
     baseQueueHandler = null;
+    if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
+    ownedListCharacterHandler = null;
 
     // The tabs are the panel: leaving the marketplace closes it, and a
     // transient claim does not outlive what made it
@@ -2339,6 +2368,74 @@ export function materialsFromList(lines, ownerId = null) {
 }
 
 /**
+ * Recount a list's owned prerequisites separately from its purchasable lines.
+ * Exact location prevents a missing bag copy from becoming the distinct worn
+ * piece already credited as sold. The ledger itself remains item/level scoped.
+ * Nothing bought-but-unclaimed can replace an explicitly owned physical copy.
+ * @param {Object} context - The transient list and owned source descriptors
+ * @returns {Array<Object>} Full requirements, including non-purchasable owned inputs
+ */
+function listMaterials(context) {
+    const ownerId = context.ownerId || RESERVATION_OWNER;
+    const materials = materialsFromList(context.lines, ownerId);
+    const inventory = dataManager.getInventory?.() || [];
+    const queued =
+        !context.ownedInputs?.length || config.getSetting('actions_missingMaterialsButton_ignoreQueue')
+            ? new Map()
+            : calculateQueuedMaterialsForAction(null);
+    const claimed = new Map();
+    for (const input of context.ownedInputs || []) {
+        const level = Math.max(0, Math.floor(Number(input.enhancementLevel) || 0));
+        const required = Math.max(0, Math.floor(Number(input.count) || 0));
+        const key = level > 0 ? `${input.itemHrid}@${level}` : input.itemHrid;
+        const have =
+            input.sourceLocation && input.sourceLocation !== '/item_locations/market_listing'
+                ? inventory
+                      .filter(
+                          (item) =>
+                              item.itemHrid === input.itemHrid &&
+                              (item.enhancementLevel || 0) === level &&
+                              (item.itemLocationHrid || INVENTORY_LOCATION) === input.sourceLocation &&
+                              item.count !== 0
+                      )
+                      .reduce((total, item) => total + (item.count ?? 1), 0)
+                : 0;
+        // Reservations and queued crafts do not identify a source location.
+        // Deduct them conservatively, once per stack, just as owned craft bases do.
+        const used = claimed.get(key) || 0;
+        const available = Math.max(
+            0,
+            effectiveInventory(input.itemHrid, level, { excludeOwner: ownerId, held: have }) -
+                (queued.get(key) || 0) -
+                used
+        );
+        claimed.set(key, used + required);
+        const missing = Math.max(0, required - available);
+        materials.push({
+            itemHrid: input.itemHrid,
+            enhancementLevel: level,
+            required,
+            missing,
+            ownedInput: true,
+            acquisitionUnavailable:
+                context.characterId !== dataManager.getCurrentCharacterId?.() ||
+                !input.itemHrid ||
+                !required ||
+                missing > 0,
+        });
+    }
+    return materials;
+}
+
+/** A stale source must never silently turn into a purchase absent from the quote. */
+function assertOwnedListAvailable(materials) {
+    if (!materials.some((line) => line.acquisitionUnavailable)) return;
+    const error = new Error('An owned input is no longer available. Refresh the Equipment Watch route.');
+    error.code = 'OWNED_INPUT_UNAVAILABLE';
+    throw error;
+}
+
+/**
  * Open the marketplace on a bill of materials that is not an action's — a
  * house level's materials, or the two pieces a cross-slot gear swap buys, from
  * the simulators' Upgrade tab — one tab per item, each arming the buy box with
@@ -2350,11 +2447,18 @@ export function materialsFromList(lines, ownerId = null) {
  * @param {Object} [options] - Options
  * @param {string|null} [options.ownerId] - The caller's reservation-ledger owner id, when it
  *   keeps a claim of its own; without one the open tabs claim the bill themselves
+ * @param {Array<Object>} [options.ownedInputs] - Required owned copies, each naming itemHrid,
+ *   enhancementLevel, count and sourceLocation. They are claimed but never offered as purchases.
  * @returns {Promise<boolean>} Whether the marketplace opened and the tabs were drawn
  */
-export async function openMaterialsList(lines, { ownerId = null } = {}) {
+export async function openMaterialsList(lines, { ownerId = null, ownedInputs = [] } = {}) {
     const wanted = (lines || []).filter((line) => line?.itemHrid && Number(line.count) > 0);
     if (!wanted.length) return false;
+    const characterId = dataManager.getCurrentCharacterId?.();
+    const context = structuredClone({ lines: wanted, ownerId, ownedInputs, characterId });
+    const materials = listMaterials(context);
+    // A stale quote must leave the existing bill and its claim intact.
+    assertOwnedListAvailable(materials);
 
     billGeneration++;
     storedUpgradeBaseAcquisition = null;
@@ -2363,16 +2467,31 @@ export async function openMaterialsList(lines, { ownerId = null } = {}) {
     storedEnhancementContext = null;
     storedUpgradeItemLevel = 0;
     storedAlchemyContext = null;
-    storedMaterialList = { lines: wanted, ownerId };
+    storedMaterialList = context;
 
     // A caller that keeps a claim of its own has already made it (the crafting
     // plan does, on the click that opened this); only an anonymous bill is
     // claimed here, under the tabs' own transient owner
-    const materials = materialsFromList(wanted, ownerId || RESERVATION_OWNER);
-    if (!(await openWhereBought(materials))) return false;
-    if (!ownerId) await claimOpenBill(materials);
+    const isCurrent = () => storedMaterialList === context && dataManager.getCurrentCharacterId?.() === characterId;
+    const opened = await openWhereBought(materials);
+    if (!isCurrent()) return false;
+    if (!opened) {
+        if (context.ownedInputs?.length) handleMarketplaceCleanup();
+        return false;
+    }
+    const fresh = listMaterials(context);
+    if (fresh.some((line) => line.acquisitionUnavailable)) {
+        handleMarketplaceCleanup();
+        assertOwnedListAvailable(fresh);
+    }
+    if (!ownerId) await claimOpenBill(fresh);
+    else await release(RESERVATION_OWNER);
+    if (!isCurrent()) return false;
     setupInventoryListener();
-    return true;
+    // The caller's bill may overlap the old anonymous claim. Redraw after its
+    // release so the replacement does not remain short against invisible stock.
+    if (ownerId && isCurrent()) updateTabsOnInventoryChange();
+    return isCurrent();
 }
 
 /**

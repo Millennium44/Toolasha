@@ -1171,6 +1171,36 @@ describe('the Tester shop strip', () => {
         ];
     });
 
+    test('owned Mirror prerequisites stay visible but never become Tester purchase tabs', async () => {
+        missingMaterials.cleanup();
+        const { container } = buildShopDom();
+        state.inventory = [
+            { itemHrid: '/items/sword', enhancementLevel: 12, count: 1, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        state.items = {
+            '/items/sword': { name: 'Sword', isTradable: true },
+            '/items/philosophers_mirror': { name: 'Mirror', isTradable: true },
+        };
+        state.queuedInputs = new Map();
+        ledger.claims = {};
+        await openMaterialsList([{ itemHrid: '/items/philosophers_mirror', count: 1 }], {
+            ownedInputs: [
+                {
+                    itemHrid: '/items/sword',
+                    enhancementLevel: 12,
+                    count: 1,
+                    sourceLocation: '/item_locations/inventory',
+                },
+            ],
+        });
+        expect(container.querySelectorAll('[data-item-hrid]')).toHaveLength(1);
+        expect(container.querySelector('[data-item-hrid]')?.getAttribute('data-item-hrid')).toBe(
+            '/items/philosophers_mirror'
+        );
+        expect(container.querySelector('[data-owned-inputs]')?.textContent).toContain('Sword +12');
+        missingMaterials.cleanup();
+    });
+
     test('clicking a pinned line arms the quantity for that line’s item, not for any buy box', async () => {
         const { container } = buildShopDom();
 
@@ -1873,4 +1903,286 @@ describe('the Alchemy panel button', () => {
         );
         expect(returnTab.textContent).not.toContain('Holy Milk');
     });
+});
+
+describe('Mirror owned inputs remain required while shopping', () => {
+    const BAG = '/item_locations/inventory';
+    const WORN = '/item_locations/main_hand';
+    const SWORD = '/items/mirror_sword';
+    const MIRROR = '/items/philosophers_mirror';
+    const bill = [{ itemHrid: MIRROR, count: 1 }];
+    const input = (level = 12, sourceLocation = BAG, count = 1) => ({
+        itemHrid: SWORD,
+        enhancementLevel: level,
+        sourceLocation,
+        count,
+    });
+    const own = (level = 12, itemLocationHrid = BAG, count = 1) => ({
+        itemHrid: SWORD,
+        enhancementLevel: level,
+        itemLocationHrid,
+        count,
+    });
+    const fire = () => state.wsOn.mock.calls.at(-1)[1]({ type: 'items_updated' });
+    const open = (ownedInputs = [input()]) => openMaterialsList(bill, { ownedInputs });
+    beforeEach(() => {
+        missingMaterials.cleanup();
+        vi.useFakeTimers();
+        ledger.claims = {};
+        ledger.reserved = [];
+        ledger.released = [];
+        state.wsOn.mockClear();
+        state.wsOff.mockClear();
+        state.dataListeners = [];
+        state.inventory = [own()];
+        state.items = {
+            [SWORD]: { name: 'Mirror Sword', isTradable: true },
+            [MIRROR]: { name: "Philosopher's Mirror", isTradable: true },
+        };
+        state.unclaimed = {};
+        state.queuedInputs = new Map();
+        state.ignoreQueue = false;
+        state.characterId = 'char1';
+        state.testerShop = false;
+        buildMarketplaceDom();
+    });
+    afterEach(() => {
+        missingMaterials.cleanup();
+        vi.useRealTimers();
+        state.ignoreQueue = false;
+        state.characterId = 'char1';
+        state.queuedInputs = new Map();
+        state.inventory = [];
+    });
+    const settle = async (promise) => (await Promise.all([promise, vi.advanceTimersByTimeAsync(300)]))[0];
+    const tabs = () => document.querySelectorAll('[data-item-hrid]');
+
+    test('claims owned inputs at their levels, displays consumption, and buys only the Mirror', async () => {
+        state.inventory = [own(12, BAG, 3), own(11, BAG, 3)];
+        const original = structuredClone(state.inventory);
+        expect(await settle(open([input(12), input(11)]))).toBe(true);
+        expect(ledger.reserved.at(-1).lines).toEqual([
+            { itemHrid: MIRROR, enhancementLevel: 0, count: 1 },
+            { itemHrid: SWORD, enhancementLevel: 12, count: 1 },
+            { itemHrid: SWORD, enhancementLevel: 11, count: 1 },
+        ]);
+        expect(tabs()).toHaveLength(1);
+        expect(tabs()[0].getAttribute('data-item-hrid')).toBe(MIRROR);
+        expect(document.querySelector('[data-owned-inputs]').textContent).toContain('Mirror Sword +12');
+        expect(document.querySelector('[data-owned-inputs]').textContent).toContain('consumed, not sold');
+        expect(state.inventory).toEqual(original);
+        const writes = ledger.reserved.length;
+        for (const listener of ledger.listeners) listener();
+        expect(ledger.reserved).toHaveLength(writes);
+        fire();
+        expect(ledger.reserved.at(-1).lines).toHaveLength(3);
+        document.querySelector('[data-mwi-clear-all-tab]').click();
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(ledger.listeners.size).toBe(0);
+        expect(state.dataListeners).toHaveLength(0);
+    });
+
+    test.each(['removed container', 'missing reference'])(
+        'first opening with %s cannot leave an invisible owned-input claim',
+        async (change) => {
+            const { container, myListings } = buildMarketplaceDom();
+            const opening = open();
+            await vi.advanceTimersByTimeAsync(50);
+            if (change === 'removed container') container.remove();
+            else myListings.remove();
+            await vi.advanceTimersByTimeAsync(300);
+            expect(await opening).toBe(false);
+            expect(ledger.reserved).toHaveLength(0);
+            expect(ledger.claims.missingMats).toBeUndefined();
+            expect(ledger.listeners.size).toBe(0);
+            expect(state.dataListeners).toHaveLength(0);
+            expect(tabs()).toHaveLength(0);
+        }
+    );
+
+    test('a failed navigation releases the old claim instead of leaving a hidden owned bill', async () => {
+        await settle(open());
+        document.body.innerHTML = '';
+        expect(await settle(open())).toBe(false);
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(ledger.listeners.size).toBe(0);
+        expect(state.dataListeners).toHaveLength(0);
+    });
+
+    test.each([null, '/item_locations/market_listing'])(
+        'an unsupported owned source %s never falls back to another copy',
+        async (source) => {
+            await expect(settle(open([input(12, source)]))).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+        }
+    );
+
+    test('an explicitly worn copy without count is consumed without a purchase tab', async () => {
+        state.inventory = [{ itemHrid: SWORD, enhancementLevel: 12, itemLocationHrid: WORN }];
+        expect(await settle(open([input(12, WORN)]))).toBe(true);
+        expect(tabs()).toHaveLength(1);
+        expect(ledger.reserved.at(-1).lines).toContainEqual({ itemHrid: SWORD, enhancementLevel: 12, count: 1 });
+    });
+
+    test.each(['removed', 'listed', 'zero', 'different level', 'worn replacement', 'unclaimed purchase'])(
+        'rejects an owned input that is %s, preserving the current bill and claim',
+        async (change) => {
+            await settle(openMaterialsList([{ itemHrid: '/items/other', count: 2 }]));
+            if (change === 'removed') state.inventory = [];
+            if (change === 'listed') state.inventory[0].itemLocationHrid = '/item_locations/market_listing';
+            if (change === 'zero') state.inventory[0].count = 0;
+            if (change === 'different level') state.inventory[0].enhancementLevel = 11;
+            if (change === 'worn replacement') state.inventory = [own(12, WORN)];
+            if (change === 'unclaimed purchase') {
+                state.inventory = [];
+                state.unclaimed[SWORD] = 1;
+            }
+            const before = structuredClone(ledger.reserved);
+            await expect(settle(open())).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+            expect(ledger.reserved).toEqual(before);
+            expect(tabs()[0].getAttribute('data-item-hrid')).toBe('/items/other');
+        }
+    );
+
+    test('does not replace the consumed bag source with the same-level worn copy already credited as sold', async () => {
+        state.inventory = [own(), own(12, WORN)];
+        await settle(open());
+        state.inventory.shift();
+        fire();
+        expect(tabs()).toHaveLength(0);
+        expect(ledger.claims.missingMats).toBeUndefined();
+    });
+
+    test.each(['reservation', 'queue'])(
+        'rejects a source already claimed by a %s, and closes when it becomes claimed later',
+        async (source) => {
+            const claim = () => {
+                if (source === 'reservation') ledger.claims.other = { [SWORD + '|12']: 1 };
+                else state.queuedInputs.set(SWORD + '@12', 1);
+            };
+            claim();
+            await expect(settle(open())).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+            ledger.claims = {};
+            state.queuedInputs = new Map();
+            await settle(open());
+            claim();
+            if (source === 'reservation') for (const listener of ledger.listeners) listener();
+            else
+                for (const listener of state.dataListeners.filter((l) => l.event === 'actions_updated'))
+                    listener.handler();
+            expect(tabs()).toHaveLength(0);
+            expect(ledger.claims.missingMats).toBeUndefined();
+        }
+    );
+
+    test('queue deductions honor Ignore queue, remain level-specific and permit three-copy stacks', async () => {
+        state.inventory = [own(12, BAG, 3)];
+        state.queuedInputs.set(SWORD + '@12', 2);
+        state.queuedInputs.set(SWORD + '@11', 100);
+        expect(await settle(open())).toBe(true);
+        state.queuedInputs.set(SWORD + '@12', 3);
+        state.ignoreQueue = true;
+        for (const listener of state.dataListeners.filter((l) => l.event === 'actions_updated')) listener.handler();
+        expect(tabs()).toHaveLength(1);
+    });
+
+    test('duplicate prerequisites cannot spend one physical copy twice', async () => {
+        await expect(settle(open([input(), input()]))).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+        state.inventory = [own(12, BAG, 3)];
+        expect(await settle(open([input(12, BAG, 3)]))).toBe(true);
+        expect(ledger.reserved.at(-1).lines).toContainEqual({ itemHrid: SWORD, enhancementLevel: 12, count: 3 });
+    });
+
+    test('a newer target replaces the one open bill instead of accumulating duplicate owned claims', async () => {
+        await settle(open());
+        await settle(open());
+        expect(ledger.claims.missingMats[SWORD + '|12']).toBe(1);
+        expect(ledger.listeners.size).toBe(1);
+        expect(state.dataListeners.filter((l) => l.event === 'actions_updated')).toHaveLength(1);
+        await settle(openMaterialsList([{ itemHrid: '/items/other', count: 2 }]));
+        expect(ledger.claims.missingMats[SWORD + '|12']).toBeUndefined();
+        expect(ledger.listeners.size).toBe(0);
+    });
+
+    test('an external-owner replacement releases the old Mirror claim and refreshes overlapping stock', async () => {
+        state.inventory.push({ itemHrid: MIRROR, count: 1, itemLocationHrid: BAG });
+        await settle(open());
+        ledger.claims['craft:other'] = { [MIRROR + '|0']: 1 };
+        expect(await settle(openMaterialsList(bill, { ownerId: 'craft:other' }))).toBe(true);
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(ledger.claims['craft:other']).toEqual({ [MIRROR + '|0']: 1 });
+        expect(tabs()[0].getAttribute('data-missing-quantity')).toBe('0');
+        expect(openBillOwner()).toBe('craft:other');
+        expect(ledger.listeners.size).toBe(0);
+        expect(state.dataListeners).toHaveLength(0);
+        document.querySelector('[data-mwi-clear-all-tab]').click();
+        expect(ledger.claims['craft:other']).toEqual({ [MIRROR + '|0']: 1 });
+    });
+
+    test('an external-owner preflight rejection preserves the previous Mirror claim', async () => {
+        await settle(open());
+        const original = structuredClone(ledger.claims.missingMats);
+        await expect(
+            settle(
+                openMaterialsList([{ itemHrid: '/items/other', count: 1 }], {
+                    ownerId: 'craft:other',
+                    ownedInputs: [input(11)],
+                })
+            )
+        ).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+        expect(ledger.claims.missingMats).toEqual(original);
+        expect(tabs()[0].getAttribute('data-item-hrid')).toBe(MIRROR);
+    });
+
+    test('rechecks source ownership after navigation before claiming the bill', async () => {
+        const opening = open();
+        const outcome = (async () => {
+            try {
+                return { value: await opening };
+            } catch (error) {
+                return { error };
+            }
+        })();
+        await vi.advanceTimersByTimeAsync(50);
+        state.inventory = [];
+        await vi.advanceTimersByTimeAsync(300);
+        expect((await outcome).error).toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+        expect(tabs()).toHaveLength(0);
+        expect(ledger.reserved).toHaveLength(0);
+    });
+
+    test('a character switch clears the open owned bill before the next character loads', async () => {
+        await settle(open());
+        for (const listener of [...state.dataListeners].filter((l) => l.event === 'character_switching'))
+            listener.handler();
+        expect(tabs()).toHaveLength(0);
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(state.dataListeners).toHaveLength(0);
+        expect(ledger.listeners.size).toBe(0);
+    });
+
+    test('clones prerequisites so the caller cannot change an open bill', async () => {
+        const ownedInputs = [input()];
+        await settle(open(ownedInputs));
+        ownedInputs[0].enhancementLevel = 11;
+        fire();
+        expect(tabs()).toHaveLength(1);
+        expect(ledger.reserved.at(-1).lines).toContainEqual({ itemHrid: SWORD, enhancementLevel: 12, count: 1 });
+    });
+
+    test.each(['close', 'new bill', 'character switch'])(
+        'a delayed opening after %s cannot install tabs, claims or listeners',
+        async (change) => {
+            if (change === 'close') await settle(openMaterialsList([{ itemHrid: '/items/other', count: 2 }]));
+            const opening = open();
+            await vi.advanceTimersByTimeAsync(50);
+            if (change === 'close') document.querySelector('[data-mwi-clear-all-tab]').click();
+            if (change === 'new bill') await settle(openMaterialsList([{ itemHrid: '/items/other', count: 2 }]));
+            if (change === 'character switch') state.characterId = 'char2';
+            await vi.advanceTimersByTimeAsync(300);
+            expect(await opening).toBe(false);
+            expect(document.querySelector('[data-item-hrid="' + MIRROR + '"]')).toBeNull();
+            expect(ledger.reserved.some((claim) => claim.lines.some((line) => line.itemHrid === SWORD))).toBe(false);
+            expect(ledger.listeners.size).toBe(0);
+        }
+    );
 });

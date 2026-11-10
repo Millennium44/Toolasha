@@ -2159,12 +2159,12 @@ function heldCopyAt(itemHrid, level, worn) {
         const location = item.itemLocationHrid;
         if (location === LISTED_LOCATION) continue;
         if (!location || location === BAG_LOCATION) bag = true;
-        else equipped = true;
+        else equipped ||= location;
     }
-    if (bag) return { worn: false };
+    if (bag) return { worn: false, sourceLocation: BAG_LOCATION };
     const wornMatch = Boolean(worn) && worn.itemHrid === itemHrid && (worn.enhancementLevel || 0) === level;
-    if (wornMatch) return { worn: true };
-    return equipped ? { worn: false } : null;
+    if (wornMatch) return { worn: true, sourceLocation: equipped || worn.itemLocationHrid || null };
+    return equipped ? { worn: false, sourceLocation: equipped } : null;
 }
 
 /**
@@ -2244,7 +2244,7 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
             if (!(sale > 0) && !(held.worn && !noSell)) saleKnown = false;
             forgone += sale;
             if (held.worn) wornConsumed = true;
-            inputs.push({ ...want, owned: true, worn: held.worn, price: sale });
+            inputs.push({ ...want, owned: true, worn: held.worn, sourceLocation: held.sourceLocation, price: sale });
         } else {
             const ask = buyPrice(want.itemHrid, want.level);
             if (!(ask > 0)) return { unpriced: true };
@@ -2266,6 +2266,14 @@ export function mirrorBuildRoute(itemHrid, level, { worn = null, noSell = false 
         cash: Math.max(0, coins - (wornConsumed ? 0 : credit)),
         // Not clamped: two routes that both net below the trade-in must still compare. Display clamps
         real: saleKnown ? coins + forgone - credit : null,
+        ownedInputs: inputs
+            .filter((input) => input.owned)
+            .map((input) => ({
+                itemHrid: input.itemHrid,
+                enhancementLevel: input.level,
+                count: 1,
+                sourceLocation: input.sourceLocation,
+            })),
         bill: [
             ...inputs
                 .filter((input) => !input.owned)
@@ -3200,7 +3208,7 @@ function targetCard(target) {
 
     if (target.route === 'mirror' && target.mirrorBuild) {
         card.appendChild(mirrorLines(target));
-        card.appendChild(mirrorBillButton(target.mirrorBuild.bill));
+        card.appendChild(mirrorBillButton(target.mirrorBuild));
     } else if (target.enhancing) {
         // The chosen path leads in gold and the other follows in blue, so the
         // two rows swap places rather than the card losing one of them: the
@@ -3575,12 +3583,13 @@ function mirrorLines(target) {
 
 /**
  * The Missing Mats button for a mirror build: shops for what the build actually needs (the
- * inputs not owned, and the mirror), not the old route's listing. Owned copies are not billed.
+ * inputs not owned, and the mirror), not the old route's listing. Owned copies remain required
+ * prerequisites, reserved and revalidated without offering an unpriced replacement purchase.
  *
- * @param {Array<{itemHrid: string, enhancementLevel?: number, count: number}>} bill - From `mirrorBuildRoute`
+ * @param {Object} build - From `mirrorBuildRoute`
  * @returns {HTMLElement}
  */
-function mirrorBillButton(bill) {
+function mirrorBillButton(build) {
     const button = document.createElement('button');
     button.textContent = 'Missing Mats Marketplace';
     button.dataset.mirrorBill = 'true';
@@ -3596,13 +3605,16 @@ function mirrorBillButton(bill) {
         }
         button.textContent = 'Opening…';
         try {
-            await open(bill);
+            const opened = await open(build.bill, { ownedInputs: build.ownedInputs });
+            if (opened === false) button.textContent = 'Could not open the marketplace';
         } catch (error) {
             console.error('[EquipmentSavings] Opening the missing materials failed:', error);
             button.textContent =
-                error?.code === 'BASE_UNAVAILABLE'
-                    ? 'Base unavailable. Refresh this route.'
-                    : 'Could not open the marketplace';
+                error?.code === 'OWNED_INPUT_UNAVAILABLE'
+                    ? 'Owned input unavailable. Refresh this route.'
+                    : error?.code === 'BASE_UNAVAILABLE'
+                      ? 'Base unavailable. Refresh this route.'
+                      : 'Could not open the marketplace';
         }
     });
     return button;
