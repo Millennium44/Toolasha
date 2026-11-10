@@ -45,11 +45,12 @@ vi.mock('../../core/storage.js', () => ({
 
 const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
 
-test('the config popup is never wider than the viewport less a gutter', () => {
+test('the config popup is never wider than the viewport less a gutter', async () => {
+    await taskRerollProtection.initialize();
     taskRerollProtection.openConfigPopup();
 
     const popup = document.getElementById('mwi-task-protection-popup');
     expect(popup.style.width).toBe('400px');
     expect(popup.style.maxWidth).toBe('calc(100vw - 20px)');
-    popup.remove();
+    taskRerollProtection.disable();
 });

@@ -32,6 +32,9 @@ Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now w
 ### Collection favorites survive migration failures
 
 Saved favorites and filters are preserved if migration or storage fails, and editing waits until the saved data can be recovered. Overlapping loads and character changes no longer replace newer favorites with stale data.
+### Task protection follows the active character
+
+Task protection and guided reroll advice no longer pick up another character’s delayed settings. Changes made during loading are preserved, and saved limits retain their intended values.
 
 ### Combat Sim sees your party before everyone readies up
 

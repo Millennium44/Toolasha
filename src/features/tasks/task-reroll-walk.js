@@ -499,8 +499,11 @@ class TaskRerollWalk {
         try {
             const protectedKey = protectedStorageKey();
             const batch = await storage.getMany([protectedKey, PANEL_POSITION_KEY, ...capKeys()], 'settings');
-            this.protectedHrids = new Set(storage.parseJSON(batch.get(protectedKey), protectedKey, []));
+            if (!stillOurs(ticket)) return;
+            const protectedHrids = new Set(storage.parseJSON(batch.get(protectedKey), protectedKey, []));
             await this._loadThresholds(batch);
+            if (!stillOurs(ticket)) return;
+            this.protectedHrids = protectedHrids;
             this.panelPosition = batch.get(PANEL_POSITION_KEY) ?? null;
         } catch (error) {
             console.error('[TaskRerollWalk] Loading the walk’s stored state failed:', error);
@@ -581,18 +584,30 @@ class TaskRerollWalk {
      * @private
      */
     async _loadThresholds(prefetched = null) {
+        const ticket = captureOwner(this);
+        const generation = this.startGeneration;
+        const current = () => stillOurs(ticket) && generation === this.startGeneration;
         try {
             // One transaction for all six records, not three scoped reads of
             // up to two apiece. `prefetched` lets `initialize` fold them into
             // the batch it was opening anyway.
             const caps = prefetched ?? (await storage.getMany(capKeys(), 'settings'));
-            this.capProtectionEnabled = Boolean(await readScopedFrom('taskCapProtection', caps, 'settings', false));
-            this.coinThreshold =
+            if (!current()) return;
+            const capProtectionEnabled = Boolean(await readScopedFrom('taskCapProtection', caps, 'settings', false));
+            if (!current()) return;
+            const coinThreshold =
                 Number(await readScopedFrom('taskCapCoinThreshold', caps, 'settings', DEFAULT_COIN_THRESHOLD)) ||
                 DEFAULT_COIN_THRESHOLD;
-            this.cowbellThreshold =
+            if (!current()) return;
+            const cowbellThreshold =
                 Number(await readScopedFrom('taskCapCowbellThreshold', caps, 'settings', DEFAULT_COWBELL_THRESHOLD)) ||
                 DEFAULT_COWBELL_THRESHOLD;
+            if (!current()) return;
+            // A superseded start must not change the cap advice of the new
+            // walk, even though its caller also refuses to replan afterward.
+            this.capProtectionEnabled = capProtectionEnabled;
+            this.coinThreshold = coinThreshold;
+            this.cowbellThreshold = cowbellThreshold;
         } catch (error) {
             console.error('[TaskRerollWalk] Failed to read the block-reroll thresholds:', error);
         }

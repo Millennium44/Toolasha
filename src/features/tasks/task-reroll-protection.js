@@ -44,6 +44,9 @@ function getStorageKey() {
 class TaskRerollProtection {
     constructor() {
         this.isInitialized = false;
+        this.isInitializing = false;
+        this._listOwner = null;
+        this._closePopup = null;
         this.protectedHrids = new Set();
         this.capProtectionEnabled = false;
         this.coinThreshold = DEFAULT_COIN_THRESHOLD;
@@ -58,11 +61,20 @@ class TaskRerollProtection {
     }
 
     async initialize() {
-        if (this.isInitialized) return;
+        if (this.isInitialized || this.isInitializing) return;
         if (!config.getSetting('taskRerollProtection')) return;
 
-        this.isInitialized = true;
+        const ticket = captureOwner(this);
+        this.isInitializing = true;
+        try {
+            await this._initialize(ticket);
+        } finally {
+            if (stillOurs(ticket)) this.isInitializing = false;
+        }
+    }
 
+    /** Load and register only for the lifecycle that started this read. */
+    async _initialize(ticket) {
         // Cap settings are per character. A pre-scoping install's bare keys go
         // through the adopt-once migration — the character the user confirmed
         // claims them and the bare key is deleted — so an alt that never opened
@@ -79,7 +91,6 @@ class TaskRerollProtection {
         // or a full redraw), so the leaked registrations do no visible harm,
         // but they would sit there doing a duplicate pass over every task
         // card until the *next* switch's teardown clears the array wholesale.
-        const ticket = captureOwner(this);
         const [saved, caps] = await Promise.all([
             storage.getJSON(getStorageKey(), 'settings', []),
             storage.getMany(
@@ -87,16 +98,26 @@ class TaskRerollProtection {
                 'settings'
             ),
         ]);
+        if (!stillOurs(ticket)) return;
+        // Publish this owned list before awaiting caps, so edits made while
+        // the cap read is pending are not replaced by a stale saved snapshot.
         this.protectedHrids = new Set(saved);
-        this.capProtectionEnabled = await readScopedFrom('taskCapProtection', caps, 'settings', false);
-        this.coinThreshold = await readScopedFrom('taskCapCoinThreshold', caps, 'settings', DEFAULT_COIN_THRESHOLD);
-        this.cowbellThreshold = await readScopedFrom(
+        this._listOwner = ticket;
+        const capProtectionEnabled = await readScopedFrom('taskCapProtection', caps, 'settings', false);
+        if (!stillOurs(ticket)) return;
+        const coinThreshold = await readScopedFrom('taskCapCoinThreshold', caps, 'settings', DEFAULT_COIN_THRESHOLD);
+        if (!stillOurs(ticket)) return;
+        const cowbellThreshold = await readScopedFrom(
             'taskCapCowbellThreshold',
             caps,
             'settings',
             DEFAULT_COWBELL_THRESHOLD
         );
         if (!stillOurs(ticket)) return;
+        this.capProtectionEnabled = capProtectionEnabled;
+        this.coinThreshold = coinThreshold;
+        this.cowbellThreshold = cowbellThreshold;
+        this.isInitialized = true;
 
         // Watch for task cards appearing. Draw at once so the protected border
         // is there the instant the card is — the observer only ever fires for a
@@ -135,7 +156,14 @@ class TaskRerollProtection {
         // Process existing cards. @run-at document-start: cards rendered before the shared
         // observer attaches to document.body are invisible to the class watchers, so the
         // catch-up waits for its actual-ready signal (immediate if it is already attached).
-        this.unregisterHandlers.push(domObserver.onReady('TaskRerollProtectionCatchUp', () => this._processAllCards()));
+        this.unregisterHandlers.push(
+            domObserver.onReady('TaskRerollProtectionCatchUp', () => {
+                if (!stillOurs(ticket)) return;
+                const panel = document.querySelector('[class*="TasksPanel_taskSlotCount"]');
+                if (panel) this._injectConfigButton(panel);
+                this._processAllCards();
+            })
+        );
     }
 
     /**
@@ -169,7 +197,10 @@ class TaskRerollProtection {
         btn.addEventListener('mouseout', () => {
             btn.style.opacity = '0.7';
         });
-        btn.addEventListener('click', () => this.openConfigPopup());
+        const ticket = this._listOwner;
+        btn.addEventListener('click', () => {
+            if (btn.isConnected && stillOurs(ticket)) this.openConfigPopup();
+        });
 
         parent.appendChild(btn);
     }
@@ -448,9 +479,11 @@ class TaskRerollProtection {
      * @param {string} hrid - Action or monster HRID
      */
     async addProtected(hrid) {
+        const ticket = this._listOwner;
+        if (!stillOurs(ticket)) return;
         this.protectedHrids.add(hrid);
         await this._save();
-        this._processAllCards();
+        if (stillOurs(ticket) && this.isInitialized) this._processAllCards();
     }
 
     /**
@@ -458,9 +491,11 @@ class TaskRerollProtection {
      * @param {string} hrid - Action or monster HRID
      */
     async removeProtected(hrid) {
+        const ticket = this._listOwner;
+        if (!stillOurs(ticket)) return;
         this.protectedHrids.delete(hrid);
         await this._save();
-        this._processAllCards();
+        if (stillOurs(ticket) && this.isInitialized) this._processAllCards();
     }
 
     /**
@@ -469,14 +504,17 @@ class TaskRerollProtection {
      * @returns {boolean} New state (true = protected)
      */
     async toggleProtected(hrid) {
+        const ticket = this._listOwner;
+        if (!stillOurs(ticket)) return;
         if (this.protectedHrids.has(hrid)) {
             this.protectedHrids.delete(hrid);
         } else {
             this.protectedHrids.add(hrid);
         }
+        const isProtected = this.protectedHrids.has(hrid);
         await this._save();
-        this._processAllCards();
-        return this.protectedHrids.has(hrid);
+        if (stillOurs(ticket) && this.isInitialized) this._processAllCards();
+        return isProtected;
     }
 
     /**
@@ -493,6 +531,7 @@ class TaskRerollProtection {
      * @returns {boolean}
      */
     isTaskProtected(taskCard) {
+        if (!stillOurs(this._listOwner)) return false;
         const quest = this._getQuestFromCard(taskCard);
         const hrid = quest?.actionHrid || quest?.monsterHrid || '';
         return hrid ? this.protectedHrids.has(hrid) : false;
@@ -503,6 +542,7 @@ class TaskRerollProtection {
      * @private
      */
     async _save() {
+        if (!stillOurs(this._listOwner)) return;
         await storage.setJSON(getStorageKey(), Array.from(this.protectedHrids), 'settings', true);
     }
 
@@ -530,19 +570,24 @@ class TaskRerollProtection {
      */
     async _saveCapProtection() {
         const charId = dataManager.getCurrentCharacterId() || 'default';
-        await storage.set(`taskCapProtection_${charId}`, this.capProtectionEnabled, 'settings');
-        await storage.set(`taskCapCoinThreshold_${charId}`, this.coinThreshold, 'settings');
-        await storage.set(`taskCapCowbellThreshold_${charId}`, this.cowbellThreshold, 'settings');
+        // The debounced writes can span teardown and a new character load.
+        // Keep this edit's values with its owner through every continuation.
+        const { capProtectionEnabled, coinThreshold, cowbellThreshold } = this;
+        await storage.set(`taskCapProtection_${charId}`, capProtectionEnabled, 'settings');
+        await storage.set(`taskCapCoinThreshold_${charId}`, coinThreshold, 'settings');
+        await storage.set(`taskCapCowbellThreshold_${charId}`, cowbellThreshold, 'settings');
     }
 
     /**
      * Open the configuration popup for managing protected tasks.
      */
     openConfigPopup() {
+        if (!this.isInitialized || !stillOurs(this._listOwner)) return;
+        const ticket = captureOwner(this);
         // Remove existing popup
         const existing = document.getElementById('mwi-task-protection-popup');
         if (existing) {
-            existing.remove();
+            this._closePopup?.();
             return;
         }
 
@@ -599,6 +644,7 @@ class TaskRerollProtection {
         // Build popup
         const popup = document.createElement('div');
         popup.id = 'mwi-task-protection-popup';
+        const isCurrent = () => popup.isConnected && stillOurs(ticket) && this.isInitialized;
         // width: a bare 400px (404px with the border) centered by translate(-50%) put the
         // left edge off-screen on a phone (-22px at 360px wide). Capped to the viewport less
         // an 8px gutter a side; desktop still gets 400px.
@@ -722,6 +768,7 @@ class TaskRerollProtection {
             // Wire click handlers
             listContainer.querySelectorAll('[data-hrid]').forEach((row) => {
                 row.addEventListener('click', async () => {
+                    if (!isCurrent()) return;
                     if (row.dataset.zone === '1') {
                         // Zone click — toggle all monsters in zone
                         const monsters = zoneMonsters[row.dataset.hrid] || [];
@@ -734,19 +781,22 @@ class TaskRerollProtection {
                             }
                         }
                         await this._save();
-                        this._processAllCards();
+                        if (isCurrent()) this._processAllCards();
                     } else {
                         await this.toggleProtected(row.dataset.hrid);
                     }
-                    renderList(searchInput.value.trim());
+                    if (isCurrent()) renderList(searchInput.value.trim());
                 });
             });
         };
 
         let searchTimeout;
         searchInput.addEventListener('input', () => {
+            if (!isCurrent()) return;
             clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => renderList(searchInput.value.trim()), 150);
+            searchTimeout = setTimeout(() => {
+                if (isCurrent()) renderList(searchInput.value.trim());
+            }, 150);
         });
 
         // Skill bulk-select bar: one chip per skill toggles all of that skill's actions
@@ -758,10 +808,11 @@ class TaskRerollProtection {
                 accent: '#4caf50',
                 tint: 'rgba(76,175,80,0.25)',
                 onToggle: async (group) => {
+                    if (!isCurrent()) return;
                     toggleSkillGroup(group, this.protectedHrids);
                     await this._save();
-                    this._processAllCards();
-                    renderList(searchInput.value.trim());
+                    if (isCurrent()) this._processAllCards();
+                    if (isCurrent()) renderList(searchInput.value.trim());
                 },
             });
 
@@ -808,11 +859,13 @@ class TaskRerollProtection {
                 coinSel.addEventListener('click', (e) => e.stopPropagation());
                 cowbellSel.addEventListener('click', (e) => e.stopPropagation());
                 coinSel.addEventListener('change', async (e) => {
+                    if (!isCurrent()) return;
                     this.coinThreshold = parseInt(e.target.value, 10);
                     this._processAllCards();
                     await this._saveCapProtection();
                 });
                 cowbellSel.addEventListener('change', async (e) => {
+                    if (!isCurrent()) return;
                     this.cowbellThreshold = parseInt(e.target.value, 10);
                     this._processAllCards();
                     await this._saveCapProtection();
@@ -828,6 +881,7 @@ class TaskRerollProtection {
         renderCapRow();
 
         capRow.addEventListener('click', async () => {
+            if (!isCurrent()) return;
             this.capProtectionEnabled = !this.capProtectionEnabled;
             renderCapRow();
             this._processAllCards();
@@ -852,21 +906,27 @@ class TaskRerollProtection {
         // Click outside to close
         const backdrop = document.createElement('div');
         backdrop.style.cssText = `position:fixed; top:0; left:0; right:0; bottom:0; z-index:${PANEL_Z_CAP + 1};`;
-        backdrop.addEventListener('click', () => {
+        backdrop.id = 'mwi-task-protection-backdrop';
+        const close = () => {
+            clearTimeout(searchTimeout);
             popup.remove();
             backdrop.remove();
-        });
+            if (this._closePopup === close) this._closePopup = null;
+        };
+        this._closePopup = close;
+        backdrop.addEventListener('click', close);
         document.body.appendChild(backdrop);
 
         // Close handler — must remove the backdrop too, or it swallows the next click
-        popup.querySelector('#mwi-task-protection-close').addEventListener('click', () => {
-            popup.remove();
-            backdrop.remove();
-        });
+        popup.querySelector('#mwi-task-protection-close').addEventListener('click', close);
     }
 
     disable() {
         noteTeardown(this);
+        this.isInitializing = false;
+        this._listOwner = null;
+        this._closePopup?.();
+        document.querySelectorAll('.mwi-task-protection-btn').forEach((button) => button.remove());
         for (const unregister of this.unregisterHandlers) {
             unregister();
         }
