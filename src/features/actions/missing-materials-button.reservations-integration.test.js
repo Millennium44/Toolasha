@@ -203,6 +203,9 @@ beforeEach(async () => {
     _resetReservations();
     vi.useFakeTimers();
     state.settingsEnabled = true;
+    state.unclaimed = {};
+    state.queuedInputs = new Map();
+    state.ignoreQueue = false;
     state.characterId = 'char1';
     state.inventory = [owned()];
     state.items = {
@@ -245,6 +248,144 @@ describe('Mirror shopping with the real reservation ledger', () => {
             expect(saved.get(KEY).missingMats).toBeUndefined();
             expect(saved.get(KEY)[RELEASED_KEY].missingMats).toBeGreaterThan(0);
             if (ending === 'competing claim') expect(saved.get(KEY)['other-plan']).toBeTruthy();
+        }
+    );
+});
+
+describe('overlapping owned and purchasable requirements', () => {
+    const LOGS = '/items/log';
+    const WORN = '/item_locations/main_hand';
+    const stock = (count, level = 0, location = BAG, itemHrid = LOGS) => ({
+        ...buildItemsUpdated().endCharacterItems[0],
+        characterID: state.characterId,
+        itemHrid,
+        enhancementLevel: level,
+        itemLocationHrid: location,
+        count,
+        hash: `${state.characterId}::${location}::${itemHrid}::${level}`,
+    });
+    const input = (count = 30, level = 0, sourceLocation = BAG, itemHrid = LOGS) => ({
+        itemHrid,
+        enhancementLevel: level,
+        sourceLocation,
+        count,
+    });
+    const tab = (itemHrid = LOGS) => document.querySelector(`[data-item-hrid="${itemHrid}"]`);
+    beforeEach(() => {
+        state.items[LOGS] = { name: 'Log', isTradable: true };
+        state.inventory = [stock(90)];
+    });
+
+    test.each([null, 'craft:other'])(
+        'allocates bag stock once with reservation owner %s and refreshes the buy amount',
+        async (ownerId) => {
+            if (ownerId) await reserve(ownerId, [{ itemHrid: LOGS, count: 130 }]);
+            expect(
+                await settle(
+                    missingMaterials.openMaterialsList([{ itemHrid: LOGS, count: 100 }], {
+                        ownerId,
+                        ownedInputs: [input()],
+                    })
+                )
+            ).toBe(true);
+            expect(tab().getAttribute('data-missing-quantity')).toBe('40');
+            expect(allReservations()[ownerId || 'missingMats'].lines).toEqual([
+                { itemHrid: LOGS, enhancementLevel: 0, count: 130 },
+            ]);
+            await finishWrites();
+            expect(saved.get(KEY)[ownerId || 'missingMats'].lines[0].count).toBe(130);
+
+            tab().click();
+            const [quantity] = state.autofill.setPendingCalculation.mock.calls.at(-1);
+            expect(quantity()).toBe(40);
+            state.inventory[0].count = 130;
+            state.wsOn.mock.calls.at(-1)[1](buildItemsUpdated({ endCharacterItems: state.inventory }));
+            expect(tab().getAttribute('data-missing-quantity')).toBe('0');
+            expect(quantity()).toBe(0);
+            expect(allReservations()[ownerId || 'missingMats'].lines[0].count).toBe(130);
+        }
+    );
+
+    test.each([0, 7])('sums three owned inputs at +%s without spending another level', async (level) => {
+        state.inventory = [stock(90, level, BAG, SWORD), stock(500, level + 1, BAG, SWORD)];
+        await settle(
+            missingMaterials.openMaterialsList([{ itemHrid: SWORD, enhancementLevel: level, count: 100 }], {
+                ownedInputs: [input(10, level, BAG, SWORD), input(10, level, BAG, SWORD), input(10, level, BAG, SWORD)],
+            })
+        );
+        expect(tab(SWORD).getAttribute('data-missing-quantity')).toBe('40');
+        expect(allReservations().missingMats.lines).toEqual([{ itemHrid: SWORD, enhancementLevel: level, count: 130 }]);
+    });
+
+    test.each([
+        ['unclaimed purchases', 20, 0, 0, 20],
+        ['queued inputs', 0, 5, 0, 45],
+        ['other reservations', 0, 0, 10, 50],
+    ])('applies %s alongside the owned inputs', async (_name, unclaimed, queued, reserved, missing) => {
+        state.unclaimed[LOGS] = unclaimed;
+        state.queuedInputs.set(LOGS, queued);
+        if (reserved) await reserve('other-plan', [{ itemHrid: LOGS, count: reserved }]);
+        await settle(
+            missingMaterials.openMaterialsList([{ itemHrid: LOGS, count: 100, queued }], {
+                ownedInputs: [input()],
+            })
+        );
+        expect(tab().getAttribute('data-missing-quantity')).toBe(String(missing));
+    });
+
+    test.each([
+        [7, BAG],
+        [0, WORN],
+    ])('does not subtract an owned +%s input in %s from the +0 bag', async (level, location) => {
+        state.inventory = [stock(90, 0, BAG, SWORD), stock(30, level, location, SWORD)];
+        await settle(
+            missingMaterials.openMaterialsList([{ itemHrid: SWORD, count: 100 }], {
+                ownedInputs: [input(30, level, location, SWORD)],
+            })
+        );
+        expect(tab(SWORD).getAttribute('data-missing-quantity')).toBe('10');
+    });
+
+    test('unclaimed purchases cannot replace an unavailable physical owned input', async () => {
+        state.inventory = [stock(20)];
+        state.unclaimed[LOGS] = 100;
+        await expect(
+            settle(
+                missingMaterials.openMaterialsList([{ itemHrid: LOGS, count: 100 }], {
+                    ownedInputs: [input()],
+                })
+            )
+        ).rejects.toMatchObject({ code: 'OWNED_INPUT_UNAVAILABLE' });
+        expect(tab()).toBeNull();
+        expect(allReservations().missingMats).toBeUndefined();
+    });
+});
+
+describe('all open shopping lists belong to their originating character', () => {
+    test.each([null, 'craft:other'])(
+        'clears a plain bill owned by %s before the character changes',
+        async (ownerId) => {
+            if (ownerId) await reserve(ownerId, [{ itemHrid: MIRROR, count: 1 }]);
+            const openPlain = () => missingMaterials.openMaterialsList([{ itemHrid: MIRROR, count: 1 }], { ownerId });
+            await settle(openPlain());
+            await settle(openPlain());
+            expect(state.dataListeners.filter(({ event }) => event === 'character_switching')).toHaveLength(1);
+            for (const { handler } of [...state.dataListeners].filter(({ event }) => event === 'character_switching')) {
+                handler();
+            }
+            await finishWrites();
+            expect(document.querySelector('[data-mwi-tab-owner="missing-materials"]')).toBeNull();
+            expect(allReservations().missingMats).toBeUndefined();
+            if (ownerId) expect(allReservations()[ownerId].lines).toHaveLength(1);
+            else {
+                expect(saved.get(KEY).missingMats).toBeUndefined();
+                expect(saved.get(KEY)[RELEASED_KEY].missingMats).toBeGreaterThan(0);
+            }
+            expect(state.dataListeners.filter(({ event }) => event === 'character_switching')).toHaveLength(0);
+            expect(state.wsOff).toHaveBeenCalledWith('*', state.wsOn.mock.calls.at(-1)[1]);
+            expect(state.autofill.clearQuantity).toHaveBeenCalled();
+            state.characterId = 'char2';
+            expect(saved.get(`${RESERVATIONS_KEY}_char2`)).toBeUndefined();
         }
     );
 });

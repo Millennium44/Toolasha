@@ -433,7 +433,10 @@ describe('enhancement missing-material reservation handoff', () => {
                 expect(ledger.claims.missingMats).toEqual({ '/items/protection_scroll|0': 1 });
             }
             expect(ledger.listeners.size).toBe(0);
-            expect(state.dataListeners).toEqual(ordinaryListeners);
+            expect(state.dataListeners.filter((listener) => listener.event !== 'character_switching')).toEqual(
+                ordinaryListeners
+            );
+            expect(state.dataListeners.filter((listener) => listener.event === 'character_switching')).toHaveLength(1);
         }
     );
 
@@ -2230,7 +2233,7 @@ describe('Mirror owned inputs remain required while shopping', () => {
         expect(tabs()[0].getAttribute('data-missing-quantity')).toBe('0');
         expect(openBillOwner()).toBe('craft:other');
         expect(ledger.listeners.size).toBe(0);
-        expect(state.dataListeners).toHaveLength(0);
+        expect(state.dataListeners.map((listener) => listener.event)).toEqual(['character_switching']);
         document.querySelector('[data-mwi-clear-all-tab]').click();
         expect(ledger.claims['craft:other']).toEqual({ [MIRROR + '|0']: 1 });
     });

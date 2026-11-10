@@ -103,7 +103,7 @@ let enhancingPanelWatchers = [];
 let inventoryUpdateHandler = null;
 let unsubscribeBaseReservations = null;
 let baseQueueHandler = null;
-let ownedListCharacterHandler = null;
+let billCharacterHandler = null;
 let billGeneration = 0;
 let storedActionHrid = null;
 let storedNumActions = 0;
@@ -2126,8 +2126,11 @@ function setupInventoryListener() {
         dataManager.off('items_updated', baseQueueHandler);
     }
     baseQueueHandler = null;
-    if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
-    ownedListCharacterHandler = null;
+    if (billCharacterHandler) dataManager.off('character_switching', billCharacterHandler);
+    // Every shopping bill belongs to the current character, including plain
+    // lists opened without this feature's initialize() lifecycle.
+    billCharacterHandler = handleMarketplaceCleanup;
+    dataManager.on('character_switching', billCharacterHandler);
     if (storedUpgradeBaseAcquisition || storedMaterialList?.ownedInputs?.length) {
         // Checking ownership writes nothing. Calling the full tab update here
         // would reserve again and recursively trigger this same notification.
@@ -2156,10 +2159,6 @@ function setupInventoryListener() {
         // A completed action reports what it used up only as an inventory update, not a queue
         // change: an infinite or ignored-queue craft can spend the owned source while the bill is open
         dataManager.on('items_updated', baseQueueHandler);
-        if (storedMaterialList?.ownedInputs?.length) {
-            ownedListCharacterHandler = handleMarketplaceCleanup;
-            dataManager.on('character_switching', ownedListCharacterHandler);
-        }
         validateBase();
     }
 }
@@ -2275,8 +2274,8 @@ function handleMarketplaceCleanup() {
         dataManager.off('items_updated', baseQueueHandler);
     }
     baseQueueHandler = null;
-    if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
-    ownedListCharacterHandler = null;
+    if (billCharacterHandler) dataManager.off('character_switching', billCharacterHandler);
+    billCharacterHandler = null;
 
     // The tabs are the panel: leaving the marketplace closes it, and a
     // transient claim does not outlive what made it
@@ -2318,9 +2317,11 @@ function handleMarketplaceCleanup() {
  *   owner's own claim is never deducted, and nothing is deducted while the ledger is off
  *   or when no owner is named — omitting it is how every caller that predates the ledger
  *   calls this, and it must go on meaning "the ledger is not part of these figures"
+ * @param {Map<string, number>} [ownedInBag] - Bag units required as separate owned inputs,
+ *   keyed by item hrid with `@level` for enhanced copies. They cannot also satisfy a purchase line.
  * @returns {Array<Object>} Material objects for `createMaterialTab`
  */
-export function materialsFromList(lines, ownerId = null) {
+export function materialsFromList(lines, ownerId = null, ownedInBag = new Map()) {
     const inventory = dataManager.getInventory?.() || [];
     const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
     const out = [];
@@ -2350,16 +2351,21 @@ export function materialsFromList(lines, ownerId = null) {
                 )
                 .reduce((sum, i) => sum + (i.count || 0), 0);
         const queued = Math.max(0, Math.floor(Number(line.queued) || 0));
-        // Stock another plan has claimed is not this bill's to spend, nor stock the queue will eat
+        const key = level > 0 ? `${line.itemHrid}@${level}` : line.itemHrid;
+        const owned = ownedInBag.get(key) || 0;
+        // The separate owned inputs get their physical bag copies first. A
+        // purchase line can use only the remainder, even though both roles
+        // are excluded together as this bill's own reservation in the ledger.
+        // Stock another plan has claimed or the queue will eat is unavailable too.
         const unclaimed = ownerId
             ? effectiveInventory(line.itemHrid, level, { excludeOwner: ownerId, held: have })
             : have;
-        const available = Math.max(0, unclaimed - queued);
+        const available = Math.max(0, unclaimed - queued - owned);
         const missing = Math.max(0, required - available);
         const reserved = ownerId ? reservedElsewhere(line.itemHrid, level, { excludeOwner: ownerId }) : 0;
         // Only when a claim is what put the line short: an empty bag needs no explanation
         const reservedNote =
-            missing > 0 && have - queued >= required
+            missing > 0 && have - queued - owned >= required
                 ? shortfallNote(missing, line.itemHrid, level, { excludeOwner: ownerId })
                 : '';
         out.push({
@@ -2390,7 +2396,8 @@ export function materialsFromList(lines, ownerId = null) {
  */
 function listMaterials(context) {
     const ownerId = context.ownerId || RESERVATION_OWNER;
-    const materials = materialsFromList(context.lines, ownerId);
+    const ownedMaterials = [];
+    const ownedInBag = new Map();
     const inventory = dataManager.getInventory?.() || [];
     const queued =
         !context.ownedInputs?.length || config.getSetting('actions_missingMaterialsButton_ignoreQueue')
@@ -2423,8 +2430,11 @@ function listMaterials(context) {
                 used
         );
         claimed.set(key, used + required);
+        if (input.sourceLocation === INVENTORY_LOCATION) {
+            ownedInBag.set(key, (ownedInBag.get(key) || 0) + required);
+        }
         const missing = Math.max(0, required - available);
-        materials.push({
+        ownedMaterials.push({
             itemHrid: input.itemHrid,
             enhancementLevel: level,
             required,
@@ -2437,7 +2447,7 @@ function listMaterials(context) {
                 missing > 0,
         });
     }
-    return materials;
+    return [...materialsFromList(context.lines, ownerId, ownedInBag), ...ownedMaterials];
 }
 
 /** A stale source must never silently turn into a purchase absent from the quote. */
