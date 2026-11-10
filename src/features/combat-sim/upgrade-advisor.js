@@ -8104,10 +8104,16 @@ export function planWithinBudget(
             }
         }
         for (const [a, b] of conflicting) {
+            const shares = (prefix) => a.keys.some((key) => key.startsWith(prefix) && b.keys.includes(key));
+            const cause = shares('drink_slot:')
+                ? 'they replace the same drink slot'
+                : shares('drink:')
+                  ? 'they would equip two drinks from the same buff family'
+                  : 'they use the same slot';
             blocked.push({
                 kind: 'conflict',
                 ids: [a.id, b.id],
-                reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together — they use the same slot.`,
+                reason: `Pinned "${a.result.candidate.description}" and "${b.result.candidate.description}" cannot be taken together — ${cause}.`,
             });
         }
         const pinnedDrinks = pinnedEntries.filter((entry) => isDrinkAddition(entry.result.candidate));

@@ -10310,6 +10310,7 @@ describe('pinned and excluded picks in a budget plan (#545)', () => {
         expect(plan.picks).toEqual([]);
         expect(plan.blocked[0].kind).toBe('conflict');
         expect(plan.blocked[0].ids).toEqual([candidateKey(a), candidateKey(b)]);
+        expect(plan.blocked[0].reason).toContain('they use the same slot.');
     });
 
     test('two pinned pieces for one equipment slot conflict in a single loadout, and are allowed otherwise', () => {
@@ -11614,12 +11615,52 @@ describe('combat drink replacements and tier comparisons', () => {
         const pinned = planWithinBudget(choices, 0, { singleLoadout: true, required: choices.map(candidateKey) });
         expect(pinned.picks).toEqual([]);
         expect(pinned.blocked[0].kind).toBe('conflict');
+        expect(pinned.blocked[0].reason).toContain('they replace the same drink slot.');
+        expect(pinned.blocked[0].reason).not.toContain('same buff family');
     });
 
     test('the same incoming family cannot be selected for two different outgoing slots', () => {
         const player = dto();
         const choices = rows([pick(player, LUCKY, MAGIC), pick(player, SWIFT, ULTRA)]);
         expect(planWithinBudget(choices, 0).picks).toHaveLength(1);
+    });
+
+    test.each([
+        ['different outgoing drinks', [LUCKY, SWIFT, CHANNEL], 1],
+        ['duplicate outgoing drinks', [LUCKY, LUCKY, CHANNEL], 1],
+        ['a replacement and an addition', [LUCKY, null, CHANNEL], 1],
+        ['two additions', [null, null, CHANNEL], 0],
+    ])('pinned drinks name their incoming-family conflict for %s', (_label, hrids, secondSlot) => {
+        const candidates = generateDrinkCandidates(dto(hrids), gameData());
+        const choices = rows([
+            candidates.find((c) => c.drinkIndex === 0 && c.upgradeHrid === MAGIC),
+            candidates.find((c) => c.drinkIndex === secondSlot && c.upgradeHrid === ULTRA),
+        ]);
+        for (const ordered of [choices, [...choices].reverse()]) {
+            const plan = planWithinBudget(ordered, 0, {
+                singleLoadout: true,
+                required: ordered.map(candidateKey),
+            });
+            expect(plan.picks).toEqual([]);
+            expect(plan.blocked).toHaveLength(1);
+            expect(plan.blocked[0]).toMatchObject({
+                kind: 'conflict',
+                ids: ordered.map(candidateKey),
+            });
+            expect(plan.blocked[0].reason).toContain('they would equip two drinks from the same buff family.');
+            expect(plan.blocked[0].reason).not.toContain('same slot');
+            expect(plan.blocked[0].reason).not.toContain('same drink slot');
+        }
+    });
+
+    test('pinned tiers for one source name the drink slot even when their incoming family also overlaps', () => {
+        const player = dto();
+        const choices = rows([pick(player, LUCKY, MAGIC), pick(player, LUCKY, ULTRA)]);
+        const plan = planWithinBudget(choices, 0, { singleLoadout: true, required: choices.map(candidateKey) });
+        expect(plan.picks).toEqual([]);
+        expect(plan.blocked).toHaveLength(1);
+        expect(plan.blocked[0].reason).toContain('they replace the same drink slot.');
+        expect(plan.blocked[0].reason).not.toContain('same buff family');
     });
 
     test('a tier change conflicts with replacing that same outgoing drink', () => {
