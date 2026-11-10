@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy protection follows the selected action
+
+A protected action’s confirmation no longer carries over to another item, enhancement level, action or character. Protection also recognizes items whose icons use a different game format.
+
 ### Shop Max respects newer input
 
 A running Max calculation stops when you edit the quantity, open a newer calculation, change character or close the shop, so it cannot overwrite your newer choice.

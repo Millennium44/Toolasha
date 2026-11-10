@@ -14,6 +14,7 @@ import { actionPanelSort } from '../../utils/bundle-bridge.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { runningAction } from '../../utils/combat-actions.js';
 import { parseItemHash } from '../../utils/item-hash.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
@@ -55,6 +56,7 @@ class AlchemyActionProtection {
         this._panelCleanup = null; // Releases observers/listeners bound to the current alchemy panel
         this.confirmTimer = null;
         this.lockdownTimer = null;
+        this._pendingConfirmation = null;
         this._updatingGold = false;
         this._inventoryTotals = null; // Coin balance and per-item counts, rebuilt on items_updated
     }
@@ -99,50 +101,85 @@ class AlchemyActionProtection {
             if (!btn) return;
 
             const press = this._protectedPress(btn);
-            if (!press) return;
-            const { alchemyPanel, categoryHrid } = press;
+            if (!press) {
+                if (this._pendingConfirmation?.panel === btn.closest('[class*="SkillActionDetail_alchemyComponent"]')) {
+                    this._clearConfirmation();
+                }
+                return;
+            }
+            const { alchemyPanel, categoryHrid, signature } = press;
+            let pending = this._pendingConfirmation;
+            if (pending && (pending.panel !== alchemyPanel || pending.signature !== signature)) {
+                this._clearConfirmation();
+                pending = null;
+            }
 
-            // Item is in a protected category — apply state machine
-            if (alchemyPanel.dataset.mwiAlchemyConfirmed === '1') {
-                alchemyPanel.dataset.mwiAlchemyConfirmed = '';
-                this._clearWarning(alchemyPanel);
+            // Consent belongs to this character, operation, item and level,
+            // not to a panel React can reuse for a different selection.
+            if (pending?.confirmed) {
+                this._clearConfirmation();
                 return;
             }
 
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
+            if (pending) return;
 
-            if (alchemyPanel.dataset.mwiAlchemyLocked === '1') return;
-
+            pending = { panel: alchemyPanel, signature, confirmed: false };
+            this._pendingConfirmation = pending;
             alchemyPanel.dataset.mwiAlchemyLocked = '1';
-
+            alchemyPanel.dataset.mwiAlchemyConfirmed = '';
             const categoryName = this._getCategoryDisplayName(categoryHrid);
             this._showWarning(alchemyPanel, `Protected category (${categoryName})! Unlocks in 3s...`);
 
-            if (this.lockdownTimer) clearTimeout(this.lockdownTimer);
-            if (this.confirmTimer) clearTimeout(this.confirmTimer);
-
             this.lockdownTimer = setTimeout(() => {
+                if (this._pendingConfirmation !== pending) return;
+                if (
+                    !config.getSetting('alchemy_actionProtection') ||
+                    !alchemyPanel.isConnected ||
+                    this._protectedPress(btn)?.signature !== signature
+                ) {
+                    this._clearConfirmation();
+                    return;
+                }
+                pending.confirmed = true;
                 alchemyPanel.dataset.mwiAlchemyLocked = '';
                 alchemyPanel.dataset.mwiAlchemyConfirmed = '1';
                 this._showWarning(alchemyPanel, 'Click again to confirm.');
-
                 this.confirmTimer = setTimeout(() => {
-                    alchemyPanel.dataset.mwiAlchemyConfirmed = '';
-                    this._clearWarning(alchemyPanel);
+                    if (this._pendingConfirmation === pending) this._clearConfirmation();
                 }, CONFIRM_WINDOW_MS);
             }, LOCKDOWN_MS);
         };
 
         document.addEventListener('click', handler, true);
         this.unregisterHandlers.push(() => document.removeEventListener('click', handler, true));
+        const unsubscribe = config.onSettingChange?.('alchemy_actionProtection', (enabled) => {
+            if (!enabled) this._clearConfirmation();
+        });
+        if (typeof unsubscribe === 'function') this.unregisterHandlers.push(unsubscribe);
+    }
+
+    /** Retire the held press and both timers, including flags on a reused panel. */
+    _clearConfirmation() {
+        const pending = this._pendingConfirmation;
+        this._pendingConfirmation = null;
+        if (this.lockdownTimer) clearTimeout(this.lockdownTimer);
+        if (this.confirmTimer) clearTimeout(this.confirmTimer);
+        this.lockdownTimer = null;
+        this.confirmTimer = null;
+        if (pending) {
+            pending.panel.dataset.mwiAlchemyLocked = '';
+            pending.panel.dataset.mwiAlchemyConfirmed = '';
+            this._clearWarning(pending.panel);
+        }
     }
 
     /**
      * Whether a press of this button falls under a protected category.
      * @param {Element} btn - The button pressed
-     * @returns {{alchemyPanel: Element, categoryHrid: string}|null} The panel and category, or null when this
+     * @returns {{alchemyPanel: Element, categoryHrid: string, signature: string}|null} The panel and category, or null when this
      *   guard has nothing to say about the press
      */
     _protectedPress(btn) {
@@ -157,7 +194,7 @@ class AlchemyActionProtection {
         const protectedCategories = this.protectedMap.get(alchemyType);
         if (!protectedCategories || protectedCategories.size === 0) return null;
 
-        const itemHrid = this._getSelectedItemHrid();
+        const itemHrid = this._getSelectedItemHrid(alchemyPanel);
         if (!itemHrid) return null;
 
         const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -166,7 +203,13 @@ class AlchemyActionProtection {
         const categoryHrid = itemDetails.categoryHrid;
         if (!protectedCategories.has(categoryHrid)) return null;
 
-        return { alchemyPanel, categoryHrid };
+        const signature = JSON.stringify([
+            currentOwner(),
+            alchemyType,
+            itemHrid,
+            this._getSelectedEnhancementLevel(alchemyPanel),
+        ]);
+        return { alchemyPanel, categoryHrid, signature };
     }
 
     /**
@@ -379,6 +422,7 @@ class AlchemyActionProtection {
      * Invoke and clear the current panel's cleanup function
      */
     _teardownPanel() {
+        this._clearConfirmation();
         if (this._panelCleanup) {
             this._panelCleanup();
             this._panelCleanup = null;
@@ -399,28 +443,20 @@ class AlchemyActionProtection {
         return readAlchemyTabType();
     }
 
-    _getSelectedItemHrid() {
-        const reqContainer = document.querySelector(
+    _getSelectedItemHrid(root = document) {
+        const reqContainer = root.querySelector(
             '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
         );
-        if (!reqContainer) return null;
-
-        const use = reqContainer.querySelector('svg use');
-        if (!use) return null;
-
-        const href = use.getAttribute('href');
-        if (!href) return null;
-
-        const itemId = href.split('#')[1];
-        return itemId ? `/items/${itemId}` : null;
+        return itemHridFromIcon(reqContainer);
     }
 
     /**
      * The enhancement level of the item the panel is set to work on (0 with no badge).
+     * @param {ParentNode} [root=document] - The panel being read
      * @returns {number}
      */
-    _getSelectedEnhancementLevel() {
-        const container = document.querySelector(
+    _getSelectedEnhancementLevel(root = document) {
+        const container = root.querySelector(
             '[class*="SkillActionDetail_itemRequirements"] [class*="Item_itemContainer"]'
         );
         const text = container?.querySelector('[class*="Item_enhancementLevel"]')?.textContent || '';
@@ -761,9 +797,6 @@ class AlchemyActionProtection {
         }
         this.unregisterHandlers = [];
         this._teardownPanel();
-
-        if (this.lockdownTimer) clearTimeout(this.lockdownTimer);
-        if (this.confirmTimer) clearTimeout(this.confirmTimer);
 
         this.isInitialized = false;
         this.protectedMap.clear();
