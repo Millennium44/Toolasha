@@ -66,6 +66,10 @@ Replay, cohort selection, Save pool and Sanitized exports now wait for saved fig
 
 Character cards can now include up to three other learned auras from saved combat or all-skills loadouts, at their current levels; cards built from a skilling loadout get none. Turn this off in the card settings; equipped abilities keep the first five tiles, while the external viewer’s final three tiles hold extras without separate styling.
 
+### Combat task estimates follow the current card
+
+An estimate that finishes after a task changes no longer replaces the new task’s estimate or Go target with the old one.
+
 ### Reuse Solo task simulations
 
 Identical Solo combat tasks now share per-tier simulations, so Best Score searches avoid repeating the same work while still using your current build and prices.

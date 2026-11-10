@@ -2011,13 +2011,20 @@ class TaskProfitDisplay {
         // during that await must not cache the old character's figures under the new character.
         const simCharacterId = dataManager.getCurrentCharacterId();
         const generation = this._renderGeneration;
+        const cardTaskNode = container.closest(GAME.TASK_INFO);
+        // A manual game-tier run needs the same ownership checks as automatic/Best Score runs.
+        // Rerolls reuse the card node, while refreshes replace only its estimate container: an old
+        // result must not re-prime Go after the replacement cleared or completed its own estimate.
         const isStale = () =>
-            generation !== this._renderGeneration || characterIdentityChanged(simCharacterId) || shouldStop();
+            generation !== this._renderGeneration ||
+            characterIdentityChanged(simCharacterId) ||
+            shouldStop() ||
+            !container.isConnected ||
+            (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null);
         if (isStale()) return;
         // A new run starting invalidates whatever this card's Go button was
         // primed with — filled only from a currently-valid estimate, never a
         // stale one left over from before a re-run.
-        const cardTaskNode = container.closest(GAME.TASK_INFO);
         if (cardTaskNode) {
             const prior = this._cardEstimates.get(cardTaskNode);
             this._cardEstimates.delete(cardTaskNode);
@@ -2205,12 +2212,8 @@ class TaskProfitDisplay {
                     playerHrid,
                     SIM_HOURS,
                     simAtTier,
-                    // The card went, its task changed, or the character switched: the rest of the search
-                    // would only hold up other estimates
-                    () =>
-                        isStale() ||
-                        !container.isConnected ||
-                        (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null)
+                    // Stop between tiers when the request no longer owns this card.
+                    isStale
                 );
                 if (!best) return;
                 simResult = best.simResult;

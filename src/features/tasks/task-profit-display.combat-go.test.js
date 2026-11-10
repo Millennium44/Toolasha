@@ -840,6 +840,10 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
 
         const cardTaskNode = document.createElement('div');
         cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        cardTaskNode.innerHTML = `
+            <div class="RandomTask_name__1a">Defeat - Gobo</div>
+            <div class="RandomTask_rewards__1a"></div>
+            <div>Progress: 0 / 100</div>`;
         const container = document.createElement('div');
         cardTaskNode.appendChild(container);
         document.body.appendChild(cardTaskNode);
@@ -888,6 +892,10 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
 
         const cardTaskNode = document.createElement('div');
         cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        cardTaskNode.innerHTML = `
+            <div class="RandomTask_name__1a">Defeat - Gobo</div>
+            <div class="RandomTask_rewards__1a"></div>
+            <div>Progress: 0 / 100</div>`;
         const container = document.createElement('div');
         cardTaskNode.appendChild(container);
         document.body.appendChild(cardTaskNode);
@@ -934,6 +942,10 @@ describe('_runCombatSimEstimate: the estimate itself simulates at the last-used 
 
         const cardTaskNode = document.createElement('div');
         cardTaskNode.className = 'RandomTask_taskInfo__1a';
+        cardTaskNode.innerHTML = `
+            <div class="RandomTask_name__1a">Defeat - Gobo</div>
+            <div class="RandomTask_rewards__1a"></div>
+            <div>Progress: 0 / 100</div>`;
         const container = document.createElement('div');
         cardTaskNode.appendChild(container);
         document.body.appendChild(cardTaskNode);

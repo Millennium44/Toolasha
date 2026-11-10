@@ -166,6 +166,101 @@ describe.each(['zone', 'solo'])('shared %s simulations follow their actual input
         expect(taskProfitDisplay._cardEstimates.get(card).monsterHrid).toBe(SMASHY);
     });
 
+    test('a rerolled card rejects a prior manual result after its replacement estimate completes', async () => {
+        let finishOld;
+        runSimulation.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+        );
+        const card = mountCard();
+        const oldRun = estimate(card);
+        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
+
+        players[0].taskMonsterHrids = [SMASHY];
+        players[0].taskMonsterRemaining = { [SMASHY]: 65 };
+        card.querySelector('.RandomTask_name__1a').textContent = 'Defeat - Smashy';
+        taskProfitDisplay.updateTaskProfits();
+        await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(card)?.monsterHrid).toBe(SMASHY));
+        const replacement = taskProfitDisplay._resolveGoEstimate(card);
+
+        finishOld(SIM);
+        await oldRun;
+
+        expect(taskProfitDisplay._resolveGoEstimate(card)).toEqual(replacement);
+        expect(taskProfitDisplay._cardEstimates.get(card)?.monsterHrid).toBe(SMASHY);
+    });
+
+    test('a same-task refresh does not let its detached manual run replace the new Go estimate', async () => {
+        let finishOld;
+        runSimulation.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+        );
+        const card = mountCard();
+        const oldRun = estimate(card);
+        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
+        const oldContainer = card.querySelector('.mwi-task-profit');
+
+        players[0].attackLevel++;
+        taskProfitDisplay.updateTaskProfits(true);
+        await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.has(card)).toBe(true));
+        const replacement = taskProfitDisplay._resolveGoEstimate(card);
+        expect(oldContainer.isConnected).toBe(false);
+
+        finishOld({ ...SIM, encounters: 600 });
+        await oldRun;
+
+        expect(taskProfitDisplay._resolveGoEstimate(card)).toEqual(replacement);
+    });
+
+    test.each(['monster', 'quantity', 'removed'])(
+        'a manual result never primes Go after its card is %s, even before a display refresh',
+        async (change) => {
+            let finish;
+            runSimulation.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finish = resolve;
+                    })
+            );
+            const card = mountCard();
+            const pending = estimate(card);
+            await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
+            const container = card.querySelector('.mwi-task-profit');
+            if (change === 'monster') card.querySelector('.RandomTask_name__1a').textContent = 'Defeat - Smashy';
+            if (change === 'quantity') card.children[3].textContent = 'Progress: 0 / 100';
+            if (change === 'removed') card.remove();
+            finish(SIM);
+            await pending;
+
+            expect(taskProfitDisplay._resolveGoEstimate(card)).toBeNull();
+            expect(container._mwiCombatEstimate).toBeNull();
+        }
+    );
+
+    test('a manual request whose card changes during the roster read never starts an obsolete simulation', async () => {
+        let finishRoster;
+        buildAllPlayerDTOs.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishRoster = resolve;
+                })
+        );
+        const card = mountCard();
+        const pending = estimate(card);
+        await vi.waitFor(() => expect(buildAllPlayerDTOs).toHaveBeenCalledTimes(1));
+        card.querySelector('.RandomTask_name__1a').textContent = 'Defeat - Smashy';
+        finishRoster({ players: structuredClone(players), selfHrid: 'player1' });
+        await pending;
+
+        expect(runSimulation).not.toHaveBeenCalled();
+        expect(taskProfitDisplay._resolveGoEstimate(card)).toBeNull();
+    });
+
     test.each([
         [
             'remaining kills',
