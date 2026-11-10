@@ -186,8 +186,9 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
-import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
+import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
+import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
@@ -3738,7 +3739,7 @@ class CombatSimUI {
             '; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
 
         controls.innerHTML = `
-            <label for="mwi-csim-zone" style="color:#888; font-size:12px;"><span id="mwi-csim-zone-icon" aria-hidden="true"></span>Zone</label>
+            <label for="mwi-csim-zone" style="color:#888; font-size:12px;">Zone</label>
             <select class="toolasha-select" id="mwi-csim-zone" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Tier</label>
             <select class="toolasha-select" id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
@@ -4615,14 +4616,10 @@ class CombatSimUI {
         // legacy one-monster targets. Copy before sorting: the adapter's list may be shared.
         const isFullZone = (zone) => zone.isDungeon || zone.maxSpawnCount > 1;
         const zones = [...getCombatZones()].sort((a, b) => Number(isFullZone(b)) - Number(isFullZone(a)));
-        zoneSelect.innerHTML = '';
-
-        for (const zone of zones) {
-            const option = document.createElement('option');
-            option.value = zone.hrid;
-            option.textContent = zone.isDungeon ? `[D] ${zone.name}` : zone.name;
-            zoneSelect.appendChild(option);
-        }
+        populateSimEntitySelect(
+            zoneSelect,
+            zones.map((zone) => ({ hrid: zone.hrid, name: zone.isDungeon ? `[D] ${zone.name}` : zone.name }))
+        );
 
         // Select current zone and tier if available
         const current = getCurrentCombatZone();
@@ -4652,8 +4649,6 @@ class CombatSimUI {
         if (!zoneSelect || !tierSelect) return;
 
         const selectedHrid = zoneSelect.value;
-        const icon = this.panel.querySelector('#mwi-csim-zone-icon');
-        if (icon) icon.innerHTML = simEntityIconHtml(selectedHrid);
         const zones = getCombatZones();
         const zone = zones.find((z) => z.hrid === selectedHrid);
         const maxTier = zone?.isDungeon ? DUNGEON_MAX_TIER : 5;

@@ -18452,21 +18452,60 @@ describe('simulator zone ordering and entity artwork', () => {
     test('full zones and dungeons precede individual monsters without mutating the game list', () => {
         const select = ui.panel.querySelector('#mwi-csim-zone');
         expect([...select.options].map((o) => o.value)).toEqual([zone, dungeon, solo, '/actions/combat/frog']);
+        expect([...select.options].map((option) => option.querySelector('use')?.getAttribute('href'))).toEqual([
+            '/static/media/actions_sprite.test.svg#golem_cave',
+            '/static/media/actions_sprite.test.svg#chimerical_den',
+            '/static/media/combat_monsters_sprite.test.svg#rat',
+            '/static/media/actions_sprite.test.svg#frog',
+        ]);
+        expect(select.options[1].textContent).toBe('[D] Chimerical Den');
+        expect(select.querySelector('button > selectedcontent')).not.toBeNull();
         expect(select.value).toBe(zone);
         expect(mocks.zones).toEqual(zones);
-        expect(ui.panel.querySelector('#mwi-csim-zone-icon use').getAttribute('href')).toContain('#golem_cave');
+        const label = select.labels[0];
+        expect(label.textContent).toBe('Zone');
+        expect(label.children).toHaveLength(0);
+        expect(select.options[select.selectedIndex].querySelector('use').getAttribute('href')).toContain('#golem_cave');
         select.value = dungeon;
         select.dispatchEvent(new Event('change'));
-        expect(ui.panel.querySelector('#mwi-csim-zone-icon use').getAttribute('href')).toContain('#chimerical_den');
+        expect(select.options[select.selectedIndex].querySelector('use').getAttribute('href')).toContain(
+            '#chimerical_den'
+        );
         expect(ui.panel.querySelector('#mwi-csim-tier').options).toHaveLength(3);
         ui._allZonesMode = 'group';
         ui._updateAllZonesUI();
         expect(select.previousElementSibling.style.display).toBe('none');
-        expect(ui.panel.querySelector('#mwi-csim-zone-icon').parentElement).toBe(select.previousElementSibling);
+        expect(label).toBe(select.previousElementSibling);
         ui._targetZoneFromResults(solo, 4);
         expect(select.value).toBe(solo);
         expect(ui.panel.querySelector('#mwi-csim-tier').value).toBe('4');
-        expect(ui.panel.querySelector('#mwi-csim-zone-icon [data-sim-entity-icon]').dataset.simEntityIcon).toBe(solo);
+        expect(select.options[select.selectedIndex].querySelector('[data-sim-entity-icon]').dataset.simEntityIcon).toBe(
+            solo
+        );
+        expect(label.children).toHaveLength(0);
+    });
+    test('unsupported rich selects keep the Zone label plain and native choices readable', () => {
+        vi.stubGlobal('CSS', { supports: () => false });
+        try {
+            ui.populateZones();
+            const select = ui.panel.querySelector('#mwi-csim-zone');
+            expect(select.labels[0].textContent).toBe('Zone');
+            expect(select.labels[0].children).toHaveLength(0);
+            expect(select.querySelector('button, svg, span')).toBeNull();
+            expect([...select.options].map((option) => option.textContent)).toEqual([
+                'Golem Cave',
+                '[D] Chimerical Den',
+                'Jerry',
+                'Frogger',
+            ]);
+            select.value = dungeon;
+            select.dispatchEvent(new Event('change'));
+            expect(select.selectedOptions[0].textContent).toBe('[D] Chimerical Den');
+            expect(ui.panel.querySelector('#mwi-csim-tier').options).toHaveLength(3);
+            expect(select.labels[0].children).toHaveLength(0);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
     test('reordering still restores the running single-monster target and tier', async () => {
         const adapter = await import('./combat-sim-adapter.js');
@@ -18542,12 +18581,14 @@ describe('simulator zone ordering and entity artwork', () => {
         expect(results.textContent).toContain('500');
         expect(results.textContent).toContain('123');
     });
-    test('empty zone data removes the preview and leaves no phantom option', () => {
+    test('empty zone data keeps the plain label and leaves no phantom option', () => {
         mocks.zones = [];
         mocks.actionDetails = undefined;
         ui.populateZones();
         expect(ui.panel.querySelector('#mwi-csim-zone').options).toHaveLength(0);
-        expect(ui.panel.querySelector('#mwi-csim-zone-icon').children).toHaveLength(0);
+        const label = ui.panel.querySelector('label[for="mwi-csim-zone"]');
+        expect(label.textContent).toBe('Zone');
+        expect(label.children).toHaveLength(0);
     });
 });
 

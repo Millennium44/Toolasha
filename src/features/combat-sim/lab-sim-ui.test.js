@@ -9829,16 +9829,44 @@ describe('Lab monster and ability artwork', () => {
         vi.restoreAllMocks();
         resetSpriteSheetCache();
     });
-    test('selected monster preview follows changes without replacing the native dropdown labels', () => {
+    test('monster artwork stays only inside the dropdown while its plain label remains accessible', () => {
         const select = ui.panel.querySelector('#mwi-labsim-monster');
         expect(select.selectedOptions[0].textContent).toBe('宝箱怪');
-        expect(ui.panel.querySelector('#mwi-labsim-monster-icon use').getAttribute('href')).toContain('#mimic');
+        expect([...select.options].map((option) => option.querySelector('use')?.getAttribute('href'))).toEqual([
+            '/static/media/combat_monsters_sprite.test.svg#mimic',
+            '/static/media/combat_monsters_sprite.test.svg#cyclops',
+        ]);
+        expect(select.querySelector('button > selectedcontent')).not.toBeNull();
+        const label = select.labels[0];
+        expect(label.textContent).toBe('Monster');
+        expect(label.children).toHaveLength(0);
+        expect(select.options[select.selectedIndex].querySelector('use').getAttribute('href')).toContain('#mimic');
         select.value = '/monsters/cyclops';
         select.dispatchEvent(new Event('change'));
-        expect(ui.panel.querySelector('#mwi-labsim-monster-icon use').getAttribute('href')).toContain('#cyclops');
+        expect(select.options[select.selectedIndex].querySelector('use').getAttribute('href')).toContain('#cyclops');
+        expect(label.children).toHaveLength(0);
         game.monsters = [];
         ui._populateMonsters();
-        expect(ui.panel.querySelector('#mwi-labsim-monster-icon').children).toHaveLength(0);
+        expect(select.options).toHaveLength(0);
+        expect(label.textContent).toBe('Monster');
+        expect(label.children).toHaveLength(0);
+    });
+    test('unsupported rich selects keep the Monster label plain and native choices readable', () => {
+        vi.stubGlobal('CSS', { supports: () => false });
+        try {
+            ui._populateMonsters();
+            const select = ui.panel.querySelector('#mwi-labsim-monster');
+            expect(select.labels[0].textContent).toBe('Monster');
+            expect(select.labels[0].children).toHaveLength(0);
+            expect(select.querySelector('button, svg, span')).toBeNull();
+            expect([...select.options].map((option) => option.textContent)).toEqual(['宝箱怪', 'Cyclops']);
+            select.value = '/monsters/cyclops';
+            select.dispatchEvent(new Event('change'));
+            expect(select.selectedOptions[0].textContent).toBe('Cyclops');
+            expect(select.labels[0].children).toHaveLength(0);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
     test('target images retain monster identity, checked state and nonzero room levels on redraw', () => {
         ui._populateUpgradeTargets(['/monsters/mimic']);

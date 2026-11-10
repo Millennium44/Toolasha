@@ -191,8 +191,9 @@ import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
-import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
+import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
+import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthFloorClearLevel } from '../combat/labyrinth-formulas.js';
@@ -1327,7 +1328,7 @@ class LabSimUI {
             padding: 10px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
         `;
         configureControls.innerHTML = `
-            <label for="mwi-labsim-monster" style="color:#888; font-size:12px;"><span id="mwi-labsim-monster-icon" aria-hidden="true"></span>Monster</label>
+            <label for="mwi-labsim-monster" style="color:#888; font-size:12px;">Monster</label>
             <select class="toolasha-select" id="mwi-labsim-monster" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Level</label>
             <input id="mwi-labsim-level" type="number" min="1" max="1300" value="100" style="${inputStyle}">
@@ -2323,26 +2324,11 @@ class LabSimUI {
         const select = this.panel?.querySelector('#mwi-labsim-monster');
         if (!select) return;
 
-        const monsters = getLabyrinthMonsters();
-        select.innerHTML = '';
-        for (const monster of monsters) {
-            const option = document.createElement('option');
-            option.value = monster.hrid;
-            option.textContent = monster.name;
-            select.appendChild(option);
-        }
-        this._updateMonsterIcon();
-    }
-
-    /** @private */
-    _updateMonsterIcon() {
-        const icon = this.panel?.querySelector('#mwi-labsim-monster-icon');
-        if (icon) icon.innerHTML = simEntityIconHtml(this.panel.querySelector('#mwi-labsim-monster')?.value);
+        populateSimEntitySelect(select, getLabyrinthMonsters());
     }
 
     /** @private */
     _onMonsterChange(monsterHrid) {
-        this._updateMonsterIcon();
         if (!monsterHrid || !this._editor?.isInitialized()) return;
         const monsterId = monsterHrid.split('/').pop();
         const pascal = monsterId
