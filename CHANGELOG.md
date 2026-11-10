@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loadouts stay with the right character
+
+Late updates and overlapping character switches no longer overwrite another character’s saved loadout snapshots or remove its linked custom-tab items. Loadout readiness also stays tied to the correct session.
+
 ### Net Worth respects shutdown and character changes
 
 Net Worth no longer restarts services after shutdown or mixes delayed exclusions and recorded histories between character sessions. Exclusions are protected from unreadable saved data and older pending reads.

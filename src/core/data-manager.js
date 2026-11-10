@@ -223,6 +223,9 @@ class DataManager {
         // single unkeyed slot let B eat it, leaving C with stale lock state until
         // another mark update happened to arrive. Null means there is nothing waiting.
         this._pendingItemMarksUpdate = null;
+        // The latest accepted loadout map received before its character's queued init lands.
+        // Socket and announced character identity keep a later C update out of B's init.
+        this._pendingLoadoutsUpdate = null;
 
         // Who this character last fought alongside, from `new_battle`'s `players`.
         //
@@ -277,6 +280,10 @@ class DataManager {
         // work is queued. Null means "no socket has ever been seen", which is
         // permissive: see _isFromActiveSocket.
         this.activeSocket = null;
+        // Bound synchronously with the socket, before currentCharacterId can move after teardown.
+        this.activeSocketCharacterId = null;
+        this._activeSocketAwaitingCharacter = false;
+        this._activeSocketInitGeneration = 0;
 
         // Event listeners
         this.eventListeners = new Map();
@@ -1093,9 +1100,10 @@ class DataManager {
      *   synchronously by `_bindActiveSocket` before this call was even queued behind
      *   `_switchChain`. Used to tell whether a stashed `_pendingItemMarksUpdate`
      *   belongs to THIS call's character rather than a later one queued behind it.
+     * @param {number|null} [ownerInitGeneration] - The exact queued init, including repeated same-socket inits
      * @private
      */
-    async _handleInitCharacterData(data, arrivedAt, ownerSocket = null) {
+    async _handleInitCharacterData(data, arrivedAt, ownerSocket = null, ownerInitGeneration = null) {
         // Detect character switch
         const newCharacterId = data.character?.id;
         const newCharacterName = data.character?.name;
@@ -1256,6 +1264,21 @@ class DataManager {
 
         // Process new character data normally
         this.characterData = data;
+        if (
+            this.activeSocket === ownerSocket &&
+            this._activeSocketInitGeneration === ownerInitGeneration &&
+            String(this.activeSocketCharacterId) === String(newCharacterId)
+        )
+            this._activeSocketAwaitingCharacter = false;
+        const pendingLoadouts = this._pendingLoadoutsUpdate;
+        if (
+            pendingLoadouts?.socket === ownerSocket &&
+            pendingLoadouts.initGeneration === ownerInitGeneration &&
+            (!pendingLoadouts.characterId || String(pendingLoadouts.characterId) === String(newCharacterId))
+        ) {
+            this._pendingLoadoutsUpdate = null;
+            this.characterData.characterLoadoutMap = pendingLoadouts.loadoutMap;
+        }
         this.partyInfoReceivedAt = arrivedAt;
         this.partyInfoSource = 'login';
         // A mark update from this same character's socket that arrived while the
@@ -1372,11 +1395,11 @@ class DataManager {
             // old socket delivers during that drain would still be accepted if the
             // binding waited for the handler to run, which is precisely the window
             // this is meant to close.
-            this._bindActiveSocket(data, context);
+            const ownerInitGeneration = this._bindActiveSocket(data, context);
 
             const ownerSocket = context?.socket ?? null;
             this._switchChain = (this._switchChain || Promise.resolve())
-                .then(() => this._handleInitCharacterData(data, arrivedAt, ownerSocket))
+                .then(() => this._handleInitCharacterData(data, arrivedAt, ownerSocket, ownerInitGeneration))
                 .catch((error) => {
                     console.error('[DataManager] init_character_data handling failed:', error);
                     // The flag is raised before the teardown; a throw part way
@@ -1390,6 +1413,15 @@ class DataManager {
                     // socket must survive for that socket's own handler to consume.
                     if (this._pendingItemMarksUpdate?.socket === ownerSocket) {
                         this._pendingItemMarksUpdate = null;
+                    }
+                    const pendingLoadouts = this._pendingLoadoutsUpdate;
+                    if (
+                        pendingLoadouts?.socket === ownerSocket &&
+                        pendingLoadouts.initGeneration === ownerInitGeneration &&
+                        (!pendingLoadouts.characterId ||
+                            String(pendingLoadouts.characterId) === String(data?.character?.id))
+                    ) {
+                        this._pendingLoadoutsUpdate = null;
                     }
                 });
             return this._switchChain;
@@ -1444,9 +1476,32 @@ class DataManager {
         // The login copy of the loadouts is what later readers trust, so it follows the game's updates
         this.webSocketHook.on('loadouts_updated', (data, context) => {
             if (!this._isFromActiveSocket(context)) return;
-            if (this.characterData && data?.characterLoadoutMap) {
-                this.characterData.characterLoadoutMap = data.characterLoadoutMap;
+            const loadoutMap = data?.characterLoadoutMap;
+            if (!loadoutMap || typeof loadoutMap !== 'object' || Array.isArray(loadoutMap)) return;
+            const ownerId = this.activeSocket ? this.activeSocketCharacterId : null;
+            const expectedId = ownerId || (!this.isCharacterSwitching ? this.currentCharacterId : null);
+            if (
+                Object.values(loadoutMap).some(
+                    (loadout) =>
+                        !loadout ||
+                        typeof loadout !== 'object' ||
+                        (expectedId && loadout.characterID && String(loadout.characterID) !== String(expectedId))
+                )
+            )
+                return;
+            if (!this.isFromInitializedCharacter(context) || !this.characterData) {
+                // The arriving connection is already active while the departing character's flush
+                // and teardown are still awaited. Keep its latest map, including an intentional
+                // empty map, for that connection's init instead of changing the departing data.
+                this._pendingLoadoutsUpdate = {
+                    socket: context?.socket ?? null,
+                    characterId: ownerId,
+                    initGeneration: this._activeSocketInitGeneration,
+                    loadoutMap,
+                };
+                return;
             }
+            this.characterData.characterLoadoutMap = loadoutMap;
         });
 
         // Handle action_completed (action progress)
@@ -2055,12 +2110,19 @@ class DataManager {
      *
      * @param {Object} data - The init_character_data payload
      * @param {{socket?: Object}|null} context - Delivery context from the WebSocket hook
+     * @returns {number|null} The queued init identity, or null for an invalid init
      * @private
      */
     _bindActiveSocket(data, context) {
+        // An init rejected by _handleInitCharacterData must not replace a working connection or
+        // leave it waiting forever for character data that will never be installed.
+        if (!data?.character?.id || !data.character.name) return null;
+        const initGeneration = ++this._activeSocketInitGeneration;
         if (context?.socket) {
             this.activeSocket = context.socket;
-            return;
+            this.activeSocketCharacterId = data?.character?.id ?? null;
+            this._activeSocketAwaitingCharacter = true;
+            return initGeneration;
         }
 
         // No socket context. If the character is changing, the socket currently bound
@@ -2072,7 +2134,31 @@ class DataManager {
         const incomingId = data?.character?.id;
         if (incomingId && this.currentCharacterId && this.currentCharacterId !== incomingId) {
             this.activeSocket = null;
+            this.activeSocketCharacterId = null;
+            this._activeSocketAwaitingCharacter = false;
         }
+        return initGeneration;
+    }
+
+    /**
+     * Whether an update belongs to the character whose feature state is currently installed.
+     * An accepted arriving socket can precede currentCharacterId by an awaited flush/teardown,
+     * or even precede the queued init handler that raises isCharacterSwitching.
+     * @param {{socket?: Object}|null} [context] - Delivery context from the WebSocket hook
+     * @returns {boolean} Whether raw feature listeners may use the current character-scoped state
+     */
+    isFromInitializedCharacter(context) {
+        if (
+            !this._isFromActiveSocket(context) ||
+            this.isCharacterSwitching ||
+            (this.activeSocket && this._activeSocketAwaitingCharacter)
+        )
+            return false;
+        return (
+            !this.activeSocket ||
+            !this.activeSocketCharacterId ||
+            String(this.activeSocketCharacterId) === String(this.currentCharacterId)
+        );
     }
 
     /**

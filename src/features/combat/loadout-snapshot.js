@@ -146,7 +146,7 @@ class LoadoutSnapshot {
         // `snapshots` says nothing on its own: before the load resolves it is
         // indistinguishable from a character with no loadouts at all, and a
         // consumer that cannot tell the two apart silently simulates the wrong
-        // gear. Never reset once set — a reload is a fresh module.
+        // gear. Teardown resets readiness before the next character's data loads.
         this.snapshotsReady = false;
         this._readyWaiters = [];
 
@@ -169,7 +169,7 @@ class LoadoutSnapshot {
      */
     _ensureSubscribed() {
         if (this.loadoutsUpdatedHandler) return;
-        this.loadoutsUpdatedHandler = (data) => this._onLoadoutsUpdated(data);
+        this.loadoutsUpdatedHandler = (data, context) => this._onLoadoutsUpdated(data, context);
         getWebSocketHook().on('loadouts_updated', this.loadoutsUpdatedHandler);
     }
 
@@ -210,7 +210,10 @@ class LoadoutSnapshot {
         this.snapshotsReady = true;
         const waiters = this._readyWaiters;
         this._readyWaiters = [];
-        for (const resolve of waiters) resolve(true);
+        for (const waiter of waiters) {
+            clearTimeout(waiter.timer);
+            waiter.resolve(true);
+        }
     }
 
     /**
@@ -220,7 +223,8 @@ class LoadoutSnapshot {
      * real answer.
      *
      * Bounded: with the feature switched off nothing ever loads, so the
-     * deadline marks the store ready and the wait resolves anyway.
+     * deadline marks the store ready and the wait resolves anyway. A wait from a
+     * torn-down session still expires, but cannot mark the new session ready.
      * @param {number} [timeoutMs]
      * @returns {Promise<boolean>} Always true — the store is ready or has been
      *   declared ready by the deadline
@@ -229,8 +233,19 @@ class LoadoutSnapshot {
         this._ensureSubscribed();
         if (this.snapshotsReady) return Promise.resolve(true);
         return new Promise((resolve) => {
-            this._readyWaiters.push(resolve);
-            setTimeout(() => this._markReady(), timeoutMs);
+            const ticket = captureOwner(this);
+            const waiter = { resolve, timer: null };
+            this._readyWaiters.push(waiter);
+            waiter.timer = setTimeout(() => {
+                if (!stillOurs(ticket)) {
+                    // Keep the old caller's bounded wait, without declaring a later character's
+                    // still-loading store ready or releasing that character's new waiters.
+                    this._readyWaiters = this._readyWaiters.filter((entry) => entry !== waiter);
+                    resolve(true);
+                    return;
+                }
+                this._markReady();
+            }, timeoutMs);
         });
     }
 
@@ -342,16 +357,27 @@ class LoadoutSnapshot {
      * Handle a loadouts_updated WebSocket message.
      * Replaces all snapshots with the server's current state.
      * @param {Object} data - The WebSocket message payload
+     * @param {{socket?: Object}} [context] - The connection that delivered this update
      */
-    _onLoadoutsUpdated(data) {
+    _onLoadoutsUpdated(data, context) {
+        // Departing sockets can still deliver after a character switch. Match DataManager's guard
+        // before replacing anything, including an empty map that would delete the arriving cache.
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
+        // DataManager retains arriving updates until their character's init lands. Its socket is
+        // active before old-character teardown, so socket acceptance alone is not enough here.
+        if (dataManager.isFromInitializedCharacter?.(context) === false) return;
         const loadoutMap = data.characterLoadoutMap;
         if (!loadoutMap) {
             console.warn('[LoadoutSnapshot] loadouts_updated received but no characterLoadoutMap');
             return;
         }
 
+        const characterId = dataManager.getCurrentCharacterId?.();
         const newSnapshots = {};
         for (const [id, loadout] of Object.entries(loadoutMap)) {
+            // Use the same payload ownership check as login reconciliation. Reject the whole map
+            // rather than persisting a partial set under the current character's storage key.
+            if (characterId && loadout.characterID && String(loadout.characterID) !== String(characterId)) return;
             if (!loadout.name) continue;
             newSnapshots[id] = buildSnapshot(loadout, id);
         }
