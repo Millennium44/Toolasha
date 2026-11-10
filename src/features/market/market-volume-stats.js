@@ -29,6 +29,7 @@ import { MARKET_MOBILE_QUERY, ensureMarketMobileStyles, releaseMarketMobileStyle
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
+import { escapeHtml } from '../../utils/html-escape.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
@@ -635,7 +636,6 @@ class MarketVolumeStats {
                 ? `Trade prices unavailable in ${span} — average from the ask/bid.`
                 : `No trades in ${span} — figures are from the ask/bid only.`;
         };
-        const escapeAttr = (text) => text.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
         const rows = windows
             .map((entry) => {
                 const { days, stats } = entry;
@@ -647,7 +647,7 @@ class MarketVolumeStats {
                     })
                     .join('');
                 const note = rowNote(entry);
-                const title = note ? ` title="${escapeAttr(note)}"` : '';
+                const title = note ? ` title="${escapeHtml(note)}"` : '';
                 const marker = note ? '<span style="color:#AAAAAA;font-weight:normal;">*</span>' : '';
                 const labelStyle = `padding:1px 6px 1px 0;color:${ROW_COLORS[days]};font-weight:bold;${
                     note ? 'opacity:0.75;' : ''
@@ -888,19 +888,6 @@ class MarketVolumeStats {
     cleanup() {
         this.disable();
     }
-}
-
-/**
- * Minimal HTML escaping for the one place free text (a cooldown/error message)
- * is interpolated into `innerHTML`.
- * @param {string} text
- * @returns {string}
- */
-function escapeHtml(text) {
-    return String(text).replace(
-        /[&<>"']/g,
-        (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]
-    );
 }
 
 const marketVolumeStats = new MarketVolumeStats();

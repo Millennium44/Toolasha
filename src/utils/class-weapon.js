@@ -52,6 +52,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
+import { escapeHtml as escapeText } from './html-escape.js';
 import { spriteIcon, itemSpriteUrl } from './overlay-format.js';
 
 /**
@@ -321,13 +322,4 @@ export function ownWeaponHrid() {
 function iconTitle(classTag, weapon, title) {
     const head = title || classTag?.label || '';
     return `${head}${head ? '\n' : ''}Drawn as ${weapon.name} (level ${weapon.itemLevel}) — a stand-in for the class, not this player's weapon.`;
-}
-
-/**
- * Markup-safe text.
- * @param {string} value - Anything
- * @returns {string}
- */
-function escapeText(value) {
-    return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

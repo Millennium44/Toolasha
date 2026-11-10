@@ -106,6 +106,11 @@ const SINGLE_COPY_FEATURES = new Set([
 
 const ALLOWLIST = new Map([
     [
+        'src/utils/html-escape.js',
+        // A tiny pure string transformation, with no imports, shared state, or DOM dependencies.
+        'stateless HTML escaping; no runtime identity or state to share',
+    ],
+    [
         'src/utils/enhancement-steps.js',
         // A constant table and two pure functions, no imports and no module state: the game's enhancement
         // step count and the task speed a worn item gives. Core's data manager and the utils bundle both read it.

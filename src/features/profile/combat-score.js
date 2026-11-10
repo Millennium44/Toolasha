@@ -8,6 +8,7 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateCombatScore } from './score-calculator.js';
+import { escapeHtml } from '../../utils/html-escape.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import {
     constructMetzCharacterExport,
@@ -32,21 +33,6 @@ import { terminateWorkerPool } from '../../utils/enhancement-worker-manager.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { formatProfileAge } from '../../utils/shared-profile-status.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
-
-/**
- * Escape a string for safe interpolation into innerHTML.
- * Player and snapshot names are untrusted input.
- * @param {string} value - Raw string
- * @returns {string} HTML-escaped string
- */
-function escapeHtml(value) {
-    return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-}
 
 /**
  * Sim export format identifiers, and the per-viewer storage key that remembers the choice.
