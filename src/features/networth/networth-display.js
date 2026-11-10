@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import { escapeHtml as escapeMarkup } from '../../utils/html-escape.js';
 import { networthFormatter, formatKMB } from '../../utils/formatters.js';
 import networthHistoryChart, { CHART_BUTTON_ID } from './networth-history-chart.js';
 import goldSourcesPanel, { BUTTON_ID as GOLD_SOURCES_BUTTON_ID } from './gold-sources-panel.js';
@@ -52,11 +53,7 @@ function partialNetworthNote(partial) {
  * @returns {string} Escaped text
  */
 function escapeHtml(text) {
-    return String(text ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    return escapeMarkup(text ?? '');
 }
 
 /**

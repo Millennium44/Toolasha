@@ -31,6 +31,7 @@ import config from '../core/config.js';
 import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
 import { summarizeCalibration, DEFAULT_MIN_SAMPLES } from '../features/insights/calibration-math.js';
+import { escapeHtml } from './html-escape.js';
 import { entriesOf } from './cleared-record.js';
 import { isBadEnhancementScaleRecord } from './enhancement-scale-bug.js';
 
@@ -79,15 +80,6 @@ const cache = {
     /** `${actionType}|${actionHrid}|${tier}` → group summary or null */
     summaries: new Map(),
 };
-
-/**
- * Escape text for an HTML attribute.
- * @param {string} text - Raw text
- * @returns {string}
- */
-function escapeHtml(text) {
-    return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 /**
  * The calibration series an action belongs to, from either spelling of its

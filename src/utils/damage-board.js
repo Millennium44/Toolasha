@@ -26,6 +26,7 @@
  * class tag arrives as markup its own module already made safe.
  */
 
+import { escapeHtml } from './html-escape.js';
 import { formatKMB, formatWithSeparator } from './formatters.js';
 import { BUTTON_LOOK, GAME_COLORS } from './game-look.js';
 
@@ -377,9 +378,5 @@ export function abilityLineHTML(row, { label, color = BOARD_COLORS.dim } = {}) {
  * @returns {string}
  */
 export function escapeText(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+    return escapeHtml(value ?? '');
 }
