@@ -163,7 +163,7 @@ push to `main` or merge.
   merge them all locally in one pass, resolve the changelog once, run gates, and push.
   `bash scripts/land-stack.sh [--push] <pr> ...` does this in `../Toolasha-integ`: it checks each PR (open, CI,
   Codex review or carry-over, no unresolved threads), cherry-picks them in order with `HUSKY=0`, verifies each
-  stacked patch equals its PR head's, runs the full gates, and with `--push` lands everything in one atomic push.
+  stacked patch equals its PR head's, runs the full gates, and with `--push` pushes the PR branches atomically, then main (one push for both makes GitHub close the PRs instead of merging them).
 
 ### Briefing another agent
 

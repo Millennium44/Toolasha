@@ -5,7 +5,7 @@
 #
 # Works in the integration worktree ../Toolasha-integ (next to the main checkout), so the main
 # checkout and its dev build stay untouched. Without --push it stops after the full gates and prints
-# the plan. With --push it re-checks that nothing moved, then pushes everything in ONE atomic push:
+# the plan. With --push it re-checks that nothing moved, then pushes the PR branches in one atomic push and then main:
 # each PR branch is force-with-lease'd from its old head to its stacked commit, then main to the top,
 # so GitHub marks every PR merged.
 #
@@ -252,15 +252,19 @@ push_all() {
         rb="$(git ls-remote origin "refs/heads/${BRANCH[$n]}" | cut -f1)"
         [ "$rb" = "${HEAD_SHA[$n]}" ] || die "branch ${BRANCH[$n]} is at ${rb:-<missing>}, not the PR head; rerun"
     done
+    # Two pushes, branches first. A single push that moves the branches and main together makes GitHub
+    # CLOSE the PRs instead of marking them merged (seen 2026-11-10 with #907/#908/#886): it has to see each
+    # PR head updated before main contains it.
     local args=(--atomic origin)
     for n in "${PRS[@]}"; do
         args+=("--force-with-lease=refs/heads/${BRANCH[$n]}:${HEAD_SHA[$n]}")
     done
-    args+=("--force-with-lease=refs/heads/main:$MAIN_OLD")
     for n in "${PRS[@]}"; do args+=("${STACKED_SHA[$n]}:refs/heads/${BRANCH[$n]}"); done
-    args+=("$TOP:refs/heads/main")
-    note "Pushing (atomic)"
+    note "Pushing the PR branches (atomic)"
     git push "${args[@]}"
+    note "Pushing main"
+    git push origin "--force-with-lease=refs/heads/main:$MAIN_OLD" "$TOP:refs/heads/main" ||
+        die "main push refused (moved?). PR branches already point at the stacked commits; rerun to land them."
     for n in "${PRS[@]}"; do
         echo "  PR #$n: $(gh pr view "$n" --json state --jq .state)"
     done
