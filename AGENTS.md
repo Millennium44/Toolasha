@@ -29,7 +29,7 @@ npm test -- -t "numberFormatter"
 ```
 
 **Pre-commit hooks:** ESLint + Prettier + tests + build run on commit.
-**Manual testing:** Install `dist/Toolasha-dev.user.js` in Tampermonkey and open <https://www.milkywayidle.com/game>.
+**Manual testing:** Install `dist/Toolasha-dev.user.js` in Tampermonkey and open <https://test.milkywayidle.com/game>.
 
 ### Committing a multi-line message
 

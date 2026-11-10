@@ -145,6 +145,15 @@ export default [
             'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
         },
     },
+    {
+        // Keep the root-file hook and its subprocess regression tests checked as Node scripts.
+        files: ['scripts/check-root-files.js', 'scripts/check-root-files.test.js'],
+        languageOptions: { globals: { ...globals.node } },
+        rules: {
+            'no-undef': 'error',
+            'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+        },
+    },
     // Disable formatting rules that conflict with Prettier
     prettier,
 ];

@@ -7,12 +7,11 @@
  */
 
 import { execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
-import { join } from 'path';
 
 // Allowed files at project root
 const ALLOWED_FILES = new Set([
     'README.md',
+    'OVERVIEW.md',
     'CHANGELOG.md',
     'CONTRIBUTING.md',
     'LICENSE.md',

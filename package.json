@@ -18,7 +18,7 @@
         "test:watch": "vitest",
         "replay": "node scripts/replay-combat.mjs",
         "compare": "node scripts/compare-attribution.mjs",
-        "lint": "eslint src/",
+        "lint": "eslint src/ scripts/check-root-files.js scripts/check-root-files.test.js",
         "lint:fix": "eslint src/ --fix",
         "format": "prettier --write \"src/**/*.js\" \"*.config.js\" \"**/*.md\"",
         "format:check": "prettier --check \"src/**/*.js\" \"*.config.js\" \"**/*.md\"",
