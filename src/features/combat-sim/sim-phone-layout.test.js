@@ -3,6 +3,20 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { SIM_PHONE_CSS, SIM_PHONE_STYLE_ID, SIM_UPGRADE_PHONE_CSS, ensureSimPhoneStyles } from './sim-phone-layout.js';
 
 describe('sim phone layout', () => {
+    it('keeps phone loot item names on a full-width line rather than shrinking them behind numeric columns', () => {
+        expect(SIM_PHONE_CSS).toMatch(/@media \(max-width: 768px\)[\s\S]*\.mwi-csim-loot-row \{/);
+        const row = SIM_PHONE_CSS.match(/\.mwi-csim-loot-row \{([^}]*)\}/)?.[1] || '';
+        expect(row).toContain('display: grid !important');
+        expect(row).toContain('grid-template-columns: repeat(6, minmax(0, 1fr))');
+        const values = SIM_PHONE_CSS.match(/\.mwi-csim-loot-row > span \{([^}]*)\}/)?.[1] || '';
+        expect(values).toContain('min-width: 0 !important');
+        expect(values).toContain('white-space: normal !important');
+        expect(values).toContain('overflow-wrap: anywhere');
+        const name = SIM_PHONE_CSS.match(/\.mwi-csim-loot-row > span:first-child \{([^}]*)\}/)?.[1] || '';
+        expect(name).toContain('grid-column: 1 / -1');
+        expect(name).toContain('overflow: visible !important');
+    });
+
     beforeEach(() => {
         document.head.innerHTML = '';
     });

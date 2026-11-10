@@ -7,6 +7,7 @@
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { simEntityLabelHtml, simSkillHrid, simScrollItemHrid } from './sim-entity-label.js';
+import { registerSimIconPopup } from './sim-icon-refresh.js';
 import { simItemLabelHtml } from './sim-item-label.js';
 import {
     buildGameDataPayload,
@@ -2523,6 +2524,7 @@ export class SimEditor {
         document.body.appendChild(backdrop);
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
+        registerSimIconPopup(popup, this._editorEl);
         renderList('');
         searchInput.focus();
     }
@@ -2667,6 +2669,7 @@ export class SimEditor {
         document.body.appendChild(backdrop);
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
+        registerSimIconPopup(popup, this._editorEl);
         renderList('');
         searchInput.focus();
     }
@@ -2820,6 +2823,7 @@ export class SimEditor {
         document.body.appendChild(backdrop);
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
+        registerSimIconPopup(popup, this._editorEl);
         renderList('');
         searchInput.focus();
     }
@@ -3172,6 +3176,7 @@ export class SimEditor {
         document.body.appendChild(backdrop);
         markToolashaSurface(popup, 'popover');
         document.body.appendChild(popup);
+        registerSimIconPopup(popup, this._editorEl);
         renderRows();
     }
 

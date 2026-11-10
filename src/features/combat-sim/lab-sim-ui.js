@@ -192,6 +192,7 @@ import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
+import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthFloorClearLevel } from '../combat/labyrinth-formulas.js';
@@ -1065,6 +1066,7 @@ const LEVEL_SORT_DEFAULT = { key: 'score', dir: 'desc' };
 class LabSimUI {
     constructor() {
         this.panel = null;
+        this._stopIconRefresh = null;
         this._editor = null;
         this._skillingEditor = null;
         this.isRunning = false;
@@ -12827,6 +12829,7 @@ class LabSimUI {
         if (remember) saveOpenState(GEOMETRY_KEY, true);
 
         this.panel.style.display = 'flex';
+        this._stopIconRefresh ||= watchSimIconRefresh(this.panel);
         bringPanelToFront(this.panel);
         this._populateMonsters();
 
@@ -12852,6 +12855,8 @@ class LabSimUI {
         if (!this.panel) return;
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         this.panel.style.display = 'none';
+        this._stopIconRefresh?.();
+        this._stopIconRefresh = null;
     }
 
     toggle() {
@@ -12935,6 +12940,8 @@ class LabSimUI {
     }
 
     destroy() {
+        this._stopIconRefresh?.();
+        this._stopIconRefresh = null;
         if (this._openRequestHandler) {
             document.removeEventListener('mwi-labsim-open', this._openRequestHandler);
             this._openRequestHandler = null;

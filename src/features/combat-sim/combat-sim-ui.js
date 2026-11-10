@@ -187,6 +187,7 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
+import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
@@ -3502,6 +3503,7 @@ function formatElapsed(seconds) {
 class CombatSimUI {
     constructor() {
         this.panel = null;
+        this._stopIconRefresh = null;
         this._editor = null;
         this.isRunning = false;
         this._runStarting = false;
@@ -8869,7 +8871,7 @@ class CombatSimUI {
                 html += `<div style="${sectionStyle}">`;
                 html += `<div style="${headingStyle}">Drops</div>`;
                 // Column headers
-                html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
+                html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
                 html += `<span style="flex:1;">Item</span>`;
                 html += `<span style="${colNum}">/hr</span>`;
                 html += `<span style="${colNum}">/day</span>`;
@@ -8898,7 +8900,7 @@ class CombatSimUI {
                     const goldTotalStr = drop.unitValue > 0 ? formatKMB(Math.round(drop.totalGold)) : '—';
                     const goldColor = drop.unitValue > 0 ? '#e8a87c' : '#444';
 
-                    html += `<div style="${dropRowStyle}">`;
+                    html += `<div class="mwi-csim-loot-row" style="${dropRowStyle}">`;
                     html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(drop.itemHrid, name)}</span>`;
                     html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
                     html += `<span style="${valueStyle} ${colNum}"${perDay >= 1 ? exactTitleAttr(perDay) : ''}>${perDayStr}</span>`;
@@ -8914,7 +8916,7 @@ class CombatSimUI {
                     prevRevPerHr !== null && prevRevPerHr !== undefined
                         ? this._formatDelta(dropGoldPerHr, prevRevPerHr, true, true)
                         : '';
-                html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
+                html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
                 html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Revenue</span>`;
                 const revDayDelta =
                     prevRevPerHr !== null && prevRevPerHr !== undefined
@@ -8958,7 +8960,7 @@ class CombatSimUI {
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">Consumable Costs</div>`;
             // Column headers
-            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
+            html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colNum}">/day</span>`;
@@ -8986,7 +8988,7 @@ class CombatSimUI {
                 const costTotalStr = cons.unitCost > 0 ? formatKMB(Math.round(cons.totalCost)) : '—';
                 const cColor = cons.unitCost > 0 ? costColor : '#444';
 
-                html += `<div style="${costRowStyle}">`;
+                html += `<div class="mwi-csim-loot-row" style="${costRowStyle}">`;
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(cons.itemHrid, name)}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr)}>${perHrStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
@@ -9006,7 +9008,7 @@ class CombatSimUI {
                 prevConsumableCostPerHr !== null && prevConsumableCostPerHr !== undefined
                     ? this._formatDelta(consumableGoldPerHr * 24, prevConsumableCostPerHr * 24, false, true)
                     : '';
-            html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
+            html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Expenses</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
@@ -9027,7 +9029,7 @@ class CombatSimUI {
 
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">Key Costs</div>`;
-            html += `<div style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
+            html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
             html += `<span style="${colNum}">/day</span>`;
@@ -9049,7 +9051,7 @@ class CombatSimUI {
                 const costTotalStr = key.unitCost > 0 ? formatKMB(Math.round(key.totalCost)) : '—';
                 const cColor = key.unitCost > 0 ? costColor : '#444';
 
-                html += `<div style="${costRowStyle}">`;
+                html += `<div class="mwi-csim-loot-row" style="${costRowStyle}">`;
                 html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(key.itemHrid, key.name)}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
@@ -9061,7 +9063,7 @@ class CombatSimUI {
             }
 
             // Totals row
-            html += `<div style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
+            html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:4px 0 0; font-size:12px; border-top:1px solid #333; margin-top:4px; gap:6px;">`;
             html += `<span style="color:#aaa; font-weight:700; flex:1;">Total Key Costs</span>`;
             html += `<span style="${colNum}"></span>`;
             html += `<span style="${colNum}"></span>`;
@@ -10394,6 +10396,7 @@ class CombatSimUI {
         if (remember) saveOpenState(GEOMETRY_KEY, true);
 
         this.panel.style.display = 'flex';
+        this._stopIconRefresh ||= watchSimIconRefresh(this.panel);
         bringPanelToFront(this.panel);
         // The breakpoint is only watched while the panel is up; a window resized while it was closed is caught up here
         this._watchNarrowWindow();
@@ -10415,6 +10418,8 @@ class CombatSimUI {
         if (!this.panel) return;
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         this.panel.style.display = 'none';
+        this._stopIconRefresh?.();
+        this._stopIconRefresh = null;
         this._unwatchNarrowWindow();
     }
 
@@ -10441,6 +10446,8 @@ class CombatSimUI {
      * Remove the panel and clean up.
      */
     destroy() {
+        this._stopIconRefresh?.();
+        this._stopIconRefresh = null;
         if (this.elapsedTimer) {
             clearInterval(this.elapsedTimer);
             this.elapsedTimer = null;

@@ -12,7 +12,7 @@ When a task changes, its previous estimate and overlay disappear without waiting
 
 ### Simulator artwork and zone order
 
-Combat and Lab simulators show game artwork for zones, monsters, abilities, skills, houses, shrines and scrolls where available. Zone lists put full zones and dungeons ahead of individual monsters.
+Combat and Lab simulators show game artwork for zones, monsters, abilities, skills, houses, shrines and scrolls where available. Zone lists put full zones and dungeons ahead of individual monsters. Icons update when game artwork loads, and phone result rows keep item names and icons visible.
 
 ### Lab upgrade details stay current
 

@@ -18065,6 +18065,49 @@ describe('Combat Sim item icons (#862)', () => {
         mocks.prices = {};
         resetSpriteSheetCache();
     });
+    test('phone loot rows keep item artwork and all six readings together across drops, consumables, and keys', async () => {
+        const { default: dm } = await import('../../core/data-manager.js');
+        const adapter = await import('./combat-sim-adapter.js');
+        const names = {
+            '/items/coin': 'Coin',
+            '/items/small_treasure_chest': 'Small Treasure Chest',
+            '/items/cheese': 'Cheese',
+        };
+        const details = vi.spyOn(dm, 'getItemDetails').mockImplementation((hrid) => ({ name: names[hrid] || hrid }));
+        const keys = vi
+            .spyOn(adapter, 'calculateDungeonKeyCosts')
+            .mockReturnValue([
+                { itemHrid: '/items/chimerical_key', name: 'Chimerical Key', count: 3, unitCost: 100, totalCost: 300 },
+            ]);
+        try {
+            mocks.drops = new Map([
+                ['/items/coin', 1200],
+                ['/items/small_treasure_chest', 0.4],
+            ]);
+            const results = showFight(
+                oneHourFight({
+                    isDungeon: true,
+                    consumablesUsed: { player1: { '/items/cheese': 5 } },
+                })
+            );
+            const rows = [...results.querySelectorAll('.mwi-csim-loot-row')];
+            expect(rows).toHaveLength(10); // Headers, item rows, and totals all share the responsive columns.
+            expect(rows.every((row) => row.children.length === 7)).toBe(true);
+            for (const hrid of [...Object.keys(names), '/items/chimerical_key']) {
+                const icon = results.querySelector(`[data-sim-item-icon="${hrid}"]`);
+                const row = icon.closest('.mwi-csim-loot-row');
+                expect(row.firstElementChild.contains(icon)).toBe(true);
+                expect(row.firstElementChild.textContent).toBe(names[hrid] || 'Chimerical Key');
+            }
+            const coin = results.querySelector('[data-sim-item-icon="/items/coin"]').closest('.mwi-csim-loot-row');
+            expect(coin.children[1].textContent).toBe('1.2K');
+            expect(coin.children[1].getAttribute('title')).toBe('1,200');
+            expect(coin.children[2].textContent).toBe('28.8K');
+        } finally {
+            details.mockRestore();
+            keys.mockRestore();
+        }
+    });
     test('drops, spent supplies and healing sources retain rates and separate icons for the same item', () => {
         mocks.drops = new Map([
             ['/items/cheese', 3],
@@ -18319,5 +18362,58 @@ describe('simulator zone ordering and entity artwork', () => {
         ui.populateZones();
         expect(ui.panel.querySelector('#mwi-csim-zone').options).toHaveLength(0);
         expect(ui.panel.querySelector('#mwi-csim-zone-icon').children).toHaveLength(0);
+    });
+});
+
+describe('simulator late sprite panel lifecycle', () => {
+    let native;
+    beforeEach(() => {
+        mocks.wasOpen = false;
+        mocks.zones = [];
+        resetSpriteSheetCache();
+        ui.buildPanel();
+    });
+    afterEach(() => {
+        ui.destroy();
+        native?.remove();
+        resetSpriteSheetCache();
+    });
+    test('show refreshes existing ability labels, hide unsubscribes, and reopen catches late assets', async () => {
+        const { simEntityLabelHtml } = await import('./sim-entity-label.js');
+        const { default: domObserver } = await import('../../core/dom-observer.js');
+        const host = document.createElement('div');
+        host.innerHTML = simEntityLabelHtml('/abilities/water_strike', 'Water Strike L75') + '<input value="91">';
+        ui.panel.append(host);
+        const input = host.querySelector('input');
+        ui.show({ remember: false });
+        ui.show({ remember: false });
+        expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(1);
+        expect(host.querySelector('[data-sim-icon-pending]')).not.toBeNull();
+        native = document.createElement('div');
+        native.innerHTML = '<svg><use xlink:href="/static/media/abilities_sprite.late.svg#seed"></use></svg>';
+        document.body.append(native);
+        domObserver.dispatch(native);
+        await Promise.resolve();
+        expect(host.querySelector('use')?.getAttribute('href')).toBe(
+            '/static/media/abilities_sprite.late.svg#water_strike'
+        );
+        expect(host.querySelector('input')).toBe(input);
+        expect(input.value).toBe('91');
+        host.innerHTML = simEntityLabelHtml('/items/cheese', 'Cheese');
+        ui.hide({ remember: false });
+        expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(0);
+        native.insertAdjacentHTML(
+            'beforeend',
+            '<svg><use href="/static/media/items_sprite.late.svg#seed"></use></svg>'
+        );
+        ui.show({ remember: false });
+        expect(host.querySelector('[data-sim-item-icon] use')?.getAttribute('href')).toBe(
+            '/static/media/items_sprite.late.svg#cheese'
+        );
+        ui.destroy();
+        expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(0);
+        ui.buildPanel();
+        ui.show({ remember: false });
+        expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(1);
     });
 });

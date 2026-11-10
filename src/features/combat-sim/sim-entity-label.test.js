@@ -27,6 +27,12 @@ afterEach(() => {
 });
 
 describe('simulator entity artwork', () => {
+    test('Promote has no native ability icon and remains text-only even with a loaded ability sheet', () => {
+        const host = render(simEntityLabelHtml('/abilities/promote', 'Promote L75'));
+        expect(host.textContent).toBe('Promote L75');
+        expect(host.children).toHaveLength(0);
+        expect(simEntityIconHtml('/abilities/promote')).toBe('');
+    });
     test.each([
         ['/actions/combat/golem_cave', 'actions', 'zone', '石像鬼洞窟 T5'],
         ['/actions/combat/chimerical_den', 'actions', 'zone', '[D] Chimerical Den T2'],

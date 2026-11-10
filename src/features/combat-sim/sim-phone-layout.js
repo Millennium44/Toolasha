@@ -25,6 +25,21 @@ export const SIM_PHONE_CSS = `
             max-width: 100vw !important;
             box-sizing: border-box;
         }
+        /* Drops and costs have six numeric columns wider than a phone. Give the item its own
+           full-width line, then share the next line between the same six aligned readings. */
+        .mwi-csim-loot-row {
+            display: grid !important;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+        }
+        .mwi-csim-loot-row > span {
+            min-width: 0 !important;
+            white-space: normal !important;
+            overflow-wrap: anywhere;
+        }
+        .mwi-csim-loot-row > span:first-child {
+            grid-column: 1 / -1;
+            overflow: visible !important;
+        }
         /* Tea, Coffee and Food share one line; a grid keeps each label beside its select */
         #mwi-labsim-crate-row {
             display: grid !important;

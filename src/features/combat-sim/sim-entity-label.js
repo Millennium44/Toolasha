@@ -49,11 +49,14 @@ function escapeText(value) {
 
 /**
  * Draw only supported game identities using the sheet already discovered in the page.
- * Missing sheets reserve the same space and are retried on the next render, without a fetch or observer.
+ * Missing sheets reserve the same space. Open simulator panels hydrate these spacers when the game draws the sheet.
  * @param {string|null} hrid - Explicit game identity
  * @returns {string} Decorative SVG/spacer HTML, or an empty string for unsupported identities
  */
 export function simEntityIconHtml(hrid) {
+    // The native abilityIconMap has no Promote entry; its helper returns no icon.
+    // Keep this monster-only ability readable instead of inventing a blank SVG fragment.
+    if (hrid === '/abilities/promote') return '';
     const entity = ENTITIES.find(({ pattern }) => pattern.test(hrid || ''));
     if (!entity || typeof document === 'undefined') return '';
     const asset = entity.resolve
@@ -61,6 +64,7 @@ export function simEntityIconHtml(hrid) {
         : { sheet: entity.sheet, id: entity.spriteId ? entity.spriteId(hrid) : hrid };
     if (!asset?.id) return '';
     const icon = spriteIcon(asset.id, 18, asset.sheet);
+    if (icon.tagName.toLowerCase() === 'span') icon.setAttribute('data-sim-icon-pending', asset.sheet);
     icon.setAttribute('aria-hidden', 'true');
     icon.setAttribute('focusable', 'false');
     if (entity.type === 'item') icon.setAttribute('data-sim-item-icon', hrid);

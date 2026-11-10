@@ -3326,6 +3326,44 @@ describe('item icons in the shared Lab and Combat editor (#862)', () => {
             host.querySelector('[data-equipment-slot="/equipment_types/off_hand"]').parentElement.querySelector('svg')
         ).toBeNull();
     });
+    test.each(['equipment', 'consumable'])(
+        'late popup artwork reaches the %s picker without changing selection',
+        async (kind) => {
+            const { watchSimIconRefresh } = await import('./sim-icon-refresh.js');
+            const { default: domObserver } = await import('../../core/dom-observer.js');
+            sprite.replaceChildren();
+            resetSpriteSheetCache();
+            const owner = document.createElement('section');
+            const editorEl = document.createElement('div');
+            owner.append(editorEl);
+            document.body.append(owner);
+            const editor = new SimEditor({ editorEl });
+            const dto = { ...emptyDTO('p1'), food: [null] };
+            const original = structuredClone(dto);
+            const stop = watchSimIconRefresh(owner);
+            try {
+                if (kind === 'equipment') editor._openEquipmentPicker('/equipment_types/main_hand', dto, gameData);
+                else editor._openConsumablePicker('food', 0, dto, gameData);
+                const picker = document.getElementById(`mwi-csim-${kind}-picker`);
+                await Promise.resolve();
+                expect(picker.querySelector('[data-sim-icon-pending]')).not.toBeNull();
+                sprite.innerHTML = '<svg><use href="/static/media/items_sprite.late.svg#coin"></use></svg>';
+                domObserver.dispatch(sprite);
+                await Promise.resolve();
+                expect(picker.querySelector('[data-sim-icon-pending]')).toBeNull();
+                expect(picker.querySelector('use')).not.toBeNull();
+                expect(dto).toEqual(original);
+                document
+                    .getElementById(kind === 'equipment' ? 'mwi-csim-equip-picker-close' : 'mwi-csim-picker-close')
+                    .click();
+                expect(document.getElementById(`mwi-csim-${kind}-picker`)).toBeNull();
+                expect(document.getElementById(`mwi-csim-${kind}-backdrop`)).toBeNull();
+            } finally {
+                stop();
+                owner.remove();
+            }
+        }
+    );
     test('equipment picker icons select their enclosing row and removing a slot stays icon-free', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });
         vi.spyOn(editor, 'renderEditor').mockImplementation(() => {});
@@ -3374,6 +3412,61 @@ describe('ability artwork in the shared simulator editor', () => {
         document.getElementById('mwi-csim-ability-backdrop')?.remove();
         resetSpriteSheetCache();
     });
+    test.each([false, true])(
+        'late popup artwork preserves ability picker and trigger editor controls in Lab mode %s',
+        async (labMode) => {
+            const { watchSimIconRefresh } = await import('./sim-icon-refresh.js');
+            const { default: domObserver } = await import('../../core/dom-observer.js');
+            sprite.replaceChildren();
+            resetSpriteSheetCache();
+            const owner = document.createElement('section');
+            const editorEl = document.createElement('div');
+            owner.append(editorEl);
+            document.body.append(owner);
+            const editor = new SimEditor({ editorEl, labMode });
+            vi.spyOn(editor, 'renderEditor').mockImplementation(() => {});
+            const dto = { ...emptyDTO('p1'), abilities: [null, { hrid: heal, level: 75 }] };
+            editorEl.innerHTML = editor._renderAbilitiesSection(dto, data);
+            const stop = watchSimIconRefresh(owner);
+            try {
+                editor._openAbilityPicker(1, dto, data);
+                editor._openTriggerEditor('abilities', 1, dto, data);
+                const picker = document.getElementById('mwi-csim-ability-picker');
+                const trigger = document.getElementById('mwi-csim-trigger-editor');
+                const input = picker.querySelector('input');
+                input.value = 'wat';
+                input.focus();
+                await Promise.resolve();
+                expect(picker.querySelectorAll('[data-sim-icon-pending]')).toHaveLength(2);
+                expect(trigger.querySelectorAll('[data-sim-icon-pending]')).toHaveLength(1);
+                sprite.innerHTML = '<svg><use xlink:href="/static/media/abilities_sprite.late.svg#heal"></use></svg>';
+                domObserver.dispatch(sprite);
+                await Promise.resolve();
+                expect(picker.querySelectorAll('[data-sim-icon-pending]')).toHaveLength(0);
+                expect(trigger.querySelectorAll('[data-sim-icon-pending]')).toHaveLength(0);
+                expect(picker.querySelectorAll('use')).toHaveLength(2);
+                expect(trigger.querySelectorAll('use')).toHaveLength(1);
+                expect(editorEl.querySelectorAll('use')).toHaveLength(1);
+                expect(picker.querySelector('input')).toBe(input);
+                expect(input.value).toBe('wat');
+                expect(document.activeElement).toBe(input);
+                expect(dto.abilities[1]).toEqual({ hrid: heal, level: 75 });
+                picker
+                    .querySelector(`[data-pick-hrid="${strike}"] svg`)
+                    .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                expect(dto.abilities[1]).toEqual({ hrid: strike, level: 75, triggers: null });
+                expect(document.getElementById('mwi-csim-ability-picker')).toBeNull();
+                document.getElementById('mwi-csim-trigger-close').click();
+                expect(document.getElementById('mwi-csim-trigger-editor')).toBeNull();
+                expect(document.getElementById('mwi-csim-trigger-backdrop')).toBeNull();
+            } finally {
+                stop();
+                owner.remove();
+                document.getElementById('mwi-csim-trigger-editor')?.remove();
+                document.getElementById('mwi-csim-trigger-backdrop')?.remove();
+            }
+        }
+    );
     test.each([false, true])('ability levels and empty slots remain intact in Lab mode %s', (labMode) => {
         const editor = new SimEditor({ editorEl: document.createElement('div'), labMode });
         const dto = { ...emptyDTO('p1'), abilities: [null, { hrid: heal, level: 75 }] };
@@ -3386,6 +3479,22 @@ describe('ability artwork in the shared simulator editor', () => {
         expect(host.querySelector('all')).toBeNull();
         expect(host.querySelector('[data-ability-slot="0"]').parentElement.querySelector('svg')).toBeNull();
         expect(dto).toEqual(original);
+    });
+    test.each([false, true])('Promote remains a readable text-only special ability in Lab mode %s', (labMode) => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), labMode });
+        const promote = '/abilities/promote';
+        const gameData = { abilityDetailMap: { [promote]: { name: 'Promote', isSpecialAbility: true } } };
+        const dto = { ...emptyDTO('p1'), abilities: [{ hrid: promote, level: 75 }] };
+        const host = document.createElement('div');
+        host.innerHTML = editor._renderAbilitiesSection(dto, gameData);
+        expect(host.textContent).toContain('Promote');
+        expect(host.querySelector('[data-ability-idx="0"]').value).toBe('75');
+        expect(host.querySelector('[data-sim-entity-icon]')).toBeNull();
+        editor._openAbilityPicker(0, dto, gameData);
+        const choice = document.querySelector(`[data-pick-hrid="${promote}"]`);
+        expect(choice.textContent).toContain('Promote');
+        expect(choice.querySelector('svg, [data-sim-icon-pending]')).toBeNull();
+        document.getElementById('mwi-csim-ability-picker-close').click();
     });
     test('clicking an ability image selects it and clearing/closing leaves no picker behind', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });
