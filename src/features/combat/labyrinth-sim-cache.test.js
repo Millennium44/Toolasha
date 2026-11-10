@@ -31,6 +31,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key) => (storageRecords.map.has(key) ? storageRecords.map.get(key) : null),
+        tryGet: async (key) => ({ found: true, value: storageRecords.map.get(key) ?? [] }),
         getJSON: async () => null,
         set: async (key, value) => {
             storageWrites.list.push([key, value]);

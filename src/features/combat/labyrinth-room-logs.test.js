@@ -1451,13 +1451,16 @@ describe('the capture button knows its three states', () => {
 });
 
 describe('the pool tab browses what the recorder holds', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         document.body.innerHTML = '';
         labyrinthRoomLogs.panel = null;
         labyrinthRoomLogs.expandedPoolGroups = new Set();
         labyrinthRoomLogs.poolAllGear = false;
         labyrinthRoomLogs.simSource = { fingerprint: () => 'fp-now' };
         labFightRecorder.clearRecording();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        storageMock.reset();
+        labFightRecorder.forget();
         const base = {
             monsterName: 'Cyclops',
             roomLevel: 200,
@@ -1581,12 +1584,12 @@ describe('the pool tab browses what the recorder holds', () => {
         expect(labyrinthRoomLogs.clearButton.style.display).toBe('none');
     });
 
-    test('Save pool hands the recorder the summary to embed', () => {
+    test('Save pool hands the recorder the summary to embed', async () => {
         const spy = vi.spyOn(labFightRecorder, 'downloadRecording').mockReturnValue(true);
         labyrinthRoomLogs.render(false);
         const save = [...labyrinthRoomLogs.panel.querySelectorAll('button')].find((b) => b.textContent === 'Save pool');
         save.click();
-        expect(spy).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
         expect(spy.mock.calls[0][0].poolSummary.length).toBeGreaterThan(0);
         spy.mockRestore();
     });

@@ -458,7 +458,21 @@ const record = createPersistedRecord({
     base: KEY,
     store: STORE,
     empty: () => storedRecord([]),
-    merge: mergeAttempts,
+    merge: (stored, held) => {
+        // The second argument is this recorder's memory, not a remote peer.
+        // Its already-held Reset remains trusted even before its write lands:
+        // otherwise the mass-delete guard resurrects pools above 100 fights.
+        // Keep this local to persistence; sync still uses mergeAttempts below
+        // and must refuse an unaccepted remote clear of a large pool.
+        const heldClear = clearedAtOf(held);
+        const base =
+            heldClear > clearedAtOf(stored) &&
+            replayBuildFormatOf(stored) <= REPLAY_BUILD_FORMAT &&
+            replayBuildFormatOf(held) <= REPLAY_BUILD_FORMAT
+                ? { ...stored, entries: entriesOf(stored), clearedAt: heldClear }
+                : stored;
+        return mergeAttempts(base, held);
+    },
     label: 'LabyrinthFightRecorder',
     onPulled: () => refreshFromPull(),
 });
@@ -506,24 +520,28 @@ function modelMarker() {
  * Read the accumulated fights back from storage, once.
  *
  * Called from the room-log feature's initialize so the pool survives a reload.
- * Idempotent, and safe to call before it has resolved — the in-memory list is
- * simply empty until it does.
+ * Idempotent, and safe to call before it has resolved. Callers that need the
+ * complete pool must await this read rather than use the session-only list.
  *
- * @returns {Promise<Array<Object>>}
+ * @returns {Promise<Array<Object>|null>} null when the read failed or a reset overtook it; safe to retry
  */
 export async function load() {
     if (record.isLoaded()) return attempts;
     if (loading) return loading;
+    const started = poolGeneration;
     loading = (async () => {
         try {
-            record.set(storedRecord(internReplayBuilds(attempts)));
-            await record.load();
+            record.set(storedRecord(internReplayBuilds(attempts), clearedAtOf(record.get())));
+            if (!(await record.load()) || started !== poolGeneration) return null;
             attempts = entriesOf(readStored(record.get()));
+            return attempts;
         } catch (error) {
             console.error('[LabyrinthFightRecorder] Reading the fight pool failed:', error);
+            return null;
+        } finally {
+            // An old read must not release the arriving character's newer load.
+            if (started === poolGeneration) loading = null;
         }
-        loading = null;
-        return attempts;
     })();
     return loading;
 }
@@ -593,11 +611,11 @@ export function onPoolChanged(listener) {
  * @returns {Promise<boolean>} Whether a write landed
  */
 function persist() {
-    // The epoch of a clear lives on the stored copy; memory carries none of its
-    // own and the fold takes the newer of the two
+    // Keep a Reset already held in memory even while its write is pending or
+    // storage still returns an older copy.
     // A save with nothing stored yet writes memory as-is, so the interned form
     // has to be what memory holds by the time save() reads it
-    record.set(storedRecord(internReplayBuilds(attempts)));
+    record.set(storedRecord(internReplayBuilds(attempts), clearedAtOf(record.get())));
     return record
         .save()
         .then((landed) => {

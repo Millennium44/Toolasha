@@ -117,6 +117,8 @@ beforeEach(async () => {
     recorder.clearRecording();
     await settle();
     storageMock.reset();
+    // A fresh fixture has no Reset epoch in either storage or memory.
+    recorder.forget();
 });
 
 describe('labyrinth fight recorder', () => {

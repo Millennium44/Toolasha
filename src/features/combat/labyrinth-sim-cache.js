@@ -882,10 +882,18 @@ export const simCacheMethods = {
      * @returns {Promise<{cohorts: Array<Object>, selected: Array<string>, max: number}>}
      */
     async replayCohortOptions() {
+        const epoch = this.simEpoch?.() ?? 0;
+        const character = dataManager.getCurrentCharacterId?.();
+        const stillCurrent = () =>
+            (this.simEpoch?.() ?? epoch) === epoch && dataManager.getCurrentCharacterId?.() === character;
+        const loaded = await labFightRecorder.load();
+        if (!stillCurrent()) return null;
+        if (loaded === null) throw new Error('The recorded fight pool could not be loaded');
         const fingerprint = this._snapshotContentFingerprint();
         const { candidates } = replayCandidates(labFightRecorder.recordedAttempts(), fingerprint);
         const itemDetailMap = buildGameDataPayload()?.itemDetailMap;
         const stored = await readReplayCohortSelection();
+        if (!stillCurrent()) return null;
         const { selection } = applyReplayCohortSelection(candidates, stored);
         return {
             cohorts: describeReplayCohorts(candidates, itemDetailMap),
@@ -918,7 +926,12 @@ export const simCacheMethods = {
      */
     async replayRecordedFights() {
         const epoch = this.simEpoch?.() ?? 0;
-        const stillCurrent = () => (this.simEpoch?.() ?? epoch) === epoch;
+        const character = dataManager.getCurrentCharacterId?.();
+        const stillCurrent = () =>
+            (this.simEpoch?.() ?? epoch) === epoch && dataManager.getCurrentCharacterId?.() === character;
+        const loaded = await labFightRecorder.load();
+        if (!stillCurrent()) return { groups: [], diagnostics: { cancelled: true, excluded: {} } };
+        if (loaded === null) throw new Error('The recorded fight pool could not be loaded');
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts();
         const { candidates, excluded } = replayCandidates(attempts, fingerprint);

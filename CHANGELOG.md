@@ -29,16 +29,26 @@ A running Max calculation stops when you edit the quantity, open a newer calcula
 ### Equipment level warnings
 
 Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now warn when your current skill levels are too low to equip an item. Advisor warnings explicitly refer to your character, even when you are simulating a party member or future levels.
+
 ### Collection favorites survive migration failures
 
 Saved favorites and filters are preserved if migration or storage fails, and editing waits until the saved data can be recovered. Overlapping loads and character changes no longer replace newer favorites with stale data.
+
 ### Task protection follows the active character
 
 Task protection and guided reroll advice no longer pick up another character’s delayed settings. Changes made during loading are preserved, and saved limits retain their intended values.
 
+### Labyrinth exports explain when login is needed
+
+Save pool and Sanitized show “Character not ready” before login, instead of reporting a failed or empty load.
+
 ### Combat Sim sees your party before everyone readies up
 
 While you fought solo waiting for a party to ready, each new fight made the Combat Sim think you were alone, so Reset to Party and fetching party loadouts stayed greyed out. The party you are in now counts until it starts fighting together.
+
+### Labyrinth replay and exports wait for saved fights
+
+Replay, cohort selection, Save pool and Sanitized exports now wait for saved fights to finish loading, avoiding incomplete results during startup. Failed loads can be retried, and resetting a large history remains protected from old entries returning.
 
 ### Equipment Watch follows the pricing mode
 

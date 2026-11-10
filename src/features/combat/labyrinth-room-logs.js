@@ -554,6 +554,9 @@ class LabyrinthRoomLogs {
         // First of all, so an `initialize()` parked on the record read cannot
         // resume into the fields this teardown is about to null.
         noteTeardown(this);
+        this._poolExportRequest = null;
+        this._sanitizedExportRequest = null;
+        this._cohortReadRequest = null;
         // Down first, and before anything below can schedule work. The feature
         // is going away, and the one path that arms a timer during a teardown
         // — `finalizeActiveSession`'s experience-grace timeout — checks this
@@ -2298,6 +2301,7 @@ class LabyrinthRoomLogs {
      * press would treat as stale.
      */
     async onCohortsClicked() {
+        if (this._cohortReadRequest) return;
         if (this.cohortPickerOpen) {
             this.cohortPickerOpen = false;
             this.cohortChoices = null;
@@ -2315,11 +2319,14 @@ class LabyrinthRoomLogs {
         // every time and the picker never opened during a fight — which is
         // exactly when a player reaches for it.
         const ticket = captureOwner(this);
+        this._cohortReadRequest = ticket;
         let choices = null;
         try {
             choices = (await this.simSource?.replayCohorts?.()) || null;
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the replay cohorts failed:', error);
+        } finally {
+            if (this._cohortReadRequest === ticket) this._cohortReadRequest = null;
         }
         // A read that lands after teardown — including a same-character
         // reconnect — describes a pool that is not this panel's any more.
@@ -2711,10 +2718,7 @@ class LabyrinthRoomLogs {
             '; color:' +
             GAME_COLORS.text +
             '; font-size:10px; cursor:pointer; padding:0 6px;';
-        save.addEventListener('click', () => {
-            const wrote = labFightRecorder.downloadRecording({ poolSummary: groups, ...this.exportIdentity() });
-            this.flashButton(save, wrote ? 'Saved ✓' : 'Nothing yet', 'Save pool');
-        });
+        save.addEventListener('click', () => this.exportPool(save));
         header.appendChild(save);
         list.appendChild(header);
 
@@ -3001,7 +3005,13 @@ class LabyrinthRoomLogs {
         box.appendChild(title);
 
         if (result?.error) {
-            box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
+            box.appendChild(
+                this.makeNote('The replay could not run — the fight record, sim or loadout was unavailable.')
+            );
+            return box;
+        }
+        if (result?.diagnostics?.cancelled) {
+            box.appendChild(this.makeNote('The replay was cancelled. Run it again when ready.'));
             return box;
         }
 
@@ -3648,15 +3658,44 @@ class LabyrinthRoomLogs {
      * text report rounds away, goes out as-is.
      */
     async exportSanitized() {
+        if (this._sanitizedExportRequest) return;
+        const ticket = captureOwner(this);
+        const button = this.sanitizedButton;
+        if (!ticket.charId) {
+            this.flashButton(button, 'Character not ready', 'Sanitized');
+            return;
+        }
+        this._sanitizedExportRequest = ticket;
+        if (button) button.disabled = true;
+        try {
+            const loaded = await labFightRecorder.load();
+            if (!stillOurs(ticket)) return;
+            if (loaded === null) {
+                this.flashButton(button, 'Load failed', 'Sanitized');
+                return;
+            }
+            await this._exportLoadedSanitized(ticket, button);
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Loading the fight pool for export failed:', error);
+            if (stillOurs(ticket)) this.flashButton(button, 'Load failed', 'Sanitized');
+        } finally {
+            if (this._sanitizedExportRequest === ticket) this._sanitizedExportRequest = null;
+            if (stillOurs(ticket) && button) button.disabled = false;
+        }
+    }
+
+    /** Export only after a readable pool load, while this character still owns the request. */
+    async _exportLoadedSanitized(ticket, button) {
         let snapshot = null;
         try {
             snapshot = this.lastAccuracy || (await this.simSource?.accuracy?.()) || null;
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Reading the fight record for export failed:', error);
         }
+        if (!stillOurs(ticket)) return;
         const attempts = labFightRecorder.recordedAttempts();
         if (!snapshot?.rows?.length && !attempts.length) {
-            this.flashButton(this.sanitizedButton, 'Nothing yet', 'Sanitized');
+            this.flashButton(button, 'Nothing yet', 'Sanitized');
             return;
         }
 
@@ -3667,7 +3706,37 @@ class LabyrinthRoomLogs {
             character: this.exportIdentity(),
         });
         const saved = downloadJson({ ...sanitizeExport(file), sanitized: true }, 'toolasha-labyrinth-accuracy');
-        this.flashButton(this.sanitizedButton, saved ? 'Saved ✓' : 'Failed', 'Sanitized');
+        this.flashButton(button, saved ? 'Saved ✓' : 'Failed', 'Sanitized');
+    }
+
+    /** Save the complete pool, with a fresh summary using the view's selected gear scope. */
+    async exportPool(button) {
+        if (this._poolExportRequest) return;
+        const ticket = captureOwner(this);
+        if (!ticket.charId) {
+            this.flashButton(button, 'Character not ready', 'Save pool');
+            return;
+        }
+        this._poolExportRequest = ticket;
+        const fingerprint = this.poolAllGear ? undefined : this.simSource?.fingerprint?.() || undefined;
+        if (button) button.disabled = true;
+        try {
+            const loaded = await labFightRecorder.load();
+            if (!stillOurs(ticket)) return;
+            if (loaded === null) {
+                this.flashButton(button, 'Load failed', 'Save pool');
+                return;
+            }
+            const poolSummary = summarizePool(labFightRecorder.recordedAttempts(fingerprint));
+            const wrote = labFightRecorder.downloadRecording({ poolSummary, ...this.exportIdentity() });
+            this.flashButton(button, wrote ? 'Saved ✓' : 'Nothing yet', 'Save pool');
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Loading the fight pool for export failed:', error);
+            if (stillOurs(ticket)) this.flashButton(button, 'Load failed', 'Save pool');
+        } finally {
+            if (this._poolExportRequest === ticket) this._poolExportRequest = null;
+            if (stillOurs(ticket) && button) button.disabled = false;
+        }
     }
 
     /**
