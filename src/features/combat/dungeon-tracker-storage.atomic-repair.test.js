@@ -670,3 +670,253 @@ describe('strict multi-key storage contract', () => {
         expect(runIdentity((await reload())[0])).not.toBe(runIdentity(broken()));
     });
 });
+
+describe('manual deletion across repaired identities', () => {
+    test.each([false, true])(
+        'a manual removal follows the durable replacement when the displayed old identity is stale, refreshed cache = %s',
+        async (refresh) => {
+            const other = new history.constructor();
+            try {
+                await other.getAllRuns();
+                expect(await history.repairSwappedDateRuns()).toBe(1);
+                if (refresh) other._resetCache();
+                expect(await other.deleteRun(runIdentity(broken()))).toBe(true);
+                expect(await reload()).toEqual([]);
+                expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+                expect(fake.data.get(RUNS_DELETED_KEY)).toContainEqual(
+                    tombstoneFor({ ...broken(), ...rederiveSwappedRun(broken()) })
+                );
+            } finally {
+                other._resetCache();
+            }
+        }
+    );
+
+    test.each([RUNS_KEY, RUNS_DELETED_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY])(
+        'a failed %s write retains explicit deletion intent for retry without partially removing recovery evidence',
+        async (key) => {
+            const other = new history.constructor();
+            try {
+                await other.getAllRuns();
+                await history.repairSwappedDateRuns();
+                const before = structuredClone(fake.data);
+                fake.hooks.fault = { operation: 'put', key };
+                expect(await other.deleteRun(runIdentity(broken()))).toBe(false);
+                expect(fake.data).toEqual(before);
+                expect(await other.flushPendingSave()).toBe(true);
+                expect(await reload()).toEqual([]);
+                expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+            } finally {
+                other._resetCache();
+            }
+        }
+    );
+
+    test('an automatic stale-tab outlier scrub does not turn the repair tombstone into deletion of the good replacement', async () => {
+        const healthy = Array.from({ length: 5 }, (_, index) => ({
+            ...normal('A,B'),
+            dungeonName: broken().dungeonName,
+            timestamp: new Date(2026, 9, 10 + index, 10).toISOString(),
+        }));
+        fake.data.set(RUNS_KEY, [broken(), ...healthy]);
+        const other = new history.constructor();
+        try {
+            await other.getAllRuns();
+            expect(await history.repairSwappedDateRuns()).toBe(1);
+            expect(await other.scrubOutlierRuns()).toBe(1);
+            const repaired = { ...broken(), ...rederiveSwappedRun(broken()) };
+            expect(await reload()).toEqual(expect.arrayContaining([...healthy, repaired]));
+            expect(fake.data.get(RUNS_KEY)).toHaveLength(6);
+            expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([
+                { original: tombstoneFor(broken()), replacement: repaired },
+            ]);
+        } finally {
+            other._resetCache();
+        }
+    });
+
+    test('a later manual deletion during commit remains pending if its own write fails', async () => {
+        const second = { ...broken(), teamKey: 'E,F' };
+        fake.data.set(RUNS_KEY, [broken(), second]);
+        const other = new history.constructor();
+        try {
+            await other.getAllRuns();
+            expect(await history.repairSwappedDateRuns()).toBe(2);
+            const entered = deferred();
+            const release = deferred();
+            fake.hooks.beforeCommit = async () => {
+                entered.resolve();
+                await release.promise;
+            };
+            const first = other.deleteRun(runIdentity(broken()));
+            await entered.promise;
+            const later = other.deleteRun(runIdentity(second));
+            // Give deleteRun's load continuation time to record the newer intent.
+            await Promise.resolve();
+            fake.hooks.fault = { operation: 'put', key: RUNS_KEY };
+            release.resolve();
+            expect(await first).toBe(true);
+            expect(await later).toBe(false);
+            expect(await other.flushPendingSave()).toBe(true);
+            expect(await reload()).toEqual([]);
+            expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+        } finally {
+            other._resetCache();
+        }
+    });
+
+    test('an unrelated manual identity does not remove repaired runs', async () => {
+        expect(await history.repairSwappedDateRuns()).toBe(1);
+        expect(await history.deleteRun(runIdentity(normal()))).toBe(true);
+        await assertRepaired();
+    });
+});
+
+describe('manual repair deletion and revival ordering', () => {
+    async function reviveAfterFailedDelete() {
+        await history.repairSwappedDateRuns();
+        const replacement = fake.data.get(RUNS_KEY)[0];
+        fake.hooks.fault = { operation: 'put', key: RUNS_KEY };
+        expect(await history.deleteRun(runIdentity(replacement))).toBe(false);
+        expect(await history.saveTeamRun('A,B', replacement)).toBe(true);
+        expect(history._revived.has(runIdentity(replacement))).toBe(true);
+        return replacement;
+    }
+
+    test('a manual old-identity removal supersedes an earlier replacement revival without resurrecting on flush', async () => {
+        await reviveAfterFailedDelete();
+        expect(await history.deleteRun(runIdentity(broken()))).toBe(true);
+        expect(await history.getAllRuns()).toEqual([]);
+        expect(await history.flushPendingSave()).toBe(false);
+        expect(await reload()).toEqual([]);
+        expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+    });
+
+    test('a failed translated removal retains its resolved intent over an earlier revival for retry', async () => {
+        await reviveAfterFailedDelete();
+        fake.hooks.fault = { operation: 'put', key: RUNS_KEY };
+        expect(await history.deleteRun(runIdentity(broken()))).toBe(false);
+        expect(await history.flushPendingSave()).toBe(true);
+        expect(await history.getAllRuns()).toEqual([]);
+        expect(await reload()).toEqual([]);
+    });
+
+    test('a timed-out translated removal remains effective when its late commit retires the backup before retry', async () => {
+        await reviveAfterFailedDelete();
+        const entered = deferred();
+        const release = deferred();
+        fake.hooks.beforeCommit = async () => {
+            entered.resolve();
+            await release.promise;
+        };
+        storage.writeTimeoutMs = 5;
+        const deleting = history.deleteRun(runIdentity(broken()));
+        await entered.promise;
+        expect(await deleting).toBe(false);
+        release.resolve();
+        await storage.tryGet(RUNS_KEY, RUNS_STORE);
+        expect(fake.data.get(RUNS_KEY)).toEqual([]);
+        expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+        storage.writeTimeoutMs = timeout;
+        expect(await history.flushPendingSave()).toBe(true);
+        expect(await history.getAllRuns()).toEqual([]);
+        expect(await reload()).toEqual([]);
+    });
+
+    test('repair re-entry resolves pending manual intent after its earlier write failed before the callback', async () => {
+        await reviveAfterFailedDelete();
+        fake.hooks.fault = { operation: 'get', key: RUNS_DATE_REPAIR_BACKUPS_KEY };
+        expect(await history.deleteRun(runIdentity(broken()))).toBe(false);
+        expect(await history.repairSwappedDateRuns()).toBe(0);
+        expect(await history.getAllRuns()).toEqual([]);
+        await history.flushPendingSave();
+        expect(await reload()).toEqual([]);
+        expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+    });
+
+    test('a timed-out repair re-entry retains resolved manual intent after its late commit retires the mapping', async () => {
+        await reviveAfterFailedDelete();
+        fake.hooks.fault = { operation: 'get', key: RUNS_DATE_REPAIR_BACKUPS_KEY };
+        expect(await history.deleteRun(runIdentity(broken()))).toBe(false);
+        const entered = deferred();
+        const release = deferred();
+        fake.hooks.beforeCommit = async () => {
+            entered.resolve();
+            await release.promise;
+        };
+        storage.writeTimeoutMs = 5;
+        const repairing = history.repairSwappedDateRuns();
+        await entered.promise;
+        expect(await repairing).toBeNull();
+        release.resolve();
+        await storage.tryGet(RUNS_KEY, RUNS_STORE);
+        expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+        storage.writeTimeoutMs = timeout;
+        expect(await history.flushPendingSave()).toBe(true);
+        expect(await history.getAllRuns()).toEqual([]);
+        expect(await reload()).toEqual([]);
+    });
+
+    test.each(['beforeStart', 'beforeCommit'])(
+        'a genuinely later revival at %s is not erased by an earlier translated removal',
+        async (boundary) => {
+            await history.repairSwappedDateRuns();
+            const replacement = fake.data.get(RUNS_KEY)[0];
+            const entered = deferred();
+            const release = deferred();
+            fake.hooks[boundary] = async () => {
+                entered.resolve();
+                await release.promise;
+            };
+            const staleDeleting = history.deleteRun(runIdentity(broken()));
+            await entered.promise;
+            const directDeleting = history.deleteRun(runIdentity(replacement));
+            await Promise.resolve();
+            expect(await history.saveTeamRun('A,B', replacement)).toBe(true);
+            release.resolve();
+            expect(await staleDeleting).toBe(true);
+            expect(await directDeleting).toBe(true);
+            await history.flushPendingSave();
+            expect((await reload()).map(runIdentity)).toEqual([runIdentity(replacement)]);
+        }
+    );
+});
+
+describe('translated manual deletion failure boundaries', () => {
+    test.each(['read', 'abort'])(
+        'a failed %s leaves durable recovery state unchanged and retries the stale manual removal',
+        async (boundary) => {
+            const other = new history.constructor();
+            try {
+                await other.getAllRuns();
+                await history.repairSwappedDateRuns();
+                const before = structuredClone(fake.data);
+                if (boundary === 'read') fake.hooks.fault = { operation: 'get', key: RUNS_DATE_REPAIR_BACKUPS_KEY };
+                else fake.hooks.abortCommit = true;
+                expect(await other.deleteRun(runIdentity(broken()))).toBe(false);
+                expect(fake.data).toEqual(before);
+                expect(await other.flushPendingSave()).toBe(true);
+                expect(await reload()).toEqual([]);
+                expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+            } finally {
+                other._resetCache();
+            }
+        }
+    );
+
+    test('real teardown retries a failed stale manual removal before closing storage', async () => {
+        const other = new history.constructor();
+        try {
+            await other.getAllRuns();
+            await history.repairSwappedDateRuns();
+            fake.hooks.fault = { operation: 'put', key: RUNS_KEY };
+            expect(await other.deleteRun(runIdentity(broken()))).toBe(false);
+            await storage.closeForTeardown();
+            await other._persistChain;
+            expect(fake.data.get(RUNS_KEY)).toEqual([]);
+            expect(fake.data.get(RUNS_DATE_REPAIR_BACKUPS_KEY)).toEqual([]);
+        } finally {
+            other._resetCache();
+        }
+    });
+});

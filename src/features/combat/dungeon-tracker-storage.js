@@ -749,6 +749,12 @@ class DungeonTrackerStorage {
          * device cannot otherwise tell from a run it has simply never seen.
          */
         this._deleted = new Map();
+        // Only explicit UI removals may follow a repaired identity. A repair's
+        // own tombstone, or an automatic scrub of the old invalid run, must
+        // never erase its good replacement. Sequence tokens distinguish older
+        // revivals and requests from new ones made while a write commits.
+        this._manualDeletions = new Map();
+        this._mutationSequence = 0;
         /**
          * Identities recorded again since a removal, so the fold that unions
          * the stored and downloaded tombstones in does not put the removal
@@ -763,7 +769,7 @@ class DungeonTrackerStorage {
          * deletion the user made must survive a backfill re-observing the run,
          * or no delete would ever stick.
          */
-        this._revived = new Set();
+        this._revived = new Map();
         /** Whether the tombstones have changed since they were last written */
         this._deletedDirty = false;
         /** One read-merge-write at a time; two interleaved would each miss the other */
@@ -922,7 +928,7 @@ class DungeonTrackerStorage {
         // it must not cost a tombstone write — a backfill appends dozens
         if (!this._deleted.has(id)) return;
         this._deleted.delete(id);
-        this._revived.add(id);
+        this._revived.set(id, ++this._mutationSequence);
         this._deletedDirty = true;
     }
 
@@ -931,10 +937,11 @@ class DungeonTrackerStorage {
      * Both sides obey the latest clear and tombstones, including a repair another
      * tab committed after this session loaded the original history.
      * @param {Record<string, *>} stored - Related keys from one transaction
-     * @returns {{runs: Array, deleted: Map, clearedAt: number, backups: Array}} Folded state
+     * @param {Map<string, number>} [manualDeletions] - Explicit removals captured by the committing write
+     * @returns {{runs: Array, deleted: Map, clearedAt: number, backups: Array, manualDeleted: Map}} Folded state
      * @private
      */
-    _mergeStoredRunState(stored) {
+    _mergeStoredRunState(stored, manualDeletions = this._manualDeletions) {
         const clearedAt = mergeClearEpochs(stored[RUNS_CLEARED_KEY], this._clearedAt);
         const deleted = toTombstoneMap(
             pruneTombstones(mergeDeletedRuns(stored[RUNS_DELETED_KEY], this._deleted), clearedAt).filter(
@@ -942,8 +949,20 @@ class DungeonTrackerStorage {
             )
         );
         const backups = mergeRunRepairBackups(stored[RUNS_DATE_REPAIR_BACKUPS_KEY], null);
-        for (const { original } of backups) {
+        const manualDeleted = new Map();
+        for (const { original, replacement } of backups) {
             if (original.at === null || original.at > clearedAt) deleted.set(original.id, original.at);
+            // Another updated tab may still display the original identity.
+            // Its manual delete follows this transaction's durable mapping,
+            // even if the run vanished from its cache while the UI was open.
+            const replacementId = runIdentity(replacement);
+            if ((manualDeletions.get(original.id) || 0) > (this._revived.get(replacementId) || 0)) {
+                const replacementAt = runTime(replacement);
+                if (replacementAt > clearedAt) {
+                    deleted.set(replacementId, replacementAt);
+                    manualDeleted.set(replacementId, replacementAt);
+                }
+            }
         }
         const retained = backups.filter(
             ({ original, replacement }) =>
@@ -965,6 +984,7 @@ class DungeonTrackerStorage {
             deleted,
             clearedAt,
             backups: refreshed,
+            manualDeleted,
         };
     }
 
@@ -977,6 +997,16 @@ class DungeonTrackerStorage {
      * @private
      */
     _entriesForRunState(stored, state, writeRuns = false) {
+        // Both ordinary saves and repair re-entry can retire the mapping.
+        // Remember resolved manual intent before either writes, just as
+        // deleteRun records a direct tombstone before persistence. On abort or
+        // timeout it must remain retryable even if a late commit retires the
+        // backup. The fold already rejected intent older than a revival.
+        for (const [identity, at] of state.manualDeleted) {
+            this._revived.delete(identity);
+            this._deleted.set(identity, at);
+            this._deletedDirty = true;
+        }
         const entries = {};
         if (writeRuns || JSON.stringify(state.runs) !== JSON.stringify(stored[RUNS_KEY] || [])) {
             entries[RUNS_KEY] = state.runs;
@@ -1089,17 +1119,22 @@ class DungeonTrackerStorage {
         const generation = this._cacheGeneration;
         const run = async () => {
             if (generation !== this._cacheGeneration) return false;
+            let appliedManualDeletions;
             const result = await storage.updateMany(
                 this.unifiedStoreName,
                 [RUNS_KEY, RUNS_DELETED_KEY, RUNS_CLEARED_KEY, RUNS_DATE_REPAIR_BACKUPS_KEY],
                 (stored) => {
                     if (generation !== this._cacheGeneration) throw new Error('Run history was reset');
-                    const state = this._mergeStoredRunState(stored);
+                    appliedManualDeletions = new Map(this._manualDeletions);
+                    const state = this._mergeStoredRunState(stored, appliedManualDeletions);
                     return this._entriesForRunState(stored, state, true);
                 }
             );
             if (!result) return false;
             if (generation !== this._cacheGeneration) return false;
+            for (const [identity, token] of appliedManualDeletions) {
+                if (this._manualDeletions.get(identity) === token) this._manualDeletions.delete(identity);
+            }
             this._adoptCommittedRuns(result.values);
             return true;
         };
@@ -1140,7 +1175,9 @@ class DungeonTrackerStorage {
         this._loading = null;
         this._byTeam = new Map();
         this._deleted = new Map();
-        this._revived = new Set();
+        this._manualDeletions = new Map();
+        this._mutationSequence = 0;
+        this._revived = new Map();
         this._deletedDirty = false;
         this._persistChain = null;
         this._clearedAt = 0;
@@ -1598,6 +1635,7 @@ class DungeonTrackerStorage {
     async deleteRun(identity) {
         const loaded = await this._loadRuns();
         if (!loaded) return false;
+        this._manualDeletions.set(identity, ++this._mutationSequence);
         // `this._runs`, not `loaded`: a concurrent mutator that also cold-
         // loaded this same read can have already replaced `_runs` with a new
         // array by the time this synchronous block runs (see the comment in
