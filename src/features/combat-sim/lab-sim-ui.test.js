@@ -7076,7 +7076,7 @@ describe('the all-fights Combat levels table', () => {
         [...container.querySelectorAll('tr[data-allfights-level-row]')].find((tr) => tr.textContent.includes(name));
     const levelNames = () =>
         [...container.querySelectorAll('tr[data-allfights-level-row] td:first-child')].map((td) =>
-            td.firstChild.textContent.trim()
+            [...td.childNodes].find((node) => node.nodeType === 3).textContent.trim()
         );
 
     test('level rows get a table of their own, out of the gear table', () => {
@@ -9800,4 +9800,72 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
             expect(result).toEqual(original);
         }
     );
+});
+
+describe('Lab monster and ability artwork', () => {
+    let sprite;
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [
+            { hrid: '/monsters/mimic', name: '宝箱怪' },
+            { hrid: '/monsters/cyclops', name: 'Cyclops' },
+        ];
+        game.skipLevels = { '/monsters/mimic': 130, '/monsters/cyclops': 140 };
+        resetSpriteSheetCache();
+        sprite = document.createElement('div');
+        sprite.innerHTML = ['combat_monsters', 'abilities', 'skills']
+            .map((sheet) => `<svg><use xlink:href="/static/media/${sheet}_sprite.test.svg#seed"></use></svg>`)
+            .join('');
+        document.body.appendChild(sprite);
+        ui.buildPanel();
+        await settle();
+    });
+    afterEach(() => {
+        ui.destroy();
+        sprite.remove();
+        game.monsters = [];
+        game.skipLevels = {};
+        vi.restoreAllMocks();
+        resetSpriteSheetCache();
+    });
+    test('selected monster preview follows changes without replacing the native dropdown labels', () => {
+        const select = ui.panel.querySelector('#mwi-labsim-monster');
+        expect(select.selectedOptions[0].textContent).toBe('宝箱怪');
+        expect(ui.panel.querySelector('#mwi-labsim-monster-icon use').getAttribute('href')).toContain('#mimic');
+        select.value = '/monsters/cyclops';
+        select.dispatchEvent(new Event('change'));
+        expect(ui.panel.querySelector('#mwi-labsim-monster-icon use').getAttribute('href')).toContain('#cyclops');
+        game.monsters = [];
+        ui._populateMonsters();
+        expect(ui.panel.querySelector('#mwi-labsim-monster-icon').children).toHaveLength(0);
+    });
+    test('target images retain monster identity, checked state and nonzero room levels on redraw', () => {
+        ui._populateUpgradeTargets(['/monsters/mimic']);
+        const box = ui.panel.querySelector('#mwi-labsim-target-list');
+        for (let i = 0; i < 2; i++) {
+            const selected = box.querySelector('[data-lab-target="/monsters/mimic"]');
+            expect(selected.checked).toBe(true);
+            expect(selected.parentElement.querySelector('[data-sim-entity-icon]').dataset.simEntityIcon).toBe(
+                '/monsters/mimic'
+            );
+            expect(selected.parentElement.textContent).toContain('宝箱怪');
+            expect(selected.parentElement.textContent).toContain('L130');
+            ui._populateUpgradeTargets();
+        }
+    });
+    test('simulation and failed Find Max results retain monster artwork', () => {
+        ui._displaySimResults({ labyAttemptCount: 10, encounters: 7 }, '/monsters/mimic', 135, 1, Date.now(), 'p1');
+        let result = ui.panel.querySelector('#mwi-labsim-results');
+        expect(result.querySelector('[data-sim-entity-icon]').dataset.simEntityIcon).toBe('/monsters/mimic');
+        expect(result.textContent).toContain('Level 135');
+        expect(result.textContent).toContain('70.00%');
+        ui._displayFindMaxResults(
+            { cleared: false, maxLevel: 0, winRate: 0, threshold: 0.95, steps: 1, minLevel: 20, maxSearched: 200 },
+            '/monsters/cyclops',
+            Date.now()
+        );
+        result = ui.panel.querySelector('#mwi-labsim-results');
+        expect(result.querySelector('[data-sim-entity-icon]').dataset.simEntityIcon).toBe('/monsters/cyclops');
+    });
 });

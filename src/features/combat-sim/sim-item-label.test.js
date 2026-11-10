@@ -2,8 +2,11 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
+import dataManager from '../../core/data-manager.js';
 
-vi.mock('../../core/data-manager.js', () => ({ default: { getItemDetails: () => null } }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getItemDetails: () => null, getInitClientData: () => null },
+}));
 const sheet = '/static/media/items_sprite.current.svg';
 function render(html) {
     const host = document.createElement('div');
@@ -127,4 +130,132 @@ describe('upgrade descriptions', () => {
         }
         expect(simCandidateLabelHtml(null, items)).toBe('');
     });
+});
+
+describe('ability candidate artwork', () => {
+    beforeEach(() => {
+        document.body.innerHTML += '<svg><use href="/static/media/abilities_sprite.current.svg#heal"></use></svg>';
+    });
+    test.each([
+        { currentHrid: '/abilities/heal', upgradeHrid: '/abilities/heal', description: 'heal Lv7 → Lv10' },
+        {
+            currentHrid: '/abilities/heal',
+            upgradeHrid: '/abilities/water_strike',
+            description: 'heal → water_strike (Lv75)',
+        },
+        {
+            abilityOrder: true,
+            order: ['/abilities/heal', '/abilities/water_strike', '/abilities/fireball'],
+            description: 'Order: heal → water_strike → fireball',
+        },
+    ])('adds ability art without changing the candidate: $description', (candidate) => {
+        const original = structuredClone(candidate);
+        const host = render(simCandidateLabelHtml(candidate));
+        expect(host.textContent).toBe(candidate.description);
+        const expected = candidate.order || [...new Set([candidate.currentHrid, candidate.upgradeHrid])];
+        expect([...host.querySelectorAll('[data-sim-entity-icon]')].map((icon) => icon.dataset.simEntityIcon)).toEqual(
+            expected
+        );
+        expect(candidate).toEqual(original);
+    });
+    test('legacy item-only labels still reject abilities', () => {
+        expect(render(simItemLabelHtml('/abilities/heal', 'heal')).querySelector('svg')).toBeNull();
+    });
+});
+
+describe('combat skill, house, shrine, and scroll candidate artwork', () => {
+    beforeEach(() => {
+        document.body.innerHTML += ['skills', 'misc']
+            .map((sheet) => `<svg><use href="/static/media/${sheet}_sprite.current.svg#seed"></use></svg>`)
+            .join('');
+    });
+    test.each([
+        [
+            { type: 'combat_level', skillKey: 'defenseLevel', description: 'Defense 90 → 95' },
+            '/skills/defense',
+            'skills',
+            'defense',
+        ],
+        [
+            { type: 'house', roomHrid: '/house_rooms/dojo', description: 'Dojo Lv7 → Lv9' },
+            '/house_rooms/dojo',
+            'misc',
+            'house_dojo',
+        ],
+        [
+            { type: 'guild_shrine', shrineHrid: '/guild_shrines/force', description: 'Force Lv2 → Lv4' },
+            '/guild_shrines/force',
+            'misc',
+            'guild_shrine_force',
+        ],
+        [
+            {
+                type: 'scroll',
+                buffTypeHrid: '/buff_types/combat_drop_quantity',
+                enable: false,
+                description: 'Scroll of Combat Drop → off',
+            },
+            '/items/seal_of_combat_drop',
+            'items',
+            'seal_of_combat_drop',
+        ],
+    ])('decorates $0.description without changing cost/level/enable state', (candidate, hrid, sheetName, fragment) => {
+        const original = structuredClone(candidate);
+        const host = render(simCandidateLabelHtml(candidate));
+        expect(host.querySelector('use').getAttribute('href')).toBe(
+            `/static/media/${sheetName}_sprite.current.svg#${fragment}`
+        );
+        expect(host.textContent).toBe(candidate.description);
+        const icon = host.querySelector('[data-sim-entity-icon], [data-sim-item-icon]');
+        expect(icon.getAttribute('data-sim-entity-icon') || icon.getAttribute('data-sim-item-icon')).toBe(hrid);
+        expect(candidate).toEqual(original);
+    });
+    test('house bundles show all three rooms rather than one misleading representative icon', () => {
+        const candidate = {
+            type: 'house',
+            bundle: true,
+            rooms: [
+                { roomHrid: '/house_rooms/kitchen', roomName: 'Kitchen' },
+                { roomHrid: '/house_rooms/brewery', roomName: 'Brewery' },
+                { roomHrid: '/house_rooms/garden', roomName: 'Garden' },
+            ],
+            description: 'All non-combat rooms +1 (3 rooms: Kitchen, Brewery, Garden)',
+        };
+        const host = render(simCandidateLabelHtml(candidate));
+        expect(host.querySelectorAll('[data-sim-entity-type="house"]')).toHaveLength(3);
+        expect(host.textContent).toBe(candidate.description);
+    });
+    test('unknown skill, shrine and scroll identities remain plain text', () => {
+        for (const candidate of [
+            { type: 'combat_level', skillKey: 'not_a_skill' },
+            { type: 'guild_shrine', buffHrid: '/guild_buffs/force_combat' },
+            { type: 'scroll', buffTypeHrid: '/buff_types/unknown' },
+        ])
+            expect(render(simCandidateLabelHtml({ ...candidate, description: 'Unknown' })).children).toHaveLength(0);
+    });
+});
+
+test('ability descriptions use authoritative game names, including same-named abilities on opposite sides', () => {
+    document.body.innerHTML += '<svg><use href="/static/media/abilities_sprite.current.svg#heal"></use></svg>';
+    const data = vi.spyOn(dataManager, 'getInitClientData').mockReturnValue({
+        abilityDetailMap: {
+            '/abilities/heal': { name: '治疗' },
+            '/abilities/water_strike': { name: '治疗' },
+        },
+    });
+    try {
+        const candidate = {
+            currentHrid: '/abilities/heal',
+            upgradeHrid: '/abilities/water_strike',
+            description: '治疗 Lv75 → 治疗 Lv80',
+        };
+        const host = render(simCandidateLabelHtml(candidate));
+        expect(host.textContent).toBe(candidate.description);
+        expect([...host.querySelectorAll('[data-sim-entity-icon]')].map((n) => n.dataset.simEntityIcon)).toEqual([
+            '/abilities/heal',
+            '/abilities/water_strike',
+        ]);
+    } finally {
+        data.mockRestore();
+    }
 });

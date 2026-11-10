@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 
+### Simulator artwork and zone order
+
+Combat and Lab simulators show game artwork for zones, monsters, abilities, skills, houses, shrines and scrolls where available. Zone lists put full zones and dungeons ahead of individual monsters.
+
 ### Lab upgrade details stay current
 
 Sorting or switching Lab upgrade views now keeps wear warnings in step with your current levels and hides shared-route comparisons when the experiment is turned off. Item icons and the analyzed costs and scores stay intact.

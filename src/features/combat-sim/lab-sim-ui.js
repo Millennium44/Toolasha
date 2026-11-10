@@ -191,6 +191,7 @@ import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
+import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthFloorClearLevel } from '../combat/labyrinth-formulas.js';
@@ -1324,7 +1325,7 @@ class LabSimUI {
             padding: 10px 14px; border-bottom: 1px solid #222; flex-shrink: 0;
         `;
         configureControls.innerHTML = `
-            <label style="color:#888; font-size:12px;">Monster</label>
+            <label for="mwi-labsim-monster" style="color:#888; font-size:12px;"><span id="mwi-labsim-monster-icon" aria-hidden="true"></span>Monster</label>
             <select class="toolasha-select" id="mwi-labsim-monster" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Level</label>
             <input id="mwi-labsim-level" type="number" min="1" max="1300" value="100" style="${inputStyle}">
@@ -1662,7 +1663,7 @@ class LabSimUI {
                 .map(
                     ([key, label]) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${label}</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(simSkillHrid(key), label)}</label>
                     <input type="number" min="1" max="${maxLevel()}" data-lab-combat-target="${key}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
@@ -2328,10 +2329,18 @@ class LabSimUI {
             option.textContent = monster.name;
             select.appendChild(option);
         }
+        this._updateMonsterIcon();
+    }
+
+    /** @private */
+    _updateMonsterIcon() {
+        const icon = this.panel?.querySelector('#mwi-labsim-monster-icon');
+        if (icon) icon.innerHTML = simEntityIconHtml(this.panel.querySelector('#mwi-labsim-monster')?.value);
     }
 
     /** @private */
     _onMonsterChange(monsterHrid) {
+        this._updateMonsterIcon();
         if (!monsterHrid || !this._editor?.isInitialized()) return;
         const monsterId = monsterHrid.split('/').pop();
         const pascal = monsterId
@@ -2581,7 +2590,7 @@ class LabSimUI {
                     <input type="checkbox" data-lab-target="${fight.monsterHrid}" style="margin:0; cursor:pointer;"${
                         previouslyChosen.has(fight.monsterHrid) ? ' checked' : ''
                     }>
-                    ${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">L${fight.roomLevel}</span>
+                    ${simEntityLabelHtml(fight.monsterHrid, fight.monsterName)} <span style="color:${GAME_COLORS.textDim};">L${fight.roomLevel}</span>
                 </label>`
                 )
                 .join('');
@@ -4043,7 +4052,7 @@ class LabSimUI {
         container.innerHTML = `
             <div style="margin-bottom:12px;">
                 <div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:6px;">
-                    ${monsterName} \u2014 Level ${roomLevel}
+                    ${simEntityLabelHtml(monsterHrid, monsterName)} \u2014 Level ${roomLevel}
                 </div>
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 20px; font-size:12px;">
                     <div><span style="color:#888;">Win Rate:</span> <span style="color:${parseFloat(winRate) >= 95 ? '#4caf50' : parseFloat(winRate) >= 50 ? '#ff9800' : '#f44336'}; font-weight:600;">${winRate}%</span> <span style="color:#888;">${bandText}</span></div>
@@ -4236,7 +4245,7 @@ class LabSimUI {
         container.innerHTML = `
             <div style="margin-bottom:12px;">
                 <div style="color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:6px;">
-                    ${monsterName} \u2014 Find Max Result
+                    ${simEntityLabelHtml(monsterHrid, monsterName)} \u2014 Find Max Result
                 </div>
                 ${headline}
                 ${detail}
@@ -5148,7 +5157,7 @@ class LabSimUI {
                     `<span data-swap-chip="${escapeHtmlAttribute(checkedSwapKey(swap))}" style="display:inline-flex; ` +
                     `align-items:center; gap:4px; padding:1px 6px; border:1px solid ${ACCENT_BTN_BORDER}; ` +
                     `border-radius:10px; background:${ACCENT_BTN_BG}; color:${ACCENT}; font-size:11px;">` +
-                    `${simItemLabelHtml(swap.hrid, describeCheckedSwap(swap, gameData))}` +
+                    `${simEntityLabelHtml(swap.hrid, describeCheckedSwap(swap, gameData))}` +
                     `<button data-swap-remove="${escapeHtmlAttribute(checkedSwapKey(swap))}" title="Remove" ` +
                     `style="background:transparent; border:none; color:${ACCENT}; cursor:pointer; padding:0 2px; ` +
                     `font-size:12px; line-height:1;">×</button></span>`
@@ -6315,7 +6324,7 @@ class LabSimUI {
                 .map(
                     (room) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(room.hrid, room.name)} (${room.level})</label>
                     <input type="number" min="1" max="${maxHouseRoomLevel()}" data-lab-house-target="${room.hrid}"
                         value="${room.level >= maxHouseRoomLevel() ? '' : Math.min(maxHouseRoomLevel(), Math.max(uniform, room.level + 1))}"
                         ${room.level >= maxHouseRoomLevel() ? 'disabled title="Already at max level"' : ''} style="
@@ -6354,6 +6363,7 @@ class LabSimUI {
             .filter(([, detail]) => Boolean(detail?.isCombat))
             .map(([buffHrid, detail]) => ({
                 buffHrid,
+                shrineHrid: detail.shrineHrid,
                 name: shrineDisplayName(detail.shrineHrid || buffHrid),
                 level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
                 maxLevel: Math.min(getGuildShrineMaxLevel(), guildBuffMaxLevel(detail) || getGuildShrineMaxLevel()),
@@ -6379,7 +6389,7 @@ class LabSimUI {
                 .map(
                     (shrine) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(shrine.shrineHrid, shrine.name)} (${shrine.level})</label>
                     <input type="number" min="0" max="${shrine.maxLevel}" data-lab-shrine-target="${shrine.buffHrid}"
                         value="${
                             shrine.level >= shrine.maxLevel
@@ -7027,7 +7037,7 @@ class LabSimUI {
                     );
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${entry.name} (${levelText})<span style="color:${GAME_COLORS.textDim};">${loadoutText}</span></label>
+                    <label style="color:#888; font-size:11px;" title="${entry.loadouts.join(', ')}">${simEntityLabelHtml(entry.hrid, entry.name)} (${levelText})<span style="color:${GAME_COLORS.textDim};">${loadoutText}</span></label>
                     <input type="number" min="1" max="${maxLevel()}" data-ability-target="${entry.hrid}" value="${target}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
@@ -9028,7 +9038,7 @@ class LabSimUI {
                         <span style="color:${GAME_COLORS.textDim};">· ${tries}` +
                     `${fight.replaced ? `, over ${fight.replaced}` : ''}${fight.note ? `, ${fight.note}` : ''}</span>`;
                 fightRows += `<div data-fight-changed style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
-                    <span style="color:#aaa;">${fight.monsterName} <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
+                    <span style="color:#aaa;">${simEntityLabelHtml(fight.monsterHrid, fight.monsterName)} <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                     <span style="white-space:nowrap;">${outcome}</span>
                 </div>`;
             }
@@ -9038,7 +9048,7 @@ class LabSimUI {
             // list looks like a fight that was not run
             if (unchanged.length) {
                 const entries = unchanged.map(({ fight, base }) => ({
-                    name: fight.monsterName,
+                    name: simEntityLabelHtml(fight.monsterHrid, fight.monsterName),
                     notInLoadout: fight.applied === false,
                     status: fight.applied === false ? fight.skipReason || 'not in this loadout' : null,
                     neverWon: never(base.winRate),
@@ -9484,7 +9494,7 @@ class LabSimUI {
             r.fights
                 .map(
                     (fight) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:2px 0;">
-                        <span style="color:#aaa;">${fight.monsterName}
+                        <span style="color:#aaa;">${simEntityLabelHtml(fight.monsterHrid, fight.monsterName)}
                             <span style="color:${GAME_COLORS.textDim};">(Lv ${fight.roomLevel}, "${fight.loadoutName}")</span></span>
                         <span style="white-space:nowrap; color:#888;">${(fight.winRate * 100).toFixed(1)}%
                             <span style="color:${fight.winRateDelta > 0.0001 ? '#4caf50' : fight.winRateDelta < -0.0001 ? '#f44336' : '#888'};">(${deltaPct(fight.winRateDelta || 0)})</span></span>
@@ -11247,7 +11257,7 @@ class LabSimUI {
         for (const skill of visibleSkills) {
             const current = this._skillLoadouts[skill.hrid] || '';
             html += `<div style="display:flex; align-items:center; gap:4px; font-size:11px;">`;
-            html += `<span style="color:#888; width:85px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${skill.label}">${skill.label}</span>`;
+            html += `<span style="color:#888; width:85px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${skill.label}">${simEntityLabelHtml(skill.hrid, skill.label)}</span>`;
             html += `<select class="toolasha-select" data-skill-loadout="${skill.hrid}" style="${selectStyle}">`;
             html += `<option value=""${!current ? ' selected' : ''}>Current Gear</option>`;
             for (const snap of [...nonCombatSnapshots, ...allSkillsSnapshots]) {
@@ -11530,7 +11540,7 @@ class LabSimUI {
         for (const r of results) {
             if (r.skipped) {
                 html += `<tr style="border-bottom:1px solid #1a1a1a; opacity:0.55;">
-                    <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
+                    <td style="padding:3px 4px; color:#e0e0e0;">${simEntityLabelHtml(r.skillHrid, r.skillName)}</td>
                     <td style="${tdStyle} color:#888;">Skip</td>
                     <td style="${tdStyle} color:#ccc;">${r.baseLevel}</td>
                     <td style="${tdStyle} color:#888;">—</td>
@@ -11549,7 +11559,7 @@ class LabSimUI {
             const breakdown = attr(this._skillingRowBreakdown(r, usesSkipLevels, clearRate, crateSummary));
 
             html += `<tr style="border-bottom:1px solid #1a1a1a; cursor:help;" title="${breakdown}">
-                <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
+                <td style="padding:3px 4px; color:#e0e0e0;">${simEntityLabelHtml(r.skillHrid, r.skillName)}</td>
                 <td style="${tdStyle} color:#ccc;">${rowRoomLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${r.baseLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${r.effectiveLevel}</td>

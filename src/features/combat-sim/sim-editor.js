@@ -6,6 +6,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
+import { simEntityLabelHtml, simSkillHrid, simScrollItemHrid } from './sim-entity-label.js';
 import { simItemLabelHtml } from './sim-item-label.js';
 import {
     buildGameDataPayload,
@@ -2221,7 +2222,7 @@ export class SimEditor {
 
             html += editorRowOpen(i);
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
-            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simEntityLabelHtml(ability.hrid, name)}</span>`;
             html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">Lv</span>`;
             html += `<input type="number" min="1" max="${maxLevel()}" value="${ability.level}"
                 data-ability-idx="${i}"
@@ -2766,7 +2767,7 @@ export class SimEditor {
                         '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid ' +
                         GAME_COLORS.raised +
                         '; color:#555; cursor:default;">' +
-                        item.name +
+                        simEntityLabelHtml(item.hrid, item.name) +
                         ' <span style="font-size:10px; color:#664;">(in use)</span></div>';
                 } else {
                     const isCurrent = item.hrid === currentHrid;
@@ -2775,7 +2776,7 @@ export class SimEditor {
                     html +=
                         `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ${GAME_COLORS.raised}; color:${color};"` +
                         ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
-                        item.name +
+                        simEntityLabelHtml(item.hrid, item.name) +
                         indicator +
                         '</div>';
                 }
@@ -3032,7 +3033,7 @@ export class SimEditor {
         const header = document.createElement('div');
         header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Triggers — ${simItemLabelHtml(slotItem.hrid, itemName)}</span>` +
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Triggers — ${simEntityLabelHtml(slotItem.hrid, itemName)}</span>` +
             `<button id="mwi-csim-trigger-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>`;
         popup.appendChild(header);
 
@@ -3211,7 +3212,7 @@ export class SimEditor {
 
         for (const skill of skills) {
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
-            html += `<span style="color:#888; width:70px;">${skill.label}</span>`;
+            html += `<span style="color:#888; min-width:0; width:100px;">${simEntityLabelHtml(simSkillHrid(skill.key), skill.label)}</span>`;
             html += `<input type="number" min="1" max="${maxLevel()}" value="${dto[skill.key]}"
                 data-skill="${skill.key}"
                 style="width:48px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
@@ -3242,7 +3243,7 @@ export class SimEditor {
             const name = room.name || hrid.split('/').pop();
             const level = dto.houseRooms[hrid] || 0;
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
-            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${name}">${name}</span>`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(name)}">${simEntityLabelHtml(hrid, name)}</span>`;
             html += `<input type="number" min="0" max="${maxHouseRoomLevel()}" value="${level}"
                 data-house-hrid="${hrid}"
                 style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
@@ -3307,7 +3308,7 @@ export class SimEditor {
             const maxLevel = guildBuffMaxLevel(detail) || 20;
             const level = Math.max(0, Math.floor(Number(levels[buffHrid]) || 0));
             html += `<div style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
-            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${label}">${label}</span>`;
+            html += `<span style="color:#888; width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(label)}">${simEntityLabelHtml(detail.shrineHrid, label)}</span>`;
             html += `<input type="number" min="0" max="${maxLevel}" value="${level}"
                 data-guild-buff="${buffHrid}"
                 style="width:40px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
@@ -3388,7 +3389,7 @@ export class SimEditor {
             const checked = active.has(typeHrid) ? ' checked' : '';
             html += `<label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:3px; cursor:pointer;">`;
             html += `<input type="checkbox" data-scroll-buff="${typeHrid}"${checked} style="cursor:pointer;">`;
-            html += `<span style="color:#888;">${label}</span>`;
+            html += `<span style="color:#888;">${simEntityLabelHtml(simScrollItemHrid(typeHrid), label)}</span>`;
             html += '</label>';
         }
         html += `<div style="color:${GAME_COLORS.textDim}; font-size:10px; margin-top:4px;">Each scroll's 30-minute buff, applied to the whole run.</div>`;

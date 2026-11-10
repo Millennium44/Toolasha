@@ -3356,3 +3356,120 @@ describe('item icons in the shared Lab and Combat editor (#862)', () => {
         expect(document.getElementById('mwi-csim-consumable-backdrop')).toBeNull();
     });
 });
+
+describe('ability artwork in the shared simulator editor', () => {
+    let sprite;
+    const heal = '/abilities/heal';
+    const strike = '/abilities/water_strike';
+    const data = { abilityDetailMap: { [heal]: { name: 'Heal <all>' }, [strike]: { name: 'Water Strike' } } };
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/abilities_sprite.test.svg#heal"></use></svg>';
+        document.body.appendChild(sprite);
+    });
+    afterEach(() => {
+        sprite.remove();
+        document.getElementById('mwi-csim-ability-picker')?.remove();
+        document.getElementById('mwi-csim-ability-backdrop')?.remove();
+        resetSpriteSheetCache();
+    });
+    test.each([false, true])('ability levels and empty slots remain intact in Lab mode %s', (labMode) => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), labMode });
+        const dto = { ...emptyDTO('p1'), abilities: [null, { hrid: heal, level: 75 }] };
+        const original = structuredClone(dto);
+        const host = document.createElement('div');
+        host.innerHTML = editor._renderAbilitiesSection(dto, data);
+        expect(host.querySelector('[data-sim-entity-icon]').dataset.simEntityIcon).toBe(heal);
+        expect(host.querySelector('[data-ability-idx="1"]').value).toBe('75');
+        expect(host.textContent).toContain('Heal <all>');
+        expect(host.querySelector('all')).toBeNull();
+        expect(host.querySelector('[data-ability-slot="0"]').parentElement.querySelector('svg')).toBeNull();
+        expect(dto).toEqual(original);
+    });
+    test('clicking an ability image selects it and clearing/closing leaves no picker behind', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        vi.spyOn(editor, 'renderEditor').mockImplementation(() => {});
+        const dto = { ...emptyDTO('p1'), abilities: [null, { hrid: heal, level: 75 }] };
+        editor._openAbilityPicker(1, dto, data);
+        document
+            .querySelector(`[data-pick-hrid="${strike}"] svg`)
+            .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(dto.abilities[1]).toEqual({ hrid: strike, level: 75, triggers: null });
+        expect(document.getElementById('mwi-csim-ability-picker')).toBeNull();
+        editor._openAbilityPicker(1, dto, data);
+        const clear = document.querySelector('#mwi-csim-ability-picker [data-pick-hrid=""]');
+        expect(clear.querySelector('svg')).toBeNull();
+        clear.click();
+        expect(dto.abilities[1]).toBeNull();
+        expect(document.getElementById('mwi-csim-ability-backdrop')).toBeNull();
+        editor._openAbilityPicker(1, dto, data);
+        document.getElementById('mwi-csim-ability-picker-close').click();
+        expect(document.getElementById('mwi-csim-ability-picker')).toBeNull();
+    });
+});
+
+describe('combat skill, house, shrine, and scroll artwork in the editor', () => {
+    let sprite;
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        sprite = document.createElement('div');
+        sprite.innerHTML = ['skills', 'misc', 'items']
+            .map((sheet) => `<svg><use href="/static/media/${sheet}_sprite.test.svg#seed"></use></svg>`)
+            .join('');
+        document.body.appendChild(sprite);
+    });
+    afterEach(() => {
+        sprite.remove();
+        guild.detailMap = {};
+        resetSpriteSheetCache();
+    });
+    test('all seven combat skill labels retain their level inputs', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const dto = { ...emptyDTO('p1'), attackLevel: 123 };
+        const host = document.createElement('div');
+        host.innerHTML = editor._renderSkillLevelsSection(dto);
+        expect(
+            [...host.querySelectorAll('[data-sim-entity-type="skill"]')].map((n) => n.dataset.simEntityIcon)
+        ).toEqual(
+            ['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic'].map((s) => `/skills/${s}`)
+        );
+        expect(host.querySelector('[data-skill="attackLevel"]').value).toBe('123');
+    });
+    test('houses and combat/skilling shrines use their own native misc artwork', () => {
+        guild.detailMap = {
+            '/guild_buffs/force_combat': { shrineHrid: '/guild_shrines/force', isCombat: true },
+            '/guild_buffs/force_skilling': { shrineHrid: '/guild_shrines/force', isCombat: false },
+        };
+        for (const skillingMode of [false, true]) {
+            const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode });
+            const host = document.createElement('div');
+            const dto = {
+                houseRooms: { '/house_rooms/dojo': 7 },
+                guildShrineLevels: { '/guild_buffs/force_combat': 4, '/guild_buffs/force_skilling': 5 },
+            };
+            host.innerHTML =
+                editor._renderHouseRoomsSection(dto, {
+                    houseRoomDetailMap: { '/house_rooms/dojo': { name: 'Dojo' } },
+                }) + editor._renderGuildShrinesSection(dto);
+            expect(host.querySelector('[data-sim-entity-icon="/house_rooms/dojo"] use').getAttribute('href')).toContain(
+                '#house_dojo'
+            );
+            expect(
+                host.querySelector('[data-sim-entity-icon="/guild_shrines/force"] use').getAttribute('href')
+            ).toContain('#guild_shrine_force');
+            expect(host.querySelector('[data-house-hrid]').value).toBe('7');
+            expect(host.querySelector('[data-guild-buff]').value).toBe(skillingMode ? '5' : '4');
+        }
+    });
+    test('scroll images preserve enabled checkboxes and Lab keeps unsupported scroll controls hidden', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const host = document.createElement('div');
+        host.innerHTML = editor._renderScrollsSection({ scrollBuffs: ['/buff_types/damage'] });
+        expect(host.querySelector('[data-scroll-buff="/buff_types/damage"]').checked).toBe(true);
+        expect(host.querySelector('[data-sim-item-icon="/items/seal_of_combat_drop"]')).not.toBeNull();
+        expect(host.querySelectorAll('[data-sim-item-icon]')).toHaveLength(7);
+        const lab = new SimEditor({ editorEl: document.createElement('div'), labMode: true });
+        expect(lab._renderScrollsSection({ scrollBuffs: [] })).toBe('');
+    });
+});

@@ -186,6 +186,7 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
+import { simEntityIconHtml, simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
@@ -3732,7 +3733,7 @@ class CombatSimUI {
             '; border-radius:4px; padding:3px 6px; font-size:12px; text-align:center;';
 
         controls.innerHTML = `
-            <label style="color:#888; font-size:12px;">Zone</label>
+            <label for="mwi-csim-zone" style="color:#888; font-size:12px;"><span id="mwi-csim-zone-icon" aria-hidden="true"></span>Zone</label>
             <select class="toolasha-select" id="mwi-csim-zone" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Tier</label>
             <select class="toolasha-select" id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
@@ -4095,7 +4096,7 @@ class CombatSimUI {
                 .map(
                     ([key, label]) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${label}</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(simSkillHrid(key), label)}</label>
                     <input type="number" min="1" max="${maxLevel()}" data-combat-target="${key}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
@@ -4605,7 +4606,10 @@ class CombatSimUI {
         const zoneSelect = this.panel?.querySelector('#mwi-csim-zone');
         if (!zoneSelect) return;
 
-        const zones = getCombatZones();
+        // Keep the game's order within each group, but put full zones and dungeons ahead of
+        // legacy one-monster targets. Copy before sorting: the adapter's list may be shared.
+        const isFullZone = (zone) => zone.isDungeon || zone.maxSpawnCount > 1;
+        const zones = [...getCombatZones()].sort((a, b) => Number(isFullZone(b)) - Number(isFullZone(a)));
         zoneSelect.innerHTML = '';
 
         for (const zone of zones) {
@@ -4643,6 +4647,8 @@ class CombatSimUI {
         if (!zoneSelect || !tierSelect) return;
 
         const selectedHrid = zoneSelect.value;
+        const icon = this.panel.querySelector('#mwi-csim-zone-icon');
+        if (icon) icon.innerHTML = simEntityIconHtml(selectedHrid);
         const zones = getCombatZones();
         const zone = zones.find((z) => z.hrid === selectedHrid);
         const maxTier = zone?.isDungeon ? DUNGEON_MAX_TIER : 5;
@@ -5104,7 +5110,7 @@ class CombatSimUI {
             const label = document.createElement('label');
             label.style.cssText =
                 'display:flex; align-items:center; gap:4px; color:#ccc; font-size:11px; padding:1px 0; cursor:pointer;';
-            label.innerHTML = `<input type="checkbox" class="mwi-csim-zone-cb" data-hrid="${zone.hrid}" checked style="margin:0; cursor:pointer;"> ${zone.name}`;
+            label.innerHTML = `<input type="checkbox" class="mwi-csim-zone-cb" data-hrid="${zone.hrid}" checked style="margin:0; cursor:pointer;"> ${simEntityLabelHtml(zone.hrid, zone.name)}`;
             checklist.appendChild(label);
         }
 
@@ -5779,7 +5785,7 @@ class CombatSimUI {
                             const openBtn = row.zoneHrid
                                 ? `<button class="mwi-csim-open-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Open this zone at T${row.tier} in-game" style="margin-left:3px; background:transparent; border:1px solid transparent; color:#6b7a6b; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;" onmouseover="this.style.color='#81c995'; this.style.borderColor='rgba(76,175,80,0.35)';" onmouseout="this.style.color='#6b7a6b'; this.style.borderColor='transparent';">&#9654;</button>`
                                 : '';
-                            display = `${val}${marks}${targetBtn}${openBtn}`;
+                            display = `${simEntityLabelHtml(row.zoneHrid, val)}${marks}${targetBtn}${openBtn}`;
                             style += ' color:#e0e0e0; text-align:left;';
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
@@ -6489,12 +6495,18 @@ class CombatSimUI {
                 const crossings = segment.monsters.filter((m) => m.reached);
                 const pending = segment.monsters.filter((m) => !m.reached);
                 const crossText = crossings
-                    .map((m) => `${esc(this._bestiaryMonsterName(m.monsterHrid))} ${m.from} → ${m.to}`)
+                    .map(
+                        (m) =>
+                            `${simEntityLabelHtml(m.monsterHrid, this._bestiaryMonsterName(m.monsterHrid))} ${m.from} → ${m.to}`
+                    )
                     .join(', ');
                 const partialText = segment.partial
                     ? pending
                           .slice(0, 3)
-                          .map((m) => `${esc(this._bestiaryMonsterName(m.monsterHrid))} ${Math.floor(m.count)}/${m.to}`)
+                          .map(
+                              (m) =>
+                                  `${simEntityLabelHtml(m.monsterHrid, this._bestiaryMonsterName(m.monsterHrid))} ${Math.floor(m.count)}/${m.to}`
+                          )
                           .join(', ')
                     : '';
                 const detail =
@@ -7209,7 +7221,7 @@ class CombatSimUI {
                         const cellStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
 
                         if (col.key === 'zone') {
-                            display = row.zone.name;
+                            display = simEntityLabelHtml(row.zone.zoneHrid || row.zone.hrid, row.zone.name);
                         } else if (col.key === 'tier') {
                             display = String(row.zone.difficultyTier);
                         } else if (col.key === 'itemsPerHour') {
@@ -8792,7 +8804,7 @@ class CombatSimUI {
                 const prevVal = hasPrev ? prevXpPerHr[skill] || null : null;
                 const skillLabel = skill.charAt(0).toUpperCase() + skill.slice(1);
                 html += `<div style="${rowStyle}">`;
-                html += `<span style="${labelStyle}">${skillLabel}</span>`;
+                html += `<span style="${labelStyle}">${simEntityLabelHtml(`/skills/${skill}`, skillLabel)}</span>`;
                 html += `<span style="${valueStyle}"${exactTitleAttr(perHr)}>${shortCount(perHr)}${this._formatDelta(perHr, prevVal)}</span>`;
                 html += '</div>';
             }
@@ -9611,7 +9623,7 @@ class CombatSimUI {
 
             for (const row of section.rows) {
                 html += `<div style="${rowStyle}">`;
-                html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(row.source, row.name)}</span>`;
+                html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simEntityLabelHtml(row.source, row.name)}</span>`;
                 html += `<span style="color:${section.color}; font-weight:600; ${colNum}"${exact(perHour(row.amount))}>${fmt(perHour(row.amount))}</span>`;
                 html += `<span style="color:#e0e0e0; font-weight:600; ${colNum}"${exact(row.amount)}>${fmt(row.amount)}</span>`;
                 html += '</div>';
@@ -10740,7 +10752,7 @@ class CombatSimUI {
                         : Math.min(maxLevel(), (ability.level || 1) + boost);
                     return `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${name} (${ability.level})</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(ability.hrid, name)} (${ability.level})</label>
                     <input type="number" min="1" max="${maxLevel()}" data-ability-target="${ability.hrid}" value="${target}" style="
                         width:52px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                         border-radius:3px; padding:2px 4px; font-size:11px; text-align:center;">
@@ -10957,7 +10969,7 @@ class CombatSimUI {
                 .map(
                     (room) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${room.name} (${room.level})</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(room.hrid, room.name)} (${room.level})</label>
                     <input type="number" min="1" max="${maxHouseRoomLevel()}" data-house-target="${room.hrid}"
                         value="${room.level >= maxHouseRoomLevel() ? '' : Math.min(maxHouseRoomLevel(), Math.max(uniform, room.level + 1))}"
                         ${room.level >= maxHouseRoomLevel() ? 'disabled title="Already at max level"' : ''} style="
@@ -11012,6 +11024,7 @@ class CombatSimUI {
             .filter(([, detail]) => Boolean(detail?.isCombat))
             .map(([buffHrid, detail]) => ({
                 buffHrid,
+                shrineHrid: detail.shrineHrid,
                 name: shrineName(detail.shrineHrid || buffHrid),
                 level: Math.max(0, Math.floor(Number(dto?.guildShrineLevels?.[buffHrid]) || 0)),
                 maxLevel: Math.min(getGuildShrineMaxLevel(), guildBuffMaxLevel(detail) || getGuildShrineMaxLevel()),
@@ -11037,7 +11050,7 @@ class CombatSimUI {
                 .map(
                     (shrine) => `
                 <span style="display:inline-flex; align-items:center; gap:4px;">
-                    <label style="color:#888; font-size:11px;">${shrine.name} (${shrine.level})</label>
+                    <label style="color:#888; font-size:11px;">${simEntityLabelHtml(shrine.shrineHrid, shrine.name)} (${shrine.level})</label>
                     <input type="number" min="0" max="${shrine.maxLevel}" data-shrine-target="${shrine.buffHrid}"
                         value="${
                             shrine.level >= shrine.maxLevel

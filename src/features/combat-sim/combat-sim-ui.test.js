@@ -5657,13 +5657,16 @@ describe('the all-zones table', () => {
         describe('sorting missing (non-dungeon) values to the bottom', () => {
             /**
              * Plain zone names in row order, top to bottom. The zone cell's
-             * name is a leading text node; badges and the ⊚/▶ buttons that
+             * name is a text node after its decorative icon; badges and the ⊚/▶ buttons that
              * can follow it are separate child elements, so reading just the
-             * first child node avoids picking up their symbols.
+             * text child avoids picking up their symbols.
              */
             function renderedOrder() {
                 return [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr')].map((tr) =>
-                    tr.cells[0].childNodes[0].textContent.replace(/^\[D\] /, '').trim()
+                    [...tr.cells[0].childNodes]
+                        .find((node) => node.nodeType === 3)
+                        .textContent.replace(/^\[D\] /, '')
+                        .trim()
                 );
             }
 
@@ -18180,5 +18183,141 @@ describe('combined UI audit: Combat redraw', () => {
             sprite.remove();
             resetSpriteSheetCache();
         }
+    });
+});
+
+describe('simulator zone ordering and entity artwork', () => {
+    let sprite;
+    const zone = '/actions/combat/golem_cave';
+    const dungeon = '/actions/combat/chimerical_den';
+    const solo = '/actions/combat/rat';
+    const zones = [
+        { hrid: solo, name: 'Jerry', maxSpawnCount: 1 },
+        { hrid: zone, name: 'Golem Cave', maxSpawnCount: 3 },
+        { hrid: '/actions/combat/frog', name: 'Frogger', maxSpawnCount: 1 },
+        { hrid: dungeon, name: 'Chimerical Den', maxSpawnCount: 1, isDungeon: true },
+    ];
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        mocks.zones = structuredClone(zones);
+        mocks.actionDetails = Object.fromEntries(zones.map((z) => [z.hrid, {}]));
+        mocks.actionDetails[solo] = {
+            combatZoneInfo: { fightInfo: { randomSpawnInfo: { spawns: [{ combatMonsterHrid: '/monsters/rat' }] } } },
+        };
+        sprite = document.createElement('div');
+        sprite.innerHTML = ['actions', 'combat_monsters', 'abilities', 'skills']
+            .map((sheet) => `<svg><use xlink:href="/static/media/${sheet}_sprite.test.svg#seed"></use></svg>`)
+            .join('');
+        document.body.appendChild(sprite);
+        ui.buildPanel();
+    });
+    afterEach(() => {
+        ui.destroy();
+        sprite.remove();
+        mocks.zones = [];
+        mocks.actionDetails = undefined;
+        mocks.gameData = { itemDetailMap: {} };
+        vi.restoreAllMocks();
+        resetSpriteSheetCache();
+    });
+    test('full zones and dungeons precede individual monsters without mutating the game list', () => {
+        const select = ui.panel.querySelector('#mwi-csim-zone');
+        expect([...select.options].map((o) => o.value)).toEqual([zone, dungeon, solo, '/actions/combat/frog']);
+        expect(select.value).toBe(zone);
+        expect(mocks.zones).toEqual(zones);
+        expect(ui.panel.querySelector('#mwi-csim-zone-icon use').getAttribute('href')).toContain('#golem_cave');
+        select.value = dungeon;
+        select.dispatchEvent(new Event('change'));
+        expect(ui.panel.querySelector('#mwi-csim-zone-icon use').getAttribute('href')).toContain('#chimerical_den');
+        expect(ui.panel.querySelector('#mwi-csim-tier').options).toHaveLength(3);
+        ui._allZonesMode = 'group';
+        ui._updateAllZonesUI();
+        expect(select.previousElementSibling.style.display).toBe('none');
+        expect(ui.panel.querySelector('#mwi-csim-zone-icon').parentElement).toBe(select.previousElementSibling);
+        ui._targetZoneFromResults(solo, 4);
+        expect(select.value).toBe(solo);
+        expect(ui.panel.querySelector('#mwi-csim-tier').value).toBe('4');
+        expect(ui.panel.querySelector('#mwi-csim-zone-icon [data-sim-entity-icon]').dataset.simEntityIcon).toBe(solo);
+    });
+    test('reordering still restores the running single-monster target and tier', async () => {
+        const adapter = await import('./combat-sim-adapter.js');
+        vi.spyOn(adapter, 'getCurrentCombatZone').mockReturnValue({ zoneHrid: solo, difficultyTier: 5 });
+        ui.populateZones();
+        expect(ui.panel.querySelector('#mwi-csim-zone').value).toBe(solo);
+        expect(ui.panel.querySelector('#mwi-csim-tier').value).toBe('5');
+    });
+    test('zone checklist filtering and check-all behavior survive clicking artwork', () => {
+        ui._allZonesMode = 'group';
+        ui._populateZoneChecklist();
+        const box = ui.panel.querySelector('#mwi-csim-zone-checklist');
+        expect([...box.querySelectorAll('.mwi-csim-zone-cb')].map((n) => n.dataset.hrid)).toEqual([zone]);
+        box.querySelector('[data-sim-entity-icon]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        // The real browser delegates an SVG click through its label; checkbox semantics remain native.
+        expect(box.querySelector('label input.mwi-csim-zone-cb')).not.toBeNull();
+        const all = box.querySelector('#mwi-csim-checkall');
+        all.checked = false;
+        all.dispatchEvent(new Event('change'));
+        expect(box.querySelector('.mwi-csim-zone-cb').checked).toBe(false);
+        ui._allZonesMode = 'solo';
+        ui._populateZoneChecklist();
+        expect([...box.querySelectorAll('.mwi-csim-zone-cb')].map((n) => n.dataset.hrid)).toEqual([
+            solo,
+            '/actions/combat/frog',
+        ]);
+    });
+    test('ranked and Seek rows keep zone identities, tiers, and input data through sorting', async () => {
+        const results = [zone, dungeon].map((hrid, i) => ({
+            zone: { name: 'Same name', zoneHrid: hrid, difficultyTier: i + 2 },
+            simResult: {
+                simulatedTime: 3600e9,
+                encounters: 10,
+                deaths: { player1: 0 },
+                experienceGained: { player1: { defense: 100 } },
+            },
+            revenue: { netPerHour: i + 1, revenuePerHour: 10, costPerHour: 1, dropEntries: [] },
+        }));
+        const original = structuredClone(results);
+        await ui._displayAllZonesResults(results, 1, {});
+        const host = ui.panel.querySelector('#mwi-csim-results');
+        for (const col of ['zone', 'tier', 'zone']) {
+            host.querySelector(`th[data-col="${col}"]`).click();
+            const ids = [...host.querySelectorAll('td [data-sim-entity-icon]')].map(
+                (icon) => icon.dataset.simEntityIcon
+            );
+            expect(ids.sort()).toEqual([zone, dungeon].sort());
+        }
+        expect(results).toEqual(original);
+        const seek = results.map((r) => ({
+            zone: r.zone,
+            itemsPerHour: 3,
+            profitPerHour: 4,
+            costPerHour: 2,
+            costPerDrop: 1,
+        }));
+        ui._displaySeekResults(seek, 'Cheese', '/items/cheese');
+        const seekHost = ui.panel.querySelector('#mwi-csim-seek-results');
+        seekHost.querySelector('th[data-col="zone"]').click();
+        expect(seekHost.querySelectorAll('[data-sim-entity-type="zone"]')).toHaveLength(2);
+    });
+    test('healing abilities and XP skills gain artwork but invented engine labels stay text', () => {
+        mocks.gameData = { abilityDetailMap: { '/abilities/heal': { name: 'Heal' } }, itemDetailMap: {} };
+        const results = showFight(
+            oneHourFight({
+                hitpointsGained: { player1: { '/abilities/heal': 500, regen: 50 } },
+                experienceGained: { player1: { defense: 123 } },
+            })
+        );
+        expect(results.querySelector('[data-sim-entity-icon="/abilities/heal"]')).not.toBeNull();
+        expect(results.querySelector('[data-sim-entity-icon="/skills/defense"]')).not.toBeNull();
+        expect(results.querySelector('[data-sim-entity-icon="regen"]')).toBeNull();
+        expect(results.textContent).toContain('500');
+        expect(results.textContent).toContain('123');
+    });
+    test('empty zone data removes the preview and leaves no phantom option', () => {
+        mocks.zones = [];
+        mocks.actionDetails = undefined;
+        ui.populateZones();
+        expect(ui.panel.querySelector('#mwi-csim-zone').options).toHaveLength(0);
+        expect(ui.panel.querySelector('#mwi-csim-zone-icon').children).toHaveLength(0);
     });
 });
