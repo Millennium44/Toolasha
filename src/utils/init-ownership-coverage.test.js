@@ -293,13 +293,6 @@ const KNOWN_SAFE = {
     'src/features/chat/chat-commands.js#initialize':
         'The post-await `dataManager.on` sits behind a module-level `switchListenerRegistered` flag that ' +
         'is never cleared, so the listener is installed exactly once for the life of the tab.',
-    'src/features/enhancement/enhancement-feature.js#initialize':
-        '`setupEnhancementHandlers()` registers `handleActionCompleted` through `webSocketHook.on`, which ' +
-        'dedupes on `handlers.includes(handler)` — the same reference cannot be registered twice there. ' +
-        'Its `actions_updated` listener now goes through `dataManager.on`, which does not dedupe, but the ' +
-        'handler itself is idempotent per event: the module-level `trackedEnhanceActionId` it reads and ' +
-        'writes first is what a second, orphaned copy of the handler would also see already updated, so a ' +
-        'duplicate invocation from a resumed tail no-ops instead of double-processing the same delta.',
     'src/features/guild/guild-trial-abilities-ui.js#initialize':
         'The tail explicitly `webSocketHook.off`s any previous `onTrialTick` before installing the new ' +
         'one, over a module-level singleton, so at most one registration exists at any time.',

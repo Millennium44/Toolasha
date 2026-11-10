@@ -35,6 +35,7 @@ import {
 } from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
 import { priceMaterial } from '../../utils/enhancement-input-pricing.js';
+import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 /**
  * EnhancementTracker class manages enhancement tracking sessions
@@ -60,28 +61,37 @@ class EnhancementTracker {
             return;
         }
 
+        const owner = captureOwner(this);
+        const isCurrent = () => stillOurs(owner) && config.getSetting('enhancementTracker');
         try {
-            // Load sessions from storage
-            this.sessions = await loadSessions();
-            this.currentSessionId = await loadCurrentSessionId();
+            // Keep both reads local until their owner is still current. A late
+            // old ID must never be validated against the arriving session map:
+            // the resulting repair would clear the arriving character's key.
+            const sessions = await loadSessions();
+            if (!isCurrent()) return;
+            let currentSessionId = await loadCurrentSessionId();
+            if (!isCurrent()) return;
 
             // Validate current session still exists — only against a list
             // actually read back; after a read that could not be made the
             // session may well be stored and merely not in hand
-            if (this.currentSessionId && sessionsLoaded() && !this.sessions[this.currentSessionId]) {
-                this.currentSessionId = null;
+            if (currentSessionId && sessionsLoaded() && !sessions[currentSessionId]) {
+                currentSessionId = null;
                 await saveCurrentSessionId(null);
+                if (!isCurrent()) return;
             }
 
             // Validate all loaded sessions
-            for (const [sessionId, session] of Object.entries(this.sessions)) {
+            for (const [sessionId, session] of Object.entries(sessions)) {
                 if (!validateSession(session)) {
-                    delete this.sessions[sessionId];
+                    delete sessions[sessionId];
                 } else {
                     normalizeSession(session);
                 }
             }
 
+            this.sessions = sessions;
+            this.currentSessionId = currentSessionId;
             this.isInitialized = true;
         } catch (error) {
             console.error('[EnhancementTracker] Failed to initialize:', error);
@@ -507,6 +517,7 @@ class EnhancementTracker {
      * Disable and cleanup
      */
     disable() {
+        noteTeardown(this);
         // Clear in-memory session data (will be reloaded from storage on next init)
         this.sessions = {};
         this.currentSessionId = null;

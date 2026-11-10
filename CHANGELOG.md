@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement sessions stay with their character
+
+A delayed startup can no longer clear another character’s active enhancement session. Turning the tracker off during startup and back on now restarts it correctly.
+
 ### Alchemy protection follows the selected action
 
 A protected action’s confirmation no longer carries over to another item, enhancement level, action or character. Protection also recognizes items whose icons use a different game format.

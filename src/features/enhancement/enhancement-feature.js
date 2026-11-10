@@ -4,9 +4,11 @@
  * Fixes handler accumulation by coordinating tracker, UI, and handlers
  */
 
+import config from '../../core/config.js';
 import enhancementTracker from './enhancement-tracker.js';
 import enhancementUI from './enhancement-ui.js';
 import { setupEnhancementHandlers, cleanupEnhancementHandlers } from './enhancement-handlers.js';
+import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 class EnhancementFeature {
     constructor() {
@@ -22,9 +24,15 @@ class EnhancementFeature {
         }
 
         this.isInitialized = true;
+        const owner = captureOwner(this);
 
         // Initialize tracker (async)
         await enhancementTracker.initialize();
+        if (!stillOurs(owner)) return;
+        if (!config.getSetting('enhancementTracker')) {
+            this.isInitialized = false;
+            return;
+        }
 
         // Setup WebSocket handlers
         setupEnhancementHandlers();
@@ -37,6 +45,7 @@ class EnhancementFeature {
      * Cleanup all enhancement components
      */
     disable() {
+        noteTeardown(this);
         try {
             // Cleanup WebSocket handlers
             cleanupEnhancementHandlers();

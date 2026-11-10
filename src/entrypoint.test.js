@@ -35,10 +35,46 @@ import { GAME } from './utils/selectors.js';
  * config would give that key from its setting.
  */
 const featureSwitches = vi.hoisted(() => ({}));
+const enhancementStartup = vi.hoisted(() => ({
+    enabled: true,
+    settingListeners: [],
+    loadSessions: vi.fn(async () => ({})),
+    uiInitialize: vi.fn(),
+    uiCleanup: vi.fn(),
+    setupHandlers: vi.fn(),
+    cleanupHandlers: vi.fn(),
+}));
+vi.mock('./features/enhancement/enhancement-storage.js', () => ({
+    loadSessions: enhancementStartup.loadSessions,
+    loadCurrentSessionId: async () => null,
+    saveSessions: async () => {},
+    saveCurrentSessionId: async () => {},
+    sessionsLoaded: () => true,
+}));
+vi.mock('./features/enhancement/enhancement-ui.js', () => ({
+    default: { initialize: enhancementStartup.uiInitialize, cleanup: enhancementStartup.uiCleanup },
+}));
+vi.mock('./features/enhancement/enhancement-handlers.js', () => ({
+    setupEnhancementHandlers: enhancementStartup.setupHandlers,
+    cleanupEnhancementHandlers: enhancementStartup.cleanupHandlers,
+}));
+vi.mock('./features/enhancement/enhancement-xp.js', () => ({ calculateEnhancementPredictions: () => null }));
+vi.mock('./features/insights/enhancement-calibration.js', () => ({
+    default: { recordCompletion: async () => {} },
+}));
 
 vi.mock('./core/config.js', () => ({
     default: {
         isFeatureEnabled: (key) => (key in featureSwitches ? featureSwitches[key] : true),
+        getSetting: (key) => key === 'enhancementTracker' && enhancementStartup.enabled,
+        onAnySettingChange: (callback) => {
+            enhancementStartup.settingListeners.push(callback);
+            return () => {
+                enhancementStartup.settingListeners = enhancementStartup.settingListeners.filter(
+                    (fn) => fn !== callback
+                );
+            };
+        },
         clearSettingsCache: () => {},
         loadSettings: async () => {},
         applyColorSettings: () => {},
@@ -58,6 +94,8 @@ vi.mock('./utils/performance-monitor.js', () => ({
 }));
 
 const realFeatureRegistry = (await import('./core/feature-registry.js')).default;
+const realEnhancementFeature = (await import('./features/enhancement/enhancement-feature.js')).default;
+const realEnhancementTracker = (await import('./features/enhancement/enhancement-tracker.js')).default;
 
 /** How long the two probe initializers park, in ms. Long enough to interleave, short enough to run. */
 const PROBE_AWAIT_MS = 20;
@@ -192,7 +230,7 @@ beforeAll(async () => {
             },
             config: {
                 Z_FLOATING_PANEL: 1100,
-                getSetting: (key) => settings[key],
+                getSetting: (key) => (key === 'enhancementTracker' ? enhancementStartup.enabled : settings[key]),
                 getSettingValue: (key, fallback) => (key in settings ? settings[key] : fallback),
                 isFeatureEnabled: () => true,
                 initialize: async () => {},
@@ -269,6 +307,7 @@ beforeAll(async () => {
         UI: new Proxy(function stub() {}, {
             get: (target, prop) => {
                 if (prop === 'then') return undefined;
+                if (prop === 'enhancementFeature') return realEnhancementFeature;
                 if (Object.hasOwn(probeModules, prop)) return probeModules[prop];
                 if (Object.hasOwn(raceModules, prop)) return raceModules[prop];
                 return makeStub();
@@ -574,6 +613,91 @@ describe('overlay tab button gate', () => {
         settings.overlayTabButton = true;
         settings.overlayPanel = true;
         expect(gate()).toBe(true);
+    });
+});
+
+describe('enhancement lifecycle through its actual entrypoint entry and the real registry', () => {
+    let stopLive;
+    const settle = async () => {
+        for (let i = 0; i < 100; i++) await Promise.resolve();
+    };
+    const changeSetting = (enabled) => {
+        enhancementStartup.enabled = enabled;
+        for (const fn of [...enhancementStartup.settingListeners]) fn('enhancementTracker', enabled);
+    };
+
+    beforeEach(async () => {
+        await realFeatureRegistry.disableAllFeatures();
+        realEnhancementFeature.disable();
+        enhancementStartup.enabled = true;
+        enhancementStartup.settingListeners = [];
+        enhancementStartup.loadSessions.mockReset().mockResolvedValue({});
+        enhancementStartup.uiInitialize.mockClear();
+        enhancementStartup.uiCleanup.mockClear();
+        enhancementStartup.setupHandlers.mockClear();
+        enhancementStartup.cleanupHandlers.mockClear();
+        const entry = registered.find((feature) => feature.key === 'enhancementFeature');
+        expect(entry).toBeTruthy();
+        realFeatureRegistry.replaceFeatures([entry]);
+        stopLive = realFeatureRegistry.setupLiveFeatureStart();
+    });
+    afterEach(async () => {
+        stopLive?.();
+        await realFeatureRegistry.disableAllFeatures();
+        realFeatureRegistry.replaceFeatures([]);
+        enhancementStartup.enabled = true;
+    });
+
+    test('switching off during the stored-session read does not strand a later switch-on', async () => {
+        let release;
+        let entered;
+        const reading = new Promise((resolve) => (entered = resolve));
+        enhancementStartup.loadSessions.mockImplementationOnce(() => {
+            entered();
+            return new Promise((resolve) => (release = resolve));
+        });
+        const boot = realFeatureRegistry.initializeFeatures();
+        await reading;
+        changeSetting(false);
+        release({});
+        await boot;
+        await settle();
+        expect(realEnhancementTracker.isInitialized).toBe(false);
+        expect(enhancementStartup.setupHandlers).not.toHaveBeenCalled();
+        expect(enhancementStartup.uiInitialize).not.toHaveBeenCalled();
+
+        changeSetting(true);
+        await settle();
+        expect(realEnhancementTracker.isInitialized).toBe(true);
+        expect(realEnhancementFeature.isInitialized).toBe(true);
+        expect(enhancementStartup.setupHandlers).toHaveBeenCalledTimes(1);
+        expect(enhancementStartup.uiInitialize).toHaveBeenCalledTimes(1);
+    });
+
+    test('initially off can start later, and an off/on cycle tears down then starts exactly once', async () => {
+        enhancementStartup.enabled = false;
+        await realFeatureRegistry.initializeFeatures();
+        expect(enhancementStartup.loadSessions).not.toHaveBeenCalled();
+        changeSetting(true);
+        await settle();
+        expect(realEnhancementTracker.isInitialized).toBe(true);
+        expect(enhancementStartup.setupHandlers).toHaveBeenCalledTimes(1);
+
+        changeSetting(false);
+        await settle();
+        expect(realEnhancementTracker.isInitialized).toBe(false);
+        expect(realEnhancementFeature.isInitialized).toBe(false);
+        expect(enhancementStartup.cleanupHandlers).toHaveBeenCalledTimes(1);
+        expect(enhancementStartup.uiCleanup).toHaveBeenCalledTimes(1);
+
+        changeSetting(true);
+        await settle();
+        changeSetting(true);
+        await settle();
+        expect(realEnhancementTracker.isInitialized).toBe(true);
+        expect(enhancementStartup.loadSessions).toHaveBeenCalledTimes(2);
+        expect(enhancementStartup.setupHandlers).toHaveBeenCalledTimes(2);
+        expect(enhancementStartup.uiInitialize).toHaveBeenCalledTimes(2);
     });
 });
 

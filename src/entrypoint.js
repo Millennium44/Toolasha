@@ -2539,6 +2539,11 @@ function registerFeatures() {
             category: 'Enhancement',
             module: UI.enhancementFeature,
             async: false,
+            // The registry key has no setting of its own. A canceled startup must
+            // be restartable, and switching off retires its pending reads and UI.
+            customCheck: () => config.getSetting('enhancementTracker'),
+            isRunning: () => UI.enhancementFeature.isInitialized,
+            liveStop: true,
         },
         {
             key: 'enhancementXPH',
