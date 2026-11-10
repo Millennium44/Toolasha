@@ -7,6 +7,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { filterAlchemyHistorySessions, sortAlchemyHistorySessions } from './alchemy-history-filters.js';
 import { transmuteHistoryTracker } from './transmute-history-tracker.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { formatInputCostLine } from '../../utils/refined-item-cost.js';
@@ -297,58 +298,14 @@ class TransmuteHistoryViewer {
             }
         }
 
-        const hasDateFilter = !!(this.filters.dateFrom || this.filters.dateTo);
-        let dateToEndOfDay = null;
-        if (hasDateFilter && this.filters.dateTo) {
-            dateToEndOfDay = new Date(this.filters.dateTo);
-            dateToEndOfDay.setHours(23, 59, 59, 999);
-        }
+        const filtered = filterAlchemyHistorySessions(this.sessions, this.filters, (hrid) => this.getItemName(hrid));
 
-        const hasItemFilter = this.filters.selectedInputItems.length > 0;
-        const itemFilterSet = hasItemFilter ? new Set(this.filters.selectedInputItems) : null;
-
-        const hasResultsFilter = !!this.filters.resultsSearch.trim();
-        const resultsSearch = hasResultsFilter ? this.filters.resultsSearch.trim().toLowerCase() : '';
-
-        const filtered = this.sessions.filter((session) => {
-            // Date filter
-            if (hasDateFilter) {
-                const d = new Date(session.startTime);
-                if (this.filters.dateFrom && d < this.filters.dateFrom) return false;
-                if (dateToEndOfDay && d > dateToEndOfDay) return false;
-            }
-
-            // Input item filter
-            if (hasItemFilter && !itemFilterSet.has(session.inputItemHrid)) return false;
-
-            // Results text search
-            if (hasResultsFilter) {
-                const resultNames = Object.keys(session.results || {}).map((hrid) =>
-                    this.getItemName(hrid).toLowerCase()
-                );
-                if (!resultNames.some((name) => name.includes(resultsSearch))) return false;
-            }
-
-            return true;
+        this.filteredSessions = sortAlchemyHistorySessions(filtered, {
+            sortColumn: this.sortColumn,
+            sortDirection: this.sortDirection,
+            getItemName: (hrid) => this.getItemName(hrid),
+            profitCache: this.profitCache,
         });
-
-        // Sort
-        filtered.sort((a, b) => {
-            let aVal = a[this.sortColumn] ?? 0;
-            let bVal = b[this.sortColumn] ?? 0;
-            // Sort item columns by the displayed name, not the hrid
-            if (this.sortColumn === 'inputItemHrid') {
-                aVal = this.getItemName(String(aVal));
-                bVal = this.getItemName(String(bVal));
-            } else if (this.sortColumn === '_profit') {
-                aVal = this.profitCache.get(a.id)?.profit ?? 0;
-                bVal = this.profitCache.get(b.id)?.profit ?? 0;
-            }
-            const cmp = typeof aVal === 'string' ? aVal.localeCompare(String(bVal)) : aVal - bVal;
-            return this.sortDirection === 'asc' ? cmp : -cmp;
-        });
-
-        this.filteredSessions = filtered;
         this.currentPage = 1;
     }
 
