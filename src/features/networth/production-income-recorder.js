@@ -387,12 +387,17 @@ class ProductionIncomeRecorder {
 
     /** Forget the departing character's rows, so they are never written under the arriving one's key. */
     _forget() {
+        this._forgetHistory();
+        this._counts.clear();
+    }
+
+    /** Retire only saved-history ownership, preserving a newly seeded live baseline. */
+    _forgetHistory() {
         this._generation += 1;
         this._rows = [];
         this._touchedChunks.clear();
         this._charId = null;
         this._loading = null;
-        this._counts.clear();
         this._store.forget();
     }
 
@@ -410,6 +415,8 @@ class ProductionIncomeRecorder {
     async load() {
         const charId = this._currentCharId();
         if (!charId) return [];
+        // Read-only consumers can run while the switch listener is inactive.
+        if (this._charId !== null && this._charId !== charId) this._forgetHistory();
         if (this._charId === charId && !this._loading) return [...this._rows];
 
         const generation = this._generation;
@@ -422,6 +429,12 @@ class ProductionIncomeRecorder {
                 // are the departing character's days, and `_forget()` has
                 // already cleared the fields this would otherwise refill
                 if (this._generation !== generation) return;
+                if (this._currentCharId() !== charId) {
+                    // This read still owns the cache, but its character left.
+                    // A later return must reload rather than treat [] as loaded.
+                    this._forgetHistory();
+                    return;
+                }
                 this._rows = rows;
             })();
         }
@@ -431,7 +444,7 @@ class ProductionIncomeRecorder {
         } finally {
             if (this._generation === generation) this._loading = null;
         }
-        return this._generation === generation ? [...this._rows] : [];
+        return this._generation === generation && this._currentCharId() === charId ? [...this._rows] : [];
     }
 
     /**

@@ -60,6 +60,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
+import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 import { localDayId, dayStart } from './gold-sources.js';
 import { registerDayRowRetention, pruneDayRows } from './day-row-retention.js';
 
@@ -345,19 +346,27 @@ class CombatLootRecorder {
      */
     async initialize() {
         if (this.isActive) return;
+        const ticket = captureOwner(this);
 
         this._handlers = {
             newBattle: (data, context) => this._onNewBattle(data, context),
             characterInitialized: (data) => this._onCharacterInitialized(data),
             characterSwitching: () => this._forget(),
+            recordingSetting: (enabled) => {
+                // Turning recording back on cannot revive observations queued
+                // before it was turned off.
+                if (!enabled) noteTeardown(this);
+            },
         };
 
         webSocketHook.on('new_battle', this._handlers.newBattle);
         dataManager.on?.('character_initialized', this._handlers.characterInitialized);
         dataManager.on?.('character_switching', this._handlers.characterSwitching);
+        config.onSettingChange?.('networth_goldSources', this._handlers.recordingSetting);
 
         this.isActive = true;
         await this.load();
+        if (!stillOurs(ticket)) return;
 
         // This starts after the page has drawn, long after the one
         // `character_initialized` that carried this login's offline summary has
@@ -367,10 +376,12 @@ class CombatLootRecorder {
 
     /** Stop recording and drop the listeners. */
     cleanup() {
+        noteTeardown(this);
         if (!this._handlers) return;
         webSocketHook.off('new_battle', this._handlers.newBattle);
         dataManager.off?.('character_initialized', this._handlers.characterInitialized);
         dataManager.off?.('character_switching', this._handlers.characterSwitching);
+        config.offSettingChange?.('networth_goldSources', this._handlers.recordingSetting);
         this._handlers = null;
         this.isActive = false;
     }
@@ -396,6 +407,9 @@ class CombatLootRecorder {
     async load() {
         const charId = this._currentCharId();
         if (!charId) return [];
+        // The gold-sources reader may call load while recording is inactive,
+        // so no character-switch listener is present to retire the old read.
+        if (this._charId !== null && this._charId !== charId) this._forget();
         if (this._charId === charId && !this._loading) return [...this._rows];
 
         const generation = this._generation;
@@ -405,6 +419,13 @@ class CombatLootRecorder {
             this._loading = (async () => {
                 const rows = await this._store.load(charId);
                 if (this._generation !== generation) return;
+                if (this._currentCharId() !== charId) {
+                    // No newer read replaced this one, but its character left.
+                    // Mark it unloaded so returning later cannot treat [] as
+                    // that character's complete saved history.
+                    this._forget();
+                    return;
+                }
                 this._rows = rows;
             })();
         }
@@ -414,7 +435,7 @@ class CombatLootRecorder {
         } finally {
             if (this._generation === generation) this._loading = null;
         }
-        return this._generation === generation ? [...this._rows] : [];
+        return this._generation === generation && this._currentCharId() === charId ? [...this._rows] : [];
     }
 
     /**
@@ -465,6 +486,7 @@ class CombatLootRecorder {
      */
     async _onNewBattle(data, context) {
         try {
+            if (!this.isActive) return;
             if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!config.getSetting('networth_goldSources')) return;
             if (storage.isQuotaExceeded?.()) return;
@@ -478,10 +500,17 @@ class CombatLootRecorder {
             if (!counts) return;
 
             const generation = this._generation;
+            const ticket = captureOwner(this);
             await this.load();
             // The character switched while the rows were being read; this
             // reading belongs to whoever left
-            if (this._generation !== generation || this._charId !== charId) return;
+            if (
+                !stillOurs(ticket) ||
+                this._generation !== generation ||
+                this._charId !== charId ||
+                !config.getSetting('networth_goldSources')
+            )
+                return;
 
             const now = Date.now();
             const row = this._rowFor(localDayId(now));
@@ -501,6 +530,7 @@ class CombatLootRecorder {
      */
     async _onCharacterInitialized(payload) {
         try {
+            if (!this.isActive) return;
             const window = offlineWindowOf(payload);
             if (!window) return;
             if (!config.getSetting('networth_goldSources')) return;
@@ -514,8 +544,15 @@ class CombatLootRecorder {
             if (owner !== undefined && owner !== null && String(owner) !== String(charId)) return;
 
             const generation = this._generation;
+            const ticket = captureOwner(this);
             await this.load();
-            if (this._generation !== generation || this._charId !== charId) return;
+            if (
+                !stillOurs(ticket) ||
+                this._generation !== generation ||
+                this._charId !== charId ||
+                !config.getSetting('networth_goldSources')
+            )
+                return;
 
             foldOffline(this._rowFor(localDayId(window[1])), window);
             this._save();

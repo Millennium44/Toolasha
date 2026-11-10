@@ -26,6 +26,13 @@ vi.mock('../../core/storage.js', () => ({
             state.onRead?.();
             return value;
         },
+        tryGet: async (key) => {
+            const found = key in state.stored;
+            const value = state.stored[key];
+            state.onRead?.();
+            return { found, value };
+        },
+        parseJSON: (value, _key, fallback) => value ?? fallback,
         setJSON: async (key, value) => {
             state.stored[key] = value;
         },

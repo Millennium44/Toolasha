@@ -703,16 +703,21 @@ class ItemFlowRecorder {
 
     /** Forget the departing character's rows, so they are never written under the arriving one's key. */
     _forget() {
+        this._forgetHistory();
+        this._inventory = null;
+        this._combatFoodSlots = [];
+        this._dropPending();
+        this._notifyChange();
+    }
+
+    /** Retire only saved-history ownership, preserving a newly seeded live baseline. */
+    _forgetHistory() {
         this._generation += 1;
         this._rows = [];
         this._touchedChunks.clear();
         this._charId = null;
         this._loading = null;
-        this._inventory = null;
-        this._combatFoodSlots = [];
-        this._dropPending();
         this._store.forget();
-        this._notifyChange();
     }
 
     /**
@@ -722,6 +727,8 @@ class ItemFlowRecorder {
     async load() {
         const charId = this._currentCharId();
         if (!charId) return [];
+        // Read-only consumers can run while the switch listener is inactive.
+        if (this._charId !== null && this._charId !== charId) this._forgetHistory();
         if (this._charId === charId && !this._loading) return [...this._rows];
 
         const generation = this._generation;
@@ -731,6 +738,12 @@ class ItemFlowRecorder {
             this._loading = (async () => {
                 const loaded = await this._store.load(charId);
                 if (this._generation !== generation) return;
+                if (this._currentCharId() !== charId) {
+                    // This read still owns the cache, but its character left.
+                    // A later return must reload rather than treat [] as loaded.
+                    this._forgetHistory();
+                    return;
+                }
                 // Two devices' copies of one day, kept side by side by a sync
                 // pull, are one row; the next save writes the merged copy back
                 const { rows, folded } = mergeDayRows(loaded);
@@ -748,7 +761,7 @@ class ItemFlowRecorder {
         } finally {
             if (this._generation === generation) this._loading = null;
         }
-        return this._generation === generation ? [...this._rows] : [];
+        return this._generation === generation && this._currentCharId() === charId ? [...this._rows] : [];
     }
 
     /**
@@ -759,8 +772,8 @@ class ItemFlowRecorder {
      * @returns {Promise<{gained: Object<string, number>, from: number, to: number}|null>}
      */
     async getRunGathering(run) {
-        await this.load();
-        return gatheringRunTotals(this._rows, run);
+        const rows = await this.load();
+        return gatheringRunTotals(rows, run);
     }
 
     /**

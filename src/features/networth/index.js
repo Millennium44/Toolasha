@@ -109,18 +109,27 @@ class NetworthFeature {
         // after this one in the registry was waiting behind it for a number
         // nobody has looked at yet. It runs once the page has drawn instead.
         this.ready = runInBackground('networth', async () => {
+            // The idle queue outlives disable(), as can every awaited step below.
+            // Reuse this initialization's owner, so retired work cannot restart
+            // calculations, history timers or recorders after their cleanup.
+            if (!stillOurs(ticket)) return;
             if (connectionState.isConnected()) {
                 await performanceMonitor.span('bg:networth', 'first calculation', () => this.recalculate());
+                if (!stillOurs(ticket)) return;
             }
             if (config.getSetting('networth_historyChart')) {
                 networthHistoryChart.setNetworthFeature(this);
                 await performanceMonitor.span('bg:networth', 'history', () => networthHistory.initialize(this));
+                if (!stillOurs(ticket)) return;
             }
             if (config.getSetting('networth_goldSources')) {
                 await performanceMonitor.span('bg:networth', 'gold sources', async () => {
                     await productionIncomeRecorder.initialize();
+                    if (!stillOurs(ticket)) return;
                     await chestOpeningRecorder.initialize();
+                    if (!stillOurs(ticket)) return;
                     await combatLootRecorder.initialize();
+                    if (!stillOurs(ticket)) return;
                     await itemFlowRecorder.initialize();
                 });
             }

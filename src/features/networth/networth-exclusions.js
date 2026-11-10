@@ -18,11 +18,17 @@ import dataManager from '../../core/data-manager.js';
 
 const STORAGE_KEY_PREFIX = 'networth_exclusions';
 
-/** @type {Array<{type: string, value: string}>|null} In-memory cache */
-let cache = null;
+// A read keeps the state object it started with. Switching character or clearing
+// the list replaces the owner, so an old read cannot republish or save over it.
+let state = null;
 
-/** Which character `cache` belongs to — a mismatch means it must be reloaded */
-let cacheCharId = null;
+// A rapid A -> B -> A switch can skip B's feature initialization entirely.
+// Retire the old owner on teardown, not only when a getter notices a new ID.
+dataManager.on?.('character_switching', () => {
+    // Keep a loaded list: a failed pre-switch flush may still have its edits
+    // queued, and a coalesced return must not reload older disk state over them.
+    if (state) state = { ...state, loading: null };
+});
 
 /**
  * The current character id, `'default'` before login.
@@ -33,34 +39,56 @@ function currentCharId() {
 }
 
 /**
- * Get the character-scoped storage key.
+ * Keep the storage family explicit and derive it from the captured owner.
+ * @param {string} charId
  * @returns {string}
  */
-function getStorageKey() {
-    return `${STORAGE_KEY_PREFIX}_${currentCharId()}`;
+function storageKey(charId) {
+    return `${STORAGE_KEY_PREFIX}_${charId}`;
 }
 
 /**
- * Load exclusions from storage into memory.
- *
- * Reloaded whenever the character has changed since the cache was filled, not
- * only when it is empty: the feature is torn down and reinitialized on every
- * character switch (`character_switching` / `character_switched`), but this
- * module has no listener of its own, so `cache !== null` alone kept serving
- * the departed character's list to whoever logged in next — reading it, and
- * writing it back merged with anything the new character excluded, silently
- * carried one character's exclusions onto another's (a real risk with several
- * ironclad/ironcow characters open in the same browser).
- *
- * @returns {Promise<Array<{type: string, value: string}>>}
+ * The current character's cache and any read already filling it.
+ * @returns {{charId: string, list: Array|null, loading: Promise|null}}
  */
-async function loadExclusions() {
+function currentState() {
     const charId = currentCharId();
-    if (cache === null || cacheCharId !== charId) {
-        cache = (await storage.getJSON(getStorageKey(), 'settings', [])) || [];
-        cacheCharId = charId;
+    if (!state || state.charId !== charId) {
+        state = { charId, list: null, loading: null };
     }
-    return cache;
+    return state;
+}
+
+/**
+ * Load one owner's exclusions, sharing the read between concurrent callers.
+ *
+ * The returned list belongs to that owner even if a switch or clear happens
+ * during the read. Mutations check that owner again before touching the list.
+ * @param {Object} owner - State returned by currentState()
+ * @returns {Promise<Array<{type: string, value: string}>|null>} Null when unreadable
+ */
+async function loadExclusions(owner = currentState()) {
+    if (owner.list !== null) return owner.list;
+    if (!owner.loading) {
+        owner.loading = (async () => {
+            try {
+                // getJSON folds a failed read into its default. Treating that
+                // default as an empty list would erase saved rows on the next edit.
+                const key = storageKey(owner.charId);
+                const probe = await storage.tryGet(key, 'settings');
+                const list = probe ? (probe.found ? storage.parseJSON(probe.value, key, null) : []) : null;
+                if (!Array.isArray(list)) {
+                    console.warn('[NetworthExclusions] Exclusions could not be read; edits were not saved');
+                    return null;
+                }
+                owner.list = list;
+                return list;
+            } finally {
+                owner.loading = null;
+            }
+        })();
+    }
+    return owner.loading;
 }
 
 /**
@@ -76,7 +104,7 @@ export async function initExclusions() {
  * @returns {Array<{type: string, value: string}>}
  */
 export function getExclusions() {
-    return cache ?? [];
+    return currentState().list ?? [];
 }
 
 /**
@@ -86,7 +114,7 @@ export function getExclusions() {
  * @returns {boolean}
  */
 export function isExcluded(type, value) {
-    const list = cache ?? [];
+    const list = getExclusions();
     return list.some((e) => e.type === type && e.value === value);
 }
 
@@ -97,23 +125,17 @@ export function isExcluded(type, value) {
  * @returns {Promise<void>}
  */
 export async function addExclusion(type, value) {
-    // Captured before the load, checked after it. `getStorageKey()` answers
-    // with whoever is current at the moment it is called, and the write below
-    // is a full overwrite with no merge — so a character switch landing inside
-    // a cold read wrote this character's whole exclusion list over the
-    // arriving character's, deleting theirs outright and quietly dropping the
-    // items they had taken out of their net worth.
-    const key = getStorageKey();
-    const list = await loadExclusions();
-    if (key !== getStorageKey()) {
-        console.warn('[NetworthExclusions] Exclusion not saved: the character changed while the list loaded');
+    const owner = currentState();
+    const list = await loadExclusions(owner);
+    if (owner !== currentState()) {
+        console.warn('[NetworthExclusions] Exclusion not saved: the list was replaced while loading');
         return;
     }
+    if (!list) return;
     if (!list.some((e) => e.type === type && e.value === value)) {
         list.push({ type, value });
-        cache = list;
         // Fire-and-forget: persist in background so the UI updates instantly
-        storage.setJSON(key, list, 'settings');
+        storage.setJSON(storageKey(owner.charId), list, 'settings');
     }
 }
 
@@ -124,19 +146,18 @@ export async function addExclusion(type, value) {
  * @returns {Promise<void>}
  */
 export async function removeExclusion(type, value) {
-    // Same capture-and-check as addExclusion
-    const key = getStorageKey();
-    const list = await loadExclusions();
-    if (key !== getStorageKey()) {
-        console.warn('[NetworthExclusions] Exclusion not removed: the character changed while the list loaded');
+    const owner = currentState();
+    const list = await loadExclusions(owner);
+    if (owner !== currentState()) {
+        console.warn('[NetworthExclusions] Exclusion not removed: the list was replaced while loading');
         return;
     }
+    if (!list) return;
     const idx = list.findIndex((e) => e.type === type && e.value === value);
     if (idx !== -1) {
         list.splice(idx, 1);
-        cache = list;
         // Fire-and-forget: persist in background so the UI updates instantly
-        storage.setJSON(key, list, 'settings');
+        storage.setJSON(storageKey(owner.charId), list, 'settings');
     }
 }
 
@@ -145,7 +166,7 @@ export async function removeExclusion(type, value) {
  * @returns {Promise<void>}
  */
 export async function clearExclusions() {
-    cache = [];
-    cacheCharId = currentCharId();
-    storage.setJSON(getStorageKey(), [], 'settings');
+    const owner = currentState();
+    state = { charId: owner.charId, list: [], loading: null };
+    storage.setJSON(storageKey(owner.charId), state.list, 'settings');
 }

@@ -255,6 +255,8 @@ class ChestOpeningRecorder {
     async load() {
         const charId = this._currentCharId();
         if (!charId) return [];
+        // Read-only consumers can run while the switch listener is inactive.
+        if (this._charId !== null && this._charId !== charId) this._forget();
         if (this._charId === charId && !this._loading) return [...this._rows];
 
         const generation = this._generation;
@@ -264,6 +266,12 @@ class ChestOpeningRecorder {
             this._loading = (async () => {
                 const rows = await this._store.load(charId);
                 if (this._generation !== generation) return;
+                if (this._currentCharId() !== charId) {
+                    // This read still owns the cache, but its character left.
+                    // A later return must reload rather than treat [] as loaded.
+                    this._forget();
+                    return;
+                }
                 this._rows = rows;
             })();
         }
@@ -273,7 +281,7 @@ class ChestOpeningRecorder {
         } finally {
             if (this._generation === generation) this._loading = null;
         }
-        return this._generation === generation ? [...this._rows] : [];
+        return this._generation === generation && this._currentCharId() === charId ? [...this._rows] : [];
     }
 
     /**

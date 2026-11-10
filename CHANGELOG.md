@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Net Worth respects shutdown and character changes
+
+Net Worth no longer restarts services after shutdown or mixes delayed exclusions and recorded histories between character sessions. Exclusions are protected from unreadable saved data and older pending reads.
+
 ### Enhancement sessions stay with their character
 
 A delayed startup can no longer clear another character’s active enhancement session. Turning the tracker off during startup and back on now restarts it correctly.
