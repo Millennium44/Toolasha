@@ -76,13 +76,10 @@
         "src/**/*.js": [
             "eslint --fix",
             "prettier --write",
-            "npm run test:related --",
-            "bash -c 'npm run build:dev'",
-            "bash -c 'npm run build'"
+            "npm run test:related --"
         ],
         "rollup.config.js": [
-            "prettier --write",
-            "bash -c 'npm run build'"
+            "prettier --write"
         ],
         "*.config.js": [
             "prettier --write"

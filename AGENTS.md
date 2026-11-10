@@ -28,7 +28,7 @@ npm test -- src/utils/formatters.test.js
 npm test -- -t "numberFormatter"
 ```
 
-**Pre-commit hooks:** ESLint + Prettier + tests + build run on commit.
+**Pre-commit hooks:** ESLint + Prettier + tests related to the staged files run on commit (no builds; `scripts/gates.sh` and CI build).
 **Manual testing:** Install `dist/Toolasha-dev.user.js` in Tampermonkey and open <https://test.milkywayidle.com/game>.
 
 ### Committing a multi-line message
@@ -161,6 +161,9 @@ push to `main` or merge.
   `fix:`/`feat:` subjects with the PR title, and release-please drops a non-conventional one. Several
   ready PRs conflict with each other on `CHANGELOG.md`: re-sync each with `main` keeping every entry, or
   merge them all locally in one pass, resolve the changelog once, run gates, and push.
+  `bash scripts/land-stack.sh [--push] <pr> ...` does this in `../Toolasha-integ`: it checks each PR (open, CI,
+  Codex review or carry-over, no unresolved threads), cherry-picks them in order with `HUSKY=0`, verifies each
+  stacked patch equals its PR head's, runs the full gates, and with `--push` lands everything in one atomic push.
 
 ### Briefing another agent
 
