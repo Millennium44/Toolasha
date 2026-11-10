@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 
+### Item artwork in market panels and Equipment Watch
+
+Equipment Watch’s searchable picker now shows item icons. Trade Ledger, Stale Capital, Overbid and Production Arbitrage rows also show game artwork beside item names.
+
 ### Icons in simulator target dropdowns
 
 The Lab Monster and Combat Zone dropdowns show game artwork beside choices in supported browsers, with readable text where those menus are not supported.

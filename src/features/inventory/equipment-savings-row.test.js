@@ -12,6 +12,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 
 const game = vi.hoisted(() => ({
     inventory: [],
@@ -267,6 +268,7 @@ const {
 const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
+    resetSpriteSheetCache();
     game.skills = [];
     game.drinks = [];
     game.customVersion = 0;
@@ -702,8 +704,8 @@ describe('the item picker', () => {
     test('it offers only the pieces that fill that slot', () => {
         openPicker('feet');
 
-        const values = [...equipmentSavingsPanel.panel.querySelectorAll('[data-pick-item] option')].map(
-            (option) => option.value
+        const values = [...equipmentSavingsPanel.panel.querySelectorAll('[data-pick-item] [role="option"]')].map(
+            (option) => option.dataset.itemHrid
         );
         expect(values).toContain('/items/rough_boots');
         expect(values).not.toContain('/items/holy_sword');
@@ -712,7 +714,7 @@ describe('the item picker', () => {
     test('it is a list box rather than a dropdown', () => {
         // A dropdown over three hundred items is a scroll you cannot see the
         // shape of, and it closes every time anything redraws
-        expect(openPicker().size).toBe(10);
+        expect(openPicker().getAttribute('role')).toBe('listbox');
     });
 
     test('clicking the same slot again closes it', () => {
@@ -724,8 +726,7 @@ describe('the item picker', () => {
 
     test('picking a piece offers its enhancement levels and prices the choice', () => {
         const list = openPicker();
-        list.value = '/items/holy_sword';
-        list.dispatchEvent(new Event('change'));
+        list.querySelector('[data-item-hrid="/items/holy_sword"]').click();
 
         expect(equipmentSavingsPanel.panel.querySelectorAll('[data-pick-level]')).toHaveLength(21);
         expect(text()).toContain('Lowest Ask:');
@@ -734,8 +735,7 @@ describe('the item picker', () => {
 
     test('watching it adds it at the enhancement that was chosen', () => {
         const list = openPicker();
-        list.value = '/items/holy_sword';
-        list.dispatchEvent(new Event('change'));
+        list.querySelector('[data-item-hrid="/items/holy_sword"]').click();
 
         equipmentSavingsPanel.panel.querySelector('[data-pick-level="5"]').click();
         equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
@@ -747,16 +747,124 @@ describe('the item picker', () => {
 
     test('the picker closes once it has been used', () => {
         const list = openPicker();
-        list.value = '/items/holy_sword';
-        list.dispatchEvent(new Event('change'));
+        list.querySelector('[data-item-hrid="/items/holy_sword"]').click();
         equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
 
         expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
     });
 
     test('nothing picked means nothing to watch', () => {
-        expect(openPicker().value).toBe('');
+        expect(openPicker().querySelector('[aria-selected="true"]').dataset.itemHrid).toBe('');
         expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(true);
+    });
+});
+
+describe('Equipment Watch picker artwork and search', () => {
+    test('native artwork is selectable and uses the item HRID rather than its name', () => {
+        const sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use href="/static/items_sprite.test.svg#cheese_sword"></use></svg>';
+        document.body.appendChild(sprite);
+        const list = openPicker();
+        const option = list.querySelector('[data-item-hrid="/items/holy_sword"]');
+        expect(option.querySelector('use').getAttribute('href')).toBe('/static/items_sprite.test.svg#holy_sword');
+        expect(option.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+        option.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(text()).toContain('Lowest Ask:');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(false);
+        expect(document.activeElement).toBe(equipmentSavingsPanel.panel.querySelector('[data-pick-item]'));
+        sprite.remove();
+    });
+
+    test('search and keyboard choice survive pricing redraws and keep nonzero enhancement levels', () => {
+        openPicker();
+        let search = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        search.value = 'holy';
+        search.dispatchEvent(new Event('input'));
+        search.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        equipmentSavingsPanel.panel.querySelector('[data-pick-level="5"]').click();
+        search = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        expect(search.value).toBe('holy');
+        const options = equipmentSavingsPanel.panel.querySelectorAll('[role="option"]');
+        expect([...options].map((option) => option.dataset.itemHrid)).toEqual(['/items/holy_sword']);
+        expect(options[0].getAttribute('aria-selected')).toBe('true');
+        equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
+        expect(document.activeElement).toBe(equipmentSavingsPanel.panel.querySelector('[data-watch-slot="main_hand"]'));
+        expect(watchedTargets()[0]).toMatchObject({ itemHrid: '/items/holy_sword', enhancementLevel: 5 });
+    });
+
+    test('unknown search does not discard the selection, its cost or enhancement', () => {
+        openPicker().querySelector('[data-item-hrid="/items/holy_sword"]').click();
+        equipmentSavingsPanel.panel.querySelector('[data-pick-level="5"]').click();
+        const search = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        search.value = 'nothing matches this';
+        search.dispatchEvent(new Event('input'));
+        expect(equipmentSavingsPanel.panel.querySelectorAll('[role="option"]')).toHaveLength(0);
+        expect(text()).toContain('No matching equipment');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(false);
+        equipmentSavingsPanel.render();
+        equipmentSavingsPanel.panel.querySelector('[data-pick-add]').click();
+        expect(watchedTargets()[0]).toMatchObject({ itemHrid: '/items/holy_sword', enhancementLevel: 5 });
+    });
+
+    test('the empty choice clears a selection and unpriced items stay unpriced', () => {
+        game.details['/items/unpriced_sword'] = {
+            name: 'Unpriced Sword',
+            equipmentDetail: { type: '/equipment_types/main_hand' },
+        };
+        openPicker().querySelector('[data-item-hrid="/items/unpriced_sword"]').click();
+        expect(text()).toContain('Nobody is selling this one, and it cannot be reached at the anvil either.');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(false);
+        equipmentSavingsPanel.panel.querySelector('[data-item-hrid=""]').click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-add]').disabled).toBe(true);
+        expect(equipmentSavingsPanel.panel.querySelector('[aria-selected="true"]').dataset.itemHrid).toBe('');
+        expect(text()).not.toContain('Nobody is selling this one, and it cannot be reached at the anvil either.');
+    });
+
+    test('reopening, switching slots and locking clear a previous search', () => {
+        openPicker();
+        const search = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        search.value = 'holy';
+        search.dispatchEvent(new Event('input'));
+        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="feet"]').click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-search]').value).toBe('');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-item-hrid="/items/rough_boots"]')).not.toBeNull();
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
+        equipmentSavingsPanel.panel.querySelector('[data-lock-toggle]').click();
+        equipmentSavingsPanel.panel.querySelector('[data-watch-slot="main_hand"]').click();
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-search]').value).toBe('');
+    });
+
+    test('slot openers have distinct accessible names and expose whether their picker is expanded', () => {
+        unlock();
+        const opener = (slot) => equipmentSavingsPanel.panel.querySelector(`[data-watch-slot="${slot}"]`);
+        expect(opener('main_hand').getAttribute('aria-label')).toBe('Click to watch Main Hand equipment');
+        expect(opener('feet').getAttribute('aria-label')).toBe('Click to watch Feet equipment');
+        expect(opener('main_hand').getAttribute('aria-expanded')).toBe('false');
+        opener('main_hand').click();
+        expect(opener('main_hand').getAttribute('aria-expanded')).toBe('true');
+        expect(opener('feet').getAttribute('aria-expanded')).toBe('false');
+        opener('feet').click();
+        expect(opener('main_hand').getAttribute('aria-expanded')).toBe('false');
+        expect(opener('feet').getAttribute('aria-expanded')).toBe('true');
+        opener('feet').click();
+        expect(opener('feet').getAttribute('aria-expanded')).toBe('false');
+        expect(equipmentSavingsPanel.panel.querySelector('[data-pick-item]')).toBeNull();
+    });
+
+    test('the slot opener is a keyboard button and redraws retain the search caret', () => {
+        openPicker();
+        const opener = equipmentSavingsPanel.panel.querySelector('[data-watch-slot="main_hand"]');
+        expect(opener.tagName).toBe('BUTTON');
+        const search = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        search.value = 'sword';
+        search.dispatchEvent(new Event('input'));
+        search.focus();
+        search.setSelectionRange(1, 3);
+        equipmentSavingsPanel.render();
+        const rebuilt = equipmentSavingsPanel.panel.querySelector('[data-pick-search]');
+        expect(document.activeElement).toBe(rebuilt);
+        expect([rebuilt.selectionStart, rebuilt.selectionEnd]).toEqual([1, 3]);
+        expect(rebuilt.value).toBe('sword');
     });
 });
 

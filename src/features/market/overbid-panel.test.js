@@ -1,5 +1,6 @@
 /** @vitest-environment happy-dom */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 
 const hoisted = vi.hoisted(() => ({
     listings: [],
@@ -227,6 +228,7 @@ describe('panel', () => {
     const root = () => document.getElementById('toolasha-overbidPanel-panel');
 
     beforeEach(async () => {
+        resetSpriteSheetCache();
         hoisted.listings = [];
         hoisted.observations = {};
         hoisted.handlers = {};
@@ -253,6 +255,7 @@ describe('panel', () => {
     afterEach(() => {
         overbidPanel.disable();
         vi.useRealTimers();
+        resetSpriteSheetCache();
     });
 
     it('stays away while nothing is beaten, opens when something is, closes when resolved', () => {
@@ -286,6 +289,44 @@ describe('panel', () => {
         fire();
         root().querySelector('a').click();
         expect(hoisted.navigate).toHaveBeenCalledWith(CHEESE, 4);
+    });
+
+    it('native item artwork keeps duplicate tiers separate and follows the original link', () => {
+        document.body.insertAdjacentHTML(
+            'afterbegin',
+            '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>'
+        );
+        hoisted.listings = [listing(), listing({ id: 2, enhancementLevel: 7 })];
+        hoisted.observations[`${CHEESE}:0:sell`] = fresh(90);
+        hoisted.observations[`${CHEESE}:7:sell`] = fresh(80);
+        fire();
+        const links = [...root().querySelectorAll('tbody a')];
+        expect(links.map((link) => link.textContent)).toEqual(['cheese', 'cheese +7']);
+        for (const link of links) {
+            expect(link.querySelector('use').getAttribute('href')).toBe(
+                '/static/media/items_sprite.current.svg#cheese'
+            );
+            expect(link.querySelector('svg').getAttribute('aria-hidden')).toBe('true');
+        }
+        links[1].querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        expect(hoisted.navigate).toHaveBeenCalledExactlyOnceWith(CHEESE, 7);
+        fire();
+        expect(root().querySelectorAll('.toolasha-item-label svg')).toHaveLength(2);
+    });
+
+    it('keeps names before the sprite is available and fills them on a later update', () => {
+        hoisted.listings = [listing({ enhancementLevel: 7 })];
+        hoisted.observations[`${CHEESE}:7:sell`] = fresh(90);
+        fire();
+        expect(root().querySelector('a').textContent).toBe('cheese +7');
+        expect(root().querySelector('.toolasha-item-label svg')).toBeNull();
+        document.body.insertAdjacentHTML(
+            'afterbegin',
+            '<svg><use href="/static/media/items_sprite.current.svg#coin"></use></svg>'
+        );
+        fire();
+        expect(root().querySelectorAll('.toolasha-item-label svg')).toHaveLength(1);
+        expect(root().querySelector('a').textContent).toBe('cheese +7');
     });
 
     it('minimize folds the body and survives later updates', () => {

@@ -110,6 +110,40 @@ export function itemIcon(itemHrid, size = 18) {
 }
 
 /**
+ * A readable item name with decorative native artwork, for tables and links.
+ * The identity is explicit: translated or identical names never select a sprite.
+ * Missing artwork keeps its space, while unsupported identities stay text-only.
+ * @param {string|null} itemHrid - Full item HRID
+ * @param {string} name - Plain text, including any enhancement suffix
+ * @returns {HTMLElement} An inline label; navigation belongs to its caller
+ */
+export function itemLabel(itemHrid, name) {
+    const label = document.createElement('span');
+    label.className = 'toolasha-item-label';
+    Object.assign(label.style, {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        maxWidth: '100%',
+        verticalAlign: 'middle',
+    });
+
+    if (/^\/items\/[a-zA-Z0-9_]+$/.test(itemHrid || '')) {
+        const icon = itemIcon(itemHrid, 18);
+        icon.setAttribute('aria-hidden', 'true');
+        icon.setAttribute('focusable', 'false');
+        Object.assign(icon.style, { width: '18px', height: '18px', flex: '0 0 18px', pointerEvents: 'none' });
+        label.appendChild(icon);
+    }
+
+    const text = document.createElement('span');
+    text.textContent = name;
+    text.style.minWidth = '0';
+    label.appendChild(text);
+    return label;
+}
+
+/**
  * A skill's icon.
  *
  * The sheet OPanel and JHouse draw their headings from — a house room is

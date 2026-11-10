@@ -53,6 +53,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatKMB3Digits } from '../../utils/formatters.js';
 import { clampToBand } from '../../utils/market-values.js';
+import { itemLabel } from '../../utils/overlay-format.js';
 
 /** Master switch for the panel */
 export const SETTING = 'market_overbidPanel';
@@ -313,7 +314,7 @@ export function drawOverbidTable(body, rows, unknown = 0, options = {}) {
             nameCell.appendChild(control);
         }
         const link = document.createElement('a');
-        link.textContent = rowLabel(row);
+        link.appendChild(itemLabel(row.itemHrid, rowLabel(row)));
         link.href = '#';
         link.dataset.itemHrid = row.itemHrid;
         link.dataset.enhancementLevel = String(row.enhancementLevel);

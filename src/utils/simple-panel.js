@@ -88,6 +88,22 @@ export function createPanel({
         const listShapes = selects.map((select) => listShape(select));
         const focusedList = selects.indexOf(document.activeElement);
 
+        // Rich controls opt in by stable key. Keep their focus and search caret as well as
+        // their scroll position; positional select matching remains unchanged for older panels.
+        const controls = new Map(
+            [...bodyEl.querySelectorAll('[data-panel-control]')].map((control) => [
+                control.dataset.panelControl,
+                {
+                    shape: control.dataset.panelShape,
+                    top: control.scrollTop,
+                    focused: control === document.activeElement,
+                    start: control.selectionStart,
+                    end: control.selectionEnd,
+                    direction: control.selectionDirection,
+                },
+            ])
+        );
+
         bodyEl.replaceChildren();
 
         try {
@@ -107,6 +123,17 @@ export function createPanel({
                 if (listShape(select) === listShapes[index]) select.scrollTop = listTops[index];
             });
             if (focusedList >= 0) rebuilt[focusedList].focus({ preventScroll: true });
+        }
+        for (const control of bodyEl.querySelectorAll('[data-panel-control]')) {
+            const saved = controls.get(control.dataset.panelControl);
+            if (!saved) continue;
+            if (saved.shape === control.dataset.panelShape) control.scrollTop = saved.top;
+            if (saved.focused) {
+                control.focus({ preventScroll: true });
+                if (typeof saved.start === 'number' && typeof control.setSelectionRange === 'function') {
+                    control.setSelectionRange(saved.start, saved.end, saved.direction);
+                }
+            }
         }
     }
 
@@ -130,7 +157,10 @@ export function createPanel({
         if (minimizeCtl?.collapsed) return;
 
         const active = document.activeElement;
-        const busy = panel?.contains(active) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName);
+        const busy =
+            panel?.contains(active) &&
+            (['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName) ||
+                active.matches('[data-panel-control][role="listbox"]'));
         if (busy) return;
 
         render();

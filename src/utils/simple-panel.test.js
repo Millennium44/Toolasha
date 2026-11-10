@@ -221,6 +221,84 @@ describe('createPanel', () => {
         panel.hide();
     });
 
+    test('keyed rich controls retain list focus and scroll without refreshing under the keyboard', () => {
+        const panel = createPanel({
+            id: 'rich-list',
+            title: 'Rich list',
+            size: SIZE,
+            refreshMs: 1000,
+            draw: (body) => {
+                const list = document.createElement('div');
+                list.tabIndex = 0;
+                list.dataset.panelControl = 'items';
+                list.dataset.panelShape = 'sword,shield';
+                list.setAttribute('role', 'listbox');
+                body.appendChild(list);
+            },
+        });
+        panel.show();
+        const list = panel.panel.querySelector('[role="listbox"]');
+        list.focus();
+        list.scrollTop = 150;
+        vi.advanceTimersByTime(5000);
+        expect(panel.panel.querySelector('[role="listbox"]')).toBe(list);
+        panel.render();
+        const rebuilt = panel.panel.querySelector('[role="listbox"]');
+        expect(rebuilt).not.toBe(list);
+        expect(document.activeElement).toBe(rebuilt);
+        expect(rebuilt.scrollTop).toBe(150);
+        panel.hide();
+    });
+
+    test('keyed search controls restore focus and selection but never transfer them to a different key', () => {
+        let key = 'main-hand-search';
+        const panel = createPanel({
+            id: 'rich-search',
+            title: 'Search',
+            size: SIZE,
+            draw: (body) => {
+                const search = document.createElement('input');
+                search.type = 'search';
+                search.value = 'sword';
+                search.dataset.panelControl = key;
+                body.appendChild(search);
+            },
+        });
+        panel.show();
+        const search = panel.panel.querySelector('input');
+        search.focus();
+        search.setSelectionRange(1, 4, 'backward');
+        panel.render();
+        const rebuilt = panel.panel.querySelector('input');
+        expect(document.activeElement).toBe(rebuilt);
+        expect([rebuilt.selectionStart, rebuilt.selectionEnd, rebuilt.selectionDirection]).toEqual([1, 4, 'backward']);
+        key = 'feet-search';
+        panel.render();
+        expect(document.activeElement).not.toBe(panel.panel.querySelector('input'));
+        panel.hide();
+    });
+
+    test('keyed rich list scroll is only restored for the same choice set', () => {
+        let shape = 'sword,shield';
+        const panel = createPanel({
+            id: 'rich-shape',
+            title: 'Shape',
+            size: SIZE,
+            draw: (body) => {
+                const list = document.createElement('div');
+                list.dataset.panelControl = 'items';
+                list.dataset.panelShape = shape;
+                body.appendChild(list);
+            },
+        });
+        panel.show();
+        panel.panel.querySelector('[data-panel-control]').scrollTop = 150;
+        shape = 'boots';
+        panel.render();
+        expect(panel.panel.querySelector('[data-panel-control]').scrollTop).toBe(0);
+        panel.hide();
+    });
+
     test('a redraw keeps the body and list scroll positions and the list focus', () => {
         const panel = createPanel({
             id: 'scrolly',

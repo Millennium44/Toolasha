@@ -25,6 +25,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { styleGameButton, GAME_COLORS } from '../../utils/game-look.js';
+import { itemLabel } from '../../utils/overlay-format.js';
 
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
@@ -826,7 +827,7 @@ class TradeLedgerView {
             `;
 
             const itemCell = document.createElement('td');
-            itemCell.textContent = this.getItemName(item.itemHrid);
+            itemCell.appendChild(itemLabel(item.itemHrid, this.getItemName(item.itemHrid)));
             itemCell.style.cssText = 'padding: 4px 10px; cursor: pointer;';
             itemCell.title = 'Open this item in the marketplace at its enhancement level.';
             itemCell.addEventListener('mouseenter', () => (itemCell.style.textDecoration = 'underline'));

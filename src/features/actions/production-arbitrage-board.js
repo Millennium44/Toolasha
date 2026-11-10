@@ -27,6 +27,7 @@ import { createPanel } from '../../utils/simple-panel.js';
 import { GAME_COLORS, styleGameButton } from '../../utils/game-look.js';
 import { navigateToAction, navigateToItem } from '../../utils/item-navigation.js';
 import { liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { itemLabel } from '../../utils/overlay-format.js';
 import {
     PRODUCTION_SKILLS,
     rankProductionArbitrage,
@@ -501,7 +502,8 @@ class ProductionArbitrageBoard {
 
             tr.appendChild(cell(index + 1, { textAlign: 'center', color: MUTED }));
 
-            const name = cell(row.itemName, { color: '#93c5fd' });
+            const name = cell('', { color: '#93c5fd' });
+            name.appendChild(itemLabel(row.itemHrid, row.itemName));
             if (row.actionName && row.actionName !== row.itemName) {
                 const action = document.createElement('span');
                 action.textContent = ` (${row.actionName})`;

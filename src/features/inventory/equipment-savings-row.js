@@ -103,6 +103,7 @@ import {
 import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID } from '../../utils/mirror-route.js';
 import { createPanel, panelCard, panelNote } from '../../utils/simple-panel.js';
 import { styleGameButton } from '../../utils/game-look.js';
+import { createEquipmentItemPicker } from './equipment-item-picker.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { roomSkill } from '../../utils/room-skills.js';
 import {
@@ -199,6 +200,7 @@ const state = { targets: {}, noSell: false, marketValue: true, selected: null, l
  */
 const editing = {
     itemHrid: '',
+    itemSearch: '',
     enhancementLevel: 0,
     slot: '',
     abilityHrid: '',
@@ -790,6 +792,7 @@ export function setLocked(locked) {
     // A picker left open under a slot that is about to disappear
     editing.slot = '';
     editing.itemHrid = '';
+    editing.itemSearch = '';
     persist();
 }
 
@@ -818,6 +821,7 @@ export function selectTarget(key) {
  */
 export function resetEquipmentSavings() {
     editing.itemHrid = '';
+    editing.itemSearch = '';
     editing.enhancementLevel = 0;
     editing.slot = '';
     editing.abilityHrid = '';
@@ -2719,50 +2723,33 @@ function slotPicker(slot) {
         if (!editing.itemHrid) return;
         watchTarget(editing.itemHrid, editing.enhancementLevel);
         editing.itemHrid = '';
+        editing.itemSearch = '';
         editing.enhancementLevel = 0;
         editing.slot = '';
         equipmentSavingsPanel.render();
+        equipmentSavingsPanel.panel?.querySelector(`[data-watch-slot="${slot}"]`)?.focus({ preventScroll: true });
     });
 
     heading.append(label, watch);
     card.appendChild(heading);
 
-    const list = document.createElement('select');
-    list.classList.add('toolasha-select');
-    list.dataset.pickItem = 'true';
-    // A list box, not a dropdown: the shape of the list is visible and nothing
-    // can close it
-    list.size = 10;
-    Object.assign(list.style, {
-        background: 'rgba(0, 0, 0, 0.35)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        borderRadius: '3px',
-        color: '#e8ecf5',
-        fontSize: '11px',
-        padding: '2px',
-        width: '100%',
-    });
-
-    const blank = document.createElement('option');
-    blank.value = '';
-    blank.textContent = '-- Select Item --';
-    list.appendChild(blank);
-
     const group = equipmentBySlot().find((entry) => entry.type.split('/').pop() === slot);
-    for (const item of group?.items || []) {
-        const option = document.createElement('option');
-        option.value = item.itemHrid;
-        option.textContent = item.name;
-        option.selected = item.itemHrid === editing.itemHrid;
-        list.appendChild(option);
-    }
-    list.addEventListener('change', () => {
-        editing.itemHrid = list.value;
-        equipmentSavingsPanel.render();
-    });
-    // A keystroke in a list should not also be a game hotkey
-    list.addEventListener('keydown', (event) => event.stopPropagation());
-    card.appendChild(list);
+    card.appendChild(
+        createEquipmentItemPicker({
+            slot,
+            label: `${slotLabel(slot)} equipment`,
+            items: group?.items || [],
+            value: editing.itemHrid,
+            query: editing.itemSearch,
+            onSearch: (query) => {
+                editing.itemSearch = query;
+            },
+            onChange: (itemHrid) => {
+                editing.itemHrid = itemHrid;
+                equipmentSavingsPanel.render();
+            },
+        })
+    );
 
     card.appendChild(enhancementButtons());
     if (editing.itemHrid) card.appendChild(costPreview(editing.itemHrid, editing.enhancementLevel));
@@ -3936,9 +3923,12 @@ function slotSection(slot, targets) {
  * @returns {HTMLElement}
  */
 function emptySlotRow(slot) {
-    const row = document.createElement('div');
+    const row = document.createElement('button');
+    row.type = 'button';
     Object.assign(row.style, {
+        border: 'none',
         borderLeft: '2px solid rgba(127, 214, 163, 0.5)',
+        width: '100%',
         background: 'rgba(255, 255, 255, 0.03)',
         borderRadius: '3px',
         color: 'rgba(232, 236, 245, 0.45)',
@@ -3948,6 +3938,9 @@ function emptySlotRow(slot) {
         textAlign: 'center',
     });
     row.dataset.watchSlot = slot;
+    row.setAttribute('aria-label', `Click to watch ${slotLabel(slot)} equipment`);
+    row.setAttribute('aria-expanded', String(editing.slot === slot));
+    row.dataset.panelControl = `equipment-watch-slot-${slot}`;
     row.replaceChildren(eyeIcon(false), document.createTextNode(' Click to watch'));
     Object.assign(row.style, { display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' });
     row.title = 'Open the picker with this slot in mind.';
@@ -3956,8 +3949,12 @@ function emptySlotRow(slot) {
         // is a switch rather than a one-way door
         editing.slot = editing.slot === slot ? '' : slot;
         editing.itemHrid = '';
+        editing.itemSearch = '';
         editing.enhancementLevel = 0;
         equipmentSavingsPanel.render();
+        if (editing.slot) {
+            equipmentSavingsPanel.panel?.querySelector('[data-pick-search]')?.focus({ preventScroll: true });
+        }
     });
     return row;
 }

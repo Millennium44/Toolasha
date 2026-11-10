@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     signedPercent,
     shortDuration,
@@ -12,6 +12,7 @@ import {
     ROW_COLORS,
     resetSpriteSheetCache,
     itemIcon,
+    itemLabel,
     linkToMarketplace,
 } from './overlay-format.js';
 
@@ -33,6 +34,74 @@ describe('signedPercent', () => {
     test('the band can be widened for a noisier figure', () => {
         expect(signedPercent(8, 10).color).toBe(ROW_COLORS.dim);
     });
+});
+
+describe('item labels for tables and links', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        resetSpriteSheetCache();
+    });
+    afterEach(() => {
+        document.body.innerHTML = '';
+        resetSpriteSheetCache();
+    });
+
+    const seedSprite = () => {
+        document.body.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>';
+    };
+
+    test('identical translated names keep their explicit item identities and remain plain text', () => {
+        seedSprite();
+        for (const slug of ['cheese', 'milk']) {
+            const label = itemLabel(`/items/${slug}`, '奶酪 +7 <not markup>');
+            expect(label.textContent).toBe('奶酪 +7 <not markup>');
+            expect(label.querySelector('not')).toBeNull();
+            expect(label.querySelector('use').getAttribute('href')).toBe(
+                `/static/media/items_sprite.current.svg#${slug}`
+            );
+            const icon = label.firstElementChild;
+            expect(icon.getAttribute('aria-hidden')).toBe('true');
+            expect(icon.getAttribute('focusable')).toBe('false');
+            expect(icon.style.pointerEvents).toBe('none');
+            expect(icon.style.flex).toBe('0 0 18px');
+            expect(label.style.maxWidth).toBe('100%');
+            expect(label.lastElementChild.style.minWidth).toBe('0');
+        }
+    });
+
+    test('late sprite sheets replace a same-size spacer on the next render', () => {
+        const early = itemLabel('/items/cheese', 'Cheese');
+        expect(early.querySelector('svg')).toBeNull();
+        expect(early.firstElementChild.style.width).toBe('18px');
+        expect(early.firstElementChild.style.height).toBe('18px');
+        seedSprite();
+        const ready = itemLabel('/items/cheese', 'Cheese');
+        expect(ready.querySelector('svg')).not.toBeNull();
+        expect(ready.firstElementChild.style.width).toBe(early.firstElementChild.style.width);
+        expect(ready.textContent).toBe(early.textContent);
+    });
+
+    test('artwork adds no separate click or keyboard target', () => {
+        seedSprite();
+        const link = document.createElement('a');
+        const navigate = vi.fn();
+        link.addEventListener('click', navigate);
+        link.appendChild(itemLabel('/items/cheese', 'Cheese +7'));
+        link.querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(navigate).toHaveBeenCalledTimes(1);
+        expect(link.querySelector('[tabindex]')).toBeNull();
+    });
+
+    test.each([null, '', '/abilities/heal', '/items/cheese#milk', '/items/<svg>'])(
+        'unsupported identity %s stays readable without invented artwork',
+        (hrid) => {
+            seedSprite();
+            const label = itemLabel(hrid, 'Unknown item');
+            expect(label.textContent).toBe('Unknown item');
+            expect(label.childElementCount).toBe(1);
+            expect(label.querySelector('svg')).toBeNull();
+        }
+    );
 });
 
 describe('shortDuration', () => {

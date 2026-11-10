@@ -9,7 +9,8 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => ({ '/items/sword': { name: 'Sword' }, '/items/log': { name: 'Log' } })[hrid],
     },
 }));
-vi.mock('../../utils/overlay-format.js', () => ({
+vi.mock('../../utils/overlay-format.js', async () => ({
+    ...(await vi.importActual('../../utils/overlay-format.js')),
     itemIcon: (hrid) => {
         const node = document.createElement('span');
         node.dataset.icon = hrid;

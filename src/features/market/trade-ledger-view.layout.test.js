@@ -11,7 +11,19 @@
  * in Firefox, Chromium and WebKit at 360 and 390px wide, and 1280px unchanged.
  */
 
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
+
+const artwork = vi.hoisted(() => ({ navigate: vi.fn(), csv: vi.fn() }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    visibleTabsContainer: () => null,
+    insertTabInOrder: () => {},
+    navigateToMarketplace: artwork.navigate,
+}));
+vi.mock('../../utils/csv-export.js', async () => ({
+    ...(await vi.importActual('../../utils/csv-export.js')),
+    downloadCsv: artwork.csv,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -63,9 +75,16 @@ function open() {
 }
 
 describe('the ledger dialog fits a phone-width screen', () => {
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        tradeLedgerView.filterText = '';
+        artwork.navigate.mockClear();
+        artwork.csv.mockClear();
+    });
     afterEach(() => {
         tradeLedgerView.disable();
         document.body.innerHTML = '';
+        resetSpriteSheetCache();
     });
 
     test('no fixed min-width wider than a phone; both bounds leave room for padding', () => {
@@ -87,5 +106,43 @@ describe('the ledger dialog fits a phone-width screen', () => {
         const tableContainer = content.querySelector('.mwi-trade-ledger-table-container');
         expect(tableContainer.querySelector('table')).not.toBeNull();
         expect(tableContainer.style.overflowX).toBe('auto');
+    });
+
+    test('item artwork uses identities, retains enhancement navigation and leaves CSV names plain', () => {
+        document.body.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>';
+        const content = open();
+        const original = tradeLedgerView.aggregates.items[0];
+        tradeLedgerView.aggregates.items = [original, { ...original, itemHrid: '/items/milk', enhancementLevel: 7 }];
+        tradeLedgerView.renderItemTable();
+        const rows = [...content.querySelectorAll('.mwi-trade-ledger-table-container tbody tr')];
+        expect(rows.map((tr) => tr.cells[0].textContent)).toEqual(['Holy Cheese', 'Holy Cheese']);
+        expect(rows.map((tr) => tr.querySelector('use').getAttribute('href'))).toEqual([
+            '/static/media/items_sprite.current.svg#holy_cheese',
+            '/static/media/items_sprite.current.svg#milk',
+        ]);
+        expect(rows[1].cells[1].textContent).toBe('+7');
+        rows[1].querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(artwork.navigate).toHaveBeenCalledExactlyOnceWith('/items/milk', 7);
+        tradeLedgerView.exportCSV();
+        expect(artwork.csv).toHaveBeenCalledTimes(1);
+        const csv = artwork.csv.mock.calls[0][1];
+        expect(csv).toContain('Holy Cheese');
+        expect(csv).not.toMatch(/<svg|toolasha-item-label|items_sprite/);
+    });
+
+    test('redraw picks up a late sprite without duplicates, and an empty filter draws no icons', () => {
+        const content = open();
+        expect(content.querySelector('.toolasha-item-label svg')).toBeNull();
+        document.body.insertAdjacentHTML(
+            'afterbegin',
+            '<svg><use href="/static/media/items_sprite.current.svg#coin"></use></svg>'
+        );
+        tradeLedgerView.renderItemTable();
+        tradeLedgerView.renderItemTable();
+        expect(content.querySelectorAll('.toolasha-item-label svg')).toHaveLength(1);
+        tradeLedgerView.filterText = 'no matching item';
+        tradeLedgerView.renderItemTable();
+        expect(content.querySelectorAll('.toolasha-item-label')).toHaveLength(0);
+        expect(content.textContent).toContain('No item names match');
     });
 });

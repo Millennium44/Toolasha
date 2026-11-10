@@ -31,6 +31,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
+import { itemLabel } from '../../utils/overlay-format.js';
 
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'staleCapitalModal';
@@ -459,7 +460,7 @@ class StaleCapitalView {
             tr.style.cssText = `border-bottom: 1px solid ${GAME_COLORS.border}; background: ${index % 2 === 0 ? 'rgba(255, 255, 255, 0.04)' : 'transparent'};`;
 
             const itemCell = document.createElement('td');
-            itemCell.textContent = this.getItemName(row.itemHrid);
+            itemCell.appendChild(itemLabel(row.itemHrid, this.getItemName(row.itemHrid)));
             itemCell.style.cssText = 'padding: 4px 10px; cursor: pointer;';
             itemCell.title = 'Open this item in the marketplace at its enhancement level.';
             itemCell.addEventListener('mouseenter', () => (itemCell.style.textDecoration = 'underline'));

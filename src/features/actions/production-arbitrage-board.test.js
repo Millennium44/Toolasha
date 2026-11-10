@@ -12,6 +12,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 
 const ranking = vi.hoisted(() => ({
     rows: [],
@@ -167,6 +168,7 @@ async function settle() {
 }
 
 beforeEach(() => {
+    resetSpriteSheetCache();
     ranking.rows = [
         row(),
         row({
@@ -218,6 +220,7 @@ beforeEach(() => {
 afterEach(() => {
     board.disable();
     document.body.replaceChildren();
+    resetSpriteSheetCache();
     board.sort = 'day';
     board.skillHrid = null;
     board.query = '';
@@ -318,6 +321,26 @@ describe('table', () => {
         expect(egg.querySelector('[data-arb-quality]').textContent).toBe('no price');
         // The action is named when it differs from the item
         expect(egg.querySelector('td:nth-child(2)').textContent).toBe('Egg (Fried Egg)');
+    });
+
+    test('native output artwork preserves recipe names, numeric columns and row navigation', () => {
+        const before = [...panelState.created.panel.querySelectorAll('[data-arb-row]')].map((tr) => tr.textContent);
+        document.body.insertAdjacentHTML(
+            'afterbegin',
+            '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>'
+        );
+        panelState.created.render();
+        const rows = [...panelState.created.panel.querySelectorAll('[data-arb-row]')];
+        expect(rows.map((tr) => tr.querySelector('use').getAttribute('href'))).toEqual([
+            '/static/media/items_sprite.current.svg#cheese',
+            '/static/media/items_sprite.current.svg#verdant_cheese',
+            '/static/media/items_sprite.current.svg#egg',
+        ]);
+        expect(rows.map((tr) => tr.textContent)).toEqual(before);
+        rows[2].querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(navigation.toAction).toHaveBeenCalledWith('/actions/cooking/egg');
+        panelState.created.render();
+        expect(panelState.created.panel.querySelectorAll('.toolasha-item-label svg')).toHaveLength(3);
     });
 
     test('sorts by hour and by unit', () => {

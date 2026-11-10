@@ -11,7 +11,15 @@
  * WebKit at 360 and 390px wide, and 1280px unchanged.
  */
 
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
+
+const artwork = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('../../utils/marketplace-tabs.js', () => ({
+    visibleTabsContainer: () => null,
+    insertTabInOrder: () => {},
+    navigateToMarketplace: artwork.navigate,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -60,9 +68,14 @@ function open() {
 }
 
 describe('the stale capital dialog fits a phone-width screen', () => {
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        artwork.navigate.mockClear();
+    });
     afterEach(() => {
         staleCapitalView.disable();
         document.body.innerHTML = '';
+        resetSpriteSheetCache();
     });
 
     test('no fixed min-width wider than a phone; both bounds leave room for padding', () => {
@@ -89,5 +102,43 @@ describe('the stale capital dialog fits a phone-width screen', () => {
             expect(container.querySelector('table')).not.toBeNull();
             expect(container.style.overflowX).toBe('auto');
         }
+    });
+
+    test('both sides show native artwork and keep unknown prices and enhancement navigation', () => {
+        document.body.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>';
+        const content = open();
+        for (const side of ['sell', 'buy']) {
+            const row = { ...staleCapitalView.result[`${side}Rows`][0], enhancementLevel: 7, priceComparison: null };
+            staleCapitalView.renderSide(side, side, [row, { ...row, itemHrid: '/items/milk' }], 200_000);
+            const rows = [...content.querySelectorAll(`.mwi-stale-capital-${side} tbody tr`)];
+            expect(rows.map((tr) => tr.querySelector('use').getAttribute('href'))).toEqual([
+                '/static/media/items_sprite.current.svg#holy_cheese',
+                '/static/media/items_sprite.current.svg#milk',
+            ]);
+            expect(rows[1].cells[0].textContent).toBe('Holy Cheese');
+            expect(rows[1].cells[1].textContent).toBe('+7');
+            expect(rows[1].textContent).toContain('unknown');
+            rows[1].querySelector('use').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        }
+        expect(artwork.navigate.mock.calls).toEqual([
+            ['/items/milk', 7],
+            ['/items/milk', 7],
+        ]);
+    });
+
+    test('late sprites appear on redraw and empty sides retain their empty messages', () => {
+        const content = open();
+        expect(content.querySelector('.toolasha-item-label svg')).toBeNull();
+        document.body.insertAdjacentHTML(
+            'afterbegin',
+            '<svg><use href="/static/media/items_sprite.current.svg#coin"></use></svg>'
+        );
+        staleCapitalView.renderContent();
+        staleCapitalView.renderContent();
+        expect(content.querySelectorAll('.toolasha-item-label svg')).toHaveLength(2);
+        for (const side of ['sell', 'buy']) staleCapitalView.renderSide(side, side, [], 0);
+        expect(content.querySelectorAll('.toolasha-item-label')).toHaveLength(0);
+        expect(content.textContent).toContain('No open sell listings.');
+        expect(content.textContent).toContain('No open buy orders.');
     });
 });
