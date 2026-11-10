@@ -49,7 +49,7 @@
         "chartjs-plugin-datalabels": "2.2.0",
         "eslint": "^10.14.0",
         "eslint-config-prettier": "^10.1.8",
-        "globals": "^17.13.0",
+        "globals": "^17.14.0",
         "happy-dom": "^21.0.4",
         "husky": "^9.1.7",
         "lint-staged": "^17.6.0",
@@ -57,9 +57,9 @@
         "markdownlint-cli": "^0.50.0",
         "mathjs": "15.2.0",
         "prettier": "^3.9.10",
-        "rollup": "^4.66.0",
+        "rollup": "^4.68.0",
         "rollup-plugin-banner2": "^1.2.2",
-        "vitest": "^5.0.5"
+        "vitest": "^5.1.0"
     },
     "overrides": {
         "markdownlint-cli": {
