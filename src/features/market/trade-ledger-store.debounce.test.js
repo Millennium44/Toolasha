@@ -1265,22 +1265,35 @@ describe('a fill with the baseline record latched', () => {
         }
     });
 
-    test('a latch on the day alone: the write stays one key, and the baseline takes its usual road', async () => {
-        await openBook();
-        storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
-        const batches = [];
-        storage.putAll = async (name, entries, options) => {
-            batches.push(Object.keys(entries));
-            return REAL_PUT_ALL(name, entries, options);
-        };
+    test.each([0, 120])(
+        'a latch on the day alone: the write stays one key, and the baseline takes its usual road (read delay %i ms)',
+        async (readDelay) => {
+            await openBook();
+            storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
+            const batches = [];
+            storage.putAll = async (name, entries, options) => {
+                batches.push(Object.keys(entries));
+                return REAL_PUT_ALL(name, entries, options);
+            };
+            storage.tryGet = async (key, name) => {
+                // Inject latency beyond the former 80 ms wait: this is the race being tested, not synchronization.
+                if (key === STATE_KEY && readDelay) await sleep(readDelay);
+                return REAL_TRY_GET(key, name);
+            };
 
-        fillEvent(3);
-        await sleep(80);
+            fillEvent(3);
+            // flushAll snapshots the queue. The baseline only joins it after the fill commits and its read
+            // finishes; flushing sooner can correctly do nothing. Await that boundary, not elapsed time.
+            await vi.waitFor(() =>
+                expect(storage.pendingWrites.get(`${STORE}:${STATE_KEY}`)?.value?.[100]?.filledQuantity).toBe(3)
+            );
 
-        expect(batches[0]).toEqual([dayKey(today)]);
-        await storage.flushAll();
-        expect(diskBaseline(100)).toBe(3);
-    });
+            expect(batches[0]).toEqual([dayKey(today)]);
+            await storage.flushAll();
+            await store._statesChain;
+            expect(diskBaseline(100)).toBe(3);
+        }
+    );
 });
 
 describe('advanceStoredBaselines', () => {
