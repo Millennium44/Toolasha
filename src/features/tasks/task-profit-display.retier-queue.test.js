@@ -17,6 +17,10 @@ vi.mock('../../utils/zone-tier-memory.js', async (importOriginal) => {
     return { ...actual, resolveZoneTier: vi.fn(() => tierMock.resolved) };
 });
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runSimulation: vi.fn() }));
+vi.mock('../../utils/character-key.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    writeScoped: vi.fn(),
+}));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
     buildAllPlayerDTOs: vi.fn(),
@@ -28,6 +32,7 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
 
 import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
+import config from '../../core/config.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
 import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 
@@ -127,6 +132,7 @@ beforeEach(() => {
     buildAllPlayerDTOs.mockResolvedValue({ players: [{ hrid: 'player1' }] });
     tierMock.resolved = { tier: 0, known: false, source: 'default', pending: false };
     taskProfitDisplay.isInitialized = true;
+    taskProfitDisplay._estimateMode = 'solo';
     installRunner();
 });
 
@@ -134,6 +140,9 @@ afterEach(() => {
     taskProfitDisplay.isInitialized = false;
     taskProfitDisplay._retierQueue = [];
     taskProfitDisplay._retierRunning = false;
+    taskProfitDisplay._retierActive = null;
+    taskProfitDisplay._cardEstimates = new WeakMap();
+    taskProfitDisplay._staleGoEstimates = new WeakMap();
     taskProfitDisplay._zoneSimCache.clear();
     dataManager.initClientData = null;
     dataManager.currentCharacterId = null;
@@ -204,6 +213,75 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
         await vi.waitFor(() => expect(cards.map(tierOf)).toEqual([3, 3]), { timeout: 2000 });
         for (const { container } of cards) expect(container.innerHTML).not.toContain('Estimate failed');
     });
+
+    test('a manual click removes Estimate and Re-run synchronously before the roster await', async () => {
+        const [{ container, info }] = mountBoard(['Defeat - Stabby']);
+        let finishRoster;
+        buildAllPlayerDTOs.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishRoster = () => resolve({ players: [{ hrid: 'player1' }] });
+                })
+        );
+        taskProfitDisplay._renderCombatEstimateConfig(container, taskProfitDisplay.parseTaskData(info));
+        const estimate = vi.spyOn(taskProfitDisplay, '_runCombatSimEstimate');
+        container.querySelector('.mwi-combat-est-btn').click();
+
+        expect(container.textContent).toContain('Simulating');
+        expect(container.querySelector('button')).toBeNull();
+        expect(container.querySelector('select')).toBeNull();
+        expect(estimate).toHaveBeenCalledTimes(1);
+        expect(runSimulation).not.toHaveBeenCalled();
+
+        finishRoster();
+        await estimate.mock.results[0].value;
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(['config', 'new estimate'])(
+        'a queued tier redo cannot overwrite the player opening %s on that card',
+        async (choice) => {
+            const cards = mountBoard(['Defeat - Stabby', 'Defeat - Smashy']);
+            await drawAll(cards);
+            taskProfitDisplay._estimateMode = 'solo';
+            vi.spyOn(config, 'getSetting').mockImplementation((key) => key === 'taskCombatEstimate');
+            runSimulation.mockClear();
+            let finishFirst;
+            buildAllPlayerDTOs.mockImplementationOnce(
+                () =>
+                    new Promise((resolve) => {
+                        finishFirst = () => resolve({ players: [{ hrid: 'player1' }] });
+                    })
+            );
+
+            tierMock.resolved = T3;
+            taskProfitDisplay._retierOpenCombatEstimates();
+            expect(taskProfitDisplay._retierQueue).toHaveLength(1);
+            const { container, info } = cards[1];
+            // The waiting card still exposes its real result and Re-run controls while the
+            // first card reads its roster. No second direct call on this card is needed.
+            container.firstElementChild.click();
+            [...container.querySelectorAll('button')].find((button) => button.textContent === 'Re-run').click();
+            if (choice === 'new estimate') {
+                container.querySelector('.mwi-combat-est-mode').click();
+                container.querySelector('.mwi-combat-est-btn').click();
+                await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(info)?.mode).toBe('zone'));
+            }
+
+            finishFirst();
+            await vi.waitFor(() => expect(taskProfitDisplay._retierRunning).toBe(false));
+
+            if (choice === 'config') {
+                expect(container.querySelector('.mwi-combat-est-btn')).not.toBeNull();
+                expect(taskProfitDisplay._resolveGoEstimate(info)).toBeNull();
+            } else {
+                expect(taskProfitDisplay._resolveGoEstimate(info)?.mode).toBe('zone');
+                expect(container._mwiCombatEstimate?.mode).toBe('zone');
+            }
+            // Only the first card is redone automatically; the second card belongs to the player.
+            expect(runSimulation.mock.calls.filter((call) => call[2]?.preempt === false)).toHaveLength(1);
+        }
+    );
 
     test('a character switch during the queue stops the rest', async () => {
         const cards = mountBoard(['Defeat - Stabby', 'Defeat - Smashy', 'Defeat - Stabby']);

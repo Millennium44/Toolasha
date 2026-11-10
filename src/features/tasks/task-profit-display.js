@@ -593,6 +593,9 @@ class TaskProfitDisplay {
         this.pendingTaskNodes = new Set(); // Track task nodes waiting for data
         this.eventListeners = new WeakMap(); // Store listeners for cleanup
         this._estimateLayouts = new Map();
+        // One owner per estimate container, including queued work and tier retries. A newer
+        // request or a return to config invalidates every await belonging to the previous owner.
+        this._combatEstimateRequests = new WeakMap();
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
         // Shared per-zone task sims, keyed by character, zone, tier, loadout and
@@ -622,6 +625,7 @@ class TaskProfitDisplay {
         this._retierQueue = [];
         this._retierRunning = false;
         this._retierActive = null;
+        this._retierActiveRequest = null;
         this._retierActiveForce = false;
         // One pending refresh per source, so a burst of messages runs it once
         this._questsTimer = null;
@@ -722,6 +726,7 @@ class TaskProfitDisplay {
             return;
         }
         if (key === 'taskCombatEstimate' && !value) {
+            this._combatEstimateRequests = new WeakMap();
             this._cardEstimates = new WeakMap();
             this._staleGoEstimates = new WeakMap();
         }
@@ -1873,6 +1878,11 @@ class TaskProfitDisplay {
      * @private
      */
     _renderCombatEstimateConfig(container, taskData) {
+        this._combatEstimateRequests.delete(container);
+        // A waiting tier redo still has its old mode/loadout, and the card keeps Re-run available
+        // until that redo starts. Opening config gives this card back to the player: the queued
+        // redo must not replace their choices or a newer manual estimate when its turn arrives.
+        this._retierQueue = this._retierQueue.filter((entry) => entry.container !== container);
         // Back to "no estimate for this card" the moment the config UI is
         // shown again (first render, or a Re-run) — Go must not fill a zone
         // or count computed for a task this card no longer describes.
@@ -1944,9 +1954,12 @@ class TaskProfitDisplay {
      * @private
      */
     async _runQueuedAutoEstimate(preceding, container, taskData) {
+        const request = {};
+        this._combatEstimateRequests.set(container, request);
         const generation = this._renderGeneration;
         const characterId = dataManager.getCurrentCharacterId();
         const isStale = () =>
+            this._combatEstimateRequests.get(container) !== request ||
             generation !== this._renderGeneration ||
             characterIdentityChanged(characterId) ||
             !container.isConnected ||
@@ -1967,7 +1980,8 @@ class TaskProfitDisplay {
                     mode,
                     0,
                     true,
-                    shouldStop
+                    shouldStop,
+                    request
                 );
                 if (shouldStop()) break;
                 if (outcome !== 'cancelled') return;
@@ -1995,6 +2009,7 @@ class TaskProfitDisplay {
      *   does not preempt other simulations, and being cancelled by one is not a failure; the call
      *   resolves 'cancelled' (leaving the card on "Simulating...") for the caller to run it again
      * @param {function(): boolean} [shouldStop] - Whether the queued request is no longer wanted
+     * @param {Object|null} [request] - Existing owner for a queued attempt or tier retry; null starts a new request
      * @returns {Promise<'cancelled'|undefined>}
      * @private
      */
@@ -2005,22 +2020,36 @@ class TaskProfitDisplay {
         mode = 'solo',
         retierDepth = 0,
         automatic = false,
-        shouldStop = () => false
+        shouldStop = () => false,
+        request = null
     ) {
         // Capture ownership before building player DTOs, which can await a party roster. A switch
         // during that await must not cache the old character's figures under the new character.
         const simCharacterId = dataManager.getCurrentCharacterId();
         const generation = this._renderGeneration;
         const cardTaskNode = container.closest(GAME.TASK_INFO);
+        const owner = request || {};
         // A manual game-tier run needs the same ownership checks as automatic/Best Score runs.
         // Rerolls reuse the card node, while refreshes replace only its estimate container: an old
         // result must not re-prime Go after the replacement cleared or completed its own estimate.
         const isStale = () =>
+            this._combatEstimateRequests.get(container) !== owner ||
             generation !== this._renderGeneration ||
             characterIdentityChanged(simCharacterId) ||
             shouldStop() ||
             !container.isConnected ||
             (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null);
+        if (!request) {
+            if (
+                characterIdentityChanged(simCharacterId) ||
+                shouldStop() ||
+                !container.isConnected ||
+                (cardTaskNode !== null && this._liveTaskData(cardTaskNode, taskData) === null)
+            ) {
+                return;
+            }
+            this._combatEstimateRequests.set(container, owner);
+        }
         if (isStale()) return;
         // A new run starting invalidates whatever this card's Go button was
         // primed with — filled only from a currently-valid estimate, never a
@@ -2246,7 +2275,8 @@ class TaskProfitDisplay {
                         mode,
                         retierDepth + 1,
                         automatic,
-                        shouldStop
+                        shouldStop,
+                        owner
                     );
                 }
                 console.warn('[TaskProfit] The zone tier kept changing while estimating; showing the tier simulated');
@@ -2550,13 +2580,18 @@ class TaskProfitDisplay {
      * @private
      */
     _enqueueRetier(container, force = false) {
-        const queued = this._retierQueue.find((entry) => entry.container === container);
+        const currentRequest = this._combatEstimateRequests.get(container);
+        // An older run can still be draining after a newer request has completed on this card.
+        // Only work owned by that newer request may absorb its next tier change.
+        const queued = this._retierQueue.find(
+            (entry) => entry.container === container && entry.request === currentRequest
+        );
         if (queued) {
             // A setting change asks for a redo whatever the tier; a waiting tier redo takes that on
             if (force) queued.force = true;
             return;
         }
-        if (this._retierActive === container) {
+        if (this._retierActive === container && this._retierActiveRequest === currentRequest) {
             // Being redone in the old mode right now: run it once more when it finishes
             if (force) this._retierActiveForce = true;
             return;
@@ -2564,7 +2599,10 @@ class TaskProfitDisplay {
         // What the redo needs, kept with the entry: a run that is cancelled has already cleared the
         // card's cached result, so a second attempt could not read it back from the card
         const cached = container._mwiCombatEstimate;
+        const request = {};
+        this._combatEstimateRequests.set(container, request);
         this._retierQueue.push({
+            request,
             container,
             attempts: 0,
             characterId: dataManager.getCurrentCharacterId(),
@@ -2583,6 +2621,7 @@ class TaskProfitDisplay {
             .finally(() => {
                 this._retierRunning = false;
                 this._retierActive = null;
+                this._retierActiveRequest = null;
             });
     }
 
@@ -2597,6 +2636,8 @@ class TaskProfitDisplay {
         while (this._retierQueue.length > 0 && this.isInitialized) {
             const entry = this._retierQueue.shift();
             const { container } = entry;
+            const isSuperseded = () => this._combatEstimateRequests.get(container) !== entry.request;
+            if (isSuperseded()) continue;
             if (characterIdentityChanged(entry.characterId)) {
                 this._retierQueue = [];
                 return;
@@ -2612,6 +2653,7 @@ class TaskProfitDisplay {
             }
 
             this._retierActive = container;
+            this._retierActiveRequest = entry.request;
             this._retierActiveForce = false;
             const outcome = await this._runCombatSimEstimate(
                 container,
@@ -2619,9 +2661,13 @@ class TaskProfitDisplay {
                 entry.loadoutName,
                 entry.mode,
                 0,
-                true
+                true,
+                isSuperseded,
+                entry.request
             );
             this._retierActive = null;
+            this._retierActiveRequest = null;
+            if (isSuperseded()) continue;
             if (this._retierActiveForce && outcome !== 'cancelled' && container.isConnected) {
                 // The tier setting changed while this ran: it was simulated the old way
                 this._retierActiveForce = false;
@@ -4133,6 +4179,7 @@ class TaskProfitDisplay {
             // calculateTaskProfit() await; it checks this after every await and bails instead of
             // appending a new .mwi-task-profit once every setting is off.
             this._renderGeneration++;
+            this._combatEstimateRequests = new WeakMap();
             this._retierQueue = [];
             // Cancel pending timeouts so they cannot recreate UI after disable
             this.timerRegistry.clearAll();
