@@ -1804,6 +1804,61 @@ describe('the panel', () => {
         expect(sheet.rows[0].costUnpriced).toBe('Wisdom Coffee');
     });
 
+    test('drink replacements disclose the one-slot search and ongoing costs in the control', () => {
+        const title = ui.panel.querySelector('[data-upgrade-mode="drink"]').closest('label').title;
+        expect(title).toContain('each combat coffee and tier');
+        expect(title).toContain('Lucky with Wisdom');
+        expect(title).toContain('Each row changes one slot');
+        expect(title).toContain('hourly spend');
+    });
+
+    test('an unpriced outgoing drink shows unknown profit in the table and export, never a ceiling', async () => {
+        const unpriced = {
+            ...row('Lucky Coffee → Wisdom Coffee', { cost: 0, type: 'drink', profitGain: 50 }),
+            deltas: { dps: 1, xp: 0, profit: 5, deaths: 0, encounters: 0 },
+            costUnpriced: ['/items/lucky_coffee'],
+            costUnpricedBaseline: ['/items/lucky_coffee'],
+            economics: { profitGainPerHour: 50, paybackHours: Infinity, repayHours: Infinity, roiAnnualPct: null },
+        };
+        mocks.upgradeResult = { baseline: BASELINE, results: [unpriced], food: null };
+        selectZone();
+        ui._upgradeHiddenColumns = new Set();
+        const exported = [];
+        const original = ui._addCsvExport.bind(ui);
+        vi.spyOn(ui, '_addCsvExport').mockImplementation((container, stem, build) => {
+            exported.push(build);
+            return original(container, stem, build);
+        });
+        await ui._onUpgradeAnalyze();
+        const results = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const flagged = [...results.querySelectorAll('[data-cost-unpriced]')].map((node) => node.textContent);
+        expect(flagged).toContain('Unknown');
+        expect(flagged.some((value) => value.includes('replaced drink has no price'))).toBe(true);
+        expect(flagged.some((value) => value.includes('ceiling') || value.startsWith('≤'))).toBe(false);
+        expect(results.textContent).not.toContain('could not be drawn');
+        const sheet = exported.at(-1)();
+        expect(sheet.rows[0].profitGainPerHour).toBeNull();
+        expect(sheet.rows[0].profitPct).toBeNull();
+        expect(sheet.rows[0].costUnpricedBaseline).toBe('/items/lucky_coffee');
+        expect(planUpgradeBudget([unpriced], 0, { baseline: BASELINE, metricKey: 'profit' }).picks).toEqual([]);
+    });
+
+    test('an unknown outgoing drink cost never prints a signed profit delta in expanded details', () => {
+        const change = {
+            ...row('Lucky Coffee → Wisdom Coffee', { cost: 0, type: 'drink', profitGain: 50 }),
+            costUnpriced: ['/items/lucky_coffee'],
+            costUnpricedBaseline: ['/items/lucky_coffee'],
+        };
+        const details = document.createElement('div');
+        details.innerHTML = ui._renderUpgradeDetailCells(change, BASELINE);
+        const profit = [...details.querySelectorAll('div')].find(
+            (node) => node.textContent === 'Profit/day'
+        ).parentElement;
+        expect(profit.textContent).toContain('Unknown');
+        expect(profit.textContent).not.toContain('+1.00%');
+        expect(profit.textContent).not.toContain('+1.2K');
+    });
+
     test('a stopped run says it covers only part of the run, in the table, the budget and when remembered', async () => {
         mocks.upgradeResult = {
             baseline: BASELINE,
@@ -8806,6 +8861,51 @@ describe('confirming a basket together', () => {
         expect(container.textContent).toContain('together');
         expect(container.querySelector('#mwi-csim-budget-confirm')).toBeNull();
     });
+
+    test.each(['profit', 'score'])(
+        'an unpriced replaced drink hides the confirmed profit number under the %s goal',
+        async (goal) => {
+            const scored = twoPickResults();
+            scored.results.forEach((result, index) => (result.score = 10 - index));
+            mocks.confirmResult = {
+                ...mocks.confirmResult,
+                costUnpriced: ['/items/lucky_coffee'],
+                costUnpricedBaseline: ['/items/lucky_coffee'],
+                economics: { profitGainPerHour: 12345 },
+            };
+            ui._upgradePlanMetric = goal;
+            ui._renderUpgradeResults(scored);
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            container.querySelector('#mwi-csim-budget-confirm').click();
+            for (let i = 0; i < 5; i++) await Promise.resolve();
+
+            const profit = container.querySelector('[data-confirm-profit="unknown"]');
+            expect(profit?.textContent).toMatch(/unknown/i);
+            expect(container.textContent).not.toContain('12.35K/hr profit');
+            expect(container.textContent).not.toContain('12.3K/hr profit');
+            expect(profit?.textContent).not.toContain('≤');
+            if (goal === 'score') expect(container.textContent).toContain('DPS');
+        }
+    );
+
+    test.each(['profit', 'score'])(
+        'an unpriced added drink marks the confirmed profit number as a ceiling under the %s goal',
+        async (goal) => {
+            const scored = twoPickResults();
+            scored.results.forEach((result, index) => (result.score = 10 - index));
+            mocks.confirmResult = { ...mocks.confirmResult, costUnpriced: ['/items/wisdom_coffee'] };
+            ui._upgradePlanMetric = goal;
+            ui._renderUpgradeResults(scored);
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            container.querySelector('#mwi-csim-budget-confirm').click();
+            for (let i = 0; i < 5; i++) await Promise.resolve();
+
+            const profit = container.querySelector('[data-confirm-profit="ceiling"]');
+            expect(profit?.textContent).toContain('≤');
+            expect(profit?.textContent).toContain('80/hr profit');
+            if (goal === 'score') expect(container.textContent).toContain('DPS');
+        }
+    );
 
     test('an inapplicable combination reports why instead of a number', async () => {
         mocks.confirmResult = {
@@ -16864,6 +16964,37 @@ describe('upgrade results as cards', () => {
             const card = cardsOf()[0];
             expect(card.querySelector('.mwi-ucard-within')?.textContent).toBe('within noise');
             expect(card.querySelector('.mwi-ucard-detail').textContent).toContain('sampling error');
+        });
+
+        test('an unpriced outgoing drink is unknown on cards too, with its reason in Details', () => {
+            const change = row('Lucky Coffee → Wisdom Coffee', { cost: 0, type: 'drink', profitGain: 50 });
+            change.costUnpriced = ['/items/lucky_coffee'];
+            change.costUnpricedBaseline = ['/items/lucky_coffee'];
+            ui._upgradeHiddenColumns = new Set();
+            ui._upgradeSort = { key: 'deltaProfit', asc: true };
+            draw({}, [change]);
+            showCards();
+            const card = cardsOf()[0];
+            expect(card.textContent).toContain('Profit gain is unknown');
+            expect(card.textContent).toContain('replaced drink has no price in the baseline');
+            expect(card.textContent).not.toContain('ceiling');
+            expect(card.textContent).not.toContain('≤');
+        });
+
+        test.each([true, false])('unknown profit sorts last with neutral card tone (ascending: %s)', (asc) => {
+            const unknown = row('Unknown coffee swap', { cost: 0, type: 'drink', profitGain: 50_000 });
+            unknown.costUnpriced = ['/items/lucky_coffee'];
+            unknown.costUnpricedBaseline = ['/items/lucky_coffee'];
+            const list = [unknown, row('Known gain', { profitGain: 50 }), row('Known loss', { profitGain: -10 })];
+            ui._upgradeHiddenColumns = new Set();
+            ui._upgradeSort = { key: 'deltaProfit', asc };
+            draw({}, list);
+            expect(ui._goldVerifyRows.at(-1).candidate.description).toBe('Unknown coffee swap');
+            showCards();
+            expect(cardsOf().at(-1).querySelector('.mwi-ucard-name').textContent).toBe('Unknown coffee swap');
+            expect(cardNamed('Unknown coffee swap').querySelector('.mwi-ucard-gain').className).toContain(
+                'mwi-ucard-t-neutral'
+            );
         });
 
         test('a regression is red', () => {

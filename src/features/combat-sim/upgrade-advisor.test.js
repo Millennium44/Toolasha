@@ -7328,19 +7328,26 @@ describe('drink candidates', () => {
         expect(added.description).toBe('Add Wisdom Coffee');
     });
 
-    test('a family at its top tier has nothing to offer', () => {
+    test('a family at its top tier still offers lower tiers for economic comparison', () => {
         const player = { equipment: FULL_POUCH, drinks: [{ hrid: '/items/ultra_power_coffee' }, null, null] };
         const candidates = generateDrinkCandidates(player, drinkGameData());
 
-        expect(candidates.some((c) => c.buffFamily === COFFEE_FAMILY)).toBe(false);
+        expect(candidates.filter((c) => c.buffFamily === COFFEE_FAMILY).map((c) => c.upgradeHrid)).toEqual([
+            '/items/power_coffee',
+            '/items/super_power_coffee',
+        ]);
     });
 
-    test('nothing new is offered with every slot full', () => {
+    test('a full bar offers replacements but no free-slot additions', () => {
         const player = {
             drinks: [{ hrid: '/items/ultra_power_coffee' }, { hrid: '/items/wisdom_coffee' }, { hrid: '/items/x' }],
         };
 
-        expect(generateDrinkCandidates(player, drinkGameData())).toEqual([]);
+        const candidates = generateDrinkCandidates(player, drinkGameData());
+        expect(candidates).toHaveLength(2);
+        expect(candidates.every((c) => c.currentHrid === '/items/ultra_power_coffee' && !c.fillsFreeDrinkSlot)).toBe(
+            true
+        );
     });
 
     test('a drink that restores hitpoints is the food search, not this', () => {
@@ -10084,13 +10091,13 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
 
     const simulatedDrinks = () => runSimulation.mock.calls.at(-1)[0].playerDTOs[0].drinks.map((d) => d?.hrid ?? null);
 
-    test('an empty bar takes three of four new coffees, each in its own slot, and the run wears all three', async () => {
+    test('an empty bar takes three of four families across five tier choices, and the run wears all three', async () => {
         const gameData = drinkGameData();
         const drinks = [null, null, null];
         const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData).filter(
             (c) => !c.currentHrid
         );
-        expect(candidates).toHaveLength(4);
+        expect(candidates).toHaveLength(5);
 
         const plan = planWithinBudget(rowsFor(candidates), 100);
         expect(plan.picks).toHaveLength(3);
@@ -10123,7 +10130,9 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('a tier up of a worn family combines with additions without replacing anything else', async () => {
         const gameData = drinkGameData();
         const drinks = [null, { hrid: '/items/power_coffee' }, null];
-        const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData);
+        const candidates = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData).filter(
+            (c) => !c.currentHrid || c.buffFamily === '/buff_uniques/power_coffee'
+        );
         const tierUp = candidates.find((c) => c.currentHrid === '/items/power_coffee');
         expect(tierUp.upgradeHrid).toBe('/items/super_power_coffee');
 
@@ -10142,10 +10151,12 @@ describe('a budget fits new coffees into distinct free drink slots (#542)', () =
     test('a basket naming more new coffees than the bar holds is refused, not simulated short', async () => {
         const gameData = drinkGameData();
         const drinks = [{ hrid: '/items/existing_0' }, { hrid: '/items/existing_1' }, null];
-        const picks = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData).map((candidate) => ({
-            candidate,
-            cost: 0,
-        }));
+        const picks = generateDrinkCandidates({ equipment: FULL_POUCH, drinks }, gameData)
+            .filter((candidate) => candidate.upgradeHrid !== '/items/super_power_coffee')
+            .map((candidate) => ({
+                candidate,
+                cost: 0,
+            }));
         expect(picks.length).toBeGreaterThan(1);
 
         const outcome = await confirmUpgradeBudgetPlan(picks, context(gameData, drinks));
@@ -11039,13 +11050,9 @@ describe('the drink bar and the ability bar offer only what the character can us
             triggers: null,
         };
 
-        // The first slot is taken and the pouch opens no other: the write falls back to a free slot inside the capacity,
-        // of which there is none, so it lands on the only slot it may use
-        expect(
-            applyCandidateToDTO(dto, wisdom)
-                .drinks.slice(1)
-                .every((d) => !d)
-        ).toBe(true);
+        // No free usable slot: reject the change instead of overwriting the existing coffee.
+        expect(() => applyCandidateToDTO(dto, wisdom)).toThrow(/cannot fit on the drink bar/);
+        expect(dto.drinks).toEqual([{ hrid: '/items/speed_coffee' }, null, null]);
     });
 
     test('an Intelligence bonus does not open a slot: base 49 leaves slot 3 shut, 50 and 90 open it', () => {
@@ -11434,5 +11441,392 @@ describe('a raw skill candidate recomputes the party level-gap penalty (#652 T22
         expect(seen[0]).toEqual([-0.9, 0]);
         expect(seen.some((roster) => roster[0] === 0 && roster[1] === 0)).toBe(true);
         adapter.recomputeLevelGapDebuffs.mockReset();
+    });
+});
+
+describe('combat drink replacements and tier comparisons', () => {
+    const POUCH = '/items/giant_pouch';
+    const MAGIC = '/items/magic_coffee';
+    const SUPER = '/items/super_magic_coffee';
+    const ULTRA = '/items/ultra_magic_coffee';
+    const LUCKY = '/items/lucky_coffee';
+    const WISDOM = '/items/wisdom_coffee';
+    const SWIFT = '/items/swiftness_coffee';
+    const CHANNEL = '/items/channeling_coffee';
+    const skillNames = ['stamina', 'intelligence', 'attack', 'defense', 'melee', 'ranged', 'magic'];
+    const coffee = (family, type, tier = 0) => {
+        const prefix = ['', 'super_', 'ultra_'][tier];
+        const hrid = `/items/${prefix}${family}_coffee`;
+        return [
+            hrid,
+            {
+                name: `${['', 'Super ', 'Ultra '][tier]}${family[0].toUpperCase()}${family.slice(1)} Coffee`,
+                itemLevel: [20, 65, 90][tier],
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: {
+                    hitpointRestore: 0,
+                    manapointRestore: 0,
+                    cooldownDuration: 300e9,
+                    usableInActionTypeMap: { '/action_types/combat': true },
+                    buffs: [
+                        {
+                            uniqueHrid: `/buff_uniques/${family}_coffee`,
+                            typeHrid: `/buff_types/${type}`,
+                            flatBoost: tier + 1,
+                            ratioBoost: [0.08, 0.16, 0.22][tier],
+                        },
+                    ],
+                    defaultCombatTriggers: [
+                        {
+                            dependencyHrid: '/combat_trigger_dependencies/self',
+                            conditionHrid: `/combat_trigger_conditions/${family}_coffee`,
+                            comparatorHrid: '/combat_trigger_comparators/is_inactive',
+                        },
+                    ],
+                },
+            },
+        ];
+    };
+    const gameData = () => ({
+        itemDetailMap: {
+            ...Object.fromEntries([
+                ...skillNames.flatMap((skill) => [0, 1, 2].map((tier) => coffee(skill, `${skill}_level`, tier))),
+                coffee('lucky', 'combat_drop_rate'),
+                coffee('wisdom', 'wisdom'),
+                coffee('swiftness', 'attack_speed'),
+                coffee('channeling', 'cast_speed'),
+            ]),
+            [POUCH]: { equipmentDetail: { combatStats: { drinkSlots: 2 } } },
+        },
+    });
+    const dto = (hrids = [LUCKY, SWIFT, CHANNEL], slots = 3) => ({
+        hrid: '/players/me',
+        equipment: slots === 3 ? { '/equipment_types/pouch': { hrid: POUCH, enhancementLevel: 0 } } : {},
+        abilities: [],
+        food: [],
+        drinks: hrids.map((hrid) => (hrid ? { hrid, triggers: [{ value: 123 }] } : null)),
+    });
+    const rows = (candidates) =>
+        candidates.map((candidate, index) => ({
+            candidate,
+            cost: 0,
+            attemptsDelta: -(100 - index),
+            significant: true,
+        }));
+    const pick = (player, from, to, data = gameData()) =>
+        generateDrinkCandidates(player, data).find((c) => c.currentHrid === from && c.upgradeHrid === to);
+    const fight = () => ({ simulatedTime: 3.6e12, experienceGained: {}, deaths: {}, encounters: 100 });
+    const context = (player, data = gameData()) => ({
+        gameData: data,
+        playerDTOs: [player],
+        playerIndex: 0,
+        playerHrid: player.hrid,
+        zoneHrid: '/actions/combat/fly',
+        difficultyTier: 0,
+        hours: 1,
+        communityBuffs: {},
+        seed: 17,
+        baselineResult: fight(),
+        baseline: { dps: 100, xpPerHour: 0, profitPerHour: 0, deathsPerHour: 0, encountersPerHour: 100 },
+    });
+
+    beforeEach(() => {
+        resolveItemPrice.mockReturnValue({ price: 1000 });
+        runSimulation.mockReset();
+        runSimulation.mockResolvedValue(fight());
+        calculateSimRevenue.mockReset();
+        calculateSimRevenue.mockReturnValue({ netPerHour: 0, revenuePerHour: 0, costPerHour: 0 });
+    });
+
+    test.each(skillNames)('includes pure %s-level coffees and all their tiers', (skill) => {
+        const additions = generateDrinkCandidates(dto([null, null, null]), gameData());
+        expect(
+            additions.filter((c) => c.buffFamily === `/buff_uniques/${skill}_coffee`).map((c) => c.upgradeHrid)
+        ).toEqual([`/items/${skill}_coffee`, `/items/super_${skill}_coffee`, `/items/ultra_${skill}_coffee`]);
+    });
+
+    test('offers Lucky to Wisdom on a full bar, and keeps the actual game-shaped source untouched', () => {
+        const player = dto();
+        const before = structuredClone(player);
+        const candidate = pick(player, LUCKY, WISDOM);
+        expect(candidate).toMatchObject({
+            type: 'drink',
+            drinkIndex: 0,
+            drinkCapacity: 3,
+            currentHrid: LUCKY,
+            upgradeHrid: WISDOM,
+            description: 'Lucky Coffee → Wisdom Coffee',
+        });
+        expect(candidate.fillsFreeDrinkSlot).not.toBe(true);
+        const changed = applyCandidateToDTO(player, candidate);
+        expect(changed.drinks.map((d) => d.hrid)).toEqual([WISDOM, SWIFT, CHANNEL]);
+        expect(changed.drinks[0].triggers).toEqual(
+            gameData().itemDetailMap[WISDOM].consumableDetail.defaultCombatTriggers
+        );
+        expect(player).toEqual(before);
+    });
+
+    test('compares cheaper tiers too and never suggests the identical drink', () => {
+        const player = dto([SUPER, LUCKY, WISDOM]);
+        const sameFamily = generateDrinkCandidates(player, gameData()).filter(
+            (c) => c.currentHrid === SUPER && c.buffFamily === '/buff_uniques/magic_coffee'
+        );
+        expect(sameFamily.map((c) => c.upgradeHrid)).toEqual([MAGIC, ULTRA]);
+        expect(generateDrinkCandidates(player, gameData()).some((c) => c.currentHrid === c.upgradeHrid)).toBe(false);
+    });
+
+    test('never offers a family another slot already carries, including a locked saved slot', () => {
+        const player = dto([LUCKY, SUPER, null], 1);
+        const candidates = generateDrinkCandidates(player, gameData());
+        expect(candidates.length).toBeGreaterThan(0);
+        expect(candidates.every((c) => c.drinkIndex === 0 && c.currentHrid === LUCKY)).toBe(true);
+        expect(candidates.some((c) => c.buffFamily === '/buff_uniques/magic_coffee')).toBe(false);
+        expect(candidates.some((c) => c.upgradeHrid === LUCKY)).toBe(false);
+    });
+
+    test('does not replace unknown or restorative drinks or offer skilling-only tea', () => {
+        const data = gameData();
+        data.itemDetailMap['/items/wisdom_tea'] = structuredClone(data.itemDetailMap[WISDOM]);
+        data.itemDetailMap['/items/wisdom_tea'].consumableDetail.usableInActionTypeMap = {
+            '/action_types/milking': true,
+        };
+        data.itemDetailMap['/items/restorative'] = structuredClone(data.itemDetailMap[MAGIC]);
+        data.itemDetailMap['/items/restorative'].consumableDetail.manapointRestore = 100;
+        const candidates = generateDrinkCandidates(dto(['/items/unknown', '/items/restorative', null]), data);
+        expect(candidates.every((c) => !c.currentHrid && c.drinkIndex === 2)).toBe(true);
+        expect(candidates.some((c) => ['/items/wisdom_tea', '/items/restorative'].includes(c.upgradeHrid))).toBe(false);
+    });
+
+    test('has a linear single-slot bound and stable unique identities, not a combination search', () => {
+        const data = gameData();
+        const full = generateDrinkCandidates(dto(), data);
+        expect(full.length).toBeLessThanOrEqual(3 * 25);
+        expect(new Set(full.map(candidateAssignmentKey)).size).toBe(full.length);
+        const empty = generateDrinkCandidates(dto([null, null, null]), data);
+        expect(empty).toHaveLength(25);
+        expect(empty.every((c) => c.fillsFreeDrinkSlot && c.freeDrinkSlots === 3)).toBe(true);
+    });
+
+    test('two replacements of the same source are alternatives in automatic and pinned budgets', () => {
+        const player = dto();
+        const choices = rows([pick(player, LUCKY, WISDOM), pick(player, LUCKY, MAGIC)]);
+        expect(planWithinBudget(choices, 0, { singleLoadout: true }).picks).toHaveLength(1);
+        const pinned = planWithinBudget(choices, 0, { singleLoadout: true, required: choices.map(candidateKey) });
+        expect(pinned.picks).toEqual([]);
+        expect(pinned.blocked[0].kind).toBe('conflict');
+    });
+
+    test('the same incoming family cannot be selected for two different outgoing slots', () => {
+        const player = dto();
+        const choices = rows([pick(player, LUCKY, MAGIC), pick(player, SWIFT, ULTRA)]);
+        expect(planWithinBudget(choices, 0).picks).toHaveLength(1);
+    });
+
+    test('a tier change conflicts with replacing that same outgoing drink', () => {
+        const player = dto([MAGIC, LUCKY, CHANNEL]);
+        const choices = rows([pick(player, MAGIC, SUPER), pick(player, MAGIC, WISDOM)]);
+        expect(planWithinBudget(choices, 0).picks).toHaveLength(1);
+    });
+
+    test('independent swaps combine with an addition and confirmation wears every chosen drink', async () => {
+        const player = dto([LUCKY, SWIFT, null]);
+        const choices = rows([pick(player, LUCKY, WISDOM), pick(player, SWIFT, MAGIC), pick(player, null, CHANNEL)]);
+        const plan = planWithinBudget(choices, 0, { singleLoadout: true });
+        expect(plan.picks).toHaveLength(3);
+        const outcome = await confirmUpgradeBudgetPlan(plan.picks, context(player));
+        expect(outcome.ok).toBe(true);
+        expect(runSimulation.mock.calls.at(-1)[0].playerDTOs[0].drinks.map((d) => d.hrid)).toEqual([
+            WISDOM,
+            MAGIC,
+            CHANNEL,
+        ]);
+        expect(player.drinks.map((d) => d?.hrid)).toEqual([LUCKY, SWIFT, undefined]);
+    });
+
+    test('conflicting swaps are refused before a confirmation simulation', async () => {
+        const player = dto();
+        const choices = rows([pick(player, LUCKY, WISDOM), pick(player, LUCKY, MAGIC)]);
+        const outcome = await confirmUpgradeBudgetPlan(choices, context(player));
+        expect(outcome.ok).toBe(false);
+        expect(outcome.reason).toMatch(/cannot both be worn/);
+        expect(runSimulation).not.toHaveBeenCalled();
+    });
+
+    test('an absent outgoing source is refused instead of overwriting the stale slot', () => {
+        const candidate = pick(dto(), LUCKY, WISDOM);
+        expect(() => applyCandidateToDTO(dto([MAGIC, SWIFT, CHANNEL]), candidate)).toThrow(/no longer/);
+    });
+
+    test('a moved unique outgoing source is followed without touching the other slots', () => {
+        const candidate = pick(dto(), LUCKY, WISDOM);
+        const changed = applyCandidateToDTO(dto([SWIFT, LUCKY, CHANNEL]), candidate);
+        expect(changed.drinks.map((d) => d.hrid)).toEqual([SWIFT, WISDOM, CHANNEL]);
+    });
+
+    test('a duplicate incoming family at another tier is rejected', () => {
+        const candidate = pick(dto(), LUCKY, MAGIC);
+        expect(() => applyCandidateToDTO(dto([LUCKY, SUPER, CHANNEL]), candidate)).toThrow(/family/);
+    });
+
+    test('a source saved only beyond capacity cannot be followed into a locked slot', () => {
+        const candidate = { ...pick(dto(), LUCKY, WISDOM), drinkCapacity: 1 };
+        expect(() => applyCandidateToDTO(dto([MAGIC, LUCKY, CHANNEL], 1), candidate)).toThrow(/no longer/);
+    });
+
+    test('an overfull addition never overwrites an occupied slot', () => {
+        const candidate = pick(dto([null, null, null]), null, WISDOM);
+        expect(() => applyCandidateToDTO(dto(), candidate)).toThrow(/cannot fit/);
+    });
+
+    test('a duplicate source uses its named slot, never the first matching copy', () => {
+        const player = dto([LUCKY, LUCKY, CHANNEL]);
+        const candidate = generateDrinkCandidates(player, gameData()).find(
+            (c) => c.drinkIndex === 1 && c.upgradeHrid === WISDOM
+        );
+        expect(applyCandidateToDTO(player, candidate).drinks.map((d) => d.hrid)).toEqual([LUCKY, WISDOM, CHANNEL]);
+    });
+
+    test('duplicate source drinks in distinct slots can be replaced together with different families', async () => {
+        const player = dto([LUCKY, LUCKY, CHANNEL]);
+        const candidates = generateDrinkCandidates(player, gameData());
+        const choices = rows([
+            candidates.find((c) => c.drinkIndex === 0 && c.upgradeHrid === WISDOM),
+            candidates.find((c) => c.drinkIndex === 1 && c.upgradeHrid === MAGIC),
+        ]);
+        const plan = planWithinBudget(choices, 0, { singleLoadout: true, required: choices.map(candidateKey) });
+        expect(plan.picks).toHaveLength(2);
+        expect((await confirmUpgradeBudgetPlan(plan.picks, context(player))).ok).toBe(true);
+        expect(runSimulation.mock.calls.at(-1)[0].playerDTOs[0].drinks.map((drink) => drink.hrid)).toEqual([
+            WISDOM,
+            MAGIC,
+            CHANNEL,
+        ]);
+        expect(player.drinks.map((drink) => drink.hrid)).toEqual([LUCKY, LUCKY, CHANNEL]);
+    });
+
+    test('old remembered tier candidates without family metadata still apply', () => {
+        const old = {
+            type: 'drink',
+            slot: 'drink_0',
+            drinkIndex: 0,
+            currentHrid: MAGIC,
+            upgradeHrid: SUPER,
+            buffFamily: '/buff_uniques/magic_coffee',
+        };
+        expect(applyCandidateToDTO(dto([MAGIC, LUCKY, CHANNEL]), old).drinks[0].hrid).toBe(SUPER);
+    });
+    const analyze = async ({ missing = [], twoPlayers = false } = {}) => {
+        const data = gameData();
+        buildGameDataPayload.mockReturnValue(data);
+        plannedWorkerCount.mockReturnValue(1);
+        const player = dto([LUCKY], 1);
+        const roster = twoPlayers ? [{ ...dto([CHANNEL], 1), hrid: '/players/other' }, player] : [player];
+        runSimulation.mockImplementation(async ({ playerDTOs }) => {
+            const drinks = playerDTOs[twoPlayers ? 1 : 0].drinks;
+            const wisdom = drinks.some((drink) => drink?.hrid === WISDOM);
+            const unpriced = drinks.map((drink) => drink?.hrid).filter((hrid) => missing.includes(hrid));
+            return {
+                ...fight(),
+                experienceGained: { [player.hrid]: { magic: wisdom ? 112 : 100 } },
+                revenue: {
+                    netPerHour: wisdom ? 80 : 100,
+                    revenuePerHour: wisdom ? 100 : 110,
+                    costPerHour: wisdom ? 20 : 10,
+                    unpricedConsumables: unpriced,
+                    unpricedRates: Object.fromEntries(unpriced.map((hrid) => [hrid, 12])),
+                },
+            };
+        });
+        calculateSimRevenue.mockImplementation((result) => result.revenue);
+        const result = await runUpgradeAnalysis(
+            {
+                playerDTOs: roster,
+                playerIndex: twoPlayers ? 1 : 0,
+                selfHrid: '/players/other',
+                zoneHrid: '/actions/combat/fly',
+                difficultyTier: 0,
+                hours: 1,
+                communityBuffs: {},
+                upgradeMode: 'drink',
+            },
+            null,
+            {}
+        );
+        return {
+            ...result,
+            player,
+            row: result.results.find((r) => r.candidate.currentHrid === LUCKY && r.candidate.upgradeHrid === WISDOM),
+        };
+    };
+
+    test('the real analysis keeps XP gains and profit losses separate, with no one-time drink charge', async () => {
+        const { row, player, context: analysis } = await analyze({ twoPlayers: true });
+        expect(row.metrics.xpPerHour).toBe(112);
+        expect(row.deltas.xp).toBeCloseTo(12);
+        expect(row.economics.profitGainPerHour).toBe(-20);
+        expect(row.metrics.costPerHour).toBe(20);
+        expect(row.cost).toBe(0);
+        expect(row.costDetail.source).toBe('ongoing');
+        expect(player.drinks[0].hrid).toBe(LUCKY);
+        expect(runSimulation.mock.calls.every(([params]) => params.playerDTOs[0].drinks[0].hrid === CHANNEL)).toBe(
+            true
+        );
+        expect(runSimulation.mock.calls.every(([params]) => params.seed === analysis.seed)).toBe(true);
+        expect(seedSimPriceCache.mock.calls.at(-1)[2].consumableHrids).toEqual(
+            expect.arrayContaining([LUCKY, WISDOM, MAGIC, SUPER, ULTRA])
+        );
+    });
+
+    test('unpriced incoming coffee retains XP results but cannot win or be pinned in a profit budget', async () => {
+        const { row } = await analyze({ missing: [WISDOM] });
+        expect(row.costUnpriced).toEqual([WISDOM]);
+        expect(row.costUnpricedBaseline).toBeUndefined();
+        expect(row.significantBy.profit).toBe(false);
+        expect(row.goldPer.profit).toBe(Infinity);
+        expect(row.economics.roiAnnualPct).toBeNull();
+        const eligible = { ...row, attemptsDelta: -10 };
+        expect(planWithinBudget([eligible], 0, { excludeCostUnpriced: true }).picks).toEqual([]);
+        expect(
+            planWithinBudget([eligible], 0, { excludeCostUnpriced: true, required: [candidateKey(eligible)] })
+                .blocked[0].kind
+        ).toBe('cost-unpriced');
+        expect(planWithinBudget([eligible], 0, { includeUnmeasured: true }).picks).toHaveLength(1);
+    });
+
+    test('an unpriced outgoing coffee makes the comparison unknown, not a claimed ceiling', async () => {
+        const { row, context: analysis } = await analyze({ missing: [LUCKY] });
+        expect(row.costUnpriced).toEqual([LUCKY]);
+        expect(row.costUnpricedBaseline).toEqual([LUCKY]);
+        expect(row.economics.costUnpricedBaseline).toEqual([LUCKY]);
+        expect(row.economics.paybackHours).toBe(Infinity);
+        expect(row.economics.roiAnnualPct).toBeNull();
+        expect(row.significantBy.profit).toBe(false);
+        const plan = planWithinBudget([{ ...row, attemptsDelta: -10 }], 0, { excludeCostUnpriced: true });
+        expect(plan.picks).toEqual([]);
+        expect(plan.skipped[0].reason).toContain('unknown');
+        const confirmed = await confirmUpgradeBudgetPlan([row], analysis);
+        expect(confirmed.ok).toBe(true);
+        expect(confirmed.provisional).toBe(true);
+        expect(confirmed.costUnpricedBaseline).toEqual([LUCKY]);
+        expect(confirmed.economics.roiAnnualPct).toBeNull();
+    });
+
+    test('both missing drink prices remain flagged across JSON save and basket confirmation', async () => {
+        const { row, context: analysis } = await analyze({ missing: [LUCKY, WISDOM] });
+        const restored = JSON.parse(JSON.stringify(row));
+        expect(restored.costUnpriced).toEqual([WISDOM, LUCKY]);
+        expect(restored.costUnpricedBaseline).toEqual([LUCKY]);
+        const confirmed = await confirmUpgradeBudgetPlan([restored], { ...analysis, priceCache: {} });
+        expect(confirmed.ok).toBe(true);
+        expect(confirmed.costUnpriced).toEqual([WISDOM, LUCKY]);
+        expect(confirmed.costUnpricedBaseline).toEqual([LUCKY]);
+        expect(restored.candidate.drinkFamilyHrids).toContain(WISDOM);
+    });
+
+    test('all new drink swap and tier candidates remain excluded from the Labyrinth', () => {
+        const player = dto();
+        const candidates = generateDrinkCandidates(player, gameData());
+        expect(candidates.length).toBeGreaterThan(0);
+        expect(candidates.every((candidate) => !candidateAppliesToDTO(candidate, player, gameData()))).toBe(true);
     });
 });

@@ -2333,27 +2333,15 @@ export function slotWarnings(playerDTO, gameData) {
 }
 
 /**
- * Buff drinks worth simulating: a tier up in each family you already run, and
- * the best of each family you run none of.
+ * Compare one drink-slot change at a time, including cross-family swaps and every available tier.
+ * Lower tiers can win on net profit, so item level alone never removes one. This is a linear single-slot
+ * search, not an exhaustive search of three-drink combinations; Confirm together measures a chosen basket.
  *
- * The advisor could weigh a chestpiece against an ability against a house room
- * and had nothing at all to say about the three coffee slots, which for most
- * characters are a larger and far cheaper lever than any of them. The food
- * optimizer does not cover this: it walks tiers *within an occupied slot* on a
- * survival criterion, and a coffee neither restores anything nor occupies a
- * food slot.
+ * Only combat-usable buff drinks enter the pools. A family already in another slot (even a saved slot beyond
+ * the pouch capacity) cannot be added twice. Empty slots share one set of addition candidates, which the
+ * planner fits into distinct slots. Unknown/restorative drinks stay untouched.
  *
- * Two shapes of candidate, and no more:
- *   - **A tier up** in a family already equipped, which competes with nothing.
- *   - **The best drink of a family you are not running**, into a free slot.
- * Every intermediate tier of a family you do not run is deliberately left out —
- * it would trade sims for rows nobody would buy, and the top tier answers the
- * question ("is this buff worth a slot") that the lower ones only blur.
- *
- * Cost is zero rather than a price: a coffee is drunk continuously, and the
- * sim's own consumable accounting already subtracts its hourly spend from
- * Profit/hr. Charging it again as an outlay would count it twice.
- *
+ * Drinks cost zero up front: the simulation already subtracts their actual hourly consumption from profit.
  * @param {Object} playerDTO - Player DTO carrying `drinks`
  * @param {Object} gameData - Game data payload
  * @returns {Array<Object>} Candidates of type 'drink'
@@ -2362,87 +2350,57 @@ export function generateDrinkCandidates(playerDTO, gameData) {
     const pools = buildBuffDrinkPools(gameData);
     if (pools.size === 0) return [];
 
+    // The engine applies these seven buffs before rebuilding combat stats. Keep this drink-specific so the
+    // house/shrine relevance rules do not change along with a coffee search.
+    const levelBuffs = new Set(COMBAT_LEVEL_SKILLS.map(({ key }) => `/buff_types/${key.replace('Level', '_level')}`));
+    const relevant = (entry) => entry.buffTypes.some((type) => COMBAT_BUFF_TYPES.has(type) || levelBuffs.has(type));
+    const entries = new Map([...pools.values()].flat().map((entry) => [entry.hrid, entry]));
     const drinks = Array.isArray(playerDTO?.drinks) ? playerDTO.drinks : [];
-    const familyOf = (hrid) => {
-        for (const [family, pool] of pools) {
-            if (pool.some((entry) => entry.hrid === hrid)) return family;
-        }
-        return null;
-    };
-
-    // Only the slots the build pouch opens: a saved coffee beyond them is neither upgraded nor given a neighbor
     const capacity = drinkCapacity(playerDTO, gameData);
-    const lockedFamilies = new Set();
-    for (let index = capacity; index < drinks.length; index++) {
-        const family = drinks[index]?.hrid ? familyOf(drinks[index].hrid) : null;
-        if (family) lockedFamilies.add(family);
-    }
-
-    const equipped = new Map(); // family → { index, entry }
-    let freeSlot = -1;
-    let freeSlots = 0;
-    for (let index = 0; index < capacity; index++) {
-        const worn = drinks[index];
-        if (!worn?.hrid) {
-            if (freeSlot === -1) freeSlot = index;
-            freeSlots++;
-            continue;
-        }
-        const family = familyOf(worn.hrid);
-        if (!family) continue;
-        equipped.set(family, { index, entry: pools.get(family).find((e) => e.hrid === worn.hrid) });
-    }
-
+    const families = drinks.map((drink) => entries.get(drink?.hrid)?.family);
+    const freeIndices = Array.from({ length: capacity }, (_, index) => index).filter((index) => !drinks[index]?.hrid);
     const candidates = [];
-    const combatRelevant = (entry) => entry.buffTypes.some((type) => COMBAT_BUFF_TYPES.has(type));
 
-    for (const [family, pool] of pools) {
-        const usable = pool.filter(combatRelevant);
-        if (usable.length === 0) continue;
-
-        const worn = equipped.get(family);
-        if (worn?.entry) {
-            const better = usable.filter((entry) => entry.itemLevel > worn.entry.itemLevel);
-            if (better.length === 0) continue;
-            const next = better[0];
-            candidates.push({
-                type: 'drink',
-                slot: `drink_${worn.index}`,
-                drinkIndex: worn.index,
-                drinkCapacity: capacity,
-                currentHrid: worn.entry.hrid,
-                upgradeHrid: next.hrid,
-                upgradeLevel: 0,
-                triggers: next.triggers,
-                buffFamily: family,
-                description: `${worn.entry.name} → ${next.name}`,
-            });
-            continue;
-        }
-
-        // Not running this family at all: only worth a row if there is a slot
-        // free to run it in, and only the best of it. A family saved in a slot the pouch does not open is one the
-        // build already carries
-        if (freeSlot === -1 || lockedFamilies.has(family)) continue;
-        const best = usable[usable.length - 1];
+    const offer = (index, current, entry, pool) => {
         candidates.push({
             type: 'drink',
-            slot: `drink_${freeSlot}`,
-            drinkIndex: freeSlot,
-            currentHrid: null,
-            upgradeHrid: best.hrid,
-            upgradeLevel: 0,
-            triggers: best.triggers,
-            buffFamily: family,
-            // An addition takes whichever slot is still free where it is applied (see `applyDrinkToDTO`), and
-            // no more additions fit together than the bar has free slots (see `planWithinBudget`)
-            fillsFreeDrinkSlot: true,
-            freeDrinkSlots: freeSlots,
+            slot: `drink_${index}`,
+            drinkIndex: index,
             drinkCapacity: capacity,
-            description: `Add ${best.name}`,
+            currentHrid: current?.hrid || null,
+            upgradeHrid: entry.hrid,
+            upgradeLevel: 0,
+            triggers: entry.triggers,
+            buffFamily: entry.family,
+            // Apply/confirm can validate a remembered candidate without guessing families from item names.
+            drinkFamilyHrids: pool.map((drink) => drink.hrid),
+            ...(current ? {} : { fillsFreeDrinkSlot: true, freeDrinkSlots: freeIndices.length }),
+            description: current ? `${current.name} → ${entry.name}` : `Add ${entry.name}`,
         });
-    }
+    };
 
+    // Keep same-family changes first, then alternatives. Every target is still simulated against the original
+    // bar, never the previous candidate's bar, and each slot/target is offered only once.
+    for (let index = 0; index < capacity; index++) {
+        const current = entries.get(drinks[index]?.hrid);
+        if (!current) continue;
+        const otherFamilies = new Set(families.filter((_, otherIndex) => otherIndex !== index));
+        const ordered = [...pools].sort(([a], [b]) => Number(b === current.family) - Number(a === current.family));
+        for (const [family, pool] of ordered) {
+            if (otherFamilies.has(family)) continue;
+            for (const entry of pool) {
+                if (entry.hrid !== current.hrid && relevant(entry)) offer(index, current, entry, pool);
+            }
+        }
+    }
+    if (freeIndices.length) {
+        for (const [family, pool] of pools) {
+            if (families.includes(family)) continue;
+            for (const entry of pool) {
+                if (relevant(entry)) offer(freeIndices[0], null, entry, pool);
+            }
+        }
+    }
     return candidates;
 }
 
@@ -2461,7 +2419,7 @@ function labCanUse(candidate) {
 }
 
 /**
- * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn one with a better tier.
+ * Whether a drink candidate adds a coffee to a free slot rather than replacing a worn drink.
  * Read off `currentHrid` too, so a candidate remembered from before the flag existed is still recognized.
  * @param {Object} candidate - Upgrade candidate
  * @returns {boolean}
@@ -2471,34 +2429,41 @@ function isDrinkAddition(candidate) {
 }
 
 /**
- * Put a drink candidate into its slot, in place.
- *
- * A tier up goes where the drink it replaces sits. An addition goes into a slot that is free on *this* DTO:
- * the index it was generated with is only the first free slot of the bar it came from, and a basket of two
- * additions both aimed at it would have the second overwrite the first. With no free slot left, the
- * generated index is used as before (a single-candidate run always has it free).
+ * Put a drink candidate into its slot, in place, or reject a stale/impossible change.
+ * Replacements follow the source drink only when it is unique and still within the usable bar. Additions
+ * use a genuinely empty slot; neither kind may silently overwrite another candidate or duplicate its family.
  * @param {Object} dto - Player DTO (mutated)
  * @param {Object} candidate - Candidate of type 'drink'
  */
 function applyDrinkToDTO(dto, candidate) {
-    if (!Array.isArray(dto.drinks)) dto.drinks = [];
-    while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
-    // The bar the candidate was made for: an addition never lands in a slot its pouch does not open
+    const drinks = Array.isArray(dto.drinks) ? dto.drinks : [];
     const room = Number.isFinite(candidate.drinkCapacity)
-        ? Math.min(DRINK_SLOTS, candidate.drinkCapacity)
+        ? Math.max(0, Math.min(DRINK_SLOTS, Math.floor(candidate.drinkCapacity)))
         : DRINK_SLOTS;
     let index = candidate.drinkIndex;
     if (isDrinkAddition(candidate)) {
-        if (dto.drinks[index]?.hrid || index >= room) {
-            const free = dto.drinks.slice(0, room).findIndex((drink) => !drink?.hrid);
-            if (free >= 0) index = free;
-            // No free slot the pouch opens: the coffee is not worn, rather than written into one it does not
-            else if (index >= room) return;
+        if (!Number.isInteger(index) || index < 0 || index >= room || drinks[index]?.hrid) {
+            index = Array.from({ length: room }, (_, i) => i).find((i) => !drinks[i]?.hrid);
         }
-    } else if (candidate.currentHrid) {
-        const worn = dto.drinks.findIndex((drink) => drink?.hrid === candidate.currentHrid);
-        if (worn >= 0) index = worn;
+        if (index == null) throw new Error('The selected coffee cannot fit on the drink bar.');
+    } else if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= room ||
+        drinks[index]?.hrid !== candidate.currentHrid
+    ) {
+        const matches = drinks.slice(0, room).flatMap((drink, i) => (drink?.hrid === candidate.currentHrid ? [i] : []));
+        if (matches.length !== 1)
+            throw new Error('The drink being replaced is no longer in a usable slot. Analyze again.');
+        [index] = matches;
     }
+    const family = new Set(candidate.drinkFamilyHrids || [candidate.upgradeHrid]);
+    if (drinks.some((drink, otherIndex) => otherIndex !== index && family.has(drink?.hrid))) {
+        throw new Error('Another drink of this family is already on the drink bar.');
+    }
+    if (!candidate.upgradeHrid) throw new Error('The replacement coffee is missing. Analyze again.');
+    dto.drinks = drinks;
+    while (dto.drinks.length < DRINK_SLOTS) dto.drinks.push(null);
     dto.drinks[index] = { hrid: candidate.upgradeHrid, triggers: candidate.triggers || null };
 }
 
@@ -5423,8 +5388,13 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
         // An extra coffee or key nothing priced is counted as free in the profit: the row's profit gain is a ceiling
         // until it is priced, so it is neither ranked as a gain, budgeted as one, nor given a payback
-        const costUnpriced = newlyUnpricedCosts(base.metrics, metrics);
-        const economics = withUnknownCost(computeEconomics(candidate.cost, base.metrics, metrics), costUnpriced);
+        const costUnpricedBaseline = unpricedReplacedDrinks(base.metrics, [candidate]);
+        const costUnpriced = [...new Set([...newlyUnpricedCosts(base.metrics, metrics), ...costUnpricedBaseline])];
+        const economics = withUnknownCost(
+            computeEconomics(candidate.cost, base.metrics, metrics),
+            costUnpriced,
+            costUnpricedBaseline
+        );
         const noise = rateDeltaNoisePct(base.result, simResult, playerHrid);
         const significantBy = significantDeltas(deltas, noise, { baseline: base.metrics, upgraded: metrics });
         if (costUnpriced.length) {
@@ -5442,6 +5412,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             goldPer,
             economics,
             ...(costUnpriced.length ? { costUnpriced } : {}),
+            ...(costUnpricedBaseline.length ? { costUnpricedBaseline } : {}),
             noise,
             significantBy,
             // The single flag `planWithinBudget` reads. A row is worth planning
@@ -6462,6 +6433,31 @@ export function newlyUnpricedCosts(baseline, upgraded) {
     });
 }
 
+/**
+ * An unpriced drink being removed was free in the baseline, so its saved cost is unknown too. Unlike an added
+ * unpriced expense, this does not make the profit gain an upper bound. Keep it out of economic rankings while
+ * still allowing XP/DPS comparisons. Revenue's missing-item identifiers are the game's item hrids.
+ * @param {Object} baseline - Baseline metrics
+ * @param {Object[]} candidates - Changes being compared with that baseline
+ * @returns {string[]} Unpriced outgoing drink hrids
+ */
+function unpricedReplacedDrinks(baseline, candidates) {
+    const unpriced = new Set(baseline?.unpricedCost || []);
+    return [
+        ...new Set(
+            candidates
+                .filter(
+                    (candidate) =>
+                        candidate?.type === 'drink' &&
+                        candidate.currentHrid &&
+                        candidate.currentHrid !== candidate.upgradeHrid &&
+                        unpriced.has(candidate.currentHrid)
+                )
+                .map((candidate) => candidate.currentHrid)
+        ),
+    ];
+}
+
 /** How much more of an already-unpriced item a candidate must spend, as a share, before it counts as more */
 const UNPRICED_MORE_TOLERANCE = 0.02;
 
@@ -6469,10 +6465,11 @@ const UNPRICED_MORE_TOLERANCE = 0.02;
  * Economics with an unknown running cost marked: no ROI or repay time is quoted (a finite figure would read as a
  * measurement), and the result says which items were missing.
  * @param {Object} economics - From {@link computeEconomics}
- * @param {string[]} costUnpriced - From {@link newlyUnpricedCosts}
+ * @param {string[]} costUnpriced - Missing costs affecting the comparison
+ * @param {string[]} [costUnpricedBaseline] - Missing outgoing drinks in the baseline
  * @returns {Object} `economics` unchanged when nothing is missing
  */
-export function withUnknownCost(economics, costUnpriced) {
+export function withUnknownCost(economics, costUnpriced, costUnpricedBaseline = []) {
     if (!costUnpriced?.length) return economics;
     return {
         ...economics,
@@ -6482,6 +6479,7 @@ export function withUnknownCost(economics, costUnpriced) {
         roiAnnualPct: null,
         provisional: true,
         costUnpriced,
+        ...(costUnpricedBaseline.length ? { costUnpricedBaseline, paybackHours: Infinity } : {}),
     };
 }
 
@@ -7632,7 +7630,19 @@ export function conflictKeys(candidate) {
     if (candidate.type === 'scroll') return [`scroll:${candidate.buffTypeHrid}`];
     // Two coffees of one buff family cannot both be up, whichever slots they
     // would sit in — the game's own conflict rule, keyed the same way
-    if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
+    if (candidate.type === 'drink') {
+        const keys = [`drink:${candidate.buffFamily}`];
+        // A replacement claims its outgoing drink and slot as well as the incoming family. Otherwise Lucky →
+        // Wisdom and Lucky → Magic appear compatible and one silently overwrites the other. Additions share
+        // free capacity instead of claiming the generator's placeholder index.
+        if (!isDrinkAddition(candidate)) {
+            keys.push(
+                `drink_out:${candidate.drinkIndex}:${candidate.currentHrid}`,
+                `drink_slot:${candidate.drinkIndex}`
+            );
+        }
+        return keys;
+    }
     // A re-ordering and anything that changes WHICH abilities are on the bar cannot both be taken: the
     // order names the exact set it applies to. A level change keeps the set (levelling follows the
     // ability, not its slot), so it combines with an order; a swap of an ordered ability, or a fill of
@@ -7869,7 +7879,7 @@ export function planWithinBudget(
                 blocked.push({
                     kind: 'cost-unpriced',
                     ids: [id],
-                    reason: `"${result.candidate?.description}" is pinned but nothing prices ${result.costUnpriced.join(', ')} in its running costs, so its profit gain is only a ceiling.`,
+                    reason: `"${result.candidate?.description}" is pinned but nothing prices ${result.costUnpriced.join(', ')} in its running costs, so its profit gain is ${result.costUnpricedBaseline?.length ? 'unknown' : 'only a ceiling'}.`,
                 });
             } else if (!Number.isFinite(result.cost)) {
                 blocked.push({
@@ -7893,7 +7903,7 @@ export function planWithinBudget(
             skipped.push({
                 kind: 'cost-unpriced',
                 result,
-                reason: `no price for ${result.costUnpriced.join(', ')} in its running costs: its profit gain is only a ceiling`,
+                reason: `no price for ${result.costUnpriced.join(', ')} in its running costs: its profit gain is ${result.costUnpricedBaseline?.length ? 'unknown' : 'only a ceiling'}`,
             });
             continue;
         }
@@ -8322,8 +8332,9 @@ export function planWithinBudget(
  *   communityBuffs, seed, precision, baselineResult, baseline }`, as returned by `runUpgradeAnalysis`
  * @returns {Promise<{ok: true, metrics: Object, deltas: Object, economics: Object, noise: Object,
  *   totalCost: number, baseline: Object, provisional?: true, costUnpriced?: string[]} | {ok: false, reason: string}>}
- *   `deltas`, `economics` and `baseline` are on the basket's own price snapshot; `provisional` means a coffee or key
- *   the basket adds had no price, so its profit gain is a ceiling and carries no ROI or payback
+ *   `deltas`, `economics` and `baseline` are on the basket's own price snapshot; missing added costs make profit
+ *   a ceiling, while `costUnpricedBaseline` means an outgoing drink was unpriced and the comparison is unknown.
+ *   Either case is provisional and carries no ROI or repay time.
  */
 export async function confirmUpgradeBudgetPlan(picks, context) {
     if (!picks?.length) return { ok: false, reason: 'The plan is empty — nothing to confirm.' };
@@ -8436,8 +8447,13 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
     const deltas = computeDeltas(pricedBaseline, metrics);
     // A coffee or key the basket adds that nothing priced is free in this profit: the confirmed gain is then a
     // ceiling, so no ROI or payback is quoted and the result says what was missing
-    const costUnpriced = newlyUnpricedCosts(pricedBaseline, metrics);
-    const economics = withUnknownCost(computeEconomics(totalCost, pricedBaseline, metrics), costUnpriced);
+    const costUnpricedBaseline = unpricedReplacedDrinks(pricedBaseline, candidates);
+    const costUnpriced = [...new Set([...newlyUnpricedCosts(pricedBaseline, metrics), ...costUnpricedBaseline])];
+    const economics = withUnknownCost(
+        computeEconomics(totalCost, pricedBaseline, metrics),
+        costUnpriced,
+        costUnpricedBaseline
+    );
     const noise = rateDeltaNoisePct(baselineResult, combinedResult, playerHrid);
 
     // `baseline`: the analysis baseline on the basket's own price basis, for a reader that shows the gain
@@ -8450,6 +8466,7 @@ export async function confirmUpgradeBudgetPlan(picks, context) {
         totalCost,
         baseline: pricedBaseline,
         ...(costUnpriced.length ? { provisional: true, costUnpriced } : {}),
+        ...(costUnpricedBaseline.length ? { costUnpricedBaseline } : {}),
     };
 }
 

@@ -1185,10 +1185,12 @@ export function cardWithinNoise(row, metric, unpricedOf = row) {
 function ceilingFigure(row) {
     if (!row?.costUnpriced?.length) return null;
     return figure(
-        'Profit gain is a ceiling',
+        row.costUnpricedBaseline?.length ? 'Profit gain is unknown' : 'Profit gain is a ceiling',
         `no price for ${escapeAttribute(row.costUnpriced.join(', '))}`,
         'warn',
-        'Counted as free in the profit, so this gain is only a ceiling.'
+        row.costUnpricedBaseline?.length
+            ? 'The replaced drink has no price in the baseline, so the profit comparison is incomplete.'
+            : 'Counted as free in the profit, so this gain is only a ceiling.'
     );
 }
 
@@ -3409,8 +3411,9 @@ const UPGRADE_MODES = [
         label: 'Drinks',
         defaultOn: false,
         title:
-            'A tier up in each buff drink you already run, and the best drink of each family you have a free ' +
-            'slot for.\n\n' +
+            'Compare each combat coffee and tier, including replacing an equipped drink such as Lucky with ' +
+            'Wisdom, or filling a free slot. Each row changes one slot; this is not a search of every drink ' +
+            'combination. Compare EXP/hr and Profit/hr, then Confirm together for a chosen basket.\n\n' +
             'Cost shows as free because a coffee is not bought once — its hourly spend is already subtracted ' +
             'from Profit/hr by the sim, so charging it again as an outlay would count it twice. Read these ' +
             'rows on their deltas rather than on a value ranking.',
@@ -12899,6 +12902,8 @@ class CombatSimUI {
             // An unpriced running cost makes the profit delta a ceiling: the reason is the thing to say, not
             // "within noise" (the figure is a bound, not a measurement being judged against sampling error)
             if (key === 'profit' && r.costUnpriced?.length) {
+                if (r.costUnpricedBaseline?.length)
+                    return `<span data-cost-unpriced style="color:#ff9800;"> unknown: the replaced drink has no price (${escapeAttribute(r.costUnpricedBaseline.join(', '))})</span>`;
                 return `<span data-cost-unpriced style="color:#ff9800;" title="Counted as free in the profit, so this gain is only a ceiling."> ceiling: no price for ${escapeAttribute(r.costUnpriced.join(', '))}</span>`;
             }
             const { noisePct, significant } = upgradeNoiseFor(r, key);
@@ -12936,7 +12941,7 @@ class CombatSimUI {
                 <div>
                     <div style="color:#888;">Profit/day</div>
                     <div style="color:#e0e0e0;">${formatKMB(r.metrics.profitPerHour * 24)}</div>
-                    <div style="color:${deltaColor(profitValueDelta)};">${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)${errorBar('profit')}</div>
+                    <div style="color:${r.costUnpricedBaseline?.length ? '#ff9800' : deltaColor(profitValueDelta)};">${r.costUnpricedBaseline?.length ? 'Unknown' : `${fmtDelta(profitValueDelta)} (${r.deltas.profit >= 0 ? '+' : ''}${r.deltas.profit.toFixed(2)}%)`}${errorBar('profit')}</div>
                 </div>
                 <div>
                     <div style="color:#888;">EPH</div>
@@ -13051,7 +13056,7 @@ class CombatSimUI {
         if (r.costUnpriced?.length) {
             parts.push(
                 `<span data-cost-unpriced style="color:#ff9800;">No price for ${escapeAttribute(r.costUnpriced.join(', '))} ` +
-                    'in the running costs: the profit gain is a ceiling, with no repay time or ROI.</span>'
+                    `in the running costs: the profit gain is ${r.costUnpricedBaseline?.length ? 'unknown' : 'a ceiling'}, with no repay time or ROI.</span>`
             );
         }
 
@@ -13533,11 +13538,13 @@ class CombatSimUI {
                 sub: '/hr',
                 numeric: true,
                 lowerIsBetter: false,
-                value: (r) => r.economics?.profitGainPerHour ?? 0,
+                value: (r) => (r.costUnpricedBaseline?.length ? NaN : (r.economics?.profitGainPerHour ?? 0)),
                 render: (r) => {
                     const body = deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour);
                     // An unpriced running cost was counted as free: the figure is a ceiling, not a gain
                     if (!r.costUnpriced?.length) return body;
+                    if (r.costUnpricedBaseline?.length)
+                        return `<span data-cost-unpriced title="${escapeAttribute(`The replaced drink has no price in the baseline: ${r.costUnpricedBaseline.join(', ')}. The profit comparison is incomplete.`)}" style="color:#ff9800;">Unknown</span>`;
                     const title = `Ceiling: nothing prices ${r.costUnpriced.join(', ')}, which this run counted as free.`;
                     return `<span data-cost-unpriced title="${escapeAttribute(title)}" style="color:#ff9800;">≤ ${body}</span>`;
                 },
@@ -14265,7 +14272,7 @@ class CombatSimUI {
                 body += `<div data-budget-cost-unpriced style="margin-top:4px; color:#ff9800; font-size:10px; line-height:1.35;"
                     title="${escapeAttribute(unpricedSkips.map((entry) => `${entry.result.candidate.description}: ${entry.reason}`).join('; '))}">
                     ${unpricedSkips.length} upgrade${unpricedSkips.length === 1 ? '' : 's'} left out of this plan: a running
-                    cost has no price, so the profit gain is only a ceiling.</div>`;
+                    cost has no price, so the profit comparison is incomplete.</div>`;
             }
         }
 
@@ -14718,23 +14725,28 @@ class CombatSimUI {
                 const color = gain > 0 ? '#4caf50' : gain < 0 ? '#e57373' : '#888';
                 return `<span style="color:${color}; font-weight:600;">${text}</span>`;
             };
+            const confirmedGain = (metric, labeled = false) => {
+                const label = labeled ? `${metric.label} ` : '';
+                if (metric.key === 'profit' && state.result.costUnpriced?.length) {
+                    if (state.result.costUnpricedBaseline?.length)
+                        return `<span data-confirm-profit="unknown" style="color:#ff9800; font-weight:600;">${label}unknown profit gain</span>`;
+                    const gain = metric.gain(confirmedRow, basis);
+                    return `<span data-confirm-profit="ceiling" style="color:#ff9800; font-weight:600;">${label}≤ ${metric.format(gain)}</span>`;
+                }
+                const gain = metric.gain(confirmedRow, basis);
+                return gainSpan(gain, `${label}${metric.format(gain)}`);
+            };
             const togetherHtml =
                 plan.metric.key === 'score'
                     ? `<span style="color:#888;">can't be confirmed as a score; the measured changes are</span>
                         ${UPGRADE_PLAN_METRICS.filter((m) => m.key !== 'score')
-                            .map((m) => {
-                                const gain = m.gain(confirmedRow, basis);
-                                return gainSpan(gain, `${m.label} ${m.format(gain)}`);
-                            })
+                            .map((m) => confirmedGain(m, true))
                             .join(', ')}`
-                    : (() => {
-                          const gain = plan.metric.gain(confirmedRow, basis);
-                          return gainSpan(gain, plan.metric.format(gain));
-                      })();
+                    : confirmedGain(plan.metric);
             const provisionalNote = state.result.costUnpriced?.length
                 ? `<div data-confirm-cost-unpriced style="font-size:11px; color:#ff9800; margin-top:2px;">No price for
                     ${escapeAttribute(state.result.costUnpriced.join(', '))} in the running costs, so the combined
-                    profit is a ceiling and no payback or ROI is quoted.</div>`
+                    profit gain is ${state.result.costUnpricedBaseline?.length ? 'unknown' : 'a ceiling'} and no payback or ROI is quoted.</div>`
                 : '';
             return wrap(
                 provisionalNote +
@@ -15956,6 +15968,7 @@ class CombatSimUI {
                     { key: 'profitNoisePct', label: 'Profit error ±%' },
                     { key: 'measured', label: 'Clears the noise' },
                     { key: 'costUnpriced', label: 'Unpriced running cost' },
+                    { key: 'costUnpricedBaseline', label: 'Unpriced replaced drink' },
                 ],
                 // Infinity is not a number a spreadsheet can hold; blank says the
                 // same thing ("never repays") without pretending to be a measurement
@@ -15975,7 +15988,7 @@ class CombatSimUI {
                         deathsPerHour: finite(r.metrics?.deathsPerHour),
                         dpsPct: finite(r.deltas?.dps),
                         xpPct: finite(r.deltas?.xp),
-                        profitPct: finite(r.deltas?.profit),
+                        profitPct: r.costUnpricedBaseline?.length ? null : finite(r.deltas?.profit),
                         encountersPct: finite(r.deltas?.encounters),
                         deathsPct: finite(r.deltas?.deaths),
                         goldPerDps: finite(r.goldPer?.dps),
@@ -15983,7 +15996,9 @@ class CombatSimUI {
                         goldPerProfit: finite(r.goldPer?.profit),
                         goldPerEncounters: finite(r.goldPer?.encounters),
                         goldPerDeaths: finite(r.goldPer?.deaths),
-                        profitGainPerHour: finite(r.economics?.profitGainPerHour),
+                        profitGainPerHour: r.costUnpricedBaseline?.length
+                            ? null
+                            : finite(r.economics?.profitGainPerHour),
                         paybackHours: finite(r.economics?.paybackHours),
                         repayHours: finite(r.economics?.repayHours),
                         roiAnnualPct: finite(r.economics?.roiAnnualPct),
@@ -15997,6 +16012,7 @@ class CombatSimUI {
                         measured: r.significant === undefined ? '' : r.significant ? 'yes' : 'no',
                         // The items nothing priced: the profit columns of such a row are a ceiling
                         costUnpriced: (r.costUnpriced || []).join('; '),
+                        costUnpricedBaseline: (r.costUnpricedBaseline || []).join('; '),
                     };
                 }),
             }),
