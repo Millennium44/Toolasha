@@ -50,19 +50,19 @@ function player(hrid = 'player1') {
     };
 }
 
-function mountCard(name = 'Stabby') {
+function mountCard(name = 'Stabby', progress = 0, quantity = 65) {
     const card = document.createElement('div');
     card.className = 'RandomTask_taskInfo__1a';
     card.innerHTML = `
         <div class="RandomTask_name__1a">Defeat - ${name}</div>
         <div class="RandomTask_action__1a"></div>
         <div class="RandomTask_rewards__1a"></div>
-        <div>Progress: 0 / 65</div>`;
+        <div>Progress: ${progress} / ${quantity}</div>`;
     document.querySelector('[class*="TasksPanel_taskList"]').appendChild(card);
     return card;
 }
 
-async function estimate(card, { mode = 'zone', loadout = '' } = {}) {
+async function estimate(card, { mode = taskProfitDisplay._estimateMode, loadout = '' } = {}) {
     let container = card.querySelector('.mwi-task-profit');
     if (!container) {
         container = document.createElement('div');
@@ -139,7 +139,11 @@ afterEach(async () => {
     applyLoadoutSnapshotToDTO.mockReset();
 });
 
-describe('shared Zone simulations follow their actual inputs', () => {
+describe.each(['zone', 'solo'])('shared %s simulations follow their actual inputs', (mode) => {
+    beforeEach(() => {
+        taskProfitDisplay._estimateMode = mode;
+    });
+
     test('a rerolled board refresh uses the new task damage targets', async () => {
         const card = mountCard();
         await taskProfitDisplay.addProfitToTask(card);
@@ -221,6 +225,8 @@ describe('shared Zone simulations follow their actual inputs', () => {
         }
         const card = mountCard();
         await estimate(card);
+        await estimate(card);
+        expect(runSimulation).toHaveBeenCalledTimes(1);
         change();
         await estimate(card);
         expect(runSimulation).toHaveBeenCalledTimes(2);
@@ -259,7 +265,7 @@ describe('shared Zone simulations follow their actual inputs', () => {
     test('different task cards share one whole-zone simulation when their board and gear match', async () => {
         players[0].taskMonsterHrids = [STABBY, SMASHY];
         players[0].taskMonsterRemaining[SMASHY] = 3;
-        for (const name of ['Stabby', 'Smashy', 'Robo']) await estimate(mountCard(name));
+        for (const name of ['Stabby', 'Smashy', 'Robo']) await estimate(mountCard(name), { mode: 'zone' });
         expect(runSimulation).toHaveBeenCalledTimes(1);
     });
 
@@ -317,5 +323,153 @@ describe('shared Zone simulations follow their actual inputs', () => {
         dataManager.initClientData.actionDetailMap[ZONE].combatZoneInfo.fightInfo.randomSpawnInfo.maxSpawnCount = 5;
         await estimate(card);
         expect(runSimulation).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('Solo simulation cache boundaries', () => {
+    beforeEach(() => {
+        taskProfitDisplay._estimateMode = 'solo';
+    });
+
+    test('three duplicate tasks share a board simulation but retain their own remaining kills and Go counts', async () => {
+        players[0].taskMonsterHrids = [STABBY, STABBY, STABBY];
+        players[0].taskMonsterRemaining = { [STABBY]: 79 };
+        const cards = [mountCard(), mountCard('Stabby', 4, 18), mountCard('Stabby', 3, 3)];
+        for (const card of cards) await estimate(card);
+
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+        const records = cards.map((card) => taskProfitDisplay._cardEstimates.get(card));
+        expect(records.map((record) => record.killsNeeded)).toEqual([65, 14, 0]);
+        expect(records[0].predictedFights).toBeGreaterThan(records[1].predictedFights);
+        expect(records[1].predictedFights).toBeGreaterThan(0);
+        expect(records[2].predictedFights).toBe(0);
+    });
+
+    test('different Solo targets in the same zone keep separate filtered spawn tables', async () => {
+        players[0].taskMonsterHrids = [STABBY, SMASHY];
+        players[0].taskMonsterRemaining[SMASHY] = 30;
+        for (const name of ['Stabby', 'Smashy', 'Stabby']) await estimate(mountCard(name));
+
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        const fights = runSimulation.mock.calls.map(
+            ([params]) => params.gameData.actionDetailMap[ZONE].combatZoneInfo.fightInfo
+        );
+        expect(fights.map((fight) => fight.randomSpawnInfo.spawns)).toEqual([
+            [{ combatMonsterHrid: STABBY }],
+            [{ combatMonsterHrid: SMASHY }],
+        ]);
+        expect(fights.every((fight) => fight.bossSpawns.length === 0)).toBe(true);
+    });
+
+    test.each([
+        ['solo', 'zone'],
+        ['zone', 'solo'],
+    ])('%s then %s never shares a filtered result with the full zone', async (first, second) => {
+        const card = mountCard();
+        await estimate(card, { mode: first });
+        await estimate(card, { mode: second });
+        await estimate(card, { mode: first });
+        await estimate(card, { mode: second });
+
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(
+            runSimulation.mock.calls.map(
+                ([params]) =>
+                    params.gameData.actionDetailMap[ZONE].combatZoneInfo.fightInfo.randomSpawnInfo.spawns.length
+            )
+        ).toEqual(first === 'solo' ? [1, 2] : [2, 1]);
+    });
+
+    test('a boss Solo card still shares with full-zone estimates but not an ordinary Solo card', async () => {
+        await estimate(mountCard('Robo'));
+        await estimate(mountCard('Stabby'), { mode: 'zone' });
+        await estimate(mountCard('Stabby'));
+        await estimate(mountCard('Stabby'));
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(
+            runSimulation.mock.calls[0][0].gameData.actionDetailMap[ZONE].combatZoneInfo.fightInfo.bossSpawns
+        ).toEqual([{ combatMonsterHrid: BOSS }]);
+    });
+
+    test('identical concurrent Solo cards share the pending promise and completed random sample', async () => {
+        let finish;
+        runSimulation.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finish = resolve;
+                })
+        );
+        const cards = [mountCard(), mountCard(), mountCard()];
+        const requests = cards.map((card) => estimate(card));
+        await vi.waitFor(() => expect(buildAllPlayerDTOs).toHaveBeenCalledTimes(3));
+        finish(SIM);
+        const containers = await Promise.all(requests);
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+        expect(containers.every((container) => container._mwiCombatEstimate.simResult === SIM)).toBe(true);
+        for (const card of cards) expect(taskProfitDisplay._cardEstimates.has(card)).toBe(true);
+        // This caller has no fixed seed setting. Each cache miss still asks the runner
+        // for its normal independent sample; only equivalent cache hits share one.
+        expect(runSimulation.mock.calls[0][0]).not.toHaveProperty('seed');
+        expect(runSimulation.mock.calls[0][0].taskDamageMode).toBe('perMonster');
+    });
+
+    test('a rejected shared promise is evicted and all waiters can retry', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        let reject;
+        runSimulation.mockImplementationOnce(
+            () =>
+                new Promise((_resolve, no) => {
+                    reject = no;
+                })
+        );
+        const cards = [mountCard(), mountCard(), mountCard()];
+        const requests = cards.map((card) => estimate(card));
+        await vi.waitFor(() => expect(buildAllPlayerDTOs).toHaveBeenCalledTimes(3));
+        reject(new Error('worker failed'));
+        const containers = await Promise.all(requests);
+        expect(runSimulation).toHaveBeenCalledTimes(1);
+        expect(containers.every((container) => container.textContent.includes('Estimate failed. Retry'))).toBe(true);
+        expect(taskProfitDisplay._zoneSimCache.size).toBe(0);
+        for (const card of cards) await estimate(card);
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+    });
+
+    test('the cache expires at three minutes and prunes entries for other targets', async () => {
+        let now = 1000;
+        vi.spyOn(Date, 'now').mockImplementation(() => now);
+        const card = mountCard();
+        await estimate(card);
+        await estimate(mountCard('Smashy'));
+        now += 3 * 60 * 1000 - 1;
+        await estimate(card);
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        now++;
+        await estimate(card);
+        expect(runSimulation).toHaveBeenCalledTimes(3);
+        expect(taskProfitDisplay._zoneSimCache.size).toBe(1);
+    });
+
+    test('disable clears Solo entries and an old pending result cannot replace a new generation', async () => {
+        let finishOld;
+        runSimulation.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    finishOld = resolve;
+                })
+        );
+        const oldCard = mountCard();
+        const pending = estimate(oldCard);
+        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(1));
+        taskProfitDisplay.disable();
+        expect(taskProfitDisplay._zoneSimCache.size).toBe(0);
+        taskProfitDisplay.isInitialized = true;
+        const card = mountCard();
+        await estimate(card);
+        finishOld({ ...SIM, encounters: 999 });
+        await pending;
+        await estimate(card);
+        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(taskProfitDisplay._cardEstimates.has(oldCard)).toBe(false);
+        expect(card.querySelector('.mwi-task-profit')._mwiCombatEstimate.simResult).toBe(SIM);
     });
 });

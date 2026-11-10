@@ -57,6 +57,11 @@ Replay, cohort selection, Save pool and Sanitized exports now wait for saved fig
 ### Character cards include saved-loadout auras
 
 Character cards can now include up to three other learned auras from saved combat or all-skills loadouts, at their current levels; cards built from a skilling loadout get none. Turn this off in the card settings; equipped abilities keep the first five tiles, while the external viewer’s final three tiles hold extras without separate styling.
+
+### Reuse Solo task simulations
+
+Identical Solo combat tasks now share per-tier simulations, so Best Score searches avoid repeating the same work while still using your current build and prices.
+
 ### Task estimates follow your current build
 
 New Zone and boss-task estimates use current task targets, remaining kills, gear, party, and buffs instead of reusing an outdated run. Cards with identical inputs still share a simulation.

@@ -124,9 +124,9 @@ afterEach(async () => {
 
 describe('initial automatic task estimates', () => {
     test.each([
-        ['best', 'solo', 12],
+        ['best', 'solo', 4],
         ['best', 'zone', 4],
-        ['game', 'solo', 3],
+        ['game', 'solo', 1],
         ['game', 'zone', 1],
     ])('%s tier, %s mode: every queued card leaves the player simulation running', async (pick, mode, calls) => {
         tierMode = pick;
@@ -163,11 +163,25 @@ describe('initial automatic task estimates', () => {
         first.reject(new Error('Cancelled'));
         await taskProfitDisplay._simQueue;
 
-        expect(runSimulation).toHaveBeenCalledTimes(9); // cancelled T0, then four tiers on each card
+        expect(runSimulation).toHaveBeenCalledTimes(5); // cancelled T0, then four shared tiers
         expect(runSimulation.mock.calls.every((call) => call[2]?.preempt === false)).toBe(true);
         expect(firstContainer.textContent).not.toContain('Estimate failed');
         expect(taskProfitDisplay._cardEstimates.has(firstCard)).toBe(true);
         expect(taskProfitDisplay._cardEstimates.has(secondCard)).toBe(true);
+    });
+
+    test('a later cancelled Solo tier retries only that tier and reuses the successful tiers', async () => {
+        const interrupted = deferred();
+        runSimulation.mockImplementationOnce(async () => SIM).mockImplementationOnce(() => interrupted.promise);
+        const cards = [mountCard(), mountCard(), mountCard()];
+        for (const card of cards) await enqueue(card);
+        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(2));
+        interrupted.reject(new Error('Cancelled'));
+        await taskProfitDisplay._simQueue;
+
+        expect(runSimulation.mock.calls.map(([params]) => params.difficultyTier)).toEqual([0, 1, 1, 2, 3]);
+        expect(runSimulation.mock.calls.every((call) => call[2]?.preempt === false)).toBe(true);
+        for (const card of cards) expect(taskProfitDisplay._cardEstimates.has(card)).toBe(true);
     });
 
     test('repeated cancellations are bounded and restore manual Estimate instead of a stuck spinner', async () => {

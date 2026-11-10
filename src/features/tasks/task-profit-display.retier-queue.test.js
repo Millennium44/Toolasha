@@ -91,16 +91,20 @@ function mountBoard(descriptions) {
  * A runner that behaves like the real one: a run started without `preempt: false` cancels every run
  * in flight ("Cancelled"), and each run takes a few milliseconds.
  */
-const live = { active: [], maxConcurrent: 0, tiers: [] };
+const live = { active: [], maxConcurrent: 0, tiers: [], cancelled: 0 };
 function installRunner(delayMs = 4) {
     live.active = [];
     live.maxConcurrent = 0;
     live.tiers = [];
+    live.cancelled = 0;
     runSimulation.mockImplementation(
         (params, _onProgress, options = {}) =>
             new Promise((resolve, reject) => {
                 if (options.preempt !== false) {
-                    for (const run of live.active.splice(0)) run.reject(new Error('Cancelled'));
+                    for (const run of live.active.splice(0)) {
+                        live.cancelled++;
+                        run.reject(new Error('Cancelled'));
+                    }
                 }
                 const run = { reject };
                 live.active.push(run);
@@ -130,6 +134,7 @@ afterEach(() => {
     taskProfitDisplay.isInitialized = false;
     taskProfitDisplay._retierQueue = [];
     taskProfitDisplay._retierRunning = false;
+    taskProfitDisplay._zoneSimCache.clear();
     dataManager.initClientData = null;
     dataManager.currentCharacterId = null;
     document.body.innerHTML = '';
@@ -159,7 +164,7 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
 
         expect(live.maxConcurrent).toBe(1);
         for (const { container } of cards) expect(container.innerHTML).not.toContain('Estimate failed');
-        expect(live.tiers).toEqual([3, 3, 3]);
+        expect(live.tiers).toEqual([3, 3]); // The two Stabby cards share their T3 run.
     });
 
     test('a second tier change while the queue runs adds no parallel queue and no duplicate runs', async () => {
@@ -175,7 +180,7 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
         await vi.waitFor(() => expect(cards.map(tierOf)).toEqual([3, 3, 3]), { timeout: 2000 });
 
         expect(live.maxConcurrent).toBe(1);
-        expect(live.tiers.length).toBe(3);
+        expect(live.tiers.length).toBe(2);
     });
 
     test('a run cancelled by the player own simulation is not a failure and is picked up again', async () => {
@@ -186,7 +191,7 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
         taskProfitDisplay._retierOpenCombatEstimates();
         await new Promise((r) => setTimeout(r, 1));
         // The player presses Estimate on another card: a normal run, which preempts whatever is running
-        const other = mountBoard(['Defeat - Stabby'])[0];
+        const other = mountBoard(['Defeat - Smashy'])[0]; // A different target misses the active Stabby cache.
         const userRun = taskProfitDisplay._runCombatSimEstimate(
             other.container,
             taskProfitDisplay.parseTaskData(other.info),
@@ -194,6 +199,7 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
             'solo'
         );
         await userRun;
+        expect(live.cancelled).toBeGreaterThan(0);
 
         await vi.waitFor(() => expect(cards.map(tierOf)).toEqual([3, 3]), { timeout: 2000 });
         for (const { container } of cards) expect(container.innerHTML).not.toContain('Estimate failed');
@@ -225,7 +231,7 @@ describe('tier-change redos of several open Solo cards in one zone', () => {
         cards[1].info.remove();
         await vi.waitFor(() => expect(tierOf(cards[2])).toBe(3), { timeout: 2000 });
 
-        expect(runSimulation).toHaveBeenCalledTimes(2);
+        expect(runSimulation).toHaveBeenCalledTimes(1); // The remaining cards share their Stabby result.
         expect(tierOf(cards[1])).toBe(0);
     });
 });

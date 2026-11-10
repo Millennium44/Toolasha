@@ -113,7 +113,7 @@ function getRatingMode() {
 // quiet until enough cards carry a rating for "the board" to mean anything.
 const MIN_RATED_CARDS_FOR_MEDIAN = 3;
 
-/** How long a shared full-zone sim result stands before it is re-run */
+/** How long a shared task sim result stands before it is re-run */
 const ZONE_SIM_TTL_MS = 3 * 60 * 1000;
 
 /** Marks a combat estimate container that is showing a result a progress change can redraw */
@@ -595,9 +595,10 @@ class TaskProfitDisplay {
         this._estimateLayouts = new Map();
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
-        // Shared full-zone sims, keyed by character, zone, tier, loadout and the
-        // effective player/buff inputs. Expired entries are dropped as they are
-        // met rather than kept forever; replaced game tables also invalidate a hit.
+        // Shared per-zone task sims, keyed by character, zone, tier, loadout and
+        // effective player/buff inputs. Ordinary Solo targets have separate entries
+        // from full-zone sims and other monsters. Expired entries are pruned;
+        // replaced game tables also invalidate a hit.
         this._zoneSimCache = new Map();
         // taskNode → { zoneHrid, predictedFights }, the last successfully completed
         // estimate for that card. Cleared the instant a new run starts (config
@@ -856,7 +857,7 @@ class TaskProfitDisplay {
         });
     }
 
-    /** Drop every zone sim result that has aged out */
+    /** Drop every shared task sim result that has aged out */
     _pruneZoneSimCache() {
         const now = Date.now();
         for (const [key, entry] of this._zoneSimCache) {
@@ -2143,78 +2144,54 @@ class TaskProfitDisplay {
             // The same span the Task Statistics zone rows simulate, so a card
             // and its zone row quote figures from equally long runs
             const SIM_HOURS = ZONE_SIM_HOURS;
-            // Full-zone sims (zone mode / boss targets) are shared across all
-            // task cards for the same zone+loadout, so every card in a zone
-            // reports identical numbers instead of independent RNG rolls
+            // Identical cards share each tier's simulation instead of repeating
+            // the same work and drawing independent RNG samples. Solo filters the
+            // spawn table, so its target is part of the identity; boss Solo keeps
+            // the full table and can still share with Zone cards.
             const sharedZoneSim = mode === 'zone' || isBossTarget;
             const playerHrid = selfDTO?.hrid || 'player1';
             const simAtTier = async (tier) => {
                 const communityBuffs = getCommunityBuffs();
-                if (sharedZoneSim) {
-                    // A reroll, remaining kill count, edited snapshot or party change
-                    // can change the fight without changing the zone/loadout name.
-                    // Key the applied DTOs (including each player's own task damage
-                    // targets/counts) and buffs, preserving sharing for identical cards.
-                    const inputKey = stableStringify({ players, communityBuffs });
-                    const cacheKey = `${simCharacterId || ''}|${zoneHrid}|${tier}|${loadoutName || ''}|${inputKey}`;
-                    const cached = this._zoneSimCache.get(cacheKey);
-                    if (cached && cached.clientData === initClientData && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
-                        return cached.promise;
-                    } else {
-                        // Anything past its time is dropped on the way through, so a
-                        // long session does not accumulate a sim result per zone per
-                        // loadout for the rest of the day
-                        this._pruneZoneSimCache();
-                        const promise = runSimulation(
-                            {
-                                gameData: simGameData,
-                                playerDTOs: players,
-                                zoneHrid,
-                                difficultyTier: tier,
-                                hours: SIM_HOURS,
-                                communityBuffs,
-                                // The Tasks panel is a task estimate by definition, so
-                                // it never consults the general task-damage setting —
-                                // an estimate of how long a task takes must model the
-                                // gear you are wearing for it. Zone mode covers the
-                                // whole spawn table, so the honest rule here is the
-                                // per-monster one: the bonus pays on the monsters your
-                                // own board names and on no others.
-                                taskDamageMode: TASK_DAMAGE_PER_MONSTER,
-                            },
-                            ...simArgs
-                        );
-                        this._zoneSimCache.set(cacheKey, { promise, t: Date.now(), clientData: initClientData });
-                        try {
-                            return await promise;
-                        } catch (error) {
-                            // A replacement may already be running after expiry or
-                            // fresh game data. An older failure only owns its entry.
-                            if (this._zoneSimCache.get(cacheKey)?.promise === promise) {
-                                this._zoneSimCache.delete(cacheKey);
-                            }
-                            throw error;
-                        }
+                // A reroll, remaining kill count, edited snapshot or party change
+                // can change the fight without changing the zone/loadout name.
+                // Key the applied DTOs (including each player's own task damage
+                // targets/counts) and buffs, preserving sharing for identical cards.
+                const inputKey = stableStringify({
+                    players,
+                    communityBuffs,
+                    soloMonsterHrid: sharedZoneSim ? null : monsterHrid,
+                });
+                const cacheKey = `${simCharacterId || ''}|${zoneHrid}|${tier}|${loadoutName || ''}|${inputKey}`;
+                const cached = this._zoneSimCache.get(cacheKey);
+                if (cached && cached.clientData === initClientData && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
+                    return cached.promise;
+                }
+                this._pruneZoneSimCache();
+                const promise = runSimulation(
+                    {
+                        gameData: simGameData,
+                        playerDTOs: players,
+                        zoneHrid,
+                        difficultyTier: tier,
+                        hours: SIM_HOURS,
+                        communityBuffs,
+                        // Task estimates always model the gear worn for the board:
+                        // the bonus pays only on each player's own task monsters.
+                        // Solo has narrowed the spawns, but keeps this same rule.
+                        taskDamageMode: TASK_DAMAGE_PER_MONSTER,
+                    },
+                    ...simArgs
+                );
+                this._zoneSimCache.set(cacheKey, { promise, t: Date.now(), clientData: initClientData });
+                try {
+                    return await promise;
+                } catch (error) {
+                    // A replacement may already be running after expiry or
+                    // fresh game data. An older failure only owns its entry.
+                    if (this._zoneSimCache.get(cacheKey)?.promise === promise) {
+                        this._zoneSimCache.delete(cacheKey);
                     }
-                } else {
-                    return runSimulation(
-                        {
-                            gameData: simGameData,
-                            playerDTOs: players,
-                            zoneHrid,
-                            difficultyTier: tier,
-                            hours: SIM_HOURS,
-                            communityBuffs,
-                            // The same per-monster rule as the zone sim above, and for
-                            // the same reason. Solo mode has already narrowed the spawn
-                            // table to this card's task monster, so "every fight counts"
-                            // would reach the same answer — but only by a different
-                            // route, and it would be wrong the moment the table is not
-                            // narrowed. One code path, and it is the honest one.
-                            taskDamageMode: TASK_DAMAGE_PER_MONSTER,
-                        },
-                        ...simArgs
-                    );
+                    throw error;
                 }
             };
 

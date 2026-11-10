@@ -37,7 +37,7 @@ import taskProfitDisplay from './task-profit-display.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import { runSimulation } from '../combat-sim/combat-sim-runner.js';
-import { buildAllPlayerDTOs, buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
+import { buildAllPlayerDTOs, buildGameDataPayload, calculateSimRevenue } from '../combat-sim/combat-sim-adapter.js';
 
 const ZONE = '/actions/combat/gobo_planet';
 const PLAYER = 'player1';
@@ -283,6 +283,28 @@ describe('_searchBestTier: which tier the Best Score search keeps', () => {
         expect(record.tier).toBe(2);
     });
 
+    test('cached Solo tiers are ranked again with current prices instead of caching the old winning tier', async () => {
+        const tiers = ladder();
+        // Equal XP makes current profit alone decide the winning tier.
+        for (const result of Object.values(tiers)) result.experienceGained = { [PLAYER]: { attack: 1000 } };
+        installTiers(tiers);
+        const card = mountCard();
+        expect((await estimate(card)).tier).toBe(2);
+        const previousRevenue = calculateSimRevenue.getMockImplementation();
+        calculateSimRevenue.mockImplementation((sim) => ({
+            netPerHour: sim === tiers[1] ? 1_000_000 : 0,
+            dropEntries: [],
+            consumableEntries: [],
+        }));
+
+        try {
+            expect((await estimate(card)).tier).toBe(1);
+            expect(runSimulation).toHaveBeenCalledTimes(4);
+        } finally {
+            calculateSimRevenue.mockImplementation(previousRevenue);
+        }
+    });
+
     test('a character switch mid-search stops it, and nothing is cached under the new character', async () => {
         const tiers = ladder();
         runSimulation.mockImplementation(async ({ difficultyTier }) => {
@@ -443,12 +465,12 @@ describe('_retierOpenCombatEstimates in Best Score mode', () => {
         taskProfitDisplay._retierOpenCombatEstimates({ all: true });
 
         expect(enqueue).toHaveBeenCalledTimes(1);
-        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalledTimes(4));
         await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(card.info)?.tier).toBe(2));
+        expect(runSimulation).not.toHaveBeenCalled(); // Same inputs reuse all four cached tiers.
     });
 
     test('in the game-pick mode a different pick does enqueue (the contrast)', async () => {
-        await drawn();
+        const card = await drawn();
         tierMode = 'game';
         const enqueue = vi.spyOn(taskProfitDisplay, '_enqueueRetier');
 
@@ -456,8 +478,9 @@ describe('_retierOpenCombatEstimates in Best Score mode', () => {
         taskProfitDisplay._retierOpenCombatEstimates();
 
         expect(enqueue).toHaveBeenCalledTimes(1);
-        await vi.waitFor(() => expect(runSimulation).toHaveBeenCalled());
-        expect(runSimulation.mock.calls[0][0]).toMatchObject({ difficultyTier: 0 });
+        await vi.waitFor(() => expect(taskProfitDisplay._cardEstimates.get(card.info)?.tier).toBe(0));
+        expect(card.container.textContent).not.toContain('best Score');
+        expect(runSimulation).not.toHaveBeenCalled(); // T0 was already simulated in the search.
     });
 
     test('the setting switched to the game pick while a Best Score search runs: the card ends in the new mode', async () => {
