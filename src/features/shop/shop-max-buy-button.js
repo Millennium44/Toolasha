@@ -20,6 +20,7 @@ import {
 } from '../../utils/shop-max-buy.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+import { captureOwner, stillOurs, noteTeardown } from '../../utils/init-ownership.js';
 
 const SETTING = 'shop_maxBuyButton';
 const BUTTON_CLASS = 'toolasha-shop-max-buy-button';
@@ -71,6 +72,8 @@ class ShopMaxBuyButton {
     constructor() {
         this.isInitialized = false;
         this.registry = null;
+        this._fills = new Map();
+        this._fillEvents = new WeakSet();
     }
 
     initialize() {
@@ -92,6 +95,8 @@ class ShopMaxBuyButton {
     }
 
     disable() {
+        noteTeardown(this);
+        for (const request of this._fills.values()) request.cancel();
         this.registry?.cleanupAll();
         this.registry = null;
         document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.remove());
@@ -130,6 +135,8 @@ class ShopMaxBuyButton {
      * @param {string} [panelKey]
      */
     async handleMaxClick(container, input, modalContentClass, panelKey) {
+        // Even an unaffordable or unreadable new request supersedes the old fill.
+        this._fills.get(input)?.cancel();
         try {
             const candidate = computeMaxAffordable(this.resolveUnitCostLines(container, input, panelKey));
             if (candidate === null) return;
@@ -174,6 +181,29 @@ class ShopMaxBuyButton {
      * @param {string} [modalContentClass]
      */
     async fillAndVerify(container, input, candidate, modalContentClass) {
+        this._fills.get(input)?.cancel();
+        const owner = captureOwner(this);
+        const onInput = (event) => {
+            if (!this._fillEvents.has(event)) request.cancel();
+        };
+        const request = {
+            cancel: () => {
+                input.removeEventListener('input', onInput);
+                input.removeEventListener('change', onInput);
+                if (this._fills.get(input) === request) this._fills.delete(input);
+            },
+        };
+        this._fills.set(input, request);
+        input.addEventListener('input', onInput);
+        input.addEventListener('change', onInput);
+        let lastValue = input.value;
+        const isCurrent = () =>
+            this._fills.get(input) === request &&
+            stillOurs(owner) &&
+            config.getSetting(SETTING) &&
+            input.isConnected &&
+            container.contains(input) &&
+            input.value === lastValue;
         const modalRoot = (modalContentClass && container.closest(`[class*="${modalContentClass}"]`)) || document;
         const findBuyButton = () => {
             const matches = [...modalRoot.querySelectorAll('button[class*="Button_success"]')].filter(
@@ -185,17 +215,32 @@ class ShopMaxBuyButton {
         // true: found and disabled (go smaller). false: found and enabled (quantity works).
         // null: no reliable oracle (stop and leave as-is).
         const isDisabledAt = async (value) => {
-            setReactInputValue(input, value, { focus: false });
+            // The next frame may belong to a newer Max press, a manual quantity,
+            // another character, or a dialog that has already been closed.
+            if (!isCurrent()) return null;
+            setReactInputValue(input, value, { focus: false, dispatchInput: false });
+            lastValue = input.value;
+            // Ignore only this exact owned event, including for a newer request
+            // started by an input listener. Nested external edits still cancel.
+            const event = new Event('input', { bubbles: true });
+            event.simulated = true;
+            this._fillEvents.add(event);
+            input.dispatchEvent(event);
             await nextFrame();
+            if (!isCurrent()) return null;
             const button = findBuyButton();
             return button ? button.disabled : null;
         };
 
-        const best = await findMaxValidQuantity(candidate, isDisabledAt);
-        if (best !== null && best !== candidate) {
-            await isDisabledAt(best);
+        try {
+            const best = await findMaxValidQuantity(candidate, isDisabledAt);
+            if (best !== null && best !== candidate) {
+                await isDisabledAt(best);
+            }
+            // else: nothing valid even at 1, or the oracle was lost; leave the game's own validation to explain it
+        } finally {
+            request.cancel();
         }
-        // else: nothing valid even at 1, or the oracle was lost; leave the game's own validation to explain it
     }
 }
 

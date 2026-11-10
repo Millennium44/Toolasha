@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shop Max respects newer input
+
+A running Max calculation stops when you edit the quantity, open a newer calculation, change character or close the shop, so it cannot overwrite your newer choice.
+
 ### Equipment level warnings
 
 Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now warn when your current skill levels are too low to equip an item. Advisor warnings explicitly refer to your character, even when you are simulating a party member or future levels.
