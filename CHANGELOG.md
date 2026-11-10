@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim sees your party before everyone readies up
+
+While you fought solo waiting for a party to ready, each new fight made the Combat Sim think you were alone, so Reset to Party and fetching party loadouts stayed greyed out. The party you are in now counts until it starts fighting together.
+
 ### Equipment Watch follows the pricing mode
 
 Equipment Watch now buys and sells on the sides your pricing mode setting picks, like the rest of Toolasha's profit figures, instead of always buying at ask and selling at bid. The price labels on its cards name the side in use.

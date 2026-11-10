@@ -2928,19 +2928,23 @@ class DataManager {
         }
         if (!sawSelf) return;
 
-        const key = members
-            .map((member) => member.characterID)
-            .sort()
-            .join(',');
-        const previous = (this.battlePartyRoster?.members || [])
-            .map((member) => member.characterID)
-            .sort()
-            .join(',');
+        const keyOf = (list) =>
+            list
+                .map((member) => member.characterID)
+                .sort()
+                .join(',');
+        const previous = keyOf(this.getPartyMembers().members);
 
         this.battlePartyRoster = { members, updatedAt: Date.now() };
-        if (key === previous) return;
+        // Announce what readers now get, not the fight's own list: a solo fight fought while a
+        // party is still forming does not change who the party is.
+        const roster = this.getPartyMembers();
+        if (keyOf(roster.members) === previous) return;
 
-        this.emit('party_roster_updated', { members: members.map((member) => ({ ...member })), source: 'battle' });
+        this.emit('party_roster_updated', {
+            members: roster.members.map((member) => ({ ...member })),
+            source: roster.source,
+        });
     }
 
     /**
@@ -2983,7 +2987,11 @@ class DataManager {
 
         const battle = this.battlePartyRoster;
         const loginIsNewer = members.length > 0 && loginAt !== null && !(battle?.updatedAt >= loginAt);
-        if (battle?.members?.length && !loginIsNewer) {
+        // A party still forming is not in any fight: a fight started meanwhile is the character's
+        // own solo action, and its one-name roster says nothing about who the party is.
+        const status = partyInfo?.party?.status;
+        const partyForming = members.length > 1 && (status === 'creating' || status === 'recruiting');
+        if (battle?.members?.length && !loginIsNewer && !partyForming) {
             return {
                 members: battle.members.map((member) => ({ ...member })),
                 source: 'battle',

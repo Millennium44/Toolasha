@@ -2478,6 +2478,39 @@ describe('party_updated', () => {
         expect(dataManager.getPartyMembers().members.map((m) => m.characterID)).toEqual(['me']);
     });
 
+    test('a solo fight while the party is still forming does not replace the party', async () => {
+        const dataManager = await loggedIn();
+        const listener = vi.fn();
+        webSocketHandlers.get('party_updated')(party('recruiting', ['me', 'a', 'b']));
+        dataManager.on('party_roster_updated', listener);
+
+        // The character keeps fighting solo while the party waits for everyone to ready up.
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        webSocketHandlers.get('new_battle')({ players: [{ character: { id: 'me', name: 'Me' } }] });
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        webSocketHandlers.get('new_battle')({ players: [{ character: { id: 'me', name: 'Me' } }] });
+
+        expect(dataManager.getPartyMembers().members.map((m) => m.characterID)).toEqual(['me', 'a', 'b']);
+        expect(listener).not.toHaveBeenCalled();
+        dataManager.off('party_roster_updated', listener);
+    });
+
+    test('a party fight roster still wins once the party is battling', async () => {
+        const dataManager = await loggedIn();
+        webSocketHandlers.get('party_updated')(party('battling', ['me', 'a']));
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        webSocketHandlers.get('new_battle')({
+            players: [
+                { character: { id: 'me', name: 'Me' } },
+                { character: { id: 'a', name: 'A' } },
+                { character: { id: 'b', name: 'B' } },
+            ],
+        });
+
+        expect(dataManager.getPartyMembers()).toMatchObject({ source: 'battle' });
+        expect(dataManager.getPartyMembers().members).toHaveLength(3);
+    });
+
     test('an emptied slot map while battling leaves the fight roster standing', async () => {
         const dataManager = await loggedIn();
         webSocketHandlers.get('new_battle')({
