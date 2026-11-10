@@ -484,16 +484,19 @@ describe('cooldownRemainingMs', () => {
         expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBe(0);
     });
 
-    test('is positive, and roughly the cool-down length, once the cool-down trips', async () => {
-        const fetchMock = refusal();
-        globalThis.fetch = fetchMock;
+    test('is the full cool-down length once the cool-down trips', async () => {
+        vi.useFakeTimers();
+        try {
+            const fetchMock = refusal();
+            globalThis.fetch = fetchMock;
 
-        await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
-        await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
+            await marketHistoryAPI.fetchHistory('/items/a', 0, 7);
+            await marketHistoryAPI.fetchHistory('/items/b', 0, 7); // trips it
 
-        const remaining = marketHistoryAPI.cooldownRemainingMs('mooket2');
-        expect(remaining).toBeGreaterThan(0);
-        expect(remaining).toBeLessThanOrEqual(marketHistoryAPI.cooldownUntil - Date.now() + 1);
+            expect(marketHistoryAPI.cooldownRemainingMs('mooket2')).toBe(30_000);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('is 0 for a source other than the one that is cooling down', async () => {
