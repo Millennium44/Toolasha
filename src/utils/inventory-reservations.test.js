@@ -646,6 +646,224 @@ describe('a character switch moves the whole ledger', () => {
     });
 });
 
+describe('pending operations keep their character identity', () => {
+    const IRONCOW = `${RESERVATIONS_KEY}_ironcow456`;
+    const OWNER = 'goal:shared';
+    const operations = [
+        ['reserve', () => reserve(OWNER, [{ itemHrid: LOGS, count: 10 }]), false],
+        ['empty reserve', () => reserve(OWNER, []), false],
+        ['reserveMany', () => reserveMany([{ ownerId: OWNER, lines: [{ itemHrid: LOGS, count: 10 }] }]), false],
+        ['empty reserveMany entry', () => reserveMany([{ ownerId: OWNER, lines: [] }]), false],
+        ['release', () => release(OWNER), false],
+        ['releaseMissing', () => releaseMissing('goal:', []), 0],
+    ];
+
+    /** @returns {Object} A storage gate with an explicit completion signal. */
+    function holdNextRead() {
+        const { promise, resolve } = Promise.withResolvers();
+        const read = mockStorage.tryGet.getMockImplementation();
+        mockStorage.tryGet.mockImplementationOnce(async (...args) => {
+            await promise;
+            return read(...args);
+        });
+        return resolve;
+    }
+
+    /** @param {number} count - Stock claimed. @returns {Object} A current stored ledger. */
+    function ledger(count) {
+        return {
+            [OWNER]: {
+                label: 'Shared owner',
+                updatedAt: Date.now(),
+                lines: [{ itemHrid: LOGS, enhancementLevel: 2, count }],
+            },
+        };
+    }
+
+    test.each(operations)(
+        '%s cannot edit an arriving character after its pending load',
+        async (_name, run, skipped) => {
+            const departing = ledger(5);
+            const arriving = ledger(50);
+            mockStorage.storeFor('settings').set(KEY, departing);
+            mockStorage.storeFor('settings').set(IRONCOW, arriving);
+            const finish = holdNextRead();
+            const pending = run();
+            mockDataManager.currentCharacterId = 'ironcow456';
+            await ensureReservationsLoaded();
+            mockStorage.set.mockClear();
+            finish();
+            const result = await pending;
+            await flushReservationWrites();
+
+            expect(mockStorage.storeFor('settings').get(IRONCOW)).toEqual(arriving);
+            expect(mockStorage.storeFor('settings').get(KEY)).toEqual(departing);
+            expect(allReservations()).toEqual(arriving);
+            expect(result).toBe(skipped);
+            expect(mockStorage.set).not.toHaveBeenCalled();
+        }
+    );
+
+    test.each(operations)('%s notices a switch before another ledger caller does', async (_name, run, skipped) => {
+        const departing = ledger(5);
+        const arriving = ledger(50);
+        mockStorage.storeFor('settings').set(KEY, departing);
+        mockStorage.storeFor('settings').set(IRONCOW, arriving);
+        const finish = holdNextRead();
+        const pending = run();
+        mockDataManager.currentCharacterId = 'ironcow456';
+        mockStorage.set.mockClear();
+        finish();
+        const result = await pending;
+        await flushReservationWrites();
+
+        expect(mockStorage.storeFor('settings').get(IRONCOW)).toEqual(arriving);
+        expect(mockStorage.storeFor('settings').get(KEY)).toEqual(departing);
+        expect(result).toBe(skipped);
+        expect(mockStorage.set).not.toHaveBeenCalled();
+        await ensureReservationsLoaded();
+        expect(allReservations()).toEqual(arriving);
+    });
+
+    test.each(operations)('%s stays canceled after switching away and back', async (_name, run, skipped) => {
+        mockStorage.storeFor('settings').set(KEY, ledger(5));
+        mockStorage.storeFor('settings').set(IRONCOW, ledger(50));
+        const finish = holdNextRead();
+        const pending = run();
+        mockDataManager.currentCharacterId = 'ironcow456';
+        await ensureReservationsLoaded();
+        const newer = ledger(75);
+        mockStorage.storeFor('settings').set(KEY, newer);
+        mockDataManager.currentCharacterId = 'market123';
+        await ensureReservationsLoaded();
+        mockStorage.set.mockClear();
+        finish();
+        const result = await pending;
+        await flushReservationWrites();
+
+        expect(mockStorage.storeFor('settings').get(KEY)).toEqual(newer);
+        expect(allReservations()).toEqual(newer);
+        expect(result).toBe(skipped);
+        expect(mockStorage.set).not.toHaveBeenCalled();
+    });
+
+    test.each(operations)('%s cannot move a queued save to the arriving character', async (name, run) => {
+        const departing = ledger(5);
+        mockStorage.storeFor('settings').set(KEY, departing);
+        const arriving = ledger(50);
+        mockStorage.storeFor('settings').set(IRONCOW, arriving);
+        await ensureReservationsLoaded();
+        const started = Promise.withResolvers();
+        const finish = Promise.withResolvers();
+        const write = mockStorage.set.getMockImplementation();
+        mockStorage.set.mockImplementationOnce(async (...args) => {
+            const written = await write(...args);
+            started.resolve();
+            await finish.promise;
+            return written;
+        });
+        const first = reserve('first', [{ itemHrid: LOGS, count: 1 }]);
+        await started.promise;
+        const edited = Promise.withResolvers();
+        const off = onReservationsChanged(edited.resolve);
+        const pending = run();
+        await edited.promise;
+        off();
+        // The second operation already edited A and queued its save, but the
+        // deferred character_switched handler has not reset the record yet.
+        mockDataManager.currentCharacterId = 'ironcow456';
+        finish.resolve();
+        const [firstWritten, result] = await Promise.all([first, pending]);
+        await flushReservationWrites();
+
+        expect(mockStorage.storeFor('settings').get(IRONCOW)).toEqual(arriving);
+        expect(firstWritten).toBe(true);
+        // releaseMissing reports how many in-memory owners it dropped, not whether the save landed.
+        expect(result).toBe(name === 'releaseMissing' ? 1 : false);
+        expect(mockStorage.storeFor('settings').get(KEY)[OWNER]).toEqual(departing[OWNER]);
+    });
+
+    test.each([operations[0], operations[2]])('%s rechecks the setting after loading', async (_name, run) => {
+        const stored = ledger(5);
+        mockStorage.storeFor('settings').set(KEY, stored);
+        const finish = holdNextRead();
+        const pending = run();
+        mockConfig.enabled = false;
+        mockStorage.set.mockClear();
+        finish();
+        const result = await pending;
+        await flushReservationWrites();
+
+        expect(mockStorage.storeFor('settings').get(KEY)).toEqual(stored);
+        expect(result).toBe(false);
+        expect(mockStorage.set).not.toHaveBeenCalled();
+    });
+
+    test('a load overtaken during expiry cleanup returns no stale claims or change event', async () => {
+        mockStorage.storeFor('settings').set(KEY, {
+            ...ledger(5),
+            expired: { updatedAt: Date.now() - RESERVATION_TTL_MS - 1, lines: [{ itemHrid: LOGS, count: 1 }] },
+        });
+        mockStorage.storeFor('settings').set(IRONCOW, ledger(50));
+        const started = Promise.withResolvers();
+        const finish = Promise.withResolvers();
+        const write = mockStorage.set.getMockImplementation();
+        mockStorage.set.mockImplementationOnce(async (...args) => {
+            const written = await write(...args);
+            started.resolve();
+            await finish.promise;
+            return written;
+        });
+        const pending = loadReservations();
+        await started.promise;
+        mockDataManager.currentCharacterId = 'ironcow456';
+        await ensureReservationsLoaded();
+        const heard = vi.fn();
+        const off = onReservationsChanged(heard);
+        finish.resolve();
+        const loaded = await pending;
+        await flushReservationWrites();
+        off();
+
+        expect(loaded).toEqual({});
+        expect(heard).not.toHaveBeenCalled();
+        expect(allReservations()[OWNER].lines[0].count).toBe(50);
+    });
+
+    test('an obsolete load does not return another character’s claims', async () => {
+        const arriving = ledger(50);
+        mockStorage.storeFor('settings').set(KEY, ledger(5));
+        mockStorage.storeFor('settings').set(IRONCOW, arriving);
+        const finish = holdNextRead();
+        const pending = loadReservations();
+        mockDataManager.currentCharacterId = 'ironcow456';
+        await ensureReservationsLoaded();
+        finish();
+        expect(await pending).toEqual({});
+        expect(allReservations()).toEqual(arriving);
+    });
+
+    test('finishing an obsolete load leaves the arriving character’s shared load in place', async () => {
+        mockStorage.storeFor('settings').set(KEY, ledger(5));
+        mockStorage.storeFor('settings').set(IRONCOW, ledger(50));
+        mockStorage.tryGet.mockClear();
+        const finishDeparting = holdNextRead();
+        const departing = ensureReservationsLoaded();
+        mockDataManager.currentCharacterId = 'ironcow456';
+        const finishArriving = holdNextRead();
+        const arriving = ensureReservationsLoaded();
+        finishDeparting();
+        await departing;
+        const shared = ensureReservationsLoaded();
+        const readCount = mockStorage.tryGet.mock.calls.length;
+        finishArriving();
+        await Promise.all([arriving, shared]);
+
+        expect(readCount).toBe(2);
+        expect(allReservations()[OWNER].lines[0].count).toBe(50);
+    });
+});
+
 describe('a ledger that could not be read is not a ledger that is empty', () => {
     test('a claim made while the read fails does not overwrite what is stored', async () => {
         await reserve('goal:a', [{ itemHrid: LOGS, count: 300 }], { label: 'Goal: A' });

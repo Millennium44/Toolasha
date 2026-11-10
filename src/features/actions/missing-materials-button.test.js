@@ -11,6 +11,8 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { buildActionCompleted } from '../../__fixtures__/wire/action-completed.js';
+import { buildItemsUpdated } from '../../__fixtures__/wire/items-updated.js';
 
 const state = vi.hoisted(() => ({
     inventory: [],
@@ -2097,6 +2099,54 @@ describe('Mirror owned inputs remain required while shopping', () => {
             expect(tabs()[0].getAttribute('data-item-hrid')).toBe('/items/other');
         }
     );
+
+    test('an action-completed inventory update closes a spent Mirror plan and releases its inputs', async () => {
+        await settle(open());
+        const consumed = {
+            ...buildItemsUpdated().endCharacterItems[0],
+            ...own(),
+            characterID: state.characterId,
+            count: 0,
+            hash: `${state.characterId}::${BAG}::${SWORD}::12`,
+        };
+        state.inventory = [consumed];
+        state.wsOn.mock.calls.at(-1)[1](buildActionCompleted({ endCharacterItems: [consumed] }));
+        expect(tabs()).toHaveLength(0);
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(ledger.listeners.size).toBe(0);
+        expect(state.dataListeners).toHaveLength(0);
+    });
+
+    test('an action-completed inventory update refreshes the Mirror quantity without another item packet', async () => {
+        state.inventory.push({ itemHrid: MIRROR, itemLocationHrid: BAG, count: 1 });
+        await settle(open());
+        expect(tabs()[0].getAttribute('data-missing-quantity')).toBe('0');
+        const consumed = {
+            ...buildItemsUpdated().endCharacterItems[0],
+            characterID: state.characterId,
+            itemHrid: MIRROR,
+            count: 0,
+            hash: `${state.characterId}::${BAG}::${MIRROR}::0`,
+        };
+        state.inventory[1] = consumed;
+        state.wsOn.mock.calls.at(-1)[1](buildActionCompleted({ endCharacterItems: [consumed] }));
+        expect(tabs()[0].getAttribute('data-missing-quantity')).toBe('1');
+        expect(ledger.claims.missingMats[SWORD + '|12']).toBe(1);
+    });
+
+    test.each([
+        [0, 1],
+        [1, 0],
+    ])('opening redraws a Mirror quantity changed from %s to %s during navigation', async (before, after) => {
+        state.inventory.push({ itemHrid: MIRROR, itemLocationHrid: BAG, count: before });
+        const opening = open();
+        await vi.advanceTimersByTimeAsync(50);
+        state.inventory[1].count = after;
+        await vi.advanceTimersByTimeAsync(300);
+        expect(await opening).toBe(true);
+        expect(tabs()[0].getAttribute('data-missing-quantity')).toBe(String(1 - after));
+        expect(ledger.claims.missingMats[SWORD + '|12']).toBe(1);
+    });
 
     test('does not replace the consumed bag source with the same-level worn copy already credited as sold', async () => {
         state.inventory = [own(), own(12, WORN)];

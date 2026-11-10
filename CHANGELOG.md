@@ -7,6 +7,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ## Unreleased — branch `main`
 
 ### Rerolled tasks clear their old estimates immediately
+### Shopping plans follow inventory and character changes
+
+Equipment Watch refreshes missing materials when crafting changes your inventory and closes plans whose Mirror input is gone. Pending reservation updates no longer write to another character after switching, and an old crafting plan cannot start on the new character.
+
+### Equipment Watch reserves Mirror inputs
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.
 

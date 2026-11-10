@@ -449,6 +449,35 @@ describe('save', () => {
         expect(stored().map((e) => e.id)).toEqual([2]);
     });
 
+    test('a queued overwrite cannot move to another character before reset runs', async () => {
+        const record = byId();
+        const arriving = [{ id: 99 }];
+        storageMock.storeFor('settings').set('log_char2', arriving);
+        const started = Promise.withResolvers();
+        const finish = Promise.withResolvers();
+        const write = storageMock.set.getMockImplementation();
+        storageMock.set.mockImplementationOnce(async (...args) => {
+            const written = await write(...args);
+            started.resolve();
+            await finish.promise;
+            return written;
+        });
+        record.set([{ id: 1 }]);
+        const first = record.save({ overwrite: true });
+        await started.promise;
+        record.set([{ id: 2 }]);
+        const queued = record.save({ overwrite: true });
+        // The live id moves before the deferred lifecycle listener resets this record.
+        dataManagerMock.characterId = 'char2';
+        finish.resolve();
+        const results = await Promise.all([first, queued]);
+
+        expect(storageMock.storeFor('settings').get('log_char2')).toEqual(arriving);
+        expect(stored()).toEqual([{ id: 1 }]);
+        expect(results).toEqual([true, false]);
+        expect(storageMock.set).toHaveBeenCalledTimes(1);
+    });
+
     test('reset forgets memory without writing, for a character switch', async () => {
         storageMock.storeFor('settings').set(LOG, [{ id: 1 }]);
         const record = byId();

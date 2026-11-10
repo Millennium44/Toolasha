@@ -80,6 +80,9 @@ function planOwner(itemHrid) {
  */
 let walkingOwner = null;
 
+/** Invalidates pending button clicks and walk callbacks across disable/re-enable, even for the same character. */
+let planSession = 0;
+
 /**
  * Every plan owner the player can still be said to hold.
  *
@@ -347,6 +350,12 @@ function createRow(leftText, rightText, options = {}) {
  * @returns {HTMLElement|null}
  */
 export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = null) {
+    const characterId = dataManager.getCurrentCharacterId?.();
+    const session = planSession;
+    const isCurrentPlan = () =>
+        session === planSession &&
+        characterId === dataManager.getCurrentCharacterId?.() &&
+        config.getSetting('actionPanel_bestCraftingPlan') !== false;
     const gameData = dataManager.getInitClientData();
     const actionDetail = gameData?.actionDetailMap?.[actionHrid];
     if (!actionDetail) return null;
@@ -667,6 +676,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             color: white; cursor: pointer; font-size: 0.85em;
         `;
         buyButton.addEventListener('click', async () => {
+            if (!isCurrentPlan()) return;
             // The plan this button buys for is exactly the one the section
             // above is rendering — no separate re-plan at click time, or the
             // two could disagree about what "this run" means the moment a
@@ -679,6 +689,9 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
             await reserve(planOwner(output.itemHrid), lines, {
                 label: `Crafting plan: ${dataManager.getItemDetails(output.itemHrid)?.name || output.itemHrid}`,
             });
+            // A rejected reservation is normal when the ledger is off; only
+            // the originating character/session decides whether to continue.
+            if (!isCurrentPlan()) return;
 
             // Route through the shared missing-mats mechanism so the tabs get
             // live inventory tracking: buying a material lowers its badge and
@@ -825,6 +838,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
                 color: var(--text-color-primary, #fff); cursor: pointer; font-size: 0.85em;
             `;
             walkButton.addEventListener('click', async () => {
+                if (!isCurrentPlan() || !config.getSetting('craftingPlan_guidedWalk')) return;
                 // The walk steps the same plan the section above is showing —
                 // already sized to the run — not a separate re-plan.
                 const inventory = effectiveInventoryRows(dataManager.getInventory() || [], {
@@ -844,6 +858,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
                         label: `Crafting plan: ${dataManager.getItemDetails(output.itemHrid)?.name || output.itemHrid}`,
                     });
                 await reserveClaim();
+                if (!isCurrentPlan() || !config.getSetting('craftingPlan_guidedWalk')) return;
 
                 // Shrink the claim as the walk consumes it. `missingMaterialLines`
                 // is inventory-driven, not step-driven: `collectMissingMaterials`
@@ -857,6 +872,7 @@ export function buildPlanUI(actionHrid, onToggle, defaultOpen = false, panel = n
                 // plan's shopping list, `reserve()` just now sees more of it held.
                 let previousStep = null;
                 craftingPlanWalk.onStepAboutToRun = (step) => {
+                    if (!isCurrentPlan() || !config.getSetting('craftingPlan_guidedWalk')) return;
                     if (previousStep?.kind === 'craft') {
                         reserveClaim().catch((error) =>
                             console.error('[CraftingPlan] Re-reserving after a craft step failed:', error)
@@ -1129,6 +1145,7 @@ class CraftingPlanDisplay {
     }
 
     disable() {
+        planSession++;
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
 

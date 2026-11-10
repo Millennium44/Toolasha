@@ -782,6 +782,10 @@ export function createPersistedRecord({
              * character's stored one.
              */
             const askedIn = generation;
+            // A character id can move before its deferred switch listener calls
+            // reset(). An overwrite belongs to the key it was requested for,
+            // even while the record generation has not observed that switch.
+            const overwriteKey = overwrite ? key() : null;
             let handOff;
             const handedOff = new Promise((resolve) => {
                 handOff = resolve;
@@ -795,7 +799,7 @@ export function createPersistedRecord({
                 // read rather than again after it
                 const writeKey = scoped ? characterKey(base) : base;
                 try {
-                    if (overwrite && askedIn !== generation) return false;
+                    if (overwrite && (askedIn !== generation || writeKey !== overwriteKey)) return false;
                     if (!overwrite && isAtomic()) {
                         if (prepare) {
                             if ((await prepare()) === false) {

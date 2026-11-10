@@ -15,6 +15,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const state = vi.hoisted(() => ({
     inventory: [],
+    characterId: 'charA',
     eligibility: { status: 'unknown', message: 'Craft availability unknown' },
     gameListeners: {},
     loadoutListeners: new Set(),
@@ -56,6 +57,7 @@ vi.mock('../../core/data-manager.js', () => ({
             itemDetailMap: {},
         }),
         getInventory: () => state.inventory,
+        getCurrentCharacterId: () => state.characterId,
         on: (event, handler) => {
             (state.gameListeners[event] ||= new Set()).add(handler);
         },
@@ -163,6 +165,7 @@ const ledger = vi.hoisted(() => ({
     claimedElsewhere: 0,
     rowsCalls: [],
     reserveCalls: [],
+    reserveGate: null,
     releaseCalls: [],
     // A stand-in for the stored ledger, so a sweep can be asserted by what is
     // left holding stock rather than only by the call that was made
@@ -189,6 +192,7 @@ vi.mock('../../utils/inventory-reservations.js', () => ({
     reserve: async (ownerId, lines, options) => {
         if (ledger.simulateGating && !ledger.enabled) return false;
         ledger.reserveCalls.push({ ownerId, lines, options });
+        if (ledger.reserveGate) return ledger.reserveGate;
         return true;
     },
     release: async (ownerId) => {
@@ -246,6 +250,8 @@ const { mergedMissingRoot } = await import('./task-crafting-train.js');
 // each describe's own beforeEach. The pre-existing doubles (state, ledger,
 // walk) keep their own per-describe resets below, unchanged.
 beforeEach(() => {
+    state.characterId = 'charA';
+    ledger.reserveGate = null;
     state.eligibility = { status: 'unknown', message: 'Craft availability unknown' };
     panels.inputValue = '2';
     panels.resolvedActionHrid = null;
@@ -1165,6 +1171,134 @@ describe('starting the guided walk and the reservation ledger', () => {
         walk.instance.onStepAboutToRun(walk.steps[2]); // previous (steps[1]) was a buy
         await Promise.resolve();
         expect(ledger.reserveCalls).toHaveLength(2);
+    });
+});
+
+describe('crafting-plan reservation continuations belong to their starting session', () => {
+    beforeEach(() => {
+        craftingPlanDisplay.disable();
+        state.settings = { actionPanel_bestCraftingPlan: true, craftingPlan_guidedWalk: true };
+        state.plan = craftPlanWithWalk('/items/wood', 'Wood', 100);
+        state.missing = [{ itemHrid: '/items/wood', required: 200, missing: 200, isTradeable: true }];
+        state.inventory = [];
+        state.openMaterialsList.mockClear();
+        ledger.reserveCalls = [];
+        ledger.simulateGating = false;
+        walk.instance.start.mockClear();
+        walk.instance.onStepAboutToRun = null;
+        walk.useActualBuilder = false;
+        walk.steps = [
+            { kind: 'craft', actionHrid: '/actions/crafting/wooden_bow', actions: 2 },
+            { kind: 'buy', itemHrid: '/items/wood', count: 200 },
+        ];
+        craftingPlanDisplay.initialize();
+    });
+
+    afterEach(() => {
+        craftingPlanDisplay.disable();
+    });
+
+    const buttonFor = (section, action) => (action === 'buy' ? findBuyButton(section) : findWalkButton(section));
+    const drain = async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    const leaveSession = (change) => {
+        if (change === 'different character') state.characterId = 'charB';
+        else if (change === 'setting off') state.settings.actionPanel_bestCraftingPlan = false;
+        else {
+            craftingPlanDisplay.disable();
+            if (change === 'round trip') {
+                state.characterId = 'charB';
+                craftingPlanDisplay.initialize();
+                craftingPlanDisplay.disable();
+                state.characterId = 'charA';
+            }
+            if (change !== 'disable') craftingPlanDisplay.initialize();
+        }
+    };
+
+    test.each(['buy', 'walk'])('%s does not continue a delayed claim in a different character', async (action) => {
+        let complete;
+        ledger.reserveGate = new Promise((resolve) => {
+            complete = resolve;
+        });
+        buttonFor(buildPlanUI('/actions/crafting/wooden_bow'), action).click();
+        expect(ledger.reserveCalls).toHaveLength(1);
+        leaveSession('different character');
+        complete(false);
+        await drain();
+        expect(state.openMaterialsList).not.toHaveBeenCalled();
+        expect(walk.instance.start).not.toHaveBeenCalled();
+        expect(walk.instance.onStepAboutToRun).toBeNull();
+    });
+
+    test.each([
+        ['buy', 'disable'],
+        ['walk', 'disable'],
+        ['buy', 'setting off'],
+        ['walk', 'setting off'],
+        ['buy', 're-enable'],
+        ['walk', 're-enable'],
+        ['buy', 'round trip'],
+        ['walk', 'round trip'],
+    ])('%s does not revive after %s while its claim is pending', async (action, change) => {
+        let complete;
+        ledger.reserveGate = new Promise((resolve) => {
+            complete = resolve;
+        });
+        buttonFor(buildPlanUI('/actions/crafting/wooden_bow'), action).click();
+        leaveSession(change);
+        complete(true);
+        await drain();
+        expect(state.openMaterialsList).not.toHaveBeenCalled();
+        expect(walk.instance.start).not.toHaveBeenCalled();
+        expect(walk.instance.onStepAboutToRun).toBeNull();
+    });
+
+    test.each(['buy', 'walk'])('%s rejects an old character button before claiming anything', async (action) => {
+        const section = buildPlanUI('/actions/crafting/wooden_bow');
+        state.characterId = 'charB';
+        buttonFor(section, action).click();
+        await drain();
+        expect(ledger.reserveCalls).toHaveLength(0);
+        expect(state.openMaterialsList).not.toHaveBeenCalled();
+        expect(walk.instance.start).not.toHaveBeenCalled();
+    });
+
+    test('turning guided walks off during the claim cannot start one afterward', async () => {
+        let complete;
+        ledger.reserveGate = new Promise((resolve) => {
+            complete = resolve;
+        });
+        findWalkButton(buildPlanUI('/actions/crafting/wooden_bow')).click();
+        state.settings.craftingPlan_guidedWalk = false;
+        complete(true);
+        await drain();
+        expect(walk.instance.start).not.toHaveBeenCalled();
+        expect(walk.instance.onStepAboutToRun).toBeNull();
+    });
+
+    test.each(['different character', 're-enable'])(
+        'the old walk hook cannot reserve again after %s',
+        async (change) => {
+            findWalkButton(buildPlanUI('/actions/crafting/wooden_bow')).click();
+            await drain();
+            const hook = walk.instance.onStepAboutToRun;
+            hook(walk.steps[0]);
+            leaveSession(change);
+            hook(walk.steps[1]);
+            await drain();
+            expect(ledger.reserveCalls).toHaveLength(1);
+        }
+    );
+
+    test.each(['buy', 'walk'])('%s still proceeds in the current session when reservations are off', async (action) => {
+        ledger.enabled = false;
+        ledger.simulateGating = true;
+        buttonFor(buildPlanUI('/actions/crafting/wooden_bow'), action).click();
+        await drain();
+        if (action === 'buy') expect(state.openMaterialsList).toHaveBeenCalledTimes(1);
+        else expect(walk.instance.start).toHaveBeenCalledWith(walk.steps);
     });
 });
 

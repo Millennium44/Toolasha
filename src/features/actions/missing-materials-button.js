@@ -2104,13 +2104,15 @@ function setupInventoryListener() {
         // Common message types that update inventory:
         // - item_added, item_removed, items_updated
         // - market_buy_complete, market_sell_complete
+        // - action_completed carries inventory deltas in endCharacterItems
         // - Or any message with inventory field
         if (
             data.type?.includes('item') ||
             data.type?.includes('inventory') ||
             data.type?.includes('market') ||
             data.inventory ||
-            data.characterItems
+            data.characterItems ||
+            data.endCharacterItems?.length
         ) {
             updateTabsOnInventoryChange();
         }
@@ -2165,8 +2167,9 @@ function setupInventoryListener() {
 /**
  * Update all custom tabs when inventory changes
  * Recalculates materials and updates badge display
+ * @param {{claim?: boolean}} [options] - Skip restating a bill just claimed by its opener
  */
-function updateTabsOnInventoryChange() {
+function updateTabsOnInventoryChange({ claim = true } = {}) {
     // Check if tabs still exist
     if (currentMaterialsTabs.length === 0) {
         return;
@@ -2217,7 +2220,7 @@ function updateTabsOnInventoryChange() {
     // would put a second claim on one shopping trip, and since the tabs net
     // against every owner but the caller's, the trip would then be short
     // against itself.
-    if (!storedMaterialList?.ownerId) claimOpenBill(updatedMaterials);
+    if (claim && !storedMaterialList?.ownerId) claimOpenBill(updatedMaterials);
 
     // Update each existing tab
     currentMaterialsTabs.forEach((tab) => {
@@ -2498,9 +2501,11 @@ export async function openMaterialsList(lines, { ownerId = null, ownedInputs = [
     else await release(RESERVATION_OWNER);
     if (!isCurrent()) return false;
     setupInventoryListener();
-    // The caller's bill may overlap the old anonymous claim. Redraw after its
-    // release so the replacement does not remain short against invisible stock.
-    if (ownerId && isCurrent()) updateTabsOnInventoryChange();
+    // Navigation and the claim write both await: stock may have moved since the
+    // tabs were drawn. Refresh the quantities before a click can arm a stale buy
+    // amount. This also removes an old anonymous claim from an external owner's
+    // figures after the release above, without claiming the same bill twice.
+    if (isCurrent()) updateTabsOnInventoryChange({ claim: false });
     return isCurrent();
 }
 

@@ -352,6 +352,9 @@ const record = createPersistedRecord({
 /** Whose ledger is in memory, so a character switch never spends the other's bag */
 let owner = null;
 
+/** A return to the same character is a new session, not permission to finish their old edit. */
+let generation = 0;
+
 /** The in-flight or finished load for the character in `owner`, so it happens once */
 let loading = null;
 
@@ -362,6 +365,7 @@ let loading = null;
 function claim() {
     const who = dataManager.getCurrentCharacterId?.() || null;
     if (who === owner) return;
+    generation += 1;
     record.reset();
     // The in-flight read belongs to the character just left. `record.reset()`
     // has pulled the record out from under it, so it will come back having
@@ -371,6 +375,16 @@ function claim() {
     // so the next caller starts a read of its own.
     loading = null;
     owner = who;
+}
+
+/**
+ * Whether work that awaited storage still belongs to the ledger in memory.
+ * Check the live id too: a write can resume before the switch event calls `claim()`.
+ * @param {number} askedIn - Generation captured before waiting
+ * @returns {boolean} Whether the caller may still use the ledger
+ */
+function isCurrent(askedIn) {
+    return askedIn === generation && owner === (dataManager.getCurrentCharacterId?.() || null);
 }
 
 /**
@@ -473,10 +487,13 @@ function sweepTombstones(ledger, now) {
 async function readLedger() {
     try {
         claim();
+        const askedIn = generation;
         const before = JSON.stringify(ownersOnly(record.get()));
         const loaded = await record.load({ authoritative: true });
+        if (!isCurrent(askedIn)) return {};
         const ledger = record.get();
         if (sweepExpired(ledger, Date.now())) await record.save({ overwrite: true });
+        if (!isCurrent(askedIn)) return {};
         // Start-up, enabling the feature and a character switch adopt stored claims with no reserve() call;
         // a table drawn against the empty ledger needs telling
         if (loaded !== false && JSON.stringify(ownersOnly(ledger)) !== before) notifyChanged();
@@ -513,17 +530,21 @@ export async function loadReservations() {
  * Goes through {@link readLedger} rather than {@link loadReservations} so that a
  * release still has the stored record in hand while the feature is off.
  *
- * @returns {Promise<void>}
+ * @returns {Promise<number>} The requesting generation, checked by writers after their await
  */
 async function ensureLoaded() {
     claim();
-    if (record.isLoaded()) return;
-    if (!loading) {
-        loading = readLedger().finally(() => {
-            loading = null;
-        });
+    const askedIn = generation;
+    if (record.isLoaded()) return askedIn;
+    if (!loading) loading = readLedger();
+    const pending = loading;
+    try {
+        await pending;
+    } finally {
+        // An older character's read must not clear the arriving character's shared load.
+        if (loading === pending) loading = null;
     }
-    await loading;
+    return askedIn;
 }
 
 /**
@@ -581,7 +602,8 @@ export async function reserve(ownerId, lines, { label = '' } = {}) {
     if (!clean.length) return release(ownerId);
 
     try {
-        await ensureLoaded();
+        const askedIn = await ensureLoaded();
+        if (!isCurrent(askedIn) || !reservationsEnabled()) return false;
         // Every write below is an `overwrite` one, which takes no probe of its
         // own — so a ledger that could not be READ would be answered by writing
         // this one claim over whatever is stored, losing every other plan's.
@@ -641,8 +663,8 @@ export async function reserve(ownerId, lines, { label = '' } = {}) {
 export async function reserveMany(entries, { abandoned } = {}) {
     if (!reservationsEnabled() || !Array.isArray(entries) || !entries.length) return false;
     try {
-        await ensureLoaded();
-        if (abandoned?.()) return false;
+        const askedIn = await ensureLoaded();
+        if (!isCurrent(askedIn) || !reservationsEnabled() || abandoned?.()) return false;
         // See `reserve`: a ledger that could not be read must not be overwritten
         if (!record.isLoaded()) {
             console.warn('[InventoryReservations] Not reserving: the ledger could not be read first');
@@ -704,7 +726,8 @@ export async function reserveMany(entries, { abandoned } = {}) {
 export async function release(ownerId) {
     if (typeof ownerId !== 'string' || !ownerId || ownerId === RELEASED_KEY) return false;
     try {
-        await ensureLoaded();
+        const askedIn = await ensureLoaded();
+        if (!isCurrent(askedIn)) return false;
         const ledger = record.get();
         if (!(ownerId in ledger)) return false;
         const now = Date.now();
@@ -739,7 +762,8 @@ export async function release(ownerId) {
 export async function releaseMissing(prefix, liveIds) {
     if (typeof prefix !== 'string' || !prefix) return 0;
     try {
-        await ensureLoaded();
+        const askedIn = await ensureLoaded();
+        if (!isCurrent(askedIn)) return 0;
         const live = new Set(liveIds || []);
         const ledger = record.get();
         const now = Date.now();
@@ -951,6 +975,7 @@ export function shortfallNote(short, itemHrid, enhancementLevel = 0, { excludeOw
  * @returns {void}
  */
 export function _resetReservations() {
+    generation += 1;
     record.reset();
     owner = null;
     loading = null;
