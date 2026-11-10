@@ -29,6 +29,9 @@ A running Max calculation stops when you edit the quantity, open a newer calcula
 ### Equipment level warnings
 
 Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now warn when your current skill levels are too low to equip an item. Advisor warnings explicitly refer to your character, even when you are simulating a party member or future levels.
+### Collection favorites survive migration failures
+
+Saved favorites and filters are preserved if migration or storage fails, and editing waits until the saved data can be recovered. Overlapping loads and character changes no longer replace newer favorites with stale data.
 
 ### Combat Sim sees your party before everyone readies up
 

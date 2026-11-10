@@ -70,9 +70,13 @@ vi.mock('../../core/storage.js', () => ({
         ready: Promise.resolve(true),
         get: async () => null,
         getMany: async (keys) => {
-            // The one read initialize() parks on
             if (world.gate) await world.gate;
             return new Map(keys.map((key) => [key, null]));
+        },
+        tryGetMany: async (keys) => {
+            // The one read initialize() parks on
+            if (world.gate) await world.gate;
+            return new Map(keys.map((key) => [key, { found: false, value: null }]));
         },
         parseJSON: (raw, _key, fallback = null) => (raw === null ? fallback : raw),
         tryGet: async () => ({ found: false, value: null }),

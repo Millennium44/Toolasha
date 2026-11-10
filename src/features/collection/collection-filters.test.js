@@ -89,8 +89,19 @@ vi.mock('../../core/storage.js', () => ({
             const read = new Map();
             // Read through the same property access a single `get` uses, so a
             // test can still land a character switch inside the batch
-            for (const key of keys) read.set(key, store[name]?.[key] ?? null);
+            for (const key of keys) read.set(key, store.failRead ? null : (store[name]?.[key] ?? null));
             return read;
+        },
+        tryGetMany: async (keys, name = 'settings') => {
+            record('readonly', name, [...keys]);
+            store.onRead?.();
+            if (store.unavailable || store.failRead || keys.some((key) => key === store.failBatchKey)) return null;
+            return new Map(
+                keys.map((key) => {
+                    const value = store[name]?.[key] ?? null;
+                    return [key, { found: value != null, value }];
+                })
+            );
         },
         parseJSON: (raw, _key, fallback = null) => {
             if (raw === null) return fallback;
@@ -103,20 +114,23 @@ vi.mock('../../core/storage.js', () => ({
         },
         tryGet: async (key, name = 'settings') => {
             record('readonly', name, [key]);
+            await store.onProbe?.(key);
             if (store.unavailable) return null;
             const held = store[name]?.[key];
             return held === undefined || held === null
                 ? { found: false, value: null }
                 : { found: true, value: structuredClone(held) };
         },
-        set: async (key, value, name = 'settings') => {
+        set: async (key, value, name = 'settings', _immediate = false, { fold } = {}) => {
             record('readwrite', name, [key]);
-            if (store.unavailable) return false;
-            store[name][key] = structuredClone(value);
+            if (store.unavailable || store.failWrite === key) return false;
+            store.onWrite?.(key);
+            store[name][key] = structuredClone(fold ? fold(store[name][key], value) : value);
             return true;
         },
         delete: async (key, name = 'settings') => {
             record('readwrite', name, [key]);
+            if (store.failDelete === key) return false;
             delete store[name][key];
             return true;
         },
@@ -136,9 +150,16 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const { default: collectionFilters } = await import('./collection-filters.js');
+const { default: mockStorage } = await import('../../core/storage.js');
 
 beforeEach(async () => {
     store.collections = {};
+    store.failWrite = null;
+    store.failRead = false;
+    store.failDelete = null;
+    store.failBatchKey = null;
+    store.onWrite = null;
+    store.onProbe = null;
     store.settings = {};
     store.unavailable = false;
     store.onRead = null;
@@ -164,6 +185,12 @@ beforeEach(async () => {
     // The priming load leaves the rename's persisted marker behind; a test that
     // stages colon keys expects a character the migration has never run for
     store.collections = {};
+    store.failWrite = null;
+    store.failRead = false;
+    store.failDelete = null;
+    store.failBatchKey = null;
+    store.onWrite = null;
+    store.onProbe = null;
     store.transactions = [];
     collectionFilters.collections = {};
     collectionFilters.favorites = {};
@@ -1418,4 +1445,329 @@ describe('each setting keeps to its own part', () => {
         const order = [...catsEl.children].map((el) => el.querySelector('use').getAttribute('href').split('#')[1]);
         expect(order).toEqual(['milk', 'log']);
     });
+});
+
+describe('failed legacy collection migration', () => {
+    test('a rejected copy must not delete the only saved favorites', async () => {
+        const favorites = { '/items/milk': true, '/items/log': true };
+        store.collections['favorites:market123'] = favorites;
+        store.failWrite = 'favorites_market123';
+        await collectionFilters._renameLegacyKeys();
+        expect(store.collections['favorites:market123']).toEqual(favorites);
+        expect(store.collections.legacyKeysRenamed_market123).toBeUndefined();
+    });
+
+    test('an unreadable batch must not retire the migration as empty', async () => {
+        store.collections['favorites:market123'] = { '/items/milk': true };
+        store.failRead = true;
+        await collectionFilters._renameLegacyKeys();
+        expect(store.collections.legacyKeysRenamed_market123).toBeUndefined();
+        expect(store.collections['favorites:market123']).toEqual({ '/items/milk': true });
+    });
+
+    test('a rejected source deletion must not stamp completion', async () => {
+        store.collections['favorites:market123'] = { '/items/milk': true };
+        store.failDelete = 'favorites:market123';
+        await collectionFilters._renameLegacyKeys();
+        expect(store.collections.legacyKeysRenamed_market123).toBeUndefined();
+        expect(store.collections.favorites_market123).toEqual({ '/items/milk': true });
+    });
+});
+
+describe('legacy migration recovery and edit safety', () => {
+    test.each([
+        ['flags', { 'cf-c1-9': false, __sortMode: 'gold-cost' }],
+        ['favorites', { milk: true, log: true, cheese: true }],
+        ['collections', { milk: 12, log: 30, cheese: 0 }],
+        ['showUncollected', false],
+        ['collectionsUpdatedAt', 1700],
+    ])('retries a failed %s copy in the same session', async (base, value) => {
+        const legacy = `${base}:market123`;
+        const current = `${base}_market123`;
+        store.collections[legacy] = value;
+        store.failWrite = current;
+
+        await collectionFilters._load();
+
+        expect(store.collections[legacy]).toEqual(value);
+        expect(collectionFilters._renamedFor).not.toBe('market123');
+        expect(collectionFilters._migrationBlocked()).toBe(true);
+        store.failWrite = null;
+        await collectionFilters._load();
+
+        expect(store.collections[current]).toEqual(value);
+        expect(store.collections[legacy]).toBeUndefined();
+        expect(store.collections.legacyKeysRenamed_market123).toBe(true);
+        expect(collectionFilters._migrationBlocked()).toBe(false);
+    });
+
+    test('a failed migration batch stays pending even when the marker batch is readable', async () => {
+        store.collections['favorites:market123'] = { milk: true };
+        store.failBatchKey = 'favorites:market123';
+
+        await collectionFilters._load();
+
+        expect(store.collections.legacyKeysRenamed_market123).toBeUndefined();
+        expect(collectionFilters._renamedFor).not.toBe('market123');
+        store.failBatchKey = null;
+        await collectionFilters._load();
+        expect(collectionFilters.favorites).toEqual({ milk: true });
+    });
+
+    test('a rejected completion marker is retried without resurrecting old favorites', async () => {
+        store.collections['favorites:market123'] = { milk: true };
+        store.failWrite = 'legacyKeysRenamed_market123';
+
+        await collectionFilters._load();
+
+        expect(collectionFilters._renamedFor).not.toBe('market123');
+        expect(store.collections.favorites_market123).toEqual({ milk: true });
+        // A different tab edits the successfully copied destination before retry.
+        store.collections.favorites_market123 = { log: true };
+        store.failWrite = null;
+        await collectionFilters._load();
+        expect(collectionFilters.favorites).toEqual({ log: true });
+        expect(store.collections.legacyKeysRenamed_market123).toBe(true);
+    });
+
+    test('failed source cleanup retries without overwriting a destination edited in between', async () => {
+        store.collections['favorites:market123'] = { milk: true };
+        store.failDelete = 'favorites:market123';
+        await collectionFilters._load();
+        store.collections.favorites_market123 = { log: true };
+        store.failDelete = null;
+
+        await collectionFilters._load();
+
+        expect(collectionFilters.favorites).toEqual({ log: true });
+        expect(store.collections['favorites:market123']).toBeUndefined();
+        expect(store.collections.legacyKeysRenamed_market123).toBe(true);
+    });
+
+    test('a failed migration does not create editable defaults or scan over legacy counts', async () => {
+        const favorites = { milk: true, log: true, cheese: true };
+        const counts = { milk: 12, log: 30, cheese: 90 };
+        store.collections['favorites:market123'] = favorites;
+        store.collections['collections:market123'] = counts;
+        store.failWrite = 'favorites_market123';
+        const { panelEl, catsEl } = buildPanel([{ itemId: 'milk', count: '12' }]);
+        await collectionFilters._load();
+
+        collectionFilters._rerenderPanel(panelEl);
+        await collectionFilters.records.collections.flushed();
+
+        expect(panelEl.querySelector('.cf-sort-select')).toBeNull();
+        expect(catsEl.querySelector('.star')).toBeNull();
+        expect(store.collections.collections_market123).toEqual(counts);
+        expect(store.collections['favorites:market123']).toEqual(favorites);
+        store.failWrite = null;
+        // Let the refused panel retry finish before visiting it again.
+        await vi.waitFor(() => expect(collectionFilters._panelLoadRetry).toBeNull());
+        collectionFilters._rerenderPanel(panelEl);
+        await vi.waitFor(() => expect(panelEl.parentElement.querySelector('.star')).not.toBeNull());
+        expect(collectionFilters.favorites).toEqual(favorites);
+        expect(collectionFilters.collections).toEqual(counts);
+    });
+
+    test('a save after recovery merges with the migrated favorites instead of an empty load', async () => {
+        store.collections['favorites:market123'] = { milk: true, log: true };
+        store.failWrite = 'favorites_market123';
+        await collectionFilters._load();
+        collectionFilters.favorites.cheese = true;
+        // This is an already-issued save, not a new UI edit; controls remain gated.
+        await collectionFilters._saveFavorites();
+        store.failWrite = null;
+        await collectionFilters._saveFavorites();
+
+        expect(store.collections.favorites_market123).toEqual({ milk: true, log: true, cheese: true });
+        expect(store.collections['favorites:market123']).toBeUndefined();
+    });
+
+    test('a destination created after the batch read wins over the legacy snapshot', async () => {
+        store.collections['favorites:market123'] = { milk: true };
+        store.collections['showUncollected:market123'] = true;
+        store.onWrite = (key) => {
+            if (key === 'favorites_market123') store.collections[key] = { log: true };
+            if (key === 'showUncollected_market123') store.collections[key] = false;
+        };
+
+        await collectionFilters._load();
+
+        expect(collectionFilters.favorites).toEqual({ log: true });
+        expect(collectionFilters.showUncollected).toBe(false);
+        expect(store.collections.favorites_market123).toEqual({ log: true });
+        expect(store.collections.showUncollected_market123).toBe(false);
+    });
+
+    test('a switch while the copy is settling leaves cleanup and completion for the owner', async () => {
+        store.collections['favorites:market123'] = { milk: true };
+        store.collections['favorites:iron456'] = { log: true };
+        store.onWrite = (key) => {
+            if (key === 'favorites_market123') mockDataManager.characterId = 'iron456';
+        };
+
+        await collectionFilters._load();
+
+        expect(store.collections['favorites:market123']).toEqual({ milk: true });
+        expect(store.collections['favorites:iron456']).toEqual({ log: true });
+        expect(store.collections.legacyKeysRenamed_market123).toBeUndefined();
+        expect(store.collections.favorites_iron456).toBeUndefined();
+        store.onWrite = null;
+        store.onProbe = null;
+        mockDataManager.characterId = 'market123';
+        await collectionFilters._load();
+        expect(collectionFilters.favorites).toEqual({ milk: true });
+        expect(store.collections['favorites:market123']).toBeUndefined();
+    });
+
+    test('existing controls cannot mutate favorites while the migration is unresolved', async () => {
+        const { panelEl, catsEl } = buildPanel([{ itemId: 'milk', count: '12' }]);
+        collectionFilters._rerenderPanel(panelEl);
+        await collectionFilters.records.collections.flushed();
+        store.collections['favorites:market123'] = { milk: true };
+        store.failWrite = 'favorites_market123';
+        await collectionFilters._load();
+
+        catsEl.querySelector('.star').click();
+
+        expect(collectionFilters.favorites).toEqual({});
+        expect(store.collections.favorites_market123).toBeUndefined();
+        expect(store.collections['favorites:market123']).toEqual({ milk: true });
+    });
+});
+
+describe('overlapping collection reloads', () => {
+    test('a superseded load cannot put its held flags back over a newer retry', async () => {
+        store.collections.flags_market123 = { 'cf-c1-9': true, __sortMode: 'gold-cost' };
+        await collectionFilters._load();
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        let started;
+        const reading = new Promise((resolve) => {
+            started = resolve;
+        });
+        store.onProbe = (key) => {
+            if (key !== 'flags_market123') return;
+            store.onProbe = null;
+            started();
+            return gate;
+        };
+        const older = collectionFilters._load();
+        await reading;
+        store.collections.flags_market123 = { 'cf-c1-9': false, __sortMode: 'items-needed' };
+        await collectionFilters._load();
+        release();
+        await older;
+
+        expect(collectionFilters.flags.find((flag) => flag.className === 'cf-c1-9').checked).toBe(false);
+        expect(collectionFilters.sortMode).toBe('items-needed');
+        await collectionFilters._saveFlags();
+        expect(store.collections.flags_market123.__sortMode).toBe('items-needed');
+    });
+});
+
+describe('isolated collection record loads', () => {
+    test.each([0, 1, 2, 3, 4, 5, 6, 7, 8])(
+        'an old load cannot trust an empty replacement at microtask offset %i',
+        async (hops) => {
+            store.collections.favorites_market123 = { milk: true };
+            store.collections.legacyKeysRenamed_market123 = true;
+            collectionFilters._renamedFor = 'market123';
+            collectionFilters._migrationBlockedFor = null;
+            let later;
+            let started;
+            const reading = new Promise((resolve) => {
+                started = resolve;
+            });
+            const original = mockStorage.tryGet;
+            const spy = vi.spyOn(mockStorage, 'tryGet').mockImplementation(async (key, name) => {
+                const result = await original(key, name);
+                if (key === 'favorites_market123') {
+                    spy.mockRestore();
+                    const reload = (remaining) => {
+                        if (remaining) {
+                            queueMicrotask(() => reload(remaining - 1));
+                            return;
+                        }
+                        store.failRead = true;
+                        later = collectionFilters._load();
+                        started();
+                    };
+                    queueMicrotask(() => reload(hops));
+                }
+                return result;
+            });
+            await collectionFilters._load();
+            await reading;
+            await later;
+            store.failRead = false;
+            collectionFilters.favorites.log = true;
+            await collectionFilters._saveFavorites();
+
+            expect(store.collections.favorites_market123).toEqual({ milk: true, log: true });
+        }
+    );
+});
+
+test('an issued save keeps its untrusted record if a full reload wins migration recovery', async () => {
+    store.collections['favorites:market123'] = { milk: true, log: true };
+    store.failWrite = 'favorites_market123';
+    await collectionFilters._load();
+    collectionFilters.favorites.cheese = true;
+    store.failWrite = null;
+    let release;
+    const gate = new Promise((resolve) => {
+        release = resolve;
+    });
+    const original = mockStorage.tryGetMany;
+    let first = true;
+    const spy = vi.spyOn(mockStorage, 'tryGetMany').mockImplementation(async (...args) => {
+        if (first) {
+            first = false;
+            await gate;
+        }
+        return original(...args);
+    });
+    const save = collectionFilters._saveFavorites();
+    await collectionFilters._load();
+    release();
+    try {
+        await save;
+    } finally {
+        spy.mockRestore();
+    }
+
+    expect(store.collections.favorites_market123).toEqual({ milk: true, log: true, cheese: true });
+});
+
+test('a failed migration after switching characters does not retain prior display settings', async () => {
+    store.collections.flags_market123 = { __sortMode: 'gold-cost' };
+    store.collections.collectionsUpdatedAt_market123 = Date.now();
+    store.collections.showUncollected_market123 = true;
+    await collectionFilters._load();
+    mockDataManager.characterId = 'iron456';
+    store.collections['favorites:iron456'] = { milk: true };
+    store.failWrite = 'favorites_iron456';
+
+    await collectionFilters._load();
+
+    expect(collectionFilters.sortMode).toBe('default');
+    expect(collectionFilters.showUncollected).toBe(false);
+    expect(collectionFilters.collectionsLastUpdated).toBeNull();
+    expect(collectionFilters._getBadgeStalenessTooltip(0)).toContain('not yet loaded');
+});
+
+test('a queued save stays with its departing character after load handles are replaced', async () => {
+    store.collections.favorites_market123 = { milk: true };
+    await collectionFilters._load();
+    collectionFilters.favorites.log = true;
+    const saving = collectionFilters._saveFavorites();
+    mockDataManager.characterId = 'iron456';
+    const loading = collectionFilters._load();
+    await Promise.all([saving, loading]);
+
+    expect(store.collections.favorites_iron456).toBeUndefined();
+    expect(store.collections.favorites_market123).toEqual({ milk: true, log: true });
 });

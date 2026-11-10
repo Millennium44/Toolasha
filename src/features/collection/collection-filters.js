@@ -184,11 +184,20 @@ const RENAME_MARKER = 'legacyKeysRenamed';
  * memory is the truth and an un-starring sticks; before that, saves fold in
  * what is stored so nothing is lost. A read that cannot be made keeps what is
  * in hand rather than blanking it, and no write goes over an unreadable store.
- * @param {string} base - The unscoped key
+ * These keys have always been per character; their colon-form migration is
+ * handled below. Pin the underscore key now so a queued save cannot resolve
+ * its owner again after a character switch.
+ * @param {string} base - The key already scoped to its captured character
  * @returns {Object} The record
  */
 const collectionRecord = (base) =>
-    createCuratedRecord({ base, store: 'collections', empty: () => ({}), label: 'CollectionFilters' });
+    createCuratedRecord({
+        base,
+        scoped: false,
+        store: 'collections',
+        empty: () => ({}),
+        label: 'CollectionFilters',
+    });
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -511,9 +520,9 @@ class CollectionFilters {
         this.favorites = {};
         this.showUncollected = false;
         this.records = {
-            flags: collectionRecord('flags'),
-            favorites: collectionRecord('favorites'),
-            collections: collectionRecord('collections'),
+            flags: collectionRecord(characterKey('flags')),
+            favorites: collectionRecord(characterKey('favorites')),
+            collections: collectionRecord(characterKey('collections')),
         };
         /** Character whose state is in hand, so a switch never shows another's */
         this._loadedFor = null;
@@ -522,6 +531,10 @@ class CollectionFilters {
         this.itemActionCache = null;
         /** Character whose colon-form keys have already been renamed this session */
         this._renamedFor = null;
+        /** A pending rename must not expose an empty, editable replacement for saved data. */
+        this._migrationBlockedFor = null;
+        this._panelLoadRetry = null;
+        this._loadTicket = null;
     }
 
     // -------------------------------------------------------------------------
@@ -647,6 +660,8 @@ class CollectionFilters {
 
     disable() {
         noteTeardown(this);
+        this._panelLoadRetry = null;
+        this._loadTicket = null;
         try {
             if (this.characterInitHandler) {
                 dataManager.off('character_initialized', this.characterInitHandler);
@@ -701,7 +716,7 @@ class CollectionFilters {
      * opening a transaction of its own for the question.
      * @param {string} scope - The character's id, or `'default'`, as `characterKey` scopes it
      * @param {boolean} renamePending - Whether the rename still has to be considered
-     * @returns {Array<string>} Keys for a single `getMany`
+     * @returns {Array<string>} Keys for a single `tryGetMany`
      */
     _loadKeys(scope, renamePending) {
         const keys = [`showUncollected_${scope}`, `collectionsUpdatedAt_${scope}`];
@@ -712,7 +727,7 @@ class CollectionFilters {
     /**
      * Both forms of every stored key, for the one transaction the migration reads.
      * @param {string} scope - The character's id
-     * @returns {Array<string>} Keys for a single `getMany`
+     * @returns {Array<string>} Keys for a single `tryGetMany`
      */
     _renameKeys(scope) {
         return STORED_KEYS.flatMap((key) => [`${key}_${scope}`, `${key}:${scope}`]);
@@ -732,12 +747,14 @@ class CollectionFilters {
      * widest. On the one load per character that still has to look, the ten
      * records it compares come out of a single further transaction, and what
      * it read is merged back into `values` so the caller need not read again.
-     * @param {Map<string, *>} values - The batched read from `_loadKeys`, extended in place
+     * @param {Map<string, {found: boolean, value: *}>|null} values - The batch from `_loadKeys`, extended in place
      * @param {string|null} charId - The character, captured before the read
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether the rename is complete
      */
     async _applyLegacyRename(values, charId) {
-        if (!charId || values.get(`${RENAME_MARKER}_${charId}`) != null) return;
+        if (!charId) return true;
+        if (!values || dataManager.getCurrentCharacterId() !== charId) return false;
+        if (values.get(`${RENAME_MARKER}_${charId}`)?.found) return true;
 
         // Both keys are built from `charId`, captured by the caller before the
         // read, and not from `characterKey()`/`getCurrentCharacterId()` again
@@ -750,11 +767,11 @@ class CollectionFilters {
         // The marker is subject to the same rule — it is written only for the
         // character the reads were made for, and only on a pass that was still
         // speaking for that character by the time it wrote.
-        const read = await storage.getMany(this._renameKeys(charId), 'collections');
-        if (dataManager.getCurrentCharacterId() !== charId) return;
+        const read = await storage.tryGetMany(this._renameKeys(charId), 'collections');
+        if (!read || dataManager.getCurrentCharacterId() !== charId) return false;
         for (const [key, value] of read) values.set(key, value);
 
-        const moves = STORED_KEYS.filter((key) => read.get(`${key}:${charId}`) != null);
+        const moves = STORED_KEYS.filter((key) => read.get(`${key}:${charId}`).found);
 
         // Each key's move touches only that key's own two records, so the keys
         // have nothing to serialize against each other — only the steps within
@@ -762,21 +779,33 @@ class CollectionFilters {
         const renameOne = async (key) => {
             const currentKey = `${key}_${charId}`;
             const legacyKey = `${key}:${charId}`;
-            if (read.get(currentKey) == null) {
-                await storage.set(currentKey, read.get(legacyKey), 'collections', true);
+            if (dataManager.getCurrentCharacterId() !== charId) return false;
+            if (!read.get(currentKey).found) {
+                // Another tab can populate the destination after our read. Keep its
+                // newer record rather than replacing it with the legacy snapshot.
+                const copied = await storage.set(currentKey, read.get(legacyKey).value, 'collections', true, {
+                    fold: (stored, legacy) => {
+                        const value = stored ?? legacy;
+                        values.set(currentKey, { found: true, value });
+                        return value;
+                    },
+                });
+                if (!copied || dataManager.getCurrentCharacterId() !== charId) return false;
             }
-            await storage.delete(legacyKey, 'collections');
+            return await storage.delete(legacyKey, 'collections');
         };
 
         try {
-            await Promise.all(moves.map(renameOne));
+            const moved = await Promise.all(moves.map(renameOne));
+            if (moved.some((success) => !success)) return false;
             // Written last, and only after the moves it vouches for landed: a
             // marker set ahead of a failed move would retire the migration with
             // keys still under their colon form, unreachable forever.
-            if (dataManager.getCurrentCharacterId() !== charId) return;
-            await storage.set(`${RENAME_MARKER}_${charId}`, true, 'collections', true);
+            if (dataManager.getCurrentCharacterId() !== charId) return false;
+            return await storage.set(`${RENAME_MARKER}_${charId}`, true, 'collections', true);
         } catch (error) {
             console.error('[CollectionFilters] Renaming legacy collection keys failed:', error);
+            return false;
         }
     }
 
@@ -785,15 +814,16 @@ class CollectionFilters {
      *
      * The read-and-apply path for a caller with no batch in hand; `_load` folds
      * the marker into its own read instead.
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} Whether the rename is complete
      */
     async _renameLegacyKeys() {
         const charId = dataManager.getCurrentCharacterId();
-        if (!charId || this._renamedFor === charId) return;
+        if (!charId || this._renamedFor === charId) return true;
+        const values = await storage.tryGetMany(this._loadKeys(charId, true), 'collections');
+        const renamed = await this._applyLegacyRename(values, charId);
+        if (!renamed || dataManager.getCurrentCharacterId() !== charId) return false;
         this._renamedFor = charId;
-
-        const values = await storage.getMany(this._loadKeys(charId, true), 'collections');
-        await this._applyLegacyRename(values, charId);
+        return true;
     }
 
     /**
@@ -804,56 +834,67 @@ class CollectionFilters {
      * first so it can neither show for this one nor be folded into their key.
      */
     async _load() {
+        const ticket = captureOwner(this);
+        this._loadTicket = ticket;
+        const stillCurrent = () => this._loadTicket === ticket && stillOurs(ticket);
         const who = dataManager.getCurrentCharacterId() || null;
         if (who !== this._loadedFor) {
             this.favorites = {};
             this.collections = {};
+            this.collectionsLastUpdated = null;
+            this.showUncollected = false;
+            this.sortMode = 'default';
             this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
             this._loadedFor = who;
         }
         // What the flags are now, kept if the stored ones cannot be read
         const heldFlags = this._flagStates();
-        // Reset flags to defaults before loading saved state
-        this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
-
         // One transaction for the migration's records and the two plain ones
         // this load reads, instead of five rename reads and two more after
         // them. Keys are built from `who`, captured above, for the same reason
         // the rename builds its own from it.
         const renamePending = Boolean(who) && this._renamedFor !== who;
-        if (renamePending) this._renamedFor = who;
+        if (renamePending) this._migrationBlockedFor = who;
+        // Each load owns its handles. A superseded load's curated wrapper can
+        // finish after another load resets the shared handle and re-trust its
+        // empty memory. Fresh handles keep that late trust away from new saves.
         const scope = who || 'default';
-        const batch = await storage.getMany(this._loadKeys(scope, renamePending), 'collections');
-        if (renamePending) await this._applyLegacyRename(batch, who);
+        const records = {
+            flags: collectionRecord(`flags_${scope}`),
+            favorites: collectionRecord(`favorites_${scope}`),
+            collections: collectionRecord(`collections_${scope}`),
+        };
+        this.records = records;
+        const batch = await storage.tryGetMany(this._loadKeys(scope, renamePending), 'collections');
+        if (!batch || !stillCurrent()) return;
+        if (renamePending) {
+            if (!(await this._applyLegacyRename(batch, who))) return;
+            if (!stillCurrent()) return;
+            this._renamedFor = who;
+        }
 
         // What the rename would have left under the current key: it writes the
         // colon value across only when the underscore key is empty, so the
         // resolution is the same either way and needs no re-read.
         const renamed = (key) =>
-            batch.get(`${key}_${scope}`) ?? (renamePending ? (batch.get(`${key}:${scope}`) ?? null) : null);
+            batch.get(`${key}_${scope}`)?.value ??
+            (renamePending ? (batch.get(`${key}:${scope}`)?.value ?? null) : null);
 
-        for (const record of Object.values(this.records)) record.reset();
         const [flagsRead, favoritesRead, collectionsRead] = await Promise.all([
-            this.records.flags.load(),
-            this.records.favorites.load(),
-            this.records.collections.load(),
+            records.flags.load(),
+            records.favorites.load(),
+            records.collections.load(),
         ]);
         const savedShowUncollected = storage.parseJSON(renamed('showUncollected'), 'showUncollected', false);
         const savedTimestamp = renamed('collectionsUpdatedAt');
-        // A switch inside those reads means everything here is another
-        // character's. The curated records already refuse to adopt a superseded
-        // read — their generation is bumped by the `reset()` above — but that
-        // refusal is what makes `flagsRead` false, which used to fall back to
-        // `heldFlags`: the *departing* character's checkboxes and sort mode,
-        // applied over the ones the arriving character's own `_load()` had just
-        // installed. The two raw reads below were never guarded at all.
-        // `_saveFlags()` and `_saveShowUncollected()` then file that mix under
-        // the arriving character's keys on their next click.
-        if ((dataManager.getCurrentCharacterId() || null) !== who) return;
+        // Neither a character switch nor a newer same-character load may adopt
+        // this load's values or fallback flags. Its handles remain private.
+        if (!stillCurrent()) return;
 
-        const savedFlags = flagsRead ? this.records.flags.get() : heldFlags;
+        const savedFlags = flagsRead ? records.flags.get() : heldFlags;
 
-        // Apply saved flag states
+        // Apply saved flag states only after the migration is safe to edit.
+        this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
         this.flags.forEach((f) => {
             if (f.className in savedFlags) {
                 f.checked = savedFlags[f.className];
@@ -864,10 +905,11 @@ class CollectionFilters {
             this.sortMode = savedFlags.__sortMode;
         }
 
-        if (favoritesRead) this.favorites = this._favoritesEnabled ? this.records.favorites.get() : {};
-        if (collectionsRead) this.collections = this.records.collections.get();
+        if (favoritesRead) this.favorites = this._favoritesEnabled ? records.favorites.get() : {};
+        if (collectionsRead) this.collections = records.collections.get();
         this.collectionsLastUpdated = savedTimestamp;
         this.showUncollected = savedShowUncollected;
+        this._migrationBlockedFor = null;
     }
 
     /** @returns {Object} className → checked, plus the sort mode, as stored */
@@ -880,24 +922,57 @@ class CollectionFilters {
         return fs;
     }
 
+    /** Whether controls would edit state whose legacy copy is still unresolved. */
+    _migrationBlocked() {
+        return this._migrationBlockedFor != null && this._migrationBlockedFor === dataManager.getCurrentCharacterId();
+    }
+
+    /** Save only after the destination is safe; untrusted records still merge on recovery. */
+    async _saveRecord(name, value) {
+        // The value belongs to this handle, not a newer load that might finish
+        // during the retry and start trusting a different view of the record.
+        const records = this.records;
+        const who = dataManager.getCurrentCharacterId();
+        if (this._migrationBlocked() && !(await this._renameLegacyKeys())) return false;
+        if (dataManager.getCurrentCharacterId() !== who) return false;
+        // A newer load replaced the original handle while this save waited.
+        // Keep the older view conservative rather than inheriting either load's trust.
+        const record = records === this.records ? records[name] : collectionRecord(`${name}_${who || 'default'}`);
+        record.set(value);
+        return await record.save();
+    }
+
     async _saveFlags() {
-        this.records.flags.set(this._flagStates());
-        await this.records.flags.save();
+        return await this._saveRecord('flags', this._flagStates());
     }
 
     async _saveFavorites() {
-        this.records.favorites.set(this.favorites);
-        await this.records.favorites.save();
+        return await this._saveRecord('favorites', this.favorites);
     }
 
     async _saveCollections() {
-        this.records.collections.set(this.collections);
-        await this.records.collections.save();
+        return await this._saveRecord('collections', this.collections);
     }
 
     async _saveShowUncollected(value) {
+        const who = dataManager.getCurrentCharacterId();
+        if (this._migrationBlocked() && !(await this._renameLegacyKeys())) return false;
+        if (dataManager.getCurrentCharacterId() !== who) return false;
         this.showUncollected = value;
-        await storage.setJSON(this._charKey('showUncollected'), value, 'collections');
+        return await storage.setJSON(this._charKey('showUncollected'), value, 'collections');
+    }
+
+    /** Retry a failed load when the panel is visited again, without drawing editable defaults. */
+    async _retryPanelLoad(panelEl) {
+        if (this._panelLoadRetry) return;
+        const ticket = captureOwner(this);
+        this._panelLoadRetry = ticket;
+        try {
+            await this._load();
+            if (stillOurs(ticket) && panelEl.isConnected && !this._migrationBlocked()) this._rerenderPanel(panelEl);
+        } finally {
+            if (this._panelLoadRetry === ticket) this._panelLoadRetry = null;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -925,6 +1000,10 @@ class CollectionFilters {
      * @param {Element} panelEl — the .AchievementsPanel_controls__3bGFT element
      */
     _rerenderPanel(panelEl) {
+        if (this._migrationBlocked()) {
+            this._retryPanelLoad(panelEl);
+            return;
+        }
         const catsEl = panelEl.parentElement?.querySelector('.AchievementsPanel_categories__34hno');
         if (!catsEl) return;
 
@@ -989,6 +1068,7 @@ class CollectionFilters {
                         'click',
                         (event) => {
                             event.stopPropagation();
+                            if (this._migrationBlocked()) return;
                             if (this.favorites[itemId]) {
                                 delete this.favorites[itemId];
                                 el.classList.remove('cf-favorite');
@@ -1055,6 +1135,7 @@ class CollectionFilters {
                 `</select></div>`
         );
         panelEl.querySelector('.cf-sort-select').addEventListener('change', (e) => {
+            if (this._migrationBlocked()) return;
             this.sortMode = e.target.value;
             this._saveFlags();
             this._applySorting(catsEl);
@@ -1066,6 +1147,7 @@ class CollectionFilters {
             if (!checkEl) return;
             checkEl.addEventListener('click', (event) => {
                 event.stopPropagation();
+                if (this._migrationBlocked()) return;
                 f.checked = !f.checked;
                 this._saveFlags();
                 this._rerenderPanel(panelEl);
@@ -1095,6 +1177,7 @@ class CollectionFilters {
             nativeCheckbox._toolashaWired = true;
             nativeCheckbox.addEventListener('click', () => {
                 requestAnimationFrame(() => {
+                    if (this._migrationBlocked()) return;
                     const isChecked =
                         nativeCheckbox.querySelector('label > span')?.classList.contains('Mui-checked') ?? false;
                     this._saveShowUncollected(isChecked);
