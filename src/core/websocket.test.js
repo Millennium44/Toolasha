@@ -43,6 +43,8 @@ beforeEach(() => {
     webSocketHook.socketEventHandlers.clear();
     webSocketHook.processedMessages.clear();
     webSocketHook.recentActionCompleted.clear();
+    // A prior test's client data would add writes to the next simulator snapshot and consume its failure mock.
+    webSocketHook.pendingClientData = null;
     vi.clearAllMocks();
     storage.getJSON.mockImplementation(async () => []);
     storage.setJSON.mockImplementation(async () => {});
