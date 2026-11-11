@@ -11015,8 +11015,13 @@ class LabSimUI {
 
         for (const buy of detail.buys || []) {
             const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
-            // A held copy a route uses up is not bought: what it costs is the sale it gives up
-            const verb = buy.forgone ? 'Use your' : 'Buy';
+            // A held copy a route uses up is not bought: what it costs is the sale it gives up. A route-priced
+            // row's own line is that route's: a craft is made and a mirror build is built, not bought
+            const routeVerb =
+                detail.sharedRoute?.applied && !buy.forgone
+                    ? { craft: 'Craft', mirror: 'Build with mirrors' }[detail.sharedRoute.route]
+                    : null;
+            const verb = buy.forgone ? 'Use your' : routeVerb || 'Buy';
             const tail = buy.forgone ? `gives up ${price} of sale` : price;
             parts.push(line(`${verb} ${simItemLabelHtml(buy.hrid, buy.name)} +${buy.enhancementLevel} — ${tail}`));
         }

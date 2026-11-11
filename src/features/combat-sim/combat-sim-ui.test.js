@@ -12225,7 +12225,7 @@ describe('the cost basis detail', () => {
                 },
             },
         });
-        expect(html).toContain("Advisor\'s own quote (Craft 170 not used)");
+        expect(html).toContain("Advisor's own quote (Craft 170 not used)");
         expect(html).toContain('Buys 180');
         const unsupported = ui._renderUpgradeCostBasis({
             costDetail: { sharedRoute: { applied: false, reason: '<img src=x>' } },
@@ -19186,5 +19186,13 @@ describe('a row priced by a shared route shops for what that route buys', () => 
         const row = { ...routeRow(craftShop), cost: 400_000_000 };
         expect(upgradeRowPurchase(row).routeMaterials).toBeNull();
         expect(upgradeRowPurchase(row).routeCraft).toBeNull();
+    });
+
+    test('the basis tag of a route-priced Craft row names the route, not the stock no-listing wording', () => {
+        const row = routeRow(craftShop);
+        const tag = costSourceTagHtml('craft', row.costDetail);
+        expect(tag).toContain('Priced by Craft');
+        expect(tag).not.toContain('No market listing');
+        expect(costSourceTagHtml('craft')).toContain('No market listing');
     });
 });
