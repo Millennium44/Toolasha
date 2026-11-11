@@ -8511,6 +8511,79 @@ describe('clearing the comparison history', () => {
         expect(ui._simHistory.map((e) => e.label)).toEqual(['Current Gear']);
     });
 
+    describe('"Other runs" list', () => {
+        const three = () => {
+            pushHistory('A');
+            pushHistory('B');
+            pushHistory('C');
+            ui._comparisonBaseline = 0;
+            ui._comparisonSlots = [];
+        };
+        const rowsOf = () => Array.from(ui.panel.querySelectorAll('[data-other-run]')).map((r) => r.dataset.otherRun);
+
+        test('lists every run that is neither baseline nor compared, each with + compare and an ✕', () => {
+            three();
+            ui._comparisonSlots = [1];
+            showFight();
+
+            expect(rowsOf()).toEqual(['2']);
+            const row = ui.panel.querySelector('[data-other-run="2"]');
+            expect(row.querySelector('[data-add-comparison="2"]')).not.toBeNull();
+            expect(row.querySelector('[data-delete-history="2"]')).not.toBeNull();
+            expect(ui.panel.querySelector('select#mwi-csim-add-comparison')).toBeNull();
+        });
+
+        test('an ✕ deletes a run that was never added to the comparison', () => {
+            three();
+            ui._comparisonSlots = [2];
+            showFight();
+
+            ui.panel.querySelector('[data-other-run="1"] [data-delete-history]').click();
+
+            expect(ui._simHistory.map((e) => e.label)).toEqual(['A', 'C']);
+            expect(ui._comparisonSlots).toEqual([1]);
+            expect(ui._comparisonBaseline).toBe(0);
+        });
+
+        test('deleting the baseline hands the role to the last remaining run', () => {
+            three();
+            showFight();
+
+            ui.panel.querySelector('[data-delete-history="0"]').click();
+
+            expect(ui._simHistory.map((e) => e.label)).toEqual(['B', 'C']);
+            expect(ui._comparisonBaseline).toBe(1);
+            expect(ui.panel.querySelector('#mwi-csim-baseline-select').value).toBe('1');
+        });
+
+        test('deleting down to one run drops the comparison section and its state', () => {
+            pushHistory('A');
+            pushHistory('B');
+            ui._comparisonBaseline = 0;
+            showFight();
+
+            ui.panel.querySelector('[data-other-run="1"] [data-delete-history]').click();
+
+            expect(ui._simHistory.map((e) => e.label)).toEqual(['A']);
+            expect(ui._comparisonBaseline).toBeNull();
+            expect(ui._comparisonSlots).toEqual([]);
+            expect(ui.panel.querySelector('#mwi-csim-baseline-select')).toBeNull();
+            expect(rowsOf()).toEqual([]);
+        });
+
+        test('+ compare moves the run into the table and out of the list', () => {
+            three();
+            showFight();
+            expect(rowsOf()).toEqual(['1', '2']);
+
+            ui.panel.querySelector('[data-add-comparison="2"]').click();
+
+            expect(ui._comparisonSlots).toEqual([2]);
+            expect(rowsOf()).toEqual(['1']);
+            expect(ui.panel.querySelector('tr[data-history-idx="2"] [data-delete-history]')).not.toBeNull();
+        });
+    });
+
     test('clearing an empty history is a no-op rather than a status line', () => {
         showFight();
         ui._setStatus('Simulation complete.');

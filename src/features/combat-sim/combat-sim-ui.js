@@ -9254,18 +9254,18 @@ class CombatSimUI {
             });
         }
 
-        // Comparison: add sim dropdown
-        const addCompSelect = container.querySelector('#mwi-csim-add-comparison');
-        if (addCompSelect) {
-            addCompSelect.addEventListener('change', () => {
-                const idx = parseInt(addCompSelect.value, 10);
+        // Comparison: add a run from the "Other runs" list
+        container.querySelectorAll('[data-add-comparison]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const idx = parseInt(btn.dataset.addComparison, 10);
                 if (!isNaN(idx) && !this._comparisonSlots.includes(idx)) {
                     this._comparisonSlots.push(idx);
                     this._activeDetailIndex = idx;
                     this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
                 }
             });
-        }
+        });
 
         // Comparison: every run of the session, not just the rows on screen —
         // the point of the export is to keep runs that will scroll off the list
@@ -10131,26 +10131,42 @@ class CombatSimUI {
 
         html += '</table></div>';
 
-        // Add to comparison dropdown
+        // Runs not on screen: a row each rather than a <select>, because an
+        // <option> cannot hold a delete button and a run that never made it
+        // into the table could otherwise not be removed
         const available = [];
         for (let i = 0; i < history.length; i++) {
             if (i === baseIdx || this._comparisonSlots.includes(i)) continue;
             available.push(i);
         }
         if (available.length > 0) {
-            html += '<div style="margin-top:6px;">';
-            html +=
-                '<select class="toolasha-select" id="mwi-csim-add-comparison" style="width:100%; background:' +
-                GAME_COLORS.inputBackground +
-                '; color:#aaa; border:1px solid ' +
-                GAME_COLORS.inputBorder +
-                '; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
-            html += '<option value="">+ Add sim to comparison...</option>';
+            html += '<div id="mwi-csim-add-comparison" style="margin-top:6px; font-size:11px;">';
+            html += '<div style="color:#888; margin-bottom:2px;">Other runs</div>';
             for (const i of available) {
                 const { short, title } = this._historyEntryLabel(history[i]);
-                html += '<option value="' + i + '" title="' + escapeAttribute(title) + '">' + short + '</option>';
+                html +=
+                    '<div data-other-run="' +
+                    i +
+                    '" style="display:flex; align-items:center; gap:6px; padding:2px 4px; opacity:0.7;">';
+                html +=
+                    '<span style="flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#aaa;" title="' +
+                    escapeAttribute(title) +
+                    '">' +
+                    short +
+                    '</span>';
+                html +=
+                    '<span data-add-comparison="' +
+                    i +
+                    '" title="Add this run to the comparison" style="flex-shrink:0; cursor:pointer; color:#8ab4f8;">+ compare</span>';
+                html +=
+                    '<span data-delete-history="' +
+                    i +
+                    '" title="Delete result" style="flex-shrink:0; cursor:pointer; padding:0 2px; color:' +
+                    GAME_COLORS.textDim +
+                    ';">✕</span>';
+                html += '</div>';
             }
-            html += '</select></div>';
+            html += '</div>';
         }
 
         html += '</div></div>';
