@@ -648,6 +648,9 @@ class CombatSimulator {
         this.hpMpRecorder = this.labyrinth
             ? null
             : new HpMpRecorder(this.players, { preWipe: Boolean(this.zone.isDungeon) });
+        // A second simulate() on this instance must not open its first wipe
+        // with the previous run's hits and heals (the rings exist once the constructor has run)
+        if (this.wipeLogs && this.wipeSupport) this.resetWipeLogs();
     }
 
     processEvent(event) {

@@ -41,6 +41,9 @@ export function lootStateKey(dropRate, rareFind, dropQuantity) {
     return `${roundLootStat(dropRate)}|${roundLootStat(rareFind)}|${roundLootStat(dropQuantity)}`;
 }
 
+/** Wipe events kept per result (the runner keeps the same number when merging) */
+export const MAX_WIPE_EVENTS = 20;
+
 class SimResult {
     constructor(zone, numberOfPlayers) {
         this.deaths = {};
@@ -156,7 +159,10 @@ class SimResult {
         // Absent, not null, on an event with no samples: results saved before
         // this existed look the same and the UI treats both as "no chart"
         if (hpMp) event.hpMp = hpMp;
-        this.wipeEvents.push(event);
+        // The runner keeps 20 per merged result anyway; with heals and casts each
+        // event carries up to 600 log entries, so the rest would only cross
+        // postMessage to be dropped. dungeonsFailed still counts every wipe.
+        if (this.wipeEvents.length < MAX_WIPE_EVENTS) this.wipeEvents.push(event);
     }
 
     addDeath(unit) {
