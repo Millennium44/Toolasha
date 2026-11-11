@@ -3860,7 +3860,11 @@ class CombatSimUI {
             soloMode: config.getSettingValue('combatSim_soloMode', false),
             onSoloModeChange: (value) => config.setSettingValue('combatSim_soloMode', value),
             // The Solo zones + party dungeons mode is offered only with a party loaded
-            onRender: () => this._updateSoloPartyOffer(),
+            onRender: () => {
+                this._updateSoloPartyOffer();
+                // A roster load, an Apply or a loadout edit changes the builds the All players count is made from
+                this._scheduleAllPlayersNote();
+            },
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -4208,6 +4212,7 @@ class CombatSimUI {
                     ${triggerSectionOptionsHtml()}
                     <button id="mwi-csim-trigger-run" style="${CHIP_BUTTON_STYLE}" title="Tunes the triggers now, on its own: it does not need Analyze and leaves the Analyze results alone">Tune</button>
                     <span id="mwi-csim-trigger-estimate" style="color:${GAME_COLORS.textDim}; font-size:11px;"></span>
+                    <span id="mwi-csim-trigger-all-hint" style="display:none; color:${GAME_COLORS.textDim}; font-size:11px;"></span>
                 </div>
             </div>`;
         triggerBar.querySelector('#mwi-csim-trigger-body').appendChild(triggerBox);
@@ -11680,8 +11685,11 @@ class CombatSimUI {
                         }
                     }
                     const player = saved.player;
+                    // While All players is chosen the box is left alone: a restore would show a player while the
+                    // run, and the next redraw of the box, still mean All
                     if (
                         !skip('player') &&
+                        !this._upgradeAllChosenFlag &&
                         player &&
                         typeof player.name === 'string' &&
                         player.name !== '' &&
@@ -12039,12 +12047,33 @@ class CombatSimUI {
     }
 
     /**
+     * While All players is chosen, Tune triggers (and the target boxes' prefill) cannot mean everyone: they use the
+     * live character. Said where Tune is, so it is not a silent substitution.
+     * @private
+     */
+    _refreshTriggerAllHint() {
+        const hint = this.panel?.querySelector('#mwi-csim-trigger-all-hint');
+        if (!hint) return;
+        if (!this._upgradeAllChosen()) {
+            hint.style.display = 'none';
+            hint.textContent = '';
+            return;
+        }
+        const roster = this._allPlayersRoster();
+        const at = this._upgradePlayerIndex();
+        const name = roster?.names[at] || 'the live character';
+        hint.textContent = `Tune runs for ${name} while All players is chosen.`;
+        hint.style.display = 'inline';
+    }
+
+    /**
      * The line under the Upgrade controls while All players is chosen: how many players and simulations the run
      * will start, who is skipped for want of a loaded profile, and what the run leaves out. The count is each
      * player's own (their build decides their candidates) summed.
      * @private
      */
     _refreshAllPlayersNote() {
+        this._refreshTriggerAllHint();
         const el = this.panel?.querySelector('#mwi-csim-upgrade-all-note');
         if (!el) return;
         if (!this._upgradeAllChosen()) {

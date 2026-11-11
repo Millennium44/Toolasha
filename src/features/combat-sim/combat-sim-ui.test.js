@@ -103,6 +103,8 @@ const mocks = vi.hoisted(() => ({
     dungeonRuns: [],
     /** What SimEditor#getEditedDTOs() hands back; null unless a test opts in */
     editedDTOs: null,
+    /** The options the panel built the editor stub with (its onRender listener) */
+    editorOptions: null,
     /** hrid -> the name the editor reports for it (the hrid itself when unset) */
     playerNames: null,
     /** Names of party members with no loaded profile */
@@ -636,6 +638,9 @@ vi.mock('../../utils/liquidity-cap.js', () => ({
 
 vi.mock('./sim-editor.js', () => ({
     SimEditor: class {
+        constructor(options) {
+            mocks.editorOptions = options;
+        }
         getEditedDTOs() {
             return mocks.editedDTOs;
         }
@@ -19278,6 +19283,57 @@ describe('the Upgrade tab: All players', () => {
             expect(ui._readTriggerChoices().playerIndex).toBe(2);
             mocks.editorSelfHrid = 'player2';
             expect(ui._readTriggerChoices().playerIndex).toBe(1);
+        });
+    });
+
+    describe('consistency with the rest of the panel', () => {
+        test('a later restore of the saved inputs leaves the player box alone while All is chosen', async () => {
+            chooseAll();
+            mocks.store.set('settings:combatSimUpgradeInputs_char1', {
+                v: 1,
+                values: {},
+                player: { name: 'Bob', nth: 0 },
+            });
+            ui._upgradeInputsRestored = false;
+            await ui._restoreUpgradeInputs();
+            expect(select().value).toBe('all');
+            expect(ui._upgradeAllChosenFlag).toBe(true);
+            expect(ui._upgradeAllChosen()).toBe(true);
+        });
+
+        test('the count follows a build change the editor reports', async () => {
+            ui.panel.querySelector('[data-upgrade-mode="equipment"]').checked = false;
+            ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;
+            ui._onUpgradeModesChanged();
+            mocks.gameData = { itemDetailMap: {}, abilityDetailMap: { '/abilities/a': { name: 'A' } } };
+            mocks.editedDTOs = {
+                player1: { hrid: 'player1', equipment: {}, abilities: [] },
+                player2: { hrid: 'player2', equipment: {}, abilities: [] },
+            };
+            ui._populateUpgradePlayerSelector();
+            chooseAll();
+            await settle();
+            try {
+                expect(note().textContent).toContain('2 simulations in all');
+                mocks.editedDTOs.player2.abilities = [{ hrid: '/abilities/a', level: 10 }];
+                mocks.editorOptions.onRender();
+                await settle();
+                expect(note().textContent).toContain('3 simulations in all');
+            } finally {
+                mocks.gameData = { itemDetailMap: {} };
+            }
+        });
+
+        test('Tune says it runs for the live character while All is chosen, and only then', async () => {
+            mocks.editorSelfHrid = 'player3';
+            const hint = () => ui.panel.querySelector('#mwi-csim-trigger-all-hint');
+            expect(hint().style.display).toBe('none');
+            chooseAll();
+            await settle();
+            expect(hint().textContent).toBe('Tune runs for Cy while All players is chosen.');
+            expect(hint().style.display).not.toBe('none');
+            choose('0');
+            expect(hint().style.display).toBe('none');
         });
     });
 
