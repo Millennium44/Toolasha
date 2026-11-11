@@ -41,6 +41,9 @@ Conditions found by "Search new conditions" can now be applied to the sim with t
 ### Combat Sim charts HP and MP over the run
 
 Healing & Mana now has an HP chart and an MP chart side by side, with every player on each, and an Overlay toggle that draws both in one chart. A faint band shows each stretch's lowest point so short dips are no longer averaged away, and a legend click hides or shows a player.
+### Combat Sim Results compares every player side by side
+
+The player row on Results has an "All" choice: one table with a column per player for DPS, deaths, mana, casts per ability, healing, XP, food and drink, and gold. Revenue and profit now show "≥" when some drops have no price, and a player missing from the comparison baseline no longer gets money deltas against made-up figures. Openable drops are now valued the same way in comparisons as in the Drops table.
 
 ### Reset to Party uses your party loadout and the party's zone
 
