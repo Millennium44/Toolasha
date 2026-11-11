@@ -414,7 +414,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     default: {
         calculateExpectedValue: () => null,
         getCachedValue: () => null,
-        calculateSingleContainer: () => null,
+        calculateSingleContainer: (hrid) => mocks.openableValues?.[hrid] ?? null,
         calculateContainerValueAtTaxRate: () => null,
     },
 }));
@@ -8955,6 +8955,62 @@ describe('the All pill: every player side by side', () => {
     test("the summary tiles (one player's figures) give way to the table", () => {
         expect(show(partyFight({}), { all: false }).textContent).toContain('Summary');
         expect(show(partyFight({})).textContent).not.toContain('Summary');
+    });
+
+    test('the gold rows equal each own view, an openable drop included', () => {
+        // The chest has no market price: it is valued through the expected-value cache, the path that
+        // once differed between the single view and the history metrics
+        mocks.drops = new Map([
+            ['/items/chest', 10],
+            ['/items/coin', 1000],
+        ]);
+        mocks.openableValues = { '/items/chest': 500 };
+        mocks.prices = { '/items/donut': { bid: 4, ask: 5 } };
+        try {
+            const fight = partyFight();
+            const all = show(fight).cloneNode(true);
+            const spans = (results, label) =>
+                [...results.querySelectorAll('.mwi-csim-loot-row, div')].find(
+                    (d) => d.children[0]?.textContent === label
+                )?.children;
+            for (const [hrid, col] of [
+                ['player1', 1],
+                ['player2', 2],
+                ['player3', 3],
+            ]) {
+                const single = show(fight, { all: false, tab: hrid });
+                expect(row(all, 'Revenue')[col].textContent).toBe(spans(single, 'Total Revenue')[3].textContent);
+                const expenses = spans(single, 'Total Expenses');
+                expect(row(all, 'Expenses')[col].textContent).toBe(expenses ? expenses[3].textContent : '0');
+                expect(row(all, 'Profit')[col].textContent).toBe(spans(single, 'Profit')[3].textContent);
+            }
+            // 10 chests at 500 plus 1000 coins, an hour
+            expect(row(all, 'Revenue')[1].textContent).toBe('6.0K');
+        } finally {
+            mocks.openableValues = undefined;
+        }
+    });
+
+    test('an XP Total delta reads a player absent from the baseline as the single view does', () => {
+        pushHistory('base', partyFight({ experienceGained: { player1: { attack: 600 } } }));
+        ui._comparisonBaseline = 0;
+        ui._activeDetailIndex = null;
+        const fight = partyFight();
+        const all = show(fight).cloneNode(true);
+        for (const [hrid, col] of [
+            ['player1', 1],
+            ['player2', 2],
+        ]) {
+            const single = show(fight, { all: false, tab: hrid });
+            const total = [...single.querySelectorAll('div')].find(
+                (d) =>
+                    d.children.length === 2 &&
+                    d.children[0].textContent === 'Total' &&
+                    /\d/.test(d.children[1].textContent)
+            );
+            expect(row(all, 'Total')[col].textContent).toBe(total.children[1].textContent);
+        }
+        expect(row(all, 'Total')[2].textContent).toContain('(+3.0K)');
     });
 
     describe('against a comparison baseline', () => {

@@ -8899,21 +8899,7 @@ class CombatSimUI {
             const dropData = [...dropMap.entries()]
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
-                    // Revenue: sell price for the pricing mode, net of the shown player's sale tax
-                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
-                    if (unitValue === 0 && itemHrid === '/items/coin') {
-                        unitValue = 1;
-                    }
-                    if (unitValue === 0) {
-                        // Use cached EV or calculate directly (matches combat stats approach); another player's
-                        // tax is not what the shared cache holds, so their contents are valued at it
-                        const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-                        const ev =
-                            saleTaxRate != null
-                                ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
-                                : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
-                        if (ev !== null && ev > 0) unitValue = ev;
-                    }
+                    const unitValue = this._dropUnitValue(itemHrid, saleTaxRate);
                     return { itemHrid, total, unitValue, totalGold: total * unitValue };
                 })
                 .sort((a, b) => b.totalGold - a.totalGold); // Sort by gold value descending
@@ -9931,7 +9917,9 @@ class CombatSimUI {
                         (sum, amount) => sum + Math.round(amount / hours),
                         0
                     );
-                    const prev = inBaseline(hrid)
+                    // As the single view's Total: any baseline gives a previous figure (0 for a player who was
+                    // not in it)
+                    const prev = hasPrev
                         ? Object.values(xpOf(compResult, hrid)).reduce(
                               (sum, amount) => sum + Math.round(amount / compHours),
                               0
@@ -9971,9 +9959,7 @@ class CombatSimUI {
             };
             const now = hrids.map((hrid) => metricsFor(simResult, hours, gameData, hrid));
             const before = hrids.map((hrid) =>
-                hasPrev && compResult.experienceGained?.[hrid] !== undefined
-                    ? metricsFor(compResult, compHours, compEntry.gameData, hrid)
-                    : null
+                hasPrev ? metricsFor(compResult, compHours, compEntry.gameData, hrid) : null
             );
             const money = (label, field, { higherIsBetter, color, signed }) => ({
                 label,
@@ -10024,6 +10010,30 @@ class CombatSimUI {
         // Who ran dry across the run: already every player's line
         html += renderRunMpChart(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player);
         return html;
+    }
+
+    /**
+     * What one of a drop is worth to the player: the sell price for the pricing mode net of their sale tax,
+     * a coin as 1, and an openable at its expected value (another player's tax is not what the shared cache
+     * holds, so theirs is valued at it). The single view's Drops table, the history metrics and the All
+     * view all price through here, so the three cannot disagree.
+     * @param {string} itemHrid - The drop
+     * @param {number|null} saleTaxRate - The shown player's sale tax when not the live character
+     * @returns {number} Gold per unit, 0 when unpriced
+     * @private
+     */
+    _dropUnitValue(itemHrid, saleTaxRate) {
+        let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
+        if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
+        if (unitValue === 0) {
+            const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+            const ev =
+                saleTaxRate != null
+                    ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
+                    : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
+            if (ev !== null && ev > 0) unitValue = ev;
+        }
+        return unitValue;
     }
 
     /**
@@ -10261,18 +10271,7 @@ class CombatSimUI {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
-                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
-                if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
-                if (unitValue === 0) {
-                    const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-                    if (saleTaxRate != null) {
-                        const ev = evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate);
-                        if (ev > 0) unitValue = ev;
-                    } else {
-                        const evData = evc.calculateExpectedValue(itemHrid);
-                        if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
-                    }
-                }
+                const unitValue = this._dropUnitValue(itemHrid, saleTaxRate);
                 revenuePerHr += (total / hours) * unitValue;
             }
         }
