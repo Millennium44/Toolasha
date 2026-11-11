@@ -1183,7 +1183,7 @@ describe('applyPayload merges additive records', () => {
         off();
     });
 
-    test('a merge that throws falls back to the remote copy rather than failing the pull', async () => {
+    test('a merge that throws holds the whole store instead of replacing the local copy', async () => {
         const off = registerSyncMerge({
             store: 'dungeonRuns',
             base: 'run',
@@ -1196,12 +1196,14 @@ describe('applyPayload merges additive records', () => {
 
         const result = await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
 
-        expect(importedPayloads[0].stores.dungeonRuns.run_char).toEqual(['remote']);
+        expect(importedPayloads[0].stores).not.toHaveProperty('dungeonRuns');
+        expect(result.complete).toBe(false);
+        expect(result.mergeHeld).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
         expect(result.merged).toEqual([]);
         off();
     });
 
-    test('a merge that throws is reported, because this device’s copy of that record is gone', async () => {
+    test('a merge that throws is reported as failed and held, not as overwritten', async () => {
         const off = registerSyncMerge({
             store: 'dungeonRuns',
             base: 'run',
@@ -1214,9 +1216,9 @@ describe('applyPayload merges additive records', () => {
 
         const result = await applyPayload(payloadWith('dungeonRuns', 'run_char', ['remote']));
 
-        // Saying nothing would report a pull that overwrote a history as one
-        // that combined it
         expect(result.mergeFailed).toEqual([{ store: 'dungeonRuns', key: 'run_char', label: 'fake' }]);
+        expect(result.mergeHeld).toEqual(result.mergeFailed);
+        expect(result.complete).toBe(false);
         off();
     });
 

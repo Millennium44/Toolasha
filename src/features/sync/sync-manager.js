@@ -1908,8 +1908,11 @@ class SyncManager {
             const stores = (failed || []).map((entry) => entry.store).join(', ');
             console.error('[Sync] The pull did not apply cleanly; leaving the sync stamp alone.', failed);
             showToast(
-                `Sync pull could not write ${stores || 'some stores'}. Nothing was recorded as synced — ` +
-                    'free some space or reload and try again.',
+                mergeHeld?.length
+                    ? `Sync pull could not safely combine ${mergeHeld.map((entry) => entry.label).join(', ')}. ` +
+                          "This device's copies were kept. Nothing was recorded as synced; reload and pull again."
+                    : `Sync pull could not write ${stores || 'some stores'}. Nothing was recorded as synced — ` +
+                          'free some space or reload and try again.',
                 { kind: 'error', duration: 0 }
             );
             return { ok: false, reason: 'incomplete-apply' };

@@ -102,6 +102,10 @@ Crafting now compares buying the required base with enhancing a copy you own aft
 
 Guided crafting steps now match exact item IDs, so similarly named items do not advance the wrong step. Item histories and enhancement helpers also recognize compact item hashes consistently.
 
+### Sync preserves concurrent edits and failed merges
+
+Automatic sync keeps choices recreated in another tab. If a record cannot be combined, its store stays untouched and sync reports a retry instead of replacing local data; pull summaries now reflect what actually committed.
+
 ### Equipment Watch follows the pricing mode
 
 Equipment Watch now buys and sells on the sides your pricing mode setting picks, like the rest of Toolasha's profit figures, instead of always buying at ask and selling at bid. The price labels on its cards name the side in use.

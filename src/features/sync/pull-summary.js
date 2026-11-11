@@ -268,6 +268,7 @@ let lastSummary = null;
  *   forced "Reload now"), by store
  * @param {number|null} [result.latched] - How many keys the import latched; null when not reported
  * @param {Record<string, number>} [result.expected] - Keys each store was asked to write
+ * @param {Record<string, number>|null} [result.restored] - Committed counts, when available
  * @param {Record<string, number>|null} [result.unchanged] - Keys each store left as they were; null or
  *   missing when not reported
  * @param {string|null} [result.at] - When the pull landed, ISO
@@ -283,6 +284,7 @@ export function buildPullSummary({
     latchedKeys = [],
     latched = null,
     expected = {},
+    restored = null,
     unchanged = null,
     at = null,
     timing = null,
@@ -327,6 +329,8 @@ export function buildPullSummary({
     }
     for (const entry of mergeFailed || []) {
         if (!entry?.store) continue;
+        // A strict transaction-time failure kept this device's copy and aborted its store.
+        if (mergeHeld?.some((held) => held.store === entry.store && held.key === entry.key)) continue;
         const store = row(entry.store);
         store.overwritten += 1;
         store.overwrittenRecords.push({ key: entry.key, label: entry.label || '' });
@@ -342,10 +346,9 @@ export function buildPullSummary({
         row(entry.store).latchedRecords.push({ key: entry.key });
     }
 
-    // A held key was deleted from the payload before the import, so it is not in
-    // the expected count; a failed fold was written whole, so it is. What is
-    // left after the folds is therefore exactly the whole writes.
-    for (const [store, count] of Object.entries(expected || {})) {
+    // An aborted store wrote nothing even when its payload named several keys. Prefer actual commits;
+    // older successful results expose only expected, which is still a useful backward-compatible count.
+    for (const [store, count] of Object.entries(restored ?? expected ?? {})) {
         if (!Number.isFinite(count)) continue;
         const target = row(store);
         target.writtenWhole = Math.max(0, count - target.combined);

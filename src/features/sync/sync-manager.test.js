@@ -997,6 +997,26 @@ describe('pull', () => {
             expect(stored.map.toolasha_sync_mergeHeld).toBeNull();
         });
 
+        test('a write-time merge failure keeps the retry guard and never advances the completion baseline', async () => {
+            stored.map.toolasha_sync_gistId = 'abc';
+            const oldBaseline = { previous: 'kept' };
+            stored.map.toolasha_sync_baseline = oldBaseline;
+            gist.read = remote('2026-02-01T00:00:00.000Z');
+            payload.mergeHeld = [{ store: 'marketListings', key: 'record', label: 'market history' }];
+            payload.mergeFailed = payload.mergeHeld;
+            payload.complete = false;
+            payload.failed = [{ store: 'marketListings', expected: 2, written: 0 }];
+
+            expect(await syncManager.pull()).toMatchObject({ ok: false, reason: 'incomplete-apply' });
+            expect(stored.map.toolasha_sync_mergeHeld.keys).toEqual([{ store: 'marketListings', key: 'record' }]);
+            expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+            expect(stored.map.toolasha_sync_baseline).toEqual(oldBaseline);
+            expect(toasts.at(-1)).toMatchObject({ kind: 'error', duration: 0 });
+            expect(toasts.at(-1).message).toContain("This device's copies were kept");
+            expect(toasts.at(-1).message).not.toContain('took the downloaded copy');
+            expect(await syncManager.push()).toMatchObject({ ok: false, reason: 'held-back' });
+        });
+
         test('a pull that held nothing back writes no marker whichever way it stops', async () => {
             stored.map.toolasha_sync_gistId = 'abc';
             gist.read = remote('2026-02-01T00:00:00.000Z');

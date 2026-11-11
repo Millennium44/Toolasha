@@ -2653,6 +2653,9 @@ class Storage {
      * @param {Record<string, *>} entries - Map of key → value to write
      * @param {{bypassRestoreLatch?: boolean, folds?: Record<string, Function>}} [options] - `bypassRestoreLatch`
      *   for a writer that is not pre-restore state (above); `folds`, the keys folded into the stored copy (see `set`)
+     * @param {boolean} [options.strictFolds] - Abort the store rather than replace a key when its fold fails
+     * @param {{values: Object, failedFolds: Array<string>}} [options.writeReport] - Optional result sink;
+     *   values are published only at commit, failed folds name keys that forced an abort
      * @returns {Promise<number>} Number of entries successfully written
      */
     async putAll(storeName, entries, options = {}) {
@@ -2697,7 +2700,7 @@ class Storage {
         }
 
         return this._guardedWrite('putAll', `${keys.length} keys`, storeName, [], () =>
-            this._runPutAll(storeName, entries, keys, options.folds || null)
+            this._runPutAll(storeName, entries, keys, options.folds || null, options)
         );
     }
 
@@ -2707,21 +2710,24 @@ class Storage {
      * @param {Record<string, *>} entries - Map of key → value to write
      * @param {Array<string>} keys - `Object.keys(entries)`, already computed
      * @param {Record<string, Function>|null} [folds] - Keys read in the same transaction and written folded
+     * @param {{strictFolds?: boolean, writeReport?: Object}} [options] - Sync failure policy and committed values
      * @returns {Promise<Array<string>>} The keys that were written
      * @private
      */
-    _runPutAll(storeName, entries, keys, folds = null) {
+    _runPutAll(storeName, entries, keys, folds = null, { strictFolds = false, writeReport = null } = {}) {
         const failuresAtStart = this._quotaFailures;
         return new Promise((resolve) => {
             try {
                 const transaction = this.db.transaction([storeName], 'readwrite');
                 const store = transaction.objectStore(storeName);
                 const written = [];
+                const values = {};
 
                 const put = (key, value) => {
                     const request = value === FOLD_DELETE ? store.delete(key) : store.put(value, key);
                     request.onsuccess = () => {
                         written.push(key);
+                        values[key] = value;
                     };
                     request.onerror = () => {
                         console.error(`[Storage] Failed to bulk-write key ${key} to ${storeName}:`, request.error);
@@ -2740,7 +2746,23 @@ class Storage {
                     // Read and written inside this same transaction, so nothing
                     // another tab commits can land between the two
                     const read = store.get(key);
-                    read.onsuccess = () => put(key, foldForWrite(fold, key, entries[key], read.result));
+                    read.onsuccess = () => {
+                        if (!strictFolds) {
+                            put(key, foldForWrite(fold, key, entries[key], read.result));
+                            return;
+                        }
+                        try {
+                            const next = fold(read.result, entries[key]);
+                            if (next === undefined) throw new Error('The merge returned no value');
+                            put(key, next);
+                        } catch (error) {
+                            // A sync pull must never replace unseen local data as a fallback. Abort the
+                            // whole store, including any companion tombstones already queued beside it.
+                            console.error(`[Storage] Folding ${key} failed; keeping the stored copy:`, error);
+                            writeReport?.failedFolds.push(key);
+                            transaction.abort();
+                        }
+                    };
                     read.onerror = () => {
                         console.error(
                             `[Storage] Failed to read key ${key} in ${storeName} before writing it:`,
@@ -2750,6 +2772,7 @@ class Storage {
                 }
 
                 transaction.oncomplete = () => {
+                    if (writeReport) writeReport.values = values;
                     if (written.length > 0) {
                         this._noteWriteCommitted(failuresAtStart);
                         this._announceCommit(storeName, written);

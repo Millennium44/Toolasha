@@ -950,12 +950,10 @@ async function readMany(keys, storeName) {
  * from the stale base is then written straight back over the entry that just
  * landed. See {@link applyPayload}.
  *
- * A merge that throws is not fatal to the pull — the key falls back to the
- * whole-key write it would have had anyway — but it is not nothing either: this
- * device's entries for that record are the ones being discarded, and a pull that
- * reports plain success over it tells the player their histories were combined
- * when one of them was overwritten. So the failures come back beside the
- * successes, for the caller to say so.
+ * A merge that throws holds its entire store back, just like a failure inside
+ * the write transaction. Companion tombstones must not land without their
+ * records, and a retry must not turn yesterday's safely held transaction failure
+ * into today's whole-key overwrite merely because its local copy is visible sooner.
  *
  * A fold that comes out exactly as the copy it was built on adds nothing, and
  * is noted (`same`) so the import leaves the key alone. Not left to the later
@@ -985,10 +983,10 @@ async function readMany(keys, storeName) {
  * @returns {Promise<{merged: Array<{store: string, key: string, label: string}>,
  *   failed: Array<{store: string, key: string, label: string}>,
  *   held: Array<{store: string, key: string, label: string}>,
- *   same: Set<string>, refolds: Record<string, Record<string, Function>>}>} What was combined, what took the
- *   remote copy anyway, what was held back because the local copy could not be read, (as `baselineId`s) the
+ *   same: Set<string>, refolds: Record<string, Record<string, Function>>, refolded: Map<string, Object|null>}>} What was combined, what took the
+ *   no download because the merge failed, what was held back because the local copy could not be read, (as `baselineId`s) the
  *   folds that added nothing, and per store the fold each folded key's write redoes against what is stored by
- *   then (see {@link refoldAgainstStored})
+ *   then (see {@link refoldAgainstStored}), with transaction-time row counts used only after commit
  */
 async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     const merged = [];
@@ -996,6 +994,7 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
     const held = [];
     const same = new Set();
     const refolds = {};
+    const refolded = new Map();
 
     const slice = createSlicer();
     for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
@@ -1036,16 +1035,47 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     held.push({ store: storeName, key, label: registration.label });
                     continue;
                 }
-                if (!probed.found || probed.value == null) {
-                    (refolds[storeName] ||= {})[key] = refoldIfAppeared(registration, context);
-                    continue;
-                }
                 const id = baselineId(storeName, key);
                 // A key a full-backup restore wrote is folded whatever the last
                 // exchange was: the restored copy can lack entries the gist holds
                 const restored = restoredKey(baseline?.[RESTORED_BASELINE], storeName, key);
                 const was = baseline && !restored && !plainFold?.has(id) ? readBaselineEntry(baseline[id]) : null;
                 const gistUnmoved = Boolean(was) && was.local !== null && valueHash(entries[key]) === was.gist;
+                const incoming = entries[key];
+                // Decide again from the transaction's local copy. An absent probe cannot tell whether
+                // another tab's newly recreated value moved from the local half of an asymmetric baseline.
+                const fold = (local, pulled = incoming) => {
+                    if (gistUnmoved && was.local === was.gist) return local;
+                    const localWins =
+                        gistUnmoved &&
+                        valueHash(local) !== was.local &&
+                        registration.mergeForPull === registration.merge;
+                    return localWins
+                        ? registration.merge(pulled, local)
+                        : registration.foldPull(local, pulled, context);
+                };
+                // The report is only consumed for committed keys. A later abort invalidates every outcome here.
+                const recordRefold = (refold) => (stored, value) => {
+                    const localRows = countRows(stored);
+                    const pulledRows = countRows(incoming);
+                    const next = refold(stored, value);
+                    refolded.set(
+                        id,
+                        stored == null
+                            ? null
+                            : {
+                                  store: storeName,
+                                  key,
+                                  label: registration.label,
+                                  counts: { local: localRows, pulled: pulledRows, merged: countRows(next) },
+                              }
+                    );
+                    return next;
+                };
+                if (!probed.found || probed.value == null) {
+                    (refolds[storeName] ||= {})[key] = recordRefold(refoldIfAppeared(fold));
+                    continue;
+                }
                 if (gistUnmoved && was.local === was.gist) {
                     // Settled at the last exchange and unmoved since: nothing here
                     // is news. The entry is set to this device's copy, so a rule
@@ -1056,25 +1086,18 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     // ...and what is here when it lands, should a save land first. Most such keys are left
                     // out of the write altogether, so the copy is serialized only if the fold runs
                     const settled = probed.value;
-                    (refolds[storeName] ||= {})[key] = refoldAgainstStored(() => stableStringify(settled), null);
+                    (refolds[storeName] ||= {})[key] = recordRefold(
+                        refoldAgainstStored(() => stableStringify(settled), null)
+                    );
                     continue;
                 }
-                // This device's side wins ties when only it moved. Only for a
-                // registration whose pull fold is its plain merge: one with its own
-                // pull fold (which takes only what can be news) or one already
-                // keeping local ties keeps that fold
-                const localWins =
-                    gistUnmoved &&
-                    valueHash(probed.value) !== was.local &&
-                    registration.mergeForPull === registration.merge;
-                const incoming = entries[key];
-                const fold = (local) =>
-                    localWins ? registration.merge(incoming, local) : registration.foldPull(local, incoming, context);
                 // Row counts for the pull report, taken before the fold so a merge that edits its inputs cannot
                 // change them. Numbers only: the report never holds a value.
                 const localRows = countRows(probed.value);
                 const pulledRows = countRows(incoming);
-                entries[key] = fold(probed.value);
+                const next = fold(probed.value);
+                if (next === undefined) throw new Error('The merge returned no value');
+                entries[key] = next;
                 merged.push({
                     store: storeName,
                     key,
@@ -1088,10 +1111,8 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     same.add(id);
                     const kept = probed.value;
                     let keptText = null;
-                    (refolds[storeName] ||= {})[key] = refoldAgainstStored(
-                        () => (keptText ??= stableStringify(kept)),
-                        fold,
-                        incoming
+                    (refolds[storeName] ||= {})[key] = recordRefold(
+                        refoldAgainstStored(() => (keptText ??= stableStringify(kept)), fold, incoming)
                     );
                     continue;
                 }
@@ -1105,15 +1126,15 @@ async function mergeLocalHistories(payload, baseline = null, plainFold = null) {
                     entries[key] = probed.value;
                     same.add(id);
                 }
-                (refolds[storeName] ||= {})[key] = refoldAgainstStored(() => probedText, fold, incoming);
+                (refolds[storeName] ||= {})[key] = recordRefold(refoldAgainstStored(() => probedText, fold, incoming));
             } catch (error) {
-                console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
+                console.error(`[Sync] Merging ${storeName}/${key} failed; keeping this device's store:`, error);
                 failed.push({ store: storeName, key, label: registration.label });
             }
         }
     }
 
-    return { merged, failed, held, same, refolds };
+    return { merged, failed, held, same, refolds, refolded };
 }
 
 /**
@@ -1148,13 +1169,11 @@ function refoldAgainstStored(probedText, fold, incoming) {
  * The gap {@link refoldAgainstStored} closes is just as open for a key nothing held at the read, and the loss is
  * worse: the first fill of a day, written by another tab in the gap, went under the whole download while its baseline
  * stayed moved, so that fill was gone for good. A key still absent is the plain write it always was.
- * @param {{foldPull: Function}} registration - The key's registered merge
- * @param {{download: Object}} context - What came down, for a pull fold that reads it
+ * @param {Function} fold - The key's pull policy, evaluated against the stored local copy
  * @returns {(stored: *, value: *) => *} A storage fold: `(stored, value)`, `value` being what the pull would write
  */
-function refoldIfAppeared(registration, context) {
-    return (stored, value) =>
-        stored === undefined || stored === null ? value : registration.foldPull(stored, value, context);
+function refoldIfAppeared(fold) {
+    return (stored, value) => (stored === undefined || stored === null ? value : fold(stored, value));
 }
 
 /**
@@ -1301,7 +1320,16 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             }
         }
         const histories = await phase('merge', () => mergeLocalHistories(payload, foldBaseline, heldIds));
-        const mergeHeld = histories.held;
+        const mergeHeld = [...histories.held, ...histories.failed];
+        // A failure during the initial fold is the same safety decision as a failed transaction fold.
+        // Hold the whole store, including companions and successful neighboring folds. In particular,
+        // retrying a transaction-held key must not overwrite it via the earlier fold's old fallback.
+        const blockedStores = new Map();
+        for (const { store } of histories.failed) {
+            if (blockedStores.has(store)) continue;
+            blockedStores.set(store, Object.keys(stripExcludedKeys(store, payload.stores[store])).length);
+            delete payload.stores[store];
+        }
         // One store read at a time, each let go before the next: what this
         // device moved since the last exchange is kept (merge mode), and what it
         // already holds is noted, to be left out once `applied` is taken below
@@ -1326,7 +1354,7 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             Boolean(settingsStore);
         // ...and again around re-serializing it, which costs about as much
         if (rewrote) await pageFrame();
-        const applied = rewrote ? await phase('serialize', () => stringifyPayloadSliced(payload)) : json;
+        let applied = rewrote ? await phase('serialize', () => stringifyPayloadSliced(payload)) : json;
         if (rewrote) await pageFrame();
 
         // After `applied`, which describes the data as it now stands here: a
@@ -1335,16 +1363,15 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         const changed = (entry) => !unchangedKeys.has(baselineId(entry.store, entry.key));
         // The merged count is re-read from the payload as it now stands: `weighAgainstLocal` and the retention
         // rules may have changed the value after the fold, and the report should count what is about to be written
-        const merged = histories.merged.filter(changed).map((entry) => {
+        let merged = histories.merged.filter(changed).map((entry) => {
             const stored = payload?.stores?.[entry.store];
             if (!entry.counts || !stored || !Object.hasOwn(stored, entry.key)) return entry;
             return { ...entry, counts: { ...entry.counts, merged: countRows(stored[entry.key]) } };
         });
-        const mergeFailed = histories.failed.filter(changed);
+        let mergeFailed = [...histories.failed];
         // What the import wrote that no fold produced, named for the pull summary: every key it wrote, less
-        // the folds (a fold whose merge threw was written whole, so it stays in). The importer's own list
+        // the folds. Failed stores contribute no writes. The importer's own list
         // counts the tombstone companions its reconciliation adds; the payload's keys are the fallback.
-        const folded = new Set(merged.map((entry) => baselineId(entry.store, entry.key)));
         const payloadKeys = {};
         for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
             if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
@@ -1354,13 +1381,43 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
         let imported;
         try {
             imported = await phase('write', () =>
-                importEverything(payload, { liveSafeMerge: true, folds: histories.refolds })
+                importEverything(payload, { liveSafeMerge: true, folds: histories.refolds, strictFolds: true })
             );
         } catch (error) {
             await restoreMigrationRecords(migrationRecords);
             throw error;
         }
-        const { restored, expected, latched, latchedKeys } = imported;
+        const { latched, latchedKeys } = imported;
+        const restored = { ...imported.restored };
+        const expected = { ...imported.expected };
+        for (const [store, count] of blockedStores) {
+            restored[store] = 0;
+            expected[store] = count;
+        }
+        const committed = imported.writtenKeys ?? payloadKeys;
+        const mergedById = new Map(merged.map((entry) => [baselineId(entry.store, entry.key), entry]));
+        for (const [id, entry] of histories.refolded) {
+            if (entry) mergedById.set(id, entry);
+            else mergedById.delete(id);
+        }
+        const didCommit = (entry) => committed[entry.store]?.includes(entry.key);
+        merged = [...mergedById.values()].filter(didCommit);
+        mergeFailed = mergeFailed.filter((entry) => blockedStores.has(entry.store) || didCommit(entry));
+        for (const entry of imported.foldFailed || []) {
+            const failure = { ...entry, label: mergeForKey(entry.store, entry.key)?.label || entry.key };
+            mergeFailed.push(failure);
+            mergeHeld.push(failure);
+        }
+        // Manual pulls fingerprint `applied` instead of rebuilding the local payload. Keep unchanged
+        // keys from the pre-write snapshot, replacing only values the transaction actually committed.
+        if (histories.refolded.size && imported.writtenValues) {
+            const actual = await phase('parse-committed', () => parsePayloadSliced(applied));
+            for (const [storeName, values] of Object.entries(imported.writtenValues)) {
+                Object.assign((actual.stores[storeName] ||= {}), values);
+            }
+            applied = await phase('serialize-committed', () => stringifyPayloadSliced(actual));
+        }
+        const folded = new Set(merged.map((entry) => baselineId(entry.store, entry.key)));
         const writtenWholeKeys = [];
         for (const [storeName, keys] of Object.entries(imported.writtenKeys ?? payloadKeys)) {
             for (const key of keys) {
@@ -1368,6 +1425,13 @@ export async function applyPayload(json, { mode = 'pull', baseline = null, retry
             }
         }
         let { failed, complete } = imported;
+        if (blockedStores.size) {
+            failed = [
+                ...(failed || []),
+                ...[...blockedStores].map(([store, count]) => ({ store, expected: count, written: 0 })),
+            ];
+            complete = false;
+        }
         // Only where the snapshots that push them out landed, and past the
         // latch the import (or an earlier pull) set: they are part of this restore
         const landedShort = new Set((failed || []).map((entry) => entry.store));

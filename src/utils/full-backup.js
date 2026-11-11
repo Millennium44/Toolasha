@@ -444,6 +444,7 @@ export async function exportEverything() {
  * @param {Record<string, Record<string, Function>>} [options.folds] - Per store, keys whose write reads the
  *   stored copy in its own transaction and writes `fold(stored, value)` (see `storage.set`'s `fold`): a sync
  *   pull's folds, redone against a save that landed after the pull read its base, a base it read as absent included
+ * @param {boolean} [options.strictFolds] - Sync only: abort a store on fold failure and report committed values
  * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
  *   failed: Array<{store: string, expected: number, written: number}>, complete: boolean}>}
  *   What landed, what was meant to, and whether every store wrote its full count
@@ -481,6 +482,8 @@ export async function importEverything(payload, options = {}) {
     /** store -> keys this restore wrote, tombstone companions the reconciliation added included */
     const writtenKeys = {};
     const failed = [];
+    const foldFailed = [];
+    const writtenValues = {};
     /** store -> keys the restore actually wrote (and their tombstone companions), for the per-key latch */
     const written = new Map();
 
@@ -517,13 +520,20 @@ export async function importEverything(payload, options = {}) {
             // — it is what the latch is protecting. A second pull in the same
             // session would otherwise be refused by the first one's latch.
             const folds = options.folds?.[storeName];
+            const writeReport = options.strictFolds ? { values: {}, failedFolds: [] } : null;
             const count = await storage.putAll(storeName, entries, {
                 bypassRestoreLatch: true,
                 ...(folds ? { folds } : {}),
+                ...(writeReport ? { strictFolds: true, writeReport } : {}),
             });
             restored[storeName] = count;
             expected[storeName] = want;
-            writtenKeys[storeName] = Object.keys(entries);
+            writtenKeys[storeName] = count === want ? Object.keys(entries) : [];
+            if (writeReport) {
+                // A timed-out write has an uncertain outcome; do not claim its later completion here.
+                writtenValues[storeName] = count === want ? writeReport.values : {};
+                for (const key of writeReport.failedFolds) foldFailed.push({ store: storeName, key });
+            }
 
             // One key the store refuses aborts the whole transaction and takes
             // every healthy key with it, so a shortfall is not "most of it
@@ -570,7 +580,16 @@ export async function importEverything(payload, options = {}) {
         latched += keys.size;
         for (const key of keys) latchedKeys.push({ store: storeName, key });
     }
-    return { restored, expected, failed, complete: failed.length === 0, writtenKeys, latched, latchedKeys };
+    return {
+        restored,
+        expected,
+        failed,
+        complete: failed.length === 0,
+        writtenKeys,
+        latched,
+        latchedKeys,
+        ...(options.strictFolds ? { foldFailed, writtenValues } : {}),
+    };
 }
 
 export default {
