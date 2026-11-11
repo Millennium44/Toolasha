@@ -7709,6 +7709,23 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown.indexOf('Summary')).toBeLessThan(shown.indexOf('Player11 has skilling gear'));
     });
 
+    test('casts per ability list each ability with its hourly rate, and call out one that never fired', () => {
+        const fight = oneHourFight({
+            abilityCasts: { player1: { '/abilities/quick_aid': 0, '/abilities/fireball': 360 } },
+        });
+        const shown = showFight(fight, 2);
+        const text = shown.textContent;
+
+        expect(text).toContain('Casts/hr by ability');
+        expect(shown.querySelector('[data-ability-cast="/abilities/fireball"]').textContent).toContain('180');
+        const never = shown.querySelector('[data-ability-cast="/abilities/quick_aid"]');
+        expect(never.textContent).toContain('never cast');
+    });
+
+    test('a run with no per-ability counts (an older saved result) draws no casts block', () => {
+        expect(showFight(oneHourFight()).textContent).not.toContain('Casts/hr by ability');
+    });
+
     test('and are absent entirely when there is nothing to warn about', () => {
         ui._lastPartyWarnings = [];
         const shown = showFight().textContent;

@@ -194,6 +194,7 @@ import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import { neverFiringWarnings } from './trigger-checks.js';
+import { abilityCastsHtml } from './ability-casts-view.js';
 import {
     buildEditorChanges,
     formatChangesText,
@@ -8647,6 +8648,13 @@ class CombatSimUI {
             html += `<span style="${labelStyle}">Casts Refused/hr</span>`;
             html += `<span style="color:#ff6b6b; font-weight:600;">${formatRatePerHour(refusedPerHr)} (${refusedShare.toFixed(1)}%)</span>`;
             html += '</div>';
+        }
+
+        // Casts per ability for the shown player: an ability that never fired is called out, because it is
+        // usually a trigger that cannot be met rather than an ability that is not worth casting
+        const abilityCasts = simResult.abilityCasts?.[activeTab];
+        if (abilityCasts && Object.keys(abilityCasts).length > 0 && hours > 0) {
+            html += abilityCastsHtml(abilityCasts, hours, gameData, { rowStyle, labelStyle, valueStyle });
         }
 
         // Debuff on level gap — only shown when non-zero

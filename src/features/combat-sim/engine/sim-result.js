@@ -89,6 +89,9 @@ class SimResult {
         // checkTriggers re-tests after every event and a per-check count would scale with event density, and a
         // per-stretch count would scale with the number of worker chunks, each of which starts at full mana.
         this.manaCastsMade = {};
+        // unitHrid → ability hrid → casts that went through (a refused cast is not counted); `manaCastsMade`
+        // is the per-player total of these
+        this.abilityCasts = {};
         this.manaCastsRefused = {};
         this.manaRefusalNextAt = {};
         this.manaUsed = {};
@@ -520,8 +523,12 @@ class SimResult {
         this.hitpointsSpent[unit.hrid][source] += amount;
     }
 
-    addCastMade(unit) {
+    addCastMade(unit, ability) {
         this.manaCastsMade[unit.hrid] = (this.manaCastsMade[unit.hrid] || 0) + 1;
+        if (ability?.hrid) {
+            const casts = this.abilityCasts[unit.hrid] || (this.abilityCasts[unit.hrid] = {});
+            casts[ability.hrid] = (casts[ability.hrid] || 0) + 1;
+        }
     }
 
     /**
@@ -529,6 +536,18 @@ class SimResult {
      * count is density-independent and adds across worker chunks. A floor of one second stops a zero-cooldown
      * ability from being counted on every event.
      */
+    /**
+     * Give every equipped ability an entry in `abilityCasts` (0 when it never fired), so a reader can tell
+     * "never cast" from "not equipped". Called once per player at the end of the run.
+     * @param {Object} unit - A player at the end of the run
+     */
+    setAbilityCastSlots(unit) {
+        const casts = this.abilityCasts[unit.hrid] || (this.abilityCasts[unit.hrid] = {});
+        for (const slot of unit.abilities || []) {
+            if (slot?.hrid && casts[slot.hrid] === undefined) casts[slot.hrid] = 0;
+        }
+    }
+
     addCastRefused(unit, ability, time, cooldownPeriod) {
         if (!this.manaRefusalNextAt[unit.hrid]) this.manaRefusalNextAt[unit.hrid] = {};
         const nextAt = this.manaRefusalNextAt[unit.hrid];

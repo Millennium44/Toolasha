@@ -538,6 +538,18 @@ function mergeSimResults(results) {
             }
         }
 
+        // Casts per ability (per player → per ability, summed)
+        if (r.abilityCasts) {
+            if (!merged.abilityCasts) merged.abilityCasts = {};
+            for (const [playerHrid, abilities] of Object.entries(r.abilityCasts)) {
+                if (!merged.abilityCasts[playerHrid]) merged.abilityCasts[playerHrid] = {};
+                for (const [abilityHrid, count] of Object.entries(abilities)) {
+                    merged.abilityCasts[playerHrid][abilityHrid] =
+                        (merged.abilityCasts[playerHrid][abilityHrid] || 0) + count;
+                }
+            }
+        }
+
         // Mana run out time (sum closed OOM windows; close any still-open window at chunk boundary)
         if (r.playerRanOutOfManaTime) {
             if (!merged.playerRanOutOfManaTime) merged.playerRanOutOfManaTime = {};
