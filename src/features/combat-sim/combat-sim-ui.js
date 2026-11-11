@@ -9445,7 +9445,7 @@ class CombatSimUI {
                     keyCostPerHr: m.keyCostPerHr ?? null,
                     profitPerHr: m.profitPerHr ?? null,
                     unpricedDrops: (m.unpricedDrops || []).join('; '),
-                    player: this._metricsOwnerLabel(),
+                    player: this._metricsOwnerLabel(entry),
                     successRate: m.successRate ?? null,
                     ranAt: entry.timestamp ? new Date(entry.timestamp).toISOString() : '',
                 };
@@ -10053,15 +10053,19 @@ class CombatSimUI {
     }
 
     /**
-     * Whose Profit and XP the comparison table and CSV hold: the player the open pill names, when the roster
-     * has more than one. Empty for a lone player, where there is nobody to confuse them with.
+     * Whose Profit and XP one history entry's row holds: the player its metrics were computed for, named
+     * from that entry's own saved roster.
+     * @param {Object} entry - A sim history entry
      * @returns {string}
      * @private
      */
-    _metricsOwnerLabel() {
-        if (!Array.isArray(this._playerInfo) || this._playerInfo.length < 2) return '';
-        const labels = playerColumnLabels(this._playerInfo);
-        return labels.find((entry) => entry.hrid === this._activePlayerTab)?.label || '';
+    _metricsOwnerLabel(entry) {
+        const roster =
+            Array.isArray(entry?.playerInfo) && entry.playerInfo.length ? entry.playerInfo : this._playerInfo;
+        if (!Array.isArray(roster) || !roster.length) return '';
+        // The hrid the entry's metrics were computed for, not the open pill: a Solo run is read for its own player
+        const hrid = entry?.metricsTab || this._activePlayerTab;
+        return playerColumnLabels(roster).find((column) => column.hrid === hrid)?.label || '';
     }
 
     /**
@@ -10608,11 +10612,14 @@ class CombatSimUI {
         html += '</div>';
 
         // Profit and XP in the table are one player's (the pill last chosen); say whose, in either view
-        const metricsOwner = this._metricsOwnerLabel();
-        if (metricsOwner) {
+        // (rows can differ: a Solo run is read for its own player). A lone player has nobody to confuse
+        const owners = new Set(history.map((entry) => this._metricsOwnerLabel(entry)).filter(Boolean));
+        if (owners.size > 1 || (owners.size === 1 && this._playerInfo.length > 1)) {
+            const whose =
+                owners.size > 1 ? 'per row (the player each run was read for)' : `${escapeAttribute([...owners][0])}'s`;
             html +=
                 `<div data-history-player style="color:#888; font-size:10px; margin-bottom:4px;">` +
-                `Profit and XP are ${escapeAttribute(metricsOwner)}'s; encounters and DPS are the party's.</div>`;
+                `Profit and XP are ${whose}; encounters and DPS are the party's.</div>`;
         }
 
         // Table

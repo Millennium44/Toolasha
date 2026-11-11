@@ -9135,6 +9135,37 @@ describe('the All pill: every player side by side', () => {
         }
     });
 
+    test('a Solo row is named for the player it was read for, and the caption says per row', () => {
+        pushHistory('party', partyFight(), 1, { playerInfo: ROSTER });
+        pushHistory(
+            'solo',
+            oneHourFight({ deaths: { player2: 0 }, experienceGained: { player2: { magic: 100 } } }),
+            1,
+            {
+                partySize: 1,
+                playerHrid: 'player2',
+                playerInfo: [ROSTER[1]],
+            }
+        );
+        ui._activeDetailIndex = null;
+        const saved = [];
+        ui._wireCsvButton = ((original) => (button, stem, build) => {
+            saved.push({ stem, build });
+            return original.call(ui, button, stem, build);
+        })(ui._wireCsvButton);
+        try {
+            // The panel-wide pill is player1; the Solo row's figures are player2's
+            show(partyFight(), { all: false, tab: 'player1' });
+            const csv = saved.find((entry) => entry.stem === 'combatsim-comparison').build();
+            expect(csv.rows.map((r) => r.player)).toEqual(['Kasvitatti', 'Ana']);
+            const note = ui.panel.querySelector('[data-history-player]').textContent;
+            expect(note).toContain('per row');
+            expect(note).not.toContain("Kasvitatti's");
+        } finally {
+            delete ui._wireCsvButton;
+        }
+    });
+
     test('opening a history entry with no roster of its own leaves the All view', () => {
         pushHistory('with', partyFight(), 1, { playerInfo: ROSTER });
         pushHistory('without', partyFight());
