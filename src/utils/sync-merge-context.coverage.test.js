@@ -330,7 +330,7 @@ const FIXTURES = {
     },
     'Combat Sim saved parties': {
         store: 'settings',
-        key: `combatSimSavedParties_${CHAR}`,
+        key: 'combatSimSavedParties',
         a: {
             savedAt: EARLIER,
             parties: [

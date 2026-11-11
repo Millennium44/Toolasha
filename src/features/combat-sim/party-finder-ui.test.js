@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     db: undefined,
     /** The saved-parties record (its own key) */
     savedDb: undefined,
+    savedGate: null,
     prefs: {},
     failWrite: false,
     calls: [],
@@ -70,6 +71,11 @@ vi.mock('../../core/storage.js', () => ({
                 String(k).startsWith('combatSimPartyIncludeParty_')
             )
                 return k in state.prefs ? state.prefs[k] : fallback;
+            if (k === 'combatSimSavedParties' && state.savedGate) {
+                const held = state.savedDb === undefined ? fallback : structuredClone(state.savedDb);
+                await state.savedGate;
+                return held;
+            }
             if (k === 'combatSimSavedParties') {
                 return state.savedDb === undefined ? fallback : structuredClone(state.savedDb);
             }
@@ -301,6 +307,7 @@ beforeEach(() => {
     state.gameMode = undefined;
     state.db = undefined;
     state.savedDb = undefined;
+    state.savedGate = null;
     state.prefs = {};
     state.failWrite = false;
     state.calls = [];
@@ -2623,5 +2630,68 @@ describe('saved parties', () => {
         await flush();
         expect(savedRow('sp-9')).not.toBeNull();
         expect(lockLabels()).toContain('Saved: From phone');
+    });
+
+    test('a proven deletion of the locked-in party resets the stored pick to My party', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        savedButton('sp-1', '×').click();
+        await flush();
+        savedButton('sp-1', 'Delete?').click();
+        await flush();
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe(true);
+    });
+
+    test('a pulled tombstone resets the stored pick', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        state.savedDb = savedRecord([], { 'sp-1': Date.now() });
+        announceSyncPullApplied({ settings: ['combatSimSavedParties'] });
+        await flush();
+        expect(lockValue()).toBe('my');
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe(true);
+    });
+
+    test('a list that merely lacks the party (no tombstone) falls back in memory and leaves the stored pick', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        state.savedDb = savedRecord([]);
+        announceSyncPullApplied({ settings: ['combatSimSavedParties'] });
+        await flush();
+        expect(lockValue()).toBe('my');
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe('saved:sp-1');
+    });
+
+    test('Enter twice, or Enter then Save, while a save is pending makes one party', async () => {
+        editorWith(['Ann']);
+        await mountTab();
+        el('party-name').value = 'Crew';
+        el('party-name').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        el('party-name').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        el('save-party').click();
+        await flush();
+        expect(state.savedDb.parties).toHaveLength(1);
+    });
+
+    test('an older read that resolves after a save does not put back the list from before it', async () => {
+        editorWith(['Ann']);
+        await mountTab();
+        let release;
+        state.savedGate = new Promise((resolve) => (release = resolve));
+        const stale = tab._reloadSaved();
+        state.savedGate = null;
+        el('party-name').value = 'Crew';
+        el('save-party').click();
+        await flush();
+        expect(tab._saved.parties).toHaveLength(1);
+        release();
+        await stale;
+        await flush();
+        expect(tab._saved.parties).toHaveLength(1);
+        expect(tab.root.querySelectorAll('[data-pf-saved-party]')).toHaveLength(1);
     });
 });

@@ -271,7 +271,8 @@ export async function renameParty(id, name) {
         if (!party) return { write: false, found: false };
         if (!clean || party.name === clean) return { write: false, found: true };
         party.name = clean;
-        party.updatedAt = now;
+        // Later than its last change even on a clock that is behind, so the rename wins the fold
+        party.updatedAt = Math.max(now, (party.updatedAt || 0) + 1);
         const duplicate = saved.parties.some((p) => p.id !== id && p.name.toLowerCase() === clean.toLowerCase());
         return { write: true, found: true, duplicate };
     });

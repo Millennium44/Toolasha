@@ -143,6 +143,17 @@ describe('saving, renaming, deleting', () => {
         expect(db.value.parties.map((p) => p.name)).toEqual(['Crew']);
     });
 
+    test('a rename on a device whose clock is behind still stamps later than the stored copy', async () => {
+        const ahead = Date.now() + 10 * 60 * 1000;
+        db.value = {
+            savedAt: 1,
+            removed: {},
+            parties: [{ id: 'sp-1', name: 'Crew', members: [member('Ann')], addedAt: 1, updatedAt: ahead }],
+        };
+        await renameParty('sp-1', 'Raid');
+        expect(db.value.parties[0].updatedAt).toBe(ahead + 1);
+    });
+
     test('rename keeps the members; delete leaves a tombstone', async () => {
         const { id } = await saveParty('Crew', [member('Ann')]);
         const renamed = await renameParty(id, 'Raid');

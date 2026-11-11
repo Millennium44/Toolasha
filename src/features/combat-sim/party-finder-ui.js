@@ -358,6 +358,10 @@ export class PartyFinderTab {
         /** The saved parties, and whether they have been read yet (a stored pick of one waits for the read) */
         this._saved = { savedAt: 0, parties: [], removed: {} };
         this._savedLoaded = false;
+        /** Bumped by every read and every write of the saved parties: an older read resolving later is dropped */
+        this._savedSeq = 0;
+        /** A save is in flight: a second press waits for it */
+        this._savingParty = false;
         /** Party member row id (`party:<characterID>`) → 'try' | 'always' | 'never' picked this session */
         this._partyChoices = new Map();
         /** Party row id → aura options to try them with, this session only (never the saved roster) */
@@ -948,7 +952,8 @@ export class PartyFinderTab {
         if (this._lockMode.startsWith('saved:')) {
             // A stored pick waits for the saved parties to be read: a party not read yet is not a party deleted
             if (!this._savedLoaded) await this._reloadSaved({ refresh: false });
-            if (token !== this._partyToken || !this.root) return;
+            // A newer read or write superseded ours and has not landed: it redraws the party when it does
+            if (token !== this._partyToken || !this.root || !this._savedLoaded) return;
             const id = this._lockMode.slice('saved:'.length);
             const party = this._saved.parties.find((p) => p.id === id);
             if (party) {
@@ -978,6 +983,18 @@ export class PartyFinderTab {
             // Deleted (here or on another device): back to your in-game party. The stored pick is left alone, so a
             // read that failed is not mistaken for a deletion for good
             this._lockMode = 'my';
+            // A deletion someone made leaves a tombstone: only then is the stored pick reset, so a failed or
+            // missing read never costs the player their pick
+            if (this._saved.removed?.[id]) {
+                const ownerId = dataManager.getCurrentCharacterId();
+                if (ownerId != null) {
+                    try {
+                        await storage.set(this._includePartyKey(ownerId), true, 'settings');
+                    } catch (error) {
+                        console.error('[PartyFinder] Could not reset the lock-in pick:', error);
+                    }
+                }
+            }
             prefix = 'The saved party you had locked in is gone, so this is your in-game party again. ';
             this._renderLockSelect();
         }
@@ -1621,8 +1638,10 @@ export class PartyFinderTab {
      */
     async _reloadSaved({ pulled = false, refresh = true } = {}) {
         const before = this._saved;
+        const seq = ++this._savedSeq;
         const saved = await loadSavedParties();
-        if (!this.root) return;
+        // A newer read, or a write that handed back the list, is fresher than this one
+        if (!this.root || seq !== this._savedSeq) return;
         this._saved = saved;
         this._savedLoaded = true;
         this._renderSavedParties();
@@ -1645,6 +1664,7 @@ export class PartyFinderTab {
      */
     _adoptSaved(result) {
         if (!this.root) return;
+        this._savedSeq++;
         this._saved = result.saved;
         this._savedLoaded = true;
         this._renderSavedParties();
@@ -1774,6 +1794,17 @@ export class PartyFinderTab {
 
     /** @private */
     async _onSaveParty() {
+        if (this._savingParty) return;
+        this._savingParty = true;
+        try {
+            await this._saveParty();
+        } finally {
+            this._savingParty = false;
+        }
+    }
+
+    /** @private */
+    async _saveParty() {
         const { members, count } = this._partyDraft();
         if (!count) {
             this._savedPartyNote('Nobody is loaded in the editor. Load a party on the Configure tab first.', true);
