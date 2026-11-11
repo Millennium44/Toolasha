@@ -13112,6 +13112,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         });
 
         test('a stored 0 is read back as 0', async () => {
+            ui._bestiaryPlanMinClear = 70;
             mocks.store.set('settings:combatSimBestiaryPlanMinClear', 0);
             await ui._loadBestiaryPlanPrefs();
             expect(ui._bestiaryPlanMinClear).toBe(0);
