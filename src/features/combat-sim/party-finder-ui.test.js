@@ -82,6 +82,12 @@ vi.mock('../../core/storage.js', () => ({
             return state.db === undefined ? fallback : structuredClone(state.db);
         },
         set: async (k, v) => {
+            // One held write, for races: the next lock-in write waits until the test lets it through
+            if (state.setGate && String(k).startsWith('combatSimPartyIncludeParty_')) {
+                const gate = state.setGate;
+                state.setGate = null;
+                await gate;
+            }
             state.prefs[k] = v;
         },
         update: async (k, mutate) => {
@@ -308,6 +314,7 @@ beforeEach(() => {
     state.db = undefined;
     state.savedDb = undefined;
     state.savedGate = null;
+    state.setGate = null;
     state.prefs = {};
     state.failWrite = false;
     state.calls = [];
@@ -2642,6 +2649,27 @@ describe('saved parties', () => {
         savedButton('sp-1', 'Delete?').click();
         await flush();
         expect(state.prefs.combatSimPartyIncludeParty_me).toBe(true);
+    });
+
+    test('picking another saved party while the deleted pick is being reset keeps the new party', async () => {
+        state.savedDb = savedRecord([
+            savedParty('sp-1', 'Raid', [savedMember('Ann', 110)]),
+            savedParty('sp-2', 'Crew', [savedMember('Bea', 120)]),
+        ]);
+        await mountTab();
+        await choose('saved:sp-1');
+        let release;
+        state.setGate = new Promise((resolve) => (release = resolve));
+        savedButton('sp-1', '×').click();
+        await flush();
+        savedButton('sp-1', 'Delete?').click();
+        await flush();
+        // The reset write is held; the player picks the other party meanwhile
+        await choose('saved:sp-2');
+        release();
+        await flush();
+        expect(lockValue()).toBe('saved:sp-2');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Bea (saved party: Crew)']);
     });
 
     test('a pulled tombstone resets the stored pick', async () => {

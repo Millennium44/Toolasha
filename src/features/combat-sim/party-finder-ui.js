@@ -993,6 +993,10 @@ export class PartyFinderTab {
                     } catch (error) {
                         console.error('[PartyFinder] Could not reset the lock-in pick:', error);
                     }
+                    // The player may have picked another party, or switched character, during the write
+                    if (token !== this._partyToken || !this.root || dataManager.getCurrentCharacterId() !== ownerId) {
+                        return;
+                    }
                 }
             }
             prefix = 'The saved party you had locked in is gone, so this is your in-game party again. ';
