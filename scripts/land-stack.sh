@@ -143,8 +143,13 @@ check_pr_state() { # <pr>
 
 # --- b. CI ------------------------------------------------------------------------------------------
 check_ci() { # <pr>
-    local n="$1" rc=0
-    gh pr checks "$n" >/dev/null 2>&1 || rc=$? # 0 all pass or skipped, 8 pending, 1 failing
+    local n="$1" rc=0 out
+    out="$(gh pr checks "$n" 2>&1)" || rc=$? # 0 all pass or skipped, 8 pending, 1 failing or none
+    # CI runs only for PRs into main, so a PR stacked on another has none; the full gates below cover it
+    if [ "$rc" -ne 0 ] && [ -n "${PARENT[$n]:-}" ] && grep -q '^no checks reported' <<<"$out"; then
+        echo "PR #$n: no CI (stacked on #${PARENT[$n]}; CI runs only for PRs into main), covered by the full gates"
+        return
+    fi
     case "$rc" in
         0) echo "PR #$n: CI green" ;;
         8) die "PR #$n: CI checks still pending" ;;
