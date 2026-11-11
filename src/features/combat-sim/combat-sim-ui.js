@@ -105,7 +105,7 @@ import { capProfitRateCached, liquidityMarkerHtml } from '../../utils/liquidity-
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import { scrollTokenRate, priceScrollRow, scrollGoldPerStep } from './scroll-pricing.js';
 import { MIRROR_ITEM_HRID, mirrorsToBuy } from '../../utils/mirror-route.js';
-import { ladderSentence, acquisitionComparisonText } from './cost-basis-text.js';
+import { ladderSentence, sharedRouteText } from './cost-basis-text.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -2419,6 +2419,10 @@ export function upgradeRowPurchase(result) {
               }
             : null;
 
+    // A row priced by a Craft or Mirror route shops for what that route buys, never the item itself
+    const routeShop = sharedRouteShopOf(result);
+    const routeMaterials = routeShop?.bill?.length ? namedBill(routeShop.bill) : null;
+
     return {
         itemHrid,
         enhancementLevel,
@@ -2426,6 +2430,15 @@ export function upgradeRowPurchase(result) {
         quantity: isBook ? abilityBookCount(result) : 1,
         items,
         selfEnhance,
+        routeMaterials,
+        routeCraft:
+            routeShop?.kind === 'craft'
+                ? {
+                      actionHrid: routeShop.actionHrid,
+                      upgradeItemLevel: routeShop.upgradeItemLevel || 0,
+                      upgradeBaseAcquisition: routeShop.upgradeBaseAcquisition || null,
+                  }
+                : null,
         refineMaterials: isBook || isConsumable || items ? null : refineMaterialsOf(ladder),
         savable: !isBook && !isConsumable,
         // The gear side's equivalent of `ability.cost`: the price this row was
@@ -2443,6 +2456,44 @@ export function upgradeRowPurchase(result) {
               }
             : null,
     };
+}
+
+/**
+ * The shopping a row's shared route maps to, when that route set the row's Cost and is not a plain buy.
+ * @param {Object} result - An upgrade result row
+ * @returns {{kind: string, bill: Array<Object>, actionHrid?: string, upgradeItemLevel?: number,
+ *   upgradeBaseAcquisition?: Object}|null} Null for a row on the advisor's own quote or the Buy route
+ */
+function sharedRouteShopOf(result) {
+    const stamp = result?.costDetail?.sharedRoute;
+    if (!stamp?.applied) return null;
+    const shop = stamp.shop;
+    return shop && (shop.kind === 'craft' || shop.kind === 'mirror') ? shop : null;
+}
+
+/**
+ * A bill's lines, each named with its level, whole units only.
+ * @param {Array<{itemHrid: string, count: number, enhancementLevel?: number}>} bill - Lines to buy
+ * @returns {Array<{itemHrid: string, count: number, enhancementLevel?: number, name: string}>|null}
+ */
+function namedBill(bill) {
+    const lines = bill
+        .filter(
+            (line) => line?.itemHrid && String(line.itemHrid).startsWith('/items/') && line.itemHrid !== '/items/coin'
+        )
+        .map((line) => {
+            const enhancementLevel = Math.max(0, Math.floor(Number(line.enhancementLevel) || 0));
+            const base =
+                dataManager.getItemDetails?.(line.itemHrid)?.name ||
+                String(line.itemHrid).split('/').pop().replace(/_/g, ' ');
+            return {
+                itemHrid: line.itemHrid,
+                ...(enhancementLevel > 0 ? { enhancementLevel } : {}),
+                count: Math.max(1, Math.ceil(Number(line.count) || 0)),
+                name: enhancementLevel > 0 ? `${base} +${enhancementLevel}` : base,
+            };
+        });
+    return lines.length ? lines : null;
 }
 
 /**
@@ -2745,6 +2796,37 @@ export function upgradeRowActionsHtml(result) {
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
     }
 
+    // A row priced by a Craft or Mirror route buys that route's inputs, not the item: Market opens them
+    // (a craft through its missing-materials list, which counts what you hold), and there is no Watch, as
+    // no single listing is what the row pays. Save keeps the item, which is the slot being saved for.
+    if (buy.routeMaterials) {
+        const [main] = buy.routeMaterials;
+        const mainAttrs =
+            `data-buy-hrid="${main.itemHrid}" data-buy-level="${main.enhancementLevel || 0}" ` +
+            `data-buy-quantity="${main.count}"`;
+        const bill = escapeAttribute(
+            JSON.stringify(
+                buy.routeMaterials.map((m) => ({
+                    itemHrid: m.itemHrid,
+                    count: m.count,
+                    ...(m.enhancementLevel > 0 ? { enhancementLevel: m.enhancementLevel } : {}),
+                }))
+            )
+        );
+        const craft = buy.routeCraft
+            ? ` data-craft-action="${escapeAttribute(buy.routeCraft.actionHrid)}" data-craft-level="${buy.routeCraft.upgradeItemLevel}"` +
+              (buy.routeCraft.upgradeBaseAcquisition
+                  ? ` data-craft-acquisition="${escapeAttribute(JSON.stringify(buy.routeCraft.upgradeBaseAcquisition))}"`
+                  : '')
+            : '';
+        const wanted = buy.routeMaterials.map((m) => `${m.count.toLocaleString()} × ${m.name}`).join(', ');
+        const title = buy.routeCraft
+            ? `Opens the marketplace on what this craft is short of: ${wanted}`
+            : `Opens the marketplace on what this mirror build buys: ${wanted}`;
+        return `${save}<button type="button" ${mainAttrs} data-buy-action="market" data-buy-materials="${bill}"${craft}
+            title="${escapeAttribute(title)}" style="${ROW_ACTION_STYLE}">Market</button>`;
+    }
+
     // A refine row buys the refinement material, not the ★ item: Watch and
     // Market aim at the material (the ★ item at that level is never listed), and
     // Save keeps the slot. Placed ahead of the self-enhance branch, since a
@@ -2940,7 +3022,7 @@ function seedWatchlistPriceTarget(itemHrid, enhancementLevel, rawCost) {
  */
 export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
     container?.querySelectorAll('[data-buy-action]').forEach((button) => {
-        button.addEventListener('click', (event) => {
+        button.addEventListener('click', async (event) => {
             event.stopPropagation();
             event.preventDefault();
 
@@ -3000,7 +3082,18 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     // not around
                     const rawBill = button.getAttribute('data-buy-materials');
                     const openBill = missingMaterialsButton()?.openMaterialsList;
-                    if (rawBill && typeof openBill === 'function') {
+                    // A craft-priced row opens the craft's own missing materials, at the base level it costed
+                    const craftAction = button.getAttribute('data-craft-action');
+                    const openCraft = missingMaterialsButton()?.openMissingMaterials;
+                    if (craftAction && typeof openCraft === 'function') {
+                        marketAutofill?.clearQuantity();
+                        const rawAcquisition = button.getAttribute('data-craft-acquisition');
+                        await openCraft(craftAction, 1, {
+                            upgradeItemLevel: Number(button.getAttribute('data-craft-level')) || 0,
+                            ...(rawAcquisition ? { upgradeBaseAcquisition: JSON.parse(rawAcquisition) } : {}),
+                        });
+                        button.textContent = 'Opened ✓';
+                    } else if (rawBill && typeof openBill === 'function') {
                         marketAutofill?.clearQuantity();
                         openBill(JSON.parse(rawBill));
                         button.textContent = 'Opened ✓';
@@ -14667,12 +14760,18 @@ class CombatSimUI {
         const parts = [];
         const source = COST_SOURCES[r.costSource];
         const detail = r.costDetail;
-        const comparison = config.getSettingValue('upgradeAdvisor_compareRoutes', false)
-            ? acquisitionComparisonText(detail?.acquisitionComparison)
-            : '';
-        if (comparison) parts.push(`<span style="color:#ff9800;">${escapeAttribute(comparison)}</span>`);
+        // Which route set the Cost: always for a route-priced row, the kept quote's reason only while on
+        const route = sharedRouteText(detail, {
+            showKept: config.getSettingValue('upgradeAdvisor_compareRoutes', false),
+        });
+        if (route) {
+            const color = detail.sharedRoute?.applied ? '#8ab4f8' : '#ff9800';
+            parts.push(`<span style="color:${color};">${escapeAttribute(route)}</span>`);
+        }
 
-        if (source) parts.push(`<span style="color:#aaa;">Cost basis: ${source.label} — ${source.title}</span>`);
+        // A route-priced row's basis is the route sentence above; the stock titles describe the advisor's own
+        if (source && !detail?.sharedRoute?.applied)
+            parts.push(`<span style="color:#aaa;">Cost basis: ${source.label} — ${source.title}</span>`);
 
         // A `sim` figure is an enhancement path, and the same path costs
         // different money on different benches: the player's own stats, the

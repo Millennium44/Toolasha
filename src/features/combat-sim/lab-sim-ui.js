@@ -166,7 +166,7 @@ import { generateSkillingCommunityBuffCandidates, MAX_COMMUNITY_BUFF_LEVEL } fro
 // by a bundle that does not own the combat sim panel, and a cross-bundle named
 // import compiles to a property read off a global that carries only the default.
 import combatSimUI from './combat-sim-ui.js';
-import { compactCostLines, acquisitionComparisonText } from './cost-basis-text.js';
+import { compactCostLines, sharedRouteText } from './cost-basis-text.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import {
@@ -810,7 +810,7 @@ function formatElapsed(seconds) {
  * @param {Array<Object>} picks - Picks from `planWithinBudget`
  * @returns {Array<Object>} From `upgradeRowPurchase`, in plan order
  */
-function planPurchases(picks) {
+export function planPurchases(picks) {
     const seen = new Set();
     const items = [];
 
@@ -819,6 +819,19 @@ function planPurchases(picks) {
         // A cape or quiver is enhanced at your own bench, never listed, so it
         // has no place on a marketplace trip; its row carries an Enhance button
         if (!buy || buy.selfEnhance) continue;
+
+        // A pick priced by a Craft or Mirror route buys that route's inputs, not the item: each line is
+        // a purchase, and two picks needing the same input need both counts
+        if (buy.routeMaterials) {
+            for (const line of buy.routeMaterials) {
+                const level = line.enhancementLevel || 0;
+                const key = `route:${line.itemHrid}+${level}`;
+                const same = items.find((item) => item.routeKey === key);
+                if (same) same.count += line.count;
+                else items.push({ ...line, enhancementLevel: level, routeKey: key });
+            }
+            continue;
+        }
 
         const key = `${buy.itemHrid}+${buy.enhancementLevel}`;
         if (seen.has(key)) continue;
@@ -911,8 +924,8 @@ async function openPlanInMarketplace(picks) {
             // count this list is asking you to acquire
             itemHrid: item.itemHrid,
             itemName: item.name,
-            missing: 1,
-            required: 1,
+            missing: item.count || 1,
+            required: item.count || 1,
             isTradeable: true,
         };
         const tab = createMaterialTab(
@@ -936,7 +949,7 @@ async function openPlanInMarketplace(picks) {
         watchTabForAcquisition(tab, {
             itemHrid: item.itemHrid,
             enhancementLevel: item.enhancementLevel,
-            requiredCount: 1,
+            requiredCount: item.count || 1,
             itemName: item.name,
             onRetire: () => {
                 const idx = marketPlanTabs.indexOf(tab);
@@ -9603,7 +9616,7 @@ class LabSimUI {
         const keptReason = checkedSwap ? KEPT_REASON_CHECKED : KEPT_REASON_LABYRINTH;
         const lines = compactCostLines(detail, {
             showAcquisitionComparison: config.getSettingValue('upgradeAdvisor_compareRoutes', false),
-            basisTitle: COST_SOURCES[detail.source]?.title,
+            basisTitle: detail.sharedRoute?.applied ? undefined : COST_SOURCES[detail.source]?.title,
             keptWhy: checkedSwap
                 ? 'a loadout this swap does not reach still wears it'
                 : 'the labyrinth needs every set',
@@ -10933,10 +10946,11 @@ class LabSimUI {
             return line('No cost breakdown available for this candidate.', GAME_COLORS.textDim);
         }
 
-        const comparison = config.getSettingValue('upgradeAdvisor_compareRoutes', false)
-            ? acquisitionComparisonText(detail.acquisitionComparison)
-            : '';
-        if (comparison) parts.push(line(escapeHtmlAttribute(comparison), '#ff9800'));
+        // Which route set the Cost: always for a route-priced row, the kept quote's reason only while on
+        const route = sharedRouteText(detail, {
+            showKept: config.getSettingValue('upgradeAdvisor_compareRoutes', false),
+        });
+        if (route) parts.push(line(escapeHtmlAttribute(route), detail.sharedRoute?.applied ? '#8ab4f8' : '#ff9800'));
 
         // A shrine level is bought with guild credits and guild tokens. Credits
         // have a gold value (the cheapest items that convert into them); tokens

@@ -136,7 +136,8 @@ function creditClause(detail, market) {
  * @param {number} [options.toLevel] - Candidate's target level
  * @param {boolean} [options.isEnhancement] - The candidate enhances a piece
  * @param {string} [options.kind] - The candidate's type (`house` gets its own wording)
- * @param {boolean} [options.showAcquisitionComparison=false] - Current opt-in; hides saved comparisons when off
+ * @param {boolean} [options.showAcquisitionComparison=false] - Current opt-in; a row that kept the advisor's
+ *   quote says why only while it is on (a route-priced row always names its route)
  * @returns {Array<{text: string, title?: string, tone: string}>} Lines, tone one of main|warn|kept
  */
 export function compactCostLines(
@@ -258,23 +259,47 @@ export function compactCostLines(
         }
         if (resale) lines.push({ text: `Keeps ${names} (${resale}: ${keptWhy}).`, title: keptTitle, tone: 'kept' });
     }
-    if (showAcquisitionComparison && detail.acquisitionComparison)
-        lines.push({ text: acquisitionComparisonText(detail.acquisitionComparison), tone: 'warn', plainText: true });
+    const route = sharedRouteText(detail, { showKept: showAcquisitionComparison });
+    // The route that set the figure comes first; a kept quote's reason is a note after the account
+    if (route && detail.sharedRoute?.applied) lines.unshift({ text: route, tone: 'main', plainText: true });
+    else if (route) lines.push({ text: route, tone: 'warn', plainText: true });
     for (const note of detail.ownershipNotes || []) lines.push({ text: note, tone: 'warn' });
     return lines;
 }
 
+/** Route ids as the row names them */
+const ROUTE_NAMES = { buy: 'Buy', craft: 'Craft', mirror: 'Mirror' };
+
 /**
- * Plain-text explanation of the experimental comparison; never a replacement cost.
- * @param {Object|null} comparison - Optional read-only snapshot
- * @returns {string} Explicit comparison status and scope, or empty text
+ * One short sentence on which route set a row's Cost.
+ *
+ * A row the shared route priced always says so, whatever the setting is now: the figure on screen came
+ * from it. A row that kept the advisor's own quote says why only while the setting is on, and an
+ * analysis saved before route pricing (a bare `acquisitionComparison`) says nothing, since its Cost was
+ * never route-priced.
+ * @param {Object|null} detail - `costDetail`
+ * @param {Object} [options]
+ * @param {boolean} [options.showKept=false] - Whether to explain a row that kept the advisor's quote
+ * @returns {string} Plain text, empty when there is nothing to say
  */
-export function acquisitionComparisonText(comparison) {
-    if (!comparison) return '';
-    const unchanged = 'Comparison only; Cost, ranking and shopping actions are unchanged.';
-    if (comparison.status === 'unsupported') return `Shared routes: ${comparison.reason} ${unchanged}`;
-    if (comparison.status !== 'priced') return `Shared routes: no fully priced eligible route. ${unchanged}`;
-    const note = (comparison.notes || []).join(' ');
-    const route = comparison.route.charAt(0).toUpperCase() + comparison.route.slice(1);
-    return `Shared routes: ${route}, real cost ${formatKMB(comparison.real)}, cash ${formatKMB(comparison.cash)}. ${unchanged}${note ? ` ${note}` : ''}`;
+export function sharedRouteText(detail, { showKept = false } = {}) {
+    const stamp = detail?.sharedRoute;
+    if (!stamp) return '';
+    const name = ROUTE_NAMES[stamp.route] || '';
+    if (stamp.applied) {
+        const why =
+            stamp.preference && stamp.preference !== 'auto' && stamp.preference === stamp.route
+                ? 'your preferred route'
+                : 'the lowest real cost';
+        const own = Number.isFinite(stamp.advisorNet) ? stamp.real - stamp.advisorNet : null;
+        const versus =
+            own === null
+                ? '; the advisor had no quote of its own'
+                : `, ${money(Math.abs(own))} ${own < 0 ? 'below' : 'above'} the advisor's own quote`;
+        return `Priced by ${name}, ${why}: ${money(stamp.real)}${versus}.`;
+    }
+    if (!showKept) return '';
+    if (stamp.agrees) return `${name} route, the same as the advisor's own quote.`;
+    const route = name && Number.isFinite(stamp.real) ? ` (${name} ${money(stamp.real)} not used)` : '';
+    return `Advisor's own quote${route}: ${stamp.reason}`;
 }

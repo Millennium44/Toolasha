@@ -13029,22 +13029,30 @@ describe('the cost basis detail', () => {
             costDetail: {
                 gross: 180,
                 credit: 0,
-                acquisitionComparison: { status: 'priced', route: 'craft', real: 170, cash: 100 },
+                sharedRoute: {
+                    applied: false,
+                    route: 'craft',
+                    real: 170,
+                    cash: 100,
+                    reason: 'The craft is not known to be startable.',
+                },
             },
         });
-        expect(html).toContain('Shared routes: Craft, real cost 170, cash 100');
-        expect(html).toContain('ranking and shopping actions are unchanged');
+        expect(html).toContain("Advisor\'s own quote (Craft 170 not used)");
         expect(html).toContain('Buys 180');
         const unsupported = ui._renderUpgradeCostBasis({
-            costDetail: { acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' } },
+            costDetail: { sharedRoute: { applied: false, reason: '<img src=x>' } },
             candidate: {},
         });
         expect(unsupported).toContain('&lt;img');
         expect(unsupported).not.toContain('<img');
         setting.mockRestore();
         expect(
-            ui._renderUpgradeCostBasis({ candidate: {}, costDetail: { acquisitionComparison: { status: 'unknown' } } })
-        ).not.toContain('Shared routes');
+            ui._renderUpgradeCostBasis({
+                candidate: {},
+                costDetail: { sharedRoute: { applied: false, reason: 'No shared route is fully priced.' } },
+            })
+        ).not.toContain("Advisor's own quote");
     });
     test('an incremental enhancement path does not describe buying and reselling the same item', () => {
         const html = ui._renderUpgradeCostBasis({
@@ -19991,14 +19999,20 @@ describe('combined UI audit: Combat redraw', () => {
                 credit: 0,
                 buys: [],
                 credits: [],
-                acquisitionComparison: { status: 'priced', route: 'craft', real: 90, cash: 80 },
+                sharedRoute: {
+                    applied: false,
+                    route: 'craft',
+                    real: 90,
+                    cash: 80,
+                    reason: 'The craft is not known to be startable.',
+                },
             };
             ui._viewChoices = { wide: 'table', narrow: 'table' };
             ui._renderUpgradeResults({ baseline: BASELINE, results: [upgrade], food: null });
             const host = ui.panel.querySelector('#mwi-csim-upgrade-results');
             expect(host.querySelector('[data-item-requirement-hrid]').textContent).toContain('you: 88');
             expect(host.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-            expect(host.textContent).toContain('Shared routes:');
+            expect(host.textContent).toContain("Advisor's own quote");
             skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
             const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
             refreshItemRequirementWarnings(host);
@@ -20008,7 +20022,7 @@ describe('combined UI audit: Combat redraw', () => {
                 expect(host.querySelector('[data-item-requirement-hrid]').hidden).toBe(true);
                 expect(host.textContent).not.toContain('you: 88');
                 expect(host.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-                expect(host.textContent).not.toContain('Shared routes:');
+                expect(host.textContent).not.toContain("Advisor's own quote");
             }
         } finally {
             details.mockRestore();
@@ -20830,5 +20844,131 @@ describe('the Upgrade tab: All players', () => {
             expect(resultsText()).not.toContain('Bob old run');
             expect(ui._allPlayersRun).not.toBeNull();
         });
+    });
+});
+
+describe('a row priced by a shared route shops for what that route buys', () => {
+    const SPEAR = '/items/refined_spear';
+    const BASE = '/items/plain_spear';
+    const SHARD = '/items/shard';
+    const MIRROR = '/items/philosophers_mirror';
+    const routeRow = (shop, route = shop.kind) => ({
+        cost: 170_000_000,
+        costDetail: {
+            source: route === 'buy' ? 'market' : route,
+            gross: 170_000_000,
+            credit: 0,
+            net: 170_000_000,
+            buys: [{ hrid: SPEAR, name: 'Refined Spear', enhancementLevel: 13, price: 170_000_000, source: route }],
+            credits: [],
+            ladder: null,
+            sharedRoute: { applied: true, route, real: 170_000_000, advisorNet: 400_000_000, preference: 'auto', shop },
+        },
+        candidate: { upgradeHrid: SPEAR, upgradeLevel: 13, type: 'equipment', description: 'Spear +13' },
+    });
+    const craftShop = {
+        kind: 'craft',
+        actionHrid: '/actions/refine',
+        upgradeItemLevel: 13,
+        upgradeBaseAcquisition: { kind: 'buy', itemHrid: BASE, startLevel: 13, targetLevel: 13 },
+        bill: [
+            { itemHrid: SHARD, enhancementLevel: 0, count: 20 },
+            { itemHrid: BASE, enhancementLevel: 13, count: 1 },
+        ],
+    };
+    const render = (row) => {
+        const container = document.createElement('div');
+        container.innerHTML = upgradeRowActionsHtml(row);
+        return container;
+    };
+
+    test('Craft: Market opens the craft at its base level, Save carries the craft cost, no Watch', async () => {
+        const opened = [];
+        mocks.bridgeMissingMats = {
+            openMissingMaterials: async (...args) => opened.push(args),
+            openMaterialsList: () => {
+                throw new Error('the craft list must open through the action, not a bill');
+            },
+        };
+        try {
+            const container = render(routeRow(craftShop));
+            const market = container.querySelector('[data-buy-action="market"]');
+            expect(market.getAttribute('data-buy-hrid')).toBe(SHARD);
+            expect(JSON.parse(market.getAttribute('data-buy-materials'))).toEqual([
+                { itemHrid: SHARD, count: 20 },
+                { itemHrid: BASE, count: 1, enhancementLevel: 13 },
+            ]);
+            expect(container.querySelector('[data-buy-action="watch"]')).toBeNull();
+            const save = container.querySelector('[data-buy-action="save"]');
+            expect(save.getAttribute('data-buy-hrid')).toBe(SPEAR);
+            expect(save.getAttribute('data-buy-cost')).toBe('170000000');
+            expect(save.getAttribute('data-buy-cost-source')).toBe('craft');
+            wireUpgradeRowActions(container);
+            market.click();
+            await vi.waitFor(() => expect(opened).toHaveLength(1));
+            expect(opened[0]).toEqual([
+                '/actions/refine',
+                1,
+                {
+                    upgradeItemLevel: 13,
+                    upgradeBaseAcquisition: { kind: 'buy', itemHrid: BASE, startLevel: 13, targetLevel: 13 },
+                },
+            ]);
+            expect(mocks.marketOpened).toEqual([]);
+        } finally {
+            mocks.bridgeMissingMats = null;
+        }
+    });
+
+    test('Mirror: Market opens the mirrors and the listed copies, never the item', () => {
+        const opened = [];
+        mocks.bridgeMissingMats = { openMaterialsList: (lines) => opened.push(lines) };
+        try {
+            const shop = {
+                kind: 'mirror',
+                bill: [
+                    { itemHrid: MIRROR, enhancementLevel: 0, count: 2 },
+                    { itemHrid: SPEAR, enhancementLevel: 12, count: 1 },
+                ],
+            };
+            const container = render(routeRow(shop));
+            expect(container.querySelector('[data-buy-action="watch"]')).toBeNull();
+            wireUpgradeRowActions(container);
+            container.querySelector('[data-buy-action="market"]').click();
+            expect(opened).toEqual([
+                [
+                    { itemHrid: MIRROR, count: 2 },
+                    { itemHrid: SPEAR, count: 1, enhancementLevel: 12 },
+                ],
+            ]);
+            expect(upgradeRowPurchase(routeRow(shop)).routeCraft).toBeNull();
+        } finally {
+            mocks.bridgeMissingMats = null;
+        }
+    });
+
+    test('Buy: the ordinary item buttons, watched at the route price', () => {
+        const container = render(routeRow({ kind: 'buy' }, 'buy'));
+        const market = container.querySelector('[data-buy-action="market"]');
+        expect(market.getAttribute('data-buy-hrid')).toBe(SPEAR);
+        expect(market.getAttribute('data-buy-level')).toBe('13');
+        expect(market.hasAttribute('data-buy-materials')).toBe(false);
+        expect(container.querySelector('[data-buy-action="watch"]').getAttribute('data-buy-cost')).toBe('170000000');
+        expect(upgradeRowPurchase(routeRow({ kind: 'buy' }, 'buy')).routeMaterials).toBeNull();
+    });
+
+    test('a row that kept the advisor quote keeps its own buttons, even with a craft on the stamp', () => {
+        const row = routeRow(craftShop);
+        row.costDetail.sharedRoute = { ...row.costDetail.sharedRoute, applied: false, reason: 'x' };
+        const buy = upgradeRowPurchase(row);
+        expect(buy.routeMaterials).toBeNull();
+        expect(buy.routeCraft).toBeNull();
+        expect(render(row).querySelector('[data-buy-action="watch"]').getAttribute('data-buy-hrid')).toBe(SPEAR);
+    });
+
+    test('the cost basis names the route with the setting off, and never the stock craft title', () => {
+        const html = ui._renderUpgradeCostBasis({ ...routeRow(craftShop), costSource: 'craft' });
+        expect(html).toContain("Priced by Craft, the lowest real cost: 170.0M, 230.0M below the advisor's own quote.");
+        expect(html).not.toContain('No market listing');
     });
 });

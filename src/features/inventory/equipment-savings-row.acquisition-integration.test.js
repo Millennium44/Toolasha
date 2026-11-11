@@ -355,7 +355,8 @@ vi.mock('../combat-sim/direct-enhancement-cost.js', () => ({
 }));
 vi.mock('../combat-sim/skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 const { computeBestCraftingPlan } = await import('../crafting-plan/crafting-plan-calculator.js');
-const { explainUpgradeCost, calculateUpgradeCost } = await import('../combat-sim/upgrade-advisor.js');
+const { explainUpgradeCost, calculateUpgradeCost, explainLabCandidateCost, priceMergedAcquisition } =
+    await import('../combat-sim/upgrade-advisor.js');
 const { actionStartEligibility } = await import('../../utils/craft-start-eligibility.js');
 const M = 1_000_000;
 const TARGET = '/items/refined_spear';
@@ -557,21 +558,6 @@ describe('integrated acquisition routes', () => {
         expect(craft(watch()).eligibility.status).toBe('unknown');
         expect(comparison().route).toBe('craft');
         expect(craft(comparison()).eligibility.status).toBe('unknown');
-    });
-    test('comparison off/on/off preserves every legacy cost field and candidate', () => {
-        const c = candidate(),
-            beforeCandidate = structuredClone(c);
-        game.compareRoutes = false;
-        const before = explainUpgradeCost(c, data()),
-            cost = calculateUpgradeCost(c, data());
-        game.compareRoutes = true;
-        const { acquisitionComparison, ...after } = explainUpgradeCost(c, data());
-        expect(after).toEqual(before);
-        expect(acquisitionComparison.route).toBe('craft');
-        expect(calculateUpgradeCost(c, data())).toBe(cost);
-        expect(c).toEqual(beforeCandidate);
-        game.compareRoutes = false;
-        expect(explainUpgradeCost(c, data())).toEqual(before);
     });
     test('missing quote for blocked intermediate retains a blocked diagnostic on both surfaces', () => {
         delete game.prices[SHARD + ':0'];
@@ -778,5 +764,227 @@ describe('audit current and kept worn copies', () => {
         game.profitMode = 'patientBuy';
         expect(watch()).toMatchObject({ route: 'craft', cost: 150 * M, realCost: 150 * M, upgradeBaseLevel: 13 });
         expect(comparison()).toMatchObject({ route: 'craft', cash: 150 * M, real: 150 * M });
+    });
+});
+
+describe('the advisor ranks a supported row on the shared route', () => {
+    beforeEach(initializeRoutes);
+    afterEach(() => delete window.Toolasha);
+    const own = (c = candidate()) => {
+        const was = game.compareRoutes;
+        game.compareRoutes = false;
+        const quote = { cost: calculateUpgradeCost(c, data()), detail: explainUpgradeCost(c, data()) };
+        game.compareRoutes = was;
+        return quote;
+    };
+    const priced = (c = candidate(), isSelf = true) => ({
+        cost: calculateUpgradeCost(c, data(), isSelf),
+        detail: explainUpgradeCost(c, data(), isSelf),
+    });
+
+    test('Craft wins: Cost, breakdown and shopping all follow the craft; off restores the advisor quote', () => {
+        const before = own();
+        const beforeCandidate = structuredClone(candidate());
+        expect(before.cost).toBe(400 * M);
+        const { cost, detail } = priced();
+        expect(cost).toBe(170 * M);
+        expect(detail).toMatchObject({ net: 170 * M, gross: 170 * M, credit: 0, source: 'craft', ladder: null });
+        expect(detail.sharedRoute).toMatchObject({
+            applied: true,
+            route: 'craft',
+            real: 170 * M,
+            advisorNet: 400 * M,
+            shop: {
+                kind: 'craft',
+                actionHrid: '/actions/refine',
+                upgradeItemLevel: 13,
+                upgradeBaseAcquisition: { kind: 'buy', itemHrid: BASE, startLevel: 13, targetLevel: 13 },
+                bill: [
+                    { itemHrid: SHARD, enhancementLevel: 0, count: 20 },
+                    { itemHrid: BASE, enhancementLevel: 13, count: 1 },
+                ],
+            },
+        });
+        // Nothing from the advisor's own route survives into the figure
+        expect(detail.enhanceSource).toBeNull();
+        expect(detail.buys).toEqual([expect.objectContaining({ hrid: TARGET, price: 170 * M, source: 'craft' })]);
+        expect(candidate()).toEqual(beforeCandidate);
+        game.compareRoutes = false;
+        expect(calculateUpgradeCost(candidate(), data())).toBe(before.cost);
+        expect(explainUpgradeCost(candidate(), data())).toEqual(before.detail);
+    });
+
+    test('Buy wins: the listing sets Cost and the shopping stays on the item', () => {
+        game.prices[TARGET + ':13'] = { ask: 100 * M, bid: 90 * M };
+        const { cost, detail } = priced();
+        expect(cost).toBe(100 * M);
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'buy', shop: { kind: 'buy' } });
+        expect(detail.buys).toEqual([expect.objectContaining({ hrid: TARGET, enhancementLevel: 13, price: 100 * M })]);
+    });
+
+    test('Mirror wins: the build sets Cost and its bill is the mirror and the listed copies', () => {
+        game.prices[TARGET + ':11'] = { ask: 30 * M, bid: 29 * M };
+        game.prices[TARGET + ':12'] = { ask: 40 * M, bid: 39 * M };
+        game.prices['/items/philosophers_mirror:0'] = { ask: 10 * M, bid: 10 * M };
+        const { cost, detail } = priced();
+        expect(cost).toBe(80 * M);
+        expect(detail).toMatchObject({ net: 80 * M, source: 'mirror' });
+        expect(detail.sharedRoute.shop).toEqual({
+            kind: 'mirror',
+            bill: [
+                { itemHrid: '/items/philosophers_mirror', enhancementLevel: 0, count: 1 },
+                { itemHrid: TARGET, enhancementLevel: 12, count: 1 },
+                { itemHrid: TARGET, enhancementLevel: 11, count: 1 },
+            ],
+        });
+    });
+
+    test('a preferred route that is dearer is still the one priced, and named as preferred', () => {
+        game.prices[TARGET + ':13'] = { ask: 100 * M, bid: 90 * M };
+        game.routePreference = 'craft';
+        const { cost, detail } = priced();
+        expect(cost).toBe(170 * M);
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'craft', preference: 'craft' });
+    });
+
+    test('an unpriced input is never a free one: Craft is out and Buy, the next cheapest, sets Cost', () => {
+        delete game.prices[SHARD + ':0'];
+        delete game.actions['/actions/shard'];
+        const { cost, detail } = priced();
+        expect(detail.acquisitionComparison.routes.find((r) => r.id === 'craft').cash).toBeNull();
+        expect(cost).toBe(180 * M);
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'buy' });
+    });
+
+    test('nothing priced on any shared route keeps the advisor quote', () => {
+        delete game.prices[SHARD + ':0'];
+        delete game.actions['/actions/shard'];
+        delete game.prices[TARGET + ':13'];
+        const { cost, detail } = priced();
+        expect(cost).toBe(own().cost);
+        expect(detail.sharedRoute).toMatchObject({ applied: false, reason: 'No shared route is fully priced.' });
+    });
+
+    test('ask vs bid: patient buy reprices the craft on the bid side', () => {
+        game.profitMode = 'patientBuy';
+        const { cost, detail } = priced();
+        expect(cost).toBe(150 * M);
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'craft', real: 150 * M });
+    });
+
+    test('a party member is priced on the advisor model, never from your bag or crafting setup', () => {
+        const { cost, detail } = priced(candidate(), false);
+        game.compareRoutes = false;
+        expect(cost).toBe(calculateUpgradeCost(candidate(), data(), false));
+        expect(detail.sharedRoute).toMatchObject({ applied: false, reason: expect.stringContaining('Party') });
+    });
+
+    test('an enhancement row on a worn +10: the worn copy is sold once, after tax, against the craft', () => {
+        const worn = { itemHrid: TARGET, enhancementLevel: 10 };
+        game.equipment.set('/item_locations/main_hand', worn);
+        game.inventory.push({ ...worn, itemLocationHrid: '/item_locations/main_hand' });
+        game.prices[TARGET + ':10'] = { ask: 60 * M, bid: 50 * M };
+        const row = {
+            type: 'enhancement',
+            currentHrid: TARGET,
+            currentLevel: 10,
+            upgradeHrid: TARGET,
+            upgradeLevel: 13,
+        };
+        // Enhancing the worn copy is cheaper, and the shared routes have no enhance: the advisor quote stands
+        expect(own(row).cost).toBe(80 * M);
+        expect(priced(row).cost).toBe(80 * M);
+        expect(priced(row).detail.sharedRoute).toMatchObject({
+            applied: false,
+            route: 'craft',
+            reason: expect.stringContaining('no shared equivalent'),
+        });
+        game.enhanceCost = 500 * M;
+        // A dearer enhance loses to the cheaper craft, net of the worn copy's one after-tax sale
+        expect(own(row).cost).toBe(500 * M);
+        const { cost, detail } = priced(row);
+        expect(cost).toBe(170 * M - 48 * M);
+        expect(detail).toMatchObject({ gross: 170 * M, credit: 48 * M, net: 122 * M, creditApplied: true });
+        expect(detail.credits).toEqual([
+            expect.objectContaining({ hrid: TARGET, enhancementLevel: 10, price: 48 * M }),
+        ]);
+    });
+
+    test('a resale credit larger than the route spends keeps the advisor quote', () => {
+        const worn = { itemHrid: TARGET, enhancementLevel: 10 };
+        game.equipment.set('/item_locations/main_hand', worn);
+        game.inventory.push({ ...worn, itemLocationHrid: '/item_locations/main_hand' });
+        game.prices[TARGET + ':10'] = { ask: 300 * M, bid: 250 * M };
+        const row = {
+            type: 'enhancement',
+            currentHrid: TARGET,
+            currentLevel: 10,
+            upgradeHrid: TARGET,
+            upgradeLevel: 13,
+        };
+        const { cost, detail } = priced(row);
+        expect(cost).toBe(own(row).cost);
+        expect(detail.sharedRoute).toMatchObject({ applied: false, reason: expect.stringContaining('resale credit') });
+    });
+
+    test.each([
+        ['an owned base is prepared', () => (game.prices[BASE + ':12'].bid = 10 * M), 'prepares a base'],
+        ['the craft may not start', () => (game.skills = []), 'not known to be startable'],
+        ['an input is crafted', () => (game.skills[1].level = 95), 'crafts an input'],
+        [
+            'a held base at the level makes it ambiguous',
+            () => {
+                // Selling the held +13 fetches more than a listed one costs, so the bought base wins
+                game.prices[BASE + ':13'].bid = 160 * M;
+                game.inventory.push({
+                    itemHrid: BASE,
+                    enhancementLevel: 13,
+                    count: 1,
+                    itemLocationHrid: '/item_locations/inventory',
+                });
+            },
+            'ambiguous',
+        ],
+    ])('Craft wins but %s: cost and shopping both stay on the advisor quote', (_label, setup, reason) => {
+        setup();
+        const { cost, detail } = priced();
+        expect(detail.acquisitionComparison.route).toBe('craft');
+        expect(cost).toBe(own().cost);
+        expect(detail.net).toBe(own().cost);
+        expect(detail.sharedRoute.applied).toBe(false);
+        expect(detail.sharedRoute.reason).toContain(reason);
+    });
+
+    test('a refined target compares Buy and Craft only, and Craft sets its Cost', () => {
+        const REF = '/items/spear_refined';
+        game.details[REF] = { ...game.details[TARGET], name: 'Spear (R)' };
+        game.actions['/actions/refine'].outputItems = [{ itemHrid: REF, count: 1 }];
+        game.prices[REF + ':13'] = { ask: 180 * M, bid: 170 * M };
+        game.prices['/items/philosophers_mirror:0'] = { ask: M, bid: M };
+        game.candidateOverrides = { upgradeHrid: REF };
+        const { cost, detail } = priced();
+        expect(detail.acquisitionComparison.routes.map((r) => r.id)).not.toContain('mirror');
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'craft' });
+        expect(cost).toBe(170 * M);
+    });
+
+    test('a merged acquisition stays on the advisor model, members included', () => {
+        expect(priced({ ...candidate(), mergedAcquisition: true }).cost).toBe(400 * M);
+        const member = (skillKey) => ({ candidate: { ...candidate(), skillKey }, cost: 170 * M });
+        const merged = priceMergedAcquisition([member('/skills/a'), member('/skills/b'), member('/skills/c')], data());
+        expect(merged.cost).toBe(400 * M);
+        expect(merged.costDetail.sharedRoute).toMatchObject({
+            applied: false,
+            reason: expect.stringContaining('Merged'),
+        });
+        expect(priceMergedAcquisition([member('/skills/a')], data()).cost).toBe(170 * M);
+    });
+
+    test('the Lab breakdown keeps its kept-gear note on a route-priced row', () => {
+        const row = { ...candidate(), keptItems: [{ hrid: BASE, enhancementLevel: 12 }] };
+        const detail = explainLabCandidateCost(row, data());
+        expect(detail.sharedRoute).toMatchObject({ applied: true, route: 'craft' });
+        expect(detail.kept).toEqual([expect.objectContaining({ hrid: BASE, enhancementLevel: 12 })]);
+        expect(detail.net).toBe(calculateUpgradeCost(row, data()));
     });
 });

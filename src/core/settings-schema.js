@@ -823,10 +823,10 @@ export const settingsGroups = {
             },
             upgradeAdvisor_compareRoutes: {
                 id: 'upgradeAdvisor_compareRoutes',
-                label: 'Upgrade advisors: Compare shared acquisition routes (experimental)',
+                label: 'Upgrade advisors: Price upgrades by your preferred route',
                 type: 'checkbox',
-                default: false,
-                help: "Adds a read-only Buy/Craft/Mirror comparison beside the existing Combat and Lab advisor cost. Uses Equipment Watch's preferred route and compares real cost separately from cash. Existing ranking and actions are unchanged. Local single-item tradable targets only; party, multi-item and untradable paths retain the existing model. Refined targets compare Buy/Craft while the original advisor retains its deeper Mirror paths. Rerun the analysis after changing this setting or route preference.",
+                default: true,
+                help: "The Combat and Lab advisors price a supported upgrade by Equipment Watch's preferred route (Buy, Craft or Mirror; Auto takes the lowest real cost), and its Cost, ranking and shopping buttons follow that route. Supported means one tradable item of your own; party members, multi-item swaps, untradable gear, drinks and abilities keep the advisor's own quote, as does any row whose route the shopping buttons cannot follow yet. Rerun the analysis after changing this setting or the preferred route.",
             },
             equipmentWatch_routePreference: {
                 id: 'equipmentWatch_routePreference',
