@@ -4526,7 +4526,7 @@ describe('the cost breakdown', () => {
                 reason: 'The craft is not known to be startable.',
             },
         });
-        expect(html).toContain("Advisor\'s own quote (Craft 170 not used)");
+        expect(html).toContain("Advisor's own quote (Craft 170 not used)");
         const unsupported = ui._renderCostBreakdown({
             buys: [],
             credits: [],
@@ -9700,7 +9700,7 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
                     'For you: Needs Defense 95 (you: 88)'
                 );
                 expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-                expect(container.textContent).toContain("Advisor\'s own quote (Craft 900 not used)");
+                expect(container.textContent).toContain("Advisor's own quote (Craft 900 not used)");
                 expect(container.textContent).not.toContain('could not be drawn');
             }
             expect(result.results[0].cost).toBe(1000);
@@ -9787,7 +9787,7 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
         expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
         comparisonEnabled = true;
         ui._pickLabView('table');
-        expect(container.textContent).toContain("Advisor\'s own quote (Craft 900 not used)");
+        expect(container.textContent).toContain("Advisor's own quote (Craft 900 not used)");
         expect(result).toEqual(original);
     });
     test.each(renderers)('$label reevaluates route opt-in on every sort without reanalyzing', ({ method, options }) => {
@@ -10029,9 +10029,23 @@ describe('a budget plan shops a route-priced pick by what its route buys', () =>
             source: 'mirror',
             sharedRoute: { applied: true, route: 'mirror', real: 70, advisorNet: 90, preference: 'auto' },
         });
-        expect(html).toContain('Buy ');
+        expect(html).toContain('Build with mirrors ');
         expect(html).toContain('Use your ');
         expect(html).toContain('gives up 20 of sale');
         expect(html).not.toContain('could not be drawn');
+    });
+
+    test('a route-priced Craft row says it is crafted, not bought', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [{ hrid: '/items/spear', name: 'Spear', enhancementLevel: 13, price: 170, source: 'craft' }],
+            credits: [],
+            gross: 170,
+            credit: 0,
+            net: 170,
+            source: 'craft',
+            sharedRoute: { applied: true, route: 'craft', real: 170, advisorNet: 180, preference: 'auto' },
+        });
+        expect(html).toContain('Craft ');
+        expect(html).not.toContain('Buy ');
     });
 });

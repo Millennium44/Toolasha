@@ -365,7 +365,6 @@ const { computeBestCraftingPlan } = await import('../crafting-plan/crafting-plan
 const { explainUpgradeCost, calculateUpgradeCost, explainLabCandidateCost, priceMergedAcquisition } =
     await import('../combat-sim/upgrade-advisor.js');
 const { actionStartEligibility } = await import('../../utils/craft-start-eligibility.js');
-const { compactCostLines } = await import('../combat-sim/cost-basis-text.js');
 const M = 1_000_000;
 const TARGET = '/items/refined_spear';
 const BASE = '/items/plain_spear';

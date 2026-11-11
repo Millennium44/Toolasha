@@ -1160,12 +1160,16 @@ export function upgradeCostCell(result) {
  * cheapest honest way to say which one a reader is looking at.
  *
  * @param {string|null} source - A key of `COST_SOURCES`
+ * @param {Object|null} [detail] - The row's `costDetail`, for a route-priced row's own title
  * @returns {string} HTML, empty when the basis is unknown
  */
-export function costSourceTagHtml(source) {
+export function costSourceTagHtml(source, detail = null) {
     const entry = COST_SOURCES[source];
     if (!entry) return '';
-    return `<span title="${entry.title}" style="color:${GAME_COLORS.textDim}; font-size:9px; margin-left:3px;">${entry.label}</span>`;
+    // A route-priced row's basis is its route, not the stock wording: "No market listing" is false of a Craft
+    // that Auto chose over a listed Buy
+    const title = detail?.sharedRoute?.applied ? escapeAttribute(sharedRouteText(detail)) : entry.title;
+    return `<span title="${title}" style="color:${GAME_COLORS.textDim}; font-size:9px; margin-left:3px;">${entry.label}</span>`;
 }
 
 /**
@@ -15244,7 +15248,7 @@ class CombatSimUI {
                         : cell.title
                           ? `<span title="${cell.title}">${cell.text}</span>`
                           : cell.text;
-                    return `${body}${costSourceTagHtml(r.costSource)}`;
+                    return `${body}${costSourceTagHtml(r.costSource, r.costDetail)}`;
                 },
             },
             {
