@@ -9,6 +9,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Combat sim Results sections collapse
 
 Every Results section, in a player's view and in the All view, now collapses with a click and stays the way you left it across runs and reloads. On a phone the All table is tighter, keeps its labels pinned while you scroll sideways, and the price bar no longer lets rows show through.
+### Upgrade advisors price by your preferred route
+
+The Combat and Lab upgrade advisors can price a single tradable upgrade by Equipment Watch's preferred route (Buy, Craft or Mirror), and its Cost, ranking and shopping buttons follow that route; the route replaces the advisor's own quote only when it is cheaper. On for new players; existing players turn on "Price upgrades by your preferred route" in Settings.
 
 ### Token totals follow a stack linked in chat
 
