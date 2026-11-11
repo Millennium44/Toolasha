@@ -234,9 +234,10 @@ export function compactCostLines(
             label = 'Crafted';
         }
         const what = detail.buys
-            .map(
-                (buy) =>
-                    `${buy.name} +${buy.enhancementLevel} for ${buy.price === null ? 'no price' : money(buy.price)}`
+            .map((buy) =>
+                buy.forgone
+                    ? `your ${buy.name} +${buy.enhancementLevel} (gives up ${money(buy.price)} of sale)`
+                    : `${buy.name} +${buy.enhancementLevel} for ${buy.price === null ? 'no price' : money(buy.price)}`
             )
             .join(' and ');
         main(`${label}: ${verb} ${what}${creditClause(detail, verb === 'buy')}.${ratesTail}`);

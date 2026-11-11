@@ -10015,4 +10015,23 @@ describe('a budget plan shops a route-priced pick by what its route buys', () =>
         });
         expect(html).toContain("Priced by Mirror, your preferred route: 170, 30 below the advisor's own quote.");
     });
+
+    test('a held copy a route uses up reads as used, not bought', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [
+                { hrid: '/items/spear', name: 'Spear', enhancementLevel: 13, price: 50, source: 'mirror' },
+                { hrid: '/items/spear', name: 'Spear', enhancementLevel: 12, price: 20, forgone: true },
+            ],
+            credits: [],
+            gross: 70,
+            credit: 0,
+            net: 70,
+            source: 'mirror',
+            sharedRoute: { applied: true, route: 'mirror', real: 70, advisorNet: 90, preference: 'auto' },
+        });
+        expect(html).toContain('Buy ');
+        expect(html).toContain('Use your ');
+        expect(html).toContain('gives up 20 of sale');
+        expect(html).not.toContain('could not be drawn');
+    });
 });

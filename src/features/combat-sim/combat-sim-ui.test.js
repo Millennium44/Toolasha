@@ -20971,4 +20971,18 @@ describe('a row priced by a shared route shops for what that route buys', () => 
         expect(html).toContain("Priced by Craft, the lowest real cost: 170.0M, 230.0M below the advisor's own quote.");
         expect(html).not.toContain('No market listing');
     });
+
+    test('a Mirror row using a held copy draws its basis and keeps the item off Watch', () => {
+        const row = routeRow({ kind: 'mirror', bill: [{ itemHrid: MIRROR, enhancementLevel: 0, count: 1 }] });
+        row.costDetail.buys.push({ hrid: SPEAR, name: 'Refined Spear', enhancementLevel: 13, price: 1, forgone: true });
+        const html = ui._renderUpgradeCostBasis({ ...row, costSource: 'mirror' });
+        expect(html).toContain('Priced by Mirror');
+        expect(upgradeRowPurchase(row).watchCost).toBe(170_000_000);
+    });
+
+    test('a stamp that no longer lands on the row Cost shops the item, as the Cost does', () => {
+        const row = { ...routeRow(craftShop), cost: 400_000_000 };
+        expect(upgradeRowPurchase(row).routeMaterials).toBeNull();
+        expect(upgradeRowPurchase(row).routeCraft).toBeNull();
+    });
 });

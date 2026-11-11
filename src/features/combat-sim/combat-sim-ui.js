@@ -2394,7 +2394,7 @@ export function upgradeRowPurchase(result) {
     // breakdown's buy line for this exact item is a figure the market can hit;
     // its gross, then the net, stand in when there is no such line.
     const buyLine = (result?.costDetail?.buys || []).find(
-        (line) => line?.hrid === itemHrid && (line.enhancementLevel || 0) === enhancementLevel
+        (line) => line?.hrid === itemHrid && (line.enhancementLevel || 0) === enhancementLevel && !line.forgone
     );
     const watchCost = result?.costDetail?.enhancementPath
         ? (result.costDetail.targetAsk ?? null)
@@ -2467,6 +2467,8 @@ export function upgradeRowPurchase(result) {
 function sharedRouteShopOf(result) {
     const stamp = result?.costDetail?.sharedRoute;
     if (!stamp?.applied) return null;
+    // Only the route the row's Cost was priced by: a stamp that no longer lands on it shops nothing of its own
+    if (!Number.isFinite(result.cost) || Math.abs(result.cost - stamp.real) > 1) return null;
     const shop = stamp.shop;
     return shop && (shop.kind === 'craft' || shop.kind === 'mirror') ? shop : null;
 }
