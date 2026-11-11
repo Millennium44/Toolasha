@@ -279,6 +279,11 @@ export function objectiveFooterText(objective, { dungeon = false } = {}) {
  * @returns {string} Plain text
  */
 export function triggerHeadline(result) {
+    const text = headlineText(result);
+    return result?.fineTuneOnly ? `Fine-tune of the applied conditions only: ${text}` : text;
+}
+
+function headlineText(result) {
     if (!result) return 'Stopped before the baseline finished';
     if (result.noTunables) {
         // No thresholds to tune, but the condition search may still have an answer, and the expanded view shows it
@@ -498,7 +503,7 @@ export function renderTriggerResultsHtml(
         : '';
     const head = collapseHeaderHtml({
         key: 'trigger',
-        title: `Trigger tuning${cachedLabel}`,
+        title: `Trigger tuning${result?.fineTuneOnly ? ' (fine-tune of the applied conditions only)' : ''}${cachedLabel}`,
         summary: triggerHeadline(result),
         style: `color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;`,
     });

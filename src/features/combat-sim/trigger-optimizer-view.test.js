@@ -840,3 +840,12 @@ describe('applying new conditions', () => {
         expect(none).toContain('Nothing to fine-tune');
     });
 });
+
+describe('a fine-tune result', () => {
+    const result = { scope: 'me', simCount: 4, unchanged: [], changes: [], fineTuneOnly: true };
+    test('is labeled in the header and the summary', () => {
+        expect(triggerHeadline(result)).toContain('Fine-tune of the applied conditions only');
+        expect(renderTriggerResultsHtml(result, gameData)).toContain('fine-tune of the applied conditions only');
+        expect(triggerHeadline({ ...result, fineTuneOnly: undefined })).not.toContain('Fine-tune');
+    });
+});

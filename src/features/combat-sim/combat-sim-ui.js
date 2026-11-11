@@ -13494,6 +13494,7 @@ class CombatSimUI {
             );
             // A switched character or a destroyed panel draws nothing and saves nothing
             if (!isCurrent()) return;
+            if (fineTune && result) result.fineTuneOnly = true;
 
             // The zone, tier, player, build or choices moved while it ran: this is an answer for the setup it
             // started with, so it is not drawn under the setup on screen now (it is still remembered for its own)
@@ -13636,12 +13637,19 @@ class CombatSimUI {
                 result?.conditions,
                 runContext?.playerHrid ?? null
             ).map((c) => ({ ...c, dtoRef: byHrid.get(c.playerHrid) }));
+            // The search measured every condition on top of ALL the tuned thresholds: with one of them refused
+            // the slots are not the ones it simulated, so none is written
+            const heldBack = conditionChanges.length > 0 && (outcome.skipped.length > 0 || changedBuild.length > 0);
             const conditionOutcome =
-                conditionChanges.length > 0 && !setupChanged
+                conditionChanges.length > 0 && !setupChanged && !heldBack
                     ? this._editor.applyTriggerRowChanges(conditionChanges)
                     : { applied: 0, skipped: [], appliedChanges: [] };
             const conditionSkipped = [
                 ...conditionOutcome.skipped,
+                ...(heldBack && !setupChanged ? conditionChanges : []).map((change) => ({
+                    change,
+                    reason: 'held back: a threshold change was refused',
+                })),
                 ...(setupChanged ? conditionChanges : []).map((change) => ({
                     change,
                     reason: 'changed since analysis',
@@ -13685,7 +13693,10 @@ class CombatSimUI {
             this._setStatus(
                 (applied > 0 ? `Applied ${appliedText} to the sim editor` : 'Nothing applied') +
                     (skipped.length ? ` (${skipped.length} skipped: ${skipped[0].reason})` : '') +
-                    (applied > 0 ? '. Run Simulate to use them.' : '.')
+                    (applied > 0 ? '. Run Simulate to use them.' : '.') +
+                    (heldBack && !setupChanged
+                        ? ' The new conditions were held back because they were measured with every threshold change applied.'
+                        : '')
             );
         });
         this._wireTriggerChatCopy(result, gameData, runContext);
@@ -13715,7 +13726,9 @@ class CombatSimUI {
         const dto = this._editor?.getEditedDTOs()?.[playerHrid];
         if (!slot || !dto) return;
         const slots = appliedChanges.map((c) => `${c.slotType}|${c.slotIndex}`);
-        const count = collectTunables({ playerDTOs: [dto], playerIndices: [0], gameData }).filter((t) =>
+        // The Include choice the fine-tune run will use, so the count is what it will tune
+        const include = this._readTriggerChoices().include;
+        const count = collectTunables({ playerDTOs: [dto], playerIndices: [0], gameData, include }).filter((t) =>
             slots.includes(`${t.slotType}|${t.slotIndex}`)
         ).length;
         slot.outerHTML = triggerFineTuneHtml({ count });

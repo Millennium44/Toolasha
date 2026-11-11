@@ -15069,6 +15069,53 @@ describe('the Triggers option', () => {
             expect(ui.panel.querySelector('#mwi-csim-trigger-finetune').textContent).toContain('Nothing to fine-tune');
         });
 
+        test('conditions are held back when any threshold change was refused', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = { ...conditionResult(), noTunables: false, changes: [fireballChange] };
+            await ui._onTuneTriggers();
+            mocks.applyOutcome = { applied: 0, skipped: [{ reason: 'changed since analysis' }] };
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+            mocks.applyOutcome = null;
+
+            expect(mocks.rowApplied).toHaveLength(0);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain(
+                'held back because they were measured with every threshold change applied'
+            );
+        });
+
+        test('the Fine-tune count follows the panel Include choice', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            withFireball();
+            ui.panel.querySelector('#mwi-csim-trigger-include').value = 'consumables';
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(ui.panel.querySelector('#mwi-csim-trigger-finetune-btn')).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-finetune').textContent).toContain('Nothing to fine-tune');
+        });
+
+        test('a fine-tune result says it covers only the applied conditions', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            withFireball();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+            mocks.triggerResult = { scope: 'me', changes: [], unchanged: [], combined: null, simCount: 4 };
+            ui.panel.querySelector('#mwi-csim-trigger-finetune-btn').click();
+            await vi.waitFor(() =>
+                expect(ui.panel.querySelector('#mwi-csim-trigger-results').textContent).toContain(
+                    'fine-tune of the applied conditions only'
+                )
+            );
+        });
+
         test('Fine-tune on a result whose setup moved on is refused', async () => {
             ui.buildPanel();
             selectZone();
