@@ -986,6 +986,8 @@ export function planBestiaryRoute({
  * @returns {string|null}
  */
 export function clearRateLeftOutReason(zone, minClearPercent) {
+    // Never clearing leaves a zone out whatever the minimum is
+    if (zone?.neverClears) return 'never clears';
     const minimum = Number(minClearPercent);
     const rate = zone?.clearRate;
     if (rate === null || rate === undefined || !Number.isFinite(Number(rate))) return null;
@@ -994,7 +996,7 @@ export function clearRateLeftOutReason(zone, minClearPercent) {
     if (percent >= minimum - 1e-9) return null;
     // Whole percent unless rounding would make the rate look like it met the minimum
     const whole = Math.round(percent);
-    const shown = whole >= minimum ? percent.toFixed(1) : String(whole);
+    const shown = whole >= minimum ? (Math.floor(percent * 10) / 10).toFixed(1) : String(whole);
     const source = zone.clearRateSource ? ` (${zone.clearRateSource})` : '';
     return `clears ${shown}%${source} < ${minimum}% minimum`;
 }

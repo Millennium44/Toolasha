@@ -12270,6 +12270,13 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         },
         revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
     });
+    // The same dungeon with the sim clearing it three times in four, so its clear rate is 75%
+    const coveT1Mostly = () => {
+        const result = coveT1();
+        result.simResult.dungeonsCompleted = 3;
+        result.simResult.dungeonsFailed = 1;
+        return result;
+    };
     const click = (selector) =>
         ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
     const bestiaryCell = (plainName) => {
@@ -12316,8 +12323,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         // No spawn table is readable here, so the stretch is the only pace left.
         // Ten minutes a clear at T2 is 2.4x the sim's clean 24 minutes, so the
         // Jackalope's 7.75 credits/hr (62 bodies x 3 over 24 h) become 18.6 and
-        // its 190 credits to 1,000 take 10.2 h, in the column and in the plan, and 17.0 h once the sim's
-        // 66% wipe share lengthens the time by 66% (the minimum clear rate is off here).
+        // its 190 credits to 1,000 take 10.2 h, in the column and in the plan, the same with the wipe penalty, because the stretched sim time keeps its wiping hours (the minimum clear rate is off here).
         // Charging the 39 wiped attempts' kills to the 20 clears, as the plan
         // used to, made it 55.8/hr and three thresholds in a few hours while
         // the column still said a day away.
@@ -12341,12 +12347,12 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
         ];
         await ui._displayAllZonesResults([denT2()], 24, gameData);
 
-        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 17.0h');
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 10.2h');
 
         click('#mwi-csim-bestiary-plan-btn');
         const rows = planRows();
         expect(rows).toHaveLength(1);
-        expect(rows[0][2]).toBe('16:58');
+        expect(rows[0][2]).toBe('10:13');
         expect(rows[0][4]).toBe('+4');
         expect(rows[0][5]).toContain('Jackalope 810 → 1000');
         expect(rows[0][5]).not.toContain('Manticore 496 → 1000');
@@ -12402,7 +12408,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             teamKey: 'Me',
         });
         await ui._displayAllZonesResults([denT2()], 24, gameData);
-        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 17.0h');
+        expect(bestiaryCell('Chimerical Den').textContent).toContain('1st 10.2h');
     });
 
     test('another tier’s runs do not set a T2 dungeon’s pace', async () => {
@@ -12580,19 +12586,53 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             describe('the wipe penalty and the clear rate the plan checks', () => {
                 const wiped = (zone) => withWipeRules(zone);
 
-                test('a wipe-exclusive row (your clear time, no failures on record) is charged the sim’s 25% wipe share', () => {
+                test('a wipe-exclusive row (your clear time, no failures on record) is charged 1 / 0.75 attempts per clear (+33%)', () => {
                     const row = coveRow({ completions: 18, failed: 6, cleanClearSeconds: 3600 });
                     const runs = [clear(2), clear(3), clear(4)];
                     const zone = wiped(bestiaryPlanZoneForRow(row, runs, who));
                     const base = bestiaryPlanZoneForRow(row, runs, who);
                     expect(zone.clearRate).toBeCloseTo(0.75, 9);
                     expect(zone.clearRateSource).toBe('sim');
-                    expect(zone.wipePenaltyPercent).toBeCloseTo(25, 9);
-                    expect(zone.creditsPerHour[MARK]).toBeCloseTo(base.creditsPerHour[MARK] / 1.25, 9);
-                    expect(zone.encountersPerHour).toBeCloseTo(base.encountersPerHour / 1.25, 9);
-                    expect(zone.paceLabel).toMatch(/, \+25% for wipes$/);
-                    expect(zone.note).toContain('time +25% for wipes (75% of attempts clear, sim)');
+                    expect(zone.wipePenaltyPercent).toBeCloseTo(100 / 3, 9);
+                    expect(zone.creditsPerHour[MARK]).toBeCloseTo(base.creditsPerHour[MARK] * 0.75, 9);
+                    expect(zone.encountersPerHour).toBeCloseTo(base.encountersPerHour * 0.75, 9);
+                    expect(zone.paceLabel).toMatch(/, \+33% for wipes$/);
+                    expect(zone.paceLabel).not.toContain('no wipes counted');
+                    expect(zone.note).toContain('time +33% for wipes (75% of attempts clear, sim)');
                     expect('clearInfo' in zone).toBe(false);
+                });
+
+                test('never clears (a wipe-exclusive row at 0%) is left out even with the minimum at 0, and stays finite', () => {
+                    const row = coveRow({ completions: 0, failed: 60 });
+                    const raw = bestiaryPlanZoneForRow(row, [run(), run()], who);
+                    const zone = wiped(raw);
+                    expect(zone.neverClears).toBe(true);
+                    expect(zone.clearRate).toBe(0);
+                    expect(Object.values(zone.creditsPerHour).every(Number.isFinite)).toBe(true);
+                    const plan = planBestiaryRoute({ zones: [zone], counts: {}, hours: 5, minClearPercent: 0 });
+                    expect(plan.segments).toEqual([]);
+                    expect(plan.leftOut[0].reason).toBe('never clears');
+                });
+
+                test('a clear rate that is not a number is no data: unknown, nothing charged', () => {
+                    const base = { zoneHrid: 'z|T0', isDungeon: true, creditsPerHour: { a: 1 } };
+                    const zone = withWipeRules({
+                        ...base,
+                        clearInfo: { rate: NaN, source: 'sim', timeHasWipes: false },
+                    });
+                    expect(zone.clearRate).toBeNull();
+                    expect(zone.creditsPerHour).toEqual({ a: 1 });
+                });
+
+                test('the stretch of the sim’s clear time keeps the sim’s wiping hours: no second penalty', () => {
+                    // No spawn table is readable, so your clear time stretches the sim's rates (wipes and all)
+                    mocks.actionDetails = {};
+                    const row = coveRow({ completions: 18, failed: 6, cleanClearSeconds: 3600 });
+                    const zone = wiped(bestiaryPlanZoneForRow(row, [run()], who));
+                    expect(zone.note).toBe('measured (1 run)');
+                    expect(zone.clearRate).toBeCloseTo(0.75, 9);
+                    expect(zone.wipePenaltyPercent).toBe(0);
+                    expect(zone.paceLabel).not.toContain('for wipes');
                 });
 
                 test('a wipe-inclusive row (the sim’s time with its wipes) keeps its time, with the rate still checked', () => {
@@ -12957,7 +12997,7 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
                 mocks.dungeonRuns = [run({ ...old, team: ['Me'] })];
                 mocks.monsters = [{ monsterHrid: JACK, count: 9, tierData: '{"1":9}' }];
                 mocks.monstersAt = READ_AT;
-                await ui._displayAllZonesResults([coveT1()], 24, gameData);
+                await ui._displayAllZonesResults([coveT1Mostly()], 24, gameData);
                 click('#mwi-csim-bestiary-plan-btn');
                 expect(planRows()[0][1]).toContain('your 1 run, tier from Bestiary');
                 mocks.monstersAt = null;
@@ -13045,14 +13085,15 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
 
         test('the plan row, its Fights, the copied text and the table column all read your runs', async () => {
             mocks.dungeonRuns = [run({ team: ['Me'] }), run({ team: ['Me'] })];
-            await ui._displayAllZonesResults([coveT1()], 24, gameData);
+            await ui._displayAllZonesResults([coveT1Mostly()], 24, gameData);
             click('#mwi-csim-bestiary-plan-btn');
 
             const rows = planRows();
             expect(rows[0][1]).toContain('[D] Pirate Cove T1');
-            expect(rows[0][1]).toContain('your 2 runs, no wipes counted');
+            expect(rows[0][1]).toContain('your 2 runs, +33% for wipes');
+            expect(rows[0][1]).not.toContain('no wipes counted');
             const tag = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td span')].find((span) =>
-                span.textContent.includes('no wipes counted')
+                span.textContent.includes('+33% for wipes')
             );
             expect(tag.getAttribute('style')).toContain('#ffb74d');
             // Fills the count it shows: clears, not waves and not a dash
@@ -13060,15 +13101,15 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             expect(ui.panel.querySelectorAll('.mwi-csim-plan-open-btn')).toHaveLength(1);
             const nameCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[1];
             expect(nameCell.getAttribute('title')).toContain('measured (2 runs');
-            expect(ui._bestiaryPlanText()).toContain('[your 2 runs, no wipes counted, +100% for wipes]');
+            expect(ui._bestiaryPlanText()).toContain('[your 2 runs, +33% for wipes]');
 
             const cell = bestiaryCell('Pirate Cove');
             expect(cell.getAttribute('title')).toContain('Dungeon pace: measured (2 runs');
             // Solo at T1 and two clears an hour: a marksman's three a clear are worth 2 each,
             // twelve credits an hour, and the boss four, whichever reaches its threshold first
-            // The sim wiped every attempt, so the wipe penalty halves both
-            expect(ui._bestiaryPlanZones[0].creditsPerHour[MARK]).toBeCloseTo(6, 9);
-            expect(ui._bestiaryPlanZones[0].creditsPerHour[JACK]).toBeCloseTo(2, 9);
+            // The sim clears three attempts in four, and your clear time leaves the wipes out: x 0.75
+            expect(ui._bestiaryPlanZones[0].creditsPerHour[MARK]).toBeCloseTo(9, 9);
+            expect(ui._bestiaryPlanZones[0].creditsPerHour[JACK]).toBeCloseTo(3, 9);
         });
 
         test('with no runs the row says it is a sim estimate from failed runs', async () => {
@@ -13109,6 +13150,19 @@ describe('the Bestiary column and the plan read one set of dungeon rates', () =>
             expect(leftOut()).toBe('');
             expect(mocks.store.get('settings:combatSimBestiaryPlanMinClear')).toBe(0);
             expect(ui._bestiaryPlanMinClear).toBe(0);
+        });
+
+        test('the Bestiary column marks a dungeon the route leaves out, and drops the mark when the minimum is lowered', async () => {
+            ui._bestiaryPlanMinClear = undefined;
+            await ui._displayAllZonesResults([denT2()], 24, gameData);
+            expect(bestiaryCell('Chimerical Den').textContent).toContain('left out');
+            expect(bestiaryCell('Chimerical Den').getAttribute('title')).toContain(
+                'Left out of the Bestiary route: clears'
+            );
+            const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-minclear');
+            input.value = '0';
+            input.dispatchEvent(new window.Event('change', { bubbles: true }));
+            await vi.waitFor(() => expect(bestiaryCell('Chimerical Den').textContent).not.toContain('left out'));
         });
 
         test('a stored 0 is read back as 0', async () => {

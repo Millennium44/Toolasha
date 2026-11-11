@@ -95,6 +95,7 @@ import {
     formatPlanHours,
     formatPlanText,
     parseBestiaryZoneKey,
+    clearRateLeftOutReason,
 } from '../../utils/bestiary-plan.js';
 import { isClearRun, RUN_RESULT_FAIL } from '../../utils/dungeon-run-result.js';
 import { openCombatZoneAtTier } from '../../utils/combat-zone-open.js';
@@ -1800,7 +1801,8 @@ export function wipeTimeInfo(info, timeHasWipes) {
 
 /**
  * Charge a dungeon zone for its wipes and carry its clear rate to the planner. Adjusted time is the
- * measured time x (1 + wipe share), so the zone's credits and clears per hour are divided by that. The
+ * measured time / (1 - wipe share), the expected attempts per clear, so the zone's credits and clears per hour are
+ * multiplied by the clear rate. A rate of 0 is never clearing: `neverClears`, left out of the route. The
  * label and note say so (`+18% for wipes`); a row whose time already includes its wipes (`timeHasWipes`) keeps its
  * time and only carries the rate; an unknown clear rate is said to be unknown and charges nothing.
  *
@@ -1821,23 +1823,34 @@ export function withWipeRules(planZone) {
             note: [zone.note, unknown].filter(Boolean).join(' · '),
         };
     }
-    const wipeShare = Math.min(1, Math.max(0, 1 - info.rate));
-    const out = { ...zone, clearRate: info.rate, clearRateSource: info.source, wipePenaltyPercent: 0 };
+    // A rate that is not a number is no data: unknown, charged nothing
+    if (!Number.isFinite(info.rate)) return withWipeRules({ ...planZone, clearInfo: null });
+    const rate = Math.min(1, Math.max(0, info.rate));
+    const wipeShare = 1 - rate;
+    const out = { ...zone, clearRate: rate, clearRateSource: info.source, wipePenaltyPercent: 0 };
     // A time that already includes its wipes is not charged twice; the rate still faces the minimum
     if (!(wipeShare > 0) || info.timeHasWipes) return out;
-    const factor = 1 + wipeShare;
+    // Never clears: no number of attempts gets a clear, so no finite time exists to rank it by
+    if (!(rate > 0)) {
+        out.neverClears = true;
+        out.note = [zone.note, 'never clears (every attempt wipes), so it is left out of the route']
+            .filter(Boolean)
+            .join(' · ');
+        return out;
+    }
+    // Expected attempts per clear: the measured time is divided by the clear rate
+    const factor = 1 / rate;
     const scale = (rates) =>
-        Object.fromEntries(Object.entries(rates || {}).map(([hrid, rate]) => [hrid, Number(rate) / factor]));
-    const percent = Math.max(1, Math.round(wipeShare * 100));
+        Object.fromEntries(Object.entries(rates || {}).map(([hrid, value]) => [hrid, Number(value) * rate]));
+    const added = (factor - 1) * 100;
+    const percent = Math.max(1, Math.round(added));
     const label = `+${percent}% for wipes`;
     out.creditsPerHour = scale(zone.creditsPerHour);
-    if (Number.isFinite(zone.encountersPerHour)) out.encountersPerHour = zone.encountersPerHour / factor;
-    out.wipePenaltyPercent = wipeShare * 100;
-    out.paceLabel = [zone.paceLabel, label].filter(Boolean).join(', ');
-    out.note = [
-        zone.note,
-        `time +${percent}% for wipes (${Math.round(info.rate * 100)}% of attempts clear, ${info.source})`,
-    ]
+    if (Number.isFinite(zone.encountersPerHour)) out.encountersPerHour = zone.encountersPerHour * rate;
+    out.wipePenaltyPercent = added;
+    // The row's time now charges wipes, so it can no longer say none were counted
+    out.paceLabel = [(zone.paceLabel || '').replace(', no wipes counted', ''), label].filter(Boolean).join(', ');
+    out.note = [zone.note, `time +${percent}% for wipes (${Math.round(rate * 100)}% of attempts clear, ${info.source})`]
         .filter(Boolean)
         .join(' · ');
     return out;
@@ -1940,12 +1953,13 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
     const fails = failedAttempts.length;
     const clearsHere = paceRuns.filter((run) => runTierOf(run) === row.tier);
     // The clear rate rides on the zone for {@link withWipeRules}, which `_buildBestiaryPlanZones` applies next
-    const finish = (fields, usedOwn = false) => ({
+    const finish = (fields, usedOwn = false, leavesWipesOut = false) => ({
         ...withNote(withNote({ ...zone, isDungeon: true, ...fields }, tierNote), partySizeNote),
-        // Only your own clear time with no failure on record leaves its wipes out of the time
+        // Only a time built from your clears and the spawn tables, with no failure on record, leaves its wipes
+        // out; the sim's time and a stretch of it (which keeps the sim's wiping hours) already hold them
         clearInfo: wipeTimeInfo(
             dungeonClearRate({ usedOwn, clearsHere, fails, completions, failed }),
-            !(usedOwn && fails === 0)
+            !(leavesWipesOut && fails === 0)
         ),
     });
     const atShare = (rates, share) =>
@@ -1995,6 +2009,7 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
                     paceLabel: yours(measured.runs, noWipes ? 'no wipes counted' : wipesCounted),
                     paceWarn: noWipes || (few && fails > 0),
                 },
+                true,
                 true
             );
         }
@@ -2058,7 +2073,7 @@ export function bestiaryPlanZoneForRow(row, runs = [], who = {}) {
  * @param {Array<Object>} planZones - One planner zone per row
  * @param {Object} counts - monsterHrid → Bestiary credits so far
  */
-export function applyPlanRatesToRows(rows, planZones, counts) {
+export function applyPlanRatesToRows(rows, planZones, counts, minClearPercent = 0) {
     if (!Array.isArray(rows) || !Array.isArray(planZones) || !counts) return;
     rows.forEach((row, index) => {
         const zone = planZones[index];
@@ -2067,6 +2082,8 @@ export function applyPlanRatesToRows(rows, planZones, counts) {
         row._bestiary = outlook;
         row.bestiary = outlook.pointsPerDay;
         row._bestiaryNote = zone.isDungeon ? zone.note || null : null;
+        // The column says what the route does with a dungeon the minimum clear rate leaves out
+        row._bestiaryLeftOut = zone.isDungeon ? clearRateLeftOutReason(zone, minClearPercent) : null;
     });
 }
 
@@ -5862,7 +5879,7 @@ class CombatSimUI {
         // are restated at your clear time for the plan, so the column is
         // restated with them, or the table calls a zone a day away that the
         // plan clears in an afternoon. One plan zone per row, in row order.
-        if (bestiaryCounts) applyPlanRatesToRows(rows, planZones, bestiaryCounts);
+        if (bestiaryCounts) applyPlanRatesToRows(rows, planZones, bestiaryCounts, this._bestiaryMinClear());
 
         // The Bestiary's own winner: most points in a day, ties to the earlier first point
         const bestBestiary = bestiaryCounts
@@ -6098,7 +6115,10 @@ class CombatSimUI {
                                     : null;
                                 display =
                                     `${outlook.pointsPerDay.toFixed(1)}` +
-                                    (first ? `<span style="color:#888; font-size:9px;"> · 1st ${first}</span>` : '');
+                                    (first ? `<span style="color:#888; font-size:9px;"> · 1st ${first}</span>` : '') +
+                                    (row._bestiaryLeftOut
+                                        ? '<span style="color:#ffb74d; font-size:9px;"> · left out</span>'
+                                        : '');
                                 const lines = outlook.monsters
                                     .slice(0, 8)
                                     .map((m) => {
@@ -6112,7 +6132,10 @@ class CombatSimUI {
                                     })
                                     .join('\n');
                                 const paceNote = row._bestiaryNote ? `\nDungeon pace: ${row._bestiaryNote}.` : '';
-                                const cellTitle = `${outlook.pointsGained} points in the first 24 h here.${paceNote}\n${lines}`;
+                                const leftOutNote = row._bestiaryLeftOut
+                                    ? `\nLeft out of the Bestiary route: ${row._bestiaryLeftOut}.`
+                                    : '';
+                                const cellTitle = `${outlook.pointsGained} points in the first 24 h here.${paceNote}${leftOutNote}\n${lines}`;
                                 style += ' text-align:right; font-variant-numeric:tabular-nums;';
                                 const bestVal = maxVals[col.key];
                                 if (bestVal !== undefined && val === bestVal && val > 0 && rows.length > 1) {
@@ -6527,7 +6550,7 @@ class CombatSimUI {
                 <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
-                <label style="color:#888; display:flex; align-items:center; gap:4px;" title="A dungeon that clears less often than this (in the sim, or in your own recorded runs where the row uses them) is left out of the route; the plan lists it with the reason. A dungeon with no clear data is kept. 0 turns this off. Dungeons that stay in are also charged for wipes: their time is lengthened by the share of attempts that wipe.">Min clear %
+                <label style="color:#888; display:flex; align-items:center; gap:4px;" title="A dungeon that clears less often than this (in the sim, or in your own recorded runs where the row uses them) is left out of the route; the plan lists it with the reason. A dungeon with no clear data is kept. 0 turns this off. Dungeons timed from your clears alone are also charged for wipes: their time is divided by (1 - wipe share). A dungeon that never clears is always left out.">Min clear %
                     <input id="mwi-csim-bestiary-plan-minclear" type="number" min="0" max="100" step="1" value="${minClear}" style="${inputStyle}">
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="${GAME_BTN_CSS} padding:2px 8px; font-size:11px;" ${GAME_BTN_HOVER}>Plan</button>
@@ -6539,7 +6562,7 @@ class CombatSimUI {
                     // changes nothing — and it never filtered the plan.
                     this._allZonesMode === 'dungeons' || this._allZonesMode === SOLO_VS_PARTY_MODE
                         ? ''
-                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables, less any failed attempts you have recorded; a row marked no wipes counted has none on record to charge. With no runs it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. A dungeon's time is also lengthened by its share of wipes (shown on the row), and one below Min clear % is left out of the route and listed with the reason. Takes effect on the next All Zones run.">
+                        : `<label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own runs at that tier and party size measured, where there are any. One the sim wipes in is planned from those runs and its spawn tables, less any failed attempts you have recorded; a row marked no wipes counted has none on record to charge. With no runs it stays a sim estimate that includes failed attempts, and the row says so. Runs recorded with no tier are not used, unless your Bestiary shows the dungeon's final boss at one tier only. A dungeon timed from your clears alone is also lengthened to its expected attempts per clear, time / (1 - wipe share) (shown on the row), and one below Min clear % is left out of the route and listed with the reason. Takes effect on the next All Zones run.">
                     <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
                     Include dungeons
                 </label>`
@@ -6617,6 +6640,11 @@ class CombatSimUI {
             event.target.value = String(this._bestiaryPlanMinClear);
             this._persistBestiaryPlanPrefs();
             if (this._bestiaryPlanActive) this._drawBestiaryPlan();
+            // The table's Bestiary column marks the dungeons the minimum leaves out, so it is drawn again
+            const args = this._allZonesRedrawArgs;
+            if (this._allZonesResults && args && !this._isBusy()) {
+                this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData, args.playerHrid);
+            }
         });
         box.querySelector('#mwi-csim-bestiary-plan-btn').addEventListener('click', (event) => {
             event.stopPropagation();

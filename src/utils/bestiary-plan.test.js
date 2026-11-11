@@ -1264,7 +1264,7 @@ describe('the minimum clear rate', () => {
         });
         expect(names(plan)).toEqual(['at']);
         expect(plan.leftOut).toHaveLength(1);
-        expect(plan.leftOut[0].reason).toBe('clears 69.96% (sim) < 70% minimum'.replace('69.96', '70.0'));
+        expect(plan.leftOut[0].reason).toBe('clears 69.9% (sim) < 70% minimum');
     });
 
     test('zero clears is a known 0%, left out; 100% stays; no data is unknown and stays', () => {
