@@ -482,6 +482,7 @@ describe('balancedScore', () => {
             dps: 4,
             encounters: 7,
             attempts: 0,
+            failedRuns: 0,
         });
         sample.perPlayer.a.revenue = 5;
         sample.perPlayer.b.cost = 6;
@@ -494,6 +495,7 @@ describe('balancedScore', () => {
             dps: 44,
             encounters: 7,
             attempts: 0,
+            failedRuns: 0,
         });
     });
 });

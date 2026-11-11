@@ -857,7 +857,7 @@ async function measureCombatTriggers({
     const origMetrics = origSamples.map((s) => scopeMetrics(s, scopeHrids));
     const tunedMetrics = tunedSamples.map((s) => scopeMetrics(s, scopeHrids));
     const baseScope = {};
-    for (const key of ['xp', 'profit', 'revenue', 'cost', 'deaths', 'dps', 'encounters', 'attempts']) {
+    for (const key of ['xp', 'profit', 'revenue', 'cost', 'deaths', 'dps', 'encounters', 'attempts', 'failedRuns']) {
         baseScope[key] = mean(origMetrics.map((m) => m[key]));
     }
     const objective = result.objective ?? 'balanced';

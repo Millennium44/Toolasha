@@ -57,6 +57,7 @@ const RESULT_FIELDS = [
     'scope',
     'include',
     'objective',
+    'dungeon',
     'precision',
     'minGain',
     'simCount',
