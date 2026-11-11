@@ -17,6 +17,9 @@ Configure has Save party and Load party: save the whole roster, you and imported
 ### Combat Sim zone icons show before you've been in combat
 
 Zone and monster icons in the sim's zone list stayed blank on a character that hadn't been in combat or opened the Combat page since the page loaded. They now load either way.
+### Combat Sim Copy for chat
+
+Trigger tuning and Upgrade results have a "Copy for chat" button that copies one short line per player (the trigger changes, and optionally the top upgrades), each within the game chat's 400-byte limit and split into numbered parts when longer.
 
 <!-- shipped in 3.84.0 -->
 
