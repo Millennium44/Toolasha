@@ -11015,7 +11015,10 @@ class LabSimUI {
 
         for (const buy of detail.buys || []) {
             const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
-            parts.push(line(`Buy ${simItemLabelHtml(buy.hrid, buy.name)} +${buy.enhancementLevel} — ${price}`));
+            // A held copy a route uses up is not bought: what it costs is the sale it gives up
+            const verb = buy.forgone ? 'Use your' : 'Buy';
+            const tail = buy.forgone ? `gives up ${price} of sale` : price;
+            parts.push(line(`${verb} ${simItemLabelHtml(buy.hrid, buy.name)} +${buy.enhancementLevel} — ${tail}`));
         }
 
         // Nothing is listed at that enhancement, so half the figure above is a

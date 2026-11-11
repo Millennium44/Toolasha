@@ -175,7 +175,7 @@ vi.mock('../enhancement/enhancement-params-source.js', () => ({
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() }));
 vi.mock('../../utils/tea-parser.js', () => ({ parseArtisanBonus: () => 0, getDrinkConcentration: () => 0 }));
 
-const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf, priceMergedAcquisition } =
+const { calculateUpgradeCost, explainUpgradeCost, saleTaxRateOf, priceMergedAcquisition, matchingCostDetail } =
     await import('./upgrade-advisor.js');
 const { calculateEnhancementPath } = await import('../enhancement/tooltip-enhancement.js');
 
@@ -543,6 +543,32 @@ describe('route pricing: a supported row ranks on the shared route', () => {
         state.compareRoutes = false;
         expect(explainUpgradeCost(candidate, gameData)).toEqual(before);
         expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
+    });
+    test.each([
+        ['a custom buy price on the target', () => (state.custom[`${SWORD}:0:buy`] = 700)],
+        ['a custom sell price on the replaced piece', () => (state.custom[`${OLD_SWORD}:0:sell`] = 50)],
+    ])('%s keeps the advisor quote, which honors it', (_label, setup) => {
+        state.books[`${OLD_SWORD}:0`] = { ask: 100, bid: 80 };
+        state.inventory = [
+            { itemHrid: OLD_SWORD, enhancementLevel: 0, count: 1, itemLocationHrid: '/item_locations/main_hand' },
+        ];
+        const candidate = { ...tier(0), currentHrid: OLD_SWORD, currentLevel: 0, removedItems: undefined };
+        setup();
+        const before = calculateUpgradeCost(candidate, gameData);
+        state.compareRoutes = true;
+        const detail = explainUpgradeCost(candidate, gameData);
+        expect(detail.sharedRoute).toMatchObject({ applied: false, reason: expect.stringContaining('custom price') });
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(before);
+    });
+    test('a route breakdown that no longer lands on the row Cost is dropped, kept and checked rows too', () => {
+        const detail = { net: 1000, sharedRoute: { applied: true, route: 'craft', real: 1000 } };
+        expect(matchingCostDetail(detail, 1000, {})).toBe(detail);
+        expect(matchingCostDetail(detail, 400, {})).toBeNull();
+        expect(matchingCostDetail(detail, 400, { checkedSwap: true })).toBeNull();
+        expect(matchingCostDetail(detail, 400, { keptItems: [{ hrid: OLD_SWORD }] })).toBeNull();
+        // The advisor's own breakdown keeps its old rule: a kept or checked row always carries it
+        const ownDetail = { net: 1000, sharedRoute: { applied: false, reason: 'x' } };
+        expect(matchingCostDetail(ownDetail, 400, { checkedSwap: true })).toBe(ownDetail);
     });
     test('party and multi-slot rows are explicitly unsupported, not priced from the local bag', () => {
         state.compareRoutes = true;
