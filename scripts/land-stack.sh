@@ -198,7 +198,11 @@ stack_prs() {
         [ -n "$commits" ] || die "PR #$n has no commits beyond main"
         for c in $commits; do pick_commit "$c"; done
         STACKED_SHA[$n]="$(git rev-parse HEAD)"
-        ENTRIES[$n]="$(git diff "$mb" "refs/pr/$n" -- CHANGELOG.md | grep -c '^+### ' || true)"
+        # Net titles: a PR that renames an entry removes one title and adds another
+        local added removed
+        added="$(git diff "$mb" "refs/pr/$n" -- CHANGELOG.md | grep -c '^+### ' || true)"
+        removed="$(git diff "$mb" "refs/pr/$n" -- CHANGELOG.md | grep -c '^-### ' || true)"
+        ENTRIES[$n]=$((added - removed))
         echo "PR #$n stacked: ${PRE_SHA[$n]:0:9} -> ${STACKED_SHA[$n]:0:9}"
     done
     # Union merges drop the blank line between entries; prettier restores it.
