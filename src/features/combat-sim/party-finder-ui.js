@@ -736,8 +736,11 @@ export class PartyFinderTab {
     async _loadIncludeParty() {
         const ownerId = dataManager.getCurrentCharacterId();
         if (ownerId == null) return;
+        const edits = this._includePartyEdits || 0;
         const saved = await storage.get(this._includePartyKey(ownerId), 'settings', null);
         if (!this.root || dataManager.getCurrentCharacterId() !== ownerId) return;
+        // The player flipped the box while this read was out: their click is newer than what was saved
+        if ((this._includePartyEdits || 0) !== edits) return;
         const next = saved !== false;
         if (next === this._includeParty) return;
         this._includeParty = next;
@@ -753,6 +756,7 @@ export class PartyFinderTab {
      */
     async _onIncludeParty(checked) {
         const ownerId = dataManager.getCurrentCharacterId();
+        this._includePartyEdits = (this._includePartyEdits || 0) + 1;
         this._includeParty = Boolean(checked);
         this._refreshParty();
         if (ownerId == null) return;
@@ -875,6 +879,7 @@ export class PartyFinderTab {
             members: this._partyMembers,
             savedEntries: this._roster.entries,
             includeParty: this._includeParty,
+            neverIds: new Set([...this._partyChoices].filter(([, choice]) => choice === 'never').map(([id]) => id)),
         });
     }
 
@@ -943,6 +948,8 @@ export class PartyFinderTab {
                 choice.value = this._partyChoices.get(row.id) || 'always';
                 choice.addEventListener('change', () => {
                     this._partyChoices.set(row.id, choice.value);
+                    // Never hands the run back to a saved teammate of the same name, so its row changes too
+                    this._renderRoster();
                     this._renderPlan();
                 });
                 line.appendChild(choice);

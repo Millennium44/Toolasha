@@ -57,6 +57,12 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (k, _s, fallback) => {
+            // A read in flight already holds the old value when a later write lands
+            if (String(k).startsWith('combatSimPartyIncludeParty_') && state.includeGate) {
+                const held = k in state.prefs ? state.prefs[k] : fallback;
+                await state.includeGate;
+                return held;
+            }
             if (
                 String(k).startsWith('combatSimPartyScoreWeight_') ||
                 String(k).startsWith('combatSimPartyIncludeParty_')
@@ -2129,6 +2135,25 @@ describe('include my party', () => {
         await mountTab();
         expect(el('include-party').checked).toBe(false);
         expect(partyRows()).toHaveLength(0);
+    });
+
+    test('a click on the box while the saved switch is still loading wins over the saved value', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.prefs['combatSimPartyIncludeParty_me'] = true;
+        let release;
+        state.includeGate = new Promise((resolve) => (release = resolve));
+        try {
+            await mountTab();
+            el('include-party').checked = false;
+            el('include-party').dispatchEvent(new Event('change'));
+            await flush();
+            release();
+            await flush();
+            expect(el('include-party').checked).toBe(false);
+            expect(partyRows()).toHaveLength(0);
+        } finally {
+            state.includeGate = null;
+        }
     });
 
     test('the party changing while the tab is open redraws', async () => {

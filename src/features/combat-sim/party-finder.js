@@ -793,24 +793,26 @@ const sameName = (a, b) =>
  *
  * - A member whose profile is not loaded (`dto` null) is `missing`: left out of the runs, never given a blank build.
  * - A member who is also a saved teammate (same name) is run once, as the party member; the saved teammate is
- *   returned in `suppressed` and is not run.
+ *   returned in `suppressed` and is not run — unless that party member is set to Never, when the saved one runs.
  * @param {Object} options
  * @param {Array<{characterID: *, characterName: string, dto: (Object|null)}>} options.members - The other members
  *   of your party (not you), with their sim build when their profile is loaded
  * @param {Array<{id: string, name: string}>} [options.savedEntries] - The saved teammates
  * @param {boolean} [options.includeParty=true]
+ * @param {Set<string>} [options.neverIds] - Party rows the player set to Never
  * @returns {{rows: Array<{id: string, characterId: string, name: string, status: 'ready'|'missing',
  *   duplicates: Array<string>}>, entries: Array<Object>, suppressed: Set<string>}} `entries` are the ready rows in
  *   roster shape, for {@link planSweep}
  */
-export function planPartyLock({ members, savedEntries = [], includeParty = true }) {
+export function planPartyLock({ members, savedEntries = [], includeParty = true, neverIds = new Set() }) {
     const out = { rows: [], entries: [], suppressed: new Set() };
     if (!includeParty) return out;
     for (const member of Array.isArray(members) ? members : []) {
         const id = `${PARTY_ENTRY_PREFIX}${member.characterID}`;
         const name = String(member.characterName || 'Party member');
         const ready = Boolean(member.dto);
-        const duplicates = ready ? savedEntries.filter((e) => sameName(e.name, name)).map((e) => e.id) : [];
+        const duplicates =
+            ready && !neverIds.has(id) ? savedEntries.filter((e) => sameName(e.name, name)).map((e) => e.id) : [];
         for (const dup of duplicates) out.suppressed.add(dup);
         out.rows.push({
             id,

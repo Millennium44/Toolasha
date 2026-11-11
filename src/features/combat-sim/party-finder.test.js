@@ -881,6 +881,19 @@ describe('your party locked into every party', () => {
         ]);
     });
 
+    test('a party member set to Never gives the run back to the saved teammate of the same name', () => {
+        const saved = [mate('a', 'Captain')];
+        const kept = planPartyLock({ members: [member('1', 'Captain')], savedEntries: saved });
+        expect([...kept.suppressed]).toEqual(['a']);
+        const never = planPartyLock({
+            members: [member('1', 'Captain')],
+            savedEntries: saved,
+            neverIds: new Set(['party:1']),
+        });
+        expect([...never.suppressed]).toEqual([]);
+        expect(never.rows[0].duplicates).toEqual([]);
+    });
+
     test('more locked members than the zone takes: that zone is skipped with a note, the other still runs', () => {
         const lock = planPartyLock({
             members: [member('1', 'Captain'), member('2', 'Dawn'), member('3', 'Eve')],
