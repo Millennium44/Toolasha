@@ -447,9 +447,24 @@ export function coarseGrid(tunable, ctx) {
     const step = coarseStep(tunable, ctx);
     const count = isPercentKind(tunable.kind) ? 11 : tunable.kind === KIND_ENEMY_HP ? COARSE_POINTS : POOL_STEPS + 1;
     const values = [];
-    for (let i = 0; i < count; i++) values.push(clampValue(tunable.kind, i * step));
+    for (let i = 0; i < count; i++) {
+        const value = clampValue(tunable.kind, i * step);
+        if (!neverTrue(tunable, value)) values.push(value);
+    }
     values.push(clampValue(tunable.kind, tunable.current ?? tunable.original));
     return uniqueSorted(values);
+}
+
+/**
+ * Whether a candidate value would make the row impossible: a percentage can never be at or below 0
+ * for a living unit, so `<= 0` would never cast (and the sim's never-fires warning would flag the
+ * very value the tuner suggested). The current value is still measured as the reference.
+ * @param {Object} tunable - A tunable
+ * @param {number} value - Candidate threshold
+ * @returns {boolean}
+ */
+function neverTrue(tunable, value) {
+    return isPercentKind(tunable.kind) && tunable.comparatorHrid === CMP_LTE && value <= 0;
 }
 
 /**
@@ -471,7 +486,7 @@ export function fineGrid(tunable, ctx, center, tried = new Set()) {
           })();
     const values = offsets
         .map((o) => clampValue(tunable.kind, center + o))
-        .filter((v) => v !== center && !tried.has(v));
+        .filter((v) => v !== center && !tried.has(v) && !neverTrue(tunable, v));
     return uniqueSorted(values);
 }
 

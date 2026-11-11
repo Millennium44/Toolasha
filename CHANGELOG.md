@@ -19,7 +19,7 @@ The Results tab lists each player's abilities with casts per hour, and marks any
 
 ### Trigger tuning covers heal triggers and dungeon wipes
 
-Tuning now adjusts "allies' lowest HP %" triggers on heal abilities and tries them as new conditions. In a dungeon, the score now counts failed runs, so a change that prevents wipes ranks higher.
+Tuning in the Combat Sim and the Lab now adjusts "allies' lowest HP %" triggers on heal abilities and tries them as new conditions. In a dungeon, the score now counts failed runs, so a change that prevents wipes ranks higher.
 
 ### Combat Sim comparison shows when each run was made
 

@@ -228,3 +228,20 @@ describe('buildConditionCandidates for a heal', () => {
         expect(rowsFor(QUICK_AID, gd).some((r) => r.dependencyHrid === ALLIES)).toBe(false);
     });
 });
+
+describe('the grid never offers a threshold that can never be true', () => {
+    test('a "<=" percentage row is not offered 0, which would never cast', () => {
+        const tunable = { kind: KIND_ALLY_PCT, comparatorHrid: LTE, original: 50 };
+        expect(coarseGrid(tunable, {})).not.toContain(0);
+        expect(fineGrid(tunable, {}, 2)).not.toContain(0);
+        expect(coarseGrid({ kind: KIND_ENEMY_PCT, comparatorHrid: LTE, original: 50 }, {})).not.toContain(0);
+    });
+
+    test('a ">=" percentage row still runs from 0', () => {
+        expect(coarseGrid({ kind: KIND_ALLY_PCT, comparatorHrid: GTE, original: 50 }, {})).toContain(0);
+    });
+
+    test('the current value is still measured even when it is the impossible one', () => {
+        expect(coarseGrid({ kind: KIND_ALLY_PCT, comparatorHrid: LTE, original: 0 }, {})).toContain(0);
+    });
+});
