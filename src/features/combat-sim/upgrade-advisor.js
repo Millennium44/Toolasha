@@ -3727,7 +3727,11 @@ function resolveMirrorBase(
     }
     // No plan can use the taken piece (an input has no price): the fresh route, with the piece still sold
     plan = plan || fresh;
-    if (!Number.isFinite(plan.pay) || (!compareOnly && !(plan.pay + plan.forfeit < viaOrdinary))) return null;
+    const beatsOrdinary = (p) => Number.isFinite(p.pay) && (compareOnly || p.pay + p.forfeit < viaOrdinary);
+    // Using the piece lost to buying the target outright, so the piece is sold either way: then the fresh
+    // mirror, which also sells it, still competes with that outright purchase
+    if (plan !== fresh && !beatsOrdinary(plan) && beatsOrdinary(fresh)) plan = fresh;
+    if (!beatsOrdinary(plan)) return null;
 
     // The base copies the route buys, for the Market bill. A level the mirror builds is built from its
     // two inputs in turn, so the leaves are what is bought: a listed level at its own level, and a level

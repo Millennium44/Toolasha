@@ -867,6 +867,24 @@ describe('refined target priced from a held base', () => {
                     expect(detail.credit).toBeGreaterThan(0);
                 });
 
+                test('when the held piece loses to an outright buy, a fresh mirror that also sells it still competes', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    // Outright sits between the fresh mirror and the mirror that spends the worn +10
+                    const freshMirror = ladder.mirrorTotals[12];
+                    const withHeld = ladder.best[11] + 1_000_000 + DEAR;
+                    const outright = Math.round((freshMirror + withHeld) / 2);
+                    expect(outright).toBeLessThan(withHeld);
+                    state.noAsk = false;
+                    state.askFor = (hrid, level) => (hrid === SWORD && level === 12 ? outright : 0);
+                    const detail = explainUpgradeCost(swapOff(10), gameData);
+                    expect(detail.source).toBe('mirror');
+                    expect(detail.buys[0].price).toBeCloseTo(freshMirror, 0);
+                    // The worn +10 is not used, so it is sold
+                    expect(detail.ladder.mirror.heldLevels).toEqual([]);
+                    expect(detail.credit).toBeGreaterThan(0);
+                });
+
                 test('a bag +10 another loadout wears keeps the strict-cost rule: built fresh, not used', () => {
                     state.swordSell = DEAR;
                     state.items = [stack(SWORD, 10)];
