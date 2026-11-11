@@ -167,6 +167,8 @@ export class SimEditor {
         // moved since can be said out loud rather than sat on. Null means the
         // list makes no claim to be a party (an import, an external DTO).
         this._partyKeyAtLoad = null;
+        /** The roster came from a pasted Export Party (Replace party), not the game's party */
+        this._rosterFromPaste = false;
         // A line about the loaded player the editor was opened with (an external DTO)
         this._externalNote = '';
         // Progress or outcome of the last "Fetch <name>'s loadout" click
@@ -847,6 +849,7 @@ export class SimEditor {
             this._importSkipped = [];
             this._externalNote = '';
             this._partyKeyAtLoad = this._partySignature().key;
+            this._rosterFromPaste = false;
             this._editorInitialized = true;
             this._scenarioToken++;
 
@@ -1211,6 +1214,8 @@ export class SimEditor {
         // Cleared and not saved: the remembered selection belongs to the live character, not these builds
         this._selectedLoadoutName = '';
         this._rosterEdited = true;
+        // Not the game's party: Fetch would reload the game party over the pasted roster
+        this._rosterFromPaste = true;
         this._editorInitialized = true;
         this._scenarioToken++;
         this._recomputeLevelGapDebuffs();
@@ -1291,6 +1296,7 @@ export class SimEditor {
         this._selectedLoadoutName = '';
         this._forgetAppliedLoadouts();
         this._partyKeyAtLoad = this._partySignature().key;
+        this._rosterFromPaste = false;
         this._editorInitialized = true;
         this._scenarioToken++;
 
@@ -1492,7 +1498,7 @@ export class SimEditor {
         }>Reset to Party</button>`;
         // Only where the game can View Loadout at all: a build without it gets no button
         const target =
-            inParty && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()
+            inParty && !this._rosterFromPaste && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()
                 ? this._nextLoadoutTarget()
                 : null;
         if (target) {

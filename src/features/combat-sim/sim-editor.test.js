@@ -2080,6 +2080,27 @@ describe('Fetch a party loadout', () => {
         ];
     });
 
+    test('is not offered after Replace party, whose roster is not the game party, and returns on Reset to Party', async () => {
+        viewLoadout.available = true;
+        viewLoadout.captured = {};
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+        expect(el.querySelector(FETCH_BTN)).not.toBeNull();
+
+        game.parseImport = () => ({
+            players: [emptyDTO('player1'), emptyDTO('player2')],
+            names: ['Pasted One', 'Pasted Two'],
+            skipped: [],
+        });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-replace-party').click();
+        expect(el.querySelector(FETCH_BTN)).toBeNull();
+
+        await editor.resetToParty();
+        expect(el.querySelector(FETCH_BTN)).not.toBeNull();
+    });
+
     test('is not offered on a game build without View Loadout, and nothing is requested', async () => {
         const el = document.createElement('div');
         const editor = new SimEditor({ editorEl: el });
