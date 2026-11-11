@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# The full pre-push gate, in the order CI runs it, so a push never learns
-# something from CI that it could have learned here.
+# The full pre-push gate, so a push never learns something from CI that it
+# could have learned here.
 #
-# Mirrors .github/workflows/ci.yml step for step: ESLint, Prettier with CI's
+# Covers every step of .github/workflows/ci.yml: ESLint, Prettier with CI's
 # own globs (not `prettier --check .`, which also flags files CI ignores), the
-# test suite, both builds, the split-bundle smoke test, the production-vs-dev value parity check, the 2 MiB @require ceiling, and the bundle-sharing
-# check that `npm run build` already runs.
+# production build with its bundle-sharing and load-order checks, the 2 MiB
+# @require ceiling (warning past 98%), the test suite, the dev build, the
+# split-bundle smoke test and the production-vs-dev value parity check. The
+# build and the ceiling run before the suite so a size failure comes first.
 #
 # Prettier is here because agent commits skip the pre-commit hook by design
 # (--no-verify), so their files reach main unformatted and CI rejects the
@@ -27,6 +29,30 @@ npx eslint src/
 step 'Prettier (CI globs)'
 npx prettier --check "src/**/*.js" "*.config.js" "**/*.md"
 
+# The production build and the size ceiling go first: an over-limit stack then fails in about a minute,
+# not after the full test suite (2026-11-11, a six-PR landing failed on size at the very end)
+step 'Build: production (includes bundle-sharing check)'
+BUILD_MODE=production npx rollup -c 2>&1 | tail -1
+node scripts/check-bundle-sharing.mjs
+node scripts/check-bundle-load-order.mjs
+
+step 'Bundle sizes (2097152-byte @require ceiling)'
+limit=2097152
+# Past 98% a bundle is one feature from blocking a landing: say so on every run, before it does
+warn=$((limit * 98 / 100))
+for file in dist/Toolasha.user.js dist/libraries/*.js; do
+    size=$(wc -c <"$file")
+    if [ "$size" -gt "$limit" ]; then
+        echo "FAIL $file is over the limit ($size bytes)"
+        exit 1
+    fi
+    if [ "$size" -gt "$warn" ]; then
+        echo "WARN $file is at $((size * 100 / limit))% of the limit ($size bytes, $((limit - size)) left): move a module out before it blocks a landing"
+    else
+        echo "ok   $file ($size bytes)"
+    fi
+done
+
 step 'Tests'
 # Only the failures and the summary. A bare `tail` lost both once Vitest began
 # ending its output with an isolate hint: a failed run showed nothing to act on.
@@ -46,27 +72,11 @@ rm -f "$tests_log"
 step 'Build: dev standalone'
 BUILD_TARGET=dev-standalone npx rollup -c 2>&1 | tail -1
 
-step 'Build: production (includes bundle-sharing check)'
-BUILD_MODE=production npx rollup -c 2>&1 | tail -1
-node scripts/check-bundle-sharing.mjs
-node scripts/check-bundle-load-order.mjs
-
 step 'Split-bundle smoke test (load order, namespaces, bridge identity, no stray singleton copies)'
 node scripts/check-bundle-smoke.mjs --require-build
 
 step 'Production-vs-dev value parity (golden values through the published namespaces of both builds)'
 node scripts/check-bundle-parity.mjs --require-build
-
-step 'Bundle sizes (2097152-byte @require ceiling)'
-limit=2097152
-for file in dist/Toolasha.user.js dist/libraries/*.js; do
-    size=$(wc -c <"$file")
-    if [ "$size" -gt "$limit" ]; then
-        echo "FAIL $file is over the limit ($size bytes)"
-        exit 1
-    fi
-    echo "ok   $file ($size bytes)"
-done
 
 step '@require URLs (classic scripts, not ES modules)'
 node scripts/check-require-urls.mjs
