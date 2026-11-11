@@ -488,6 +488,66 @@ describe('a missing member whose profile opens', () => {
         expect(el.textContent).toContain("Ghost's profile arrived — Reset to Party to add them.");
     });
 
+    test('a second profile arriving while the first rebuild is in flight still adds its member', async () => {
+        const WISP = { characterID: 'w1', characterName: 'Wisp' };
+        game.battleParty = [SELF, GHOST, WISP];
+        game.allPlayers = {
+            players: [{ ...emptyDTO('player1'), attackLevel: 90 }],
+            playerInfo: [{ hrid: 'player1', name: 'Milkman' }],
+            selfHrid: 'player1',
+            missingMembers: ['Ghost', 'Wisp'],
+            missingMemberIds: ['g1', 'w1'],
+        };
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        await editor.initEditor({ restoreLoadout: false });
+
+        let landGhost, landWisp;
+        ws.chain = new Promise((resolve) => (landGhost = resolve));
+        const ghostDone = fire(shared('g1'));
+        ws.chain = new Promise((resolve) => (landWisp = resolve));
+        const wispDone = fire(shared('w1', 'Wisp'));
+
+        // Ghost's write lands first; the list it reads has Ghost but not yet Wisp
+        game.allPlayers = {
+            players: [
+                { ...emptyDTO('player1'), attackLevel: 90 },
+                { ...emptyDTO('player2'), attackLevel: 70 },
+            ],
+            playerInfo: [
+                { hrid: 'player1', name: 'Milkman' },
+                { hrid: 'player2', name: 'Ghost' },
+            ],
+            selfHrid: 'player1',
+            missingMembers: ['Wisp'],
+            missingMemberIds: ['w1'],
+        };
+        landGhost();
+        await ghostDone;
+        expect(editor.getMissingMembers()).toEqual(['Wisp']);
+
+        // Then Wisp's lands, after Ghost's rebuild already moved the scenario on
+        game.allPlayers = {
+            players: [
+                { ...emptyDTO('player1'), attackLevel: 90 },
+                { ...emptyDTO('player2'), attackLevel: 70 },
+                { ...emptyDTO('player3'), attackLevel: 60 },
+            ],
+            playerInfo: [
+                { hrid: 'player1', name: 'Milkman' },
+                { hrid: 'player2', name: 'Ghost' },
+                { hrid: 'player3', name: 'Wisp' },
+            ],
+            selfHrid: 'player1',
+            missingMembers: [],
+            missingMemberIds: [],
+        };
+        landWisp();
+        await wispDone;
+
+        expect(editor.getPlayerInfo().map((p) => p.name)).toEqual(['Milkman', 'Ghost', 'Wisp']);
+        expect(editor.getMissingMembers()).toEqual([]);
+    });
+
     test('a picked loadout counts as an edit', async () => {
         const { editor } = await missingGhostEditor();
         editor._selectedLoadoutName = 'Bruteforce';

@@ -1553,10 +1553,13 @@ export class SimEditor {
         if (!id || !(this._missingMemberIds || []).includes(String(id))) return;
 
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
-        let scenario = this._scenarioToken;
+        // Not the scenario token: another member's profile-driven rebuild bumps it, and a
+        // second profile arriving while the first rebuild was in flight then gave up with its
+        // member still excluded. What protects the user's work is the untouched-party check,
+        // which every step below (and initEditor's onlyIf) applies.
         const stillCurrent = () =>
             (dataManager.getCurrentCharacterId?.() ?? null) === owner &&
-            this._scenarioToken === scenario &&
+            this._isUntouchedParty() &&
             this._missingMemberIds.includes(String(id));
 
         if (!this._isUntouchedParty()) {
@@ -1575,14 +1578,11 @@ export class SimEditor {
                 /* a failed write is logged where it happens */
             }
             if (!stillCurrent()) return;
-            await this.initEditor({ restoreLoadout: false, onlyIf: () => stillCurrent() && this._isUntouchedParty() });
-            // A rebuild that landed is the newest scenario; one that was dropped left the token alone
-            if (this._scenarioToken !== scenario && this._isUntouchedParty()) scenario = this._scenarioToken;
-            if (!this._missingMemberIds.includes(String(id))) return;
+            await this.initEditor({ restoreLoadout: false, onlyIf: () => stillCurrent() });
             if (!stillCurrent()) return;
             // Still missing: the write had not landed yet; give it one more beat
             await new Promise((resolve) => setTimeout(resolve, 100));
-            if (!stillCurrent() || !this._isUntouchedParty()) return;
+            if (!stillCurrent()) return;
         }
     }
 
