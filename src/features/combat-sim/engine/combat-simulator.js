@@ -24,6 +24,7 @@ import WeakenExpirationEvent from './events/weaken-expiration-event.js';
 import FuryExpirationEvent from './events/fury-expiration-event.js';
 import EnrageTickEvent from './events/enrage-tick-event.js';
 import SimResult from './sim-result.js';
+import HpMpRecorder from './hpmp-recorder.js';
 import { getSimWarnings, recordUnknown, resetSimWarnings } from './sim-warnings.js';
 import AbilityCastEndEvent from './events/ability-cast-end-event.js';
 import AwaitCooldownEvent from './events/await-cooldown-event.js';
@@ -401,7 +402,10 @@ class CombatSimulator {
 
     saveWipeLogsToSimResult(wave) {
         const logs = this.getOrderedWipeLogs();
-        this.simResult.addWipeEvent(logs, this.simulationTime, wave);
+        // The party's last 30 s of HP and MP, if this run records them (a
+        // dungeon, and only for the first few wipes)
+        const hpMp = this.hpMpRecorder?.takePreWipe(this.simulationTime) || null;
+        this.simResult.addWipeEvent(logs, this.simulationTime, wave, hpMp);
     }
 
     /**
@@ -430,6 +434,7 @@ class CombatSimulator {
         this.nextStopCheck = Number(this.stopRule?.minTrials) || 1;
 
         let ticks = 0;
+        const recorder = this.hpMpRecorder;
 
         const combatStartEvent = new CombatStartEvent(0);
         this.eventQueue.addEvent(combatStartEvent);
@@ -444,6 +449,9 @@ class CombatSimulator {
                 break;
             }
             this.processEvent(nextEvent);
+            if (recorder !== null && this.simulationTime >= recorder.nextSampleTime) {
+                recorder.sample(this.simulationTime);
+            }
 
             ticks++;
             if (ticks === 50000) {
@@ -500,6 +508,7 @@ class CombatSimulator {
         }
 
         this.simResult.simulatedTime = this.simulationTime;
+        if (recorder !== null) this.simResult.hpMpSeries = recorder.toSeries(this.simulationTime);
         this.simResult.taskDamageMode = this.taskDamageMode;
         this.simResult.taskDamageKills = this.taskDamageKills;
         this._collectWarnings();
@@ -551,6 +560,11 @@ class CombatSimulator {
         this.eventQueue.clear();
         this.simResult = new SimResult(this.zone, this.players.length);
         this.simResult.clock = () => this.simulationTime;
+        // HP/MP samples for the results charts. A labyrinth is a string of
+        // short fights with no run or wipe to chart.
+        this.hpMpRecorder = this.labyrinth
+            ? null
+            : new HpMpRecorder(this.players, { preWipe: Boolean(this.zone.isDungeon) });
     }
 
     processEvent(event) {
@@ -788,6 +802,7 @@ class CombatSimulator {
                 }
                 this.lastDungeonCompletionTime = this.simulationTime;
                 this.dungeonPairBroken = false;
+                this.hpMpRecorder?.markRunStart(this.simulationTime);
                 for (let i = 0; i < this.players.length; i++) {
                     // Clearing the dungeon puts a downed party member back on
                     // their feet — a revive by another name, so it owes the same
@@ -1318,6 +1333,8 @@ class CombatSimulator {
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);
                 this.wipeLogs.index = 0;
                 this.wipeLogs.count = 0;
+                this.hpMpRecorder?.clearPreWipe();
+                this.hpMpRecorder?.markRunStart(this.simulationTime);
 
                 // Clear combat events but preserve buff expiration and cooldown events
                 this.eventQueue.clearEventsOfType(AutoAttackEvent.type);

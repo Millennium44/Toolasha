@@ -465,6 +465,47 @@ describe('splitting the requested hours', () => {
     });
 });
 
+describe('merging the HP/MP series of a split run', () => {
+    test("keeps the first worker's series rather than concatenating them", async () => {
+        const seen = [];
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor() {}
+            }
+        );
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:sim', revokeObjectURL: () => {} });
+        vi.stubGlobal(
+            'Worker',
+            class {
+                postMessage(message) {
+                    const index = seen.length;
+                    seen.push(message);
+                    const hpMpSeries = { playerHrids: ['player1'], stepSeconds: 60, hp: [[index]], mp: [[index]] };
+                    setTimeout(() =>
+                        this.onmessage?.({
+                            data: {
+                                type: 'result',
+                                taskId: message.taskId,
+                                simResult: { ...EMPTY_SIM_RESULT, hpMpSeries },
+                            },
+                        })
+                    );
+                }
+                terminate() {}
+            }
+        );
+
+        const merged = await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 2 }, null, {
+            workers: 2,
+        });
+
+        expect(seen).toHaveLength(2);
+        expect(merged.hpMpSeries.hp).toEqual([[0]]);
+        expect(merged.hpMpSeries.mp).toEqual([[0]]);
+    });
+});
+
 /**
  * Whether a simulation builds a Worker or borrows one.
  *

@@ -188,6 +188,7 @@ import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { createWipeNamer, analyzeWipe, describeWipe, summarizeWipes } from './wipe-summary.js';
+import { renderPreWipeChart, renderRunMpChart } from './hpmp-charts.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
@@ -8774,6 +8775,8 @@ class CombatSimUI {
 
         // Sustain — HP/MP the engine has always tracked per source and never shown
         html += this._renderSustainBreakdown(simResult, hours, gameData, activeTab);
+        // Who ran dry: each player's MP across the run (absent on results saved before it was recorded)
+        html += renderRunMpChart(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player);
 
         // XP/hr by skill — per active tab player
         const xpTotals = {};
@@ -9155,6 +9158,7 @@ class CombatSimUI {
                 html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px; flex-shrink:0;">▶</span>`;
                 html += `</div>`;
                 html += `<div id="${eventId}-body" style="display:none; padding:6px 8px; font-size:11px; font-family:monospace; background:#111; max-height:300px; overflow-y:auto;">`;
+                html += renderPreWipeChart(event.hpMp, wipeNamer.player);
 
                 // Group logs by time
                 const logs = event.logs || [];
