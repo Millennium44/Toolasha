@@ -279,7 +279,13 @@ export async function handleViewCardFromSnapshot(snapshotName, snapshotId) {
             clientData,
             consumablesData,
             combatScore,
-            { includeLoadoutAuras: config.getSetting('characterCard_extraAuras') === true }
+            // A skilling loadout's card shows its own (usually empty) ability row; extra combat auras
+            // there read as part of a gathering or crafting build. All Skills loadouts keep them.
+            {
+                includeLoadoutAuras:
+                    config.getSetting('characterCard_extraAuras') === true &&
+                    (!snapshot.actionTypeHrid || snapshot.actionTypeHrid === '/action_types/combat'),
+            }
         );
 
         window.open(url, '_blank', 'noopener');

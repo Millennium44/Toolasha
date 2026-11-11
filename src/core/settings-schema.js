@@ -2786,7 +2786,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 requires: 'characterCard',
-                help: 'Adds up to three other learned auras to tib-san.gitlab.io cards, in saved combat/all-skills loadout order, at their current levels. Slots 1–5 remain equipped; slots 6–8 are extras. The external viewer does not label or dim the extras. Other players need their own learned/loadout data; yours is never used for them.',
+                help: 'Adds up to three other learned auras to tib-san.gitlab.io cards, in saved combat/all-skills loadout order, at their current levels (not on cards built from a skilling loadout). Slots 1–5 remain equipped; slots 6–8 are extras. The external viewer does not label or dim the extras. Other players need their own learned/loadout data; yours is never used for them.',
             },
             eliteAchievementReminder: {
                 id: 'eliteAchievementReminder',

@@ -205,4 +205,28 @@ describe('character card button', () => {
         expect(card.characterLoadoutMap).toBe(game.characterData.characterLoadoutMap);
         expect(options).toEqual({ includeLoadoutAuras: true });
     });
+
+    test.each([
+        ['/action_types/foraging', false],
+        ['/action_types/brewing', false],
+        ['/action_types/combat', true],
+        ['', true],
+    ])('a %s loadout card gets extra auras: %s', async (actionTypeHrid, expected) => {
+        game.snapshots = [
+            { id: 1, name: 'Main', actionTypeHrid, equipment: [], abilities: [], food: [], drinks: [] },
+            {
+                id: 2,
+                name: 'Main',
+                actionTypeHrid: '/action_types/combat',
+                equipment: [],
+                abilities: [],
+                food: [],
+                drinks: [],
+            },
+        ];
+        const pending = handleViewCardFromSnapshot('Main', 1);
+        game.resolveScore({ total: 1 });
+        await pending;
+        expect(buildCharacterSheetLink.mock.calls[0][6]).toEqual({ includeLoadoutAuras: expected });
+    });
 });
