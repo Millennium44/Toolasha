@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 With "I own the inputs" on, a refined cape now costs its base cape plus its refinement stones, all at their sell-after-tax value, since a refined cape is account bound and its market listing is not a sale you could make. The cost cell lists the parts.
 
+### Dungeon luck counts refinement chests
+
+The dungeon chest luck tooltip now adds a line per player for refinement chests, a separate roll from the main chest: how many dropped against how many the dungeon's tier rate expects (0% at T0, about 33% at T1, certain from T2), and how lucky that is.
+
 ### Combat sim Results sections collapse
 
 Every Results section, in a player's view and in the All view, now collapses with a click and stays the way you left it across runs and reloads. On a phone the All table is tighter, keeps its labels pinned while you scroll sideways, and the price bar no longer lets rows show through.
