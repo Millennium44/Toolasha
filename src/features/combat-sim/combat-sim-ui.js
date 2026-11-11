@@ -10001,7 +10001,7 @@ class CombatSimUI {
             if (!entry.timestamp) return text;
             const at = new Date(entry.timestamp);
             if (Number.isNaN(at.getTime())) return text;
-            return `${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${text}`;
+            return `${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })} · ${text}`;
         };
         if (!entry.zoneName && !entry.zoneHrid) {
             return { short: withTime(entry.label), title: entry.label };

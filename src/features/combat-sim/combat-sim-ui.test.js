@@ -8974,7 +8974,7 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
 
     describe('run time', () => {
         const at = new Date(2026, 10, 11, 22, 42).getTime();
-        const clock = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const clock = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
         const zone = { zoneName: 'Sinister Circus', difficultyTier: 1, partySize: 5 };
 
         test('leads the dropdown option and the table cell, and never the CSV scenario', () => {
