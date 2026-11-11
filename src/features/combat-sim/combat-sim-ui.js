@@ -187,7 +187,7 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
-import { createWipeNamer, analyzeWipe, describeWipe, summarizeWipes } from './wipe-summary.js';
+import { createWipeNamer, analyzeWipe, describeWipe, describeWipeHealing, summarizeWipes } from './wipe-summary.js';
 import { renderPreWipeChart, renderRunMpChart } from './hpmp-charts.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
@@ -9158,13 +9158,21 @@ class CombatSimUI {
                     display:flex; justify-content:space-between; align-items:center;
                     padding:4px 8px; background:#1a1a1a; cursor:pointer; font-size:12px;
                 ">`;
-                const wipeText = describeWipe(analyzeWipe(event.logs), wipeNamer);
+                const wipeAnalysis = analyzeWipe(event.logs);
+                const wipeText = describeWipe(wipeAnalysis, wipeNamer);
+                const healText = describeWipeHealing(wipeAnalysis, wipeNamer);
                 html += `<span style="color:#aaa; min-width:0;">Wipe #${wi + 1} — Wave ${wave} @ ${timeSec}s`;
                 if (wipeText.first) {
                     html += `<span data-wipe-first style="display:block; color:#ff9a9a; font-size:11px;">First down: ${escapeAttribute(wipeText.first)}</span>`;
                     html += `<span data-wipe-order style="display:block; color:${GAME_COLORS.textDim}; font-size:10px;">Fell: ${escapeAttribute(wipeText.order)}</span>`;
+                    if (healText.lastHealed) {
+                        html += `<span data-wipe-last-heal style="display:block; color:${GAME_COLORS.textDim}; font-size:10px;">${escapeAttribute(healText.lastHealed)}</span>`;
+                    }
                 } else {
                     html += `<span data-wipe-first style="display:block; color:${GAME_COLORS.textDim}; font-size:10px;">${(event.logs || []).length > 0 ? 'No player death in the recorded hits' : 'No hit log recorded'}</span>`;
+                }
+                if (healText.heals) {
+                    html += `<span data-wipe-heals style="display:block; color:#86efac; font-size:10px;">${escapeAttribute(healText.heals)}</span>`;
                 }
                 html += `</span>`;
                 html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px; flex-shrink:0;">▶</span>`;
@@ -9189,35 +9197,39 @@ class CombatSimUI {
                 for (const group of groups) {
                     const rel = ((group.time - baseTime) / 1e9).toFixed(2);
                     html += `<div style="margin-top:6px; color:${GAME_COLORS.textDim}; border-top:1px solid #222; padding-top:4px;">[+${rel}s] Wave ${group.wave ?? '?'}</div>`;
-                    const damagedPlayers = new Set(group.logs.map((l) => l.target));
+                    const damagedPlayers = new Set(
+                        group.logs.filter((l) => l.kind === undefined || l.kind === 'hit').map((l) => l.target)
+                    );
                     for (const log of group.logs) {
-                        const abilityLabel =
-                            log.ability === 'autoAttack'
-                                ? 'Auto Attack'
-                                : log.ability === 'damageOverTime'
-                                  ? 'DoT'
-                                  : log.ability === 'physicalThorns'
-                                    ? 'Physical Thorns'
-                                    : log.ability === 'elementalThorns'
-                                      ? 'Elemental Thorns'
-                                      : log.ability === 'retaliation'
-                                        ? 'Retaliation'
-                                        : log.ability;
-                        const critMark = log.isCrit ? '!!!' : '';
-                        html += `<div style="padding:1px 0; color:#ccc;">`;
-                        html += `<span style="color:#9ca3af;">${log.source}</span>`;
-                        html += ` cast <span style="color:#c4b5fd;">${abilityLabel}</span>`;
-                        html += ` → <span style="color:#93c5fd;">${log.target}</span>`;
-                        html += ` <span style="color:#ff6b6b;">${log.damage}${critMark}</span>`;
-                        html += ` <span style="color:${GAME_COLORS.textDim};">HP ${log.beforeHp}→${log.afterHp}</span>`;
-                        html += `</div>`;
+                        const who = escapeAttribute(wipeNamer.source(log.source));
+                        const what = escapeAttribute(wipeNamer.ability(log.ability));
+                        const to = log.target ? escapeAttribute(wipeNamer.source(log.target)) : '';
+                        if (log.kind === 'heal') {
+                            const pctBefore = Math.round(log.targetHpPct ?? 0);
+                            const maxHp = log.playersHp?.find((p) => p.hrid === log.target)?.max;
+                            const pctAfter = maxHp > 0 ? Math.round((log.afterHp / maxHp) * 100) : null;
+                            const range = pctAfter === null ? `${pctBefore}%` : `${pctBefore}% → ${pctAfter}%`;
+                            html += `<div data-wipe-heal style="padding:1px 0; color:#86efac;">${who} ${what} → ${to} +${Math.round(log.amount).toLocaleString('en-US')} (${range})</div>`;
+                        } else if (log.kind === 'cast') {
+                            html += `<div data-wipe-cast style="padding:1px 0; color:${GAME_COLORS.textDim};">${who} cast ${what}${to ? ` → ${to}` : ''}</div>`;
+                        } else {
+                            const critMark = log.isCrit ? '!!!' : '';
+                            html += `<div style="padding:1px 0; color:#ccc;">`;
+                            html += `<span style="color:#9ca3af;">${who}</span>`;
+                            html += ` cast <span style="color:#c4b5fd;">${what}</span>`;
+                            html += ` → <span style="color:#93c5fd;">${to}</span>`;
+                            html += ` <span style="color:#ff6b6b;">${log.damage}${critMark}</span>`;
+                            html += ` <span style="color:${GAME_COLORS.textDim};">HP ${log.beforeHp}→${log.afterHp}</span>`;
+                            html += `</div>`;
+                        }
                     }
                     // Players HP summary at end of each time group
-                    if (group.logs.length > 0 && group.logs[group.logs.length - 1].playersHp) {
-                        const playersHp = group.logs[group.logs.length - 1].playersHp;
+                    const lastWithHp = [...group.logs].reverse().find((l) => l.playersHp);
+                    if (lastWithHp) {
+                        const playersHp = lastWithHp.playersHp;
                         const hpParts = playersHp.map((p) => {
                             const color = p.current <= 0 ? '#ff6b6b' : damagedPlayers.has(p.hrid) ? '#93c5fd' : '#666';
-                            return `<span style="color:${color};">${p.hrid}: ${p.current}/${p.max}</span>`;
+                            return `<span style="color:${color};">${escapeAttribute(wipeNamer.player(p.hrid))}: ${p.current}/${p.max}</span>`;
                         });
                         html += `<div style="padding:2px 0; font-size:10px;">Players HP: ${hpParts.join(' | ')}</div>`;
                     }

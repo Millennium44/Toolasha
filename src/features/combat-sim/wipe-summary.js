@@ -7,6 +7,13 @@
  * `time`, `wave` and `playersHp`. Nothing in it says who died: a death is a hit
  * whose `afterHp` is 0 on a target that was above 0 before it.
  *
+ * The same log also carries the party's side, merged in time order: `heal`
+ * entries (`source`, `ability`, `target`, `amount`, `beforeHp`, `afterHp`,
+ * `targetHpPct`, `time`) and `cast` entries (`source`, `ability`, `target`).
+ * Entries are told apart by `kind`; an entry with none is a hit, which is how a
+ * result saved before heals were logged still reads. Only hits are damage:
+ * deaths, killing blows and damage shares never look at the other kinds.
+ *
  * Pure functions, no DOM: the UI escapes the strings it draws.
  */
 
@@ -16,6 +23,7 @@ const SPECIAL_ABILITIES = {
     physicalThorns: 'Physical Thorns',
     elementalThorns: 'Elemental Thorns',
     retaliation: 'Retaliation',
+    lifesteal: 'Life Steal',
 };
 
 /**
@@ -54,7 +62,9 @@ export function createWipeNamer({ playerInfo = [], gameData = null } = {}) {
             if (!ability) return 'Unknown';
             if (SPECIAL_ABILITIES[ability]) return SPECIAL_ABILITIES[ability];
             return (
-                gameData?.abilityDetailMap?.[ability]?.name || (ability.includes('/') ? prettifyHrid(ability) : ability)
+                gameData?.abilityDetailMap?.[ability]?.name ||
+                gameData?.itemDetailMap?.[ability]?.name ||
+                (ability.includes('/') ? prettifyHrid(ability) : ability)
             );
         },
     };
@@ -73,11 +83,23 @@ export function createWipeNamer({ playerInfo = [], gameData = null } = {}) {
  *   time: number, tick: number}>, hits: Array<Object>}}
  */
 export function analyzeWipe(logs) {
-    const hits = (Array.isArray(logs) ? logs : []).filter(
-        (log) => log && !log.error && typeof log.target === 'string' && Number.isFinite(log.damage)
+    const all = Array.isArray(logs) ? logs : [];
+    const isHit = (log) =>
+        log &&
+        !log.error &&
+        (log.kind === undefined || log.kind === 'hit') &&
+        typeof log.target === 'string' &&
+        Number.isFinite(log.damage);
+    const hits = all.filter(isHit);
+    const heals = all.filter(
+        (log) => log && !log.error && log.kind === 'heal' && typeof log.target === 'string' && log.amount > 0
     );
+    const casts = all.filter((log) => log && !log.error && log.kind === 'cast');
     const fallen = new Map();
-    hits.forEach((log, order) => {
+    let hitOrder = 0;
+    all.forEach((log, at) => {
+        if (!isHit(log)) return;
+        const order = hitOrder++;
         if ((log.beforeHp ?? 0) > 0) fallen.delete(log.target); // standing when hit: any earlier fall was undone
         if ((log.afterHp ?? 1) <= 0 && (log.beforeHp ?? 0) > 0) {
             fallen.set(log.target, {
@@ -88,6 +110,7 @@ export function analyzeWipe(logs) {
                 isCrit: !!log.isCrit,
                 time: log.time,
                 order,
+                at,
             });
         }
     });
@@ -100,7 +123,53 @@ export function analyzeWipe(logs) {
         lastTime = d.time;
         d.tick = tick;
     }
-    return { down, hits };
+    return { down, hits, heals, casts, entries: all };
+}
+
+/**
+ * What the party's healing looked like going into one wipe.
+ *
+ * `heals` counts the heals in the last 30 s before the log's final entry and
+ * who they landed on; `lastHealed` says how long before the first player to
+ * fall they were last healed. Both are empty when the log holds no party-side
+ * entries at all (a result from before they were recorded, or a wipe with no
+ * heals and no casts), so an old result does not claim "not healed".
+ *
+ * @param {ReturnType<typeof analyzeWipe>} analysis
+ * @param {ReturnType<typeof createWipeNamer>} namer
+ * @returns {{heals: string, lastHealed: string}}
+ */
+export function describeWipeHealing(analysis, namer) {
+    const { down, heals, casts, entries } = analysis;
+    if (heals.length === 0 && casts.length === 0) return { heals: '', lastHealed: '' };
+
+    const times = entries.filter((log) => log && !log.error && Number.isFinite(log.time)).map((log) => log.time);
+    const end = times.length > 0 ? Math.max(...times) : 0;
+    const recent = heals.filter((h) => h.time >= end - 30e9);
+    const perTarget = new Map();
+    for (const h of recent) {
+        const name = namer.player(h.target);
+        perTarget.set(name, (perTarget.get(name) || 0) + 1);
+    }
+    const spread = [...perTarget]
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .map(([name, n]) => `${name} ×${n}`)
+        .join(', ');
+    const healsText = `Heals in the last 30 s: ${recent.length}${spread ? `, to: ${spread}` : ''}`;
+
+    let lastHealed = '';
+    if (down.length > 0) {
+        const first = down[0];
+        let last = null;
+        entries.forEach((log, i) => {
+            if (i < first.at && log?.kind === 'heal' && log.target === first.target && log.amount > 0) last = log;
+        });
+        const name = namer.player(first.target);
+        lastHealed = last
+            ? `${name} last healed ${Math.max(0, (first.time - last.time) / 1e9).toFixed(1)} s before falling`
+            : `${name} not healed in the log window`;
+    }
+    return { heals: healsText, lastHealed };
 }
 
 /**
