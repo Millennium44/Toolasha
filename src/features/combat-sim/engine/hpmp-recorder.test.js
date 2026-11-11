@@ -272,6 +272,47 @@ describe('HpMpRecorder', () => {
         expect(series.mp[0]).toEqual([0, 91.7]);
     });
 
+    test('a bucket records its lowest held value, and merging keeps the lower of the pair', () => {
+        const players = fakePlayers(1);
+        const rec = new HpMpRecorder(players, { preWipe: false });
+        players[0].combatDetails.currentHitpoints = 100;
+        rec.sample(0);
+        players[0].combatDetails.currentHitpoints = 0;
+        rec.sample(20 * ONE_SECOND);
+        players[0].combatDetails.currentHitpoints = 100;
+        rec.sample(25 * ONE_SECOND);
+        const series = rec.toSeries(120 * ONE_SECOND);
+        // Minute one held 0 % for 5 s: the average hides it, the minimum does not
+        expect(series.hp[0][0]).toBeGreaterThan(90);
+        expect(series.hpMin[0][0]).toBe(0);
+        expect(series.hpMin[0][1]).toBe(100);
+
+        // A run long enough to merge buckets keeps the dip in the merged bucket
+        const longPlayers = fakePlayers(1);
+        const long = new HpMpRecorder(longPlayers, { preWipe: false });
+        const end = 10 * 3600 * ONE_SECOND;
+        for (let t = 0; t <= end; t += 5 * ONE_SECOND) {
+            longPlayers[0].combatDetails.currentHitpoints = t === 7200 * ONE_SECOND ? 0 : 100;
+            long.sample(t);
+        }
+        const merged = long.toSeries(end);
+        expect(merged.stepSeconds).toBeGreaterThan(60);
+        expect(Math.min(...merged.hpMin[0])).toBe(0);
+        expect(merged.hpMin[0]).toHaveLength(merged.hp[0].length);
+        expect(merged.mpMin[0].every((v) => v === 50)).toBe(true);
+    });
+
+    test('time under 25% HP is weighted by time', () => {
+        const players = fakePlayers(1);
+        const rec = new HpMpRecorder(players, { preWipe: false });
+        players[0].combatDetails.currentHitpoints = 10;
+        rec.sample(0);
+        players[0].combatDetails.currentHitpoints = 100;
+        rec.sample(30 * ONE_SECOND);
+        const series = rec.toSeries(120 * ONE_SECOND);
+        expect(series.lowHpShare[0]).toBeCloseTo(0.25, 5);
+    });
+
     test('run starts are capped', () => {
         const rec = new HpMpRecorder(fakePlayers(1), { preWipe: true });
         for (let i = 0; i < 1000; i++) rec.markRunStart(i * ONE_SECOND);

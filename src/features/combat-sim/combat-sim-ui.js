@@ -189,7 +189,7 @@ import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
 import { createWipeNamer, analyzeWipe, describeWipe, describeWipeHealing, summarizeWipes } from './wipe-summary.js';
-import { renderPreWipeChart, renderRunMpChart } from './hpmp-charts.js';
+import { renderPreWipeChart, renderRunCharts } from './hpmp-charts.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
@@ -3586,6 +3586,10 @@ class CombatSimUI {
         this._comparisonBaseline = null; // index into _simHistory
         this._comparisonSlots = []; // array of _simHistory indices to compare
         this._activeDetailIndex = null; // which history entry's details are shown
+        // Run charts: one overlaid chart instead of HP and MP side by side, and the players
+        // switched off in their legend (hrids). Kept for the session, not saved.
+        this._runChartOverlay = false;
+        this._runChartHidden = new Set();
         this._activeMainTab = 'configure';
         // All Zones state
         this._allZonesMode = null; // null = off, 'group', 'solo', or 'dungeons'
@@ -8823,8 +8827,14 @@ class CombatSimUI {
 
         // Sustain — HP/MP the engine has always tracked per source and never shown
         html += this._renderSustainBreakdown(simResult, hours, gameData, activeTab);
-        // Who ran dry: each player's MP across the run (absent on results saved before it was recorded)
-        html += renderRunMpChart(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player);
+        // Each player's HP and MP across the run (a note on results recorded before the series existed)
+        const runChartNamer = createWipeNamer({ playerInfo, gameData }).player;
+        const drawRunCharts = () =>
+            renderRunCharts(simResult.hpMpSeries, runChartNamer, {
+                overlay: this._runChartOverlay,
+                hidden: this._runChartHidden,
+            });
+        html += drawRunCharts();
 
         // XP/hr by skill — per active tab player
         const xpTotals = {};
@@ -9301,6 +9311,29 @@ class CombatSimUI {
 
         container.innerHTML = html;
         container.style.display = 'block';
+
+        // Run charts: the Overlay box and the legend redraw just that block, so the panel keeps its scroll
+        const bindRunCharts = () => {
+            const wrap = container.querySelector('[data-hpmp-run]');
+            if (!wrap) return;
+            const redraw = () => {
+                wrap.outerHTML = drawRunCharts();
+                bindRunCharts();
+            };
+            wrap.querySelector('[data-hpmp-overlay]')?.addEventListener('change', (e) => {
+                this._runChartOverlay = Boolean(e.target.checked);
+                redraw();
+            });
+            wrap.querySelectorAll('[data-hpmp-toggle]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const hrid = btn.dataset.hpmpToggle;
+                    if (this._runChartHidden.has(hrid)) this._runChartHidden.delete(hrid);
+                    else this._runChartHidden.add(hrid);
+                    redraw();
+                });
+            });
+        };
+        bindRunCharts();
 
         // Tab click handler — re-render with new active player
         container.querySelectorAll('[data-tab]').forEach((btn) => {

@@ -8883,25 +8883,92 @@ describe('HP and MP charts in the results', () => {
         expect(results.textContent).not.toContain('could not be drawn');
     });
 
-    test.each([1, 5])('the run chart handles %i player(s)', (count) => {
+    const showCharts = (count, extra = {}) => {
+        ui._runChartOverlay = false;
+        ui._runChartHidden = new Set();
         const hrids = Array.from({ length: count }, (_, i) => 'player' + (i + 1));
-        const simResult = oneHourFight({ hpMpSeries: runSeries(hrids), numberOfPlayers: count });
+        const hpMpSeries = { ...runSeries(hrids), ...extra };
+        const simResult = oneHourFight({ hpMpSeries, numberOfPlayers: count });
         const results = showFight(simResult);
         ui._playerInfo = hrids.map((hrid, i) => ({ hrid, name: 'P' + (i + 1) }));
         ui._displayResults(simResult, 1, ui._lastGameData);
+        return { hrids, results, wrap: () => ui.panel.querySelector('[data-hpmp-run]') };
+    };
 
-        const chart = ui.panel.querySelector('[data-hpmp-run]');
-        expect(chart).not.toBeNull();
-        expect(chart.querySelectorAll('svg path').length).toBe(count);
-        expect(chart.querySelector('[data-hpmp-legend]').textContent).toContain('P1');
-        expect(chart.querySelector('[data-hpmp-low]').textContent).toContain('Time under 10% MP: P1 25%');
-        expect(chart.querySelectorAll('[data-run-start]').length).toBe(3);
+    test.each([1, 5])('the run charts handle %i player(s): HP and MP side by side', (count) => {
+        const { results, wrap } = showCharts(count);
+        const charts = wrap().querySelectorAll('[data-hpmp-chart]');
+        expect(charts).toHaveLength(2);
+        expect(charts[0].textContent).toContain('HP over the run');
+        expect(charts[1].textContent).toContain('MP over the run');
+        expect(charts[0].querySelectorAll('path[data-player]')).toHaveLength(count);
+        expect(charts[1].querySelectorAll('path[data-player]')).toHaveLength(count);
+        expect(wrap().querySelector('[data-hpmp-legend]').textContent).toContain('P1');
+        expect(wrap().querySelector('[data-hpmp-low]').textContent).toContain('Time under 10% MP: P1 25%');
+        expect(wrap().querySelectorAll('[data-run-start]')).toHaveLength(6); // 3 per chart
+        expect(wrap().querySelector('[data-hpmp-overlay]').checked).toBe(false);
         expect(results.textContent).not.toContain('could not be drawn');
     });
 
-    test('a result without a series draws no run chart', () => {
+    test('the Overlay box draws HP solid and MP dashed in one chart and is remembered', () => {
+        const { wrap } = showCharts(2);
+        const box = wrap().querySelector('[data-hpmp-overlay]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')).toHaveLength(1);
+        const lines = [...wrap().querySelectorAll('path[data-player]')];
+        expect(lines).toHaveLength(4);
+        expect(lines.filter((l) => l.dataset.kind === 'hp').every((l) => !l.hasAttribute('stroke-dasharray'))).toBe(
+            true
+        );
+        expect(lines.filter((l) => l.dataset.kind === 'mp').every((l) => l.hasAttribute('stroke-dasharray'))).toBe(
+            true
+        );
+        expect(wrap().querySelector('[data-hpmp-overlay]').checked).toBe(true);
+        expect(ui.panel.textContent).not.toContain('could not be drawn');
+
+        // A later redraw in the same session stays overlaid
+        ui._displayResults(ui._lastSimResult, 1, ui._lastGameData);
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')).toHaveLength(1);
+    });
+
+    test('a player at 0 HP for one bucket shows in the band although the average stays high', () => {
+        const hp = [Array.from({ length: 12 }, () => 95)];
+        const hpMin = [Array.from({ length: 12 }, (_, i) => (i === 5 ? 0 : 90))];
+        const { wrap } = showCharts(1, { hp, hpMin, mpMin: [Array.from({ length: 12 }, () => 0)] });
+        const band = wrap().querySelector('[data-hpmp-chart] polygon[data-band]');
+        expect(band).not.toBeNull();
+        // The polygon reaches the 0% line (y = 104 of the 120-high plot) at the dip
+        expect(band.getAttribute('points')).toContain(' 104.0');
+        expect(ui.panel.textContent).not.toContain('could not be drawn');
+    });
+
+    test('the legend hides and shows a player, per hrid', () => {
+        const { wrap } = showCharts(2);
+        wrap().querySelector('[data-hpmp-toggle="player1"]').click();
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')[0].querySelectorAll('path[data-player]')).toHaveLength(1);
+        expect(wrap().querySelector('[data-hpmp-toggle="player1"]').getAttribute('aria-pressed')).toBe('false');
+        wrap().querySelector('[data-hpmp-toggle="player1"]').click();
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')[0].querySelectorAll('path[data-player]')).toHaveLength(2);
+    });
+
+    test('a series from before the minimums draws lines without a band; one with no HP says so', () => {
+        const { wrap } = showCharts(2);
+        expect(wrap().querySelector('[data-band]')).toBeNull();
+        const noHp = showCharts(2, { hp: undefined });
+        const boxes = noHp.wrap().querySelectorAll('[data-hpmp-chart]');
+        expect(boxes[0].textContent).toContain('Not recorded for this run');
+        expect(boxes[1].querySelectorAll('path[data-player]')).toHaveLength(2);
+        expect(ui.panel.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a result without a series shows the chart area with a note, not an error', () => {
         const results = showFight(oneHourFight());
-        expect(results.querySelector('[data-hpmp-run]')).toBeNull();
+        const wrap = results.querySelector('[data-hpmp-run]');
+        expect(wrap).not.toBeNull();
+        expect(wrap.querySelector('[data-hpmp-note]').textContent).toContain('Not recorded for this run');
+        expect(wrap.querySelector('svg')).toBeNull();
         expect(results.textContent).not.toContain('could not be drawn');
     });
 });

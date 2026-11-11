@@ -6,7 +6,8 @@
  * 1. A ring of the last ~30 simulated seconds per player, taken every 0.5 s of
  *    sim time in dungeons only. A wipe copies it into its event so the card can
  *    show how the party's HP and MP ran down.
- * 2. A coarse whole-run series, a time-weighted average per bucket. Buckets start
+ * 2. A coarse whole-run series, a time-weighted average per bucket, plus the
+ *    lowest sampled value in each bucket (the average alone hides a dip to 0). Buckets start
  *    at one minute and merge pairwise whenever the run outgrows MAX_POINTS, so a
  *    ten-hour run and a ten-minute one both end up under that many points.
  *
@@ -34,6 +35,10 @@ const START_STEP_SECONDS = 60;
 export const MAX_WIPE_SAMPLE_SETS = 20;
 /** Most dungeon run starts recorded for the whole-run chart */
 export const MAX_RUN_STARTS = 240;
+/** Sentinel above any percentage: a bucket with no minimum yet */
+const NO_MIN = 1000;
+/** A player is "in danger" below this share of their health pool */
+export const LOW_HP_FRACTION = 0.25;
 /** A player is "dry" below this share of their mana pool */
 export const LOW_MP_FRACTION = 0.1;
 
@@ -72,8 +77,12 @@ export default class HpMpRecorder {
         this.bucketWeight = new Float64Array(MAX_POINTS);
         this.bucketHp = new Float64Array(MAX_POINTS * this.count);
         this.bucketMp = new Float64Array(MAX_POINTS * this.count);
+        // Lowest held value per bucket; NO_MIN marks a bucket nothing landed in
+        this.bucketMinHp = new Float32Array(MAX_POINTS * this.count).fill(NO_MIN);
+        this.bucketMinMp = new Float32Array(MAX_POINTS * this.count).fill(NO_MIN);
         this.lastBucket = -1;
         this.lowMpWeight = new Float64Array(this.count);
+        this.lowHpWeight = new Float64Array(this.count);
         this.totalWeight = 0;
         this.hasMp = new Array(this.count).fill(false);
 
@@ -144,12 +153,19 @@ export default class HpMpRecorder {
                 for (let i = 0; i < n; i++) {
                     this.bucketHp[bucket * n + i] += this.prevHp[i] * part;
                     this.bucketMp[bucket * n + i] += this.prevMp[i] * part;
+                    if (this.prevHp[i] < this.bucketMinHp[bucket * n + i]) {
+                        this.bucketMinHp[bucket * n + i] = this.prevHp[i];
+                    }
+                    if (this.prevMp[i] < this.bucketMinMp[bucket * n + i]) {
+                        this.bucketMinMp[bucket * n + i] = this.prevMp[i];
+                    }
                 }
                 if (bucket > this.lastBucket) this.lastBucket = bucket;
                 t = end;
             }
             for (let i = 0; i < n; i++) {
                 if (this.hasMp[i] && this.prevMp[i] < LOW_MP_FRACTION * 100) this.lowMpWeight[i] += weight;
+                if (this.prevHp[i] < LOW_HP_FRACTION * 100) this.lowHpWeight[i] += weight;
             }
             this.totalWeight += weight;
         }
@@ -169,11 +185,21 @@ export default class HpMpRecorder {
             for (let i = 0; i < n; i++) {
                 this.bucketHp[b * n + i] = this.bucketHp[2 * b * n + i] + this.bucketHp[(2 * b + 1) * n + i];
                 this.bucketMp[b * n + i] = this.bucketMp[2 * b * n + i] + this.bucketMp[(2 * b + 1) * n + i];
+                this.bucketMinHp[b * n + i] = Math.min(
+                    this.bucketMinHp[2 * b * n + i],
+                    this.bucketMinHp[(2 * b + 1) * n + i]
+                );
+                this.bucketMinMp[b * n + i] = Math.min(
+                    this.bucketMinMp[2 * b * n + i],
+                    this.bucketMinMp[(2 * b + 1) * n + i]
+                );
             }
         }
         this.bucketWeight.fill(0, half);
         this.bucketHp.fill(0, half * n);
         this.bucketMp.fill(0, half * n);
+        this.bucketMinHp.fill(NO_MIN, half * n);
+        this.bucketMinMp.fill(NO_MIN, half * n);
         this.stepNs *= 2;
         this.lastBucket = Math.floor(this.lastBucket / 2);
     }
@@ -220,7 +246,7 @@ export default class HpMpRecorder {
      * The whole-run series for the result.
      * @param {number} timeNs - Sim time at the end of the run (one last sample is taken)
      * @returns {{playerHrids: string[], stepSeconds: number, hp: Array<number[]>, mp: Array<number[]>,
-     *   hasMp: boolean[], lowMpShare: Array<number|null>, runStarts: number[]}|null} null when nothing was recorded
+     *   hpMin: Array<Array<number|null>>, mpMin: Array<Array<number|null>>, hasMp: boolean[], lowHpShare: Array<number|null>, lowMpShare: Array<number|null>, runStarts: number[]}|null} null when nothing was recorded
      */
     toSeries(timeNs) {
         this.sample(timeNs);
@@ -229,12 +255,18 @@ export default class HpMpRecorder {
         const points = this.lastBucket + 1;
         const hp = Array.from({ length: n }, () => []);
         const mp = Array.from({ length: n }, () => []);
+        const hpMin = Array.from({ length: n }, () => []);
+        const mpMin = Array.from({ length: n }, () => []);
         for (let b = 0; b < points; b++) {
             const w = this.bucketWeight[b];
             for (let i = 0; i < n; i++) {
                 // A bucket nothing landed in (a long quiet gap) is null, not 0
                 hp[i].push(w > 0 ? round1(this.bucketHp[b * n + i] / w) : null);
                 mp[i].push(w > 0 ? round1(this.bucketMp[b * n + i] / w) : null);
+                const lowHp = this.bucketMinHp[b * n + i];
+                const lowMp = this.bucketMinMp[b * n + i];
+                hpMin[i].push(w > 0 && lowHp < NO_MIN ? round1(lowHp) : null);
+                mpMin[i].push(w > 0 && lowMp < NO_MIN ? round1(lowMp) : null);
             }
         }
         return {
@@ -242,7 +274,10 @@ export default class HpMpRecorder {
             stepSeconds: this.stepNs / ONE_SECOND,
             hp,
             mp,
+            hpMin,
+            mpMin,
             hasMp: [...this.hasMp],
+            lowHpShare: Array.from(this.lowHpWeight, (w) => (this.totalWeight > 0 ? w / this.totalWeight : null)),
             lowMpShare: Array.from(this.lowMpWeight, (w, i) =>
                 this.hasMp[i] && this.totalWeight > 0 ? w / this.totalWeight : null
             ),
