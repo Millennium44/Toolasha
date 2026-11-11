@@ -40,6 +40,10 @@ const game = vi.hoisted(() => ({
     equipment: null,
     /** The item sheet, for resolving a worn item's equipment type */
     itemDetailMap: null,
+    /** Where the party record came from ('party' after a party_updated, 'login' before) */
+    partyInfoSource: 'party',
+    /** The roster a fight named, as data-manager keeps it, or null */
+    battleRoster: null,
     /** The character action queue */
     actions: null,
     /** Set to make the live reads throw */
@@ -53,6 +57,12 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         getCurrentCharacterId: () => game.charId,
         getCurrentActions: () => game.actions || [],
+        get partyInfoSource() {
+            return game.partyInfoSource;
+        },
+        get battlePartyRoster() {
+            return game.battleRoster;
+        },
         getInitClientData: () => ({ itemDetailMap: game.itemDetailMap || {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
         getHouseRooms: () => game.houseRooms,
@@ -277,6 +287,8 @@ beforeEach(() => {
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.battleParty = null;
     game.actions = null;
+    game.partyInfoSource = 'party';
+    game.battleRoster = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
     game.buildExport = null;
@@ -3923,19 +3935,61 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: den, tier: 1 });
     });
 
-    test('no party zone: the zone is left alone and the line says so', async () => {
-        for (const info of [
-            partyInfo({ status: 'disbanded' }),
-            partyInfo({ actionHrid: '' }),
-            partyInfo({ actionHrid: '/actions/foraging/x' }),
-            null,
-            partyInfo({ others: false }),
-        ]) {
+    test('no party zone: the zone is left alone and each case says its own reason', async () => {
+        const NOT_IN = 'You are not in a party';
+        const STALE = 'Your party data is out of date';
+        const NO_ZONE = 'The party has no zone set';
+        const cases = [
+            [partyInfo({ status: 'disbanded' }), STALE],
+            [partyInfo({ actionHrid: '' }), NO_ZONE],
+            [partyInfo({ actionHrid: '/actions/foraging/x' }), NO_ZONE],
+            [null, NOT_IN],
+            [{ partySlotMap: {} }, NOT_IN],
+            [partyInfo({ others: false }), STALE],
+        ];
+        for (const [info, expected] of cases) {
             const { el, editor, onResetToParty } = setup(info);
             await editor.resetToParty({ fromButton: true });
             expect(onResetToParty).not.toHaveBeenCalled();
-            expect(el.textContent).toContain('The party has no zone set');
+            expect(el.textContent).toContain(expected);
         }
+    });
+
+    test('a login-time record is not trusted: loadout falls back to the action, zone says out of date', async () => {
+        bridge.snapshots = [
+            { id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT },
+            { id: 555, name: 'FromAction', actionTypeHrid: COMBAT },
+        ];
+        game.actions = [{ actionHrid: ZONE, characterLoadoutID: 555, isDone: false, ordinal: 1 }];
+        game.partyInfoSource = 'login';
+        const { el, editor, onResetToParty } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('FromAction');
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(el.textContent).toContain('Your party data is out of date');
+    });
+
+    test('a login-time record is trusted when a fight roster names you', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT }];
+        game.partyInfoSource = 'login';
+        game.battleRoster = { members: [{ characterID: 'me', characterName: 'Milkman' }] };
+        const { editor, onResetToParty } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('FromSlot');
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 3 });
+    });
+
+    test('a reset to self landing mid-build wins over the party loadout and zone', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const { editor, onResetToParty } = setup(partyInfo());
+        let release;
+        game.buildHold = new Promise((resolve) => (release = resolve));
+        const pending = editor.resetToParty({ fromButton: true });
+        expect(editor.resetToSelf()).toBe(true);
+        release();
+        await pending;
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(editor.getSelectedLoadoutName()).toBe('');
     });
 
     test('a zone the owner could not set is reported with the owner note', async () => {

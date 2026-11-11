@@ -217,6 +217,8 @@ export class SimEditor {
         // fetch was started for, so a reply that lands after the user has
         // moved on cannot overwrite what they moved on to.
         this._scenarioToken = 0;
+        // The token the last initEditor build made (see resetToParty)
+        this._builtToken = 0;
         // Combat mode only (see the checkbox in renderEditor()): when on, a run
         // simulates only the player whose tab is open here, leaving the loaded
         // roster, fetched loadouts and edits untouched underneath it.
@@ -902,6 +904,8 @@ export class SimEditor {
             this._rosterFromPaste = false;
             this._editorInitialized = true;
             this._scenarioToken++;
+            // Which scenario this build made, so a caller can tell its own build from a later replacement
+            this._builtToken = this._scenarioToken;
 
             this.renderEditor();
             if (restoreLoadout) await this._restoreLoadoutMemory();
@@ -1791,26 +1795,53 @@ export class SimEditor {
         this._selectedLoadoutName = '';
         this._loadoutFetchNote = '';
         this._editorInitialized = false;
+        const builtBefore = this._builtToken;
         await this.initEditor({ restoreLoadout: false });
-        // A character switch or a newer scenario landing inside the build leaves the editor uninitialised
-        if ((fromButton || withLoadout) && this._editorInitialized && this._remembersLoadout()) {
+        // A character switch or a newer scenario landing inside the build leaves the editor uninitialised, and a
+        // reset to self or an import that landed mid-build must win: the scenario must still be the one this build made
+        if (
+            (fromButton || withLoadout) &&
+            this._editorInitialized &&
+            this._builtToken !== builtBefore &&
+            this._scenarioToken === this._builtToken &&
+            this._remembersLoadout()
+        ) {
             this._adoptPartyLoadoutAndZone({ withZone: fromButton });
         }
         this._saveLoadoutMemory();
     }
 
     /**
+     * The party record, only when it can be believed: the last `party_updated` message set it, or a fight's
+     * roster names this character. A login-time record can describe a party this character has since left.
+     *
+     * @private
+     * @returns {{info: Object|null, stale: boolean}} `stale` is true when a record exists but is not trusted
+     */
+    _trustedPartyInfo() {
+        const info = dataManager.characterData?.partyInfo;
+        if (!info) return { info: null, stale: false };
+        const selfId = dataManager.getCurrentCharacterId?.() ?? null;
+        const inFight = (dataManager.battlePartyRoster?.members || []).some(
+            (member) => selfId !== null && String(member?.characterID) === String(selfId)
+        );
+        if (dataManager.partyInfoSource === 'party' || inFight) return { info, stale: false };
+        return { info: null, stale: true };
+    }
+
+    /**
      * The saved loadout id this character picked for the party, or 0 for No Loadout.
      *
      * The party's slot for this character is authoritative (0 there is a real "No Loadout"). A dungeon run
-     * empties the slot map, so with no slot the running combat action carries the same id.
+     * empties the slot map, and an untrusted record is no reading, so then the running combat action carries
+     * the same id.
      *
      * @private
      * @returns {number}
      */
     _partyLoadoutId() {
         const selfId = dataManager.getCurrentCharacterId?.() ?? null;
-        const info = dataManager.characterData?.partyInfo;
+        const { info } = this._trustedPartyInfo();
         if (info?.party?.status !== 'disbanded') {
             const slot = Object.values(info?.partySlotMap || {}).find(
                 (entry) => entry && selfId !== null && String(entry.characterID) === String(selfId)
@@ -1822,24 +1853,28 @@ export class SimEditor {
     }
 
     /**
-     * The party's combat zone and tier, or null when there is none to follow: no party, a disbanded one,
-     * a non-combat action, or a party record that names other characters than this one.
+     * The party's combat zone and tier, or the reason there is none to follow.
      *
      * @private
-     * @returns {{zoneHrid: string, tier: number}|null}
+     * @returns {{zone: {zoneHrid: string, tier: number}|null, note: string}}
      */
     _partyZone() {
-        const info = dataManager.characterData?.partyInfo;
+        const outOfDate = { zone: null, note: 'Your party data is out of date, so your zone is unchanged.' };
+        const { info, stale } = this._trustedPartyInfo();
+        if (stale) return outOfDate;
         const party = info?.party;
-        if (!party || party.status === 'disbanded') return null;
-        const zoneHrid = String(party.actionHrid || '');
-        if (!zoneHrid.startsWith('/actions/combat/')) return null;
+        if (!party) return { zone: null, note: 'You are not in a party, so your zone is unchanged.' };
+        if (party.status === 'disbanded') return outOfDate;
         const selfId = dataManager.getCurrentCharacterId?.() ?? null;
         const slots = Object.values(info.partySlotMap || {}).filter((entry) => entry?.characterID);
-        // A login-time record can name a party this character has since left; an empty map (a dungeon run) cannot say
-        if (slots.length && !slots.some((entry) => String(entry.characterID) === String(selfId))) return null;
+        // An empty map (a dungeon run) cannot say who is in the party; a map that names others can
+        if (slots.length && !slots.some((entry) => String(entry.characterID) === String(selfId))) return outOfDate;
+        const zoneHrid = String(party.actionHrid || '');
+        if (!zoneHrid.startsWith('/actions/combat/')) {
+            return { zone: null, note: 'The party has no zone set, so your zone is unchanged.' };
+        }
         const tier = Number(party.difficultyTier);
-        return { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 };
+        return { zone: { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 }, note: '' };
     }
 
     /**
@@ -1865,14 +1900,13 @@ export class SimEditor {
             }
         }
 
-        const zone = withZone ? this._partyZone() : null;
-        if (!withZone) {
-            // Fetch: the zone stays whatever the user chose
-        } else if (!zone) {
-            notes.push('The party has no zone set, so your zone is unchanged.');
-        } else if (this._onResetToParty) {
+        // Fetch (no zone): the zone stays whatever the user chose
+        const found = withZone ? this._partyZone() : null;
+        if (found && !found.zone) {
+            notes.push(found.note);
+        } else if (found && this._onResetToParty) {
             try {
-                const note = this._onResetToParty(zone);
+                const note = this._onResetToParty(found.zone);
                 if (note) notes.push(note);
             } catch (error) {
                 console.error('[SimEditor] onResetToParty listener failed:', error);
