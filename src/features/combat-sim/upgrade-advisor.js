@@ -36,7 +36,14 @@ import { TASK_DAMAGE_OFF } from './engine/task-damage-mode.js';
 import { buildBuffDrinkPools, estimateFoodSimCount, runFoodOptimization } from './food-optimizer.js';
 import { generateLabArmorCandidates, getWeaponStyleFamily, labelItemWithLevel } from './lab-armor-candidates.js';
 import { buildGuidePlan } from './build-guide.js';
-import { ABILITY_ORDER_HRID, consistentAbilityOrders, zeroCooldownAbilities } from './ability-order.js';
+import {
+    ABILITY_ORDER_HRID,
+    abilitySlotUnlocks,
+    consistentAbilityOrders,
+    zeroCooldownAbilities,
+} from './ability-order.js';
+
+export { abilitySlotUnlocks };
 import { profitScale } from './trigger-tuning.js';
 import { bestGearForSkill, describeSkillingUpgrade } from './skilling-gear-candidates.js';
 import { deriveSeed, randomSeed } from './engine/rng.js';
@@ -2261,9 +2268,6 @@ export function generateGuildShrineCandidates(
 /** Drink slots a combat loadout has at most (a full pouch) */
 const DRINK_SLOTS = 3;
 
-/** Ability slots a combat loadout has: the special slot, then four ordinary ones */
-const ABILITY_SLOTS = 5;
-
 /**
  * How many of a loadout's drink slots it can use. The game gives one slot, and each pouch adds its `drinkSlots`
  * (with its enhancement bonus), so a build with no pouch drinks one coffee however many are saved on it.
@@ -2281,26 +2285,6 @@ export function drinkCapacity(playerDTO, gameData) {
     const extra =
         (detail.combatStats?.drinkSlots || 0) + multiplier * (detail.combatEnhancementBonuses?.drinkSlots || 0);
     return Math.max(1, Math.min(DRINK_SLOTS, Math.floor(1 + extra + 1e-9)));
-}
-
-/**
- * Which ability slots a loadout can use. A slot opens at a base Intelligence level the game lists per slot
- * (`abilitySlotsLevelRequirementList`); an Intelligence bonus from gear or tea does not open one. The list is read
- * by the game's slot number: the list has an unused entry 0, so the ability bar's slot `i` (0 the special slot, as
- * `fillAbilities` lays it out) reads entry `i + 1`. Without the list or the player's Intelligence nothing is locked,
- * and a DTO marked `intelligenceUnknown` (an import or profile that never carried the level; its 1 is only the
- * simulation's default) has nothing locked either.
- * @param {Object} playerDTO - Player DTO with `intelligenceLevel`
- * @param {Object} gameData - Game data payload
- * @returns {boolean[]} One flag per slot, true where the slot is open
- */
-export function abilitySlotUnlocks(playerDTO, gameData) {
-    const list = gameData?.abilitySlotsLevelRequirementList;
-    const level = playerDTO?.intelligenceUnknown ? NaN : Number(playerDTO?.intelligenceLevel);
-    return Array.from({ length: ABILITY_SLOTS }, (_, index) => {
-        const required = Array.isArray(list) ? Number(list[index + 1]) : NaN;
-        return !Number.isFinite(required) || !Number.isFinite(level) || level >= required;
-    });
 }
 
 /**

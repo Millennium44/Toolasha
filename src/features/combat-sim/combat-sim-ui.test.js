@@ -19316,6 +19316,29 @@ describe('combined UI audit: Combat redraw', () => {
     });
 });
 
+describe('an ability reorder marks measured results stale', () => {
+    test('the build signature trigger Apply and the upgrade tab compare changes when abilities swap', async () => {
+        const { buildDtoSignature } = await import('./combat-sim-ui.js');
+        const { moveAbilitySlot } = await import('./ability-order.js');
+        const slot = (hrid) => ({ hrid, level: 10, triggers: null });
+        const dto = {
+            hrid: 'player1',
+            abilities: [slot('/abilities/aura'), slot('/abilities/a'), slot('/abilities/b'), null, null],
+        };
+        const measured = new Map([[dto.hrid, buildDtoSignature(dto)]]);
+        const editor = { getEditedDTOs: () => ({ player1: dto }) };
+        const probe = Object.create(Object.getPrototypeOf(ui));
+        probe._editor = editor;
+        const results = { _buildSigs: measured };
+        expect(probe._buildChangedSinceAnalysis(results)).toBe(false);
+        dto.abilities = moveAbilitySlot(dto.abilities, 1, 1).abilities;
+        expect(probe._buildChangedSinceAnalysis(results)).toBe(true);
+        // Putting it back is the measured build again
+        dto.abilities = moveAbilitySlot(dto.abilities, 2, -1).abilities;
+        expect(probe._buildChangedSinceAnalysis(results)).toBe(false);
+    });
+});
+
 describe('simulator zone ordering and entity artwork', () => {
     let sprite;
     const zone = '/actions/combat/golem_cave';

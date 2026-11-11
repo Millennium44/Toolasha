@@ -27,6 +27,7 @@ import {
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { runningCombatAction } from '../../utils/combat-actions.js';
+import { abilitySlotUnlocks, moveAbilitySlot } from './ability-order.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
@@ -409,9 +410,11 @@ export class SimEditor {
             if (!slot?.hrid) return;
             const level = live.get(slot.hrid);
             if (level === undefined) return;
-            const ref = reference.abilities?.[index];
-            // A slot swapped or leveled by hand is theirs
-            if (!ref || ref.hrid !== slot.hrid || ref.level !== slot.level) return;
+            // The slot's own reference first; else by ability, so one moved up or down keeps following the game
+            let ref = reference.abilities?.[index];
+            if (ref?.hrid !== slot.hrid) ref = (reference.abilities || []).find((entry) => entry?.hrid === slot.hrid);
+            // A slot leveled by hand is theirs
+            if (!ref || ref.level !== slot.level) return;
             if (slot.level === level) return;
             slot.level = level;
             ref.level = level;
@@ -765,6 +768,28 @@ export class SimEditor {
     }
     getSelectedLoadoutName() {
         return this._selectedLoadoutName;
+    }
+
+    /**
+     * Move an ability one slot up (-1, cast earlier) or down (+1) among the ordinary slots, taking its level and
+     * trigger rows with it. See {@link moveAbilitySlot} for what may not move. A hand edit like any other: the
+     * DTO changes in place, so the build signature a trigger or upgrade result was measured against no longer
+     * matches and those results read as stale.
+     *
+     * @param {number} slotIndex - Slot to move from
+     * @param {number} direction - -1 or +1
+     * @param {string} [playerHrid] - Defaults to the player whose tab is open
+     * @returns {{moved: boolean, reason: string}} `reason` is '' when moved
+     */
+    moveAbility(slotIndex, direction, playerHrid = this._activeEditPlayer) {
+        const dto = this._editedDTOs?.[playerHrid];
+        if (!dto || !Array.isArray(dto.abilities)) return { moved: false, reason: 'invalid' };
+        const unlocked = abilitySlotUnlocks(dto, buildGameDataPayload());
+        const result = moveAbilitySlot(dto.abilities, slotIndex, direction, unlocked);
+        if (!result.moved) return { moved: false, reason: result.reason };
+        dto.abilities = result.abilities;
+        this.renderEditor();
+        return { moved: true, reason: '' };
     }
 
     /**
@@ -2928,6 +2953,13 @@ export class SimEditor {
         const maxSlots = 5;
         const slotCount = Math.max(dto.abilities.length, maxSlots);
 
+        const unlocked = abilitySlotUnlocks(dto, gameData);
+        const moveButton = (i, direction, name) => {
+            const probe = moveAbilitySlot(dto.abilities, i, direction, unlocked);
+            const word = direction < 0 ? 'up' : 'down';
+            return `<button type="button" data-ability-move="${i}:${direction}" aria-label="Move ${escapeHtml(name)} ${word}" title="Move ${word} (cast ${direction < 0 ? 'earlier' : 'later'})" ${probe.moved ? '' : 'disabled'} style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; min-width:26px; min-height:24px; padding:0 4px; border-radius:3px; font-size:11px; cursor:${probe.moved ? 'pointer' : 'default'}; opacity:${probe.moved ? 1 : 0.35}; font-family:inherit;">${direction < 0 ? '\u25b2' : '\u25bc'}</button>`;
+        };
+
         for (let i = 0; i < slotCount; i++) {
             const ability = dto.abilities[i];
             const slotLabel = i === 0 ? 'Special' : `Slot ${i}`;
@@ -2952,6 +2984,7 @@ export class SimEditor {
                 data-ability-idx="${i}"
                 style="width:4em; box-sizing:content-box; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
                 border-radius:3px; padding:1px 3px; font-size:12px; text-align:center;">`;
+            if (i > 0) html += moveButton(i, -1, name) + moveButton(i, 1, name);
             html += this._renderTriggerButton('abilities', i, ability, gameData);
             html += `<button data-ability-slot="${i}" style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; padding:1px 6px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">change</button>`;
             html += '</div>';
@@ -4564,6 +4597,17 @@ export class SimEditor {
                 const slotIndex = parseInt(btn.dataset.abilitySlot);
                 const gameData = buildGameDataPayload();
                 if (gameData) this._openAbilityPicker(slotIndex, dto, gameData);
+            });
+        });
+
+        editorArea.querySelectorAll('[data-ability-move]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const [slot, direction] = btn.dataset.abilityMove.split(':').map(Number);
+                if (!this.moveAbility(slot, direction).moved) return;
+                // The editor redraws, so keep keyboard focus on the moved row's button
+                const same = this._editorEl?.querySelector(`[data-ability-move="${slot + direction}:${direction}"]`);
+                const other = this._editorEl?.querySelector(`[data-ability-move="${slot + direction}:${-direction}"]`);
+                (same && !same.disabled ? same : other)?.focus();
             });
         });
 

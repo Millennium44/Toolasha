@@ -44,6 +44,8 @@ const game = vi.hoisted(() => ({
     partyInfoSource: 'party',
     /** The roster a fight named, as data-manager keeps it, or null */
     battleRoster: null,
+    /** What buildGameDataPayload answers, or null for the empty default */
+    gameData: null,
     /** The character action queue */
     actions: null,
     /** Set to make the live reads throw */
@@ -107,7 +109,7 @@ const guild = vi.hoisted(() => ({
 vi.mock('./combat-sim-adapter.js', () => ({
     seedSimPriceCache: (cache) => cache,
 
-    buildGameDataPayload: () => ({ itemDetailMap: {}, abilityDetailMap: {}, houseRoomDetailMap: {} }),
+    buildGameDataPayload: () => game.gameData || { itemDetailMap: {}, abilityDetailMap: {}, houseRoomDetailMap: {} },
     buildAllPlayerDTOs: async () => {
         // A build left open, so a test can land a character switch inside one
         if (game.buildHold) await game.buildHold;
@@ -290,6 +292,7 @@ beforeEach(() => {
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.battleParty = null;
     game.actions = null;
+    game.gameData = null;
     game.partyInfoSource = 'party';
     game.battleRoster = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
@@ -4096,5 +4099,106 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         await pending;
         expect(onResetToParty).not.toHaveBeenCalled();
         expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+});
+
+describe('reordering abilities in Configure', () => {
+    const ab = (hrid, level, triggers = null) => ({ hrid, level, triggers });
+    const AURA = ab('/abilities/fierce_aura', 40);
+    const A = ab('/abilities/a', 11, [{ dependencyHrid: '/x', conditionHrid: '/y', comparatorHrid: '/z', value: 5 }]);
+    const B = ab('/abilities/b', 22);
+    const C = ab('/abilities/c', 33);
+    const hrids = (editor) => editor.getEditedDTOs().player1.abilities.map((slot) => slot?.hrid ?? null);
+
+    async function loaded(abilities = [AURA, A, B, C, null]) {
+        game.allPlayers.players[0] = { ...emptyDTO('player1'), abilities: structuredClone(abilities) };
+        const el = document.createElement('div');
+        document.body.appendChild(el);
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+        return { el, editor };
+    }
+    const button = (el, slot, direction) => el.querySelector(`[data-ability-move="${slot}:${direction}"]`);
+
+    test('moves down and up, carrying level and trigger rows', async () => {
+        const { editor } = await loaded();
+        expect(editor.moveAbility(1, 1)).toEqual({ moved: true, reason: '' });
+        const dto = editor.getEditedDTOs().player1;
+        expect(hrids(editor)).toEqual(['/abilities/fierce_aura', '/abilities/b', '/abilities/a', '/abilities/c', null]);
+        expect(dto.abilities[2].level).toBe(11);
+        expect(dto.abilities[2].triggers).toEqual(A.triggers);
+        expect(editor.moveAbility(2, -1).moved).toBe(true);
+        expect(hrids(editor)[1]).toBe('/abilities/a');
+    });
+
+    test('the buttons move it, keep the Abilities section open and put focus on the moved row', async () => {
+        const { el, editor } = await loaded();
+        el.querySelector('[data-toggle="ability-section"]').click();
+        button(el, 1, 1).click();
+        expect(hrids(editor)[2]).toBe('/abilities/a');
+        expect(document.activeElement).toBe(button(el, 2, 1));
+    });
+
+    test('top and bottom limits, empty slots and the special slot have no live button', async () => {
+        const { el, editor } = await loaded();
+        expect(el.querySelector('[data-ability-move^="0:"]')).toBeNull();
+        expect(button(el, 1, -1).disabled).toBe(true);
+        expect(button(el, 1, 1).disabled).toBe(false);
+        expect(button(el, 3, 1).disabled).toBe(false);
+        expect(el.querySelector('[data-ability-move^="4:"]')).toBeNull();
+        expect(editor.moveAbility(1, -1)).toEqual({ moved: false, reason: 'limit' });
+        expect(editor.moveAbility(0, 1)).toEqual({ moved: false, reason: 'special' });
+        expect(editor.moveAbility(4, -1)).toEqual({ moved: false, reason: 'empty' });
+        expect(hrids(editor)).toEqual(['/abilities/fierce_aura', '/abilities/a', '/abilities/b', '/abilities/c', null]);
+    });
+
+    test('a full bar stops at the last slot', async () => {
+        const { el, editor } = await loaded([AURA, A, B, C, ab('/abilities/d', 5)]);
+        expect(button(el, 4, 1).disabled).toBe(true);
+        expect(editor.moveAbility(4, 1).reason).toBe('limit');
+    });
+
+    test('an ability moves into a free slot', async () => {
+        const { editor } = await loaded();
+        expect(editor.moveAbility(3, 1).moved).toBe(true);
+        expect(hrids(editor)).toEqual(['/abilities/fierce_aura', '/abilities/a', '/abilities/b', null, '/abilities/c']);
+    });
+
+    test('a slot the Intelligence level has not opened is refused and its button is off', async () => {
+        game.gameData = {
+            itemDetailMap: {},
+            abilityDetailMap: {},
+            houseRoomDetailMap: {},
+            abilitySlotsLevelRequirementList: [0, 1, 1, 1, 90, 120],
+        };
+        const { el, editor } = await loaded([AURA, A, B, C, null]);
+        // intelligenceLevel 1: slots 3 and 4 (list entries 4 and 5) are shut
+        expect(editor.moveAbility(2, 1)).toEqual({ moved: false, reason: 'locked' });
+        expect(button(el, 2, 1).disabled).toBe(true);
+        expect(editor.moveAbility(1, 1).moved).toBe(true);
+    });
+
+    test('the edit is visible to the build signature and the export order', async () => {
+        const { editor } = await loaded();
+        const before = JSON.stringify(editor.getEditedDTOs().player1);
+        editor.moveAbility(1, 1);
+        expect(JSON.stringify(editor.getEditedDTOs().player1)).not.toBe(before);
+        editor.moveAbility(2, -1);
+        expect(JSON.stringify(editor.getEditedDTOs().player1)).toBe(before);
+    });
+
+    test('a reordered ability keeps following the game level (matched by ability, not position)', async () => {
+        game.learnedAbilities = [{ abilityHrid: '/abilities/a', level: 15 }];
+        const { editor } = await loaded();
+        editor.moveAbility(1, 1);
+        const dto = editor.getEditedDTOs().player1;
+        expect(dto.abilities.find((slot) => slot?.hrid === '/abilities/a').level).toBe(15);
+    });
+
+    test('a reorder does not bring back the untouched-party reload', async () => {
+        const { editor } = await loaded();
+        expect(editor._isUntouchedParty()).toBe(true);
+        editor.moveAbility(1, 1);
+        expect(editor._isUntouchedParty()).toBe(false);
     });
 });
