@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim Results sections collapse
+
+Every Results section, in a player's view and in the All view, now collapses with a click and stays the way you left it across runs and reloads. On a phone the All table is tighter, keeps its labels pinned while you scroll sideways, and the price bar no longer lets rows show through.
+
 ### Token totals follow a stack linked in chat
 
 Hovering tokens someone linked in chat now totals their linked amount instead of your own stack, and the line drops "Your" when the count is not yours.
