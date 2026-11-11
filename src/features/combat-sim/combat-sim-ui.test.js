@@ -9416,6 +9416,20 @@ describe('HP and MP charts in the results', () => {
         expect(results.textContent).not.toContain('could not be drawn');
     });
 
+    test('the All players view draws the HP and MP run charts, and its Overlay box works', () => {
+        const { wrap } = showCharts(2);
+        ui.panel.querySelector('[data-tab-all]').click();
+        expect(ui.panel.querySelector('[data-all-players]')).not.toBeNull();
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')).toHaveLength(2);
+        expect(ui.panel.textContent).not.toContain('could not be drawn');
+
+        const box = wrap().querySelector('[data-hpmp-overlay]');
+        box.checked = true;
+        box.dispatchEvent(new Event('change'));
+        expect(wrap().querySelectorAll('[data-hpmp-chart]')).toHaveLength(1);
+        expect(ui.panel.querySelector('[data-all-players]')).not.toBeNull();
+    });
+
     test('the Overlay box draws HP solid and MP dashed in one chart and is remembered', () => {
         const { wrap } = showCharts(2);
         const box = wrap().querySelector('[data-hpmp-overlay]');

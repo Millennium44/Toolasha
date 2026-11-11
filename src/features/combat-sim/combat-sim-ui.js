@@ -10037,8 +10037,12 @@ class CombatSimUI {
         table += '</tbody></table></div>';
         html += table;
 
-        // Who ran dry across the run: already every player's line
-        html += renderRunMpChart(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player);
+        // Every player's HP and MP across the run, with the per-player view's Overlay and legend state, so the
+        // results' chart binding redraws this block the same way
+        html += renderRunCharts(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player, {
+            overlay: this._runChartOverlay,
+            hidden: this._runChartHidden,
+        });
         return html;
     }
 
