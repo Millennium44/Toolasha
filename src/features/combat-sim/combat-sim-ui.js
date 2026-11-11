@@ -12030,6 +12030,8 @@ class CombatSimUI {
             // The builds this analysis measures from, taken before its baseline: an Apply or any edit afterwards
             // makes every later Confirm and Verify measure a different build against this baseline
             const buildSigs = new Map(playerDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+            // Whose build this measures, named now: the roster can change in Configure while the run is going
+            const ranForName = (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null;
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -12107,7 +12109,7 @@ class CombatSimUI {
             if (results) {
                 results.ranFor = {
                     hrid: playerDTOs[playerIndex]?.hrid || null,
-                    name: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                    name: ranForName,
                     zoneHrid: zoneHrid || null,
                     difficultyTier: difficultyTier ?? null,
                 };

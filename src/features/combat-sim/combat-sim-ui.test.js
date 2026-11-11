@@ -1288,6 +1288,25 @@ describe('the panel', () => {
         expect(upgrade.value).toBe('12');
     });
 
+    test('an upgrade run names the player it measured, even if Configure replaces them mid-run', async () => {
+        selectZone();
+        let names = ['Alice'];
+        const spy = vi
+            .spyOn(ui._editor, 'getPlayerInfo')
+            .mockImplementation(() => names.map((name, i) => ({ hrid: `player${i + 1}`, name })));
+        mocks.upgradeResult = { results: [] };
+        // Bob takes Alice's slot while her build is being measured
+        mocks.onRun = () => {
+            names = ['Bob'];
+        };
+        try {
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeResult.ranFor?.name).toBe('Alice');
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test('an upgrade run uses the hours typed on the Upgrade tab', async () => {
         selectZone();
         let hours = null;
