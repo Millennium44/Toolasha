@@ -164,8 +164,8 @@ export function conditionResultsHtml(conditions, gameData) {
     if (!conditions) return '';
     let body =
         `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-top:8px;">New conditions</div>` +
-        '<div style="color:#888; font-size:11px;">The selected player only; show-only, so enter any you want in the ' +
-        'game by hand.' +
+        '<div style="color:#888; font-size:11px;">The selected player only. Apply puts them in the sim editor to ' +
+        'try; set any you want in the game by hand.' +
         (conditions.afterThresholds ? ' Searched after the threshold changes above; gains are on top of them.' : '') +
         '</div>';
     const skipped = {

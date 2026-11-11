@@ -337,6 +337,9 @@ describe('new conditions block', () => {
         expect(html).toContain('Activate when: Targeted enemy Current HP');
         expect(html).toContain('was: Activate when: Targeted enemy Current HP');
         expect(html).toContain('Δscore +5.0 ± 0.4');
+        // Apply writes new conditions into the sim editor, so the header must not call the section show-only
+        expect(html).not.toContain('show-only');
+        expect(html).toContain('Apply puts them in the sim editor');
     });
 
     test('with no accepted condition it shows the best found, or that the current rows measured best', () => {
