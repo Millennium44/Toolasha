@@ -27,8 +27,11 @@ const storageMock = vi.hoisted(() => {
                 ? { found: true, value: structuredClone(map.get(key)) }
                 : { found: false, value: null };
         }),
-        set: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, structuredClone(value));
+        // The fold rides with the value and runs against what is stored when the write lands, as the real one does
+        set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
+            const map = storeFor(store);
+            const stored = map.has(key) ? structuredClone(map.get(key)) : undefined;
+            map.set(key, structuredClone(options?.fold ? options.fold(stored, value) : value));
             return true;
         }),
         delete: vi.fn(async (key, store = 'settings') => {
@@ -111,7 +114,7 @@ vi.mock('./custom-tabs-data.js', async (importOriginal) => {
 });
 
 const { default: CustomTabsUI } = await import('./custom-tabs-ui.js');
-const { flushConfigWrites } = await import('./custom-tabs-data.js');
+const { flushConfigWrites, addTab, removeTab } = await import('./custom-tabs-data.js');
 const { announceSyncPullApplied } = await import('../../../utils/sync-merge-registry.js');
 
 const KEY = (charId) => `${charId}_inventoryTabs_config`;
@@ -242,5 +245,38 @@ describe('a sync pull of the tab config', () => {
         warn.mockRestore();
 
         expect(ui._applyLayout).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('an edit before the panel has taken a pull in', () => {
+    const savedIds = () =>
+        storageMock
+            .storeFor('settings')
+            .get(KEY('ironChar'))
+            .tabs.map((t) => t.id);
+
+    test('keeps the pulled tab, and the adoption that follows shows both', async () => {
+        store('ironChar', [{ id: 'a', name: 'Old' }]);
+        await startUI();
+        // The pull has written, and its announcement has not reached the panel yet
+        store('ironChar', [
+            { id: 'a', name: 'Old' },
+            { id: 'b', name: 'Pulled' },
+        ]);
+        const result = addTab(ui._config, null, 'Mine');
+        ui._config = result.config;
+        await ui._save();
+        await flushConfigWrites();
+        expect(savedIds()).toEqual(['a', 'b', result.tabId]);
+
+        pull('ironChar');
+        await vi.waitFor(() => expect(ui._config.tabs.map((t) => t.id)).toEqual(['a', 'b', result.tabId]));
+        expect(ui._applyLayout).toHaveBeenCalledTimes(1);
+
+        // Taken in: a deletion of the pulled tab now stands
+        ui._config = removeTab(ui._config, 'b');
+        await ui._save();
+        await flushConfigWrites();
+        expect(savedIds()).toEqual(['a', result.tabId]);
     });
 });

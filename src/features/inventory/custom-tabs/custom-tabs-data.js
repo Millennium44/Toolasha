@@ -774,13 +774,85 @@ registerSyncMerge({
     // A fold that reorders nothing and adds no tab, item or tombstone is not news, however the stored text differs
     sameAs: sameTabContent,
     label: 'Custom inventory tabs',
-    // Deliberately NOT live-safe: a pull latches this key and asks for a reload. Every save writes the held config
-    // whole (the curated record trusts memory), so an edit landing between a restore releasing its hold and the
-    // panel adopting the pull would erase the pulled tabs. Folding every save through `mergeConfigs` is not an
-    // option: it never lets a tombstone delete an UNSTAMPED (pre-3.22.0) tab, so deleting a legacy tab would be
-    // undone by the next save. `CustomTabsUI._adoptPulledConfig` stays as a harmless refresh for a pull that lands
-    // without a latch (a latched write is refused until reload, so it never sees one).
+    // A pull may replace the stored config under a running page. Every save decides inside its own write's
+    // transaction (`foldOverBaseline`): a stored copy still the one the panel last took in or wrote is written over
+    // whole, as before; one that moved (a pull, another tab) is folded under the panel's copy, after the panel's
+    // own deletions since that copy are taken out of it, so neither the pulled tabs nor a deletion made here is
+    // lost. Folding every save through `mergeConfigs` alone would not do: it never lets a tombstone delete an
+    // UNSTAMPED (pre-3.22.0) tab or item, and its mass-delete caps refuse a large deletion. The panel takes the
+    // pulled copy in through `CustomTabsUI._adoptPulledConfig`. A backup restore still latches the key.
+    liveSafe: true,
 });
+
+/**
+ * Every tab in a tree by id, nested ones included.
+ * @param {Array} tabs
+ * @param {Map<*, Object>} [into]
+ * @returns {Map<*, Object>}
+ */
+function tabsById(tabs, into = new Map()) {
+    for (const tab of Array.isArray(tabs) ? tabs : []) {
+        if (!tab || typeof tab !== 'object' || tab.id == null) continue;
+        if (!into.has(tab.id)) into.set(tab.id, tab);
+        tabsById(tab.children, into);
+    }
+    return into;
+}
+
+/** @param {Object} tab @returns {string} The tab and its subtree in canonical text */
+const tabText = (tab) => stableStringify(normalizeTabs([tab]));
+
+/**
+ * A stored config without what the panel deleted since `baseline`, the copy it last took in or wrote.
+ *
+ * A tab the baseline has, the panel's copy has nowhere, and the stored copy holds exactly as the baseline did was
+ * removed here, and nobody else has touched it since: it is dropped. An item the baseline's copy of a tab holds,
+ * the panel's copy lacks and the stored copy still holds was taken out here: it is dropped from the stored copy.
+ * What the stored copy changed or added (a pull, another tab) is left for `mergeConfigs` and its tombstones to
+ * judge. This is what lets a deletion of an unstamped tab or item, or a large one the mass-delete caps would
+ * refuse, survive a fold that a pull made necessary.
+ * @param {Object} stored - As stored now
+ * @param {Object} baseline - What the panel's copy was read from or last wrote
+ * @param {Object} held - The panel's copy
+ * @returns {Object} The stored config, pruned (a copy)
+ */
+function withoutLocalDeletions(stored, baseline, held) {
+    const baseTabs = tabsById(baseline?.tabs);
+    const heldTabs = tabsById(held?.tabs);
+    const prune = (tabs) => {
+        const out = [];
+        for (const tab of Array.isArray(tabs) ? tabs : []) {
+            if (!tab || typeof tab !== 'object') continue;
+            const base = tab.id != null ? baseTabs.get(tab.id) : undefined;
+            if (base && !heldTabs.has(tab.id) && tabText(tab) === tabText(base)) continue;
+            const next = { ...tab };
+            const mine = tab.id != null ? heldTabs.get(tab.id) : undefined;
+            if (base && mine && Array.isArray(tab.items)) {
+                const had = new Set(Array.isArray(base.items) ? base.items : []);
+                const has = new Set(Array.isArray(mine.items) ? mine.items : []);
+                next.items = tab.items.filter((hrid) => hrid === LINEBREAK_HRID || !had.has(hrid) || has.has(hrid));
+            }
+            if (Array.isArray(tab.children)) next.children = prune(tab.children);
+            out.push(next);
+        }
+        return out;
+    };
+    return { ...stored, tabs: prune(stored?.tabs) };
+}
+
+/**
+ * What a save of the panel's copy writes over the stored config. See the `liveSafe` note on the registration.
+ * @param {Object} stored - As stored now
+ * @param {Object} held - The copy being saved
+ * @param {Object|null} baseline - What the panel's copy was read from or last wrote; null when it has none
+ * @returns {{value: Object, whole: boolean}} The value, and whether it is the held copy written whole
+ */
+function foldOverBaseline(stored, held, baseline) {
+    if (!baseline || tabContentOf(pruneTombstones(stored)) === tabContentOf(pruneTombstones(baseline))) {
+        return { value: held, whole: true };
+    }
+    return { value: mergeConfigs(withoutLocalDeletions(stored, baseline, held), held), whole: false };
+}
 
 /**
  * One curated record per character, under the exact key the config has always
@@ -800,17 +872,62 @@ const records = new Map();
 function recordFor(characterId) {
     let record = records.get(characterId);
     if (!record) {
+        /**
+         * The empty configs the record makes for itself. An authoritative load folds what it read under one of
+         * them, and that is a read, not a panel that deleted everything
+         */
+        const blanks = new WeakSet();
+        const state = { baseline: null, seq: 0, trusted: false };
         record = createCuratedRecord({
             base: getStorageKey(characterId),
             store: STORE,
             scoped: false,
-            empty: defaultConfig,
-            merge: mergeConfigs,
+            empty: () => {
+                const blank = defaultConfig();
+                blanks.add(blank);
+                return blank;
+            },
+            // Every fold reaches this, the one inside a save's own transaction included (`keepMerging`): which of
+            // them may write the held copy whole is decided against the panel's baseline, not trusted after a load
+            keepMerging: true,
+            merge: (stored, held) => {
+                if (blanks.has(held)) return mergeConfigs(stored, held);
+                if (state.baseline) return foldOverBaseline(stored, held, state.baseline).value;
+                // No baseline yet: as the curated record always did, trust the held copy only after a readable load
+                return state.trusted ? held : mergeConfigs(stored, held);
+            },
             label: 'CustomTabs',
         });
+        const { load, reset } = record;
+        record.load = async (options) => {
+            state.trusted = false;
+            const readable = await load(options);
+            state.trusted = readable;
+            return readable;
+        };
+        record.reset = () => {
+            state.trusted = false;
+            reset();
+        };
+        record._tabsState = state;
         records.set(characterId, record);
     }
     return record;
+}
+
+/**
+ * The panel now holds `config` for this character: the copy its saves are judged against (see
+ * `foldOverBaseline`). Only the panel's own adoption of a load calls this; a reader that loads the config for its own
+ * use (the bulk-sell assistant) does not, since the panel may still hold an older copy.
+ * @param {string} characterId
+ * @param {Object} config - The config the panel took in
+ * @returns {void}
+ */
+export function adoptConfigBaseline(characterId, config) {
+    if (!characterId || !config) return;
+    const state = recordFor(characterId)._tabsState;
+    state.seq += 1;
+    state.baseline = clone(config);
 }
 
 /**
@@ -879,8 +996,15 @@ export function pullWroteConfig(characterId, written) {
 export async function saveConfig(characterId, config) {
     if (!characterId) return;
     const record = recordFor(characterId);
+    const state = record._tabsState;
+    // The copy the panel holds once this lands, whether it was written whole or folded: never the fold, which can
+    // carry what a pull brought and the panel has not taken in, so that its absence would read as a deletion here
+    const lineage = state.baseline ? clone(config) : null;
+    const seq = ++state.seq;
     record.set(config);
-    return record.save();
+    const written = await record.save();
+    if (written && lineage && state.seq === seq) state.baseline = lineage;
+    return written;
 }
 
 /**

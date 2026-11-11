@@ -756,6 +756,30 @@ describe('importEverything reports what did not land', () => {
         }
     });
 
+    test('the tab config and the trial ability session: a pull leaves them open, a backup restore latches them', async () => {
+        // The real registrations, not a stand-in: both owners fold every write over what is stored
+        await import('../features/inventory/custom-tabs/custom-tabs-data.js');
+        await import('../features/guild/guild-trial-abilities.js');
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+        payload.stores = {
+            settings: { '42_inventoryTabs_config': { version: 1, tabs: [], selectedTabId: null } },
+            guildHistory: { guildTrialAbilities_Cats: { startedAt: 1, players: {} } },
+        };
+        db.set('settings', new Map());
+        db.set('guildHistory', new Map());
+
+        const pulled = await importEverything(payload, { liveSafeMerge: true });
+        expect(pulled.latched).toBe(0);
+        expect(storage.finishRestore).not.toHaveBeenCalled();
+
+        const restored = await importEverything(payload);
+        expect(restored.latched).toBe(2);
+        const latched = storage.finishRestore.mock.calls[0][0];
+        expect(Array.from(latched.get('settings'))).toEqual(['42_inventoryTabs_config']);
+        expect(Array.from(latched.get('guildHistory'))).toEqual(['guildTrialAbilities_Cats']);
+    });
+
     test('reports every key it wrote, including a tombstone companion the reconciliation added', async () => {
         const payload = await exportEverything();
         payload.stores.settings = { enhancementTracker_sessions_abc: { sessions: [] } };

@@ -37,6 +37,7 @@ import {
     loadConfig,
     saveConfig,
     pullWroteConfig,
+    adoptConfigBaseline,
     addTab,
     removeTab,
     clearAllTabs,
@@ -769,6 +770,7 @@ export default class CustomTabsUI {
         // Gates the whole tail — there is only one await in this body, and the
         // registrations below run in sequence off it.
         if (!stillOurs(ticket)) return;
+        adoptConfigBaseline(charId, this._config);
         this._configCharId = charId;
         this._storedNativeTabPending = true;
         this._unlistenPulls = onSyncPullApplied((written) => this._adoptPulledConfig(written));
@@ -983,9 +985,10 @@ export default class CustomTabsUI {
     /**
      * A sync pull wrote this character's tab config: take it in, and redraw only if it changed.
      *
-     * The held config has to be replaced BEFORE any later edit saves, or that save would write the stale copy back
-     * over the pulled one (the record trusts memory once loaded). The redraw waits out a drag, since rebuilding the
-     * headers under one cancels it.
+     * The key is live-safe: a save made before this has taken the pull in finds the stored copy moved off the
+     * panel's baseline and folds it under the edit rather than writing over it (`saveConfig`), so nothing the pull
+     * brought is lost meanwhile. Taking it in also moves the baseline, so later saves are written whole again. The
+     * redraw waits out a drag, since rebuilding the headers under one cancels it.
      * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
      * @returns {Promise<void>}
      */
@@ -1008,8 +1011,12 @@ export default class CustomTabsUI {
             return;
         }
         if (generation !== this._reloadGeneration || this._configCharId !== charId) return;
-        if (JSON.stringify(loaded) === JSON.stringify(this._config)) return;
+        if (JSON.stringify(loaded) === JSON.stringify(this._config)) {
+            adoptConfigBaseline(charId, loaded);
+            return;
+        }
         this._config = loaded;
+        adoptConfigBaseline(charId, loaded);
         this._boundBaseHrids = null;
         if (!this._isActive) return;
         if (this._dragInProgress || this._tileDragData) {
@@ -1087,6 +1094,7 @@ export default class CustomTabsUI {
         if (generation !== this._reloadGeneration) return;
 
         this._config = loaded;
+        adoptConfigBaseline(charId, loaded);
         this._configCharId = charId;
         // `_boundBaseHrids` is derived from `_config`'s loadoutBindings and is
         // rebuilt only when it is null, so a config swap has to drop it. Left

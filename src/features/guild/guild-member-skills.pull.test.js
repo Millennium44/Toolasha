@@ -72,16 +72,16 @@ describe('guild member skills and a sync pull', () => {
     test('the guild key resolves as live-safe in the forms the game produces', () => {
         expect(isLiveSafeKey('guildHistory', 'guildMemberSkills_default')).toBe(true);
         expect(isLiveSafeKey('guildHistory', KEY)).toBe(true);
-        // Custom tabs deliberately latch: see the note on its registration
-        expect(isLiveSafeKey('settings', '603281_inventoryTabs_config')).toBe(false);
+        // A key with no live-safe owner still latches
+        expect(isLiveSafeKey('settings', '603281_bulkSell_lastTab')).toBe(false);
     });
 
-    test('a restore with liveSafeMerge latches only the custom tabs key', async () => {
+    test('a restore with liveSafeMerge latches only the key with no live-safe owner', async () => {
         const payload = {
             formatVersion: 1,
             stores: {
                 guildHistory: { guildMemberSkills_default: { ada: capture('Ada', 60, 2000) } },
-                settings: { '603281_inventoryTabs_config': { version: 1, tabs: [], selectedTabId: null } },
+                settings: { '603281_bulkSell_lastTab': 'tab-1' },
             },
         };
         const result = await importEverything(payload, { liveSafeMerge: true });
