@@ -245,6 +245,25 @@ export function formatReturn(ratio) {
     return { text, color: COLORS.textDim, title };
 }
 
+/**
+ * The expected total beside an actual one ("· exp 131.29M"), so the percent on the right has its base on screen.
+ * Both totals leave out unpriced items, and the hover says so when the chest has any.
+ * @param {{expectedValue?: number, items?: Array<{unpriced?: boolean}>}} performance - From chestPerformance
+ * @returns {HTMLElement} An empty span when there is nothing expected to show
+ */
+export function expectedNote(performance) {
+    const note = document.createElement('span');
+    note.dataset.role = 'expected-total';
+    const expected = performance?.expectedValue;
+    if (!(expected > 0)) return note;
+    note.textContent = ` · exp ${formatLargeNumber(Math.round(expected))}`;
+    note.style.color = COLORS.textDim;
+    note.title = performance.items?.some((item) => item.unpriced)
+        ? 'What the drop table says to expect. Items with no price are left out of this and of the value beside it.'
+        : 'What the drop table says to expect.';
+    return note;
+}
+
 /** What the game calls a scroll; see {@link isScrollItem} */
 const SCROLL_CATEGORY = '/item_categories/scroll';
 const LABYRINTH_TOKEN_HRID = '/items/labyrinth_token';
@@ -1501,6 +1520,7 @@ class TreasureTracker {
             'Which side of the market these values are taken from. ' +
             'Set by the profit pricing mode in Toolasha’s settings.';
         paid.appendChild(basis);
+        paid.appendChild(expectedNote(opening));
         const pct = document.createElement('span');
         pct.textContent = verdict.text;
         pct.style.color = verdict.color;
@@ -1525,6 +1545,7 @@ class TreasureTracker {
         const totalValue = document.createElement('span');
         totalValue.textContent = `${formatLargeNumber(Math.round(lifetime.actualValue))} · ${lifeVerdict.text}`;
         totalValue.style.color = lifeVerdict.color;
+        totalLabel.appendChild(expectedNote(lifetime));
         total.appendChild(totalLabel);
         total.appendChild(totalValue);
         body.appendChild(total);

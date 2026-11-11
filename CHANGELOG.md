@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Treasure popup shows the expected total
+
+The last opening and the all-time line now show what the drop table expected (for example "114.93M ask · exp 131.29M"), so the percent beside them has its base on screen.
+
 ### Missing Mats separates owned inputs from purchases
 
 Shopping lists no longer count an owned prerequisite toward a separate purchase of the same item and level. Open lists also close cleanly when you switch characters.

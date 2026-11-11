@@ -752,6 +752,39 @@ describe('the popup’s header is the panel’s header', () => {
     });
 });
 
+describe('the popup’s expected totals', () => {
+    afterEach(() => {
+        treasureTracker._removePopup();
+    });
+
+    test('both the last opening and the lifetime line show what was expected', () => {
+        const popup = treasureTracker._buildPopup(
+            '/items/known',
+            { opened: 27, ratio: 0.875, actualValue: 114_930_000, expectedValue: 131_290_000, items: [] },
+            { opened: 619, ratio: 0.846, actualValue: 2_550_000_000, expectedValue: 3_014_000_000, items: [] }
+        );
+        const notes = [...popup.querySelectorAll('[data-role="expected-total"]')].map((n) => n.textContent);
+        expect(notes).toEqual([' · exp 131.29M', ' · exp 3.01B']);
+    });
+
+    test('nothing expected shows no note, and an unpriced item is named in the hover', () => {
+        const popup = treasureTracker._buildPopup(
+            '/items/known',
+            {
+                opened: 1,
+                ratio: 1,
+                actualValue: 300,
+                expectedValue: 300,
+                items: [{ itemHrid: '/items/cape', unpriced: true }],
+            },
+            { opened: 0, ratio: null, actualValue: 0, expectedValue: 0, items: [] }
+        );
+        const notes = [...popup.querySelectorAll('[data-role="expected-total"]')];
+        expect(notes[0].title).toMatch(/no price/);
+        expect(notes[1].textContent).toBe('');
+    });
+});
+
 describe('the popup’s item rows', () => {
     const item = (extra) => ({
         itemHrid: '/items/coin',
