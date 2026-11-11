@@ -3713,25 +3713,32 @@ function resolveMirrorBase(
         buyLower: true,
         stepOdds: landing[level - 1],
     };
-    let plan = mustUpper || mustLower ? null : fresh;
+    // Two answers: the cheapest plan that spends the taken piece (required when one fits), and the
+    // cheapest that leaves it to be sold (the fresh build, or one using spares). The second stands
+    // whenever the first loses to buying the target outright, since the piece is sold either way then.
+    let forced = null;
+    let kept = fresh;
+    const cheaper = (a, b) => !b || a.pay + a.forfeit < b.pay + b.forfeit;
     for (const [useUpper, useLower] of [
         [true, false],
         [false, true],
         [true, true],
     ]) {
         if ((useUpper && !upper) || (useLower && !lower)) continue;
-        if ((mustUpper && !useUpper) || (mustLower && !useLower)) continue;
+        const usesTaken = (useUpper && upper.taken) || (useLower && lower.taken);
+        const required = (!mustUpper || useUpper) && (!mustLower || useLower);
+        if (usesTaken && !required) continue;
         // A step the chain may skip (Blessed Tea) is only run, and its inputs only spent, some of the time
         const stepOdds = useUpper ? 1 : landing[level - 1];
         const lowerPay = useLower ? 0 : best[level - 2];
         const pay = (useUpper ? 0 : best[level - 1]) + (stepOdds > 0 ? stepOdds * (lowerPay + mirrorPrice) : 0);
         const forfeit = (useUpper ? upper.forfeit : 0) + (useLower ? stepOdds * lower.forfeit : 0);
-        if (!Number.isFinite(pay) || (plan && pay + forfeit >= plan.pay + plan.forfeit)) continue;
+        if (!Number.isFinite(pay)) continue;
         // Built copies spend mirrors of their own; a held copy spends none
         const mirrors =
             (useUpper ? 0 : mirrorCounts[level - 1]) +
             (stepOdds > 0 ? stepOdds * ((useLower ? 0 : mirrorCounts[level - 2]) + 1) : 0);
-        plan = {
+        const option = {
             pay,
             forfeit,
             mirrors,
@@ -3744,13 +3751,16 @@ function resolveMirrorBase(
                 useLower ? { copy: lower, share: stepOdds } : null,
             ].filter(Boolean),
         };
+        if (usesTaken) {
+            if (cheaper(option, forced)) forced = option;
+        } else if (cheaper(option, Number.isFinite(kept.pay) ? kept : null)) {
+            kept = option;
+        }
     }
-    // No plan can use the taken piece (an input has no price): the fresh route, with the piece still sold
-    plan = plan || fresh;
     const beatsOrdinary = (p) => Number.isFinite(p.pay) && (compareOnly || p.pay + p.forfeit < viaOrdinary);
-    // Using the piece lost to buying the target outright, so the piece is sold either way: then the fresh
-    // mirror, which also sells it, still competes with that outright purchase
-    if (plan !== fresh && !beatsOrdinary(plan) && beatsOrdinary(fresh)) plan = fresh;
+    // The taken piece is used when a plan can spend it and that plan still beats the outright purchase;
+    // otherwise it is sold, and the cheapest plan that keeps it out (spares allowed) competes instead
+    const plan = forced && beatsOrdinary(forced) ? forced : kept;
     if (!beatsOrdinary(plan)) return null;
 
     // The base copies the route buys, for the Market bill. A level the mirror builds is built from its

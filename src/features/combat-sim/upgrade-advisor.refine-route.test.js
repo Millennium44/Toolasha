@@ -976,6 +976,27 @@ describe('refined target priced from a held base', () => {
                 });
             });
 
+            test('when spending the worn piece loses to the outright buy, a plan using a spare still competes', () => {
+                // Worn +5 and a free spare +6 for a +7: spending the +5 costs its sale, the spare-only plan
+                // sells the +5 and buys just the lower input and the mirror. The sale stays under the
+                // route's spend so the resale cap does not decide the comparison
+                const DEAR5 = best[5] + 500_000;
+                state.swordSell = DEAR5;
+                state.items = [wornSword(5), stack(SWORD, 6)];
+                const spareOnly = best[5] + 1_000_000;
+                const spendWorn = 1_000_000 + DEAR5;
+                const outright = Math.round((spareOnly + spendWorn) / 2);
+                state.noAsk = false;
+                state.askFor = (hrid, level) => (hrid === SWORD && level === 7 ? outright : 0);
+                const row = { ...sword(7), removedItems: [{ hrid: SWORD, enhancementLevel: 5 }] };
+                const detail = explainUpgradeCost(row, gameData);
+                expect(detail.source).toBe('mirror');
+                expect(detail.buys[0].price).toBeCloseTo(spareOnly, 0);
+                expect(detail.ladder.mirror.heldLevels).toEqual([6]);
+                // The worn +5 is not spent, so it is sold
+                expect(detail.credit).toBeGreaterThan(0);
+            });
+
             test('one spare serves one input: a lone +5 for a +7 still buys the +6', () => {
                 state.items = [stack(SWORD, 5)];
                 const detail = explainUpgradeCost(sword(7), gameData);
