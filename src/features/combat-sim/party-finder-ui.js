@@ -334,6 +334,9 @@ export function unknownBuildParts(dto, gameData) {
     return unknown;
 }
 
+/** How long a shared profile is waited for before the Party tab stops looking */
+const PROFILE_WAIT_MS = 60000;
+
 export class PartyFinderTab {
     /**
      * @param {Object} host - The Combat Sim panel (`CombatSimUI`)
@@ -917,8 +920,13 @@ export class PartyFinderTab {
         if (!waiting()) return;
         const owner = dataManager.getCurrentCharacterId();
         const ticket = (this._profileWaitTicket = (this._profileWaitTicket || 0) + 1);
+        // A profile not written within a minute is not coming without a new share, and each look rebuilds the party
+        const giveUpAt = Date.now() + PROFILE_WAIT_MS;
         const cancelled = () =>
-            !this.root || ticket !== this._profileWaitTicket || dataManager.getCurrentCharacterId() !== owner;
+            !this.root ||
+            ticket !== this._profileWaitTicket ||
+            dataManager.getCurrentCharacterId() !== owner ||
+            Date.now() >= giveUpAt;
         for (let delay = 100; ; delay = Math.min(delay * 2, 2000)) {
             try {
                 await webSocketHook._profileChain;

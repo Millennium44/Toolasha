@@ -2136,6 +2136,36 @@ describe('include my party', () => {
         }
     });
 
+    test('the wait for a shared profile stops after a minute', async () => {
+        setParty([['c1', 'Captain', null]]);
+        const handlers = [];
+        const onSpy = vi.spyOn(webSocketHook, 'on').mockImplementation((type, cb) => handlers.push([type, cb]));
+        try {
+            await mountTab();
+            const onProfile = handlers.find(([type]) => type === 'profile_shared')[1];
+            vi.useFakeTimers();
+            let builds = 0;
+            const realBuilt = state.built;
+            Object.defineProperty(state, 'built', {
+                configurable: true,
+                get: () => {
+                    builds++;
+                    return realBuilt;
+                },
+            });
+            onProfile({ profile: { sharableCharacter: { id: 'c1', name: 'Captain' } } });
+            await vi.advanceTimersByTimeAsync(61000);
+            const atCap = builds;
+            expect(atCap).toBeGreaterThan(3);
+            await vi.advanceTimersByTimeAsync(30000);
+            expect(builds).toBe(atCap);
+        } finally {
+            vi.useRealTimers();
+            delete state.built;
+            onSpy.mockRestore();
+        }
+    });
+
     test('a member whose profile is not loaded is said so and left out, never a blank build', async () => {
         seedRoster([['a', 'Ann', build(80)]]);
         setParty([['c1', 'Captain', null]]);
