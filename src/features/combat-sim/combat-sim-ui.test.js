@@ -8544,6 +8544,7 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
             partySize: 1,
             loadoutName: null,
             wasEdited: false,
+            timestamp: null,
         });
         pushHistory('Current Gear', oneHourFight(), 1, {
             zoneName: 'Chimerical Den',
@@ -8551,6 +8552,7 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
             partySize: 5,
             loadoutName: 'Fighting',
             wasEdited: false,
+            timestamp: null,
         });
         ui._comparisonBaseline = 0;
         ui._comparisonSlots = [1];
@@ -8566,8 +8568,18 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
     });
 
     test('a difficulty tier above 0 is appended to the area', () => {
-        pushHistory('Current Gear', oneHourFight(), 1, { zoneName: 'Chimerical Den', difficultyTier: 3, partySize: 1 });
-        pushHistory('Current Gear', oneHourFight(), 1, { zoneName: 'Chimerical Den', difficultyTier: 0, partySize: 1 });
+        pushHistory('Current Gear', oneHourFight(), 1, {
+            zoneName: 'Chimerical Den',
+            difficultyTier: 3,
+            partySize: 1,
+            timestamp: null,
+        });
+        pushHistory('Current Gear', oneHourFight(), 1, {
+            zoneName: 'Chimerical Den',
+            difficultyTier: 0,
+            partySize: 1,
+            timestamp: null,
+        });
         ui._comparisonBaseline = 0;
         const results = showFight();
 
@@ -8584,6 +8596,7 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
             partySize: 1,
             loadoutName: 'Fighting',
             wasEdited: true,
+            timestamp: null,
         });
         pushHistory('Fighting', oneHourFight(), 1, {
             zoneName: 'Fly',
@@ -8591,6 +8604,7 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
             partySize: 1,
             loadoutName: 'Fighting',
             wasEdited: false,
+            timestamp: null,
         });
         ui._comparisonBaseline = 0;
         const results = showFight();
@@ -8603,14 +8617,45 @@ describe('comparison labels tell entries apart by area, party and loadout', () =
     // An entry saved before the area/party/loadout fields existed has nothing
     // to compose a new label from and must still render under its old label.
     test('an old entry saved without the new fields still renders its old label', () => {
-        pushHistory('Current Gear');
-        pushHistory('New Chest');
+        pushHistory('Current Gear', oneHourFight(), 1, { timestamp: null });
+        pushHistory('New Chest', oneHourFight(), 1, { timestamp: null });
         ui._comparisonBaseline = 0;
         const results = showFight();
 
         const select = results.querySelector('#mwi-csim-baseline-select');
         const optionText = Array.from(select.options).map((o) => o.textContent);
         expect(optionText).toEqual(['Current Gear', 'New Chest']);
+    });
+
+    describe('run time', () => {
+        const at = new Date(2026, 10, 11, 22, 42).getTime();
+        const clock = new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const zone = { zoneName: 'Sinister Circus', difficultyTier: 1, partySize: 5 };
+
+        test('leads the dropdown option and the table cell, and never the CSV scenario', () => {
+            pushHistory('Current Gear', oneHourFight(), 1, { ...zone, timestamp: at });
+            pushHistory('Current Gear', oneHourFight(), 1, { ...zone, timestamp: at + 60000 });
+            ui._comparisonBaseline = 0;
+            ui._comparisonSlots = [1];
+            const results = showFight();
+
+            const options = Array.from(results.querySelector('#mwi-csim-baseline-select').options);
+            expect(options[0].textContent).toBe(`${clock} · Current gear · Party (5) · Sinister Circus T1`);
+            expect(options[0].textContent).not.toBe(options[1].textContent);
+            const cell = results.querySelector('[data-history-idx="0"] td');
+            expect(cell.textContent.startsWith(`★ ${clock} · `)).toBe(true);
+            expect(ui._historyEntryLabel(ui._simHistory[0]).title).toBe(
+                'Current gear · Party (5) · Sinister Circus T1'
+            );
+        });
+
+        test('also leads the fallback label, and is absent without a timestamp', () => {
+            expect(ui._historyEntryLabel({ label: 'Current Gear', timestamp: at }).short).toBe(
+                `${clock} · Current Gear`
+            );
+            expect(ui._historyEntryLabel({ label: 'Current Gear' }).short).toBe('Current Gear');
+            expect(ui._historyEntryLabel({ label: 'Current Gear', timestamp: NaN }).short).toBe('Current Gear');
+        });
     });
 });
 

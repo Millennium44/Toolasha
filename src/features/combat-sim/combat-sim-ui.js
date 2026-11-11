@@ -9892,8 +9892,17 @@ class CombatSimUI {
      * @private
      */
     _historyEntryLabel(entry) {
+        // The run's local time leads `short` (never `title`, which feeds the
+        // CSV that already has a "Run at" column): the table's Scenario cell
+        // ellipsizes its tail, and five identical-looking runs differ only here.
+        const withTime = (text) => {
+            if (!entry.timestamp) return text;
+            const at = new Date(entry.timestamp);
+            if (Number.isNaN(at.getTime())) return text;
+            return `${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${text}`;
+        };
         if (!entry.zoneName && !entry.zoneHrid) {
-            return { short: entry.label, title: entry.label };
+            return { short: withTime(entry.label), title: entry.label };
         }
         const areaPart = entry.zoneName
             ? entry.zoneName + (entry.difficultyTier ? ` T${entry.difficultyTier}` : '')
@@ -9907,11 +9916,12 @@ class CombatSimUI {
             : entry.wasEdited
               ? 'Current gear (edited)'
               : 'Current gear';
-        const short = [gearPart, partyPart, areaPart].filter(Boolean).join(' · ');
+        const plain = [gearPart, partyPart, areaPart].filter(Boolean).join(' · ');
+        const short = withTime(plain);
         // The tooltip adds the itemized diff (original `label`) when the run
         // was edited and that diff says more than "(edited)" already does.
         const title =
-            entry.wasEdited && entry.label && entry.label !== entry.loadoutName ? `${short}\n${entry.label}` : short;
+            entry.wasEdited && entry.label && entry.label !== entry.loadoutName ? `${plain}\n${entry.label}` : plain;
         return { short, title };
     }
 
