@@ -2047,7 +2047,7 @@ export function taxedDropValue(itemHrid, grossValue, saleTaxRate = null) {
  * @returns {{priced: boolean, unitValue: number}} `priced` is false only when
  *   nothing priced it; a price of 0 (e.g. a custom override) is a price
  */
-function dropUnitValue(itemHrid, saleTaxRate = null) {
+export function dropUnitValue(itemHrid, saleTaxRate = null) {
     if (itemHrid === '/items/coin') return { priced: true, unitValue: 1 };
     const priced = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) != null;
     let unitValue = taxedDropValue(itemHrid, getSellPrice(itemHrid), saleTaxRate);

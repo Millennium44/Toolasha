@@ -449,60 +449,79 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     savedSize: async () => null,
 }));
 
-vi.mock('./combat-sim-adapter.js', () => ({
-    seedSimPriceCache: (cache) => cache,
-
-    buildGameDataPayload: () => mocks.gameData,
-    // The Party tab reads the live build only when asked to (Copy my build, or simming as yourself)
-    buildPlayerDTO: () => null,
-    buildAllPlayerDTOs: async () =>
-        mocks.buildPlayerDTOs
-            ? mocks.buildPlayerDTOs()
-            : { players: mocks.playerDTOs, playerInfo: [], selfHrid: 'player1', missingMembers: [] },
-    getCombatZones: () => mocks.zones,
-    getCurrentCombatZone: () => null,
-    getCommunityBuffs: () => ({}),
-    calculateExpectedDrops: () => mocks.drops,
-    calculateDungeonKeyCosts: () => [],
-    calculateSimRevenue: (simResult, gameData, playerHrid, _hours, options) => {
-        mocks.revenueCalls.push(playerHrid);
-        mocks.revenueOptions.push(options);
-        return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
-    },
+vi.mock('./combat-sim-adapter.js', async () => {
+    const { getItemPrice } = await import('../../utils/market-data.js');
+    const evc = (await import('../market/expected-value-calculator.js')).default;
     // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
     // 5% patch-live market rate the suite runs under; another player's explicit
     // rate (0 for an Iron Cow, bags included) when one is passed
-    taxedDropValue: (hrid, v, rate = null) => {
+    const taxedDropValue = (hrid, v, rate = null) => {
         mocks.taxedDropRates.push(rate);
         if (!(v > 0) || hrid === '/items/coin') return v;
         if (Number.isFinite(rate))
             return rate === 0 ? v : v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : rate));
         return v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05));
-    },
-    getZonesThatDropItem: () => [],
-    getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
-    guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
-    parseShykaiImport: () => null,
-    buildShykaiExportPlayer: () => ({}),
-    recomputeLevelGapDebuffs: () => {},
-    // Stands in for the real loadout-applying mutation: tags the DTO with
-    // which loadout was "applied" (and records the call) rather than
-    // resolving real equipment, which these tests have no game data for.
-    applyLoadoutSnapshotToDTO: (dto, snapshotName) => {
-        mocks.loadoutApplications.push({ hrid: dto?.hrid, snapshotName });
-        dto.appliedLoadout = snapshotName;
-        // Real applyLoadoutSnapshotToDTO overwrites food/drinks wholesale;
-        // opted into per test via mocks.loadoutFood so the max-tier-food
-        // ordering tests can prove the substitution sees the loadout's own
-        // food, not whatever the DTO carried before the loadout ran.
-        // Keyed by name either way: the per-sweep pickers now hand this the
-        // actual snapshot object (see _resolveSoloPartyLoadout), not just its
-        // name, so a plain string key would never match one.
-        const foodKey = snapshotName && typeof snapshotName === 'object' ? snapshotName.name : snapshotName;
-        if (mocks.loadoutFood?.[foodKey]) dto.food = mocks.loadoutFood[foodKey];
-        return true;
-    },
-}));
+    };
+    // The real dropUnitValue over the mocked price book and expected-value calculator
+    const dropUnitValue = (hrid, rate = null) => {
+        if (hrid === '/items/coin') return { priced: true, unitValue: 1 };
+        const gross = getItemPrice(hrid, { context: 'profit', side: 'sell' });
+        let unitValue = taxedDropValue(hrid, gross ?? 0, rate);
+        if (unitValue === 0) {
+            const ev = Number.isFinite(rate)
+                ? evc.calculateContainerValueAtTaxRate(hrid, rate)
+                : evc.getCachedValue(hrid) || evc.calculateSingleContainer(hrid);
+            if (ev !== null && ev > 0) unitValue = ev;
+        }
+        return { priced: gross != null, unitValue };
+    };
+    return {
+        seedSimPriceCache: (cache) => cache,
+
+        buildGameDataPayload: () => mocks.gameData,
+        // The Party tab reads the live build only when asked to (Copy my build, or simming as yourself)
+        buildPlayerDTO: () => null,
+        buildAllPlayerDTOs: async () =>
+            mocks.buildPlayerDTOs
+                ? mocks.buildPlayerDTOs()
+                : { players: mocks.playerDTOs, playerInfo: [], selfHrid: 'player1', missingMembers: [] },
+        getCombatZones: () => mocks.zones,
+        getCurrentCombatZone: () => null,
+        getCommunityBuffs: () => ({}),
+        calculateExpectedDrops: () => mocks.drops,
+        calculateDungeonKeyCosts: () => [],
+        calculateSimRevenue: (simResult, gameData, playerHrid, _hours, options) => {
+            mocks.revenueCalls.push(playerHrid);
+            mocks.revenueOptions.push(options);
+            return mocks.revenueFor?.(simResult, playerHrid) || { netPerHour: 0, costPerHour: 0, revenuePerHour: 0 };
+        },
+        taxedDropValue,
+        dropUnitValue,
+        getZonesThatDropItem: () => [],
+        getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
+        guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,
+        parseShykaiImport: () => null,
+        buildShykaiExportPlayer: () => ({}),
+        recomputeLevelGapDebuffs: () => {},
+        // Stands in for the real loadout-applying mutation: tags the DTO with
+        // which loadout was "applied" (and records the call) rather than
+        // resolving real equipment, which these tests have no game data for.
+        applyLoadoutSnapshotToDTO: (dto, snapshotName) => {
+            mocks.loadoutApplications.push({ hrid: dto?.hrid, snapshotName });
+            dto.appliedLoadout = snapshotName;
+            // Real applyLoadoutSnapshotToDTO overwrites food/drinks wholesale;
+            // opted into per test via mocks.loadoutFood so the max-tier-food
+            // ordering tests can prove the substitution sees the loadout's own
+            // food, not whatever the DTO carried before the loadout ran.
+            // Keyed by name either way: the per-sweep pickers now hand this the
+            // actual snapshot object (see _resolveSoloPartyLoadout), not just its
+            // name, so a plain string key would never match one.
+            const foodKey = snapshotName && typeof snapshotName === 'object' ? snapshotName.name : snapshotName;
+            if (mocks.loadoutFood?.[foodKey]) dto.food = mocks.loadoutFood[foodKey];
+            return true;
+        },
+    };
+});
 
 vi.mock('./combat-sim-runner.js', () => ({
     runSimulation: async (params) => {
@@ -9013,6 +9032,137 @@ describe('the All pill: every player side by side', () => {
         expect(row(all, 'Total')[2].textContent).toContain('(+3.0K)');
     });
 
+    test('a player absent from the baseline run gets no money delta, in the table or in their own view', () => {
+        // The baseline run had player1 only: nothing for the others to be compared with
+        mocks.drops = new Map([['/items/coin', 1000]]);
+        mocks.prices = { '/items/donut': { bid: 4, ask: 5 } };
+        pushHistory('base', oneHourFight(), 1, { playerInfo: [ROSTER[0]] });
+        ui._comparisonBaseline = 0;
+        ui._activeDetailIndex = null;
+        const fight = partyFight();
+        const all = show(fight).cloneNode(true);
+
+        // player1 was in it: 0 expenses then, 600 now
+        expect(row(all, 'Expenses')[1].textContent).toContain('(');
+        for (const [hrid, col] of [
+            ['player2', 2],
+            ['player3', 3],
+        ]) {
+            for (const label of ['Revenue', 'Expenses', 'Profit']) {
+                expect(row(all, label)[col].textContent).not.toContain('(');
+            }
+            const single = show(fight, { all: false, tab: hrid });
+            const cellOf = (label) =>
+                [...single.querySelectorAll('div')].find((d) => d.children[0]?.textContent === label)?.children[3];
+            expect(cellOf('Total Revenue').textContent).not.toContain('(');
+            if (hrid === 'player3') expect(cellOf('Total Expenses').textContent).not.toContain('(');
+            expect(cellOf('Profit').textContent).not.toContain('(');
+        }
+    });
+
+    describe('drops nothing can price', () => {
+        const unpricedFight = () => {
+            mocks.drops = new Map([
+                ['/items/mystery', 10],
+                ['/items/coin', 1000],
+            ]);
+            mocks.prices = {};
+            return partyFight();
+        };
+
+        test('Revenue and Profit are marked as a floor, and say which drop', () => {
+            const fight = unpricedFight();
+            const all = show(fight).cloneNode(true);
+            for (const label of ['Revenue', 'Profit']) {
+                const cell = row(all, label)[1];
+                expect(cell.querySelector('[data-unpriced-floor]').getAttribute('title')).toContain('mystery');
+                expect(cell.textContent.startsWith('≥')).toBe(true);
+            }
+            expect(row(all, 'Expenses')[1].querySelector('[data-unpriced-floor]')).toBeNull();
+
+            const single = show(fight, { all: false, tab: 'player1' });
+            const revenue = [...single.querySelectorAll('div')].find(
+                (d) => d.children[0]?.textContent === 'Total Revenue'
+            );
+            const profit = [...single.querySelectorAll('div')].find((d) => d.children[0]?.textContent === 'Profit');
+            expect(revenue.children[3].querySelector('[data-unpriced-floor]')).not.toBeNull();
+            expect(profit.children[3].querySelector('[data-unpriced-floor]')).not.toBeNull();
+        });
+
+        test('the comparison Profit column and the CSV carry the same mark', () => {
+            const fight = unpricedFight();
+            pushHistory('a', fight, 1, { playerInfo: ROSTER });
+            pushHistory('b', fight, 1, { playerInfo: ROSTER });
+            const saved = [];
+            ui._wireCsvButton = ((original) => (button, stem, build) => {
+                saved.push({ stem, build });
+                return original.call(ui, button, stem, build);
+            })(ui._wireCsvButton);
+            try {
+                show(fight);
+                const panel = ui.panel.querySelector('.mwi-utable-wrap');
+                expect(panel.querySelector('[data-unpriced-floor]')).not.toBeNull();
+                const csv = saved.find((entry) => entry.stem === 'combatsim-comparison').build();
+                expect(csv.rows[0].unpricedDrops).toBe('/items/mystery');
+            } finally {
+                delete ui._wireCsvButton;
+            }
+        });
+
+        test('a fully priced run carries no mark', () => {
+            mocks.drops = new Map([['/items/coin', 1000]]);
+            const results = show(partyFight());
+            expect(results.querySelector('[data-unpriced-floor]')).toBeNull();
+        });
+    });
+
+    test('the comparison table says whose Profit and XP it holds, and the CSV names the player', () => {
+        pushHistory('a', partyFight(), 1, { playerInfo: ROSTER });
+        pushHistory('b', partyFight(), 1, { playerInfo: ROSTER });
+        ui._activeDetailIndex = null;
+        const saved = [];
+        ui._wireCsvButton = ((original) => (button, stem, build) => {
+            saved.push({ stem, build });
+            return original.call(ui, button, stem, build);
+        })(ui._wireCsvButton);
+        try {
+            show(partyFight(), { tab: 'player2' });
+            expect(ui.panel.querySelector('[data-history-player]').textContent).toContain("Ana's");
+            const csv = saved.find((entry) => entry.stem === 'combatsim-comparison').build();
+            expect(csv.rows[0].player).toBe('Ana');
+        } finally {
+            delete ui._wireCsvButton;
+        }
+    });
+
+    test('opening a history entry with no roster of its own leaves the All view', () => {
+        pushHistory('with', partyFight(), 1, { playerInfo: ROSTER });
+        pushHistory('without', partyFight());
+        ui._comparisonBaseline = 0;
+        ui._comparisonSlots = [1];
+        ui._activeDetailIndex = 0;
+        ui._playerInfo = ROSTER;
+        ui._resultsAllPlayers = true;
+        ui._lastSimResult = partyFight();
+        ui._lastSimHours = 1;
+        ui._lastGameData = { itemDetailMap: {} };
+        ui._displayResults(ui._lastSimResult, 1, ui._lastGameData);
+        expect(ui.panel.querySelector('[data-all-players]')).not.toBeNull();
+
+        ui.panel.querySelector('[data-history-idx="1"]').click();
+        expect(ui._resultsAllPlayers).toBe(false);
+        expect(ui.panel.querySelector('[data-all-players]')).toBeNull();
+        expect(headers(ui.panel.querySelector('#mwi-csim-results'))).toEqual([]);
+    });
+
+    test('an entry with no roster is never drawn as columns, even with the flag set', () => {
+        pushHistory('without', partyFight());
+        ui._playerInfo = ROSTER;
+        ui._resultsAllPlayers = true;
+        ui._displayResults(null, null, null);
+        expect(ui.panel.querySelector('[data-all-players]')).toBeNull();
+    });
+
     describe('against a comparison baseline', () => {
         const baseline = () =>
             partyFight({
@@ -9059,8 +9209,8 @@ describe('the All pill: every player side by side', () => {
         test('switching the run or the baseline redraws the table from that run', () => {
             const first = partyFight();
             const second = partyFight({ deaths: { player1: 3, player2: 0, player3: 0 } });
-            pushHistory('first', first);
-            pushHistory('second', second);
+            pushHistory('first', first, 1, { playerInfo: ROSTER });
+            pushHistory('second', second, 1, { playerInfo: ROSTER });
             ui._comparisonBaseline = 0;
             ui._playerInfo = ROSTER;
             ui._resultsAllPlayers = true;

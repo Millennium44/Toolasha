@@ -8,9 +8,7 @@ import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { runInBackground } from '../../utils/background-work.js';
 import { getItemPrice } from '../../utils/market-data.js';
-import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import {
-    expectedValueCalculator,
     missingMaterialsButton,
     dungeonTrackerStorage,
     marketHistoryPanel,
@@ -140,7 +138,7 @@ import {
     calculateExpectedDrops,
     calculateDungeonKeyCosts,
     calculateSimRevenue,
-    taxedDropValue,
+    dropUnitValue,
     getZonesThatDropItem,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
@@ -1494,6 +1492,18 @@ export function analyzedSaleTaxRate(playerDTOs, playerHrid, trueSelfHrid) {
     if (isSelf) return null;
     const dto = (playerDTOs || []).find((candidate) => candidate?.hrid === playerHrid);
     return saleTaxRateOf(dto, false);
+}
+
+/**
+ * The "at least" mark for a revenue or profit total that counted a drop nothing could price as 0.
+ * @param {string[]} itemHrids - The unpriced drops
+ * @returns {string} HTML, '' when every drop was priced
+ */
+export function unpricedFloorMark(itemHrids) {
+    if (!itemHrids?.length) return '';
+    const names = itemHrids.map((hrid) => dataManager.getItemDetails(hrid)?.name || String(hrid).split('/').pop());
+    const title = `A floor: no price for ${names.join(', ')}, which this counts as 0.`;
+    return `<span data-unpriced-floor title="${escapeAttribute(title)}" style="color:#ff9800;">≥&nbsp;</span>`;
 }
 
 /**
@@ -8565,6 +8575,9 @@ class CombatSimUI {
         // `_playerInfo` to one member, which must not hide the others' tabs
         // when an earlier party entry is reopened
         let entryRoster = null;
+        // Whether the entry on screen brought its own roster: one that did not is read against today's, whose
+        // columns would be other people's
+        let entryHasRoster = true;
         if (this._activeDetailIndex !== null && this._simHistory[this._activeDetailIndex]) {
             const entry = this._simHistory[this._activeDetailIndex];
             simResult = entry.simResult;
@@ -8573,6 +8586,7 @@ class CombatSimUI {
             partyWarnings = entry.partyWarnings || [];
             entryPlayer = historyEntryPlayer(entry);
             entryRoster = Array.isArray(entry.playerInfo) && entry.playerInfo.length ? entry.playerInfo : null;
+            entryHasRoster = entryRoster !== null;
         }
 
         const container = this.panel.querySelector('#mwi-csim-results');
@@ -8654,7 +8668,7 @@ class CombatSimUI {
 
         // Player tabs (only shown for party sims)
         // The All pill needs two players to compare; a run with fewer draws the single view whatever was chosen
-        const allMode = this._resultsAllPlayers && numberOfPlayers > 1 && playerInfo.length > 1;
+        const allMode = this._resultsAllPlayers && numberOfPlayers > 1 && playerInfo.length > 1 && entryHasRoster;
         if (numberOfPlayers > 1) {
             html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">`;
             for (const { hrid, name } of playerInfo) {
@@ -8689,7 +8703,9 @@ class CombatSimUI {
         const compEntry = compIdx !== null ? this._simHistory[compIdx] : null;
         const compResult = compEntry?.simResult;
         const compHours = compEntry?.hours;
-        const compMetrics = compEntry?.metrics;
+        // A player who was not in the baseline run has no baseline figures: its metrics would be read off
+        // drops the run never rolled for them and consumables they never used
+        const compMetrics = compEntry && this._baselineHasPlayer(compEntry, activeTab) ? compEntry.metrics : null;
         const hasPrev = compResult && compHours;
         const prevEncPerHr = hasPrev ? compResult.encounters / compHours : null;
         // Gated on the active player actually appearing in the baseline run
@@ -8884,6 +8900,7 @@ class CombatSimUI {
 
         // Track totals for net profit calculation
         let dropGoldPerHr = 0;
+        let dropUnpriced = [];
         let dropGoldTotal = 0;
         let consumableGoldPerHr = 0;
         let consumableGoldTotal = 0;
@@ -8899,11 +8916,13 @@ class CombatSimUI {
             const dropData = [...dropMap.entries()]
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
-                    const unitValue = this._dropUnitValue(itemHrid, saleTaxRate);
-                    return { itemHrid, total, unitValue, totalGold: total * unitValue };
+                    const { priced, unitValue } = dropUnitValue(itemHrid, saleTaxRate);
+                    return { itemHrid, total, unitValue, priced, totalGold: total * unitValue };
                 })
                 .sort((a, b) => b.totalGold - a.totalGold); // Sort by gold value descending
 
+            dropUnpriced = dropData.filter((drop) => !(drop.unitValue > 0 || drop.priced)).map((drop) => drop.itemHrid);
+            const floorMark = unpricedFloorMark(dropUnpriced);
             if (dropData.length > 0) {
                 const dropRowStyle = 'display:flex; align-items:center; padding:2px 0; font-size:12px; gap:6px;';
                 const colNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
@@ -8965,10 +8984,10 @@ class CombatSimUI {
                         : '';
                 html += `<span style="${colNum}"></span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr)}>${formatKMB(Math.round(dropGoldPerHr))}<br>${revDelta}</span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr * 24)}>${formatKMB(Math.round(dropGoldPerHr * 24))}<br>${revDayDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr)}>${floorMark}${formatKMB(Math.round(dropGoldPerHr))}<br>${revDelta}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldPerHr * 24)}>${floorMark}${formatKMB(Math.round(dropGoldPerHr * 24))}<br>${revDayDelta}</span>`;
                 html += `<span style="${colNum}"></span>`;
-                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldTotal)}>${formatKMB(Math.round(dropGoldTotal))}</span>`;
+                html += `<span style="color:#e8a87c; font-weight:700; ${colGold}"${exactTitleAttr(dropGoldTotal)}>${floorMark}${formatKMB(Math.round(dropGoldTotal))}</span>`;
                 html += '</div>';
                 html += '</div>';
             }
@@ -9136,6 +9155,7 @@ class CombatSimUI {
 
         const netProfitPerDay = netProfitPerHr * 24;
         const profitDaySign = netProfitPerDay >= 0 ? '' : '-';
+        const profitFloor = unpricedFloorMark(dropUnpriced);
 
         html += `<div style="${sectionStyle}">`;
         html += `<div style="${headingStyle}">Net Profit</div>`;
@@ -9159,10 +9179,10 @@ class CombatSimUI {
             prevProfit !== null && prevProfit !== undefined
                 ? this._formatDelta(netProfitPerDay, prevProfit * 24, true, true)
                 : '';
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerHr)}>${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}<br>${profitDelta}</span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerDay)}>${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}<br>${profitDayDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerHr)}>${profitFloor}${profitSign}${formatKMB(Math.abs(Math.round(netProfitPerHr)))}<br>${profitDelta}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitPerDay)}>${profitFloor}${profitDaySign}${formatKMB(Math.abs(Math.round(netProfitPerDay)))}<br>${profitDayDelta}</span>`;
         html += `<span style="${netColNum}"></span>`;
-        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitTotal)}>${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
+        html += `<span style="color:${profitColor}; font-weight:700; ${netColGold}"${exactTitleAttr(netProfitTotal)}>${profitFloor}${totalProfitSign}${formatKMB(Math.abs(Math.round(netProfitTotal)))}</span>`;
         html += '</div>';
         html += '</div>';
 
@@ -9356,6 +9376,7 @@ class CombatSimUI {
             const idx = parseInt(row.dataset.historyIdx, 10);
             row.addEventListener('click', () => {
                 this._activeDetailIndex = idx;
+                this._dropAllViewIfNoRoster(idx);
                 this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
             });
         });
@@ -9380,6 +9401,7 @@ class CombatSimUI {
                 if (!isNaN(idx) && !this._comparisonSlots.includes(idx)) {
                     this._comparisonSlots.push(idx);
                     this._activeDetailIndex = idx;
+                    this._dropAllViewIfNoRoster(idx);
                     this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
                 }
             });
@@ -9400,6 +9422,8 @@ class CombatSimUI {
                 { key: 'consumableCostPerHr', label: 'Consumable cost/hr' },
                 { key: 'keyCostPerHr', label: 'Key cost/hr' },
                 { key: 'profitPerHr', label: 'Profit/hr' },
+                { key: 'unpricedDrops', label: 'Unpriced drops (revenue and profit are a floor)' },
+                { key: 'player', label: 'Profit and XP are for' },
                 { key: 'successRate', label: 'Dungeon success rate' },
                 { key: 'ranAt', label: 'Run at' },
             ],
@@ -9420,6 +9444,8 @@ class CombatSimUI {
                     consumableCostPerHr: m.consumableCostPerHr ?? null,
                     keyCostPerHr: m.keyCostPerHr ?? null,
                     profitPerHr: m.profitPerHr ?? null,
+                    unpricedDrops: (m.unpricedDrops || []).join('; '),
+                    player: this._metricsOwnerLabel(),
                     successRate: m.successRate ?? null,
                     ranAt: entry.timestamp ? new Date(entry.timestamp).toISOString() : '',
                 };
@@ -9959,9 +9985,11 @@ class CombatSimUI {
             };
             const now = hrids.map((hrid) => metricsFor(simResult, hours, gameData, hrid));
             const before = hrids.map((hrid) =>
-                hasPrev ? metricsFor(compResult, compHours, compEntry.gameData, hrid) : null
+                hasPrev && this._baselineHasPlayer(compEntry, hrid)
+                    ? metricsFor(compResult, compHours, compEntry.gameData, hrid)
+                    : null
             );
-            const money = (label, field, { higherIsBetter, color, signed }) => ({
+            const money = (label, field, { higherIsBetter, color, signed, floor }) => ({
                 label,
                 cells: now.map((metrics, i) => {
                     if (!metrics) return NONE;
@@ -9969,16 +9997,18 @@ class CombatSimUI {
                     const sign = signed && value < 0 ? '-' : '';
                     const delta = before[i] ? this._formatDelta(value, before[i][field], higherIsBetter, true) : '';
                     const tint = typeof color === 'function' ? color(value) : color;
-                    return `<span style="color:${tint}; font-weight:600;"${exactTitleAttr(value)}>${sign}${formatKMB(Math.abs(Math.round(value)))}${delta}</span>`;
+                    const mark = floor ? unpricedFloorMark(metrics.unpricedDrops) : '';
+                    return `<span style="color:${tint}; font-weight:600;"${exactTitleAttr(value)}>${mark}${sign}${formatKMB(Math.abs(Math.round(value)))}${delta}</span>`;
                 }),
             });
             section('Gold/hr').push(
-                money('Revenue', 'revenuePerHr', { higherIsBetter: true, color: '#e8a87c' }),
+                money('Revenue', 'revenuePerHr', { higherIsBetter: true, color: '#e8a87c', floor: true }),
                 money('Expenses', 'expensesPerHr', { higherIsBetter: false, color: '#ff6b6b' }),
                 money('Profit', 'profitPerHr', {
                     higherIsBetter: true,
                     color: (value) => (value >= 0 ? '#7ec87e' : '#ff6b6b'),
                     signed: true,
+                    floor: true,
                 })
             );
         }
@@ -10013,27 +10043,39 @@ class CombatSimUI {
     }
 
     /**
-     * What one of a drop is worth to the player: the sell price for the pricing mode net of their sale tax,
-     * a coin as 1, and an openable at its expected value (another player's tax is not what the shared cache
-     * holds, so theirs is valued at it). The single view's Drops table, the history metrics and the All
-     * view all price through here, so the three cannot disagree.
-     * @param {string} itemHrid - The drop
-     * @param {number|null} saleTaxRate - The shown player's sale tax when not the live character
-     * @returns {number} Gold per unit, 0 when unpriced
+     * Leave the All view when the history entry just opened has no roster of its own to make columns from.
+     * @param {number} idx - The entry opened
      * @private
      */
-    _dropUnitValue(itemHrid, saleTaxRate) {
-        let unitValue = taxedDropValue(itemHrid, this._getSellPrice(itemHrid), saleTaxRate);
-        if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
-        if (unitValue === 0) {
-            const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
-            const ev =
-                saleTaxRate != null
-                    ? evc.calculateContainerValueAtTaxRate(itemHrid, saleTaxRate)
-                    : evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
-            if (ev !== null && ev > 0) unitValue = ev;
+    _dropAllViewIfNoRoster(idx) {
+        const roster = this._simHistory[idx]?.playerInfo;
+        if (!Array.isArray(roster) || roster.length < 2) this._resultsAllPlayers = false;
+    }
+
+    /**
+     * Whose Profit and XP the comparison table and CSV hold: the player the open pill names, when the roster
+     * has more than one. Empty for a lone player, where there is nobody to confuse them with.
+     * @returns {string}
+     * @private
+     */
+    _metricsOwnerLabel() {
+        if (!Array.isArray(this._playerInfo) || this._playerInfo.length < 2) return '';
+        const labels = playerColumnLabels(this._playerInfo);
+        return labels.find((entry) => entry.hrid === this._activePlayerTab)?.label || '';
+    }
+
+    /**
+     * Whether a history entry's run had this player in it.
+     * @param {Object} entry - A sim history entry
+     * @param {string} hrid - The player
+     * @returns {boolean}
+     * @private
+     */
+    _baselineHasPlayer(entry, hrid) {
+        if (Array.isArray(entry?.playerInfo) && entry.playerInfo.length > 0) {
+            return entry.playerInfo.some((player) => player.hrid === hrid);
         }
-        return unitValue;
+        return entry?.simResult?.experienceGained?.[hrid] !== undefined;
     }
 
     /**
@@ -10267,12 +10309,15 @@ class CombatSimUI {
 
         // Revenue from drops
         let revenuePerHr = 0;
+        // Drops nothing could price, counted as 0 above: revenue and profit are a floor while this is non-empty
+        const unpricedDrops = [];
         if (gameData) {
             const dropMap = calculateExpectedDrops(simResult, gameData, activeTab);
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
-                const unitValue = this._dropUnitValue(itemHrid, saleTaxRate);
+                const { priced, unitValue } = dropUnitValue(itemHrid, saleTaxRate);
                 revenuePerHr += (total / hours) * unitValue;
+                if (!(unitValue > 0 || priced)) unpricedDrops.push(itemHrid);
             }
         }
 
@@ -10305,6 +10350,7 @@ class CombatSimUI {
             expensesPerHr,
             consumableCostPerHr,
             keyCostPerHr: keyCostPerHrMetric,
+            unpricedDrops,
             profitPerHr: revenuePerHr - expensesPerHr,
             successRate: simResult.isDungeon
                 ? simResult.dungeonsCompleted / Math.max(1, simResult.dungeonsCompleted + simResult.dungeonsFailed)
@@ -10561,6 +10607,14 @@ class CombatSimUI {
             'flex-shrink:0;">Clear all</button>';
         html += '</div>';
 
+        // Profit and XP in the table are one player's (the pill last chosen); say whose, in either view
+        const metricsOwner = this._metricsOwnerLabel();
+        if (metricsOwner) {
+            html +=
+                `<div data-history-player style="color:#888; font-size:10px; margin-bottom:4px;">` +
+                `Profit and XP are ${escapeAttribute(metricsOwner)}'s; encounters and DPS are the party's.</div>`;
+        }
+
         // Table
         html += '<div class="mwi-utable-wrap"><table style="width:100%; font-size:11px; border-collapse:collapse;">';
         html += '<tr style="border-bottom:1px solid #333; color:' + GAME_COLORS.textDim + ';">';
@@ -10602,7 +10656,7 @@ class CombatSimUI {
             ';"' +
             (baseM ? exactTitleAttr(baseM.profitPerHr) : '') +
             '>' +
-            (baseM ? formatKMB(Math.round(baseM.profitPerHr)) : '—') +
+            (baseM ? unpricedFloorMark(baseM.unpricedDrops) + formatKMB(Math.round(baseM.profitPerHr)) : '—') +
             '</td>';
         html +=
             '<td style="text-align:right; padding:2px 4px; color:#e0e0e0;"' +
@@ -10663,7 +10717,7 @@ class CombatSimUI {
                 ';"' +
                 (m ? exactTitleAttr(m.profitPerHr) : '') +
                 '>' +
-                (m ? formatKMB(Math.round(m.profitPerHr)) : '—') +
+                (m ? unpricedFloorMark(m.unpricedDrops) + formatKMB(Math.round(m.profitPerHr)) : '—') +
                 profitDelta +
                 '</td>';
             html +=
