@@ -58,7 +58,8 @@ const storageMock = vi.hoisted(() => {
         }),
         // The fold rides with the value and runs against what is stored when the write lands, as the real one does
         set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
-            const write = { key, value: structuredClone(value), store, fold: options?.fold ?? null };
+            // The value is kept by reference until it lands, as storage's queue keeps it
+            const write = { key, value, store, fold: options?.fold ?? null };
             if (mock.hold) return new Promise((resolve) => mock.held.push({ ...write, resolve }));
             mock.land(write);
             return true;
@@ -338,5 +339,65 @@ describe('rapid edits with no pull, each write held as storage debounces it', ()
 
         expect(ids(stored())).toEqual(['a', added[3]]);
         expect(stored()).toEqual(held);
+    });
+});
+
+describe('a save asked before an adoption lands after it', () => {
+    test('pulled tab survives a held write whose fold runs after the panel adopted the pull', async () => {
+        write({ version: 1, selectedTabId: null, tabs: [tab('a')] });
+        const held = await panelLoads();
+        storageMock.hold = true;
+        const edited = addTab(held, null, 'Mine').config;
+        const saving = saveConfig('char1', edited);
+        await vi.waitFor(() => expect(storageMock.held.length).toBe(1));
+        pullWrites({ version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] });
+        // The panel takes the pull in (as `_adoptPulledConfig` does) while the edit's write is still queued
+        const loaded = await loadConfig('char1', { strict: true, over: edited });
+        adoptConfigBaseline('char1', loaded);
+        expect(ids(loaded)).toContain('b');
+        storageMock.release();
+        await saving;
+        await flushConfigWrites();
+        expect(ids(stored())).toContain('b');
+    });
+    test('pulled item survives the same sequence', async () => {
+        write({ version: 1, selectedTabId: null, tabs: [tab('a', ['/items/x'])] });
+        const held = await panelLoads();
+        storageMock.hold = true;
+        const edited = addTab(held, null, 'Mine').config;
+        const saving = saveConfig('char1', edited);
+        await vi.waitFor(() => expect(storageMock.held.length).toBe(1));
+        pullWrites({ version: 1, selectedTabId: null, tabs: [tab('a', ['/items/x', '/items/p'], { stamp: T0 + 5 })] });
+        const loaded = await loadConfig('char1', { strict: true, over: edited });
+        adoptConfigBaseline('char1', loaded);
+        storageMock.release();
+        await saving;
+        await flushConfigWrites();
+        expect(itemsOf(stored(), 'a')).toContain('/items/p');
+    });
+});
+
+describe('a reader’s load between a save being asked and running', () => {
+    test('the baseline moves only to a copy that was written, so a layout replaced here stays replaced', async () => {
+        write({ version: 1, selectedTabId: null, tabs: [tab('a'), tab('old', [], { stamp: null })] });
+        const held = await panelLoads();
+        storageMock.hold = true;
+        // An earlier save is still queued, so the next one runs only once it lands
+        const first = saveConfig('char1', addItem(held, 'a', '/items/x'));
+        await vi.waitFor(() => expect(storageMock.held.length).toBe(1));
+        // A layout replacement drops a tab with no tombstone, as an import does
+        const replaced = { ...addItem(held, 'a', '/items/x'), tabs: [tab('a', ['/items/x'], { stamp: Date.now() })] };
+        const second = saveConfig('char1', replaced);
+        // The bulk-sell assistant reads the record before that save runs, and its load replaces the record's copy
+        await loadConfig('char1');
+        storageMock.release();
+        await Promise.all([first, second]);
+        await flushConfigWrites();
+
+        // The panel saves again; the layout it holds has no 'old' tab
+        await saveConfig('char1', replaced);
+        await flushConfigWrites();
+
+        expect(ids(stored())).toEqual(['a']);
     });
 });

@@ -897,7 +897,21 @@ function recordFor(characterId) {
          * them, and that is a read, not a panel that deleted everything
          */
         const blanks = new WeakSet();
-        const state = { baseline: null, adoptions: 0, trusted: false };
+        /**
+         * Each copy a save was asked for (and each fold made of it) -> the ask: the baseline it was asked against,
+         * the adoption count then, and the copy itself. A write lands up to a debounce after it was asked, and by
+         * then an adoption may have moved the baseline onto what a pull brought; judged against that, the pulled
+         * tabs the copy never had would read as deletions made here
+         */
+        const asks = new WeakMap();
+        const state = { baseline: null, adoptions: 0, trusted: false, asks };
+        /** The baseline a fold of `held` is judged against */
+        const baselineFor = (held) => {
+            const ask = asks.get(held);
+            // A save landed since in the same adoption is this copy's own ancestor too, and the nearer one
+            if (!ask || ask.adoptions === state.adoptions) return state.baseline;
+            return ask.base;
+        };
         record = createCuratedRecord({
             base: getStorageKey(characterId),
             store: STORE,
@@ -912,7 +926,14 @@ function recordFor(characterId) {
             keepMerging: true,
             merge: (stored, held) => {
                 if (blanks.has(held)) return mergeConfigs(stored, held);
-                if (state.baseline) return foldOverBaseline(stored, held, state.baseline).value;
+                const baseline = baselineFor(held);
+                if (baseline) {
+                    const { value } = foldOverBaseline(stored, held, baseline);
+                    // The fold is what the record writes next: it is still the same ask
+                    const ask = asks.get(held);
+                    if (ask && value && typeof value === 'object' && value !== held) asks.set(value, ask);
+                    return value;
+                }
                 // No baseline yet: as the curated record always did, trust the held copy only after a readable load
                 return state.trusted ? held : mergeConfigs(stored, held);
             },
@@ -1021,15 +1042,18 @@ export async function saveConfig(characterId, config) {
     if (!characterId) return;
     const record = recordFor(characterId);
     const state = record._tabsState;
-    // The copy the panel holds once this lands, whether it was written whole or folded: never the fold, which can
-    // carry what a pull brought and the panel has not taken in, so that its absence would read as a deletion here
-    // Saves land in the order they were asked (the record serializes them), so each landed one moves the baseline
-    // on; only an adoption since this save was asked for outranks it
-    const lineage = state.baseline ? clone(config) : null;
-    const adoptions = state.adoptions;
+    // The baseline becomes the copy the panel saved once it lands, whether it was written whole or folded: never the
+    // fold, which can carry what a pull brought and the panel has not taken in, so that its absence would read as a
+    // deletion here. Only when this copy is what was written: a reader's load in between (the bulk-sell assistant)
+    // can replace the record's copy before the save runs, and then this edit never reached the disk. And never past
+    // an adoption made since it was asked
+    const ask = state.baseline ? { base: state.baseline, adoptions: state.adoptions, lineage: clone(config) } : null;
+    if (ask) state.asks.set(config, ask);
     record.set(config);
     const written = await record.save();
-    if (written && lineage && state.adoptions === adoptions) state.baseline = lineage;
+    if (written && ask && state.adoptions === ask.adoptions && state.asks.get(record.get()) === ask) {
+        state.baseline = ask.lineage;
+    }
     return written;
 }
 
