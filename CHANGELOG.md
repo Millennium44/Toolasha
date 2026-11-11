@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.84.0 -->
+
 ### Combat Sim zone list shows every zone's icon
 
 Zones with several monsters and the dungeons showed a blank space instead of their icon unless the Combat Zones list happened to be on screen. They now show their icons whenever the game has loaded them.
@@ -7193,45 +7195,42 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.84.0](https://github.com/Millennium44/Toolasha/compare/v3.83.0...v3.84.0) (2026-11-11)
 
-
 ### Features
 
-* combat sim charts HP and MP before each wipe and MP over the whole run ([51a5896](https://github.com/Millennium44/Toolasha/commit/51a58964722e1e47c803941e6cf2b7199bc65335))
-* combat sim import can replace the whole party ([2f47faf](https://github.com/Millennium44/Toolasha/commit/2f47faf890d9e882c4b33bd38383f55d48c1945c))
-* combat sim results show casts per hour for each ability ([464600a](https://github.com/Millennium44/Toolasha/commit/464600a12c6422244af0fd80e961f130af094f10))
-* combat sim wipe log shows team heals and casts ([dc2dec0](https://github.com/Millennium44/Toolasha/commit/dc2dec03eaf4d84f8e1a501b46d6336b415861b5))
-* delete any saved combat sim run from the comparison list ([3c60a27](https://github.com/Millennium44/Toolasha/commit/3c60a27f2bf32d76e20152337a6622cbacf12dd5))
-* show run time on combat sim comparison labels ([acf30e9](https://github.com/Millennium44/Toolasha/commit/acf30e95217010caa8db88ea399431565d12f521))
-* trigger tuner scores failed dungeon runs ([3cb741a](https://github.com/Millennium44/Toolasha/commit/3cb741a6c6c22cf71e7f4bfa1b94fd41d67517d2))
-* trigger tuner tunes ally-HP heal triggers ([383598f](https://github.com/Millennium44/Toolasha/commit/383598f15e9afa28270742f40cbf859a511f11b8))
-* wipe events name who fell first and what killed the party ([dcec60e](https://github.com/Millennium44/Toolasha/commit/dcec60e71701785901e374513a5ef1ead980a2d3))
-
+- combat sim charts HP and MP before each wipe and MP over the whole run ([51a5896](https://github.com/Millennium44/Toolasha/commit/51a58964722e1e47c803941e6cf2b7199bc65335))
+- combat sim import can replace the whole party ([2f47faf](https://github.com/Millennium44/Toolasha/commit/2f47faf890d9e882c4b33bd38383f55d48c1945c))
+- combat sim results show casts per hour for each ability ([464600a](https://github.com/Millennium44/Toolasha/commit/464600a12c6422244af0fd80e961f130af094f10))
+- combat sim wipe log shows team heals and casts ([dc2dec0](https://github.com/Millennium44/Toolasha/commit/dc2dec03eaf4d84f8e1a501b46d6336b415861b5))
+- delete any saved combat sim run from the comparison list ([3c60a27](https://github.com/Millennium44/Toolasha/commit/3c60a27f2bf32d76e20152337a6622cbacf12dd5))
+- show run time on combat sim comparison labels ([acf30e9](https://github.com/Millennium44/Toolasha/commit/acf30e95217010caa8db88ea399431565d12f521))
+- trigger tuner scores failed dungeon runs ([3cb741a](https://github.com/Millennium44/Toolasha/commit/3cb741a6c6c22cf71e7f4bfa1b94fd41d67517d2))
+- trigger tuner tunes ally-HP heal triggers ([383598f](https://github.com/Millennium44/Toolasha/commit/383598f15e9afa28270742f40cbf859a511f11b8))
+- wipe events name who fell first and what killed the party ([dcec60e](https://github.com/Millennium44/Toolasha/commit/dcec60e71701785901e374513a5ef1ead980a2d3))
 
 ### Bug Fixes
 
-* combat sim comparison run times show seconds ([926f28a](https://github.com/Millennium44/Toolasha/commit/926f28a5d851d529918c23a757e40c6d26fe13b0))
-* combat sim hides Fetch loadout after Replace party ([e6e5bb7](https://github.com/Millennium44/Toolasha/commit/e6e5bb759698af5dccaae2ba2df8ca8e3ebdc8e9))
-* combat sim keeps 20 wipe events per result and clears wipe logs between runs ([2970235](https://github.com/Millennium44/Toolasha/commit/297023589f1aa25be047f09ee295ec5f6dfa9a59))
-* combat sim keeps Fetch loadout when a pasted party is the party you are in ([8849d52](https://github.com/Millennium44/Toolasha/commit/8849d5221d2a352c815ced56bd16db0e7fb2260f))
-* combat sim MP chart splits a sample interval across the buckets it spans ([f91c41b](https://github.com/Millennium44/Toolasha/commit/f91c41bc7d5113dbde230687e224d0e6d381552c))
-* combat sim zone icons draw from the loaded actions sheet when none is on screen ([d8b6e43](https://github.com/Millennium44/Toolasha/commit/d8b6e43d7b99fd1831bbdd66fc0746c6b7b46ebc))
-* dungeon summary shows clear counts and the clean average clear time ([8f234c3](https://github.com/Millennium44/Toolasha/commit/8f234c31a50f3f75aebb745da4cb0c7aef6d4979))
-* never-fires warning allows HP above max after a buff ends ([dbf94cf](https://github.com/Millennium44/Toolasha/commit/dbf94cf6482d042faa3b7704d28b81e6d227c4b4))
-* sim flags trigger rows that can never be true ([5c7bdf7](https://github.com/Millennium44/Toolasha/commit/5c7bdf764e074bbce42dc6df3bfc13817e79eb71))
-* trigger tuner never suggests an impossible heal threshold ([4b9f9c4](https://github.com/Millennium44/Toolasha/commit/4b9f9c4835c60e3cf1e8951529a30da4b24cdfa0))
-* trigger tuning scope reads Selected player instead of Just me ([edc3cf4](https://github.com/Millennium44/Toolasha/commit/edc3cf451c39e3c2fe060aea1b9b70dfe7a13259))
-* wipe log orders reflected hits before the life steal of the same swing ([14b46aa](https://github.com/Millennium44/Toolasha/commit/14b46aa121925202fb35a5c194b43f3b5766f60a))
-* wipe summary names players already down when the log window opens ([429ace6](https://github.com/Millennium44/Toolasha/commit/429ace630852b35df3a87f4084f4a2b4b8d8ff1a))
-
+- combat sim comparison run times show seconds ([926f28a](https://github.com/Millennium44/Toolasha/commit/926f28a5d851d529918c23a757e40c6d26fe13b0))
+- combat sim hides Fetch loadout after Replace party ([e6e5bb7](https://github.com/Millennium44/Toolasha/commit/e6e5bb759698af5dccaae2ba2df8ca8e3ebdc8e9))
+- combat sim keeps 20 wipe events per result and clears wipe logs between runs ([2970235](https://github.com/Millennium44/Toolasha/commit/297023589f1aa25be047f09ee295ec5f6dfa9a59))
+- combat sim keeps Fetch loadout when a pasted party is the party you are in ([8849d52](https://github.com/Millennium44/Toolasha/commit/8849d5221d2a352c815ced56bd16db0e7fb2260f))
+- combat sim MP chart splits a sample interval across the buckets it spans ([f91c41b](https://github.com/Millennium44/Toolasha/commit/f91c41bc7d5113dbde230687e224d0e6d381552c))
+- combat sim zone icons draw from the loaded actions sheet when none is on screen ([d8b6e43](https://github.com/Millennium44/Toolasha/commit/d8b6e43d7b99fd1831bbdd66fc0746c6b7b46ebc))
+- dungeon summary shows clear counts and the clean average clear time ([8f234c3](https://github.com/Millennium44/Toolasha/commit/8f234c31a50f3f75aebb745da4cb0c7aef6d4979))
+- never-fires warning allows HP above max after a buff ends ([dbf94cf](https://github.com/Millennium44/Toolasha/commit/dbf94cf6482d042faa3b7704d28b81e6d227c4b4))
+- sim flags trigger rows that can never be true ([5c7bdf7](https://github.com/Millennium44/Toolasha/commit/5c7bdf764e074bbce42dc6df3bfc13817e79eb71))
+- trigger tuner never suggests an impossible heal threshold ([4b9f9c4](https://github.com/Millennium44/Toolasha/commit/4b9f9c4835c60e3cf1e8951529a30da4b24cdfa0))
+- trigger tuning scope reads Selected player instead of Just me ([edc3cf4](https://github.com/Millennium44/Toolasha/commit/edc3cf451c39e3c2fe060aea1b9b70dfe7a13259))
+- wipe log orders reflected hits before the life steal of the same swing ([14b46aa](https://github.com/Millennium44/Toolasha/commit/14b46aa121925202fb35a5c194b43f3b5766f60a))
+- wipe summary names players already down when the log window opens ([429ace6](https://github.com/Millennium44/Toolasha/commit/429ace630852b35df3a87f4084f4a2b4b8d8ff1a))
 
 ### Documentation
 
-* changelog for combat sim comparison, summary and wipe changes ([02542d6](https://github.com/Millennium44/Toolasha/commit/02542d619d835800360096e1017396b336306842))
-* changelog for combat sim HP/MP charts ([9803073](https://github.com/Millennium44/Toolasha/commit/98030738a7e48c6d184bccb0c68d70e708673d5a))
-* changelog for trigger warnings, ability casts and heal tuning ([47c9694](https://github.com/Millennium44/Toolasha/commit/47c96946b49abbf248c3ab521c9901063cd64184))
-* changelog for whole-party import and run-time seconds ([38a065e](https://github.com/Millennium44/Toolasha/commit/38a065ea6b8c45c555ad118146748bd57e916f6e))
-* changelog for wipe log heals and casts ([e69702e](https://github.com/Millennium44/Toolasha/commit/e69702e716ed74331b9319d988a59bbdcc5e446e))
-* restore blank line between changelog entries ([91f1478](https://github.com/Millennium44/Toolasha/commit/91f14782f259696c1e7ca12ab9433017b4287c88))
+- changelog for combat sim comparison, summary and wipe changes ([02542d6](https://github.com/Millennium44/Toolasha/commit/02542d619d835800360096e1017396b336306842))
+- changelog for combat sim HP/MP charts ([9803073](https://github.com/Millennium44/Toolasha/commit/98030738a7e48c6d184bccb0c68d70e708673d5a))
+- changelog for trigger warnings, ability casts and heal tuning ([47c9694](https://github.com/Millennium44/Toolasha/commit/47c96946b49abbf248c3ab521c9901063cd64184))
+- changelog for whole-party import and run-time seconds ([38a065e](https://github.com/Millennium44/Toolasha/commit/38a065ea6b8c45c555ad118146748bd57e916f6e))
+- changelog for wipe log heals and casts ([e69702e](https://github.com/Millennium44/Toolasha/commit/e69702e716ed74331b9319d988a59bbdcc5e446e))
+- restore blank line between changelog entries ([91f1478](https://github.com/Millennium44/Toolasha/commit/91f14782f259696c1e7ca12ab9433017b4287c88))
 
 ## [3.83.0](https://github.com/Millennium44/Toolasha/compare/v3.82.0...v3.83.0) (2026-11-11)
 
