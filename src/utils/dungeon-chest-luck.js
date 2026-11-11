@@ -125,6 +125,91 @@ export function countDungeonChests(lootMap, chests = DUNGEON_CHESTS) {
 }
 
 /**
+ * How many refinement chests a loot map holds.
+ *
+ * @param {Object} lootMap - The game's `totalLootMap`
+ * @returns {number}
+ */
+export function countRefinementChests(lootMap) {
+    let total = 0;
+    for (const entry of Object.values(lootMap || {})) {
+        if (entry?.itemHrid && isRefinementChest(entry.itemHrid)) total += entry.count || 0;
+    }
+    return total;
+}
+
+/**
+ * What a completion's refinement-chest roll is, from the zone's reward table.
+ *
+ * The rate is the table's own, scaled for tier the way the client's reward display
+ * scales it. The party-size split, the drop-quantity bonus and the level gap are
+ * deliberately not applied: nothing in the repo settles that they reach this roll
+ * (they model the guaranteed chest only), and the simulator's dungeon revenue
+ * treats every non-guaranteed reward as `completions * rate * avgCount`. This
+ * matches that rather than guessing.
+ *
+ * @param {Object} actionDetail - The zone's action detail
+ * @param {number} [difficultyTier] - Tier fought
+ * @returns {{itemHrid: string, rate: number, avgCount: number}|null} Null when the
+ *   zone has no refinement entry or its rate is zero at this tier (not "0 expected")
+ */
+export function refinementRewardRate(actionDetail, difficultyTier = 0) {
+    const table = actionDetail?.combatZoneInfo?.dungeonInfo?.rewardDropTable;
+    if (!Array.isArray(table)) return null;
+    for (const drop of table) {
+        if (!drop?.itemHrid || !isRefinementChest(drop.itemHrid)) continue;
+        const rate = scaledDropRate(drop.dropRate, drop.dropRatePerDifficultyTier, difficultyTier);
+        if (!(rate > 0)) return null;
+        const min = Number.isFinite(drop.minCount) ? drop.minCount : 1;
+        const max = Number.isFinite(drop.maxCount) ? drop.maxCount : min;
+        return { itemHrid: drop.itemHrid, rate, avgCount: (min + max) / 2 };
+    }
+    return null;
+}
+
+/**
+ * Refinement chests against what the table's rate owed over the completions.
+ *
+ * Its own roll per completion, so `Binomial(completions, rate)` when each hit pays
+ * one chest. No percentile when the roll is certain or pays a variable count.
+ *
+ * @param {Object} input
+ * @param {number} input.completions - Runs that paid out
+ * @param {number} input.count - Refinement chests received
+ * @param {number} input.rate - From `refinementRewardRate`
+ * @param {number} [input.avgCount] - Chests per hit
+ * @returns {{completions: number, count: number, expected: number, rate: number, percentile: number|null}|null}
+ */
+export function refinementLuck({ completions, count, rate, avgCount = 1 } = {}) {
+    if (!(completions > 0) || !(rate > 0) || !Number.isFinite(count)) return null;
+    const chancy = rate < 1 && avgCount === 1;
+    return {
+        completions,
+        count,
+        rate,
+        expected: completions * rate * avgCount,
+        percentile: chancy ? binomialAtMost(Math.max(0, count), completions, rate) : null,
+    };
+}
+
+/**
+ * Watch the refinement-chest count; mirrors `noteChestCount`.
+ *
+ * @param {Object} tally - From `newChestTally`, mutated
+ * @param {number} count - The session's refinement chest count now
+ * @returns {Object} The tally
+ */
+export function noteRefinementCount(tally, count) {
+    if (!Number.isFinite(count) || count < 0) return tally;
+    const before = tally.refinementSeen;
+    tally.refinementSeen = count;
+    tally.refinement = count;
+    if (before === null || before === undefined) return tally;
+    if (count > before) tally.refinementWatched = (tally.refinementWatched || 0) + (count - before);
+    return tally;
+}
+
+/**
  * How many chests a completion is worth to one character.
  *
  * The level gap enters here as a multiplier, the same way the quantity bonus
@@ -295,5 +380,15 @@ export function noteChestCount(tally, count) {
  * @returns {Object}
  */
 export function newChestTally() {
-    return { completions: 0, chests: 0, watchedChests: 0, unwatched: 0, byPayout: {}, seen: null };
+    return {
+        completions: 0,
+        chests: 0,
+        watchedChests: 0,
+        unwatched: 0,
+        byPayout: {},
+        seen: null,
+        refinement: 0,
+        refinementWatched: 0,
+        refinementSeen: null,
+    };
 }

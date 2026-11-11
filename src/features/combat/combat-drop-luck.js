@@ -51,6 +51,10 @@ import {
     chestLuck,
     chestsPerCompletion,
     countDungeonChests,
+    countRefinementChests,
+    refinementLuck,
+    refinementRewardRate,
+    noteRefinementCount,
     dungeonChestItems,
     newChestTally,
     noteChestCount,
@@ -385,6 +389,8 @@ class CombatDropLuck {
         this.chests.difficultyTier = difficultyTier || 0;
 
         const chestItems = dungeonChestItems(dataManager.getActionDetails(actionHrid), difficultyTier);
+        // Its own roll at the table's rate; null when the zone has none at this tier
+        this.chests.refinement = refinementRewardRate(dataManager.getActionDetails(actionHrid), difficultyTier);
         const characterId = dataManager.getCurrentCharacterId();
 
         for (const player of players) {
@@ -399,6 +405,7 @@ class CombatDropLuck {
             // the expectation should follow what is actually worn
             tally.quantity = player.combatDetails?.combatStats?.combatDropQuantity || 0;
             noteChestCount(tally, countDungeonChests(player.totalLootMap, chestItems));
+            noteRefinementCount(tally, countRefinementChests(player.totalLootMap));
         }
     }
 
@@ -510,6 +517,15 @@ class CombatDropLuck {
                 // completion count to place it against
                 chests: tally.chests,
                 luck: chestLuck({ completions, chests, mean }),
+                // A separate roll from the main chest: its own count and rate
+                refinement: tracked.refinement
+                    ? refinementLuck({
+                          completions,
+                          count: fromTracker ? tally.refinement || 0 : tally.refinementWatched || 0,
+                          rate: tracked.refinement.rate,
+                          avgCount: tracked.refinement.avgCount,
+                      })
+                    : null,
             };
         });
 
@@ -890,6 +906,18 @@ export function describeChestRun(player) {
                   `of a chest. ${luck.chests} came against ${luck.expectedExtras.toFixed(1)} owed.`
     );
     if (payouts) lines.push(`Completions by payout: ${payouts}.`);
+    const refinement = player.refinement;
+    if (refinement) {
+        const verdict =
+            refinement.percentile === null
+                ? ' Certain at this tier, so there is no luck in it.'
+                : ` Luck ${(refinement.percentile * 100).toFixed(1)}%.`;
+        lines.push(
+            `Refinement chests: ${refinement.count} over ${refinement.completions} completions, ` +
+                `${refinement.expected.toFixed(1)} expected at the table's rate ` +
+                `(${(refinement.rate * 100).toFixed(0)}% a completion).${verdict}`
+        );
+    }
     if (luck.percentile === null) {
         lines.push('Nothing about this payout is random, so there is no luck in it to place.');
     }
