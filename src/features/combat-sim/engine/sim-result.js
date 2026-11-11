@@ -129,19 +129,31 @@ class SimResult {
         this.maxEnrageStack = 0;
 
         this.wipeEvents = [];
+        /** Whole-run HP/MP per player (HpMpRecorder.toSeries), or null */
+        this.hpMpSeries = null;
         this.totalDamageDealt = {}; // sourceHrid → total damage dealt
         // Mechanics the engine met and skipped, filled in by CombatSimulator at
         // the end of the run. Non-empty means the numbers below understate.
         this.warnings = [];
     }
 
-    addWipeEvent(logs, simulationTime, wave) {
-        this.wipeEvents.push({
+    /**
+     * @param {Array<Object>} logs - The last hits on the party
+     * @param {number} simulationTime - Sim time of the wipe (ns)
+     * @param {number} wave
+     * @param {Object|null} [hpMp] - The party's HP/MP over the last 30 s (see HpMpRecorder.takePreWipe)
+     */
+    addWipeEvent(logs, simulationTime, wave, hpMp = null) {
+        const event = {
             simulationTime: simulationTime,
             logs: logs,
             wave: wave,
             timestamp: new Date().toISOString(),
-        });
+        };
+        // Absent, not null, on an event with no samples: results saved before
+        // this existed look the same and the UI treats both as "no chart"
+        if (hpMp) event.hpMp = hpMp;
+        this.wipeEvents.push(event);
     }
 
     addDeath(unit) {

@@ -8699,6 +8699,101 @@ describe('wipe events in the results', () => {
     });
 });
 
+describe('HP and MP charts in the results', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    const secondsBefore = Array.from({ length: 61 }, (_, i) => 30 - i * 0.5);
+    const preWipe = (hrids) => ({
+        playerHrids: hrids,
+        secondsBefore,
+        hp: hrids.map((_, p) => secondsBefore.map((_s, i) => Math.max(0, 100 - i * (1 + p)))),
+        mp: hrids.map((_, p) => secondsBefore.map((_s, i) => (p === 1 ? null : 80 - i / 2))),
+    });
+    const runSeries = (hrids, points = 12) => ({
+        playerHrids: hrids,
+        stepSeconds: 60,
+        hp: hrids.map(() => Array.from({ length: points }, () => 90)),
+        mp: hrids.map((_, p) => Array.from({ length: points }, (_x, i) => Math.max(0, 100 - i * (4 + p)))),
+        hasMp: hrids.map(() => true),
+        lowMpShare: hrids.map((_, p) => (p === 0 ? 0.25 : 0)),
+        runStarts: [0, 180, 360],
+    });
+    const hit = (time, target, damage, afterHp) => ({
+        time: time * 1e9,
+        wave: 4,
+        source: '/monsters/gummy_bear',
+        ability: 'autoAttack',
+        target,
+        damage,
+        beforeHp: afterHp + damage,
+        afterHp,
+        isCrit: false,
+        playersHp: [{ hrid: 'player1', current: afterHp, max: 1000 }],
+    });
+
+    test('a wipe card with samples draws a chart, with player names escaped and a legend', () => {
+        const wipeEvents = [
+            { wave: 4, simulationTime: 40e9, logs: [hit(1, 'player1', 10, 0)], hpMp: preWipe(['player1', 'player2']) },
+        ];
+        const simResult = oneHourFight({ isDungeon: true, wipeEvents, numberOfPlayers: 2 });
+        showFight(simResult);
+        ui._playerInfo = [
+            { hrid: 'player1', name: 'Me' },
+            { hrid: 'player2', name: '<img src=x>' },
+        ];
+        ui._displayResults(simResult, 1, ui._lastGameData);
+
+        const chart = ui.panel.querySelector('#mwi-wipe-0-body [data-hpmp-prewipe]');
+        expect(chart).not.toBeNull();
+        expect(chart.querySelectorAll('svg path').length).toBe(3); // 2 HP lines + 1 MP line (player2 has none)
+        expect(chart.querySelector('[data-hpmp-legend]').textContent).toContain('Me');
+        expect(chart.querySelector('[data-hpmp-legend]').textContent).toContain('<img src=x>');
+        expect(chart.querySelector('img')).toBeNull();
+        expect(ui.panel.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a wipe event from an older result draws no chart and no error', () => {
+        const wipeEvents = [{ wave: 4, simulationTime: 40e9, logs: [hit(1, 'player1', 10, 0)] }];
+        const results = showFight(oneHourFight({ isDungeon: true, wipeEvents }));
+
+        expect(results.querySelector('[data-hpmp-prewipe]')).toBeNull();
+        expect(results.querySelector('#mwi-wipe-0-body')).not.toBeNull();
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+
+    test.each([1, 5])('the run chart handles %i player(s)', (count) => {
+        const hrids = Array.from({ length: count }, (_, i) => 'player' + (i + 1));
+        const simResult = oneHourFight({ hpMpSeries: runSeries(hrids), numberOfPlayers: count });
+        const results = showFight(simResult);
+        ui._playerInfo = hrids.map((hrid, i) => ({ hrid, name: 'P' + (i + 1) }));
+        ui._displayResults(simResult, 1, ui._lastGameData);
+
+        const chart = ui.panel.querySelector('[data-hpmp-run]');
+        expect(chart).not.toBeNull();
+        expect(chart.querySelectorAll('svg path').length).toBe(count);
+        expect(chart.querySelector('[data-hpmp-legend]').textContent).toContain('P1');
+        expect(chart.querySelector('[data-hpmp-low]').textContent).toContain('Time under 10% MP: P1 25%');
+        expect(chart.querySelectorAll('[data-run-start]').length).toBe(3);
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+
+    test('a result without a series draws no run chart', () => {
+        const results = showFight(oneHourFight());
+        expect(results.querySelector('[data-hpmp-run]')).toBeNull();
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+});
+
 describe('comparison labels tell entries apart by area, party and loadout', () => {
     beforeEach(() => {
         mocks.drops = new Map();

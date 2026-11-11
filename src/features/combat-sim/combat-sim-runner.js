@@ -580,6 +580,11 @@ function mergeSimResults(results) {
             }
         }
 
+        // HP/MP series: `merged` starts as a clone of the first worker's result, so
+        // its `hpMpSeries` is kept as is. The series is a per-minute picture of one
+        // worker's run; concatenating chunks would splice unrelated timelines, and
+        // one worker's run is a fair sample of the rest. Deliberately not merged.
+
         // Dungeon stats
         if (r.isDungeon) {
             merged.dungeonsCompleted = (merged.dungeonsCompleted || 0) + (r.dungeonsCompleted || 0);
