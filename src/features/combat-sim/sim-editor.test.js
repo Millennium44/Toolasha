@@ -40,6 +40,8 @@ const game = vi.hoisted(() => ({
     equipment: null,
     /** The item sheet, for resolving a worn item's equipment type */
     itemDetailMap: null,
+    /** The character action queue */
+    actions: null,
     /** Set to make the live reads throw */
     readsThrow: false,
 }));
@@ -50,6 +52,7 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.characterData;
         },
         getCurrentCharacterId: () => game.charId,
+        getCurrentActions: () => game.actions || [],
         getInitClientData: () => ({ itemDetailMap: game.itemDetailMap || {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
         getHouseRooms: () => game.houseRooms,
@@ -170,7 +173,11 @@ vi.mock('../../utils/bundle-bridge.js', () => ({
     marketUndercutAlerts: () => null,
     marketDepthCap: () => null,
     guildMemberSkills: () => null,
-    loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
+    loadoutSnapshot: () => ({
+        getAllSnapshots: () => bridge.snapshots,
+        getSnapshotById: (id) => bridge.snapshots.find((snap) => snap.id === id) ?? null,
+        resolveEquipment: () => [],
+    }),
 }));
 
 // The game's View Loadout: whether this build has it, and what a fetch answers
@@ -269,6 +276,7 @@ beforeEach(() => {
     game.buildHold = null;
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.battleParty = null;
+    game.actions = null;
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.houseRooms = null;
     game.buildExport = null;
@@ -3838,5 +3846,125 @@ describe('combat skill, house, shrine, and scroll artwork in the editor', () => 
         expect(host.querySelectorAll('[data-sim-item-icon]')).toHaveLength(7);
         const lab = new SimEditor({ editorEl: document.createElement('div'), labMode: true });
         expect(lab._renderScrollsSection({ scrollBuffs: [] })).toBe('');
+    });
+});
+
+describe('Reset to Party picks your party loadout and the party zone', () => {
+    const ZONE = '/actions/combat/fly';
+    const COMBAT = '/action_types/combat';
+    const partyInfo = ({ me = 900401, status = 'battling', actionHrid = ZONE, tier = 3, others = true } = {}) => ({
+        party: { id: 5001, actionHrid, difficultyTier: tier, status },
+        partySlotMap: {
+            1: { characterID: 'p2', characterLoadoutID: 777, isLeader: true },
+            ...(others ? { 2: { characterID: 'me', characterLoadoutID: me, isLeader: false } } : {}),
+        },
+    });
+    const setup = (info, onResetToParty = vi.fn(() => '')) => {
+        game.characterData = { character: { id: 'me', name: 'Milkman' }, partyInfo: info };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el, onResetToParty });
+        return { el, editor, onResetToParty };
+    };
+
+    test('applies your slot loadout by id, picking the right one of two same-named loadouts', async () => {
+        bridge.snapshots = [
+            { id: 111, name: 'Same', actionTypeHrid: COMBAT },
+            { id: 900401, name: 'Same', actionTypeHrid: '' },
+        ];
+        const { el, editor, onResetToParty } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        expect(bridge.applied.at(-1)).toBe(bridge.snapshots[1]);
+        expect(editor.getSelectedLoadoutName()).toBe('Same');
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 3 });
+        expect(el.textContent).not.toContain('Current Gear.');
+    });
+
+    test('the button itself does it', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const { el, editor, onResetToParty } = setup(partyInfo());
+        editor.importPlayers([emptyDTO('x')], ['Stranger']);
+        el.querySelector(PARTY_BTN).click();
+        await vi.waitFor(() => expect(editor.getSelectedLoadoutName()).toBe('Boss'));
+        expect(onResetToParty).toHaveBeenCalledTimes(1);
+    });
+
+    test('a loadout with no snapshot stays on Current Gear and says why', async () => {
+        const { el, editor } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(el.textContent).toContain('Your party loadout is not available');
+    });
+
+    test('a non-combat snapshot is refused', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Brew', actionTypeHrid: '/action_types/brewing' }];
+        const { el, editor } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(el.textContent).toContain('not a combat loadout');
+    });
+
+    test('No Loadout (0) in your slot stays on Current Gear with no message, whatever the action says', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        game.actions = [{ actionHrid: ZONE, characterLoadoutID: 900401, isDone: false, ordinal: 1 }];
+        const { el, editor } = setup(partyInfo({ me: 0 }));
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('');
+        expect(el.textContent).not.toContain('party loadout is not');
+    });
+
+    test('a dungeon run (empty slot map) falls back to the running combat action', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const den = '/actions/combat/chimerical_den';
+        game.actions = [{ actionHrid: den, characterLoadoutID: 900401, isDone: false, ordinal: 1 }];
+        const info = { party: { id: 1, actionHrid: den, difficultyTier: 1, status: 'battling' }, partySlotMap: {} };
+        const { editor, onResetToParty } = setup(info);
+        await editor.resetToParty({ fromButton: true });
+        expect(editor.getSelectedLoadoutName()).toBe('Boss');
+        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: den, tier: 1 });
+    });
+
+    test('no party zone: the zone is left alone and the line says so', async () => {
+        for (const info of [
+            partyInfo({ status: 'disbanded' }),
+            partyInfo({ actionHrid: '' }),
+            partyInfo({ actionHrid: '/actions/foraging/x' }),
+            null,
+            partyInfo({ others: false }),
+        ]) {
+            const { el, editor, onResetToParty } = setup(info);
+            await editor.resetToParty({ fromButton: true });
+            expect(onResetToParty).not.toHaveBeenCalled();
+            expect(el.textContent).toContain('The party has no zone set');
+        }
+    });
+
+    test('a zone the owner could not set is reported with the owner note', async () => {
+        const { el, editor } = setup(
+            partyInfo(),
+            vi.fn(() => 'Not in list.')
+        );
+        await editor.resetToParty({ fromButton: true });
+        expect(el.textContent).toContain('Not in list.');
+    });
+
+    test('Fetch (plain resetToParty) leaves the zone and loadout alone', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const { editor, onResetToParty } = setup(partyInfo());
+        await editor.resetToParty();
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(editor.getSelectedLoadoutName()).toBe('');
+    });
+
+    test('a character switch during the rebuild applies nothing', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const { editor, onResetToParty } = setup(partyInfo());
+        let release;
+        game.buildHold = new Promise((resolve) => (release = resolve));
+        const pending = editor.resetToParty({ fromButton: true });
+        game.charId = 'other';
+        release();
+        await pending;
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(editor.getSelectedLoadoutName()).toBe('');
     });
 });

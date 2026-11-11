@@ -19385,6 +19385,18 @@ describe('simulator zone ordering and entity artwork', () => {
         );
         expect(label.children).toHaveLength(0);
     });
+    test('Reset to Party zone: sets zone and capped tier, leaves all-zones mode, refuses an unlisted zone', () => {
+        ui._allZonesMode = 'group';
+        expect(ui._applyPartyZone({ zoneHrid: dungeon, tier: 5 })).toBe('');
+        const select = ui.panel.querySelector('#mwi-csim-zone');
+        expect(select.value).toBe(dungeon);
+        expect(ui.panel.querySelector('#mwi-csim-tier').value).toBe('2');
+        expect(ui._allZonesMode).toBeNull();
+        ui._allZonesMode = 'group';
+        expect(ui._applyPartyZone({ zoneHrid: '/actions/combat/nowhere', tier: 1 })).toContain('not in the zone list');
+        expect(select.value).toBe(dungeon);
+        expect(ui._allZonesMode).toBe('group');
+    });
     test('unsupported rich selects keep the Zone label plain and native choices readable', () => {
         vi.stubGlobal('CSS', { supports: () => false });
         try {

@@ -26,6 +26,7 @@ import {
 } from './combat-sim-adapter.js';
 import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import { runningCombatAction } from '../../utils/combat-actions.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import {
@@ -156,6 +157,9 @@ export class SimEditor {
      *   Solo checkbox is toggled by hand, so the owner can persist it
      * @param {Function} [options.onRender] - Called after every full editor render, so the owner
      *   can follow the loaded roster (e.g. offer a mode only while a party is loaded)
+     * @param {Function} [options.onResetToParty] - Called with `{zoneHrid, tier}` when the Reset to Party
+     *   button is clicked and the party has a combat zone; applies it to the owner's Zone and Tier
+     *   selects and returns a short note when it could not ('' otherwise)
      */
     constructor({
         editorEl,
@@ -164,6 +168,7 @@ export class SimEditor {
         soloMode = false,
         onSoloModeChange = null,
         onRender = null,
+        onResetToParty = null,
     }) {
         this._editorEl = editorEl;
         this.labMode = labMode;
@@ -218,6 +223,7 @@ export class SimEditor {
         this._soloMode = Boolean(soloMode);
         this._onSoloModeChange = onSoloModeChange;
         this._onRender = onRender;
+        this._onResetToParty = onResetToParty;
         // The last Export click's outcome ("Copied Milkman's build." or, when
         // the clipboard is unavailable, a note plus the text itself so the user
         // can copy it by hand) and the timer that clears it a few seconds later.
@@ -1775,14 +1781,104 @@ export class SimEditor {
      * `missingMembers` and the editor says so rather than inventing a body for
      * them.
      *
+     * @param {Object} [options]
+     * @param {boolean} [options.fromButton=false] - The Reset to Party button, as opposed to Fetch rebuilding
+     *   the party: only the button also puts this character on the loadout picked for the party and moves the
+     *   owner's Zone and Tier to the party's, so Fetch never changes a zone the user chose
      * @returns {Promise<void>}
      */
-    async resetToParty() {
+    async resetToParty({ fromButton = false } = {}) {
         this._selectedLoadoutName = '';
         this._loadoutFetchNote = '';
         this._editorInitialized = false;
         await this.initEditor({ restoreLoadout: false });
+        // A character switch or a newer scenario landing inside the build leaves the editor uninitialised
+        if (fromButton && this._editorInitialized && this._remembersLoadout()) {
+            this._adoptPartyLoadoutAndZone();
+        }
         this._saveLoadoutMemory();
+    }
+
+    /**
+     * The saved loadout id this character picked for the party, or 0 for No Loadout.
+     *
+     * The party's slot for this character is authoritative (0 there is a real "No Loadout"). A dungeon run
+     * empties the slot map, so with no slot the running combat action carries the same id.
+     *
+     * @private
+     * @returns {number}
+     */
+    _partyLoadoutId() {
+        const selfId = dataManager.getCurrentCharacterId?.() ?? null;
+        const info = dataManager.characterData?.partyInfo;
+        if (info?.party?.status !== 'disbanded') {
+            const slot = Object.values(info?.partySlotMap || {}).find(
+                (entry) => entry && selfId !== null && String(entry.characterID) === String(selfId)
+            );
+            if (slot) return Number(slot.characterLoadoutID) || 0;
+        }
+        const running = runningCombatAction(dataManager.getCurrentActions?.() || []);
+        return Number(running?.characterLoadoutID) || 0;
+    }
+
+    /**
+     * The party's combat zone and tier, or null when there is none to follow: no party, a disbanded one,
+     * a non-combat action, or a party record that names other characters than this one.
+     *
+     * @private
+     * @returns {{zoneHrid: string, tier: number}|null}
+     */
+    _partyZone() {
+        const info = dataManager.characterData?.partyInfo;
+        const party = info?.party;
+        if (!party || party.status === 'disbanded') return null;
+        const zoneHrid = String(party.actionHrid || '');
+        if (!zoneHrid.startsWith('/actions/combat/')) return null;
+        const selfId = dataManager.getCurrentCharacterId?.() ?? null;
+        const slots = Object.values(info.partySlotMap || {}).filter((entry) => entry?.characterID);
+        // A login-time record can name a party this character has since left; an empty map (a dungeon run) cannot say
+        if (slots.length && !slots.some((entry) => String(entry.characterID) === String(selfId))) return null;
+        const tier = Number(party.difficultyTier);
+        return { zoneHrid, tier: Number.isInteger(tier) && tier >= 0 ? tier : 0 };
+    }
+
+    /**
+     * Reset to Party's extra steps: put this character's row on the loadout picked for the party and hand the
+     * party's zone to the owner. Synchronous after the rebuild, so nothing can switch character between the
+     * reads and the writes.
+     *
+     * @private
+     */
+    _adoptPartyLoadoutAndZone() {
+        const notes = [];
+
+        const loadoutId = this._partyLoadoutId();
+        if (loadoutId > 0) {
+            const snap = (loadoutSnapshot() || bundledLoadoutSnapshot).getSnapshotById?.(loadoutId) ?? null;
+            const combat = Boolean(snap) && (!snap.actionTypeHrid || snap.actionTypeHrid === '/action_types/combat');
+            if (!combat || !this.applyLoadoutByName(snap)) {
+                notes.push(
+                    snap && !combat
+                        ? 'Your party loadout is not a combat loadout, so you are on Current Gear.'
+                        : 'Your party loadout is not available (Loadout snapshots is off, or it has not loaded yet), so you are on Current Gear.'
+                );
+            }
+        }
+
+        const zone = this._partyZone();
+        if (!zone) {
+            notes.push('The party has no zone set, so your zone is unchanged.');
+        } else if (this._onResetToParty) {
+            try {
+                const note = this._onResetToParty(zone);
+                if (note) notes.push(note);
+            } catch (error) {
+                console.error('[SimEditor] onResetToParty listener failed:', error);
+            }
+        }
+
+        this._loadoutFetchNote = notes.join(' ');
+        this.renderEditor();
     }
 
     /**
@@ -2381,7 +2477,7 @@ export class SimEditor {
             btn.addEventListener('click', async () => {
                 if (btn.disabled) return;
                 if (btn.dataset.resetPlayers === 'party') {
-                    await this.resetToParty();
+                    await this.resetToParty({ fromButton: true });
                     return;
                 }
                 if (!this.resetToSelf()) {

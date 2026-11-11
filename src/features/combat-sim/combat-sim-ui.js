@@ -3872,6 +3872,8 @@ class CombatSimUI {
                 // A roster load, an Apply or a loadout edit changes the builds the All players count is made from
                 this._scheduleAllPlayersNote();
             },
+            // Reset to Party also moves the Zone and Tier to the party's
+            onResetToParty: (target) => this._applyPartyZone(target),
         });
         // The same setting is on the Settings page: a change there while this
         // panel is open must reach the editor, or the next run uses the old value
@@ -6879,6 +6881,22 @@ class CombatSimUI {
 
         // The Results table only exists after an all-zones run, which hides the
         // single-zone selects — clear that mode so they come back.
+        this._leaveAllZonesMode();
+
+        const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
+        const tierSelect = this.panel.querySelector('#mwi-csim-tier');
+        if (zoneSelect) zoneSelect.value = zoneHrid;
+        this._updateTierDropdown();
+        if (tierSelect) tierSelect.value = String(tier);
+
+        this._switchTab('configure');
+    }
+
+    /**
+     * Turn every all-zones mode off and show the single-zone selects again.
+     * @private
+     */
+    _leaveAllZonesMode() {
         this._allZonesMode = null;
         const groupBox = this.panel.querySelector('#mwi-csim-allzones-group');
         const soloBox = this.panel.querySelector('#mwi-csim-allzones-solo');
@@ -6889,14 +6907,31 @@ class CombatSimUI {
         const soloPartyBox = this.panel.querySelector('#mwi-csim-allzones-soloparty');
         if (soloPartyBox) soloPartyBox.checked = false;
         this._updateAllZonesUI();
+    }
 
-        const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
-        const tierSelect = this.panel.querySelector('#mwi-csim-tier');
-        if (zoneSelect) zoneSelect.value = zoneHrid;
+    /**
+     * Reset to Party: select the party's zone and tier. Leaves the selection alone, and says why, when the
+     * zone is not one the select offers.
+     *
+     * @param {{zoneHrid: string, tier: number}} target
+     * @returns {string} A short note when the zone was not set, '' otherwise
+     * @private
+     */
+    _applyPartyZone({ zoneHrid, tier }) {
+        const zoneSelect = this.panel?.querySelector('#mwi-csim-zone');
+        const tierSelect = this.panel?.querySelector('#mwi-csim-tier');
+        if (!zoneSelect || !tierSelect) return '';
+        // Assigning a value no option carries leaves the select empty, so look first
+        if (![...zoneSelect.options].some((option) => option.value === zoneHrid)) {
+            return "The party's zone is not in the zone list, so your zone is unchanged.";
+        }
+        this._leaveAllZonesMode();
+        zoneSelect.value = zoneHrid;
+        // The tier list depends on the zone (a dungeon stops lower), so rebuild it before choosing the tier
         this._updateTierDropdown();
-        if (tierSelect) tierSelect.value = String(tier);
-
-        this._switchTab('configure');
+        const top = tierSelect.options.length - 1;
+        tierSelect.value = String(Math.max(0, Math.min(Number(tier) || 0, top)));
+        return '';
     }
 
     /**
