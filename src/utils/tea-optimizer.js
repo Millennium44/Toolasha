@@ -1819,11 +1819,26 @@ export function scoreEquipmentSetup(
         if (equipGathering > 0) otherEfficiency.gathering = (otherEfficiency.gathering || 0) + equipGathering;
     }
 
-    const { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
-    if (!actions.length) return 0;
+    let { available: actions } = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids);
 
     const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
     const buffs = parseTeaBuffs(teaHrids, gameData.itemDetailMap, drinkConcentration);
+
+    // A selection made only of actions a skill tea unlocks has nothing available at the bare level.
+    // Callers rank equipment independently of teas (teaHrids is empty), so fall back to the tea reach
+    // the action picker offered — the chosen teas' own bonus if they give one, else the best skill tea —
+    // and score those actions at that level. Only the level counts: no other tea buff is applied.
+    // Whenever any selected action is available bare, this is skipped and scores are unchanged.
+    let unlockBonus = 0;
+    if (!actions.length) {
+        unlockBonus =
+            buffs.skillLevels[normalizedSkill] ||
+            maxSkillTeaBonus(normalizedSkill, gameData.itemDetailMap, drinkConcentration);
+        if (unlockBonus > 0) {
+            actions = getActionsForSkill(normalizedSkill, playerLevel, selectedActionHrids, unlockBonus).available;
+        }
+    }
+    if (!actions.length) return 0;
     const emptyBuffs = {
         efficiency: 0,
         wisdom: 0,
@@ -1837,6 +1852,8 @@ export function scoreEquipmentSetup(
     };
 
     const calcContext = { equipment, itemDetailMap: gameData.itemDetailMap };
+    const actionBuffs =
+        unlockBonus > 0 ? { ...emptyBuffs, skillLevels: { [normalizedSkill]: unlockBonus } } : emptyBuffs;
 
     // Alchemy XP is derived from item level, not from action data — standard calculateXpPerHour
     // always returns 0 for alchemy. Use a dedicated path with a representative item instead —
@@ -1875,13 +1892,13 @@ export function scoreEquipmentSetup(
     for (const action of actions) {
         let score;
         if (goal === 'xp') {
-            score = calculateXpPerHour(action, emptyBuffs, playerLevel, otherEfficiency, calcContext);
+            score = calculateXpPerHour(action, actionBuffs, playerLevel, otherEfficiency, calcContext);
             totalScore += score;
             count++;
         } else if (isGathering) {
             score = calculateGatheringGoldPerHour(
                 action,
-                emptyBuffs,
+                actionBuffs,
                 playerLevel,
                 otherEfficiency,
                 gameData,
@@ -1894,7 +1911,7 @@ export function scoreEquipmentSetup(
         } else {
             score = calculateProductionGoldPerHour(
                 action,
-                emptyBuffs,
+                actionBuffs,
                 playerLevel,
                 otherEfficiency,
                 gameData,

@@ -2003,3 +2003,63 @@ test('drink concentration with no skill tea does not dilute XP by admitting hypo
     const noTea = search.allResults.find((row) => row.teas.length === 0);
     expect(noTea.avgScore).toBe(bare.xpPerHour);
 });
+
+describe('scoreEquipmentSetup — actions only a skill tea unlocks', () => {
+    const cheeseAction = (level) => ({
+        type: '/action_types/cheesesmithing',
+        name: `Recipe ${level}`,
+        baseTimeCost: 10e9,
+        levelRequirement: { skillHrid: '/skills/cheesesmithing', level },
+        experienceGain: { skillHrid: '/skills/cheesesmithing', value: 100 },
+    });
+    beforeEach(() => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/cheesesmithing_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 5 }] },
+                },
+                '/items/ultra_cheesesmithing_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/cheesesmithing_level', flatBoost: 8 }] },
+                },
+                '/items/efficiency_tea': {
+                    consumableDetail: { buffs: [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.1 }] },
+                },
+            },
+            actionDetailMap: {
+                '/actions/cheesesmithing/cheese_boots': cheeseAction(1),
+                '/actions/cheesesmithing/cheese_sword': cheeseAction(60),
+            },
+        };
+        state.skills = [{ skillHrid: '/skills/cheesesmithing', level: 55 }];
+    });
+
+    test('a selection made only of a tea-unlocked action still scores', () => {
+        const only = new Set(['/actions/cheesesmithing/cheese_sword']);
+        expect(scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, only, [])).toBeGreaterThan(0);
+    });
+
+    test('no tea buff other than the unlock level is applied', () => {
+        const only = new Set(['/actions/cheesesmithing/cheese_sword']);
+        const noTeaBuffs = scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, only, []);
+        const withEfficiencyTea = scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, only, [
+            '/items/efficiency_tea',
+        ]);
+        expect(withEfficiencyTea).toBe(noTeaBuffs);
+    });
+
+    test('a selection that includes a bare-level action scores exactly as it did before', () => {
+        const bare = new Set(['/actions/cheesesmithing/cheese_boots']);
+        const both = new Set(['/actions/cheesesmithing/cheese_boots', '/actions/cheesesmithing/cheese_sword']);
+        const bareScore = scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, bare, []);
+        expect(bareScore).toBeGreaterThan(0);
+        // the tea-unlocked sword stays out of the average while a bare-level action is available
+        expect(scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, both, [])).toBe(bareScore);
+        expect(scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, null, [])).toBe(bareScore);
+    });
+
+    test('an action out of reach of every skill tea still scores 0', () => {
+        state.gameData.actionDetailMap['/actions/cheesesmithing/cheese_helmet'] = cheeseAction(80);
+        const far = new Set(['/actions/cheesesmithing/cheese_helmet']);
+        expect(scoreEquipmentSetup('cheesesmithing', 'xp', new Map(), 55, far, [])).toBe(0);
+    });
+});
