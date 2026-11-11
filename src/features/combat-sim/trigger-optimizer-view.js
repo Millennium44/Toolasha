@@ -17,6 +17,7 @@ import {
     describeRow,
 } from './trigger-tuning.js';
 import { describeTriggerRows } from './lab-condition-search.js';
+import { chatCopyBarHtml, triggerHasChatContent } from './chat-summary.js';
 import { collapseHeaderHtml } from './collapsible-sections.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 
@@ -427,7 +428,21 @@ export function triggerVerifyHtml(result, { canVerify = false, cached = false, r
  *   `verify` is `{ canVerify }` and adds the Verify block (see `triggerVerifyHtml`)
  * @returns {string} HTML
  */
-export function renderTriggerResultsHtml(result, gameData, { canApply = true, cached = false, verify = null } = {}) {
+export function renderTriggerResultsHtml(
+    result,
+    gameData,
+    { canApply = true, cached = false, verify = null, chat = null } = {}
+) {
+    // Copy for chat: `chat` is `{ canIncludeUpgrades, includeUpgrades }`; the bar is drawn only when there is a message
+    const chatBar = () =>
+        triggerHasChatContent(result)
+            ? chatCopyBarHtml({
+                  buttonId: 'mwi-csim-trigger-chat-copy',
+                  toggleId: chat?.canIncludeUpgrades ? 'mwi-csim-trigger-chat-upgrades' : null,
+                  includeUpgrades: Boolean(chat?.includeUpgrades),
+                  style: BTN_STYLE,
+              })
+            : '';
     const cachedLabel = cached
         ? ` <span style="color:#888; font-weight:400; font-size:11px;">Last result (unchanged setup)</span>` +
           ` <button id="mwi-csim-trigger-rerun" style="${BTN_STYLE} margin-left:6px;" ` +
@@ -465,6 +480,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `<div style="color:#888; font-size:12px;">${esc(message)}</div>` +
                 conditionResultsHtml(result.conditions, gameData) +
                 leftOut +
+                chatBar() +
                 (verify ? triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached }) : '')
         );
     }
@@ -577,6 +593,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
             `<button id="mwi-csim-trigger-copy" style="${BTN_STYLE}" title="Copies one line per change, to enter in the game yourself">Copy as text</button>` +
             `</div>`;
     }
+    body += chatBar();
     if (verify) body += triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached });
     return wrap(body);
 }

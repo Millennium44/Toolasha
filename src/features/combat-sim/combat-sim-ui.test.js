@@ -15050,6 +15050,44 @@ describe('the Triggers option', () => {
         expect(writeText.mock.calls[0][0]).toContain('≥ 600 (was 1)');
         delete navigator.clipboard;
     });
+
+    test('Copy for chat puts one message per player on the clipboard, with upgrades only when included', async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+        ui.buildPanel();
+        selectZone();
+        openSection();
+        mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
+        await ui._onTuneTriggers();
+        // no upgrade run yet: no toggle
+        expect(ui.panel.querySelector('#mwi-csim-trigger-chat-upgrades')).toBeNull();
+
+        ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(writeText).toHaveBeenCalledTimes(1);
+        expect(writeText.mock.calls[0][0]).toMatch(/^player1: Fireball → /);
+        expect(writeText.mock.calls[0][0]).not.toContain('Top upgrade');
+
+        ui._upgradeResultsData = {
+            context: { playerHrid: 'player1' },
+            results: [
+                { candidate: { description: 'Gloves +5', type: 'equipment' }, cost: 10, score: 61, deltas: { dps: 2 } },
+            ],
+        };
+        await ui._onTuneTriggers();
+        const toggle = ui.panel.querySelector('#mwi-csim-trigger-chat-upgrades');
+        expect(toggle).not.toBeNull();
+        toggle.checked = true;
+        toggle.dispatchEvent(new Event('change'));
+        ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(writeText.mock.calls[1][0]).toContain('Top upgrade: Gloves +5 (score 61, +2.0% DPS)');
+        expect(writeText.mock.calls[1][0].split('\n')).toHaveLength(1);
+        ui._upgradeResultsData = null;
+        delete navigator.clipboard;
+    });
 });
 
 describe('a sync pull of the panel’s remembered keys', () => {

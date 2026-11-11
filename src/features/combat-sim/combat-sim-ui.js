@@ -192,6 +192,13 @@ import { renderPreWipeChart, renderRunMpChart } from './hpmp-charts.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
+import {
+    buildChatMessages,
+    chatCopyBarHtml,
+    topUpgradeTexts,
+    triggerChatPlayers,
+    withUpgrades,
+} from './chat-summary.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import { neverFiringWarnings } from './trigger-checks.js';
 import { abilityCastsHtml } from './ability-casts-view.js';
@@ -567,6 +574,10 @@ const MIN_PANEL_HEIGHT = 300;
  * repay time inverted — all six are worth having on demand, none is worth the
  * width by default. Sixteen columns at once is what forced the panel wider.
  */
+const UPGRADE_CHAT_BTN_STYLE =
+    'background:rgba(74, 158, 255, 0.2); border:1px solid rgba(74, 158, 255, 0.4); color:#4a9eff; ' +
+    'padding:3px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;';
+
 const DEFAULT_HIDDEN_COLUMNS = ['deltaDps', 'deltaXp', 'deltaProfit', 'deltaEph', 'deltaDph', 'roi'];
 
 /** JSON with object keys sorted, so equal values always print the same */
@@ -12527,6 +12538,7 @@ class CombatSimUI {
                 canApply: Boolean(this._editor?.getEditedDTOs()),
                 cached: true,
                 verify: { canVerify: canVerifyTriggerResult(cached) },
+                chat: this._chatOptions(),
             });
             this._enhanceCollapsibles(box);
             box.dataset.cached = '1';
@@ -12693,6 +12705,7 @@ class CombatSimUI {
                 triggerBox.innerHTML = renderTriggerResultsHtml(result, gameData, {
                     canApply: Boolean(this._editor?.getEditedDTOs()),
                     verify: { canVerify: canVerifyTriggerResult(result) },
+                    chat: this._chatOptions(),
                 });
                 this._enhanceCollapsibles(triggerBox);
                 this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext, choices);
@@ -12842,6 +12855,7 @@ class CombatSimUI {
                     (applied > 0 ? '. Run Simulate to use them.' : '.')
             );
         });
+        this._wireTriggerChatCopy(result, gameData, runContext);
         this.panel.querySelector('#mwi-csim-trigger-copy')?.addEventListener('click', async () => {
             if (this._refuseStaleTriggerResult()) return;
             try {
@@ -12851,6 +12865,79 @@ class CombatSimUI {
                 console.error('[CombatSimUI] Copy of the trigger changes failed:', error);
                 this._setStatus('Could not copy to the clipboard.');
             }
+        });
+    }
+
+    /**
+     * Copy for chat state for the trigger results box: whether an upgrade run exists to include, and the toggle.
+     * The toggle is remembered for the session only (a field on the panel, never stored).
+     * @returns {{canIncludeUpgrades: boolean, includeUpgrades: boolean}}
+     * @private
+     */
+    _chatOptions() {
+        const can = this._chatUpgradeOwner() !== null;
+        return { canIncludeUpgrades: can, includeUpgrades: can && Boolean(this._chatIncludeUpgrades) };
+    }
+
+    /**
+     * Whose upgrades the Upgrade tab holds, as chat items. Null when there is no analysis or no way to name its player.
+     * @returns {{key: string|null, name: string|null, upgrades: string[]}|null}
+     * @private
+     */
+    _chatUpgradeOwner() {
+        const data = this._upgradeResultsData;
+        const upgrades = topUpgradeTexts(data);
+        if (!upgrades.length) return null;
+        const hrid = data.context?.playerHrid || null;
+        const info = (this._editor?.getPlayerInfo?.() || []).find((p) => p.hrid === hrid);
+        const name = info?.name || this._restoredUpgradeMeta?.characterName || null;
+        if (!hrid && !name) return null;
+        return { key: hrid, name, upgrades };
+    }
+
+    /**
+     * Write Copy for chat messages to the clipboard, one per line.
+     * @param {string[]} messages
+     * @param {string} what - For the status line
+     * @private
+     */
+    async _copyChatMessages(messages, what) {
+        try {
+            await navigator.clipboard.writeText(messages.join('\n'));
+            this._setStatus(`Copied ${messages.length} chat message${messages.length === 1 ? '' : 's'} (${what}).`);
+        } catch (error) {
+            console.error('[CombatSimUI] Copy for chat failed:', error);
+            this._setStatus('Could not copy to the clipboard.');
+        }
+    }
+
+    /**
+     * Wire Copy for chat and its Include upgrades toggle on the trigger results box.
+     * @param {Object} result - The optimizer result
+     * @param {Object} gameData - Game data payload
+     * @param {Object|null} runContext - Names the player the condition search ran for
+     * @private
+     */
+    _wireTriggerChatCopy(result, gameData, runContext) {
+        this.panel.querySelector('#mwi-csim-trigger-chat-upgrades')?.addEventListener('change', (event) => {
+            this._chatIncludeUpgrades = Boolean(event.target.checked);
+        });
+        this.panel.querySelector('#mwi-csim-trigger-chat-copy')?.addEventListener('click', async () => {
+            if (this._refuseStaleTriggerResult()) return;
+            const hrid = runContext?.playerHrid || null;
+            const name = (this._editor?.getPlayerInfo?.() || []).find((p) => p.hrid === hrid)?.name || null;
+            let players = triggerChatPlayers(result, gameData, { hrid, name });
+            const include = Boolean(this.panel.querySelector('#mwi-csim-trigger-chat-upgrades')?.checked);
+            if (include) {
+                const owner = this._chatUpgradeOwner();
+                if (owner) players = withUpgrades(players, owner);
+            }
+            const messages = buildChatMessages(players, { includeUpgrades: include });
+            if (!messages.length) {
+                this._setStatus('Nothing to copy for chat.');
+                return;
+            }
+            await this._copyChatMessages(messages, 'trigger tuning');
         });
     }
 
@@ -15958,6 +16045,9 @@ class CombatSimUI {
                 }) + html;
         }
         html += viewSwitchHtml(view, this._isNarrow());
+        if (this._chatUpgradeOwner()) {
+            html += chatCopyBarHtml({ buttonId: 'mwi-csim-upgrade-chat-copy', style: UPGRADE_CHAT_BTN_STYLE });
+        }
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows, results.stopped);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         // The gold table carries the ⚙ Columns popover; with no gold table the
@@ -16029,6 +16119,12 @@ class CombatSimUI {
         wireSort('data-buff-sort-key', '_buffSort');
         wireSort('data-scroll-sort-key', '_scrollSort');
         this._wireGoldVerify(container);
+        container.querySelector('#mwi-csim-upgrade-chat-copy')?.addEventListener('click', async () => {
+            const owner = this._chatUpgradeOwner();
+            if (!owner) return;
+            const players = withUpgrades([], owner);
+            await this._copyChatMessages(buildChatMessages(players, { includeUpgrades: true }), 'top upgrades');
+        });
 
         // Forgets the saved run only — the table on screen came from this
         // render call and stays right there; there is simply nothing left to

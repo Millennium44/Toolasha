@@ -715,3 +715,46 @@ describe('describeTriggerEstimate', () => {
         expect(describeTriggerEstimate(null)).toBe('');
     });
 });
+
+describe('Copy for chat bar', () => {
+    test('shown with threshold changes, with the toggle only when upgrades can be included', () => {
+        const without = renderTriggerResultsHtml({ scope: 'me', changes: [change()], simCount: 1 }, gameData);
+        expect(without).toContain('mwi-csim-trigger-chat-copy');
+        expect(without).not.toContain('mwi-csim-trigger-chat-upgrades');
+        const withToggle = renderTriggerResultsHtml({ scope: 'me', changes: [change()], simCount: 1 }, gameData, {
+            chat: { canIncludeUpgrades: true, includeUpgrades: true },
+        });
+        expect(withToggle).toMatch(/mwi-csim-trigger-chat-upgrades"[^>]*checked/);
+    });
+
+    test('shown for a condition-search-only result, absent when nothing is recommended', () => {
+        const conditionOnly = {
+            noTunables: true,
+            scope: 'me',
+            changes: [],
+            conditions: {
+                changes: [
+                    {
+                        key: 'k',
+                        itemName: 'X',
+                        slotType: 'abilities',
+                        fromRows: [],
+                        toRows: [],
+                        deltaScore: 2,
+                        se: 0.5,
+                    },
+                ],
+            },
+        };
+        expect(renderTriggerResultsHtml(conditionOnly, gameData)).toContain('mwi-csim-trigger-chat-copy');
+        expect(renderTriggerResultsHtml({ noTunables: true, scope: 'me', changes: [] }, gameData)).not.toContain(
+            'mwi-csim-trigger-chat-copy'
+        );
+        expect(renderTriggerResultsHtml({ scope: 'me', changes: [], simCount: 1 }, gameData)).not.toContain(
+            'mwi-csim-trigger-chat-copy'
+        );
+        expect(renderTriggerResultsHtml({ scope: 'me', reliable: false, changes: [change()] }, gameData)).not.toContain(
+            'mwi-csim-trigger-chat-copy'
+        );
+    });
+});
