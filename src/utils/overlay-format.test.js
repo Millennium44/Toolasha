@@ -12,6 +12,7 @@ import {
     ROW_COLORS,
     resetSpriteSheetCache,
     spriteUrl,
+    onSpriteSheetsLoaded,
     itemIcon,
     itemLabel,
     linkToMarketplace,
@@ -502,5 +503,101 @@ describe('a sprite sheet the game loaded but is not showing right now', () => {
         ]);
         expect(spriteUrl('actions')).toBe('');
         expect(spriteUrl('abilities')).toBe('');
+    });
+});
+
+describe('a sprite sheet the game never fetched (read from its main script)', () => {
+    const chunk = () => ({ name: `${location.origin}/static/js/main.abc123.chunk.js` });
+    const body = 'a="static/media/actions_sprite.e6388cbc.svg",b="static/media/combat_monsters_sprite.ddb69185.svg"';
+    const flush = async () => {
+        for (let i = 0; i < 6; i++) await Promise.resolve();
+    };
+    const okFetch = () => vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => body });
+
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        document.body.innerHTML = '';
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        resetSpriteSheetCache();
+    });
+
+    test('blank while the read is pending, then filled, and listeners are told', async () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([chunk()]);
+        const fetchMock = okFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        const told = vi.fn();
+        onSpriteSheetsLoaded(told);
+        expect(spriteUrl('actions')).toBe('');
+        expect(fetchMock).toHaveBeenCalledWith('/static/js/main.abc123.chunk.js');
+        await flush();
+        expect(told).toHaveBeenCalledTimes(1);
+        expect(spriteUrl('actions')).toBe('/static/media/actions_sprite.e6388cbc.svg');
+        expect(spriteUrl('combat_monsters')).toBe('/static/media/combat_monsters_sprite.ddb69185.svg');
+        expect(spriteUrl('abilities')).toBe('');
+    });
+
+    test('the script is fetched once however many sheets are asked for', async () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([chunk()]);
+        const fetchMock = okFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        spriteUrl('actions');
+        spriteUrl('combat_monsters');
+        spriteUrl('abilities');
+        await flush();
+        spriteUrl('abilities');
+        spriteUrl('nope');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed read stays blank, logs once and is not retried', async () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([chunk()]);
+        const fetchMock = vi.fn().mockRejectedValue(new Error('offline'));
+        vi.stubGlobal('fetch', fetchMock);
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const told = vi.fn();
+        onSpriteSheetsLoaded(told);
+        expect(spriteUrl('actions')).toBe('');
+        await flush();
+        expect(spriteUrl('actions')).toBe('');
+        expect(spriteUrl('actions')).toBe('');
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(log.mock.calls[0][0]).toContain('[OverlayFormat]');
+        expect(told).not.toHaveBeenCalled();
+    });
+
+    test('a main script from another origin is never fetched', async () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+            { name: 'https://elsewhere.example/static/js/main.abc123.chunk.js' },
+        ]);
+        const fetchMock = okFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        expect(spriteUrl('actions')).toBe('');
+        await flush();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    test('no main script on record means no read, and a later call can still look', async () => {
+        const entries = vi.spyOn(performance, 'getEntriesByType').mockReturnValue([]);
+        const fetchMock = okFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        expect(spriteUrl('actions')).toBe('');
+        expect(fetchMock).not.toHaveBeenCalled();
+        entries.mockReturnValue([chunk()]);
+        spriteUrl('actions');
+        await flush();
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    test('a sheet already on screen needs no read', () => {
+        document.body.innerHTML = '<svg><use href="/static/media/items_sprite.cur.svg#coin"></use></svg>';
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([chunk()]);
+        const fetchMock = okFetch();
+        vi.stubGlobal('fetch', fetchMock);
+        expect(spriteUrl('items')).toBe('/static/media/items_sprite.cur.svg');
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 });

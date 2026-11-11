@@ -45,6 +45,9 @@ export function spriteUrl(sheet = 'items') {
     // sim's zone icons blank. The page's record of fetched files still has the
     // URL, build hash and all.
     if (!found) found = loadedSheetUrl(sheet);
+    // Still nothing: the game has never fetched this sheet (no combat yet, Combat page
+    // not opened). Its main script names every sheet's hashed URL, so read that once.
+    if (!found) found = bundleSheets[sheet] || (startBundleScan(), '');
     // Not cached when it came back empty — the game may simply not have drawn
     // from this sheet yet, and one empty answer should not be the answer forever
     if (found) spriteSheets[sheet] = found;
@@ -70,6 +73,67 @@ function loadedSheetUrl(sheet) {
     }
 }
 
+/** Sheet name to URL path, as named in the game's main script. Filled once, by `startBundleScan`. */
+const bundleSheets = {};
+/** `idle` until a scan starts, then `pending`, then `done` or `failed`. Never leaves `done`/`failed`. */
+let bundleState = 'idle';
+const sheetListeners = new Set();
+
+/**
+ * Be told when the sheet URLs read from the game's main script become available, so
+ * icons drawn blank in the meantime can be redrawn.
+ * @param {Function} listener - Called with no arguments
+ * @returns {Function} Disposer
+ */
+export function onSpriteSheetsLoaded(listener) {
+    sheetListeners.add(listener);
+    return () => sheetListeners.delete(listener);
+}
+
+/**
+ * Read the game's own main script once and record every sprite sheet URL it names.
+ * Same origin only; the file is one the page already loaded, so this is a cache hit.
+ * @returns {Promise<void>}
+ */
+async function startBundleScan() {
+    if (bundleState !== 'idle') return;
+    let path = '';
+    try {
+        const entry = globalThis.performance
+            ?.getEntriesByType?.('resource')
+            ?.find((e) => typeof e?.name === 'string' && /\/static\/js\/main\.[^/?#]*\.js(\?|#|$)/.test(e.name));
+        if (entry) {
+            const url = new URL(entry.name, globalThis.location?.href);
+            if (url.origin === globalThis.location?.origin) path = url.pathname;
+        }
+    } catch {
+        path = '';
+    }
+    // No main script on record yet: leave idle so a later call can look again
+    if (!path) return;
+    bundleState = 'pending';
+    try {
+        const response = await fetch(path);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        for (const match of text.matchAll(/static\/media\/([a-z_]+)_sprite\.[0-9a-f]+\.svg/g)) {
+            if (!bundleSheets[match[1]]) bundleSheets[match[1]] = `/${match[0]}`;
+        }
+        bundleState = 'done';
+    } catch (error) {
+        bundleState = 'failed';
+        console.error('[OverlayFormat] Could not read sprite sheet names from the game script:', error);
+        return;
+    }
+    for (const listener of [...sheetListeners]) {
+        try {
+            listener();
+        } catch (error) {
+            console.error('[OverlayFormat] Sprite sheet listener failed:', error);
+        }
+    }
+}
+
 /**
  * Forget the sheet URLs found so far.
  *
@@ -84,6 +148,8 @@ function loadedSheetUrl(sheet) {
  */
 export function resetSpriteSheetCache() {
     for (const sheet of Object.keys(spriteSheets)) delete spriteSheets[sheet];
+    for (const sheet of Object.keys(bundleSheets)) delete bundleSheets[sheet];
+    bundleState = 'idle';
 }
 
 /**

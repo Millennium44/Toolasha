@@ -280,4 +280,26 @@ describe('simulator popup sprite ownership', () => {
         expect(owned.querySelector('input')).toBe(input);
         expect(input.value).toBe('91');
     });
+
+    test('a sheet the game never fetched is read from its script and the spacers redraw', async () => {
+        const host = panel(simEntityLabelHtml('/abilities/heal', 'Heal'));
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+            { name: `${location.origin}/static/js/main.abc123.chunk.js` },
+        ]);
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                text: async () => 'x="static/media/abilities_sprite.e6388cbc.svg"',
+            })
+        );
+        watch(host);
+        expect(host.querySelector(pending)).not.toBeNull();
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(host.querySelector('use')?.getAttribute('href')).toBe(
+            '/static/media/abilities_sprite.e6388cbc.svg#heal'
+        );
+        vi.unstubAllGlobals();
+    });
 });

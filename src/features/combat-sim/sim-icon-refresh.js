@@ -1,6 +1,6 @@
 /** Fill simulator icon spacers without rebuilding controls or disturbing an edited scenario. */
 import domObserver from '../../core/dom-observer.js';
-import { spriteUrl } from '../../utils/overlay-format.js';
+import { spriteUrl, onSpriteSheetsLoaded } from '../../utils/overlay-format.js';
 import { simEntityIconHtml } from './sim-entity-label.js';
 
 const PENDING = 'span[data-sim-icon-pending]';
@@ -10,6 +10,7 @@ const popupOwners = new WeakMap();
 const panels = new Set();
 let pendingSelector = '';
 let unregister = null;
+let stopSheets = null;
 let queued = false;
 
 function isActive(panel) {
@@ -92,6 +93,8 @@ function onAdded(node) {
 export function watchSimIconRefresh(panel) {
     panels.add(panel);
     if (!unregister) unregister = domObserver.register('sim-icon-refresh', onAdded);
+    // A sheet the game never fetched is read from its script after a moment; redraw then
+    if (!stopSheets) stopSheets = onSpriteSheetsLoaded(scheduleRefresh);
     refresh();
     let stopped = false;
     return () => {
@@ -101,6 +104,8 @@ export function watchSimIconRefresh(panel) {
         if (!panels.size) {
             unregister?.();
             unregister = null;
+            stopSheets?.();
+            stopSheets = null;
             pendingSelector = '';
         }
     };
