@@ -67,7 +67,10 @@
         },
         "get-uri": {
             "basic-ftp": "^6.2.1"
-        }
+        },
+        "re2js": "^2.8.7",
+        "minimatch": "^11.0.1",
+        "katex": "^0.18.2"
     },
     "engines": {
         "node": ">=22.12"
