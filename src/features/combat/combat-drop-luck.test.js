@@ -640,16 +640,16 @@ describe("another player's sheet arriving as battle_unit_fetched", () => {
 });
 
 describe('refinement chests, a separate roll at the reward table rate', () => {
-    // Synthetic per-tier steps: the real Sinister Circus step is not in the repo.
-    // 0.3 gives ~33% at T1 as the game panel shows; 0.5 caps to certain at T2.
+    // Real reward-table entry, read from the test server initClientData (2026-11-11):
+    // -0.3 + 0.6/tier: T0 clamps to 0, T1 = 0.33 (the panel shows ~33%), T2 = 1.08 caps at 1.
     const REFINEMENT = '/items/sinister_refinement_chest';
-    const zone = (perTier) => ({
+    const zone = () => ({
         combatZoneInfo: {
             isDungeon: true,
             dungeonInfo: {
                 rewardDropTable: [
                     { itemHrid: '/items/sinister_chest', dropRate: 1, minCount: 1, maxCount: 1 },
-                    { itemHrid: REFINEMENT, dropRate: 0, dropRatePerDifficultyTier: perTier, minCount: 1, maxCount: 1 },
+                    { itemHrid: REFINEMENT, dropRate: -0.3, dropRatePerDifficultyTier: 0.6, minCount: 1, maxCount: 1 },
                 ],
             },
         },
@@ -679,7 +679,7 @@ describe('refinement chests, a separate roll at the reward table rate', () => {
     };
 
     test('T1: every player of five gets a line, 0/1/2 over 10 completions at 33%', () => {
-        const out = run(zone(0.3), 1);
+        const out = run(zone(), 1);
         expect(out[0]).toContain('Refinement chests: 0 over 10 completions, 3.3 expected at the table');
         expect(out[1]).toContain('Refinement chests: 1 over 10 completions, 3.3 expected');
         expect(out[2]).toContain('Refinement chests: 2 over 10 completions');
@@ -688,27 +688,33 @@ describe('refinement chests, a separate roll at the reward table rate', () => {
     });
 
     test('the main chest line is unchanged by the refinement chest', () => {
-        const out = run(zone(0.3), 1);
+        const out = run(zone(), 1);
         expect(out[0]).toContain('P0: 10 chests over 10 completions,');
     });
 
     test('T0: a rate of zero has no line, not 0 expected', () => {
-        expect(run(zone(0.3), 0).join('\n')).not.toContain('Refinement');
+        expect(run(zone(), 0).join('\n')).not.toContain('Refinement');
     });
 
     test('T2 at certainty: counts, with no luck to place', () => {
-        const out = run(zone(0.5), 2);
+        const out = run(zone(), 2);
         expect(out[1]).toContain('10.0 expected');
         expect(out[1]).toContain('no luck in it');
     });
 
+    test('T3+ stays certain', () => {
+        const out = run(zone(), 3);
+        expect(out[2]).toContain('Refinement chests: 2 over 10 completions, 10.0 expected');
+        expect(out[2]).toContain('no luck in it');
+    });
+
     test('a dungeon with no refinement entry has no line', () => {
-        const detail = zone(0.3);
+        const detail = zone();
         detail.combatZoneInfo.dungeonInfo.rewardDropTable.pop();
         expect(run(detail, 1).join('\n')).not.toContain('Refinement');
     });
 
     test('zero completions: no line', () => {
-        expect(run(zone(0.3), 1, 0).join('\n')).not.toContain('Refinement');
+        expect(run(zone(), 1, 0).join('\n')).not.toContain('Refinement');
     });
 });

@@ -23,7 +23,48 @@ import {
     countDungeonChests,
     dungeonChestItems,
     isRefinementChest,
+    refinementRewardRate,
+    refinementLuck,
 } from './dungeon-chest-luck.js';
+
+describe('the refinement chest rate', () => {
+    // Real entry from the test server initClientData, 2026-11-11 (all four dungeons)
+    const zone = {
+        combatZoneInfo: {
+            dungeonInfo: {
+                rewardDropTable: [
+                    { itemHrid: '/items/sinister_chest', dropRate: 1, minCount: 1, maxCount: 1 },
+                    {
+                        itemHrid: '/items/sinister_refinement_chest',
+                        dropRate: -0.3,
+                        dropRatePerDifficultyTier: 0.6,
+                        minCount: 1,
+                        maxCount: 1,
+                    },
+                ],
+            },
+        },
+    };
+
+    test('T0 clamps the negative base to nothing: no rate, no line', () => {
+        expect(refinementRewardRate(zone, 0)).toBeNull();
+    });
+
+    test('T1 is a third', () => {
+        expect(refinementRewardRate(zone, 1).rate).toBeCloseTo(0.33, 6);
+    });
+
+    test('T2 and beyond cap at certainty', () => {
+        expect(refinementRewardRate(zone, 2).rate).toBe(1);
+        expect(refinementRewardRate(zone, 5).rate).toBe(1);
+        expect(refinementLuck({ completions: 7, count: 7, rate: 1 })).toMatchObject({ expected: 7, percentile: null });
+    });
+
+    test('a dungeon with no refinement entry has none', () => {
+        expect(refinementRewardRate({ combatZoneInfo: { dungeonInfo: { rewardDropTable: [] } } }, 1)).toBeNull();
+        expect(refinementRewardRate(null, 1)).toBeNull();
+    });
+});
 
 describe('what a completion is worth', () => {
     test('five people split five chests, one each', () => {
