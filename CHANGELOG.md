@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Wipe log shows your team's heals and casts
+
+A wipe's hit log now also lists heals (who healed whom, how much and the HP % before and after) and each player's ability casts, using player names. Each wipe card says how many heals landed in the last 30 seconds and how long before falling the first player down was last healed.
+
 ### Combat Sim charts HP and MP
 
 Each wipe card now charts every player's HP and MP over the 30 seconds before the wipe. Under Healing & Mana, a chart shows each player's MP across the run, with the share of time each spent under 10% MP, so it is clear who runs dry.
