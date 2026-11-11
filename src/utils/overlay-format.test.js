@@ -11,6 +11,7 @@ import {
     GLYPHS,
     ROW_COLORS,
     resetSpriteSheetCache,
+    spriteUrl,
     itemIcon,
     itemLabel,
     linkToMarketplace,
@@ -474,5 +475,32 @@ describe('xlink-only game sprite sheets (#862)', () => {
             document.body.innerHTML = '';
             resetSpriteSheetCache();
         }
+    });
+});
+
+describe('a sprite sheet the game loaded but is not showing right now', () => {
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        document.body.innerHTML = '';
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        resetSpriteSheetCache();
+    });
+
+    test('is found from the page record of fetched files', () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+            { name: `${location.origin}/static/media/combat_monsters_sprite.ddb69185.svg#fly` },
+            { name: `${location.origin}/static/media/actions_sprite.e6388cbc.svg#smelly_planet` },
+        ]);
+        expect(spriteUrl('actions')).toBe('/static/media/actions_sprite.e6388cbc.svg');
+    });
+
+    test('a sheet never fetched stays empty, and another origin is not trusted', () => {
+        vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+            { name: 'https://elsewhere.example/static/media/actions_sprite.abc.svg' },
+        ]);
+        expect(spriteUrl('actions')).toBe('');
+        expect(spriteUrl('abilities')).toBe('');
     });
 });

@@ -39,11 +39,35 @@ export function spriteUrl(sheet = 'items') {
     if (spriteSheets[sheet]) return spriteSheets[sheet];
 
     const use = document.querySelector(`svg use[href*="${sheet}_sprite"], svg use[xlink\\:href*="${sheet}_sprite"]`);
-    const found = (use?.getAttribute('href') || use?.getAttribute('xlink:href') || '').split('#')[0];
+    let found = (use?.getAttribute('href') || use?.getAttribute('xlink:href') || '').split('#')[0];
+    // The game may have loaded a sheet with no icon from it on screen right now
+    // (the actions sheet once the Combat Zones list is closed), which left the
+    // sim's zone icons blank. The page's record of fetched files still has the
+    // URL, build hash and all.
+    if (!found) found = loadedSheetUrl(sheet);
     // Not cached when it came back empty — the game may simply not have drawn
     // from this sheet yet, and one empty answer should not be the answer forever
     if (found) spriteSheets[sheet] = found;
     return found;
+}
+
+/**
+ * A sheet's URL from the files the page has already fetched, or an empty string.
+ * @param {string} sheet - Sheet name, e.g. `actions`
+ * @returns {string} Same-origin path without the `#fragment`
+ */
+function loadedSheetUrl(sheet) {
+    try {
+        const marker = `/${sheet}_sprite.`;
+        const entry = globalThis.performance
+            ?.getEntriesByType?.('resource')
+            ?.find((e) => typeof e?.name === 'string' && e.name.includes(marker) && /\.svg(#|$)/.test(e.name));
+        if (!entry) return '';
+        const url = new URL(entry.name, globalThis.location?.href);
+        return url.origin === globalThis.location?.origin ? url.pathname : '';
+    } catch {
+        return '';
+    }
 }
 
 /**
