@@ -982,7 +982,10 @@ class PhiloCalculator {
                 return this.needsPriceBasis();
             }
         } else if (action.upgradeItemHrid) {
-            lines.push('Base item at its sell-after-tax price');
+            const baseValue = this.resolveOwnedInputValue(action.upgradeItemHrid);
+            lines.push(
+                `${this.getItemName(action.upgradeItemHrid)}: ${formatLargeNumber(Math.round(baseValue))} (sell-after-tax)`
+            );
         }
         this._ownedRefinedBreakdowns = this._ownedRefinedBreakdowns || {};
         this._ownedRefinedBreakdowns[itemHrid] = lines;
@@ -2101,7 +2104,7 @@ class PhiloCalculator {
                     if (!lines) return `${head} Click to override this cost basis.`;
                     return [
                         head,
-                        'A refined cape with no listing: its base item plus the refinement stones, all valued as owned:',
+                        'A refined cape: its base item plus the refinement stones, all valued as owned:',
                         ...lines,
                         'Click to override this cost basis.',
                     ].join('\n');
