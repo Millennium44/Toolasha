@@ -14,7 +14,7 @@ Every Results section, in a player's view and in the All view, now collapses wit
 The Combat and Lab upgrade advisors can price a single tradable upgrade by Equipment Watch's preferred route (Buy, Craft or Mirror), and its Cost, ranking and shopping buttons follow that route; the route replaces the advisor's own quote only when it is cheaper. On for new players; existing players turn on "Price upgrades by your preferred route" in Settings.
 ### Mirror upgrades use the piece you already wear
 
-When an upgrade advisor prices a Philosopher's Mirror build and the piece you are replacing is one of its inputs, it now uses that piece instead of building a fresh copy and counting yours as sold. It still buys the target outright when that is cheaper.
+When an upgrade advisor prices a Philosopher's Mirror build and the piece you are replacing is one of its inputs, it now uses that piece instead of building a fresh copy and counting yours as sold. It still buys the target outright when that is cheaper, and the cost details now say what you pay, the sale you give up and the total, or the resale credit when your piece is sold.
 
 ### Token totals follow a stack linked in chat
 
