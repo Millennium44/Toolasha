@@ -417,7 +417,13 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
     },
 }));
 
-const { default: ui, describeAllFightsPlan, describeArchetypes, liveCombatRoomLevel } = await import('./lab-sim-ui.js');
+const {
+    default: ui,
+    describeAllFightsPlan,
+    describeArchetypes,
+    liveCombatRoomLevel,
+    planPurchases,
+} = await import('./lab-sim-ui.js');
 const { estimateLabUpgradeSims } = await import('./lab-sim-upgrade-modes.js');
 
 /** A pointer event happy-dom will hand to the drag helper's listeners. */
@@ -3980,12 +3986,18 @@ describe('the budget plan when a pick pays for itself', () => {
                 credits: [],
                 gross: 1000,
                 net: 1000,
-                acquisitionComparison: { status: 'priced', route: 'craft', real: 900, cash: 800 },
+                sharedRoute: {
+                    applied: false,
+                    route: 'craft',
+                    real: 900,
+                    cash: 800,
+                    reason: 'The craft is not known to be startable.',
+                },
             };
             ui._renderAllFightsResults(result, container);
             expect(container.querySelector('[data-item-requirement-hrid]').textContent).toContain('you: 88');
             expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-            expect(container.textContent).toContain('Shared routes:');
+            expect(container.textContent).toContain("Advisor's own quote");
             skills.mockReturnValue([{ skillHrid: '/skills/defense', level: 95 }]);
             const { refreshItemRequirementWarnings } = await import('../../utils/item-requirements.js');
             refreshItemRequirementWarnings(container);
@@ -3995,7 +4007,7 @@ describe('the budget plan when a pick pays for itself', () => {
                 expect(container.querySelector('[data-item-requirement-hrid]').hidden).toBe(true);
                 expect(container.textContent).not.toContain('you: 88');
                 expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-                expect(container.textContent).not.toContain('Shared routes:');
+                expect(container.textContent).not.toContain("Advisor's own quote");
             }
         } finally {
             details.mockRestore();
@@ -4506,28 +4518,37 @@ describe('the cost breakdown', () => {
             credits: [],
             gross: 180,
             net: 180,
-            acquisitionComparison: { status: 'priced', route: 'craft', real: 170, cash: 100 },
+            sharedRoute: {
+                applied: false,
+                route: 'craft',
+                real: 170,
+                cash: 100,
+                reason: 'The craft is not known to be startable.',
+            },
         });
-        expect(html).toContain('Shared routes: Craft, real cost 170, cash 100');
-        expect(html).toContain('ranking and shopping actions are unchanged');
+        expect(html).toContain("Advisor\'s own quote (Craft 170 not used)");
         const unsupported = ui._renderCostBreakdown({
             buys: [],
             credits: [],
-            acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' },
+            sharedRoute: { applied: false, reason: '<img src=x>' },
         });
         expect(unsupported).toContain('&lt;img');
         expect(unsupported).not.toContain('<img');
         const compact = ui._renderAllFightsCostExplanation({
             cost: 10,
             candidate: {},
-            costDetail: { net: 10, acquisitionComparison: { status: 'unsupported', reason: '<img src=x>' } },
+            costDetail: { net: 10, sharedRoute: { applied: false, reason: '<img src=x>' } },
         });
         expect(compact).toContain('&lt;img');
         expect(compact).not.toContain('<img');
         setting.mockRestore();
         expect(
-            ui._renderCostBreakdown({ buys: [], credits: [], acquisitionComparison: { status: 'unknown' } })
-        ).not.toContain('Shared routes');
+            ui._renderCostBreakdown({
+                buys: [],
+                credits: [],
+                sharedRoute: { applied: false, reason: 'No shared route is fully priced.' },
+            })
+        ).not.toContain("Advisor's own quote");
     });
     test('a sweep-priced buy names whose enhancing stats it ran on', () => {
         // Nothing is listed at that enhancement, so half the figure is a
@@ -9617,7 +9638,13 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
                     credit: 0,
                     buys: [{ hrid: '/items/new_ring', name: 'new_ring', enhancementLevel: 9, price: 1000 }],
                     credits: [],
-                    acquisitionComparison: { status: 'priced', route: 'craft', real: 900, cash: 800 },
+                    sharedRoute: {
+                        applied: false,
+                        route: 'craft',
+                        real: 900,
+                        cash: 800,
+                        reason: 'The craft is not known to be startable.',
+                    },
                 },
             },
         ],
@@ -9673,7 +9700,7 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
                     'For you: Needs Defense 95 (you: 88)'
                 );
                 expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
-                expect(container.textContent).toContain('Shared routes: Craft, real cost 900, cash 800');
+                expect(container.textContent).toContain("Advisor\'s own quote (Craft 900 not used)");
                 expect(container.textContent).not.toContain('could not be drawn');
             }
             expect(result.results[0].cost).toBe(1000);
@@ -9752,15 +9779,15 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
         const result = fixture();
         const original = JSON.parse(JSON.stringify(result));
         ui[method](result, container, options);
-        expect(container.textContent).toContain('Shared routes:');
+        expect(container.textContent).toContain("Advisor's own quote");
         comparisonEnabled = false;
         ui._pickLabView('cards');
-        expect(container.textContent).not.toContain('Shared routes:');
+        expect(container.textContent).not.toContain("Advisor's own quote");
         expect(container.querySelector(warningSelector).hidden).toBe(false);
         expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
         comparisonEnabled = true;
         ui._pickLabView('table');
-        expect(container.textContent).toContain('Shared routes: Craft, real cost 900, cash 800');
+        expect(container.textContent).toContain("Advisor\'s own quote (Craft 900 not used)");
         expect(result).toEqual(original);
     });
     test.each(renderers)('$label reevaluates route opt-in on every sort without reanalyzing', ({ method, options }) => {
@@ -9768,11 +9795,11 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
         const original = JSON.parse(JSON.stringify(result));
         comparisonEnabled = false;
         ui[method](result, container, options);
-        expect(container.textContent).not.toContain('Shared routes:');
+        expect(container.textContent).not.toContain("Advisor's own quote");
         for (const enabled of [true, false, true]) {
             comparisonEnabled = enabled;
             container.querySelector('th[data-sort-key="desc"][data-table="gold"]').click();
-            expect(container.textContent.includes('Shared routes:')).toBe(enabled);
+            expect(container.textContent.includes("Advisor's own quote")).toBe(enabled);
             expect(container.querySelector(warningSelector).hidden).toBe(false);
             expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
         }
@@ -9782,7 +9809,7 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
         '$label does not fabricate comparison data on re-enable or reprice unknown costs',
         ({ method, options }) => {
             const result = fixture();
-            delete result.results[0].costDetail.acquisitionComparison;
+            delete result.results[0].costDetail.sharedRoute;
             result.results[0].cost = null;
             result.results[0].costDetail.gross = null;
             result.results[0].costDetail.net = null;
@@ -9793,7 +9820,7 @@ describe('Lab upgrade redraws: warnings, icons and shared route comparisons', ()
             comparisonEnabled = true;
             for (const view of ['cards', 'table', 'cards']) {
                 ui._pickLabView(view);
-                expect(container.textContent).not.toContain('Shared routes:');
+                expect(container.textContent).not.toContain("Advisor's own quote");
                 expect(container.textContent).toContain('no price found');
                 expect(container.querySelector('[data-sim-item-icon="/items/new_ring"]')).not.toBeNull();
             }
@@ -9948,5 +9975,44 @@ describe('simulator late sprite panel lifecycle', () => {
         ui.buildPanel();
         ui.show({ remember: false });
         expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(1);
+    });
+});
+
+describe('a budget plan shops a route-priced pick by what its route buys', () => {
+    test('route inputs are separate purchases, summed across picks; ordinary picks stay one of each', async () => {
+        const { default: combatSimUI } = await import('./combat-sim-ui.js');
+        const shard = { itemHrid: '/items/shard', count: 20, name: 'Shard' };
+        const base = { itemHrid: '/items/plain_spear', enhancementLevel: 13, count: 1, name: 'Plain Spear +13' };
+        const buys = {
+            a: { itemHrid: '/items/refined_spear', enhancementLevel: 13, routeMaterials: [shard, base] },
+            b: { itemHrid: '/items/refined_bow', enhancementLevel: 13, routeMaterials: [shard] },
+            c: { itemHrid: '/items/ring', enhancementLevel: 2, name: 'Ring +2' },
+            d: { itemHrid: '/items/ring', enhancementLevel: 2, name: 'Ring +2' },
+        };
+        const spy = vi.spyOn(combatSimUI, 'upgradeRowPurchase').mockImplementation((pick) => buys[pick.key]);
+        try {
+            const items = planPurchases(['a', 'b', 'c', 'd'].map((key) => ({ key })));
+            expect(
+                items.map(({ itemHrid, enhancementLevel, count }) => ({ itemHrid, enhancementLevel, count }))
+            ).toEqual([
+                { itemHrid: '/items/shard', enhancementLevel: 0, count: 40 },
+                { itemHrid: '/items/plain_spear', enhancementLevel: 13, count: 1 },
+                { itemHrid: '/items/ring', enhancementLevel: 2, count: undefined },
+            ]);
+            // The route's own target item is never on the list
+            expect(items.some((item) => item.itemHrid === '/items/refined_spear')).toBe(false);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
+    test('the compact breakdown names the route that priced a row even with the setting off', () => {
+        const html = ui._renderCostBreakdown({
+            buys: [],
+            credits: [],
+            net: 170,
+            sharedRoute: { applied: true, route: 'mirror', real: 170, advisorNet: 200, preference: 'mirror' },
+        });
+        expect(html).toContain("Priced by Mirror, your preferred route: 170, 30 below the advisor's own quote.");
     });
 });

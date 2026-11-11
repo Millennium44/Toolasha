@@ -527,19 +527,22 @@ describe('a refined untradable cape in the advisor follows the cape setting', ()
     });
 });
 
-describe('opt-in shared route comparison leaves legacy pricing intact', () => {
-    test('adds a comparison without changing numeric cost or the old breakdown', () => {
+describe('route pricing: a supported row ranks on the shared route', () => {
+    test('a Buy quote that differs from the advisor quote sets Cost and breakdown together; off restores both', () => {
         const candidate = tier(0);
         const before = explainUpgradeCost(candidate, gameData);
         const cost = calculateUpgradeCost(candidate, gameData);
+        // The advisor guards a wide book at the bid; the shared Buy route is the ask Equipment Watch quotes
+        expect(cost).toBe(400);
         state.compareRoutes = true;
         const after = explainUpgradeCost(candidate, gameData);
-        const { acquisitionComparison, ...legacy } = after;
-        expect(legacy).toEqual(before);
-        expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
-        expect(acquisitionComparison).toMatchObject({ status: 'priced', route: 'buy' });
+        expect(after.sharedRoute).toMatchObject({ applied: true, route: 'buy', real: 1000, advisorNet: 400 });
+        expect(after).toMatchObject({ net: 1000, gross: 1000, source: 'market', ladder: null });
+        expect(after.buys).toEqual([expect.objectContaining({ hrid: SWORD, enhancementLevel: 0, price: 1000 })]);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(1000);
         state.compareRoutes = false;
         expect(explainUpgradeCost(candidate, gameData)).toEqual(before);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
     });
     test('party and multi-slot rows are explicitly unsupported, not priced from the local bag', () => {
         state.compareRoutes = true;
@@ -566,7 +569,7 @@ describe('opt-in shared route comparison leaves legacy pricing intact', () => {
         });
     });
 
-    test.each([0, 0.2])('keeps recursive Mirror and Blessed Tea costs unchanged (chance %s)', (blessed) => {
+    test.each([0, 0.2])('an agreeing recursive Mirror and Blessed Tea cost is unchanged (chance %s)', (blessed) => {
         state.blessedChance = blessed;
         state.books[`${SWORD}:0`] = { ask: 100_000, bid: 100_000 };
         state.books[`${SWORD}:1`] = { ask: 100_000, bid: 100_000 };
@@ -581,8 +584,10 @@ describe('opt-in shared route comparison leaves legacy pricing intact', () => {
         expect(before.source).toBe('mirror');
         expect(before.ladder.mirror.mirrorCount).toBeGreaterThan(1);
         state.compareRoutes = true;
-        const { acquisitionComparison, ...after } = explainUpgradeCost(candidate, gameData);
+        const { acquisitionComparison, sharedRoute, ...after } = explainUpgradeCost(candidate, gameData);
+        // The same Mirror figure on both models: the advisor's own breakdown stands, stamped as agreeing
         expect(after).toEqual(before);
+        expect(sharedRoute).toMatchObject({ applied: false, agrees: true, route: 'mirror' });
         expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
         expect(acquisitionComparison).toMatchObject({ status: 'priced' });
         expect(acquisitionComparison.routes.find((row) => row.id === 'mirror').mirrorCount).toBe(

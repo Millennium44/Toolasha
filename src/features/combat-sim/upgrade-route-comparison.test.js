@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from 'vitest';
 import { compareAdvisorAcquisition } from './upgrade-route-comparison.js';
-import { acquisitionComparisonText, compactCostLines } from './cost-basis-text.js';
+import { sharedRouteText, compactCostLines } from './cost-basis-text.js';
 
 const available = { status: 'available' };
 const context = () => ({
@@ -140,24 +140,49 @@ describe('read-only route comparison', () => {
         expect(compareAdvisorAcquisition(ctx, services())).toEqual(result);
         expect(ctx).toEqual(before);
     });
-    test('labels the experiment as non-authoritative in compact and expanded wording', () => {
-        const comparison = { status: 'priced', route: 'craft', real: 170, cash: 100 };
-        const text = acquisitionComparisonText(comparison);
-        expect(text).toContain('real cost 170');
-        expect(text).toContain('cash 100');
-        expect(text).toContain('ranking and shopping actions are unchanged');
+    test('names the route that set the Cost, and how far the advisor quote was from it', () => {
+        const applied = {
+            sharedRoute: { applied: true, route: 'craft', real: 170, cash: 100, advisorNet: 200, preference: 'auto' },
+        };
+        const text = sharedRouteText(applied);
+        expect(text).toBe("Priced by Craft, the lowest real cost: 170, 30 below the advisor's own quote.");
+        // A route-priced row names it whatever the setting is now, first in the compact account
+        expect(compactCostLines(applied)[0].text).toBe(text);
         expect(
-            compactCostLines({ acquisitionComparison: comparison }, { showAcquisitionComparison: true }).some(
-                (line) => line.text === text
-            )
-        ).toBe(true);
-        expect(acquisitionComparisonText({ status: 'unsupported', reason: 'Party inventory is unknown.' })).toContain(
-            'Party inventory'
+            sharedRouteText({ sharedRoute: { ...applied.sharedRoute, preference: 'craft', advisorNet: null } })
+        ).toBe('Priced by Craft, your preferred route: 170; the advisor had no quote of its own.');
+        expect(sharedRouteText({ sharedRoute: { ...applied.sharedRoute, route: 'buy', advisorNet: 150 } })).toContain(
+            "20 above the advisor's own quote"
         );
-        expect(acquisitionComparisonText({ status: 'unknown' })).toContain('no fully priced');
+    });
+    test('a kept advisor quote says why only while the setting is on; a legacy comparison says nothing', () => {
+        const kept = {
+            sharedRoute: {
+                applied: false,
+                route: 'craft',
+                real: 170,
+                reason: 'The craft is not known to be startable.',
+            },
+        };
+        expect(sharedRouteText(kept)).toBe('');
+        expect(sharedRouteText(kept, { showKept: true })).toBe(
+            "Advisor's own quote (Craft 170 not used): The craft is not known to be startable."
+        );
         expect(
-            compactCostLines({ acquisitionComparison: comparison }).some((line) => line.text.includes('Shared routes'))
-        ).toBe(false);
-        expect(acquisitionComparisonText()).toBe('');
+            sharedRouteText(
+                { sharedRoute: { applied: false, reason: 'Party inventory and crafting setup are not known.' } },
+                { showKept: true }
+            )
+        ).toBe("Advisor's own quote: Party inventory and crafting setup are not known.");
+        expect(
+            sharedRouteText(
+                { sharedRoute: { applied: false, agrees: true, route: 'buy', real: 5 } },
+                { showKept: true }
+            )
+        ).toBe("Buy route, the same as the advisor's own quote.");
+        const legacy = { acquisitionComparison: { status: 'priced', route: 'craft', real: 170, cash: 100 } };
+        expect(sharedRouteText(legacy, { showKept: true })).toBe('');
+        expect(compactCostLines(legacy, { showAcquisitionComparison: true })).toEqual([]);
+        expect(sharedRouteText()).toBe('');
     });
 });

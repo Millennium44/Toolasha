@@ -402,13 +402,14 @@ describe('net-of-tax inventory setting', () => {
     });
 });
 
-describe('shared acquisition comparison default', () => {
-    test('is an opt-in diagnostic, not a silent advisor ranking change', () => {
+describe('advisor route pricing setting', () => {
+    test('is on for new players and says the advisor prices by the preferred route', () => {
         const setting = getSettingDefinition('upgradeAdvisor_compareRoutes');
         expect(setting.type).toBe('checkbox');
-        expect(setting.default).toBe(false);
-        expect(setting.help).toContain('read-only');
-        expect(setting.help).toContain('ranking and actions are unchanged');
+        expect(setting.default).toBe(true);
+        expect(setting.label).not.toContain('experimental');
+        expect(setting.label).toContain('preferred route');
+        expect(setting.help).toContain('Cost, ranking and shopping buttons follow that route');
         expect(setting.help).toContain('Rerun the analysis');
     });
 });

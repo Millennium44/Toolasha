@@ -138,6 +138,9 @@ const PINNED_PREVIOUS_DEFAULTS = [
     // Ability books under Current Assets: on for new players only (2026-11-05); existing players keep the
     // split they had, and the update popup offers the switch once (whats-new-core.js REOFFERED_SETTINGS)
     { batch: 'p4', id: 'networth_abilityBooksAsInventory', previous: false },
+    // Upgrade advisors priced by the preferred acquisition route: on for new players only (2026-11-11); an
+    // existing player keeps the advisor's own quote until they turn it on
+    { batch: 'p5', id: 'upgradeAdvisor_compareRoutes', previous: false },
 ];
 
 /** The batch an entry belongs to when it does not name one */

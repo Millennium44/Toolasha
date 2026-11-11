@@ -51,7 +51,7 @@ import { shopPurchasePriceByMode } from '../../utils/token-valuation.js';
 import { describeEnhancementSource } from '../enhancement/enhancement-params-source.js';
 import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { calculateDirectEnhancementCost, enhancementSweepParams } from './direct-enhancement-cost.js';
-import { MIRROR_FIRST_LEVEL, cheapestWithMirror } from '../../utils/mirror-route.js';
+import { MIRROR_FIRST_LEVEL, MIRROR_ITEM_HRID, cheapestWithMirror, mirrorsToBuy } from '../../utils/mirror-route.js';
 import { blessedMirrorChance } from '../../utils/enhancement-calculator.js';
 import { computeRefinementCraftCost, findRefinementAction } from '../../utils/refined-item-cost.js';
 import { findProducingAction } from '../../utils/production-index.js';
@@ -3009,7 +3009,12 @@ function upgradeCostAtTax(candidate, gameData, isSelf) {
     const cost = calculateUpgradeCostWithoutMirror(candidate, gameData, isSelf);
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     const net = mirror && (cost == null || mirror.net < cost) ? mirror.net : cost;
-    return net == null ? net : net - freedPiecesCredit(candidate, net).credit;
+    const own = net == null ? net : net - freedPiecesCredit(candidate, net).credit;
+    // The shared route's figure comes from the one place the breakdown takes it, so the Cost a row
+    // ranks on and the breakdown it prints cannot disagree
+    if (!sharedRouteMayApply(candidate, gameData, isSelf)) return own;
+    const detail = explainUpgradeCost(candidate, gameData, isSelf);
+    return detail?.sharedRoute?.applied ? detail.net : own;
 }
 
 /**
@@ -4491,58 +4496,200 @@ function explainAbilityCandidateCost(candidate, gameData, isSelf = true) {
 
 /**
  * Itemised cost for a candidate: what gets bought, at what price, and what the
- * gear it replaces would fetch. Purely for display — the ranking still uses
- * calculateUpgradeCost — so a row showing a blank cost can say which item has no
- * price instead of leaving the reader guessing.
+ * gear it replaces would fetch, so a row showing a blank cost can say which item
+ * has no price instead of leaving the reader guessing. `calculateUpgradeCost`
+ * ranks on the same figure: where the shared route model (Equipment Watch's
+ * preferred route) prices a supported row, both take its real cost from here.
  * @param {Object} candidate - Upgrade candidate
  * @param {Object} gameData - Game data payload
  * @param {boolean} [isSelf=true] - False when pricing a row for a player other than the live
  *   character (an imported profile, a party member) — keeps the ability-book breakdown from
  *   reading the live character's own book bag as if it belonged to them
- * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource }
+ * @returns {Object} { buys, credits, gross, credit, net, unpriced, source, enhanceSource, sharedRoute? }
  */
 export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     return withSaleTaxOf(candidate, () => {
         const detail = explainUpgradeCostAtTax(candidate, gameData, isSelf);
         if (!config.getSettingValue('upgradeAdvisor_compareRoutes', false)) return detail;
+        let comparison;
         try {
-            const comparison = advisorRouteComparison(candidate, gameData, isSelf);
-            return comparison ? { ...detail, acquisitionComparison: comparison } : detail;
+            comparison = advisorRouteComparison(candidate, gameData, isSelf);
         } catch (error) {
             console.error('[UpgradeAdvisor] Shared route comparison unavailable:', error);
+            comparison = { status: 'unsupported', reason: 'Comparison data could not be read.' };
+        }
+        if (!comparison) return detail;
+        try {
+            return withSharedRoute(detail, comparison, gameData);
+        } catch (error) {
+            console.error('[UpgradeAdvisor] Shared route pricing failed:', error);
             return {
                 ...detail,
-                acquisitionComparison: { status: 'unsupported', reason: 'Comparison data could not be read.' },
+                acquisitionComparison: comparison,
+                sharedRoute: { applied: false, reason: 'The shared route could not be applied.' },
             };
         }
     });
 }
 
+/** The shared route each of the advisor's own cost sources is another quote of, where there is one */
+const SHARED_ROUTE_OF_SOURCE = { market: 'buy', craft: 'craft', refine: 'craft', mirror: 'mirror' };
+
+/** The cost source a shared route reports as, so the basis tag and the savings handoff read it */
+const SOURCE_OF_SHARED_ROUTE = { buy: 'market', craft: 'craft', mirror: 'mirror' };
+
+/** Within this many coins a shared quote and the advisor's own are the same figure */
+const SHARED_ROUTE_TOLERANCE = 0.5;
+
 /**
- * Snapshot a single local acquisition for the optional comparison. Never use the
- * local bag or crafting setup for a party member. Multi-item allocations and
- * untradable ladders keep their existing quote until their adapters are verified.
- * @param {Object} candidate - Candidate being explained
+ * Decide whether the shared route sets a row's cost, and when it does, rebuild the breakdown from that
+ * route alone so no figure on the row mixes the two models.
+ *
+ * The shared route replaces the advisor's own quote only when all of these hold: the comparison priced
+ * the row with a known real cost and no warning (an unknown sale is never a free one), the route's
+ * resale credit does not exceed what it spends (the advisor caps a built route's credit at its spend and
+ * the shared model does not, so a stale bid could otherwise rank a row below free), its shopping action
+ * can follow it (see `follow` on the comparison), and it either undercuts the advisor's own quote, is
+ * another quote of the same route, or is the route the player prefers. The advisor's own enhance and
+ * base-plus-enhance routes have no shared equivalent, so a dearer shared route never displaces them on
+ * Auto. Everything else keeps the advisor's own figure, with the reason.
+ *
+ * @param {Object} detail - The advisor's own breakdown
+ * @param {Object} comparison - From {@link advisorRouteComparison}
+ * @param {Object} gameData - Game data payload
+ * @returns {Object} The breakdown, with `acquisitionComparison` and `sharedRoute` stamped on
+ */
+function withSharedRoute(detail, comparison, gameData) {
+    const own = Number.isFinite(detail.net) ? detail.net : null;
+    const keep = (reason, extra = {}) => ({
+        ...detail,
+        acquisitionComparison: comparison,
+        sharedRoute: { applied: false, reason, ...extra },
+    });
+    if (comparison.status === 'unsupported') return keep(comparison.reason);
+    const chosen = comparison.status === 'priced' ? comparison.routes?.find((r) => r.id === comparison.route) : null;
+    if (!chosen || !Number.isFinite(chosen.real) || !Number.isFinite(chosen.gross))
+        return keep('No shared route is fully priced.');
+    const route = chosen.id;
+    const stamp = { route, real: chosen.real, cash: chosen.cash, advisorNet: own, preference: comparison.preference };
+    if (chosen.warnings?.length) return keep(chosen.warnings[0], stamp);
+    if (chosen.credit > chosen.gross) return keep('Its resale credit is more than it spends.', stamp);
+    if (!comparison.follow?.[route])
+        return keep(comparison.followReason?.[route] || 'Its shopping is not supported here yet.', stamp);
+    if (own !== null && Math.abs(chosen.real - own) <= SHARED_ROUTE_TOLERANCE)
+        return keep('Same as the advisor quote.', { ...stamp, agrees: true });
+    const ownRoute = SHARED_ROUTE_OF_SOURCE[detail.source] || null;
+    const preferred = comparison.preference !== 'auto' && comparison.preference === route;
+    if (!(own === null || chosen.real < own || ownRoute === route || preferred))
+        return keep('The advisor quote is cheaper and has no shared equivalent.', stamp);
+
+    const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
+    const { itemHrid, level } = comparison.target;
+    const buys = [
+        {
+            hrid: itemHrid,
+            name: nameOf(itemHrid),
+            enhancementLevel: level,
+            price: chosen.gross,
+            source: SOURCE_OF_SHARED_ROUTE[route],
+        },
+    ];
+    // A held copy the route uses up is part of its real cost: the sale it gives up. No `hrid`, so
+    // nothing reads the line as a listing to watch or buy
+    const held = new Map((comparison.held || []).map((copy) => [copy.id, copy]));
+    const used = new Map();
+    for (const use of chosen.consumed || []) used.set(use.id, (used.get(use.id) || 0) + (use.share ?? 1));
+    for (const [id, share] of used) {
+        const copy = held.get(id);
+        if (!copy || copy.taken || !(copy.sale > 0)) continue;
+        buys.push({
+            hrid: null,
+            name: `your ${nameOf(copy.itemHrid)} (its sale)`,
+            enhancementLevel: copy.level,
+            price: share * copy.sale,
+        });
+    }
+    // The replaced copy is sold except for whatever share of it the route consumes
+    const credits = [];
+    for (const copy of comparison.held || []) {
+        const price = copy.taken && copy.sale > 0 ? (1 - (used.get(copy.id) || 0)) * copy.sale : 0;
+        if (price > 0)
+            credits.push({ hrid: copy.itemHrid, name: nameOf(copy.itemHrid), enhancementLevel: copy.level, price });
+    }
+    return {
+        buys,
+        credits,
+        gross: chosen.gross + (chosen.forgone || 0),
+        credit: chosen.credit,
+        net: chosen.real,
+        unpriced: [],
+        creditApplied: chosen.credit > 0,
+        source: SOURCE_OF_SHARED_ROUTE[route],
+        enhanceSource: null,
+        ladder: null,
+        ...(detail.kept ? { kept: detail.kept, keptValue: detail.keptValue } : {}),
+        ...(detail.ownershipNotes ? { ownershipNotes: detail.ownershipNotes } : {}),
+        acquisitionComparison: comparison,
+        sharedRoute: { applied: true, ...stamp, shop: comparison.follow[route] },
+    };
+}
+
+/**
+ * Why the shared route model cannot price a row, or null when it can try. Never use the local bag or
+ * crafting setup for a party member. Multi-item allocations, merged acquisitions and untradable ladders
+ * keep their existing quote until their adapters are verified.
+ * @param {Object} candidate - Candidate being priced
  * @param {Object} gameData - Simulation game data
  * @param {boolean} isSelf - Explicit ownership context
- * @returns {Object|null} Shared comparison, or null for a non-equipment row
+ * @returns {{itemHrid: string|null, reason: string|null}|null} Null for a row that is not equipment
  */
-function advisorRouteComparison(candidate, gameData, isSelf) {
+function sharedRouteScope(candidate, gameData, isSelf) {
     const itemHrid = candidate.upgradeHrid || (candidate.type === 'enhancement' ? candidate.currentHrid : null);
     if (
         !candidate.addedSlots &&
         (!itemHrid?.startsWith('/items/') || !gameData?.itemDetailMap?.[itemHrid]?.equipmentDetail)
     )
         return null;
-    const unsupported = !isSelf
+    const reason = !isSelf
         ? 'Party inventory and crafting setup are not known.'
-        : candidate.addedSlots || candidate.freedItems?.length || removedPieces(candidate).length > 1
-          ? 'Multi-item copy allocation is not enabled for this comparison.'
-          : testerShopEnabled()
-            ? 'Tester shop routes retain the existing advisor model.'
-            : isSelfEnhancedItem(itemHrid, gameData?.itemDetailMap)
-              ? 'Untradable ladders retain the existing advisor model.'
-              : null;
+        : candidate.mergedAcquisition
+          ? 'Merged acquisitions need a complete multi-item allocation.'
+          : candidate.addedSlots || candidate.freedItems?.length || removedPieces(candidate).length > 1
+            ? 'Multi-item copy allocation is not enabled for this comparison.'
+            : testerShopEnabled()
+              ? 'Tester shop routes retain the existing advisor model.'
+              : isSelfEnhancedItem(itemHrid, gameData?.itemDetailMap)
+                ? 'Untradable ladders retain the existing advisor model.'
+                : null;
+    return { itemHrid, reason };
+}
+
+/**
+ * Whether the shared route may set this row's cost, cheaply: the setting is on and the row is in scope.
+ * `calculateUpgradeCost` asks this before paying for a full explanation.
+ * @param {Object} candidate - Upgrade candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {boolean}
+ */
+function sharedRouteMayApply(candidate, gameData, isSelf) {
+    if (!config.getSettingValue('upgradeAdvisor_compareRoutes', false)) return false;
+    const scope = sharedRouteScope(candidate, gameData, isSelf);
+    return Boolean(scope && !scope.reason);
+}
+
+/**
+ * Snapshot a single local acquisition for the shared route model. Unsupported rows (see
+ * {@link sharedRouteScope}) return their reason and are never priced from local stock.
+ * @param {Object} candidate - Candidate being explained
+ * @param {Object} gameData - Simulation game data
+ * @param {boolean} isSelf - Explicit ownership context
+ * @returns {Object|null} Shared comparison, or null for a non-equipment row
+ */
+function advisorRouteComparison(candidate, gameData, isSelf) {
+    const scope = sharedRouteScope(candidate, gameData, isSelf);
+    if (!scope) return null;
+    const { itemHrid, reason: unsupported } = scope;
     if (unsupported) return compareAdvisorAcquisition({ unsupported }, {});
     const inventory = dataManager.getInventory?.();
     if (!Array.isArray(inventory))
@@ -4553,6 +4700,7 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
     const artisan = action ? calculateArtisanBonus(action) || 0 : 0;
     const recipe = action
         ? {
+              actionHrid: producer.actionHrid,
               upgradeItemHrid: action.upgradeItemHrid,
               retainAllEnhancement: Boolean(action.retainAllEnhancement),
               outputCount: producer.output?.count || 1,
@@ -4672,12 +4820,17 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
                 for (const child of node.children || []) missingLeaves(child);
             };
             if (!complete(plan)) missingLeaves(plan);
-            return { cost: complete(plan) ? plan.totalCost : null, eligibility: combineCraftEligibility(checks) };
+            return {
+                cost: complete(plan) ? plan.totalCost : null,
+                eligibility: combineCraftEligibility(checks),
+                // Bought as it stands, not crafted from its own inputs: only then does buying it match the cost
+                bought: plan?.strategy === 'buy',
+            };
         }
         const price = hrid === '/items/coin' ? 1 : buy(hrid, 0);
-        return { cost: price === null ? null : price * count, eligibility: { status: 'available' } };
+        return { cost: price === null ? null : price * count, eligibility: { status: 'available' }, bought: true };
     };
-    return compareAdvisorAcquisition(context, {
+    const compared = compareAdvisorAcquisition(context, {
         buy,
         material,
         combineEligibility: combineCraftEligibility,
@@ -4710,6 +4863,98 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
                       : null;
               },
     });
+    const { follow, followReason } = sharedRouteShopping(compared, context);
+    return {
+        ...compared,
+        target: { itemHrid, level },
+        // The copies the routes were priced against: which the row sells (`taken`) and what each fetches
+        held: copies.map(({ id, itemHrid: hrid, level: at, sale, taken }) => ({
+            id,
+            itemHrid: hrid,
+            level: at,
+            sale,
+            taken: Boolean(taken),
+        })),
+        follow,
+        followReason,
+    };
+}
+
+/**
+ * What the row's shopping actions would do on each shared route, and why a route cannot be shopped.
+ *
+ * Buy opens the target's own listing, which is what an ordinary row's Market button already does. Craft
+ * opens the craft's missing materials, which only matches the cost when the recipe is known to start,
+ * every input is bought as it stands (no intermediate crafted), and the base is either none or bought at
+ * its level with no usable copy of that level held (the missing-materials count would take a held copy as
+ * the base the cost bought). A Mirror build buys its listed fresh copies and the mirrors; the held copies
+ * it uses stay owned.
+ * @param {Object} compared - From `compareAdvisorAcquisition`
+ * @param {Object} context - The comparison context (recipe, copies, target)
+ * @returns {{follow: Object, followReason: Object}} Per route id: the shopping it maps to, or why none
+ */
+function sharedRouteShopping(compared, context) {
+    const follow = { buy: { kind: 'buy' } };
+    const followReason = {};
+    const craft = (compared.routes || []).find((route) => route.id === 'craft');
+    if (craft) {
+        const { recipe, target, copies } = context;
+        const baseHeld =
+            craft.baseAcquisition === 'buy' &&
+            copies.some(
+                (copy) =>
+                    copy.itemHrid === recipe?.upgradeItemHrid &&
+                    copy.level === craft.upgradeBaseLevel &&
+                    copy.usable !== false
+            );
+        if (craft.eligibility?.status !== 'available') followReason.craft = 'The craft is not known to be startable.';
+        else if (!craft.inputsBought) followReason.craft = 'It crafts an input, and the shopping only buys inputs.';
+        else if (craft.baseAcquisition !== 'none' && craft.baseAcquisition !== 'buy')
+            followReason.craft = 'It prepares a base the shopping cannot follow yet.';
+        else if (baseHeld) followReason.craft = 'A held base at that level makes its shopping ambiguous.';
+        else if (!recipe?.actionHrid) followReason.craft = 'The recipe is not known.';
+        else
+            follow.craft = {
+                kind: 'craft',
+                actionHrid: recipe.actionHrid,
+                upgradeItemLevel: craft.upgradeBaseLevel || 0,
+                ...(craft.baseAcquisition === 'buy'
+                    ? {
+                          upgradeBaseAcquisition: {
+                              kind: 'buy',
+                              itemHrid: recipe.upgradeItemHrid,
+                              startLevel: craft.upgradeBaseLevel || 0,
+                              targetLevel: craft.upgradeBaseLevel || 0,
+                          },
+                      }
+                    : {}),
+                // Whole units to buy for one target, for a list that cannot ask the action panel
+                bill: (craft.materialBill || []).map((line) => ({
+                    itemHrid: line.itemHrid,
+                    enhancementLevel: line.enhancementLevel || 0,
+                    count: Math.max(1, Math.ceil(line.count - 1e-9)),
+                })),
+                target: { itemHrid: target.itemHrid, level: target.level },
+            };
+    }
+    const mirror = (compared.routes || []).find((route) => route.id === 'mirror');
+    if (mirror) {
+        if (!Array.isArray(mirror.boughtCopies) || !(mirror.mirrorCount > 0))
+            followReason.mirror = 'Its shopping list is not known.';
+        else
+            follow.mirror = {
+                kind: 'mirror',
+                bill: [
+                    { itemHrid: MIRROR_ITEM_HRID, enhancementLevel: 0, count: mirrorsToBuy(mirror.mirrorCount) },
+                    ...mirror.boughtCopies.map((line) => ({
+                        itemHrid: line.itemHrid,
+                        enhancementLevel: line.enhancementLevel || 0,
+                        count: Math.max(1, Math.ceil(line.count - 1e-9)),
+                    })),
+                ],
+            };
+    }
+    return { follow, followReason };
 }
 
 /**
@@ -10614,6 +10859,11 @@ function capCreditsToOwnedCopies(entries, gameData) {
 export function priceMergedAcquisition(members, gameData, pricing = {}) {
     const { price = calculateUpgradeCost, explain = explainUpgradeCost } = pricing;
     const first = members[0].candidate;
+    // Several kits sharing one purchase have no shared-route allocation yet: every figure below, the
+    // members' own included, stays on the advisor's model so the routes it weighs are never mixed
+    const merged = members.length > 1;
+    const tag = (c) => (merged ? { ...c, mergedAcquisition: true } : c);
+    const sharedOn = merged && config.getSettingValue('upgradeAdvisor_compareRoutes', false);
     const displacedBy = (c) =>
         c.removedItems || (c.currentHrid ? [{ hrid: c.currentHrid, enhancementLevel: c.currentLevel }] : []);
     const notes = [];
@@ -10653,14 +10903,14 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
     const removedItems = distinct(members.map((r) => r.candidate));
     const keptItems = members.flatMap((r) => r.candidate.keptItems || []);
     const { members: _parts, skillKeys: _skills, merged: _merged, ...rest } = first;
-    const buy = {
+    const buy = tag({
         ...rest,
         type: 'skilling_gear',
         currentHrid: '',
         currentLevel: 0,
         removedItems,
         keptItems,
-    };
+    });
     const routes = [];
     const bought = price(buy, gameData);
     if (Number.isFinite(bought))
@@ -10679,14 +10929,30 @@ export function priceMergedAcquisition(members, gameData, pricing = {}) {
                 return withNotes(detail);
             },
         });
-    for (const row of members) {
+    for (const priced of members) {
+        // A member priced on its own may carry a shared-route figure: price it again as part of the group
+        const row =
+            sharedOn && priced.candidate.type === 'enhancement'
+                ? {
+                      ...priced,
+                      cost: price(tag(priced.candidate), gameData),
+                      costDetail: priced.costDetail
+                          ? {
+                                ...explain(tag(priced.candidate), gameData),
+                                ...(priced.costDetail.kept
+                                    ? { kept: priced.costDetail.kept, keptValue: priced.costDetail.keptValue }
+                                    : {}),
+                            }
+                          : priced.costDetail,
+                  }
+                : priced;
         if (row.candidate.type !== 'enhancement' || !Number.isFinite(row.cost)) continue;
         // Enhancing the copy already held still frees the other kits' pieces. They
         // are credited by the same helper as on the buy route: the difference
         // between pricing the purchase with and without them
         const owned = displacedBy(row.candidate);
         const others = distinct(
-            members.filter((m) => m !== row).map((m) => m.candidate),
+            members.filter((m) => m !== priced).map((m) => m.candidate),
             owned
         );
         const without = price({ ...buy, removedItems: [] }, gameData);

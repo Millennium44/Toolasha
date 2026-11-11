@@ -15,11 +15,15 @@ export function craftAcquisitionRoutes(context, services) {
     const outputCount = recipe.outputCount > 0 ? recipe.outputCount : 1;
     const checks = [eligibility];
     let materials = 0;
+    // Whether every input is bought as it stands (no intermediate crafted). Only then is the input
+    // bill a shopping list; a caller that shops a craft must check this, never infer it from the bill.
+    let inputsBought = true;
     const bill = [];
     for (const input of recipe.inputItems || []) {
         const count = input.count || 0;
         if (!(count > 0)) continue;
         const priced = services.material(input.itemHrid, count);
+        if (priced?.bought !== true) inputsBought = false;
         if (!Number.isFinite(priced?.cost)) materials = null;
         else if (materials !== null) materials += priced.cost;
         checks.push(priced?.eligibility || { status: 'unknown' });
@@ -30,7 +34,7 @@ export function craftAcquisitionRoutes(context, services) {
     const bases = [];
     const baseHrid = recipe.upgradeItemHrid;
     const needsLevel = recipe.retainAllEnhancement ? target.level : 0;
-    if (!baseHrid) bases.push({ gross: 0, consumed: [], baseLevel: 0, bill: [] });
+    if (!baseHrid) bases.push({ gross: 0, consumed: [], baseLevel: 0, bill: [], acquisition: 'none' });
     else {
         // Keep the directly shoppable alternative first, including when a base
         // is already owned: the forgone sale can make buying a second one cheaper.
@@ -39,10 +43,17 @@ export function craftAcquisitionRoutes(context, services) {
             consumed: [],
             baseLevel: needsLevel,
             bill: [{ itemHrid: baseHrid, enhancementLevel: needsLevel, count: 1 / outputCount }],
+            acquisition: 'buy',
         });
         for (const copy of copies.filter((copy) => copy.itemHrid === baseHrid && copy.usable !== false)) {
             const run = copy.level < needsLevel ? services.enhance(baseHrid, copy.level, needsLevel) : 0;
-            bases.push({ gross: run, consumed: [{ id: copy.id, share: 1 / outputCount }], baseLevel: 0, bill: [] });
+            bases.push({
+                gross: run,
+                consumed: [{ id: copy.id, share: 1 / outputCount }],
+                baseLevel: 0,
+                bill: [],
+                acquisition: 'owned',
+            });
         }
         {
             const fresh = services.material(baseHrid, 1);
@@ -53,6 +64,7 @@ export function craftAcquisitionRoutes(context, services) {
                 baseLevel: 0,
                 bill: [{ itemHrid: baseHrid, enhancementLevel: 0, count: 1 / outputCount }],
                 eligibility: services.combineEligibility([available, fresh?.eligibility || { status: 'unknown' }]),
+                acquisition: 'craft',
             });
         }
     }
@@ -64,6 +76,10 @@ export function craftAcquisitionRoutes(context, services) {
                     materials !== null && Number.isFinite(base.gross) ? (materials + base.gross) / outputCount : null,
                 consumed: base.consumed,
                 upgradeBaseLevel: base.baseLevel,
+                // How the base is had: 'none' (no base), 'buy' (listed at the level), 'owned' (a held
+                // copy, enhanced if short) or 'craft' (made fresh, then enhanced)
+                baseAcquisition: base.acquisition,
+                inputsBought,
                 eligibility: base.eligibility || available,
                 // An input bill, not a cart: expected counts may be fractional and an
                 // intermediate may be crafted. Consumers must not turn it into a buy bill.
