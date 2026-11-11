@@ -256,6 +256,22 @@ describe('HpMpRecorder', () => {
         expect(series.hasMp).toEqual([true, false]);
     });
 
+    test('an interval that crosses a bucket boundary is split between the buckets', () => {
+        const players = fakePlayers(1);
+        const recorder = new HpMpRecorder(players);
+        const mp = (value) => {
+            players[0].combatDetails.currentManapoints = value;
+        };
+        mp(0);
+        recorder.sample(0);
+        recorder.sample(55 * ONE_SECOND);
+        mp(100);
+        recorder.sample(65 * ONE_SECOND);
+        const series = recorder.toSeries(120 * ONE_SECOND);
+        // Second minute: 5 s at 0% then 55 s at 100%
+        expect(series.mp[0]).toEqual([0, 91.7]);
+    });
+
     test('run starts are capped', () => {
         const rec = new HpMpRecorder(fakePlayers(1), { preWipe: true });
         for (let i = 0; i < 1000; i++) rec.markRunStart(i * ONE_SECOND);
