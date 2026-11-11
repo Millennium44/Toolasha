@@ -21,6 +21,10 @@ Zone and monster icons in the sim's zone list stayed blank on a character that h
 
 Trigger tuning and Upgrade results have a "Copy for chat" button that copies one short line per player (the trigger changes, and optionally the top upgrades), each within the game chat's 400-byte limit and split into numbered parts when longer.
 
+### Sync no longer asks for a reload over inventory tabs or trial abilities
+
+A sync pull that brings in changes to your custom inventory tabs or a guild trial's ability captures now takes effect in the open page, instead of asking for a reload. A trial tick arriving just before a pull also no longer wipes a guildmate's captures of the same trial.
+
 <!-- shipped in 3.84.0 -->
 
 ### Combat Sim zone list shows every zone's icon
