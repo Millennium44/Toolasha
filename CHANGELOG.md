@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim imports a whole party in one click
+
+The import box has a new "Replace party" button that swaps every sim member for the players in a pasted Export Party. Before, a 5-player paste was refused once the party already had members, and Replace took only the first player.
+
 ### Wipe log shows your team's heals and casts
 
 A wipe's hit log now also lists heals (who healed whom, how much and the HP % before and after) and each player's ability casts, using player names. Each wipe card says how many heals landed in the last 30 seconds and how long before falling the first player down was last healed.
@@ -28,7 +32,7 @@ Tuning in the Combat Sim and the Lab now adjusts "allies' lowest HP %" triggers 
 
 ### Combat Sim comparison shows when each run was made
 
-Each saved run's name now starts with the time it ran, so the newest one is easy to find. Every saved run gets a ✕ to delete it, including runs not yet added to the comparison.
+Each saved run's name now starts with the time it ran (to the second), so the newest one is easy to find. Every saved run gets a ✕ to delete it, including runs not yet added to the comparison.
 
 ### Dungeon summary shows clears and fails
 
