@@ -2209,6 +2209,25 @@ describe('include my party', () => {
         expect(host._switchTab).toHaveBeenCalledWith('configure');
     });
 
+    test('a simulation started elsewhere while the party is being read stops the search from starting', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        const refresh = tab._refreshParty.bind(tab);
+        tab._refreshParty = async () => {
+            await refresh();
+            host.isRunning = true;
+        };
+        try {
+            el('top-k').value = '0';
+            await tab.start();
+            await flush();
+            expect(state.calls).toHaveLength(0);
+            expect(lastStatus()).toBe('A simulation is already running.');
+        } finally {
+            host.isRunning = false;
+        }
+    });
+
     test('the party changing while the tab is open redraws', async () => {
         setParty([['c1', 'Captain', build(100)]]);
         await mountTab();

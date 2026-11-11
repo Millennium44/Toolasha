@@ -2294,6 +2294,11 @@ export class PartyFinderTab {
         if (this._includeParty) {
             await this._refreshParty();
             if (!this.root || this._running) return;
+            // Another simulation may have started on another tab during the read; starting now would cancel it
+            if (this.host?._isBusy?.()) {
+                this._status('A simulation is already running.');
+                return;
+            }
         }
         const gameData = buildGameDataPayload();
         if (!gameData) {
