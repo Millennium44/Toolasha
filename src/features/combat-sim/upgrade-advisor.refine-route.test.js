@@ -789,6 +789,114 @@ describe('refined target priced from a held base', () => {
                 expect(calculateUpgradeCost(swap, gameData)).toBeCloseTo(detail.net, 0);
             });
 
+            describe('the piece the row takes off is used as the input, not sold', () => {
+                // +10 -> +12: the inputs are a +11 and a +10, and the worn +10 is the row's own piece
+                const ordinary13 = Array.from({ length: 13 }, (_, k) => 1 + (2 ** k - 1) * 1e6);
+                const ladder = cheapestWithMirror(ordinary13, 1_000_000);
+                const swapOff = (level) => ({ ...sword(12), removedItems: [{ hrid: SWORD, enhancementLevel: level }] });
+                // Dear enough that building a fresh +10 is cheaper on paper than the worn +10's sale
+                const DEAR = Math.ceil(ladder.best[10] * 3);
+
+                test('a worn +10 is the lower input of +12: the +11 is built, the +10 is not sold', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    const row = swapOff(10);
+                    expect(DEAR).toBeGreaterThan(ladder.best[10]);
+                    const detail = explainUpgradeCost(row, gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(ladder.best[11] + 1_000_000, 0);
+                    // Used as an input, so never also credited as sold
+                    expect(detail.credit).toBe(0);
+                    expect(detail.net).toBeCloseTo(ladder.best[11] + 1_000_000, 0);
+                    expect(calculateUpgradeCost(row, gameData)).toBeCloseTo(detail.net, 0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([10]);
+                });
+
+                test('the same on the enhancement row of the worn +10', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    const row = {
+                        type: 'enhancement',
+                        currentHrid: SWORD,
+                        currentLevel: 10,
+                        upgradeHrid: SWORD,
+                        upgradeLevel: 12,
+                    };
+                    const detail = explainUpgradeCost(row, gameData);
+                    expect(detail.source).toBe('mirror');
+                    expect(detail.credit).toBe(0);
+                    expect(detail.net).toBeCloseTo(ladder.best[11] + 1_000_000, 0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([10]);
+                });
+
+                test('a worn +11 is the upper input of +12: the +10 is built, the +11 is not sold', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(11)];
+                    const detail = explainUpgradeCost(swapOff(11), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(ladder.best[10] + 1_000_000, 0);
+                    expect(detail.credit).toBe(0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([11]);
+                });
+
+                test('a worn +11 with a spare +10 supplies both inputs: only the mirror to buy', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(11), stack(SWORD, 10)];
+                    const detail = explainUpgradeCost(swapOff(11), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(1_000_000, 0);
+                    expect(detail.credit).toBe(0);
+                    expect([...detail.ladder.mirror.heldLevels].sort()).toEqual([10, 11]);
+                });
+
+                test('a worn copy at no input level is left alone and sold', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(8)];
+                    const detail = explainUpgradeCost(swapOff(8), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(ladder.best[12], 0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([]);
+                    expect(detail.credit).toBeGreaterThan(0);
+                });
+
+                test('buying the +12 outright still wins when it is cheaper than mirroring with the held piece', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    state.noAsk = false;
+                    state.askFor = (hrid, level) => (hrid === SWORD && level === 12 ? 1_000_000 : 0);
+                    const detail = explainUpgradeCost(swapOff(10), gameData);
+                    expect(detail.buys[0].source).not.toBe('mirror');
+                    expect(detail.buys[0].price).toBe(1_000_000);
+                    // The held +10 is not used, so it is sold
+                    expect(detail.credit).toBeGreaterThan(0);
+                });
+
+                test('a bag +10 another loadout wears keeps the strict-cost rule: built fresh, not used', () => {
+                    state.swordSell = DEAR;
+                    state.items = [stack(SWORD, 10)];
+                    const fights = [
+                        { loadoutName: 'A', dto: { equipment: {} } },
+                        {
+                            loadoutName: 'B',
+                            dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 10 } } },
+                        },
+                    ];
+                    const detail = explainUpgradeCost(claimedBy(sword(12), fights), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(ladder.best[12], 0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([]);
+                });
+
+                test('Blessed Tea: the worn +10 is spent only when the step runs, the rest is sold', () => {
+                    state.sweepParams = { teas: { blessed: true }, blessedTeaBonus: 0.5, guzzlingBonus: 1 };
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    const blessed = cheapestWithMirror(ordinary13, 1_000_000, 0.5);
+                    const share = blessed.landing[11];
+                    expect(share).toBeLessThan(1);
+                    const detail = explainUpgradeCost(swapOff(10), gameData);
+                    expect(detail.buys[0].price).toBeCloseTo(blessed.best[11] + share * 1_000_000, 0);
+                    expect(detail.rawCredit).toBeCloseTo((1 - share) * DEAR, 0);
+                    expect(detail.credit).toBeGreaterThan(0);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([10]);
+                });
+            });
+
             test('one spare serves one input: a lone +5 for a +7 still buys the +6', () => {
                 state.items = [stack(SWORD, 5)];
                 const detail = explainUpgradeCost(sword(7), gameData);

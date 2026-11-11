@@ -3671,10 +3671,20 @@ function resolveMirrorBase(
     // level can supply one, and a copy has one level, so no copy serves both inputs, and none is the
     // result (a copy at the result's level is the row's own held answer, priced elsewhere). A worn copy
     // costs the resale it gives up. Inputs deeper in a built chain stay fresh.
-    const heldAt = (k) => held.filter((copy) => copy.level === k).sort((a, b) => a.forfeit - b.forfeit)[0] || null;
+    // On a tie in resale the row's own taken piece goes first, then a claimed copy
+    const heldAt = (k) =>
+        held
+            .filter((copy) => copy.level === k)
+            .sort((a, b) => a.forfeit - b.forfeit || Number(Boolean(b.taken)) - Number(Boolean(a.taken)))[0] || null;
     const upper = heldAt(level - 1);
     const lower = heldAt(level - 2);
-    let plan = {
+    // A piece the row itself takes off (`taken`, a worn copy being upgraded) that fits an input level is
+    // used there, never built fresh and sold: it is that input or it is sold, and the route only
+    // pays for the input once. Free spares already win on cost, and a claimed copy (another loadout's)
+    // keeps the strict-cost rule, so only a taken piece is required.
+    const mustUpper = Boolean(upper?.taken);
+    const mustLower = Boolean(lower?.taken);
+    const fresh = {
         pay: mirrorTotals[level],
         forfeit: 0,
         used: [],
@@ -3683,18 +3693,20 @@ function resolveMirrorBase(
         buyLower: true,
         stepOdds: landing[level - 1],
     };
+    let plan = mustUpper || mustLower ? null : fresh;
     for (const [useUpper, useLower] of [
         [true, false],
         [false, true],
         [true, true],
     ]) {
         if ((useUpper && !upper) || (useLower && !lower)) continue;
+        if ((mustUpper && !useUpper) || (mustLower && !useLower)) continue;
         // A step the chain may skip (Blessed Tea) is only run, and its inputs only spent, some of the time
         const stepOdds = useUpper ? 1 : landing[level - 1];
         const lowerPay = useLower ? 0 : best[level - 2];
         const pay = (useUpper ? 0 : best[level - 1]) + (stepOdds > 0 ? stepOdds * (lowerPay + mirrorPrice) : 0);
         const forfeit = (useUpper ? upper.forfeit : 0) + (useLower ? stepOdds * lower.forfeit : 0);
-        if (!Number.isFinite(pay) || pay + forfeit >= plan.pay + plan.forfeit) continue;
+        if (!Number.isFinite(pay) || (plan && pay + forfeit >= plan.pay + plan.forfeit)) continue;
         // Built copies spend mirrors of their own; a held copy spends none
         const mirrors =
             (useUpper ? 0 : mirrorCounts[level - 1]) +
@@ -3713,6 +3725,8 @@ function resolveMirrorBase(
             ].filter(Boolean),
         };
     }
+    // No plan can use the taken piece (an input has no price): the fresh route, with the piece still sold
+    plan = plan || fresh;
     if (!Number.isFinite(plan.pay) || (!compareOnly && !(plan.pay + plan.forfeit < viaOrdinary))) return null;
 
     // The base copies the route buys, for the Market bill. A level the mirror builds is built from its
@@ -3809,6 +3823,7 @@ function mirrorHeldInputs(itemHrid, { isSelf = true, candidate = null } = {}) {
             forfeit: copy.taken || copy.claimed ? sellValue(itemHrid, copy.level) : 0,
             piece: copy.taken ? { hrid: itemHrid, level: copy.level } : null,
             claimed: copy.claimed,
+            taken: copy.taken,
         }));
 }
 
