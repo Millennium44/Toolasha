@@ -715,6 +715,32 @@ describe('route-aware shopping consumer', () => {
         });
         expect(requirements.find((row) => row.itemHrid === SHARD).required).toBe(100);
     });
+    test('an owned over-level base never labels a selected lower-level purchase as already held', async () => {
+        game.inventory = [
+            { itemHrid: BASE, enhancementLevel: 15, count: 3, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        const original = structuredClone(game.inventory);
+        expect(watch().upgradeBaseAcquisition).toMatchObject({ kind: 'buy', startLevel: 13, targetLevel: 13 });
+        const [action, count, options] = await clickBill();
+        const actual = await vi.importActual('../../utils/material-calculator.js');
+        const requirements = actual.calculateMaterialRequirements(action, count, false, options);
+        expect(requirements.find((row) => row.itemHrid === BASE)).toMatchObject({ enhancementLevel: 13, missing: 1 });
+        expect(text()).toContain('buy a +13 base, counted in');
+        expect(text()).not.toContain('you have one');
+        expect(game.inventory).toEqual(original);
+
+        game.inventory.push({
+            itemHrid: BASE,
+            enhancementLevel: 13,
+            count: 1,
+            itemLocationHrid: '/item_locations/inventory',
+        });
+        equipmentSavingsPanel.render();
+        expect(watch().upgradeBaseAcquisition).toMatchObject({ kind: 'owned', startLevel: 13, targetLevel: 13 });
+        expect(text()).toContain('you have one');
+        expect(text()).not.toContain('buy a +13 base');
+    });
+
     test('bought +13 route shopping really includes one +13 and twenty purchased blocked intermediates', async () => {
         const [action, count, options] = await clickBill();
         const actual = await vi.importActual('../../utils/material-calculator.js');

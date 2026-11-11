@@ -3673,9 +3673,13 @@ function recipeLines(target) {
     if (recipe.upgradeItemHrid) {
         const needsLevel = recipe.retainAllEnhancement ? target.enhancementLevel || 0 : 0;
         const held = highestOwnedLevel(recipe.upgradeItemHrid);
-        const owned = needsLevel > 0 ? held !== null && held >= needsLevel : held !== null;
-        const baseName = `${nameOf(recipe.upgradeItemHrid)}${needsLevel > 0 ? ` +${needsLevel}` : ''}`;
         const acquisition = target.upgradeBaseAcquisition;
+        const owned = acquisition
+            ? acquisition.kind.startsWith('owned')
+            : needsLevel > 0
+              ? held !== null && held >= needsLevel
+              : held !== null;
+        const baseName = `${nameOf(recipe.upgradeItemHrid)}${needsLevel > 0 ? ` +${needsLevel}` : ''}`;
         const status =
             acquisition?.kind === 'owned-enhance'
                 ? `enhance owned +${acquisition.startLevel} to +${acquisition.targetLevel}; enhancement inputs included`

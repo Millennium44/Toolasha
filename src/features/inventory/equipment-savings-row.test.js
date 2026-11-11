@@ -3052,6 +3052,62 @@ describe("the Philosopher's Mirror build as a route", () => {
         game.inventory.push({ itemHrid, enhancementLevel, count: 1, itemLocationHrid: location });
     const only = () => watchedTargets()[0];
 
+    test('combined Watch warning and Mirror shopping retain the consumed source across redraws', async () => {
+        const worn = { itemHrid: REFINED, enhancementLevel: 12 };
+        game.skills = [{ skillHrid: '/skills/defense', level: 88 }];
+        game.details[REFINED].equipmentDetail.levelRequirements = [{ skillHrid: '/skills/defense', level: 95 }];
+        game.equipment = new Map([['/item_locations/main_hand', worn]]);
+        game.inventory = [
+            { ...worn, count: 3, itemLocationHrid: '/item_locations/inventory' },
+            { ...worn, itemLocationHrid: '/item_locations/main_hand' },
+        ];
+        const original = structuredClone(game.inventory);
+        try {
+            watchTarget(REFINED, 13);
+            setRoutePin(REFINED, 13, 'mirror');
+            const quote = only();
+            equipmentSavingsPanel.show();
+            const openBill = async () => {
+                equipmentSavingsPanel.panel.querySelector('[data-mirror-bill]').click();
+                await Promise.resolve();
+            };
+            expect(text()).toContain('Needs Defense 95 (you: 88)');
+            expect(text()).toContain('Selling other gear');
+            expect(text()).toContain('Sells your worn Furious Spear ★ +12');
+            await openBill();
+
+            game.skills[0].level = 95;
+            equipmentSavingsPanel.render();
+            expect(text()).not.toContain('Needs Defense');
+            expect(text()).toContain('Selling other gear');
+            expect(text()).not.toContain(FAILED);
+            await openBill();
+
+            expect(bills).toHaveLength(2);
+            for (const [lines, options] of bills) {
+                expect(lines).toEqual([
+                    { itemHrid: PLAIN, enhancementLevel: 11, count: 1 },
+                    { itemHrid: MIRROR, count: 1 },
+                ]);
+                expect(options).toEqual({
+                    ownedInputs: [
+                        {
+                            itemHrid: REFINED,
+                            enhancementLevel: 12,
+                            count: 1,
+                            sourceLocation: '/item_locations/inventory',
+                        },
+                    ],
+                });
+            }
+            expect(only().cost).toBe(quote.cost);
+            expect(only().realCost).toBe(quote.realCost);
+            expect(game.inventory).toEqual(original);
+        } finally {
+            game.skills = null;
+        }
+    });
+
     test('neither input owned: both bought at ask, the mirror wins when the listing is dearer', () => {
         watchTarget(REFINED, 13);
         const target = only();

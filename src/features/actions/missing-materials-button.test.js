@@ -380,6 +380,61 @@ describe('enhancement missing-material reservation handoff', () => {
         expect(state.enhancementCalls.at(-1)[6]).toBe('missingMats');
     });
 
+    test.each(['display', 'revalidation'])(
+        'replacing Mirror shopping with enhancement clears obsolete owned-input %s',
+        async (check) => {
+            const ownedHrid = '/items/mirror_sword';
+            state.characterId = 'char1';
+            state.inventory = [
+                {
+                    itemHrid: ownedHrid,
+                    enhancementLevel: 12,
+                    count: 3,
+                    itemLocationHrid: '/item_locations/inventory',
+                },
+            ];
+            state.items[ownedHrid] = { name: 'Mirror Sword', isTradable: true };
+            state.items['/items/philosophers_mirror'] = { name: "Philosopher's Mirror", isTradable: true };
+            missingMaterials.initialize();
+            await vi.advanceTimersByTimeAsync(600);
+            const ordinaryListeners = [...state.dataListeners];
+            const opening = openMaterialsList([{ itemHrid: '/items/philosophers_mirror', count: 1 }], {
+                ownedInputs: [
+                    {
+                        itemHrid: ownedHrid,
+                        enhancementLevel: 12,
+                        count: 1,
+                        sourceLocation: '/item_locations/inventory',
+                    },
+                ],
+            });
+            await vi.advanceTimersByTimeAsync(300);
+            expect(await opening).toBe(true);
+            expect(document.querySelector('[data-owned-inputs]')).not.toBeNull();
+            expect(ledger.listeners.size).toBe(1);
+
+            document.querySelector('#mwi-missing-mats-button').click();
+            await vi.advanceTimersByTimeAsync(300);
+            const enhancementTab = () => document.querySelector('[data-item-hrid="/items/protection_scroll"]');
+            expect(enhancementTab()).not.toBeNull();
+            expect(ledger.claims.missingMats).toEqual({ '/items/protection_scroll|0': 1 });
+            expect(ledger.claims['goal:cheese-sword']).toEqual({ '/items/protection_scroll|0': 1 });
+            if (check === 'display') {
+                expect(document.querySelector('[data-owned-inputs]')).toBeNull();
+            } else {
+                state.inventory = [];
+                for (const listener of [...ledger.listeners]) listener();
+                for (const listener of [...state.dataListeners].filter((l) => l.event === 'actions_updated'))
+                    listener.handler();
+                state.wsOn.mock.calls.at(-1)[1]({ type: 'items_updated' });
+                expect(enhancementTab()).not.toBeNull();
+                expect(ledger.claims.missingMats).toEqual({ '/items/protection_scroll|0': 1 });
+            }
+            expect(ledger.listeners.size).toBe(0);
+            expect(state.dataListeners).toEqual(ordinaryListeners);
+        }
+    );
+
     describe('the attempts and copies adjustments', () => {
         const field = (name) => document.querySelector(`#mwi-missing-mats-controls [data-mwi-adjust="${name}"]`);
         const type = async (input, value) => {

@@ -905,6 +905,7 @@ async function handleEnhancementMissingMaterialsClick(
     storedNumActions = 0;
     storedUpgradeItemLevel = 0;
     storedAlchemyContext = null;
+    storedMaterialList = null;
 
     // Recalculate materials fresh (inventory may have changed since button was rendered)
     const freshMaterials = calculateEnhancementMaterialRequirements(

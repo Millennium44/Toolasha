@@ -22,13 +22,13 @@ Combat and Lab simulators show game artwork for zones, monsters, abilities, skil
 
 Sorting or switching Lab upgrade views now keeps wear warnings in step with your current levels and hides shared-route comparisons when the experiment is turned off. Item icons and the analyzed costs and scores stay intact.
 
-### Mirror shopping reserves owned inputs
+### Equipment Watch reserves Mirror inputs
 
-Equipment Watch now reserves and rechecks owned inputs used by a Mirror build while its shopping list is open, so another bill or an inventory change cannot silently reuse them.
+Missing Mats reserves and rechecks owned inputs used in a Mirror build while its shopping list is open. Switching shopping views clears the old list’s requirements.
 
 ### Equipment Watch shops the selected base route
 
-Missing Mats keeps owned, bought, and enhanced bases distinct, includes enhancement and protection inputs, and shows the preparation required before crafting. Unavailable or reserved owned copies no longer turn into an unpriced replacement purchase.
+Missing Mats keeps owned, bought, and enhanced bases distinct, includes enhancement and protection inputs, and shows the preparation required before crafting. Craft status follows the selected acquisition route, including when an owned item is above the required level.
 
 ### Equipment Watch explains Mirror sales
 
