@@ -115,6 +115,22 @@ export function analyzeWipe(logs) {
         }
     });
     const down = [...fallen.values()].sort((a, b) => a.order - b.order);
+    // Players already at 0 HP when the window opens fell before it: the log is a ring of the last hits,
+    // and in a long last wave the first deaths can be many waves back. They fell before everyone in
+    // `down`, so reading `down[0]` as "first down" would credit the last player standing.
+    const before = [];
+    const firstSnap = all.findIndex((log) => log && !log.error && Array.isArray(log.playersHp));
+    if (firstSnap >= 0) {
+        const fellThere = new Set(
+            all
+                .slice(0, firstSnap + 1)
+                .filter((log) => isHit(log) && (log.afterHp ?? 1) <= 0 && (log.beforeHp ?? 0) > 0)
+                .map((log) => log.target)
+        );
+        for (const p of all[firstSnap].playersHp) {
+            if (p && (p.current ?? 1) <= 0 && !fellThere.has(p.hrid) && !fallen.has(p.hrid)) before.push(p.hrid);
+        }
+    }
     // Index of the simulated tick: equal `time` values share one
     let tick = -1;
     let lastTime = null;
@@ -123,7 +139,7 @@ export function analyzeWipe(logs) {
         lastTime = d.time;
         d.tick = tick;
     }
-    return { down, hits, heals, casts, entries: all };
+    return { down, before, hits, heals, casts, entries: all };
 }
 
 /**
@@ -158,7 +174,8 @@ export function describeWipeHealing(analysis, namer) {
     const healsText = `Heals in the last 30 s: ${recent.length}${spread ? `, to: ${spread}` : ''}`;
 
     let lastHealed = '';
-    if (down.length > 0) {
+    // When someone fell before the window, the first fall is not in the log to measure from
+    if (down.length > 0 && !(analysis.before?.length > 0)) {
         const first = down[0];
         let last = null;
         entries.forEach((log, i) => {
@@ -180,7 +197,21 @@ export function describeWipeHealing(analysis, namer) {
  */
 export function describeWipe(analysis, namer) {
     const { down } = analysis;
-    if (down.length === 0) return { first: '', order: '' };
+    const before = analysis.before || [];
+    if (down.length === 0 && before.length === 0) return { first: '', order: '' };
+    const earlier = before.map((hrid) => namer.player(hrid)).join(' + ');
+    if (before.length > 0) {
+        const after = [];
+        for (const d of down) {
+            const group = after[after.length - 1];
+            if (group && group.tick === d.tick) group.names.push(namer.player(d.target));
+            else after.push({ tick: d.tick, names: [namer.player(d.target)] });
+        }
+        return {
+            first: `${earlier} (already down when the log starts)`,
+            order: [`${earlier} (earlier)`, ...after.map((g) => g.names.join(' + '))].join(' → '),
+        };
+    }
     const fmt = (n) => Math.round(n).toLocaleString('en-US');
     const lead = down.filter((d) => d.tick === down[0].tick);
     const first = lead
@@ -223,9 +254,15 @@ export function summarizeWipes(wipeEvents, namer, topN = 3) {
     for (const event of wipeEvents || []) {
         const wave = event?.wave ?? '?';
         waveCounts.set(wave, (waveCounts.get(wave) || 0) + 1);
-        const { down, hits } = analyzeWipe(event?.logs);
+        const { down, before, hits } = analyzeWipe(event?.logs);
         if (hits.length > 0) withLog++;
-        if (down.length > 0) {
+        if (before.length > 0) {
+            // Fell before the log window, so before everyone the log shows; their order is unknown
+            for (const hrid of before) {
+                const name = namer.player(hrid);
+                firstCounts.set(name, (firstCounts.get(name) || 0) + 1);
+            }
+        } else if (down.length > 0) {
             // Same-tick first falls each count: neither went down "second"
             for (const d of down.filter((x) => x.tick === down[0].tick)) {
                 const name = namer.player(d.target);

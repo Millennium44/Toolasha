@@ -255,3 +255,43 @@ describe('party-side entries in the wipe log', () => {
         expect(withItems.ability('lifesteal')).toBe('Life Steal');
     });
 });
+
+describe('players already down when the log window opens', () => {
+    // Seen live: in a long last wave the 200-hit ring starts after two of three players died, and the
+    // last one standing was reported as "first down"
+    const snap = (p1, p2, p3) => [
+        { hrid: 'player1', current: p1, max: 1000 },
+        { hrid: 'player2', current: p2, max: 1000 },
+        { hrid: 'player3', current: p3, max: 1000 },
+    ];
+    const lateWipe = () => [
+        hit(1, 'player1', 100, 900, { playersHp: snap(900, 0, 0) }),
+        hit(2, 'player1', 900, 0, { playersHp: snap(0, 0, 0) }),
+    ];
+
+    test('they are reported as down before the log, not the last player standing', () => {
+        const analysis = analyzeWipe(lateWipe());
+        expect(analysis.before).toEqual(['player2', 'player3']);
+        expect(analysis.down.map((d) => d.target)).toEqual(['player1']);
+        const text = describeWipe(analysis, namer);
+        expect(text.first).toBe('Bee + Cee (already down when the log starts)');
+        expect(text.order).toBe('Bee + Cee (earlier) → AFKANDY');
+    });
+
+    test('the summary counts them as down first, and no last-heal line is measured from the wrong player', () => {
+        const sum = summarizeWipes([{ wave: 25, logs: lateWipe() }], namer);
+        expect(sum.firstDown.map((f) => f.name).sort()).toEqual(['Bee', 'Cee']);
+        const withHeal = [
+            { kind: 'heal', time: 0, source: 'player1', ability: STRIKE, target: 'player1', amount: 50 },
+            ...lateWipe(),
+        ];
+        expect(describeWipeHealing(analyzeWipe(withHeal), namer).lastHealed).toBe('');
+    });
+
+    test('a player who falls on the first logged hit is not counted as down before the log', () => {
+        const logs = [hit(1, 'player2', 300, 0, { playersHp: snap(900, 0, 1000) })];
+        const analysis = analyzeWipe(logs);
+        expect(analysis.before).toEqual([]);
+        expect(analysis.down.map((d) => d.target)).toEqual(['player2']);
+    });
+});
