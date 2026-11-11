@@ -95,6 +95,14 @@ const POOL_STEPS = 10;
 /** Balanced-score points lost per extra death per hour */
 export const DEATH_POINTS_PER_PER_HOUR = 10;
 
+/**
+ * Score points lost per extra failed dungeon run per hour (dungeon zones only). A failed run is a party
+ * wipe: the key is gone and the run's time with it, and the wipe also adds a death for every player in
+ * the party, so 40 is four times what a single death costs, and clearly more than one death even when
+ * only one player's figures are judged. Clamped to ±100 like the other terms.
+ */
+export const DUNGEON_FAIL_POINTS_PER_PER_HOUR = 40;
+
 const ABILITY_SLOT = 'abilities';
 const CONSUMABLE_SLOTS = new Set(['food', 'drinks']);
 
@@ -613,7 +621,8 @@ export function zoneEnemyHp(gameData, zoneHrid, tier, monsterMaxHp) {
 /**
  * One sim's figures for the players being judged: sums across them, with the
  * zone's encounter rate (which belongs to the whole party) carried through.
- * @param {Object} sample - { perPlayer: { [hrid]: { xp, profit, deaths, dps } }, encounters }
+ * @param {Object} sample - { perPlayer: { [hrid]: { xp, profit, deaths, dps } }, encounters,
+ *   dungeon?: { failedPerHour, completedPerHour } }
  * @param {Array<string>} hrids - Whose figures count
  * @returns {{xp: number, profit: number, deaths: number, dps: number, encounters: number}}
  */
@@ -626,6 +635,8 @@ export function scopeMetrics(sample, hrids) {
         deaths: 0,
         dps: 0,
         encounters: sample?.encounters || 0,
+        // Dungeon samples only (see `sampleFromResult`): failed runs per hour, a party-wide figure
+        failedRuns: Number(sample?.dungeon?.failedPerHour) || 0,
         // Labyrinth samples only (see LAB_OBJECTIVE): expected attempts to clear the sample's fights
         attempts: Number(sample?.attempts) || 0,
     };
@@ -692,8 +703,9 @@ const term = (metrics, base, key) => {
 /**
  * The balanced objective: the average of four percentage changes against the
  * untouched setup — EXP/h, profit/h, DPS and encounters/h — less
- * `DEATH_POINTS_PER_PER_HOUR` points per extra death per hour. The deaths term
- * sits outside the average so it costs the full stated points, not a fifth of
+ * `DEATH_POINTS_PER_PER_HOUR` points per extra death per hour, and in a dungeon
+ * `DUNGEON_FAIL_POINTS_PER_PER_HOUR` per extra failed run per hour. The penalty terms
+ * sit outside the average so they cost the full stated points, not a fifth of
  * them. It reads as "roughly, the average percent better", and zero is the
  * baseline.
  *
@@ -719,7 +731,7 @@ export function balancedScore(metrics, base, { withProfit = true } = {}) {
         term(metrics, base, 'dps'),
         term(metrics, base, 'encounters'),
     ];
-    return terms.reduce((sum, t) => sum + t, 0) / terms.length + deathsTerm(metrics, base);
+    return terms.reduce((sum, t) => sum + t, 0) / terms.length + penaltyTerms(metrics, base);
 }
 
 /**
@@ -731,6 +743,24 @@ export function balancedScore(metrics, base, { withProfit = true } = {}) {
  */
 function deathsTerm(metrics, base) {
     return Math.max(-100, Math.min(100, -DEATH_POINTS_PER_PER_HOUR * ((metrics.deaths || 0) - (base.deaths || 0))));
+}
+
+/**
+ * Score points lost to extra failed dungeon runs per hour. Zero when neither side carries the figure
+ * (every non-dungeon zone), so those scores are exactly what they were.
+ * @param {Object} metrics - From `scopeMetrics`
+ * @param {Object} base - The baseline's `scopeMetrics`
+ * @returns {number}
+ */
+function failedRunsTerm(metrics, base) {
+    const extra = (metrics.failedRuns || 0) - (base.failedRuns || 0);
+    if (!extra) return 0;
+    return Math.max(-100, Math.min(100, -DUNGEON_FAIL_POINTS_PER_PER_HOUR * extra));
+}
+
+/** Everything a score subtracts for things going wrong: deaths, and failed dungeon runs */
+function penaltyTerms(metrics, base) {
+    return deathsTerm(metrics, base) + failedRunsTerm(metrics, base);
 }
 
 /** What the search optimizes: the balanced score, or one rate alone */
@@ -764,8 +794,8 @@ export const LAB_OBJECTIVE = 'lab';
 export function objectiveScore(metrics, base, objective = DEFAULT_OBJECTIVE, { withProfit = true } = {}) {
     // In attempts, not percent points: a death in the labyrinth is a lost attempt, already in the win rate
     if (objective === LAB_OBJECTIVE) return (base.attempts || 0) - (metrics.attempts || 0);
-    if (objective === 'xp') return term(metrics, base, 'xp') + deathsTerm(metrics, base);
-    if (objective === 'profit') return withProfit ? term(metrics, base, 'profit') + deathsTerm(metrics, base) : 0;
+    if (objective === 'xp') return term(metrics, base, 'xp') + penaltyTerms(metrics, base);
+    if (objective === 'profit') return withProfit ? term(metrics, base, 'profit') + penaltyTerms(metrics, base) : 0;
     return balancedScore(metrics, base, { withProfit });
 }
 
@@ -1189,6 +1219,7 @@ export async function runTriggerSearch({
             dps: mean(ms.map((m) => m.dps)),
             encounters: mean(ms.map((m) => m.encounters)),
             attempts: mean(ms.map((m) => m.attempts)),
+            failedRuns: mean(ms.map((m) => m.failedRuns)),
         };
     })();
     // Profit counts in a comparison only when every sample in it, and the baseline, valued completely.
@@ -1458,6 +1489,8 @@ export async function runTriggerSearch({
     return {
         stopped: stopped(),
         objective,
+        // Whether the zone is a dungeon, so the score also counts failed runs (the footer says so)
+        dungeon: baselineSamples.some((s) => s?.dungeon),
         baseline: baseScope,
         partyDps,
         screened: screen.map((s) => ({ key: s.tunable.key, range: s.range, promising: s.promising })),

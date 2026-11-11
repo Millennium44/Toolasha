@@ -194,6 +194,14 @@ export function sampleFromResult(simResult, gameData, hrids, fallbackHours, { pr
         if (p) pools[hrid] = { hp: p.maxHitpoints || 0, mp: p.maxManapoints || 0 };
     }
     const sample = { perPlayer, encounters: (simResult.encounters || 0) / simHours, pools };
+    // A dungeon is judged on failed runs too: a party wipe loses the key and the run's time (see
+    // DUNGEON_FAIL_POINTS_PER_PER_HOUR). Left off outside dungeons, so their scores do not change.
+    if (simResult.isDungeon) {
+        sample.dungeon = {
+            failedPerHour: (simResult.dungeonsFailed || 0) / simHours,
+            completedPerHour: (simResult.dungeonsCompleted || 0) / simHours,
+        };
+    }
     // Left out when the engine did not record trigger reads, so nothing is ever skipped on missing data
     if (simResult.triggerChecks) sample.triggerUse = triggerUseFromResult(simResult, hrids);
     return sample;
@@ -596,7 +604,17 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
     } else {
         const baseMetrics = baseline.map((sample) => scopeMetrics(sample, scopeHrids));
         const baseScope = {};
-        for (const key of ['xp', 'profit', 'revenue', 'cost', 'deaths', 'dps', 'encounters', 'attempts']) {
+        for (const key of [
+            'xp',
+            'profit',
+            'revenue',
+            'cost',
+            'deaths',
+            'dps',
+            'encounters',
+            'attempts',
+            'failedRuns',
+        ]) {
             baseScope[key] = mean(baseMetrics.map((m) => m[key]));
         }
         const baseValuation = profitValuation([baseline], scopeHrids);

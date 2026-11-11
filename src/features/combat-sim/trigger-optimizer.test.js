@@ -105,6 +105,25 @@ describe('sampleFromResult', () => {
         expect(sample.pools.player1).toEqual({ hp: 900, mp: 300 });
     });
 
+    test('a dungeon run carries failed and completed runs per hour; any other zone carries neither', () => {
+        const base = { simulatedTime: 2 * HOUR_NS, experienceGained: { player1: {} }, deaths: { player1: 0 } };
+        const dungeon = sampleFromResult(
+            { ...base, isDungeon: true, dungeonsFailed: 3, dungeonsCompleted: 9 },
+            gameData,
+            ['player1'],
+            2
+        );
+        expect(dungeon.dungeon).toEqual({ failedPerHour: 1.5, completedPerHour: 4.5 });
+        const zone = sampleFromResult(
+            { ...base, isDungeon: false, dungeonsFailed: 0, dungeonsCompleted: 0 },
+            gameData,
+            ['player1'],
+            2
+        );
+        expect(zone.dungeon).toBeUndefined();
+        expect('dungeon' in sampleFromResult(base, gameData, ['player1'], 2)).toBe(false);
+    });
+
     test('a valuation that throws is marked failed, not read as profit 0 alone', () => {
         const error = vi.spyOn(console, 'error').mockImplementation(() => {});
         try {

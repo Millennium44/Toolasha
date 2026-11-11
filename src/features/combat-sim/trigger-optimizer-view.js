@@ -8,6 +8,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import {
     PRECISIONS,
     DEFAULT_PRECISION,
+    DUNGEON_FAIL_POINTS_PER_PER_HOUR,
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
     DEFAULT_TUNABLE_SCOPE,
@@ -74,7 +75,7 @@ export function triggerSectionOptionsHtml() {
             <span style="display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;">
                 <span style="color:#888; font-size:11px;">Optimize for</span>
                 <select class="toolasha-select" id="mwi-csim-trigger-objective" style="${SELECT_STYLE}"
-                    title="Optimize for: Balanced weighs EXP/h, profit/h, DPS and encounters/h equally. XP/h or Profit/h judges a change on that one rate alone. Every choice loses 10 points per extra death per hour.">
+                    title="Optimize for: Balanced weighs EXP/h, profit/h, DPS and encounters/h equally. XP/h or Profit/h judges a change on that one rate alone. Every choice loses 10 points per extra death per hour, and in a dungeon 40 per extra failed run per hour.">
                     ${objectiveOptions}
                 </select>
             </span>
@@ -254,10 +255,14 @@ function humanizeHrid(hrid) {
 /**
  * What the score means, for the footer.
  * @param {string} [objective] - An OBJECTIVES key
+ * @param {Object} [options]
+ * @param {boolean} [options.dungeon] - The zone is a dungeon, so failed runs are scored too
  * @returns {string} Plain text
  */
-export function objectiveFooterText(objective) {
-    const deaths = 'less 10 points per extra death per hour';
+export function objectiveFooterText(objective, { dungeon = false } = {}) {
+    const deaths = dungeon
+        ? `less 10 points per extra death per hour and ${DUNGEON_FAIL_POINTS_PER_PER_HOUR} per extra failed dungeon run per hour`
+        : 'less 10 points per extra death per hour';
     if (objective === 'xp') return `Optimizing for XP/h: score is the percent change in EXP/h, ${deaths}.`;
     const profitScale =
         "profit/h is taken as a percent of the fight's loot value or consumable spend, whichever is larger";
@@ -557,7 +562,7 @@ export function renderTriggerResultsHtml(result, gameData, { canApply = true, ca
 
     body +=
         `<div style="font-size:11px; color:${GAME_COLORS.textDim}; margin-top:6px;">` +
-        `${esc(objectiveFooterText(result.objective))} ` +
+        `${esc(objectiveFooterText(result.objective, { dungeon: Boolean(result.dungeon) }))} ` +
         `A change is kept only when it clears a 95% test on seeds that did not pick it, and gains at least ${esc(result.minGain ?? MIN_GAIN)} points. ` +
         `${esc(result.simCount)} sims${
             result.conditionSimCount ? ` (${esc(result.conditionSimCount)} of them for the condition search)` : ''
