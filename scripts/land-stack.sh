@@ -21,8 +21,16 @@ set -euo pipefail
 PUSH=0
 SKIP_CI=0
 PRS=()
+declare -A REVIEWED_BY_HAND
+want_reviewed=0
 for arg in "$@"; do
+    if [ "$want_reviewed" -eq 1 ]; then
+        REVIEWED_BY_HAND[$arg]=1
+        want_reviewed=0
+        continue
+    fi
     case "$arg" in
+        --reviewed) want_reviewed=1 ;;
         --push) PUSH=1 ;;
         --skip-ci) SKIP_CI=1 ;;
         -h | --help) PRS=(); break ;;
@@ -32,6 +40,7 @@ for arg in "$@"; do
 done
 if [ "${#PRS[@]}" -eq 0 ]; then
     echo "Usage: bash scripts/land-stack.sh [--push] [--skip-ci] <pr> [<pr> ...]"
+    echo "  --reviewed <pr>: the maintainer accepted a hand check of a head Codex has not reviewed (repeatable)."
     echo "  --skip-ci: only when GitHub Actions is down and the maintainer said so; the full gates still run."
     echo "  Order of the PR numbers is the landing order. Without --push, stops after gates and prints the plan."
     exit 2
@@ -186,6 +195,12 @@ reviewThreads(first:100){totalCount nodes{isResolved}}}}}' \
 
 check_codex() { # <pr>
     local n="$1" line sha flag threads head="${HEAD_SHA[$n]}"
+    if [ -n "${REVIEWED_BY_HAND[$n]:-}" ]; then
+        threads="$(unresolved_threads "$n")"
+        [ "$threads" = "0" ] || die "PR #$n: $threads unresolved review thread(s)"
+        echo "PR #$n: Codex check SKIPPED (--reviewed: head checked by hand, maintainer approved); no unresolved threads"
+        return
+    fi
     line="$(codex_review_state "$n")" || die "PR #$n: no Codex review summary (codex-review-state:v1) found"
     sha="${line%% *}"
     flag="${line##* }"
@@ -204,7 +219,21 @@ check_codex() { # <pr>
     mb_h="$(cd "$INTEG" && range_base "$n" "$head")"
     a="$(cd "$INTEG" && patch_id "$mb_r" "$sha" CHANGELOG.md scripts/check-bundle-sharing.mjs)"
     b="$(cd "$INTEG" && patch_id "$mb_h" "$head" CHANGELOG.md scripts/check-bundle-sharing.mjs)"
-    [ "$a" = "$b" ] || die "PR #$n: Codex reviewed $sha, head is $head, and the patches differ beyond CHANGELOG.md / check-bundle-sharing.mjs"
+    if [ "$a" != "$b" ]; then
+        # The reviewed commit may sit on a PR that has landed since (its patch then counts that PR's commits too,
+        # and a rebase shifts context lines). Merge main into both: equal trees outside the changelog and
+        # bundle-sharing list mean the head is the reviewed code plus main.
+        # A merge that conflicts (exit 1) writes a tree full of markers, which proves nothing: refuse then.
+        local ta tb
+        ta="$(git -C "$INTEG" merge-tree --write-tree --no-messages origin/main "$sha" 2>/dev/null)" || ta=''
+        tb="$(git -C "$INTEG" merge-tree --write-tree --no-messages origin/main "$head" 2>/dev/null)" || tb=''
+        if [ -z "$ta" ] || [ -z "$tb" ] || ! git -C "$INTEG" diff --quiet "$ta" "$tb" -- . ':!CHANGELOG.md' \
+            ':!scripts/check-bundle-sharing.mjs'; then
+            die "PR #$n: Codex reviewed $sha, head is $head, and the patches differ beyond CHANGELOG.md / check-bundle-sharing.mjs"
+        fi
+        echo "PR #$n: Codex reviewed $sha, head is $head; with main merged into both, the trees match outside changelog/bundle-sharing"
+        return
+    fi
     echo "PR #$n: Codex reviewed $sha, head is $head; review carries over (patch identical outside changelog/bundle-sharing); no unresolved threads"
 }
 
