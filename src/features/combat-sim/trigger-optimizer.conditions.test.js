@@ -352,6 +352,40 @@ describe('Combat Sim condition search', () => {
         expect(result.noTunables).toBe(true);
         expect(result.conditions).toBeDefined();
         expect(result.conditions.slotCount).toBe(1);
+        // Not a dungeon, so the footer does not mention failed runs
+        expect(result.dungeon).toBe(false);
+    });
+
+    test('with nothing for the threshold tuner in a dungeon, the result still says failed runs are scored', async () => {
+        const noRows = {
+            ...dto(),
+            abilities: [
+                null,
+                {
+                    hrid: FIREBALL,
+                    level: 10,
+                    triggers: [{ dependencyHrid: SELF, conditionHrid: HP, comparatorHrid: LTE, value: 0 }],
+                },
+            ],
+        };
+        const dungeonData = {
+            ...gameData,
+            actionDetailMap: {
+                ...gameData.actionDetailMap,
+                [base.zoneHrid]: {
+                    ...gameData.actionDetailMap?.[base.zoneHrid],
+                    combatZoneInfo: { ...gameData.actionDetailMap?.[base.zoneHrid]?.combatZoneInfo, isDungeon: true },
+                },
+            },
+        };
+        const result = await runTriggerOptimization({
+            ...base,
+            gameData: dungeonData,
+            playerDTOs: [noRows],
+            searchConditions: true,
+        });
+        expect(result.noTunables).toBe(true);
+        expect(result.dungeon).toBe(true);
     });
 
     test('the estimate counts slots, candidates and a capped sim total', () => {

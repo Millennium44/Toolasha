@@ -219,7 +219,8 @@ export function buffsInPlay(dto, gameData, monsterHrids) {
  * 4. the buff this slot itself grants, then the rest of my kit's buffs, read on me;
  * 5. debuffs my abilities put on the target, read on the target enemy.
  *
- * Every row is one the game's editor allows: a single-target condition, a comparator from its
+ * Every row is one the game's editor allows (single-target conditions, plus the allies' lowest HP %
+ * rows a heal ability gets), with a comparator from its
  * `allowedComparatorHrids`, a dependency the game has.
  * @param {Object} params
  * @param {Object} params.slot - From `conditionSlots`

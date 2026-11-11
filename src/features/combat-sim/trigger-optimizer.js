@@ -513,7 +513,9 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         if (!result) return null;
     } else {
         // Nothing for the threshold tuner; only the condition search has something to do
-        result = { noTunables: true, changes: [], stopped: false };
+        // The condition search still scores failed runs in a dungeon, so the footer must say so
+        const dungeon = gameData?.actionDetailMap?.[zoneHrid]?.combatZoneInfo?.isDungeon === true;
+        result = { noTunables: true, changes: [], stopped: false, dungeon };
     }
 
     const out = {
