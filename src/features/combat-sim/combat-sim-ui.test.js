@@ -7553,6 +7553,49 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('0.0%');
     });
 
+    test('the Success tile carries the clear and fail counts', () => {
+        const results = showFight(oneHourFight({ isDungeon: true, dungeonsCompleted: 31, dungeonsFailed: 1 }));
+        const tile = Array.from(results.querySelectorAll('div[title]')).find((d) =>
+            d.textContent.startsWith('Success')
+        );
+
+        expect(tile.textContent).toContain('96.9%');
+        expect(tile.textContent).toContain('31 / 1 failed');
+        expect(tile.title).toBe('31 cleared, 1 failed');
+    });
+
+    test('the Avg clear tile shows the clean figure, with the incl.-fails one in its tooltip', () => {
+        // 6 completions in 1h is 10m incl. fails; clean clears average 5m (ns)
+        const results = showFight(
+            oneHourFight({
+                isDungeon: true,
+                dungeonsCompleted: 6,
+                dungeonsFailed: 2,
+                dungeonCleanClearCount: 4,
+                dungeonCleanClearTimeTotal: 4 * 300 * 1e9,
+            })
+        );
+        const tile = Array.from(results.querySelectorAll('div[title]')).find((d) =>
+            d.textContent.startsWith('Avg clear')
+        );
+
+        expect(tile.textContent).toBe('Avg clear5m 00s');
+        expect(tile.title).toContain('Clean');
+        expect(tile.title).toContain('Including fails: 10m 00s');
+    });
+
+    test('the Avg clear tile falls back to the incl.-fails figure with no clean clears', () => {
+        const results = showFight(
+            oneHourFight({ isDungeon: true, dungeonsCompleted: 6, dungeonsFailed: 2, dungeonCleanClearCount: 0 })
+        );
+        const tile = Array.from(results.querySelectorAll('div[title]')).find((d) =>
+            d.textContent.startsWith('Avg clear')
+        );
+
+        expect(tile.textContent).toBe('Avg clear10m 00s');
+        expect(tile.title).toContain('failed attempts included');
+    });
+
     test('deaths are a daily figure, because the hourly one rounds to never', () => {
         // One death every fifty hours. Three decimals is what makes an hourly
         // rate legible here: 0.020 is a number a player can act on, where the

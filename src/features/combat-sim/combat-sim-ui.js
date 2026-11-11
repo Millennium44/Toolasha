@@ -9430,10 +9430,11 @@ class CombatSimUI {
          * @param {string} label - Caption
          * @param {string} value - Preformatted value, may carry a delta span
          * @param {string} [color='#e0e0e0'] - Value color
+         * @param {string} [tip=''] - Tooltip for the whole tile
          * @returns {string} HTML
          */
-        const tile = (label, value, color = '#e0e0e0') =>
-            `<div style="${tileStyle}"><span style="${tileLabel}">${label}</span>` +
+        const tile = (label, value, color = '#e0e0e0', tip = '') =>
+            `<div style="${tileStyle}"${tip ? ` title="${escapeAttribute(tip)}"` : ''}><span style="${tileLabel}">${label}</span>` +
             `<span style="${tileValue} color:${color};">${value}</span></div>`;
 
         const profitPerDay = netProfitPerHr * 24;
@@ -9465,8 +9466,34 @@ class CombatSimUI {
         if (simResult.isDungeon) {
             const completed = simResult.dungeonsCompleted || 0;
             const attempts = completed + (simResult.dungeonsFailed || 0);
-            tiles.push(tile('Avg clear', completed > 0 ? timeReadable((hours * 3600) / completed) : '—'));
-            tiles.push(tile('Success', attempts > 0 ? `${((completed / attempts) * 100).toFixed(1)}%` : '—'));
+            const failed = simResult.dungeonsFailed || 0;
+            // Clean: the mean gap between consecutive successful clears, which is
+            // what the in-game dungeon tracker shows and the Overview's
+            // "Avg clear (clean)". The old figure charged failed-run time to clears.
+            const inclFailsSec = completed > 0 ? (hours * 3600) / completed : null;
+            const cleanSec =
+                simResult.dungeonCleanClearCount > 0
+                    ? simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount / 1e9
+                    : null;
+            const clearSec = cleanSec ?? inclFailsSec;
+            const clearTip =
+                cleanSec !== null
+                    ? 'Clean: mean time between consecutive successful clears, failed attempts excluded (matches the in-game dungeon tracker).' +
+                      (inclFailsSec !== null ? ` Including fails: ${timeReadable(inclFailsSec)}.` : '')
+                    : 'Total simulated time divided by dungeons completed, failed attempts included (no clean clears to average).';
+            tiles.push(tile('Avg clear', clearSec !== null ? timeReadable(clearSec) : '—', '#e0e0e0', clearTip));
+            const counts =
+                attempts > 0
+                    ? `<span style="display:block; font-size:10px; font-weight:400; color:${GAME_COLORS.textDim};">${completed} / ${failed} failed</span>`
+                    : '';
+            tiles.push(
+                tile(
+                    'Success',
+                    (attempts > 0 ? `${((completed / attempts) * 100).toFixed(1)}%` : '—') + counts,
+                    '#e0e0e0',
+                    `${completed} cleared, ${failed} failed`
+                )
+            );
         } else {
             tiles.push(
                 tile(
