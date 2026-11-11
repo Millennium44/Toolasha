@@ -21,12 +21,14 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import {
+    buildAllPlayerDTOs,
     buildGameDataPayload,
     buildPlayerDTO,
     getCombatZones,
@@ -69,6 +71,8 @@ import {
     sortRows,
     pickRerunRows,
     partyLabel,
+    memberLabel,
+    planPartyLock,
     sharedAuras,
     checkAuraOption,
     isPlayerSpecialAbility,
@@ -316,6 +320,18 @@ export class PartyFinderTab {
         this._roster = { savedAt: 0, entries: [], builds: [] };
         /** Teammate id → 'try' | 'always' | 'never' */
         this._choices = {};
+        /**
+         * "Include my party": on by default and remembered per character. The members of your in-game party stand
+         * in as always-included teammates. They are never written to the saved roster; this is all in memory.
+         */
+        this._includeParty = true;
+        /** Party member row id (`party:<characterID>`) → 'try' | 'always' | 'never' picked this session */
+        this._partyChoices = new Map();
+        /** Your party's other members as last read: {characterID, characterName, dto|null}, and why there are none */
+        this._partyMembers = [];
+        this._partyNote = '';
+        this._partyToken = 0;
+        this._partyUnwatch = null;
         /** Selected zone/tiers: [{zoneHrid, difficultyTier, isDungeon, name}] */
         this._zones = [];
         this._zonesSeeded = false;
@@ -381,8 +397,10 @@ export class PartyFinderTab {
         this._unsubscribePull = onSyncPullApplied((written) => {
             if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster({ pulled: true });
         });
+        this._watchParty();
         this._reloadRoster();
         this._loadScoreWeight();
+        this._loadIncludeParty();
     }
 
     /**
@@ -409,12 +427,19 @@ export class PartyFinderTab {
         this._elapsedTimer = null;
         this._unsubscribePull?.();
         this._unsubscribePull = null;
+        this._partyUnwatch?.();
+        this._partyUnwatch = null;
+        this._partyToken++;
         this.root?.remove();
         this.root = null;
         this._rows = new Map();
         this._baselines = new Map();
         this._roster = { savedAt: 0, entries: [], builds: [] };
         this._choices = {};
+        this._includeParty = true;
+        this._partyChoices = new Map();
+        this._partyMembers = [];
+        this._partyNote = '';
         this._zones = [];
         this._zonesSeeded = false;
         this._pendingConfirm = null;
@@ -440,6 +465,7 @@ export class PartyFinderTab {
         this._renderAddFromEditor();
         this._renderZoneChips();
         this._renderPlan();
+        this._refreshParty();
         if (!this.host?._isBusy?.()) this._status('Pick zones and teammates, then click Find parties.');
     }
 
@@ -481,7 +507,7 @@ export class PartyFinderTab {
                 'You',
                 `<div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
                     <select class="toolasha-select" data-pf="self" style="${INPUT_STYLE}"></select>
-                    <span style="color:${GAME_COLORS.textDim}; font-size:11px;">Every figure below is this player's own.</span>
+                    <span style="color:${GAME_COLORS.textDim}; font-size:11px;">This player is in every party tried, and every figure below is theirs.</span>
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
                     <label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center;" title="Also sim you wearing each aura you own, alone and in every party">
@@ -496,13 +522,17 @@ export class PartyFinderTab {
                 'Teammates <span data-pf="roster-count" style="color:' +
                     GAME_COLORS.textDim +
                     '; font-weight:400;"></span>',
-                `<div data-pf="roster" style="display:flex; flex-direction:column; gap:3px;"></div>
+                `<label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center; margin-bottom:4px;" title="Each member of your current in-game party is added here as Always, so every party tried already holds them and the search fills only the leftover slots. They are not saved to your roster.">
+                    <input type="checkbox" data-pf="include-party" checked> Include my party</label>
+                <div data-pf="party-note" style="color:#888; font-size:11px; margin-bottom:4px;"></div>
+                <div data-pf="party-rows" style="display:flex; flex-direction:column; gap:3px; margin-bottom:4px;"></div>
+                <div data-pf="roster" style="display:flex; flex-direction:column; gap:3px;"></div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
                     <label style="color:#888; font-size:11px;">From the editor</label>
                     <select class="toolasha-select" data-pf="editor-player" style="${INPUT_STYLE}"></select>
                     <select class="toolasha-select" data-pf="editor-target" style="${INPUT_STYLE}"></select>
                     <button data-pf="add-editor" style="${BTN_STYLE}">Save</button>
-                    <button data-pf="add-self" style="${SMALL_BTN_STYLE}" title="Save a copy of your current build as a teammate you can then edit">Copy my build</button>
+                    <button data-pf="add-self" style="${SMALL_BTN_STYLE}" title="Save a copy of your current build as a teammate you can then edit. Teammates are added to parties beside you, so this puts a second copy of you in them.">Copy my build</button>
                     <button data-pf="toggle-import" style="${SMALL_BTN_STYLE}">Paste import…</button>
                 </div>
                 <div data-pf="import-box" style="display:none; margin-top:6px;">
@@ -603,6 +633,7 @@ export class PartyFinderTab {
             this._renderSelfAuras();
             this._renderPlan();
         });
+        this._el('include-party').addEventListener('change', (e) => this._onIncludeParty(e.target.checked));
         this._el('self-aura-edit').addEventListener('click', () => {
             this._selfAuraOpen = !this._selfAuraOpen;
             this._renderSelfAuras();
@@ -691,6 +722,241 @@ export class PartyFinderTab {
         }
     }
 
+    // ---------------------------------------------------------------- your party
+
+    /** The storage key of this character's "Include my party" switch. @private */
+    _includePartyKey(characterId) {
+        return `combatSimPartyIncludeParty_${characterId}`;
+    }
+
+    /**
+     * Read this character's saved "Include my party" switch (on until they turn it off).
+     * @private
+     */
+    async _loadIncludeParty() {
+        const ownerId = dataManager.getCurrentCharacterId();
+        if (ownerId == null) return;
+        const saved = await storage.get(this._includePartyKey(ownerId), 'settings', null);
+        if (!this.root || dataManager.getCurrentCharacterId() !== ownerId) return;
+        const next = saved !== false;
+        if (next === this._includeParty) return;
+        this._includeParty = next;
+        const tick = this._el('include-party');
+        if (tick) tick.checked = next;
+        this._refreshParty();
+    }
+
+    /**
+     * The player switched "Include my party".
+     * @param {boolean} checked
+     * @private
+     */
+    async _onIncludeParty(checked) {
+        const ownerId = dataManager.getCurrentCharacterId();
+        this._includeParty = Boolean(checked);
+        this._refreshParty();
+        if (ownerId == null) return;
+        try {
+            await storage.set(this._includePartyKey(ownerId), this._includeParty, 'settings');
+        } catch (error) {
+            console.error('[PartyFinder] Could not save the Include my party switch:', error);
+        }
+    }
+
+    /**
+     * Follow the party: a roster change redraws, and so does a profile opening (a member whose profile was not
+     * loaded can then join).
+     * @private
+     */
+    _watchParty() {
+        const onRoster = () => this._refreshParty();
+        const onProfile = () => this._onProfileShared();
+        dataManager.on?.('party_roster_updated', onRoster);
+        webSocketHook.on?.('profile_shared', onProfile);
+        this._partyUnwatch = () => {
+            dataManager.off?.('party_roster_updated', onRoster);
+            webSocketHook.off?.('profile_shared', onProfile);
+        };
+    }
+
+    /**
+     * A profile was opened in game: if a party member was waiting on theirs, look again once it is written.
+     * @private
+     */
+    async _onProfileShared() {
+        if (!this.root || !this._partyMembers.some((m) => !m.dto)) return;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                await webSocketHook._profileChain;
+            } catch {
+                /* a failed write is logged where it happens */
+            }
+            if (!this.root) return;
+            await this._refreshParty();
+            if (!this.root || !this._partyMembers.some((m) => !m.dto)) return;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+    }
+
+    /**
+     * Read your party again: who is in it now, and each other member's build from their cached profile (the same
+     * source "Reset to Party" uses). A member with no cached profile gets no build, never an empty one.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _refreshParty() {
+        const token = ++this._partyToken;
+        if (!this.root) return;
+        const settle = (members, note) => {
+            this._partyMembers = members;
+            this._partyNote = note;
+            // The roster rows too: a saved teammate who is also in your party is shown as replaced
+            this._renderRoster();
+            this._renderPlan();
+        };
+        if (!this._includeParty) {
+            settle([], '');
+            return;
+        }
+        const owner = dataManager.getCurrentCharacterId();
+        const partyNow = () => dataManager.getPartyMembers?.().members || [];
+        const keyOf = (list) => list.map((m) => String(m.characterID)).join(',');
+        const all = partyNow();
+        const others = all.filter((m) => String(m.characterID) !== String(owner));
+        if (!others.length) {
+            settle([], 'You are not in a party.');
+            return;
+        }
+        const self = this._resolveSelf();
+        if (self && !self.isLive) {
+            settle([], 'Your party joins only while "You" is your live character.');
+            return;
+        }
+        let built = null;
+        try {
+            built = await buildAllPlayerDTOs();
+        } catch (error) {
+            console.error('[PartyFinder] Could not read your party:', error);
+        }
+        if (token !== this._partyToken || !this.root || dataManager.getCurrentCharacterId() !== owner) return;
+        // The party moved while the profiles were read: the slots no longer line up, read again
+        if (keyOf(partyNow()) !== keyOf(all)) {
+            await this._refreshParty();
+            return;
+        }
+        const missing = new Set((built?.missingMemberIds || []).map(String));
+        const members = [];
+        all.forEach((member, index) => {
+            if (String(member.characterID) === String(owner)) return;
+            const hrid = `player${index + 1}`;
+            const ready = !missing.has(String(member.characterID)) && hrid !== built?.selfHrid;
+            const dto = ready ? built?.players?.find((p) => p.hrid === hrid) : null;
+            const name = (dto && built?.playerInfo?.find((p) => p.hrid === hrid)?.name) || member.characterName;
+            let build = null;
+            if (dto) {
+                // Per-party fields are worked out for each party tried
+                build = structuredClone(dto);
+                for (const field of ['hrid', 'debuffOnLevelGap', 'taskMonsterHrids', 'taskMonsterRemaining']) {
+                    delete build[field];
+                }
+            }
+            members.push({ characterID: member.characterID, characterName: name, dto: build });
+        });
+        settle(members, '');
+    }
+
+    /**
+     * Your party as teammates locked into every party, from what is on screen now.
+     * @returns {{rows: Array<Object>, entries: Array<Object>, suppressed: Set<string>}}
+     * @private
+     */
+    _partyLock() {
+        return planPartyLock({
+            members: this._partyMembers,
+            savedEntries: this._roster.entries,
+            includeParty: this._includeParty,
+        });
+    }
+
+    /**
+     * Try/Always/Never for the plan: the saved roster's picks, and your party's (Always unless changed this session).
+     * @param {{entries: Array<{id: string}>}} lock - From {@link PartyFinderTab#_partyLock}
+     * @returns {Object<string, string>}
+     * @private
+     */
+    _effectiveChoices(lock) {
+        const choices = { ...this._choices };
+        for (const entry of lock.entries) choices[entry.id] = this._partyChoices.get(entry.id) || 'always';
+        return choices;
+    }
+
+    /**
+     * Whether anything can join you: a saved teammate, or a party member whose build is loaded.
+     * @returns {boolean}
+     * @private
+     */
+    _hasTeammates() {
+        return this._roster.entries.length > 0 || this._partyLock().entries.length > 0;
+    }
+
+    /** The party rows above the roster, and the line saying why there are none. @private */
+    _renderPartyRows() {
+        const list = this._el('party-rows');
+        const note = this._el('party-note');
+        if (!list || !note) return;
+        const tick = this._el('include-party');
+        if (tick) tick.checked = this._includeParty;
+        list.textContent = '';
+        note.textContent = this._includeParty ? this._partyNote : '';
+        for (const row of this._partyLock().rows) {
+            const line = document.createElement('div');
+            line.dataset.pfPartyMember = row.id;
+            line.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px;';
+            const name = document.createElement('span');
+            name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            name.textContent = `${row.name} (in party)`;
+            line.appendChild(name);
+            if (row.status === 'missing') {
+                const why = document.createElement('span');
+                why.dataset.pfPartyMissing = '';
+                why.style.cssText = 'color:#e0703a; font-size:11px;';
+                why.textContent = 'profile not loaded, left out of the runs (open their profile in game)';
+                line.appendChild(why);
+            } else {
+                const choice = document.createElement('select');
+                choice.className = 'toolasha-select';
+                choice.dataset.pfPartyChoice = row.id;
+                choice.style.cssText = INPUT_STYLE + ' font-size:11px; padding:1px 4px;';
+                choice.title =
+                    'From your party. Always: every party has them. Try: may join a party. Never: left out. ' +
+                    'Kept for this session only, not saved to your roster.';
+                for (const [value, label] of [
+                    ['always', 'Always'],
+                    ['try', 'Try'],
+                    ['never', 'Never'],
+                ]) {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = label;
+                    choice.appendChild(option);
+                }
+                choice.value = this._partyChoices.get(row.id) || 'always';
+                choice.addEventListener('change', () => {
+                    this._partyChoices.set(row.id, choice.value);
+                    this._renderPlan();
+                });
+                line.appendChild(choice);
+                if (row.duplicates.length) {
+                    const dup = document.createElement('span');
+                    dup.style.cssText = 'color:#888; font-size:11px;';
+                    dup.textContent = 'replaces the saved teammate of that name';
+                    line.appendChild(dup);
+                }
+            }
+            list.appendChild(line);
+        }
+    }
+
     /**
      * Read the roster back.
      * @param {{pulled?: boolean}} [options] - `pulled`: a sync pull wrote it, so a fold may have dropped entries for
@@ -736,6 +1002,7 @@ export class PartyFinderTab {
         const list = this._el('roster');
         if (!list) return;
         const entries = this._roster.entries;
+        this._renderPartyRows();
         this._el('roster-count').textContent = `(${entries.length}/${MAX_ROSTER_SIZE})`;
         list.textContent = '';
         if (!entries.length) {
@@ -747,6 +1014,7 @@ export class PartyFinderTab {
             list.appendChild(empty);
         }
         const names = displayNames(entries);
+        const suppressed = this._partyLock().suppressed;
         for (const entry of entries) {
             const row = document.createElement('div');
             row.dataset.pfMember = entry.id;
@@ -755,7 +1023,8 @@ export class PartyFinderTab {
             const name = document.createElement('span');
             name.dataset.pfName = '';
             name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-            name.textContent = names.get(entry.id);
+            name.textContent =
+                names.get(entry.id) + (suppressed.has(entry.id) ? ' (your party member is used instead)' : '');
             name.title = `Saved from ${entry.source}`;
 
             const choice = document.createElement('select');
@@ -774,6 +1043,7 @@ export class PartyFinderTab {
                 choice.appendChild(option);
             }
             choice.value = this._choices[entry.id] || 'try';
+            choice.disabled = suppressed.has(entry.id);
             choice.addEventListener('change', () => {
                 this._choices[entry.id] = choice.value;
                 this._renderPlan();
@@ -1594,6 +1864,7 @@ export class PartyFinderTab {
                 this._selfAuraOpen = false;
                 this._renderSelfAuras();
                 this._renderRoster();
+                this._refreshParty();
             });
         }
         this._renderSelfAuras();
@@ -1814,10 +2085,13 @@ export class PartyFinderTab {
      * @private
      */
     _planRoster(gameData) {
-        const names = displayNames(this._roster.entries);
+        const lock = this._partyLock();
+        // A saved teammate who is also in your party is run once, as the party member
+        const entries = [...this._roster.entries.filter((e) => !lock.suppressed.has(e.id)), ...lock.entries];
+        const names = displayNames(entries);
         const skipped = [];
         const roster = [];
-        for (const entry of this._roster.entries) {
+        for (const entry of entries) {
             const unknown = gameData ? unknownBuildParts(entry.dto, gameData) : [];
             if (unknown.length) {
                 skipped.push(`${names.get(entry.id)} (unknown ${unknown.slice(0, 2).join(', ')})`);
@@ -1843,7 +2117,7 @@ export class PartyFinderTab {
         const plan = planSweep({
             zones: this._zones,
             roster,
-            choices: this._choices,
+            choices: this._effectiveChoices(this._partyLock()),
             maxPartySize: settings.maxPartySize,
             gameData,
             selfAuras: mine.auras,
@@ -1869,7 +2143,7 @@ export class PartyFinderTab {
         const plan = this._plan(buildGameDataPayload());
         const notes = [];
         if (!this._zones.length) notes.push('Pick at least one zone.');
-        else if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+        else if (!this._hasTeammates() && !(this._trySelfAuras && plan.selfAuraCount)) {
             notes.push('Add teammates to the roster first.');
         } else if (plan.refused) notes.push(plan.refused);
         else {
@@ -1883,6 +2157,11 @@ export class PartyFinderTab {
             if (zone.note) notes.push(`${zone.zone.name} T${zone.zone.difficultyTier}: ${zone.note}.`);
         }
         if (plan.skipped.length) notes.push(`Left out, not runnable here: ${plan.skipped.join('; ')}.`);
+        for (const row of this._partyLock().rows) {
+            if (row.status === 'missing') {
+                notes.push(`${row.name} is in your party but their profile is not loaded, so they are left out.`);
+            }
+        }
         for (const note of plan.notes || []) notes.push(`${note}.`);
         if (this._trySelfAuras && !plan.refused) {
             notes.push(
@@ -1913,6 +2192,11 @@ export class PartyFinderTab {
             this._status('Pick at least one zone first.');
             return;
         }
+        // The party as it is now, not as it was when the tab last looked
+        if (this._includeParty) {
+            await this._refreshParty();
+            if (!this.root || this._running) return;
+        }
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._status('No game data available.');
@@ -1920,7 +2204,7 @@ export class PartyFinderTab {
         }
         const plan = this._plan(gameData);
         // With no teammates, your own aura variants alone are still worth a run (each aura solo)
-        if (!this._roster.entries.length && !(this._trySelfAuras && plan.selfAuraCount)) {
+        if (!this._hasTeammates() && !(this._trySelfAuras && plan.selfAuraCount)) {
             this._status('Add teammates to the roster first.');
             return;
         }
@@ -2329,7 +2613,7 @@ export class PartyFinderTab {
             const baseline = this._baselines.get(row.zoneKey) || null;
             const zoneLabel = `${row.zone.isDungeon ? '[D] ' : ''}${esc(row.zone.name)} T${row.zone.difficultyTier}`;
             const aliases = row.comp.aliases?.length
-                ? ` title="Same builds as: ${esc(row.comp.aliases.map((a) => a.join(' + ')).join('; '))}"`
+                ? ` title="Same builds as: ${esc(row.comp.aliases.map((a) => ['You', ...a].join(' + ')).join('; '))}"`
                 : '';
             const party = `<span${aliases} style="${row.isBaseline ? 'font-weight:700; color:#ccc;' : ''}">${esc(partyLabel(row.comp))}</span>`;
             const replaced = row.comp.members
@@ -2420,7 +2704,7 @@ export class PartyFinderTab {
             if (tierSelect) tierSelect.value = String(row.zone.difficultyTier);
         }
         this.host._switchTab?.('configure');
-        this._status(`Loaded ${self.name} + ${partyLabel(row.comp)} into the editor.`);
+        this._status(`Loaded ${[self.name, ...row.comp.members.map(memberLabel)].join(' + ')} into the editor.`);
         return true;
     }
 

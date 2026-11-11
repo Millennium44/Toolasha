@@ -763,15 +763,65 @@ export function memberLabel(member) {
 }
 
 /**
- * The names a party shows: you alone, or the teammates beside you (with the aura each was tried with); an aura
- * of yours that differs from what you wear is named after them.
+ * The names a party shows. You are in every party tried, so every label starts with you: "You alone", or
+ * "You + Bob + Cy" (with the aura each teammate was tried with); an aura of yours that differs from what you wear
+ * is named after them.
  * @param {Object} comp
  * @returns {string}
  */
 export function partyLabel(comp) {
     const mine = comp?.selfAura ? ` (you: ${comp.selfAura.name} ${comp.selfAura.level})` : '';
-    if (!comp || comp.isBaseline || !comp.members?.length) return `Solo${mine}`;
-    return comp.members.map(memberLabel).join(' + ') + mine;
+    if (!comp || comp.isBaseline || !comp.members?.length) return `You alone${mine}`;
+    return ['You', ...comp.members.map(memberLabel)].join(' + ') + mine;
+}
+
+/** Roster-entry id prefix of a member of your in-game party who stands in as an always-included teammate */
+export const PARTY_ENTRY_PREFIX = 'party:';
+
+/** A name compared without case or stray spaces */
+const sameName = (a, b) =>
+    String(a ?? '')
+        .trim()
+        .toLowerCase() ===
+    String(b ?? '')
+        .trim()
+        .toLowerCase();
+
+/**
+ * The members of your in-game party as teammates locked into every party tried. These are transient: built from
+ * the live party each time, never written to the saved roster.
+ *
+ * - A member whose profile is not loaded (`dto` null) is `missing`: left out of the runs, never given a blank build.
+ * - A member who is also a saved teammate (same name) is run once, as the party member; the saved teammate is
+ *   returned in `suppressed` and is not run.
+ * @param {Object} options
+ * @param {Array<{characterID: *, characterName: string, dto: (Object|null)}>} options.members - The other members
+ *   of your party (not you), with their sim build when their profile is loaded
+ * @param {Array<{id: string, name: string}>} [options.savedEntries] - The saved teammates
+ * @param {boolean} [options.includeParty=true]
+ * @returns {{rows: Array<{id: string, characterId: string, name: string, status: 'ready'|'missing',
+ *   duplicates: Array<string>}>, entries: Array<Object>, suppressed: Set<string>}} `entries` are the ready rows in
+ *   roster shape, for {@link planSweep}
+ */
+export function planPartyLock({ members, savedEntries = [], includeParty = true }) {
+    const out = { rows: [], entries: [], suppressed: new Set() };
+    if (!includeParty) return out;
+    for (const member of Array.isArray(members) ? members : []) {
+        const id = `${PARTY_ENTRY_PREFIX}${member.characterID}`;
+        const name = String(member.characterName || 'Party member');
+        const ready = Boolean(member.dto);
+        const duplicates = ready ? savedEntries.filter((e) => sameName(e.name, name)).map((e) => e.id) : [];
+        for (const dup of duplicates) out.suppressed.add(dup);
+        out.rows.push({
+            id,
+            characterId: String(member.characterID),
+            name,
+            status: ready ? 'ready' : 'missing',
+            duplicates,
+        });
+        if (ready) out.entries.push({ id, name, dto: member.dto, auras: [], source: 'party' });
+    }
+    return out;
 }
 
 /**

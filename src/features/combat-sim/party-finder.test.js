@@ -47,6 +47,7 @@ const {
     normalizeScoreWeight,
     pickRerunRows,
     partyLabel,
+    planPartyLock,
     csvRow,
     stoppedSweepText,
     applyAura,
@@ -118,7 +119,7 @@ describe('planSweep', () => {
     test('must-include and exclude', () => {
         const plan = planSweep({ zones: [ZONE], roster: four, choices: { a: 'always', dddd: 'never' } });
         const parties = plan.tasks.filter((t) => !t.comp.isBaseline).map((t) => partyLabel(t.comp));
-        expect(parties).toEqual(['Ann', 'Ann + Bob', 'Ann + Cy']);
+        expect(parties).toEqual(['You + Ann', 'You + Ann + Bob', 'You + Ann + Cy']);
         expect(plan.tasks[0].comp.isBaseline).toBe(true);
     });
 
@@ -190,8 +191,8 @@ describe('enumerateCompositions', () => {
         const comps = enumerateCompositions(pool, mustInclude, 2);
         const labels = comps.map(partyLabel);
         // Solo, Bob, Cy, Bob+Bob (two copies is a real party), Bob+Cy
-        expect(labels).toEqual(['Solo', 'Bob', 'Cy', 'Bob + Bob', 'Bob + Cy']);
-        expect(comps.find((c) => partyLabel(c) === 'Bob').aliases).toEqual([['Bob']]);
+        expect(labels).toEqual(['You alone', 'You + Bob', 'You + Cy', 'You + Bob + Bob', 'You + Bob + Cy']);
+        expect(comps.find((c) => partyLabel(c) === 'You + Bob').aliases).toEqual([['Bob']]);
     });
 
     test('the cheap upper bound matches the count with distinct builds', () => {
@@ -407,7 +408,7 @@ describe('ranking against solo', () => {
         expect(csvRow(row('Bob', metrics(1200, 150)), base)).toMatchObject({
             zone: 'Swamp Planet',
             tier: 1,
-            party: 'Bob',
+            party: 'You + Bob',
             size: 2,
             xpPerHour: 1200,
             profitPerHour: 150,
@@ -484,8 +485,8 @@ describe('aura options', () => {
         // Solo; Ann x3; Bob; Ann x3 + Bob
         expect(plan.total).toBe(8);
         const labels = plan.tasks.map((t) => partyLabel(t.comp));
-        expect(labels).toContain('Ann [Fierce Aura 20] + Bob');
-        expect(labels).toContain('Ann [Mystic Aura 15]');
+        expect(labels).toContain('You + Ann [Fierce Aura 20] + Bob');
+        expect(labels).toContain('You + Ann [Mystic Aura 15]');
         const distinct = plan.tasks.every(
             (t) => new Set(t.comp.members.map((m) => m.id)).size === t.comp.members.length
         );
@@ -503,7 +504,7 @@ describe('aura options', () => {
     test('as built off: only the aura variants', () => {
         const roster = [entry('a', 'Ann', withSpecial(null), [{ hrid: '/abilities/fierce_aura', level: 20 }], false)];
         const labels = planSweep({ zones: [ZONE], roster, gameData }).tasks.map((t) => partyLabel(t.comp));
-        expect(labels).toEqual(['Solo', 'Ann [Fierce Aura 20]']);
+        expect(labels).toEqual(['You alone', 'You + Ann [Fierce Aura 20]']);
     });
 
     test('no aura offered: tried as built, whatever the checkbox says', () => {
@@ -560,7 +561,7 @@ describe('aura options', () => {
         ];
         const plan = planSweep({ zones: [ZONE], roster, gameData });
         const pair = plan.tasks.find((t) => t.comp.members.length === 2);
-        expect(partyLabel(pair.comp)).toBe('Ann [Fierce Aura 20] + Bob [Fierce Aura 20]');
+        expect(partyLabel(pair.comp)).toBe('You + Ann [Fierce Aura 20] + Bob [Fierce Aura 20]');
         const party = buildCompositionParty(withSpecial('/abilities/fierce_aura'), pair.comp.members);
         expect(sharedAuras(party, gameData)).toEqual([{ name: 'Fierce Aura', count: 3 }]);
     });
@@ -684,9 +685,13 @@ describe('your own auras', () => {
         expect(plan.total).toBe(4 * 3);
         expect(plan.perZone[0].count).toBe(12);
         const labels = plan.tasks.map((t) => partyLabel(t.comp));
-        expect(labels.slice(0, 3)).toEqual(['Solo', 'Solo (you: Fierce Aura 20)', 'Solo (you: Mystic Aura 5)']);
-        expect(labels).toContain('Ann + Bea (you: Mystic Aura 5)');
-        expect(labels).toContain('Ann');
+        expect(labels.slice(0, 3)).toEqual([
+            'You alone',
+            'You alone (you: Fierce Aura 20)',
+            'You alone (you: Mystic Aura 5)',
+        ]);
+        expect(labels).toContain('You + Ann + Bea (you: Mystic Aura 5)');
+        expect(labels).toContain('You + Ann');
         // Keys never collide, so row ids and the results cache stay apart
         expect(new Set(plan.tasks.map((t) => t.comp.key)).size).toBe(plan.total);
     });
@@ -800,9 +805,9 @@ describe('your own auras', () => {
         });
         const labels = plan.tasks.map((t) => partyLabel(t.comp));
         expect(labels.filter((l) => l.includes('you:'))).toHaveLength(4);
-        expect(labels).toContain('Ann');
+        expect(labels).toContain('You + Ann');
         expect(csvRow({ zone: ZONE, comp: plan.tasks[1].comp, quick: null }, null).party).toBe(
-            'Solo (you: Fierce Aura 20)'
+            'You alone (you: Fierce Aura 20)'
         );
     });
 
@@ -810,9 +815,9 @@ describe('your own auras', () => {
         for (const roster of [[]]) {
             const plan = planSweep({ zones: [ZONE], roster, gameData, selfAuras: owned, selfDto: dto(90) });
             expect(plan.tasks.map((t) => partyLabel(t.comp))).toEqual([
-                'Solo',
-                'Solo (you: Fierce Aura 20)',
-                'Solo (you: Mystic Aura 5)',
+                'You alone',
+                'You alone (you: Fierce Aura 20)',
+                'You alone (you: Mystic Aura 5)',
             ]);
             expect(plan.selfAuraCount).toBe(2);
             expect(plan.perZone[0].count).toBe(3);
@@ -830,5 +835,86 @@ describe('your own auras', () => {
         const plan = planSweep({ zones: [ZONE], roster: many, gameData, selfAuras: auras, selfDto: dto(90) });
         expect(plan.refused).toBeTruthy();
         expect(plan.selfAuraCount).toBe(400);
+    });
+});
+
+describe('your party locked into every party', () => {
+    const member = (id, name, loaded = true) => ({
+        characterID: id,
+        characterName: name,
+        dto: loaded ? dto(95) : null,
+    });
+    const labels = (plan) => plan.tasks.map((t) => partyLabel(t.comp));
+
+    test('labels name you in every party', () => {
+        expect(partyLabel({ isBaseline: true, members: [] })).toBe('You alone');
+        expect(
+            partyLabel({ members: [{ name: 'Bob' }, { name: 'Cy', aura: { name: 'Fierce Aura', level: 3 } }] })
+        ).toBe('You + Bob + Cy [Fierce Aura 3]');
+        expect(partyLabel({ isBaseline: true, members: [], selfAura: { name: 'Mystic Aura', level: 2 } })).toBe(
+            'You alone (you: Mystic Aura 2)'
+        );
+    });
+
+    test('locked members are in every party but the baseline', () => {
+        const lock = planPartyLock({ members: [member('1', 'Captain')], savedEntries: [mate('a', 'Ann')] });
+        const plan = planSweep({
+            zones: [ZONE],
+            roster: [mate('a', 'Ann'), ...lock.entries],
+            choices: { 'party:1': 'always' },
+        });
+        expect(labels(plan)).toEqual(['You alone', 'You + Captain', 'You + Captain + Ann']);
+    });
+
+    test('a party member switched to Try can be left out; Never is left out', () => {
+        const lock = planPartyLock({ members: [member('1', 'Captain')] });
+        const roster = [mate('a', 'Ann'), ...lock.entries];
+        expect(labels(planSweep({ zones: [ZONE], roster, choices: { 'party:1': 'try' } }))).toEqual([
+            'You alone',
+            'You + Ann',
+            'You + Captain',
+            'You + Ann + Captain',
+        ]);
+        expect(labels(planSweep({ zones: [ZONE], roster, choices: { 'party:1': 'never' } }))).toEqual([
+            'You alone',
+            'You + Ann',
+        ]);
+    });
+
+    test('more locked members than the zone takes: that zone is skipped with a note, the other still runs', () => {
+        const lock = planPartyLock({
+            members: [member('1', 'Captain'), member('2', 'Dawn'), member('3', 'Eve')],
+        });
+        const choices = Object.fromEntries(lock.entries.map((e) => [e.id, 'always']));
+        const plan = planSweep({ zones: [ZONE, DUNGEON], roster: lock.entries, choices });
+        expect(plan.perZone[0].note).toMatch(/cannot all fit in a 3-player party/);
+        expect(plan.perZone[0].count).toBe(0);
+        // A dungeon takes 5: you and three
+        expect(plan.perZone[1].note).toBeNull();
+        expect(plan.tasks.every((t) => t.zone === DUNGEON)).toBe(true);
+        expect(labels(plan)).toContain('You + Captain + Dawn + Eve');
+    });
+
+    test('a member with no loaded profile gets a row but no entry', () => {
+        const lock = planPartyLock({ members: [member('1', 'Captain', false), member('2', 'Dawn')] });
+        expect(lock.rows.map((r) => [r.name, r.status])).toEqual([
+            ['Captain', 'missing'],
+            ['Dawn', 'ready'],
+        ]);
+        expect(lock.entries.map((e) => e.name)).toEqual(['Dawn']);
+    });
+
+    test('a member who is also a saved teammate suppresses the saved one, by name; missing ones do not', () => {
+        const saved = [mate('a', 'captain'), mate('b', 'Ann')];
+        const ready = planPartyLock({ members: [member('1', 'Captain')], savedEntries: saved });
+        expect([...ready.suppressed]).toEqual(['a']);
+        expect(ready.rows[0].duplicates).toEqual(['a']);
+        const missing = planPartyLock({ members: [member('1', 'Captain', false)], savedEntries: saved });
+        expect(missing.suppressed.size).toBe(0);
+    });
+
+    test('switched off, nothing is locked', () => {
+        const lock = planPartyLock({ members: [member('1', 'Captain')], includeParty: false });
+        expect(lock).toEqual({ rows: [], entries: [], suppressed: new Set() });
     });
 });

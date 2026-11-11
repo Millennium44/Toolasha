@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party tab includes your party and shows you in every row
+
+A new "Include my party" box, on by default, puts your in-game party members into every party the Party tab tries; set any of them to Try or Never. Result rows now read "You alone" and "You + …", so it is clear you are always in the party.
+
 ### Combat Sim adds a party member when their profile opens
 
 When a party member is missing because their profile was never opened, opening it in game (My Party, click them, Profile) now adds them to the Combat Sim right away, unless you have edited the party, in which case a note tells you to Reset to Party. The not-loaded and fetched-loadout notes now say what to do.

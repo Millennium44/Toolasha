@@ -27,6 +27,11 @@ const state = vi.hoisted(() => ({
     progress: null,
     tuneCalls: [],
     tunerCleared: 0,
+    /** The in-game party: all members, you included, in slot order */
+    party: [],
+    /** What buildAllPlayerDTOs answers */
+    built: null,
+    partyListeners: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -39,6 +44,11 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => state.charId,
         getCurrentCharacterGameMode: () => state.gameMode,
+        getPartyMembers: () => ({ members: state.party, source: 'test' }),
+        on: (event, cb) => state.partyListeners.push([event, cb]),
+        off: (event, cb) => {
+            state.partyListeners = state.partyListeners.filter(([e, c]) => !(e === event && c === cb));
+        },
         get characterData() {
             return { character: { name: 'Milkman' }, characterAbilities: state.owned };
         },
@@ -47,7 +57,11 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (k, _s, fallback) => {
-            if (String(k).startsWith('combatSimPartyScoreWeight_')) return k in state.prefs ? state.prefs[k] : fallback;
+            if (
+                String(k).startsWith('combatSimPartyScoreWeight_') ||
+                String(k).startsWith('combatSimPartyIncludeParty_')
+            )
+                return k in state.prefs ? state.prefs[k] : fallback;
             return state.db === undefined ? fallback : structuredClone(state.db);
         },
         set: async (k, v) => {
@@ -78,6 +92,7 @@ vi.mock('./combat-sim-adapter.js', () => ({
         state.priceSeeds.push({ cache, options });
         return cache;
     },
+    buildAllPlayerDTOs: async () => state.built,
     buildGameDataPayload: () => state.gameData,
     buildPlayerDTO: () => (state.selfDTO ? structuredClone(state.selfDTO) : null),
     getCombatZones: () => state.zones,
@@ -283,6 +298,9 @@ beforeEach(() => {
     state.priceSeeds = [];
     state.revenueCaches = [];
     state.owned = [];
+    state.party = [];
+    state.built = null;
+    state.partyListeners = [];
     state.gameData = {
         itemDetailMap: {
             '/items/rippling_trident': {},
@@ -605,10 +623,10 @@ describe('every way a search can end', () => {
         expect(rows).toHaveLength(4);
         // Ranked by EXP/hr: Ann + Bob (full 1.4K), Ann (1.2K), Solo (full 1K), Bob (800)
         expect(rows.map((r) => r.querySelector('td:nth-child(2) span').textContent)).toEqual([
-            'Ann + Bob',
-            'Ann',
-            'Solo',
-            'Bob',
+            'You + Ann + Bob',
+            'You + Ann',
+            'You alone',
+            'You + Bob',
         ]);
         expect(rows[0].textContent).toMatch(/10h/);
         expect(rows[0].textContent).toMatch(/\+40\.0%/);
@@ -641,8 +659,8 @@ describe('every way a search can end', () => {
         el('csv').click();
         const { rows, columns } = JSON.parse(state.downloads[0].csv);
         expect(columns).toContain('profitVsSolo');
-        expect(rows[0]).toMatchObject({ party: 'Ann', profitVsSolo: -50, xpVsSoloPct: 10 });
-        expect(rows[1]).toMatchObject({ party: 'Solo', profitVsSolo: 0 });
+        expect(rows[0]).toMatchObject({ party: 'You + Ann', profitVsSolo: -50, xpVsSoloPct: 10 });
+        expect(rows[1]).toMatchObject({ party: 'You alone', profitVsSolo: 0 });
 
         const annRow = tab.sortedRows()[0];
         tab.root.querySelector(`[data-pf-load="${annRow.id}"]`).click();
@@ -1314,8 +1332,8 @@ describe('also try my auras', () => {
         expect(new Set(rows.map((r) => r.id)).size).toBe(6);
         expect(rows.filter((r) => r.isBaseline)).toHaveLength(1);
         const text = rows.map((r) => rowText(r.id));
-        expect(text.some((t) => /Solo \(you: Fierce Aura 20\)/.test(t))).toBe(true);
-        expect(text.some((t) => /Ann \(you: Mystic Aura 7\)/.test(t))).toBe(true);
+        expect(text.some((t) => /You alone \(you: Fierce Aura 20\)/.test(t))).toBe(true);
+        expect(text.some((t) => /You \+ Ann \(you: Mystic Aura 7\)/.test(t))).toBe(true);
         // A solo row with an aura is compared with the as-worn baseline
         const soloAura = rows.find((r) => r.comp.selfAura && !r.comp.members.length);
         expect(rowText(soloAura.id)).toMatch(/%/);
@@ -1942,5 +1960,224 @@ describe('roster buttons on a touch screen', () => {
         tab.detach();
         expect(root.isConnected).toBe(false);
         expect(container.querySelector('style')).toBeNull();
+    });
+});
+
+/**
+ * Put you (slot 1) and others in a party. `others` are `[id, name, dto|null]`; a null build is a member whose profile
+ * is not loaded.
+ */
+function setParty(others) {
+    state.party = [
+        { characterID: 'me', characterName: 'Milkman' },
+        ...others.map(([id, name]) => ({ characterID: id, characterName: name })),
+    ];
+    const players = [{ ...build(90), hrid: 'player1' }];
+    const playerInfo = [{ hrid: 'player1', name: 'Milkman' }];
+    const missingMemberIds = [];
+    others.forEach(([id, name, dto], index) => {
+        if (dto) {
+            players.push({ ...dto, hrid: `player${index + 2}` });
+            playerInfo.push({ hrid: `player${index + 2}`, name });
+        } else missingMemberIds.push(id);
+    });
+    state.built = { players, playerInfo, selfHrid: 'player1', missingMemberIds };
+}
+
+const partyRows = () => [...tab.root.querySelectorAll('[data-pf-party-member]')];
+const partyChoice = (id) => tab.root.querySelector(`[data-pf-party-choice="${id}"]`);
+const firstPassSizes = () => state.calls[0].params.zones.map((z) => z.playerDTOs.length);
+const labelOfRow = (row) =>
+    resultRows()
+        .find((r) => r.dataset.pfRow === row.id)
+        ?.querySelector('td:nth-child(2) span')?.textContent;
+const pick = (id, value) => {
+    partyChoice(id).value = value;
+    partyChoice(id).dispatchEvent(new Event('change'));
+};
+const fireRosterEvent = () => {
+    for (const [event, cb] of state.partyListeners) if (event === 'party_roster_updated') cb();
+};
+
+describe('include my party', () => {
+    async function run() {
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+    }
+
+    test('on by default: a party member shows as Always and is in every party tried', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        expect(el('include-party').checked).toBe(true);
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Captain (in party)']);
+        expect(partyChoice('party:c1').value).toBe('always');
+        await run();
+        // You alone, then You + Captain: no party without Captain, bar the baseline
+        expect(firstPassSizes()).toEqual([1, 2]);
+        expect(state.calls[0].params.zones[1].playerDTOs[1].magicLevel).toBe(100);
+        await finishPass((_z, index) => sim(1000 + index * 100, 100));
+        expect(tab.sortedRows().map(labelOfRow).sort()).toEqual(['You + Captain', 'You alone']);
+    });
+
+    test('the party rows never reach the saved roster', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        const before = structuredClone(state.db);
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        pick('party:c1', 'never');
+        await run();
+        expect(state.db).toEqual(before);
+        expect(JSON.stringify(state.db)).not.toContain('Captain');
+        // The roster list holds Ann only
+        expect([...tab.root.querySelectorAll('[data-pf-member]')].map((r) => r.dataset.pfMember)).toEqual(['a']);
+    });
+
+    test('Try and Never are per session choices; Always keeps them in every party', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        const sizes = async () => {
+            state.calls = [];
+            await run();
+            const out = firstPassSizes();
+            tab.stop();
+            await flush();
+            return out;
+        };
+        // Always: You, You + Captain, You + Captain + Ann
+        expect(await sizes()).toEqual([1, 2, 3]);
+        pick('party:c1', 'try');
+        // Try: Captain and Ann may each be left out
+        expect((await sizes()).length).toBe(4);
+        pick('party:c1', 'never');
+        expect(await sizes()).toEqual([1, 2]);
+        // Remembered for the session: the row redraws on the pick
+        tab._renderPartyRows();
+        expect(partyChoice('party:c1').value).toBe('never');
+    });
+
+    test('not in a party: a short note, nothing added', async () => {
+        await mountTab();
+        expect(partyRows()).toHaveLength(0);
+        expect(el('party-note').textContent).toBe('You are not in a party.');
+    });
+
+    test('a member whose profile is not loaded is said so and left out, never a blank build', async () => {
+        seedRoster([['a', 'Ann', build(80)]]);
+        setParty([['c1', 'Captain', null]]);
+        await mountTab();
+        const row = partyRows()[0];
+        expect(row.querySelector('[data-pf-party-missing]')?.textContent).toMatch(/profile not loaded/);
+        expect(partyChoice('party:c1')).toBeNull();
+        expect(el('plan').textContent).toMatch(/Captain is in your party but their profile is not loaded/);
+        await run();
+        // Only Ann can join: You, You + Ann
+        expect(firstPassSizes()).toEqual([1, 2]);
+        expect(state.calls[0].params.zones[1].playerDTOs[1].magicLevel).toBe(80);
+    });
+
+    test('with only a member not loaded and no roster there is nothing to run', async () => {
+        setParty([['c1', 'Captain', null]]);
+        await mountTab();
+        await run();
+        expect(lastStatus()).toBe('Add teammates to the roster first.');
+        expect(state.calls).toHaveLength(0);
+    });
+
+    test('a party member who is also a saved teammate runs once, as the party member', async () => {
+        seedRoster([['a', 'captain', build(70)]]);
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        expect(partyRows()[0].textContent).toContain('replaces the saved teammate of that name');
+        const saved = tab.root.querySelector('[data-pf-member="a"]');
+        expect(saved.textContent).toContain('your party member is used instead');
+        expect(saved.querySelector('select').disabled).toBe(true);
+        await run();
+        expect(firstPassSizes()).toEqual([1, 2]);
+        expect(state.calls[0].params.zones[1].playerDTOs[1].magicLevel).toBe(100);
+        // ...and the saved teammate is still in the record
+        expect(state.db.entries.map((e) => e.id)).toEqual(['a']);
+    });
+
+    test('more locked members than the zone takes: the zone is skipped with a note, not crashed', async () => {
+        setParty([
+            ['c1', 'Captain', build(100)],
+            ['c2', 'Dawn', build(101)],
+            ['c3', 'Eve', build(102)],
+        ]);
+        await mountTab();
+        // Swamp Planet takes 3 players: you and three locked members do not fit
+        expect(el('plan').textContent).toMatch(/Captain, Dawn, Eve cannot all fit in a 3-player party here/);
+        await run();
+        expect(state.calls).toHaveLength(0);
+        expect(lastStatus()).toMatch(/Nothing to run/);
+    });
+
+    test('turning it off removes the rows and is remembered', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        expect(partyRows()).toHaveLength(1);
+        el('include-party').checked = false;
+        el('include-party').dispatchEvent(new Event('change'));
+        await flush();
+        expect(partyRows()).toHaveLength(0);
+        expect(el('party-note').textContent).toBe('');
+        expect(state.prefs['combatSimPartyIncludeParty_me']).toBe(false);
+        // A later opening reads it back
+        tab.detach();
+        await mountTab();
+        expect(el('include-party').checked).toBe(false);
+        expect(partyRows()).toHaveLength(0);
+    });
+
+    test('the party changing while the tab is open redraws', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        expect(partyRows()).toHaveLength(1);
+        setParty([
+            ['c1', 'Captain', build(100)],
+            ['c2', 'Dawn', build(101)],
+        ]);
+        fireRosterEvent();
+        await flush();
+        expect(partyRows().map((r) => r.dataset.pfPartyMember)).toEqual(['party:c1', 'party:c2']);
+        state.party = [{ characterID: 'me', characterName: 'Milkman' }];
+        fireRosterEvent();
+        await flush();
+        expect(partyRows()).toHaveLength(0);
+        // The listeners go with the tab
+        tab.detach();
+        expect(state.partyListeners).toHaveLength(0);
+    });
+});
+
+describe('you are in every party', () => {
+    test('the section and the Copy my build button say so', async () => {
+        await mountTab();
+        expect(tab.root.textContent).toContain(
+            'This player is in every party tried, and every figure below is theirs.'
+        );
+        expect(tab.root.textContent).not.toContain("Every figure below is this player's own.");
+        expect(el('add-self').title).toMatch(/second copy of you/);
+    });
+
+    test('result rows, the alias tooltip and the editor status all name you', async () => {
+        seedRoster([
+            ['a', 'Ann', build(80)],
+            ['b', 'Ann copy', build(80)],
+        ]);
+        await mountTab();
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        await finishPass((_z, index) => sim(1000 + index * 100, 100));
+        const labels = resultRows().map((r) => r.querySelector('td:nth-child(2) span').textContent);
+        expect(labels).toContain('You alone');
+        expect(labels).toContain('You + Ann');
+        expect(labels.every((l) => l.startsWith('You'))).toBe(true);
+        const annRow = tab.sortedRows().find((r) => labelOfRow(r) === 'You + Ann');
+        tab.root.querySelector(`[data-pf-load="${annRow.id}"]`).click();
+        expect(lastStatus()).toBe('Loaded Milkman + Ann into the editor.');
     });
 });
