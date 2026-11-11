@@ -518,6 +518,7 @@ class CombatSimulator {
             this.simResult.setPlayerPools(this.players[i]);
             this.simResult.setManaUsed(this.players[i]);
             this.simResult.setTriggerChecks(this.players[i]);
+            this.simResult.setAbilityCastSlots(this.players[i]);
         }
 
         if (this.zone.isDungeon) {
@@ -1905,7 +1906,7 @@ class CombatSimulator {
         }
 
         if (source.isPlayer) {
-            this.simResult.addCastMade(source);
+            this.simResult.addCastMade(source, ability);
             if (source.abilityManaCosts.has(ability.hrid)) {
                 source.abilityManaCosts.set(ability.hrid, source.abilityManaCosts.get(ability.hrid) + ability.manaCost);
             } else {

@@ -2657,6 +2657,7 @@ describe('casts refused for mana', () => {
         player.combatDetails.currentManapoints = 10;
         expect(sim.tryUseAbility(player, ability)).toBe(true);
         expect(sim.simResult.manaCastsMade[player.hrid]).toBe(1);
+        expect(sim.simResult.abilityCasts[player.hrid]).toEqual({ '/abilities/fixture': 1 });
         expect(sim.simResult.playerRanOutOfMana[player.hrid]).toBe(true);
     });
 

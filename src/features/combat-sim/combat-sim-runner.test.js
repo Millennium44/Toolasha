@@ -658,6 +658,25 @@ describe('keeping a simulation worker warm', () => {
         expect(merged.triggerChecks.player1).toEqual({ '/abilities/fireball': 10, '/items/donut': 0 });
     });
 
+    test('casts per ability from every chunk add up, and an ability that never fired stays at 0', async () => {
+        const { built } = stubWorkerPool({ deferred: true });
+        const pending = runSimulation({
+            gameData: gameDataPayload(),
+            zoneHrid: '/actions/combat/fly',
+            difficultyTier: 0,
+            hours: 100,
+        });
+        await new Promise((resolve) => setTimeout(resolve));
+        built.forEach((worker, i) =>
+            worker.respond({
+                ...EMPTY_SIM_RESULT,
+                abilityCasts: { player1: { '/abilities/fireball': i + 1, '/abilities/quick_aid': 0 } },
+            })
+        );
+        const merged = await pending;
+        expect(merged.abilityCasts.player1).toEqual({ '/abilities/fireball': 10, '/abilities/quick_aid': 0 });
+    });
+
     test('kill-time loot histograms from every chunk sum key by key, whatever each chunk ended on', async () => {
         // Each chunk ends in a different buff state; the merged result must not
         // value every chunk at chunk 0's end state
