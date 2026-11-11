@@ -3,6 +3,9 @@
 #
 #   bash scripts/land-stack.sh [--push] <pr> [<pr> ...]      (argument order = landing order)
 #
+# A PR may target the branch of a PR listed before it (a stack); its own commits are then the ones after
+# that PR's head, and GitHub marks it merged into that branch.
+#
 # Works in the integration worktree ../Toolasha-integ (next to the main checkout), so the main
 # checkout and its dev build stay untouched. Without --push it stops after the full gates and prints
 # the plan. With --push it re-checks that nothing moved, then pushes the PR branches in one atomic push and then main:
@@ -41,7 +44,18 @@ OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
 
 # Per-PR state, indexed by PR number.
-declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES
+declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES PARENT
+
+# Where a PR's own commits start: its merge-base with main, or, for a PR stacked on an earlier PR of this run,
+# that PR's head. Run inside a checkout.
+range_base() { # <pr> [commit, default refs/pr/<pr>]
+    local n="$1" tip="${2:-refs/pr/$1}"
+    if [ -n "${PARENT[$n]:-}" ]; then
+        git merge-base "refs/pr/${PARENT[$n]}" "$tip"
+    else
+        git merge-base origin/main "$tip"
+    fi
+}
 
 # Stable patch id of a diff between two commits, ignoring the given pathspec excludes. Position-independent,
 # so a patch that moved to a different line (main moved) still compares equal. Run inside a checkout.
@@ -71,7 +85,15 @@ check_pr_state() { # <pr>
         --jq '[.state,.baseRefName,.headRefOid,.headRefName,.isCrossRepository]|@tsv')"
     IFS=$'\t' read -r state base oid ref cross <<<"$info"
     [ "$state" = "OPEN" ] || die "PR #$n is $state, not OPEN"
-    [ "$base" = "main" ] || die "PR #$n targets $base, not main"
+    if [ "$base" != "main" ]; then
+        # A stacked PR: its base must be the branch of a PR landed earlier in this same run
+        local p
+        for p in "${PRS[@]}"; do
+            [ "$p" = "$n" ] && break
+            [ "${BRANCH[$p]:-}" = "$base" ] && PARENT[$n]="$p"
+        done
+        [ -n "${PARENT[$n]:-}" ] || die "PR #$n targets $base, not main or the branch of an earlier PR in this run"
+    fi
     [ "$cross" = "false" ] || die "PR #$n is from a fork; refusing (cannot push its branch)"
     HEAD_SHA[$n]="$oid"
     BRANCH[$n]="$ref"
@@ -131,8 +153,8 @@ check_codex() { # <pr>
     git -C "$INTEG" cat-file -e "$sha^{commit}" 2>/dev/null || git -C "$INTEG" fetch -q origin "$sha" 2>/dev/null ||
         die "PR #$n: Codex reviewed $sha, which is not fetchable, and the head is $head"
     local mb_r mb_h a b
-    mb_r="$(git -C "$INTEG" merge-base origin/main "$sha")" || die "PR #$n: reviewed commit $sha has no merge-base with main"
-    mb_h="$(git -C "$INTEG" merge-base origin/main "$head")"
+    mb_r="$(cd "$INTEG" && range_base "$n" "$sha")" || die "PR #$n: reviewed commit $sha has no merge-base with its base"
+    mb_h="$(cd "$INTEG" && range_base "$n" "$head")"
     a="$(cd "$INTEG" && patch_id "$mb_r" "$sha" CHANGELOG.md scripts/check-bundle-sharing.mjs)"
     b="$(cd "$INTEG" && patch_id "$mb_h" "$head" CHANGELOG.md scripts/check-bundle-sharing.mjs)"
     [ "$a" = "$b" ] || die "PR #$n: Codex reviewed $sha, head is $head, and the patches differ beyond CHANGELOG.md / check-bundle-sharing.mjs"
@@ -170,7 +192,7 @@ stack_prs() {
     git checkout -q --detach origin/main
     local n mb c commits last
     for n in "${PRS[@]}"; do
-        mb="$(git merge-base origin/main "refs/pr/$n")"
+        mb="$(range_base "$n")"
         PRE_SHA[$n]="$(git rev-parse HEAD)"
         commits="$(git rev-list --reverse "$mb..refs/pr/$n")"
         [ -n "$commits" ] || die "PR #$n has no commits beyond main"
@@ -194,7 +216,7 @@ stack_prs() {
 check_patch_identity() {
     local n mb a b
     for n in "${PRS[@]}"; do
-        mb="$(git merge-base origin/main "refs/pr/$n")"
+        mb="$(range_base "$n")"
         a="$(patch_id "$mb" "refs/pr/$n" CHANGELOG.md)"
         b="$(patch_id "${PRE_SHA[$n]}" "${STACKED_SHA[$n]}" CHANGELOG.md)"
         [ "$a" = "$b" ] || die "PR #$n: stacked patch differs from the PR head's patch outside CHANGELOG.md"
@@ -260,6 +282,13 @@ push_all() {
         args+=("--force-with-lease=refs/heads/${BRANCH[$n]}:${HEAD_SHA[$n]}")
     done
     for n in "${PRS[@]}"; do args+=("${STACKED_SHA[$n]}:refs/heads/${BRANCH[$n]}"); done
+    # A stacked PR targets the branch below it, which main's push never fills, so GitHub would leave it open; and
+    # once main holds its commits GitHub refuses to retarget it ("no new commits"). Retarget it now, while it can.
+    for n in "${PRS[@]}"; do
+        [ -n "${PARENT[$n]:-}" ] || continue
+        gh pr edit "$n" --base main >/dev/null || die "could not retarget stacked PR #$n to main; nothing pushed"
+        echo "  PR #$n retargeted to main"
+    done
     note "Pushing the PR branches (atomic)"
     git push "${args[@]}"
     note "Pushing main"
