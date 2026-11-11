@@ -61,6 +61,9 @@ Save pool and Sanitized show “Character not ready” before login, instead of 
 ### Combat Sim sees your party before everyone readies up
 
 While you fought solo waiting for a party to ready, each new fight made the Combat Sim think you were alone, so Reset to Party and fetching party loadouts stayed greyed out. The party you are in now counts until it starts fighting together.
+### Compact Command Palette settings button
+
+The Command Palette button in Settings now sizes to its label and aligns like Philo Gamba instead of stretching across the panel, on both desktop and phones.
 
 ### Labyrinth replay and exports wait for saved fights
 

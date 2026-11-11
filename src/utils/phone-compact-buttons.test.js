@@ -17,9 +17,19 @@ describe('phone compact buttons', () => {
         expect(document.querySelectorAll(`#${PHONE_COMPACT_BUTTONS_STYLE_ID}`)).toHaveLength(1);
     });
 
-    it('sizes Philo Gamba to its label at every width and XPH Calc at phone width only', () => {
+    it('sizes both Settings buttons to their labels at every width and XPH Calc at phone width only', () => {
         const [wide, phone] = PHONE_COMPACT_BUTTONS_CSS.split('@media');
-        expect(wide).toMatch(/\.mwi-philo-calc-button \{[^}]*width: fit-content/);
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(wide);
+        const rule = sheet.cssRules[0];
+        expect(rule.selectorText.split(',').map((selector) => selector.trim())).toEqual([
+            '.mwi-philo-calc-button',
+            '.mwi-palette-button',
+        ]);
+        expect(rule.style.width).toBe('fit-content');
+        expect(rule.style.maxWidth).toBe('100%');
+        expect(rule.style.alignSelf).toBe('flex-start');
+        expect(rule.style.justifySelf).toBe('start');
         expect(wide).not.toContain('.mwi-xph-calc-btn');
         expect(phone).toMatch(/\(max-width: 768px\)\s*\{\s*\.mwi-xph-calc-btn \{[^}]*width: fit-content/);
     });

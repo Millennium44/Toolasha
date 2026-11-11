@@ -1,11 +1,11 @@
 /**
  * Content-width injected buttons on phone screens.
  *
- * The Philo Gamba (Settings) and XPH Calc (Enhancing) buttons are inserted as direct children of a
- * game panel that lays its children out as a column, where a button stretches across the whole panel
- * and reads as a stray bar. Below the shared phone breakpoint they size to their label and sit at the
- * start of the line. Philo Gamba stretches on a desktop panel as well (measured 1,432 px), so its rule
- * applies at every width; XPH Calc's wide-screen look is untouched.
+ * The Philo Gamba and Command Palette (Settings) and XPH Calc (Enhancing) buttons are direct children
+ * of a game panel that lays its children out as a column, where a button stretches across the whole
+ * panel and reads as a stray bar. They size to their label and sit at the start of the line. Settings
+ * buttons stretch on desktop as well, so their rule applies at every width; XPH Calc is compact only
+ * below the shared phone breakpoint, leaving its wide-screen look untouched.
  */
 
 import { addStyles } from './dom.js';
@@ -14,7 +14,8 @@ export const PHONE_COMPACT_BUTTONS_STYLE_ID = 'mwi-phone-compact-buttons';
 
 /** The stylesheet text. Exported so tests can read the rules without a layout engine. */
 export const PHONE_COMPACT_BUTTONS_CSS = `
-    .mwi-philo-calc-button {
+    .mwi-philo-calc-button,
+    .mwi-palette-button {
         width: fit-content;
         max-width: 100%;
         align-self: flex-start;

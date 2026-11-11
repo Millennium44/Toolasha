@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { styleGameButton } from '../../utils/game-look.js';
 
 const settings = vi.hoisted(() => ({ values: {}, listeners: {} }));
 vi.mock('../../core/config.js', () => ({
@@ -35,18 +36,8 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
-vi.mock('../../utils/dom.js', () => ({
-    addStyles: (css, id) => {
-        const el = document.createElement('style');
-        el.id = id;
-        el.textContent = css;
-        document.head.appendChild(el);
-    },
-    removeStyles: (id) => document.getElementById(id)?.remove(),
-}));
 const device = vi.hoisted(() => ({ mobile: true }));
 vi.mock('../../utils/mobile.js', () => ({ isMobileMode: () => device.mobile }));
-vi.mock('../../utils/phone-compact-buttons.js', () => ({ ensurePhoneCompactButtonStyles: () => {} }));
 
 const buttons = (await import('./command-palette-buttons.js')).default;
 
@@ -118,6 +109,55 @@ describe('sidebar entry', () => {
 });
 
 describe('settings button', () => {
+    test.each([true, false])('sizes to its label without Philo (mobile: %s)', (mobile) => {
+        device.mobile = mobile;
+        buildPage();
+        buttons.start(opened);
+        const style = getComputedStyle(settingsBtn());
+        expect(style.width).toBe('fit-content');
+        expect(style.maxWidth).toBe('100%');
+        expect(style.alignSelf).toBe('flex-start');
+        expect(style.justifySelf).toBe('start');
+    });
+
+    test('shares the Philo button look and keeps it through repeated rebuilds and toggles', () => {
+        buildPage({ philo: true });
+        const philo = document.querySelector('.mwi-philo-calc-button');
+        styleGameButton(philo, 'primary');
+        philo.style.margin = '10px';
+        buttons.start(opened);
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            const expected = getComputedStyle(philo);
+            const actual = getComputedStyle(settingsBtn());
+            for (const property of [
+                'width',
+                'maxWidth',
+                'alignSelf',
+                'justifySelf',
+                'height',
+                'padding',
+                'margin',
+                'fontSize',
+                'fontWeight',
+                'background',
+                'borderRadius',
+            ]) {
+                expect(actual[property], property).toBe(expected[property]);
+            }
+            settingsBtn().click();
+            settingsBtn().remove();
+            observers.classCbs.forEach((cb) => cb());
+            setSetting('commandPaletteSettingsButton', false);
+            expect(settingsBtn()).toBeNull();
+            setSetting('commandPaletteSettingsButton', true);
+        }
+
+        expect(opened).toHaveBeenCalledTimes(3);
+        expect(document.querySelectorAll('.mwi-palette-button')).toHaveLength(1);
+        expect(document.querySelectorAll('#mwi-phone-compact-buttons')).toHaveLength(1);
+    });
+
     test('appears without Philo, after the history button, and opens the palette', () => {
         buildPage();
         buttons.start(opened);
