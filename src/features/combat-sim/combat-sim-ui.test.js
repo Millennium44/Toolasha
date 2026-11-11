@@ -103,6 +103,12 @@ const mocks = vi.hoisted(() => ({
     dungeonRuns: [],
     /** What SimEditor#getEditedDTOs() hands back; null unless a test opts in */
     editedDTOs: null,
+    /** hrid -> the name the editor reports for it (the hrid itself when unset) */
+    playerNames: null,
+    /** Names of party members with no loaded profile */
+    missingMembers: null,
+    /** Builds the result of each `runUpgradeAnalysis` call from its args; unset answers `upgradeResult` */
+    upgradeResultFor: null,
     /** What SimEditor#getSelfHrid() hands back */
     editorSelfHrid: null,
     /** What SimEditor#getActiveEditPlayer() hands back — the tab open in the editor */
@@ -655,10 +661,12 @@ vi.mock('./sim-editor.js', () => ({
             return mocks.editorOriginalDTOs?.[playerHrid] || null;
         }
         getPlayerInfo() {
-            return mocks.editedDTOs ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: hrid })) : [];
+            return mocks.editedDTOs
+                ? Object.keys(mocks.editedDTOs).map((hrid) => ({ hrid, name: mocks.playerNames?.[hrid] ?? hrid }))
+                : [];
         }
         getMissingMembers() {
-            return [];
+            return mocks.missingMembers || [];
         }
         applyTriggerValueChanges(changes) {
             mocks.triggerApplied.push(changes);
@@ -709,6 +717,8 @@ vi.mock('./upgrade-advisor.js', async (importOriginal) => {
         runUpgradeAnalysis: async (...args) => {
             mocks.upgradeRuns++;
             mocks.onRun?.(...args);
+            // A distinct result per call, when a test needs to tell the players' runs apart
+            if (mocks.upgradeResultFor) return mocks.upgradeResultFor(...args);
             return mocks.upgradeResult;
         },
         confirmUpgradeBudgetPlan: async (...args) => {
@@ -19148,5 +19158,480 @@ describe('simulator late sprite panel lifecycle', () => {
         ui.buildPanel();
         ui.show({ remember: false });
         expect(domObserver.handlers.filter((h) => h.name === 'sim-icon-refresh')).toHaveLength(1);
+    });
+});
+
+describe('the Upgrade tab: All players', () => {
+    const ROSTER = {
+        player1: { hrid: 'player1', equipment: {} },
+        player2: { hrid: 'player2', equipment: {} },
+        player3: { hrid: 'player3', equipment: {} },
+    };
+    const NAMES = { player1: 'Ann', player2: 'Bob', player3: 'Cy' };
+    const select = () => ui.panel.querySelector('#mwi-csim-upgrade-player');
+    const resultsText = () => ui.panel.querySelector('#mwi-csim-upgrade-results').textContent;
+    const activeText = () => ui.panel.querySelector('[data-allp-active]')?.textContent || '';
+    const status = () => ui.panel.querySelector('#mwi-csim-status').textContent;
+    const note = () => ui.panel.querySelector('#mwi-csim-upgrade-all-note');
+    const choose = (value) => {
+        select().value = value;
+        select().dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const chooseAll = () => choose('all');
+    const heads = () => [...ui.panel.querySelectorAll('[data-allp-head]')].map((h) => h.textContent);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+    /** A stale All choice with nobody left to offer it: the box still holds the option */
+    const forceAllOption = () => {
+        ui._upgradeAllChosenFlag = true;
+        const option = document.createElement('option');
+        option.value = 'all';
+        select().appendChild(option);
+        select().value = 'all';
+    };
+
+    /** A result for the player a call is for, with a row named after them and the context a verify reads */
+    const resultFor = ({ playerDTOs, playerIndex }, { rows = 2, candidateCount = rows } = {}) => ({
+        baseline: BASELINE,
+        results: Array.from({ length: rows }, (_, i) =>
+            row(`${playerDTOs[playerIndex].hrid} gear ${i + 1}`, { cost: 10 * (i + 1), dps: 110 - i })
+        ),
+        candidateCount,
+        food: null,
+        context: { playerHrid: playerDTOs[playerIndex].hrid, playerIndex, playerDTOs },
+    });
+
+    beforeEach(() => {
+        mocks.upgradeResult = { baseline: null, results: [], food: null };
+        mocks.upgradeResultFor = (args) => resultFor(args);
+        mocks.onRun = null;
+        mocks.upgradeRuns = 0;
+        mocks.characterId = 'char1';
+        mocks.editedDTOs = structuredClone(ROSTER);
+        mocks.editorSelfHrid = 'player1';
+        mocks.playerNames = { ...NAMES };
+        mocks.missingMembers = null;
+        ui.buildPanel();
+        selectZone();
+        ui._populateUpgradePlayerSelector();
+    });
+
+    afterEach(() => {
+        mocks.editedDTOs = null;
+        mocks.editorSelfHrid = null;
+        mocks.playerNames = null;
+        mocks.missingMembers = null;
+        mocks.upgradeResultFor = null;
+        mocks.onRun = null;
+        mocks.buildPlayerDTOs = null;
+        mocks.characterId = 'char1';
+        ui._upgradeRunning = false;
+        ui._upgradeAborted = false;
+        ui._allPlayersRun = null;
+        ui._upgradeAllChosenFlag = false;
+        ui._upgradeResultsData = null;
+        delete navigator.clipboard;
+        vi.restoreAllMocks();
+    });
+
+    describe('the Player box', () => {
+        test('offers All players last when there are two or more players, and not when you are alone', () => {
+            expect([...select().options].map((o) => o.textContent)).toEqual(['Ann', 'Bob', 'Cy', 'All players']);
+            expect(select().options[3].value).toBe('all');
+
+            mocks.editedDTOs = { player1: ROSTER.player1 };
+            ui._populateUpgradePlayerSelector();
+            expect([...select().options].map((o) => o.textContent)).toEqual(['Ann']);
+        });
+
+        test('a player named All players is still a player, not the All option', () => {
+            mocks.playerNames = { ...NAMES, player2: 'All players' };
+            ui._populateUpgradePlayerSelector();
+            choose('1');
+            expect(ui._upgradePlayerPick).toEqual({ name: 'All players', nth: 0 });
+            ui._populateUpgradePlayerSelector();
+            expect(select().value).toBe('1');
+        });
+
+        test('the choice survives the tab redrawing the box, and falls back to a player when the party shrinks', () => {
+            chooseAll();
+            ui._populateUpgradePlayerSelector();
+            expect(select().value).toBe('all');
+
+            mocks.editedDTOs = { player1: ROSTER.player1 };
+            ui._populateUpgradePlayerSelector();
+            expect(select().value).toBe('0');
+            expect(ui._upgradeAllChosen()).toBe(false);
+            expect(note().style.display).toBe('none');
+        });
+
+        test('choosing All players leaves the remembered single player alone', () => {
+            choose('1');
+            expect(ui._upgradePlayerPick).toEqual({ name: 'Bob', nth: 0 });
+            chooseAll();
+            expect(ui._upgradePlayerPick).toEqual({ name: 'Bob', nth: 0 });
+        });
+
+        test('the readers that need one player take the live character, never player 0 by accident', () => {
+            mocks.editorSelfHrid = 'player3';
+            chooseAll();
+            expect(ui._upgradePlayerIndex()).toBe(2);
+            expect(ui._readTriggerChoices().playerIndex).toBe(2);
+            mocks.editorSelfHrid = 'player2';
+            expect(ui._readTriggerChoices().playerIndex).toBe(1);
+        });
+    });
+
+    describe('the count before Analyze', () => {
+        test('shows each player own simulation count and their sum', async () => {
+            // Different abilities per player, so the counts differ
+            mocks.gameData = {
+                itemDetailMap: {},
+                abilityDetailMap: { '/abilities/a': { name: 'A' }, '/abilities/b': { name: 'B' } },
+            };
+            mocks.editedDTOs = {
+                player1: { hrid: 'player1', equipment: {}, abilities: [{ hrid: '/abilities/a', level: 10 }] },
+                player2: {
+                    hrid: 'player2',
+                    equipment: {},
+                    abilities: [
+                        { hrid: '/abilities/a', level: 10 },
+                        { hrid: '/abilities/b', level: 10 },
+                    ],
+                },
+                player3: { hrid: 'player3', equipment: {}, abilities: [] },
+            };
+            ui.panel.querySelector('[data-upgrade-mode="equipment"]').checked = false;
+            ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;
+            ui._onUpgradeModesChanged();
+            chooseAll();
+            await settle();
+            try {
+                expect(note().textContent).toMatch(
+                    /All players: 3 players, 6 simulations in all, before any close-call re-sims \(Ann 2, Bob 3, Cy 1\)\./
+                );
+            } finally {
+                mocks.gameData = { itemDetailMap: {} };
+            }
+        });
+
+        test('lists the members skipped for want of a loaded profile', async () => {
+            mocks.missingMembers = ['Dee', 'Eve'];
+            chooseAll();
+            await settle();
+            expect(note().textContent).toContain('Skipped, no profile loaded: Dee, Eve.');
+        });
+
+        test('says the per-player target boxes are left out while one is open', async () => {
+            ui.panel.querySelector('#mwi-csim-house-targets').style.display = 'flex';
+            chooseAll();
+            await settle();
+            expect(note().textContent).toContain('All players leaves them out');
+        });
+
+        test('goes away with the choice', async () => {
+            chooseAll();
+            await settle();
+            expect(note().style.display).toBe('block');
+            choose('0');
+            expect(note().style.display).toBe('none');
+            expect(note().textContent).toBe('');
+        });
+    });
+
+    describe('a run to the end', () => {
+        test('runs each player in party order on their own DTO, with a copy no other run sees', async () => {
+            const seen = [];
+            mocks.onRun = (params) => {
+                seen.push({ index: params.playerIndex, hrid: params.playerDTOs[params.playerIndex].hrid, params });
+                // A run that scribbles on its roster must not reach the next player's
+                params.playerDTOs[0].scribble = params.playerIndex;
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            expect(seen.map((s) => [s.index, s.hrid])).toEqual([
+                [0, 'player1'],
+                [1, 'player2'],
+                [2, 'player3'],
+            ]);
+            expect(seen[1].params.playerDTOs[0].scribble).toBe(1);
+            expect(seen[0].params.playerDTOs).not.toBe(seen[1].params.playerDTOs);
+            expect(Object.keys(mocks.editedDTOs.player1)).not.toContain('scribble');
+            expect(new Set(seen.map((s) => s.params.selfHrid))).toEqual(new Set(['player1']));
+            expect(status()).toContain('Analysis complete for 3 players: Ann, Bob, Cy.');
+        });
+
+        test('leaves the per-skill, per-ability, per-room and per-shrine target boxes out of every run', async () => {
+            const targets = [];
+            mocks.onRun = (params) => {
+                targets.push([
+                    params.abilityTargets,
+                    params.combatLevelTargets,
+                    params.houseTargets,
+                    params.guildShrineTargets,
+                ]);
+            };
+            ui.panel.querySelector('[data-upgrade-mode="ability_level"]').checked = true;
+            ui._onUpgradeModesChanged();
+            const grid = ui.panel.querySelector('#mwi-csim-ability-targets');
+            grid.style.display = 'flex';
+            grid.innerHTML = '<input data-ability-target="/abilities/a" value="99">';
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            expect(targets).toEqual([
+                [null, null, null, null],
+                [null, null, null, null],
+                [null, null, null, null],
+            ]);
+        });
+
+        test('draws one section per player in party order, the first open and each drawn as a single run is', async () => {
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            expect(heads().map((h) => h.replace(/[▼▶]/, ''))).toEqual([
+                expect.stringMatching(/^Ann2 upgrades measured/),
+                expect.stringMatching(/^Bob2 upgrades measured/),
+                expect.stringMatching(/^Cy2 upgrades measured/),
+            ]);
+            expect(activeText()).toContain('player1 gear 1');
+            expect(activeText()).not.toContain('player2 gear 1');
+            expect(ui._upgradeResultsData.context.playerHrid).toBe('player1');
+            expect(ui.panel.querySelectorAll('[data-allp-active]')).toHaveLength(1);
+
+            ui.panel.querySelector('[data-allp-head="player3"]').click();
+            expect(activeText()).toContain('player3 gear 1');
+            expect(activeText()).not.toContain('player1 gear 1');
+            // The actions of the open section act on that player's own analysis
+            expect(ui._upgradeResultsData.context.playerHrid).toBe('player3');
+            expect(ui._upgradeResultsData.context.playerIndex).toBe(2);
+        });
+
+        test('two players with the same name get their own sections and labels', async () => {
+            mocks.playerNames = { player1: 'Ann', player2: 'Ann', player3: 'Cy' };
+            ui._populateUpgradePlayerSelector();
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(heads().map((h) => h.replace(/[▼▶]/, '').replace(/\d+ upgrades measured.*/, ''))).toEqual([
+                'Ann',
+                'Ann (2)',
+                'Cy',
+            ]);
+            ui.panel.querySelector('[data-allp-head="player2"]').click();
+            expect(ui._upgradeResultsData.context.playerHrid).toBe('player2');
+        });
+
+        test('a player with nothing to upgrade is said to have nothing, and does not stop the others', async () => {
+            mocks.upgradeResultFor = (args) =>
+                args.playerIndex === 1 ? { baseline: BASELINE, results: [], food: null, context: {} } : resultFor(args);
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(3);
+            expect(heads()[1]).toContain('nothing to compare');
+            // Its section still opens, to say why there is nothing
+            ui.panel.querySelector('[data-allp-head="player2"]').click();
+            expect(activeText()).toContain('No upgrade candidates found');
+            expect(status()).toContain('Analysis complete');
+        });
+
+        test('Copy for chat covers every player on screen, not only the open section', async () => {
+            const writeText = vi.fn().mockResolvedValue(undefined);
+            Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            ui.panel.querySelector('#mwi-csim-upgrade-chat-copy').click();
+            await settle();
+
+            const copied = writeText.mock.calls[0][0];
+            for (const name of ['Ann', 'Bob', 'Cy']) expect(copied).toContain(name);
+            for (const hrid of ['player1', 'player2', 'player3']) expect(copied).toContain(`${hrid} gear`);
+            // The same list reaches the trigger box's Include upgrades
+            expect(ui._chatOptions().canIncludeUpgrades).toBe(true);
+            expect(ui._chatUpgradeOwners().map((o) => o.key)).toEqual(['player1', 'player2', 'player3']);
+        });
+    });
+
+    describe('Stop', () => {
+        test('keeps the players finished, the measured rows of the one cut short, and lists the rest as not run', async () => {
+            mocks.upgradeResultFor = (args) => {
+                if (args.playerIndex === 1) {
+                    ui._upgradeAborted = true;
+                    return resultFor(args, { rows: 1, candidateCount: 5 });
+                }
+                return resultFor(args);
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            expect(mocks.upgradeRuns).toBe(2);
+            expect(status()).toContain('Analysis cancelled.');
+            expect(status()).toContain('Finished: Ann.');
+            expect(status()).toContain('Stopped partway, partial rows kept: Bob.');
+            expect(status()).toContain('Not run: Cy.');
+            expect(resultsText()).toContain(
+                'Not every player finished: Bob (stopped: 1 of 5 candidates measured), Cy (not run)'
+            );
+            expect(ui.panel.querySelector('[data-allp-head="player3"]').disabled).toBe(true);
+            ui.panel.querySelector('[data-allp-head="player2"]').click();
+            expect(ui._upgradeResultsData.stopped).toEqual({ completed: 1, total: 5 });
+            // Chat: each player by their own run, the cut-short one marked partial, the not-run one left out
+            const owners = ui._chatUpgradeOwners();
+            expect(owners.map((x) => [x.key, x.name])).toEqual([
+                ['player1', 'Ann'],
+                ['player2', 'Bob'],
+            ]);
+            expect(owners[0].upgrades[0]).toMatch(/^Top upgrade:/);
+            expect(owners[1].upgrades[0]).toMatch(/^Top upgrade \(partial run\):/);
+            expect(resultsText()).toContain('Analysis stopped');
+        });
+
+        test('Stop before a player measured anything leaves that player not run, with no partial section', async () => {
+            mocks.upgradeResultFor = (args) => {
+                if (args.playerIndex === 1) {
+                    ui._upgradeAborted = true;
+                    return { baseline: null, results: [] };
+                }
+                return resultFor(args);
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(status()).toContain('Finished: Ann.');
+            expect(status()).toContain('Not run: Bob, Cy.');
+            expect(ui.panel.querySelector('[data-allp-head="player2"]').disabled).toBe(true);
+        });
+
+        test('Stop in the first player leaves nothing to act on and says every player did not run', async () => {
+            mocks.upgradeResultFor = () => {
+                ui._upgradeAborted = true;
+                return { baseline: null, results: [] };
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(ui._upgradeResultsData).toBeNull();
+            expect(status()).toContain('Not run: Ann, Bob, Cy.');
+            expect(ui.panel.querySelector('#mwi-csim-upgrade-chat-copy')).toBeNull();
+            expect(ui._chatUpgradeOwners()).toEqual([]);
+        });
+    });
+
+    describe('members with no loaded profile', () => {
+        test('are listed as skipped on the results and the status line, and not run', async () => {
+            mocks.missingMembers = ['Dee'];
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(3);
+            expect(status()).toContain('Skipped, no profile loaded: Dee.');
+            expect(resultsText()).toContain('Skipped, no profile loaded: Dee.');
+        });
+
+        test('when every member is skipped nothing runs, and the status says who', async () => {
+            mocks.editedDTOs = {};
+            mocks.missingMembers = ['Dee', 'Eve'];
+            ui._populateUpgradePlayerSelector();
+            forceAllOption();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(0);
+            expect(status()).toContain('Every party member is missing a loaded profile (Dee, Eve)');
+            expect(ui._upgradeRunning).toBe(false);
+        });
+    });
+
+    describe('other endings', () => {
+        test('a player whose analysis fails is listed, and later players are not run', async () => {
+            const failure = vi.spyOn(console, 'error').mockImplementation(() => {});
+            mocks.upgradeResultFor = (args) => {
+                if (args.playerIndex === 1) throw new Error('worker lost');
+                return resultFor(args);
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(2);
+            expect(status()).toContain('Analysis failed partway.');
+            expect(status()).toContain('Failed: Bob (worker lost).');
+            expect(status()).toContain('Not run: Cy.');
+            expect(resultsText()).toContain('Bob (failed: worker lost)');
+            expect(ui._upgradeRunning).toBe(false);
+            failure.mockRestore();
+        });
+
+        test('a character switch mid-run stops the loop and draws nothing as the new character', async () => {
+            mocks.upgradeResultFor = (args) => {
+                if (args.playerIndex === 0) mocks.characterId = 'char2';
+                return resultFor(args);
+            };
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(1);
+            expect(ui._allPlayersRun).toBeNull();
+            expect(resultsText()).not.toContain('gear');
+            expect(status()).not.toContain('Analysis complete');
+        });
+
+        test('a character switch while the party loads runs nothing', async () => {
+            mocks.editedDTOs = null;
+            mocks.buildPlayerDTOs = async () => {
+                mocks.characterId = 'char2';
+                return {
+                    players: [ROSTER.player1, ROSTER.player2],
+                    playerInfo: [],
+                    selfHrid: 'player1',
+                    missingMembers: [],
+                };
+            };
+            forceAllOption();
+            await ui._onUpgradeAnalyze();
+            expect(mocks.upgradeRuns).toBe(0);
+            expect(ui._upgradeRunning).toBe(false);
+        });
+
+        test('a single-player run after an All players run replaces the sections', async () => {
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            expect(ui._allPlayersRun).not.toBeNull();
+
+            choose('1');
+            await ui._onUpgradeAnalyze();
+            expect(ui._allPlayersRun).toBeNull();
+            expect(ui.panel.querySelector('[data-allp-head]')).toBeNull();
+            expect(resultsText()).toContain('player2 gear 1');
+            expect(ui._chatUpgradeOwners().map((o) => o.key)).toEqual(['player2']);
+        });
+
+        test('a character switch drops the sections and the choice', async () => {
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            ui.destroy();
+            mocks.characterId = 'char2';
+            ui.buildPanel();
+            expect(ui._allPlayersRun).toBeNull();
+            expect(ui._upgradeAllChosenFlag).toBe(false);
+        });
+    });
+
+    describe('remembered results', () => {
+        test('an All players run is not saved, and does not touch the remembered single-player record', async () => {
+            const { default: config } = await import('../../core/config.js');
+            vi.spyOn(config, 'getSetting').mockImplementation((key, fallback = false) =>
+                key === 'combatSim_rememberUpgradeResults' ? true : fallback
+            );
+            const KEY = 'combatExport:combatSimUpgradeResults_char1';
+            const remembered = {
+                data: { baseline: BASELINE, results: [row('Bob old run')] },
+                savedAt: 1,
+                characterName: 'Bob',
+            };
+            mocks.store.set(KEY, remembered);
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+            await settle();
+            expect(mocks.store.get(KEY)).toBe(remembered);
+
+            // And a pull cannot draw it over the sections
+            await ui._restoreUpgradeResults({ replace: true });
+            expect(resultsText()).not.toContain('Bob old run');
+            expect(ui._allPlayersRun).not.toBeNull();
+        });
     });
 });

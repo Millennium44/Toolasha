@@ -174,6 +174,7 @@ import {
     conflictKeys,
     candidateAssignmentKey,
     saleTaxRateOf,
+    estimateUpgradeSims,
 } from './upgrade-advisor.js';
 import {
     VERIFY_DEFAULTS,
@@ -574,6 +575,9 @@ const MIN_PANEL_HEIGHT = 300;
  * repay time inverted — all six are worth having on demand, none is worth the
  * width by default. Sixteen columns at once is what forced the panel wider.
  */
+/** The Upgrade tab's Player box value that runs every party member in turn */
+const ALL_PLAYERS_VALUE = 'all';
+
 const UPGRADE_CHAT_BTN_STYLE =
     'background:rgba(74, 158, 255, 0.2); border:1px solid rgba(74, 158, 255, 0.4); color:#4a9eff; ' +
     'padding:3px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;';
@@ -4173,6 +4177,11 @@ class CombatSimUI {
             ';';
 
         upgradeContent.appendChild(upgradeControls);
+        // What an All players run will do, before Analyze: the count, who is skipped, what is left out
+        const allPlayersNote = document.createElement('div');
+        allPlayersNote.id = 'mwi-csim-upgrade-all-note';
+        allPlayersNote.style.cssText = `display:none; padding:2px 14px 6px; flex-shrink:0; font-size:11px; color:${GAME_COLORS.textDim};`;
+        upgradeContent.appendChild(allPlayersNote);
         upgradeContent.appendChild(combatTargets);
         upgradeContent.appendChild(abilityTargetsGrid);
         upgradeContent.appendChild(houseTargetsGrid);
@@ -4351,12 +4360,19 @@ class CombatSimUI {
                 return;
             const inputGroup = UPGRADE_INPUT_GROUP_BY_ID.get(event.target.id);
             if (inputGroup) this._onUpgradeInputChanged(inputGroup);
+            this._scheduleAllPlayersNote();
         });
         // Delegated, so one listener covers the section's selects
         this.panel.addEventListener('change', (event) => {
             const inputGroup = UPGRADE_INPUT_GROUP_BY_ID.get(event.target?.id);
             if (inputGroup && !this._applyingUpgradeInputs) {
-                if (inputGroup === 'player') this._upgradePlayerPick = this._currentUpgradePlayerPick(event.target);
+                if (inputGroup === 'player') {
+                    // All players is not a player to remember: the last single pick stays what is saved
+                    this._upgradeAllChosenFlag = event.target.value === ALL_PLAYERS_VALUE;
+                    if (!this._upgradeAllChosenFlag) {
+                        this._upgradePlayerPick = this._currentUpgradePlayerPick(event.target);
+                    }
+                }
                 this._onUpgradeInputChanged(inputGroup);
             }
             if (Object.values(TRIGGER_CHOICE_IDS).includes(event.target?.id)) {
@@ -4366,6 +4382,7 @@ class CombatSimUI {
                 // The selected player is part of the remembered result's signature
                 this._refreshCachedTriggerResult();
             }
+            this._scheduleAllPlayersNote();
         });
         // The remembered trigger result can only be matched once the chip and its choices are restored
         this._upgradeInputsRestored = false;
@@ -10626,6 +10643,8 @@ class CombatSimUI {
         this._triggerSummary = '';
         this._goldVerifyRows = null;
         this._orderVerifyRows = null;
+        clearTimeout(this._allNoteTimer);
+        this._allNoteTimer = null;
         this._unwatchNarrowWindow();
         this._openCards = new Set();
         this._cardShowAll = new Set();
@@ -10668,6 +10687,9 @@ class CombatSimUI {
         // arriving character's own remembered analysis from ever restoring —
         // silently, and for the rest of the session.
         this._upgradeResultsData = null;
+        // An All players run belongs to the departing character's roster
+        this._allPlayersRun = null;
+        this._upgradeAllChosenFlag = false;
         // The runs it counts were the departing panel's
         this._upgradeRunStarted = false;
         this._restoredUpgradeAt = null;
@@ -10766,8 +10788,52 @@ class CombatSimUI {
             select.appendChild(option);
         }
 
-        // The remembered player, by name: party members change, so an index would pick a stranger
-        this._applyUpgradePlayerPick(select);
+        // Last, so every player keeps the index it has everywhere else. Offered with two or more loaded players:
+        // alone, "All players" is just you
+        let allOption = null;
+        if (playerInfo.length >= 2) {
+            allOption = document.createElement('option');
+            allOption.value = ALL_PLAYERS_VALUE;
+            allOption.dataset.allPlayers = '1';
+            allOption.textContent = 'All players';
+            select.appendChild(allOption);
+        }
+
+        if (this._upgradeAllChosenFlag && allOption) {
+            select.value = ALL_PLAYERS_VALUE;
+        } else {
+            // The party shrank to one (or the pick was a player): back to a player
+            this._upgradeAllChosenFlag = false;
+            // The remembered player, by name: party members change, so an index would pick a stranger
+            this._applyUpgradePlayerPick(select);
+        }
+        this._refreshAllPlayersNote();
+    }
+
+    /**
+     * Whether the Upgrade tab's Player box is on All players.
+     * @returns {boolean}
+     * @private
+     */
+    _upgradeAllChosen() {
+        return this.panel?.querySelector('#mwi-csim-upgrade-player')?.value === ALL_PLAYERS_VALUE;
+    }
+
+    /**
+     * The roster index the Upgrade tab's Player box means. All players has no single index: the readers that
+     * need one (a target grid's prefill, Tune triggers) take the live character, else the first player.
+     * @param {string} [selector] - The select to read
+     * @returns {number}
+     * @private
+     */
+    _upgradePlayerIndex(selector = '#mwi-csim-upgrade-player') {
+        const value = this.panel?.querySelector(selector)?.value;
+        if (value === ALL_PLAYERS_VALUE) {
+            const hrids = Object.keys(this._editor?.getEditedDTOs?.() || {});
+            const at = hrids.indexOf(this._editor?.getSelfHrid?.());
+            return at >= 0 ? at : 0;
+        }
+        return parseInt(value) || 0;
     }
 
     /**
@@ -10820,7 +10886,7 @@ class CombatSimUI {
      * @private
      */
     _prefillCombatTargets() {
-        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const playerIndex = this._upgradePlayerIndex();
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const boost = parseInt(this.panel.querySelector('#mwi-csim-combat-level-boost')?.value) || 5;
@@ -10868,7 +10934,7 @@ class CombatSimUI {
      * @private
      */
     _prefillAbilityTargets(grid, playerSelector, levelSelector, typeSelector) {
-        const playerIndex = parseInt(this.panel.querySelector(playerSelector)?.value) || 0;
+        const playerIndex = this._upgradePlayerIndex(playerSelector);
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const abilities = (dto?.abilities || []).filter(Boolean);
@@ -11068,7 +11134,7 @@ class CombatSimUI {
         if (!grid) return;
 
         const roomMap = dataManager.getInitClientData()?.houseRoomDetailMap || {};
-        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const playerIndex = this._upgradePlayerIndex();
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const uniform = Math.min(
@@ -11156,7 +11222,7 @@ class CombatSimUI {
         if (!grid) return;
 
         const detailMap = getGuildBuffDetailMap();
-        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
+        const playerIndex = this._upgradePlayerIndex();
         const editedDTOs = this._editor?.getEditedDTOs();
         const dto = editedDTOs ? Object.values(editedDTOs)[playerIndex] : null;
         const uniform = Math.min(
@@ -11494,7 +11560,7 @@ class CombatSimUI {
     _currentUpgradePlayerPick(select) {
         const options = [...(select?.options || [])];
         const index = select?.selectedIndex ?? -1;
-        if (index < 0 || !options[index]) return null;
+        if (index < 0 || !options[index] || options[index].dataset?.allPlayers) return null;
         const name = options[index].textContent;
         return { name, nth: options.slice(0, index).filter((o) => o.textContent === name).length };
     }
@@ -11509,7 +11575,9 @@ class CombatSimUI {
     _applyUpgradePlayerPick(select) {
         const pick = this._upgradePlayerPick;
         if (!select || !pick) return false;
-        const match = [...select.options].filter((o) => o.textContent === pick.name)[pick.nth];
+        const match = [...select.options].filter((o) => !o.dataset?.allPlayers && o.textContent === pick.name)[
+            pick.nth
+        ];
         if (!match) return false;
         select.value = match.value;
         return true;
@@ -11817,17 +11885,614 @@ class CombatSimUI {
     }
 
     /**
-     * Run upgrade analysis when Analyze button is clicked.
+     * Stamp a finished (or stopped) analysis with what the panel keeps beside the rows.
+     * @param {Object|null} results - The `runUpgradeAnalysis` return
+     * @param {Object} params
+     * @param {Map<string, string>} params.buildSigs - Each loaded player's build signature when the run started
+     * @param {string[]} params.upgradeModes - The checked sets
+     * @param {Object} params.playerDTO - The analysed player's DTO
+     * @param {Object} params.ranFor - Who, where and at what tier it was for, by name, as of now
      * @private
      */
-    async _onUpgradeAnalyze() {
-        if (this._isBusy()) {
-            if (this._triggerRunning) this._setStatus('Trigger tuning is running. Press Stop or wait, then Analyze.');
+    _stampUpgradeResults(results, { buildSigs, upgradeModes, playerDTO, ranFor }) {
+        // Not enumerable: it is memory-only, so it is neither saved with a remembered run nor copied
+        if (results && typeof results === 'object') {
+            Object.defineProperty(results, '_buildSigs', {
+                value: buildSigs,
+                enumerable: false,
+                configurable: true,
+            });
+        }
+        // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
+        // remembered run restores with the rate its profit deltas were measured against, not today's.
+        if (results) results.scrollTokenRate = scrollTokenRate();
+        // Verdicts belong to the analysis they re-measured; a result object handed back again starts clean
+        if (results) delete results.verifyVerdicts;
+        // Copy for chat names the player from this, never from whoever sits at that hrid or index later
+        if (results) results.ranFor = ranFor;
+        // What the Ability order section needs to tell "nothing to compare" from "stopped first": whether
+        // the option ran, how many orders there were to measure, and whether Stop cut the run short
+        if (results && upgradeModes.includes('ability_order')) {
+            const gd = results.context?.gameData || buildGameDataPayload();
+            results.abilityOrder = {
+                ran: true,
+                expected: generateAbilityOrderCandidates(playerDTO, gd).length,
+                stopped: Boolean(this._upgradeAborted),
+            };
+        }
+    }
+
+    /**
+     * Say on a result that Stop cut its run short. Stamped on the result, so the table, the budget and a
+     * remembered copy of it all say the run covers only part of what it set out to measure. Only when candidates
+     * are missing: Stop during the food search, which runs after every candidate, leaves the upgrades whole.
+     * @param {Object} results - The stopped analysis
+     * @param {number} completed - Candidates measured
+     * @param {string[]} upgradeModes - The checked sets
+     * @private
+     */
+    _stampStoppedRun(results, completed, upgradeModes) {
+        const total = Number.isFinite(results.candidateCount) ? results.candidateCount : null;
+        if (total == null || completed < total) {
+            results.stopped = { completed, total };
+        } else if (upgradeModes.includes('food')) {
+            results.foodStopped = true;
+        }
+    }
+
+    /**
+     * Display names for a roster, in order: two players that share a name get " (2)", " (3)".
+     * @param {string[]} names
+     * @returns {string[]}
+     * @private
+     */
+    _uniqueRosterNames(names) {
+        const seen = new Map();
+        return names.map((name) => {
+            const n = (seen.get(name) || 0) + 1;
+            seen.set(name, n);
+            return n === 1 ? name : `${name} (${n})`;
+        });
+    }
+
+    /**
+     * The party an All players run covers, read from the sim editor: the loaded players in party order with the
+     * names the Player box shows, and the members left out for want of a loaded profile. Null before the editor
+     * holds a party.
+     * @returns {{dtos: Array<Object>, names: string[], selfHrid: string|null, skipped: string[]}|null}
+     * @private
+     */
+    _allPlayersRoster() {
+        const edited = this._editor?.getEditedDTOs?.();
+        if (!edited) return null;
+        const infos = this._editor.getPlayerInfo?.() || [];
+        const dtos = Object.values(edited);
+        const names = this._uniqueRosterNames(
+            dtos.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`)
+        );
+        return {
+            dtos,
+            names,
+            selfHrid: this._editor.getSelfHrid?.() ?? null,
+            skipped: [...(this._editor.getMissingMembers?.() || [])],
+        };
+    }
+
+    /**
+     * Whether a per-player target grid (Combat Lv, Ability Lv, House, Shrine) is open: an All players run leaves
+     * those boxes out.
+     * @returns {boolean}
+     * @private
+     */
+    _perPlayerTargetGridOpen() {
+        const grids = [
+            '#mwi-csim-combat-targets',
+            '#mwi-csim-ability-targets',
+            '#mwi-csim-house-targets',
+            '#mwi-csim-shrine-targets',
+        ];
+        return grids.some((selector) => {
+            const grid = this.panel?.querySelector(selector);
+            return Boolean(grid) && grid.style.display !== 'none';
+        });
+    }
+
+    /**
+     * The `runUpgradeAnalysis` params an All players run uses for every player, minus the roster.
+     * @param {Object} inputs - From {@link _readUpgradeInputs}
+     * @param {Object} options - From {@link _readUpgradeRunOptions}
+     * @returns {Object}
+     * @private
+     */
+    _allPlayersParams(inputs, options) {
+        return {
+            zoneHrid: inputs.zoneHrid,
+            difficultyTier: inputs.difficultyTier,
+            hours: inputs.hours,
+            upgradeModes: inputs.upgradeModes,
+            optimizeFood: inputs.upgradeModes.includes('food'),
+            abilityLevelType: inputs.abilityLevelType,
+            abilityTargetLevel: inputs.abilityTargetLevel,
+            abilitySteps: inputs.abilitySteps,
+            combatLevelType: inputs.combatLevelType,
+            combatLevelBoost: inputs.combatLevelBoost,
+            combatLevelSteps: inputs.combatLevelSteps,
+            charmTier: inputs.charmTier,
+            charmEnhancement: inputs.charmEnhancement,
+            ...options,
+        };
+    }
+
+    /** Redraw the All players note shortly, after the control that changed has settled. @private */
+    _scheduleAllPlayersNote() {
+        if (!this.panel) return;
+        if (!this._upgradeAllChosen()) {
+            // Cheap and final: the note is empty whenever All players is not chosen
+            this._refreshAllPlayersNote();
+            return;
+        }
+        clearTimeout(this._allNoteTimer);
+        this._allNoteTimer = setTimeout(() => {
+            this._allNoteTimer = null;
+            this._refreshAllPlayersNote();
+        }, 50);
+    }
+
+    /**
+     * The line under the Upgrade controls while All players is chosen: how many players and simulations the run
+     * will start, who is skipped for want of a loaded profile, and what the run leaves out. The count is each
+     * player's own (their build decides their candidates) summed.
+     * @private
+     */
+    _refreshAllPlayersNote() {
+        const el = this.panel?.querySelector('#mwi-csim-upgrade-all-note');
+        if (!el) return;
+        if (!this._upgradeAllChosen()) {
+            el.style.display = 'none';
+            el.textContent = '';
+            return;
+        }
+        el.style.display = 'block';
+        // A run is under way: the count belongs to the controls, which cannot change meaningfully now
+        if (this._isBusy()) return;
+        const lines = [];
+        const roster = this._allPlayersRoster();
+        const modes = this._getUpgradeModes();
+        if (!roster) {
+            lines.push('All players: open the Configure tab once so the party loads; the simulation count shows here.');
+        } else if (!modes.length) {
+            lines.push('All players: check at least one upgrade type to include.');
+        } else {
+            try {
+                const inputs = this._readUpgradeInputs();
+                const params = {
+                    ...this._allPlayersParams(inputs, this._readUpgradeRunOptions(modes, { perPlayerTargets: false })),
+                    playerDTOs: structuredClone(roster.dtos),
+                    selfHrid: roster.selfHrid,
+                };
+                const counts = roster.dtos.map((_, i) => estimateUpgradeSims({ ...params, playerIndex: i }));
+                const total = counts.reduce((sum, n) => sum + n, 0);
+                const per = roster.names.map((name, i) => `${name} ${formatWithSeparator(counts[i])}`).join(', ');
+                const resim = this.panel.querySelector('#mwi-csim-upgrade-resim')?.checked
+                    ? ', before any close-call re-sims'
+                    : '';
+                lines.push(
+                    `All players: ${roster.dtos.length} players, ${formatWithSeparator(total)} simulations in all${resim} (${per}).`
+                );
+            } catch (error) {
+                console.error('[CombatSimUI] Counting the All players simulations failed:', error);
+                lines.push('All players: the simulation count is not available.');
+            }
+        }
+        if (roster?.skipped.length) {
+            lines.push(`Skipped, no profile loaded: ${roster.skipped.join(', ')}.`);
+        }
+        if (this._perPlayerTargetGridOpen()) {
+            lines.push(
+                'The per-skill, per-ability, per-room and per-shrine target boxes are one player’s levels, so ' +
+                    'All players leaves them out and uses the Lv boxes for everyone.'
+            );
+        }
+        el.innerHTML = lines.map((line) => `<div>${escapeAttribute(line)}</div>`).join('');
+    }
+
+    /**
+     * Load the party an All players run covers: the loaded players (each a copy), who is the live character,
+     * their names, and the members with no loaded profile.
+     * @returns {Promise<{playerDTOs: Array<Object>, selfHrid: string|null, names: string[], skipped: string[]}>}
+     * @private
+     */
+    async _loadAllPlayersRoster() {
+        const editedDTOs = this._editor?.getEditedDTOs();
+        if (editedDTOs) {
+            // A copy: the editor follows the game's level-ups in place, and every candidate must be measured
+            // against the build the run started with
+            const roster = this._allPlayersRoster();
+            return {
+                playerDTOs: structuredClone(Object.values(editedDTOs)),
+                selfHrid: roster.selfHrid,
+                names: roster.names,
+                skipped: roster.skipped,
+            };
+        }
+        const result = await buildAllPlayerDTOs();
+        const infos = result.playerInfo || [];
+        const players = result.players || [];
+        return {
+            playerDTOs: players,
+            selfHrid: result.selfHrid ?? null,
+            names: this._uniqueRosterNames(
+                players.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`)
+            ),
+            skipped: [...(result.missingMembers || [])],
+        };
+    }
+
+    /**
+     * Run the upgrade analysis for every loaded party member in turn, each exactly as choosing that player in the
+     * Player box would: their own DTO and loadout, a fresh seed and price snapshot, the same zone, tier, hours and
+     * options. Nothing is shared between players but the roster snapshot taken when Analyze was pressed; the
+     * per-skill, per-ability, per-room and per-shrine target boxes (one player's absolute levels) are left out.
+     *
+     * Every way it can end: all done (one section per player); Stop (the players finished stay, the one cut short
+     * keeps its measured candidates marked stopped, the rest are listed as not run); a player's analysis failing
+     * (later players are not run; the failure is listed); no loaded profile for any member (nothing runs, and
+     * the status names them); a character switch (nothing is drawn or kept). Members without a loaded profile
+     * are listed as skipped. An All players run is never saved to, or restored from, the remembered results.
+     *
+     * @param {Object} inputs - `{ ownerId, zoneHrid, difficultyTier, hours, upgradeModes }`, read before any await
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _onUpgradeAnalyzeAll({ ownerId, zoneHrid, difficultyTier, hours, upgradeModes }) {
+        // Claim the run before loading live DTOs (see `_onUpgradeAnalyze`)
+        this._upgradeRunning = true;
+        this._analysisGen = (this._analysisGen || 0) + 1;
+        const latchGen = this._analysisGen;
+        this._upgradeRunStarted = true;
+        const release = () => {
+            if (latchGen === this._analysisGen) this._upgradeRunning = false;
+        };
+        const current = () => this._stillSameCharacter(ownerId) && latchGen === this._analysisGen;
+
+        let roster;
+        try {
+            roster = await this._loadAllPlayersRoster();
+        } catch (error) {
+            release();
+            console.error('[CombatSimUI] Failed to load players for upgrade analysis:', error);
+            this._setStatus('Analysis failed: ' + error.message);
+            return;
+        }
+        if (!current()) {
+            release();
+            return;
+        }
+        const { playerDTOs, selfHrid, names, skipped } = roster;
+        if (!playerDTOs.length) {
+            release();
+            this._setStatus(
+                skipped.length
+                    ? `Every party member is missing a loaded profile (${skipped.join(', ')}): nothing to analyze. ` +
+                          'Open their profiles, then try again.'
+                    : 'No player data available. Configure a simulation first.'
+            );
             return;
         }
 
-        // Captured before the first await — see `_stillSameCharacter`
-        const ownerId = dataManager.getCurrentCharacterId();
+        const progressEl = this.panel.querySelector('#mwi-csim-upgrade-progress');
+        const resultsEl = this.panel.querySelector('#mwi-csim-upgrade-results');
+        const runBtn = this.panel.querySelector('#mwi-csim-upgrade-run');
+        const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
+        progressEl.style.display = 'block';
+        resultsEl.innerHTML = '';
+        this._setTuneButtonBusy(true);
+        this._setUpgradeColumnMenuOpen(false);
+        runBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        this._upgradeAborted = false;
+        this._upgradeRunning = true;
+        this._upgradeRunStarted = true;
+        // The previous analysis, single or all, goes with the table this run replaces; this run does not replace
+        // the remembered result (see above), and a remembered one is not drawn over a run
+        this._allPlayersRun = null;
+        this._upgradeResultsData = null;
+        this._restoredUpgradeAt = null;
+        this._rememberedResults = null;
+        this._restoredUpgradeMeta = null;
+        this._budgetConfirm = null;
+
+        // Paired by hrid, captured now: nothing below looks a name up again
+        const entries = playerDTOs.map((dto, index) => ({
+            hrid: dto.hrid,
+            name: names[index],
+            index,
+            state: 'pending',
+            results: null,
+            error: null,
+        }));
+        const eta = createEtaTracker();
+        const bar = { pct: 0 };
+        let analysisFailed = false;
+        let superseded = false;
+
+        try {
+            const options = this._readUpgradeRunOptions(upgradeModes, { perPlayerTargets: false });
+            const params = this._allPlayersParams(
+                { ...this._readUpgradeInputs(), zoneHrid, difficultyTier, hours, upgradeModes },
+                options
+            );
+            // The builds this analysis measures from, taken before any baseline: an Apply or any edit afterwards
+            // makes every later Confirm and Verify measure a different build against this baseline
+            const buildSigs = new Map(playerDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
+            for (const entry of entries) {
+                if (this._upgradeAborted) break;
+                const position = `${entry.index + 1}/${entries.length}`;
+                // Each player's run gets its own copy of the snapshot: nothing a run does to its roster reaches
+                // the next player's
+                const dtos = structuredClone(playerDTOs);
+                this._setStatus(`Analyzing ${entry.name} (${position})...`);
+                entry.state = 'running';
+                let results = null;
+                try {
+                    results = await runUpgradeAnalysis(
+                        { ...params, playerDTOs: dtos, playerIndex: entry.index, selfHrid },
+                        ({ current: done, total, description }) => {
+                            if (this._upgradeAborted || !current()) return;
+                            const fill = this.panel?.querySelector('#mwi-csim-upgrade-progress-fill');
+                            const text = this.panel?.querySelector('#mwi-csim-upgrade-progress-text');
+                            const within = total > 0 ? Math.min(1, done / total) : 0;
+                            const fraction = (entry.index + within) / entries.length;
+                            bar.pct = Math.max(bar.pct, Math.min(100, Math.round(fraction * 100)));
+                            // The pace estimate over the whole run: the advisor's own covers one player
+                            const { text: remaining } = eta.update(fraction);
+                            if (fill) fill.style.width = bar.pct + '%';
+                            if (text) {
+                                text.textContent =
+                                    `${entry.name} (${position}): ${done} / ${total}` +
+                                    (remaining ? ` · ${remaining}` : '');
+                            }
+                            this._setStatus(`${entry.name} (${position}): ${description}`);
+                        },
+                        { abortSignal: () => this._upgradeAborted }
+                    );
+                } catch (error) {
+                    // After an await: a character switch or a newer run owns the panel now
+                    if (!current()) {
+                        superseded = true;
+                        return;
+                    }
+                    console.error(`[CombatSimUI] Upgrade analysis failed for ${entry.name}:`, error);
+                    entry.state = 'failed';
+                    entry.error = error?.message || 'unknown error';
+                    analysisFailed = true;
+                    break;
+                }
+                if (!current()) {
+                    superseded = true;
+                    return;
+                }
+                const completed = results?.results?.length || 0;
+                this._stampUpgradeResults(results, {
+                    buildSigs,
+                    upgradeModes,
+                    playerDTO: playerDTOs[entry.index],
+                    ranFor: { hrid: entry.hrid, name: entry.name, zoneHrid, difficultyTier },
+                });
+                if (this._upgradeAborted) {
+                    // Every candidate already simulated is a real measurement: kept, and marked stopped
+                    if (completed) {
+                        this._stampStoppedRun(results, completed, upgradeModes);
+                        entry.results = results;
+                        entry.state = 'stopped';
+                    } else {
+                        entry.state = 'notrun';
+                    }
+                    break;
+                }
+                entry.results = results;
+                entry.state = completed ? 'done' : 'empty';
+            }
+            for (const entry of entries) {
+                if (entry.state === 'pending' || entry.state === 'running') entry.state = 'notrun';
+            }
+
+            this._allPlayersRun = {
+                entries,
+                skipped,
+                active: entries.find((e) => e.results)?.hrid ?? null,
+            };
+            this._renderUpgradeAllPlayers();
+            this._syncChatToggle();
+            this._setStatus(this._allPlayersStatus(entries, skipped));
+        } catch (error) {
+            analysisFailed = true;
+            console.error('[CombatSimUI] Upgrade analysis failed:', error);
+            if (current()) this._setStatus('Analysis failed: ' + error.message);
+        } finally {
+            // A run started after a character switch owns the latch by now
+            release();
+            progressEl.style.display = 'none';
+            runBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            if (latchGen === this._analysisGen) this._setTuneButtonBusy(false);
+            if (!superseded && current()) {
+                this._refreshAllPlayersNote();
+                this._afterRun();
+            }
+        }
+
+        // Close calls get a second look on fresh seeds when the player asked for it: for each player that
+        // finished, in party order. Never after Stop, a failure or a character switch
+        if (
+            !analysisFailed &&
+            !superseded &&
+            !this._upgradeAborted &&
+            current() &&
+            config.getSettingValue('combatSim_autoVerifyCloseCalls', false)
+        ) {
+            const run = this._allPlayersRun;
+            const first = run?.active;
+            for (const entry of entries.filter((e) => e.state === 'done')) {
+                if (this._allPlayersRun !== run || !current()) return;
+                run.active = entry.hrid;
+                this._renderUpgradeAllPlayers();
+                await this._autoVerifyCloseCalls(ownerId, entry.results);
+                if (this._upgradeAborted || !current()) return;
+            }
+            if (this._allPlayersRun === run && first && current()) {
+                run.active = first;
+                this._renderUpgradeAllPlayers();
+            }
+        }
+    }
+
+    /**
+     * The status line an All players run ends on: who finished, who was cut short, who did not run, who failed
+     * and who was skipped.
+     * @param {Array<Object>} entries - The run's players
+     * @param {string[]} skipped - Members with no loaded profile
+     * @returns {string}
+     * @private
+     */
+    _allPlayersStatus(entries, skipped) {
+        const names = (state) => entries.filter((e) => e.state === state).map((e) => e.name);
+        const done = [...names('done'), ...names('empty')];
+        const stopped = names('stopped');
+        const notRun = names('notrun');
+        const failed = entries.filter((e) => e.state === 'failed');
+        const parts = [];
+        if (!stopped.length && !notRun.length && !failed.length) {
+            const evaluated = entries.reduce((sum, e) => sum + (e.results?.results?.length || 0), 0);
+            parts.push(
+                `Analysis complete for ${done.length} player${done.length === 1 ? '' : 's'}: ${done.join(', ')}. ` +
+                    `${evaluated} upgrades evaluated.`
+            );
+        } else {
+            parts.push(failed.length ? 'Analysis failed partway.' : 'Analysis cancelled.');
+            if (done.length) parts.push(`Finished: ${done.join(', ')}.`);
+            if (stopped.length) parts.push(`Stopped partway, partial rows kept: ${stopped.join(', ')}.`);
+            if (failed.length) parts.push(`Failed: ${failed.map((e) => `${e.name} (${e.error})`).join(', ')}.`);
+            if (notRun.length) parts.push(`Not run: ${notRun.join(', ')}.`);
+        }
+        if (skipped.length) parts.push(`Skipped, no profile loaded: ${skipped.join(', ')}.`);
+        return parts.join(' ');
+    }
+
+    /**
+     * Draw an All players run: a summary of how it ended, then one section per player in party order. Each
+     * section's header names how that player's run ended; the open section is drawn by the ordinary results view
+     * on that player's own analysis (everything it does, Verify and Apply included, acts on that player), and a
+     * click on another header opens it instead.
+     * @private
+     */
+    _renderUpgradeAllPlayers() {
+        const run = this._allPlayersRun;
+        const container = this.panel?.querySelector('#mwi-csim-upgrade-results');
+        if (!run || !container) return;
+        const stateText = (entry) => {
+            const count = entry.results?.results?.length || 0;
+            switch (entry.state) {
+                case 'done':
+                    return `${count} upgrade${count === 1 ? '' : 's'} measured`;
+                case 'empty':
+                    return 'nothing to compare';
+                case 'stopped': {
+                    const of = entry.results?.stopped?.total != null ? ` of ${entry.results.stopped.total}` : '';
+                    return `stopped: ${count}${of} candidate${count === 1 && !of ? '' : 's'} measured`;
+                }
+                case 'failed':
+                    return `failed: ${entry.error}`;
+                default:
+                    return 'not run';
+            }
+        };
+        // The hints below name each player's top row on the scale the table is scored on
+        for (const entry of run.entries) this._rescoreUpgrades(entry.results);
+        const colorOf = (entry) => (entry.state === 'done' || entry.state === 'empty' ? '#7fbf7f' : '#e8a87c');
+        const unfinished = run.entries.filter((e) => e.state !== 'done' && e.state !== 'empty');
+        let html = '';
+        if (unfinished.length || run.skipped.length) {
+            const lines = [];
+            if (unfinished.length) {
+                const list = unfinished.map((e) => `${e.name} (${stateText(e)})`).join(', ');
+                lines.push(`Not every player finished: ${list}.`);
+            }
+            if (run.skipped.length) lines.push(`Skipped, no profile loaded: ${run.skipped.join(', ')}.`);
+            html +=
+                `<div data-allp-summary style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#e8a87c; ` +
+                `background:rgba(232,168,124,0.08); border:1px solid rgba(232,168,124,0.3); border-radius:5px;">` +
+                lines.map((line) => escapeAttribute(line)).join('<br>') +
+                `</div>`;
+        }
+        for (const entry of run.entries) {
+            const open = Boolean(entry.results) && entry.hrid === run.active;
+            const hint = !open && entry.results ? topUpgradeTexts(entry.results, 1)[0] || '' : '';
+            html +=
+                `<div data-allp-section="${escapeAttribute(entry.hrid)}" style="margin:0 0 8px;">` +
+                `<button type="button" data-allp-head="${escapeAttribute(entry.hrid)}" ${entry.results ? '' : 'disabled'} style="` +
+                `display:flex; width:100%; align-items:baseline; gap:8px; text-align:left; ` +
+                `cursor:${entry.results ? 'pointer' : 'default'}; background:${GAME_COLORS.raised}; ` +
+                `border:1px solid ${GAME_COLORS.border}; border-radius:5px; padding:6px 10px; color:#e0e0e0; ` +
+                `font-family:inherit; font-size:12px;">` +
+                `<span style="font-size:10px; color:#888;">${open ? '▼' : '▶'}</span>` +
+                `<span style="font-weight:700;">${escapeAttribute(entry.name)}</span>` +
+                `<span style="color:${colorOf(entry)};">${escapeAttribute(stateText(entry))}</span>` +
+                (hint
+                    ? `<span style="color:${GAME_COLORS.textDim}; min-width:0; overflow:hidden; ` +
+                      `text-overflow:ellipsis; white-space:nowrap;">${escapeAttribute(hint)}</span>`
+                    : '') +
+                `</button>` +
+                (open ? `<div data-allp-active style="padding-top:8px;"></div>` : '') +
+                `</div>`;
+        }
+        container.innerHTML = html;
+        container.querySelectorAll('[data-allp-head]').forEach((head) => {
+            head.addEventListener('click', () => this._activateAllPlayersSection(head.getAttribute('data-allp-head')));
+        });
+        const active = run.entries.find((e) => e.results && e.hrid === run.active);
+        if (active) {
+            this._renderUpgradeResults(active.results);
+        } else {
+            // Nothing finished: the panel holds no analysis for the actions below to act on
+            this._upgradeResultsData = null;
+            this._refreshAnalysisNote();
+        }
+    }
+
+    /**
+     * Open one player's section of an All players view.
+     * @param {string} hrid - The player's hrid
+     * @private
+     */
+    _activateAllPlayersSection(hrid) {
+        const run = this._allPlayersRun;
+        if (!run || this._isBusy() || run.active === hrid) return;
+        if (!run.entries.some((e) => e.hrid === hrid && e.results)) return;
+        run.active = hrid;
+        this._setUpgradeColumnMenuOpen(false);
+        this._renderUpgradeAllPlayers();
+    }
+
+    /**
+     * Where the ordinary results view draws: the open section of an All players view, else the results box.
+     * @returns {HTMLElement|null}
+     * @private
+     */
+    _upgradeResultsTarget() {
+        const box = this.panel?.querySelector('#mwi-csim-upgrade-results') || null;
+        if (!this._allPlayersRun || !box) return box;
+        return box.querySelector('[data-allp-active]') || box;
+    }
+
+    /**
+     * The Upgrade tab's inputs that do not depend on the player: the zone and tier, hours, the checked sets and
+     * the level boxes, as an Analyze reads them.
+     * @returns {Object} `{ zoneHrid, difficultyTier, hours, upgradeModes, abilityLevelType, abilityTargetLevel,
+     *   abilitySteps, combatLevelType, combatLevelBoost, combatLevelSteps, charmTier, charmEnhancement }`
+     * @private
+     */
+    _readUpgradeInputs() {
         const zoneHrid = this.panel.querySelector('#mwi-csim-zone')?.value;
         const difficultyTier = parseInt(this.panel.querySelector('#mwi-csim-tier')?.value) || 0;
         const hours = Math.min(
@@ -11838,7 +12503,6 @@ class CombatSimUI {
                     config.getSettingValue('combatSim_defaultHours', 100)
             )
         );
-        const playerIndex = parseInt(this.panel.querySelector('#mwi-csim-upgrade-player')?.value) || 0;
         // Trigger tuning is its own run (the Tune triggers section); Analyze never runs it
         const upgradeModes = this._getUpgradeModes();
         const abilityLevelType = this.panel.querySelector('#mwi-csim-upgrade-level-type')?.value || 'increment';
@@ -11874,6 +12538,140 @@ class CombatSimUI {
                     ? null
                     : Math.max(0, Math.min(maxEnhancementLevel(), parseInt(enhRaw) || 0));
         }
+        return {
+            zoneHrid,
+            difficultyTier,
+            hours,
+            upgradeModes,
+            abilityLevelType,
+            abilityTargetLevel,
+            abilitySteps,
+            combatLevelType,
+            combatLevelBoost,
+            combatLevelSteps,
+            charmTier,
+            charmEnhancement,
+        };
+    }
+
+    /**
+     * The Upgrade tab's run options that are read once the run is under way: community buffs, the Steps and
+     * target boxes, the House, Shrine and Community options, close-call re-sims and the aura-swap filter. May
+     * throw on unexpected game data.
+     *
+     * The per-ability, per-skill, per-room and per-shrine target grids are filled from one player's build and
+     * hold absolute levels, so `perPlayerTargets: false` (an All players run) leaves them out and the uniform
+     * boxes apply to everyone.
+     * @param {string[]} upgradeModes - The checked sets
+     * @param {Object} [options]
+     * @param {boolean} [options.perPlayerTargets] - Read the per-entity target grids (default true)
+     * @returns {Object} The `runUpgradeAnalysis` params that come from the panel's controls
+     * @private
+     */
+    _readUpgradeRunOptions(upgradeModes, { perPlayerTargets = true } = {}) {
+        const communityBuffs = getCommunityBuffs();
+        const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
+        const enhancementSteps = upgradeModes.includes('equipment')
+            ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-equip-steps')?.value)
+            : 1;
+        const enhancementStepKind =
+            this.panel.querySelector('#mwi-csim-equip-step-kind')?.value === 'levels' ? 'levels' : 'breakpoints';
+        const isHouseMode = upgradeModes.includes('house');
+        const houseTargetLevel = isHouseMode
+            ? Math.min(8, Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0))
+            : 0;
+        const houseTargets = isHouseMode && perPlayerTargets ? this._getHouseTargets() : null;
+        const houseNonCombatBundle =
+            isHouseMode && Boolean(this.panel.querySelector('#mwi-csim-house-noncombat-bundle')?.checked);
+        const houseSteps = isHouseMode
+            ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-house-steps')?.value)
+            : 1;
+        const guildShrineSteps = upgradeModes.includes('guild_shrine')
+            ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-shrine-steps')?.value)
+            : 1;
+        // Blank means "one level up", which is what the advisor reads a 0 as
+        const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
+            ? Math.min(
+                  getGuildShrineMaxLevel(),
+                  Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
+              )
+            : 0;
+        // Per-shrine grid, when open, overrides the uniform Lv above — the
+        // advisor's `guildShrineTargets` takes precedence over the single
+        // number, exactly as the House grid overrides the House Lv value
+        const guildShrineTargets =
+            upgradeModes.includes('guild_shrine') && perPlayerTargets ? this._getShrineTargets() : null;
+        // Default on: a level the guild's shrine building cannot sell is not
+        // an upgrade the character can buy, however well it would rank
+        const guildShrineCapToGuild =
+            upgradeModes.includes('guild_shrine') &&
+            Boolean(this.panel.querySelector('#mwi-csim-shrine-cap-guild')?.checked);
+        // Blank means one level up here too — and a level is not a purchase
+        // either way, so this only changes what gets simulated
+        const communityBuffTargetLevel = upgradeModes.includes('community_buff')
+            ? Math.min(
+                  20,
+                  Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-community-target-level')?.value) || 0)
+              )
+            : 0;
+        const combatLevelTargets =
+            upgradeModes.includes('combat_level') && perPlayerTargets ? this._getCombatLevelTargets() : null;
+        const abilityTargets =
+            upgradeModes.includes('ability_level') && perPlayerTargets
+                ? this._getAbilityTargets('#mwi-csim-ability-targets')
+                : null;
+        const resimCloseCalls = Boolean(this.panel.querySelector('#mwi-csim-upgrade-resim')?.checked);
+        const auraSwapsOnly =
+            upgradeModes.includes('ability_swap') &&
+            Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
+        return {
+            communityBuffs,
+            skipBackSlot,
+            enhancementSteps,
+            enhancementStepKind,
+            houseTargetLevel,
+            houseTargets,
+            houseNonCombatBundle,
+            houseSteps,
+            guildShrineSteps,
+            guildShrineTargetLevel,
+            guildShrineTargets,
+            guildShrineCapToGuild,
+            communityBuffTargetLevel,
+            combatLevelTargets,
+            abilityTargets,
+            resimCloseCalls,
+            auraSwapsOnly,
+        };
+    }
+
+    /**
+     * Run upgrade analysis when Analyze button is clicked.
+     * @private
+     */
+    async _onUpgradeAnalyze() {
+        if (this._isBusy()) {
+            if (this._triggerRunning) this._setStatus('Trigger tuning is running. Press Stop or wait, then Analyze.');
+            return;
+        }
+
+        // Captured before the first await — see `_stillSameCharacter`
+        const ownerId = dataManager.getCurrentCharacterId();
+        const playerIndex = this._upgradePlayerIndex();
+        const {
+            zoneHrid,
+            difficultyTier,
+            hours,
+            upgradeModes,
+            abilityLevelType,
+            abilityTargetLevel,
+            abilitySteps,
+            combatLevelType,
+            combatLevelBoost,
+            combatLevelSteps,
+            charmTier,
+            charmEnhancement,
+        } = this._readUpgradeInputs();
 
         if (!upgradeModes.length) {
             this._setStatus('Check at least one upgrade type to include.');
@@ -11888,6 +12686,12 @@ class CombatSimUI {
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._setStatus('No game data available.');
+            return;
+        }
+
+        // Every party member in turn: its own run, sharing the checks above and the helpers below
+        if (this._upgradeAllChosen()) {
+            await this._onUpgradeAnalyzeAll({ ownerId, zoneHrid, difficultyTier, hours, upgradeModes });
             return;
         }
 
@@ -11948,6 +12752,8 @@ class CombatSimUI {
         const stopBtn = this.panel.querySelector('#mwi-csim-upgrade-stop');
         progressEl.style.display = 'block';
         resultsEl.innerHTML = '';
+        // A single-player run replaces an All players view
+        this._allPlayersRun = null;
         this._setTuneButtonBusy(true);
         // A new run replaces the table the menu was configuring, so the menu
         // goes with it rather than reappearing over the results that arrive
@@ -11972,61 +12778,25 @@ class CombatSimUI {
         try {
             // Reading the buffs can throw on unexpected game data, and outside the
             // try that left the progress bar up and the Stop button stuck forever
-            const communityBuffs = getCommunityBuffs();
-            const skipBackSlot = this.panel.querySelector('#mwi-csim-upgrade-skip-back')?.checked || false;
-            const enhancementSteps = upgradeModes.includes('equipment')
-                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-equip-steps')?.value)
-                : 1;
-            const enhancementStepKind =
-                this.panel.querySelector('#mwi-csim-equip-step-kind')?.value === 'levels' ? 'levels' : 'breakpoints';
-            const isHouseMode = upgradeModes.includes('house');
-            const houseTargetLevel = isHouseMode
-                ? Math.min(
-                      8,
-                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-house-target-level')?.value) || 0)
-                  )
-                : 0;
-            const houseTargets = isHouseMode ? this._getHouseTargets() : null;
-            const houseNonCombatBundle =
-                isHouseMode && Boolean(this.panel.querySelector('#mwi-csim-house-noncombat-bundle')?.checked);
-            const houseSteps = isHouseMode
-                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-house-steps')?.value)
-                : 1;
-            const guildShrineSteps = upgradeModes.includes('guild_shrine')
-                ? normalizeLevelSteps(this.panel.querySelector('#mwi-csim-shrine-steps')?.value)
-                : 1;
-            // Blank means "one level up", which is what the advisor reads a 0 as
-            const guildShrineTargetLevel = upgradeModes.includes('guild_shrine')
-                ? Math.min(
-                      getGuildShrineMaxLevel(),
-                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-shrine-target-level')?.value) || 0)
-                  )
-                : 0;
-            // Per-shrine grid, when open, overrides the uniform Lv above — the
-            // advisor's `guildShrineTargets` takes precedence over the single
-            // number, exactly as the House grid overrides the House Lv value
-            const guildShrineTargets = upgradeModes.includes('guild_shrine') ? this._getShrineTargets() : null;
-            // Default on: a level the guild's shrine building cannot sell is not
-            // an upgrade the character can buy, however well it would rank
-            const guildShrineCapToGuild =
-                upgradeModes.includes('guild_shrine') &&
-                Boolean(this.panel.querySelector('#mwi-csim-shrine-cap-guild')?.checked);
-            // Blank means one level up here too — and a level is not a purchase
-            // either way, so this only changes what gets simulated
-            const communityBuffTargetLevel = upgradeModes.includes('community_buff')
-                ? Math.min(
-                      20,
-                      Math.max(0, parseInt(this.panel.querySelector('#mwi-csim-community-target-level')?.value) || 0)
-                  )
-                : 0;
-            const combatLevelTargets = upgradeModes.includes('combat_level') ? this._getCombatLevelTargets() : null;
-            const abilityTargets = upgradeModes.includes('ability_level')
-                ? this._getAbilityTargets('#mwi-csim-ability-targets')
-                : null;
-            const resimCloseCalls = Boolean(this.panel.querySelector('#mwi-csim-upgrade-resim')?.checked);
-            const auraSwapsOnly =
-                upgradeModes.includes('ability_swap') &&
-                Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
+            const {
+                communityBuffs,
+                skipBackSlot,
+                enhancementSteps,
+                enhancementStepKind,
+                houseTargetLevel,
+                houseTargets,
+                houseNonCombatBundle,
+                houseSteps,
+                guildShrineSteps,
+                guildShrineTargetLevel,
+                guildShrineTargets,
+                guildShrineCapToGuild,
+                communityBuffTargetLevel,
+                combatLevelTargets,
+                abilityTargets,
+                resimCloseCalls,
+                auraSwapsOnly,
+            } = this._readUpgradeRunOptions(upgradeModes);
             // The builds this analysis measures from, taken before its baseline: an Apply or any edit afterwards
             // makes every later Confirm and Verify measure a different build against this baseline
             const buildSigs = new Map(playerDTOs.map((dto) => [dto.hrid, buildDtoSignature(dto)]));
@@ -12093,39 +12863,17 @@ class CombatSimUI {
             // measurement, and throwing them away meant a run stopped one short
             // of the end showed nothing at all
             const completed = results?.results?.length || 0;
-            // Not enumerable: it is memory-only, so it is neither saved with a remembered run nor copied
-            if (results && typeof results === 'object') {
-                Object.defineProperty(results, '_buildSigs', {
-                    value: buildSigs,
-                    enumerable: false,
-                    configurable: true,
-                });
-            }
-            // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
-            // remembered run restores with the rate its profit deltas were measured against, not today's.
-            if (results) results.scrollTokenRate = scrollTokenRate();
-            // Who this analysis was for, by name, as of now: Copy for chat names the player from this, never from
-            // whoever sits at that hrid or index when the run is restored or the party has changed
-            if (results) {
-                results.ranFor = {
+            this._stampUpgradeResults(results, {
+                buildSigs,
+                upgradeModes,
+                playerDTO: playerDTOs[playerIndex],
+                ranFor: {
                     hrid: playerDTOs[playerIndex]?.hrid || null,
                     name: ranForName,
                     zoneHrid: zoneHrid || null,
                     difficultyTier: difficultyTier ?? null,
-                };
-            }
-            // Verdicts belong to the analysis they re-measured; a result object handed back again starts clean
-            if (results) delete results.verifyVerdicts;
-            // What the Ability order section needs to tell "nothing to compare" from "stopped first": whether
-            // the option ran, how many orders there were to measure, and whether Stop cut the run short
-            if (results && upgradeModes.includes('ability_order')) {
-                const gd = results.context?.gameData || buildGameDataPayload();
-                results.abilityOrder = {
-                    ran: true,
-                    expected: generateAbilityOrderCandidates(playerDTOs[playerIndex], gd).length,
-                    stopped: Boolean(this._upgradeAborted),
-                };
-            }
+                },
+            });
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
@@ -12136,12 +12884,7 @@ class CombatSimUI {
                     // Stamped on the result, so the table, the budget and a remembered copy of it all say the
                     // run covers only part of what it set out to measure. Only when candidates are missing: Stop
                     // during the food search, which runs after every candidate, leaves the upgrades whole
-                    const total = Number.isFinite(results.candidateCount) ? results.candidateCount : null;
-                    if (total == null || completed < total) {
-                        results.stopped = { completed, total };
-                    } else if (upgradeModes.includes('food')) {
-                        results.foodStopped = true;
-                    }
+                    this._stampStoppedRun(results, completed, upgradeModes);
                     this._renderUpgradeResults(results);
                     this._setStatus(
                         `Analysis cancelled — showing ${completed} completed candidate${completed === 1 ? '' : 's'}.`
@@ -12218,7 +12961,7 @@ class CombatSimUI {
             searchConditions: this.panel?.querySelector('#mwi-csim-trigger-conditions')?.checked === true,
             zoneHrid: value('#mwi-csim-zone'),
             difficultyTier: parseInt(value('#mwi-csim-tier')) || 0,
-            playerIndex: parseInt(value('#mwi-csim-upgrade-player')) || 0,
+            playerIndex: this._upgradePlayerIndex(),
             scope: value('#mwi-csim-trigger-scope') === 'party' ? 'party' : 'me',
             include: TUNABLE_SCOPES.includes(includeValue) ? includeValue : DEFAULT_TUNABLE_SCOPE,
             precision: value('#mwi-csim-trigger-precision') || 'standard',
@@ -12887,7 +13630,7 @@ class CombatSimUI {
      * @private
      */
     _chatOptions() {
-        const can = this._chatUpgradeOwner() !== null;
+        const can = this._chatUpgradeOwners().length > 0;
         return { canIncludeUpgrades: can, includeUpgrades: can && Boolean(this._chatIncludeUpgrades) };
     }
 
@@ -12896,8 +13639,7 @@ class CombatSimUI {
      * @returns {{key: string|null, name: string|null, upgrades: string[]}|null}
      * @private
      */
-    _chatUpgradeOwner() {
-        const data = this._upgradeResultsData;
+    _chatUpgradeOwner(data = this._upgradeResultsData) {
         const upgrades = topUpgradeTexts(data);
         if (!upgrades.length) return null;
         const ranFor = data.ranFor || null;
@@ -12930,9 +13672,33 @@ class CombatSimUI {
     _syncChatToggle() {
         const toggle = this.panel?.querySelector('#mwi-csim-trigger-chat-upgrades');
         if (!toggle) return;
-        const can = this._chatUpgradeOwner() !== null;
+        const can = this._chatUpgradeOwners().length > 0;
         toggle.disabled = !can;
         toggle.checked = can && Boolean(this._chatIncludeUpgrades);
+    }
+
+    /**
+     * Whose upgrades the Upgrade tab holds, one entry per player with something to say, in party order: every
+     * player of an All players view (a stopped player's measured rows included, as for a single player), else the
+     * one player {@link _chatUpgradeOwner} names.
+     * @returns {Array<{key: string|null, name: string|null, upgrades: string[]}>}
+     * @private
+     */
+    _chatUpgradeOwners() {
+        const run = this._allPlayersRun;
+        if (run) {
+            // Every section on the one scale the table is scored on, not only the one drawn
+            return run.entries
+                .map((entry) => {
+                    if (!entry.results) return null;
+                    this._rescoreUpgrades(entry.results);
+                    // Each player's own ranFor, and its own partial label when Stop cut that player short
+                    return this._chatUpgradeOwner(entry.results);
+                })
+                .filter(Boolean);
+        }
+        const owner = this._chatUpgradeOwner();
+        return owner ? [owner] : [];
     }
 
     /**
@@ -12968,10 +13734,11 @@ class CombatSimUI {
             const name = (this._editor?.getPlayerInfo?.() || []).find((p) => p.hrid === hrid)?.name || null;
             let players = triggerChatPlayers(result, gameData, { hrid, name });
             // Decided now, not when the box was drawn: the Upgrade tab may have finished or cleared since
-            const owner = this._chatIncludeUpgrades ? this._chatUpgradeOwner() : null;
+            const owners = this._chatIncludeUpgrades ? this._chatUpgradeOwners() : [];
             let note = '';
-            if (owner) {
-                const differs = (a, b) => a != null && b != null && a !== b;
+            let included = false;
+            const differs = (a, b) => a != null && b != null && a !== b;
+            for (const owner of owners) {
                 if (
                     differs(owner.zoneHrid, runContext?.zoneHrid) ||
                     differs(owner.difficultyTier, runContext?.difficultyTier)
@@ -12979,9 +13746,10 @@ class CombatSimUI {
                     note = ' Upgrades left out: they were found for another zone or tier.';
                 } else {
                     players = withUpgrades(players, owner);
+                    included = true;
                 }
             }
-            const include = Boolean(owner) && !note;
+            const include = included;
             const messages = buildChatMessages(players, { includeUpgrades: include });
             if (!messages.length) {
                 this._setStatus('Nothing to copy for chat.');
@@ -15988,7 +16756,7 @@ class CombatSimUI {
     }
 
     _renderUpgradeResults(results) {
-        const container = this.panel.querySelector('#mwi-csim-upgrade-results');
+        const container = this._upgradeResultsTarget();
         if (!container) return;
 
         const openDetails = this._openUpgradeDetails(container);
@@ -16097,7 +16865,7 @@ class CombatSimUI {
                 }) + html;
         }
         html += viewSwitchHtml(view, this._isNarrow());
-        if (this._chatUpgradeOwner()) {
+        if (this._chatUpgradeOwners().length) {
             html += chatCopyBarHtml({ buttonId: 'mwi-csim-upgrade-chat-copy', style: UPGRADE_CHAT_BTN_STYLE });
         }
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline, orderRows, results.stopped);
@@ -16173,9 +16941,10 @@ class CombatSimUI {
         this._wireGoldVerify(container);
         this._syncChatToggle();
         container.querySelector('#mwi-csim-upgrade-chat-copy')?.addEventListener('click', async () => {
-            const owner = this._chatUpgradeOwner();
-            if (!owner) return;
-            const players = withUpgrades([], owner);
+            // Everyone on screen: all players of an All players view, not only the one section drawn
+            const owners = this._chatUpgradeOwners();
+            if (!owners.length) return;
+            const players = owners.reduce((list, owner) => withUpgrades(list, owner), []);
             await this._copyChatMessages(buildChatMessages(players, { includeUpgrades: true }), 'top upgrades');
         });
 
@@ -17042,8 +17811,8 @@ class CombatSimUI {
      * counts never means re-running a simulation.
      * @private
      */
-    _rescoreUpgrades() {
-        const rows = this._upgradeResultsData?.results;
+    _rescoreUpgrades(results = this._upgradeResultsData) {
+        const rows = results?.results;
         if (!rows) return;
         const scorable = rows.filter((r) => r.candidate?.type !== 'combat_level' && !r.candidate?.abilityOrder);
         applyScoreScale(scorable, this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH, {

@@ -212,6 +212,7 @@ const {
     applyPathBootsSimLevel,
     addRefinedPathBootCandidates,
     runUpgradeAnalysis,
+    estimateUpgradeSims,
     closeCallRows,
     resimCloseCallRows,
     alignResimMetrics,
@@ -3417,6 +3418,15 @@ describe('close-call re-sims', () => {
             };
         }
         const hoursRun = () => runSimulation.mock.calls.map((call) => call[0].hours);
+
+        test('the up-front count is the total the run opens its progress with', async () => {
+            const progress = [];
+            const params = setup(false);
+            const counted = estimateUpgradeSims({ ...params, playerDTOs: structuredClone(params.playerDTOs) });
+            await runUpgradeAnalysis(params, (p) => progress.push(p), { now: () => 0 });
+            expect(counted).toBeGreaterThan(1);
+            expect(counted).toBe(progress[0].total);
+        });
 
         test('off: one pass at the chosen hours, no re-sim record', async () => {
             const result = await runUpgradeAnalysis(setup(false), null, { now: () => 0 });

@@ -5035,35 +5035,17 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 }
 
 /**
- * Run the full upgrade analysis: baseline sim + one sim per candidate.
- * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
- *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, abilitySteps (levels offered per ability in the
- *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
- *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
- *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
- *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
- *   +1" row), resimCloseCalls (re-sim the rows within noise of the leader for longer, see `resimCloseCallRows`),
- *   enhancementSteps (above 1, each piece is offered
- *   at each of its next N enhancement breakpoints), enhancementStepKind ('breakpoints' default, or 'levels' to step
- *   +1 at a time), skipBackSlot, combatLevelTargets, charmTier,
- *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
- *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
- * @param {Function} onProgress - Called with { current, total, description }
- * @param {Object} [options] - { abortSignal: () => boolean }
- * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food,
- *   context: { gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours, communityBuffs,
- *   seed, precision, baselineResult, baseline } } — `context` is what `confirmUpgradeBudgetPlan` needs to
- *   re-run a chosen set of picks under the same conditions this analysis ran under
+ * The candidates an analysis of one player measures: every mode's generated set, plus the caller's named extras.
+ * One definition for the run and for the up-front count, so the two cannot drift apart.
+ * @param {Object} params - The `runUpgradeAnalysis` params
+ * @param {Object} playerDTO - The analysed player's DTO
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether that player is the live character
+ * @returns {{candidateModes: string[], candidates: Array<Object>}}
  */
-export async function runUpgradeAnalysis(params, onProgress, options = {}) {
+function buildAnalysisCandidates(params, playerDTO, gameData, isSelf) {
     const {
         playerDTOs,
-        playerIndex,
-        selfHrid = null,
-        zoneHrid,
-        difficultyTier,
-        hours,
-        precision = null,
         communityBuffs,
         upgradeModes,
         upgradeMode,
@@ -5075,48 +5057,22 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         houseSteps = 1,
         houseNonCombatBundle = false,
         guildShrineSteps = 1,
-        resimCloseCalls = false,
         combatLevelType = 'increment',
         combatLevelBoost,
         combatLevelSteps = 1,
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
-        charmTier,
-        charmEnhancement = null,
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
         guildShrineTargets = null,
         guildShrineCapToGuild = false,
         communityBuffTargetLevel = 0,
-        optimizeFood = false,
         auraSwapsOnly = false,
         extraCandidates = [],
     } = params;
-    const { abortSignal, now = () => Date.now() } = options;
-    const gameData = buildGameDataPayload();
-    if (!gameData) throw new Error('No game data available');
-
-    const playerDTO = playerDTOs[playerIndex];
-    const playerHrid = playerDTO.hrid;
-    // Whether the row being priced is the live character. An imported profile or
-    // a party member read off a shared card carries `selfHrid: null` (or a
-    // `hrid` that never matches it) precisely so a book-bag or inventory read
-    // below does not mistake the live character's own data for theirs.
-    const isSelf = selfHrid != null && playerHrid === selfHrid;
-
-    // One seed for the whole analysis: baseline and every candidate draw the same
-    // random numbers, so a delta reflects the upgrade rather than the gap between
-    // two independent samples. A fresh seed per analysis keeps re-runs resampling.
-    const simSeed = analysisSeed();
-    // One price snapshot for the whole analysis: every drop, consumable and key price is read once and
-    // answered from here after, so a market refresh, a custom-price edit or a pricing-mode change while the
-    // candidates run cannot read as an upgrade's profit gain. Handed on in `context` so a basket's
-    // confirming run is valued on the same basis.
-    const priceCache = new Map();
     const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
-
     const candidateModes = resolveCandidateModes(upgradeModes, upgradeMode);
     const candidates = candidateModes.flatMap((mode) =>
         generateCandidates(
@@ -5148,6 +5104,87 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         already.add(key);
         candidates.push(candidate);
     }
+    return { candidateModes, candidates };
+}
+
+/**
+ * How many simulations an analysis of one player will start before any close-call re-sims: the baseline, one per
+ * candidate, two more for each combat level (its XP-rate sims) and the food search. The figure the run's own
+ * progress bar opens with.
+ * @param {Object} params - The `runUpgradeAnalysis` params (`playerDTOs`, `playerIndex`, `selfHrid`, the modes and targets)
+ * @returns {number}
+ */
+export function estimateUpgradeSims(params) {
+    const gameData = buildGameDataPayload();
+    if (!gameData) return 0;
+    const playerDTO = params.playerDTOs[params.playerIndex];
+    const isSelf = params.selfHrid != null && playerDTO.hrid === params.selfHrid;
+    const { candidates } = buildAnalysisCandidates(params, playerDTO, gameData, isSelf);
+    const combatLevelCount = candidates.filter((c) => c.type === 'combat_level').length;
+    const foodSimCount = params.optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
+    return candidates.length + combatLevelCount * 2 + foodSimCount + 1;
+}
+
+/**
+ * Run the full upgrade analysis: baseline sim + one sim per candidate.
+ * @param {Object} params - { playerDTOs, playerIndex, selfHrid, zoneHrid, difficultyTier, hours, communityBuffs,
+ *   upgradeModes, upgradeMode, abilityLevelType, abilityTargetLevel, abilitySteps (levels offered per ability in the
+ *   +Levels and Next-multiple modes, default 1), combatLevelType ('increment' | 'next_multiple'),
+ *   combatLevelBoost (the Combat Lv +N or multiple; unset borrows abilityTargetLevel as before),
+ *   combatLevelSteps (levels offered per combat skill, default 1), houseSteps and guildShrineSteps (levels
+ *   offered per room / shrine at +1 each, default 1), houseNonCombatBundle (add the one "All non-combat rooms
+ *   +1" row), resimCloseCalls (re-sim the rows within noise of the leader for longer, see `resimCloseCallRows`),
+ *   enhancementSteps (above 1, each piece is offered
+ *   at each of its next N enhancement breakpoints), enhancementStepKind ('breakpoints' default, or 'levels' to step
+ *   +1 at a time), skipBackSlot, combatLevelTargets, charmTier,
+ *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets,
+ *   guildShrineCapToGuild, optimizeFood, auraSwapsOnly }
+ * @param {Function} onProgress - Called with { current, total, description }
+ * @param {Object} [options] - { abortSignal: () => boolean }
+ * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food,
+ *   context: { gameData, playerDTOs, playerIndex, playerHrid, zoneHrid, difficultyTier, hours, communityBuffs,
+ *   seed, precision, baselineResult, baseline } } — `context` is what `confirmUpgradeBudgetPlan` needs to
+ *   re-run a chosen set of picks under the same conditions this analysis ran under
+ */
+export async function runUpgradeAnalysis(params, onProgress, options = {}) {
+    const {
+        playerDTOs,
+        playerIndex,
+        selfHrid = null,
+        zoneHrid,
+        difficultyTier,
+        hours,
+        precision = null,
+        communityBuffs,
+        resimCloseCalls = false,
+        charmTier,
+        charmEnhancement = null,
+        optimizeFood = false,
+    } = params;
+    const { abortSignal, now = () => Date.now() } = options;
+    const gameData = buildGameDataPayload();
+    if (!gameData) throw new Error('No game data available');
+
+    const playerDTO = playerDTOs[playerIndex];
+    const playerHrid = playerDTO.hrid;
+    // Whether the row being priced is the live character. An imported profile or
+    // a party member read off a shared card carries `selfHrid: null` (or a
+    // `hrid` that never matches it) precisely so a book-bag or inventory read
+    // below does not mistake the live character's own data for theirs.
+    const isSelf = selfHrid != null && playerHrid === selfHrid;
+
+    // One seed for the whole analysis: baseline and every candidate draw the same
+    // random numbers, so a delta reflects the upgrade rather than the gap between
+    // two independent samples. A fresh seed per analysis keeps re-runs resampling.
+    const simSeed = analysisSeed();
+    // One price snapshot for the whole analysis: every drop, consumable and key price is read once and
+    // answered from here after, so a market refresh, a custom-price edit or a pricing-mode change while the
+    // candidates run cannot read as an upgrade's profit gain. Handed on in `context` so a basket's
+    // confirming run is valued on the same basis.
+    const priceCache = new Map();
+
+    const { candidateModes, candidates } = buildAnalysisCandidates(params, playerDTO, gameData, isSelf);
+    const skipSkillingRooms = config.getSetting('combatSim_upgradeSkipSkillingRooms') === true;
 
     // Resale is taxed as the analysed character pays it, not as the live character would
     const saleTaxRate = saleTaxRateOf(playerDTO, isSelf);
