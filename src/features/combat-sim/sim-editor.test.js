@@ -198,6 +198,25 @@ vi.mock('../../utils/view-loadout.js', () => ({
     },
 }));
 
+// The game's websocket hook: handlers by type, and the chain the profile write runs behind
+const ws = vi.hoisted(() => ({ handlers: new Map(), chain: null }));
+vi.mock('../../core/websocket.js', () => ({
+    default: {
+        on: (type, handler) => {
+            if (!ws.handlers.has(type)) ws.handlers.set(type, []);
+            ws.handlers.get(type).push(handler);
+        },
+        off: (type, handler) => {
+            const list = ws.handlers.get(type) || [];
+            const at = list.indexOf(handler);
+            if (at > -1) list.splice(at, 1);
+        },
+        get _profileChain() {
+            return ws.chain;
+        },
+    },
+}));
+
 const { SimEditor } = await import('./sim-editor.js');
 
 const emptyDTO = (hrid) => ({
@@ -228,6 +247,8 @@ function editorWithStrangers() {
 }
 
 beforeEach(() => {
+    ws.handlers.clear();
+    ws.chain = null;
     viewLoadout.available = false;
     viewLoadout.fetches = [];
     viewLoadout.result = null;
@@ -384,8 +405,157 @@ describe('reset to party', () => {
         await editor.resetToParty();
 
         expect(el.textContent).toContain('Ghost');
-        expect(el.textContent).toContain('shared profile');
+        expect(el.textContent).toContain('needs their profile');
+        expect(el.textContent).toContain('click them → Profile');
         expect(editor.getMissingMembers()).toEqual(['Ghost']);
+    });
+});
+
+describe('a missing member whose profile opens', () => {
+    const SELF = { characterID: 'me', characterName: 'Milkman' };
+    const GHOST = { characterID: 'g1', characterName: 'Ghost' };
+    const shared = (id, name = 'Ghost') => ({ type: 'profile_shared', profile: { sharableCharacter: { id, name } } });
+    const fire = (message) => Promise.all((ws.handlers.get('profile_shared') || []).map((h) => h(message)));
+
+    /** A party of me and Ghost; Ghost has no cached profile until `profileArrives()` */
+    async function missingGhostEditor() {
+        game.battleParty = [SELF, GHOST];
+        game.allPlayers = {
+            players: [{ ...emptyDTO('player1'), attackLevel: 90 }],
+            playerInfo: [{ hrid: 'player1', name: 'Milkman' }],
+            selfHrid: 'player1',
+            missingMembers: ['Ghost'],
+            missingMemberIds: ['g1'],
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+        return { el, editor };
+    }
+    function profileArrives() {
+        game.allPlayers = {
+            players: [
+                { ...emptyDTO('player1'), attackLevel: 90 },
+                { ...emptyDTO('player2'), attackLevel: 70 },
+            ],
+            playerInfo: [
+                { hrid: 'player1', name: 'Milkman' },
+                { hrid: 'player2', name: 'Ghost' },
+            ],
+            selfHrid: 'player1',
+            missingMembers: [],
+            missingMemberIds: [],
+        };
+    }
+
+    test('an untouched editor is rebuilt with them in it', async () => {
+        const { editor } = await missingGhostEditor();
+        expect(editor.getMissingMembers()).toEqual(['Ghost']);
+        expect(ws.handlers.get('profile_shared')).toHaveLength(1);
+
+        profileArrives();
+        await fire(shared('g1'));
+
+        expect(editor.getPlayerInfo().map((p) => p.name)).toEqual(['Milkman', 'Ghost']);
+        expect(editor.getMissingMembers()).toEqual([]);
+        // Nobody is missing any more, so the listener goes
+        expect(ws.handlers.get('profile_shared')).toHaveLength(0);
+    });
+
+    test('waits for the profile write before reading the list', async () => {
+        const { editor } = await missingGhostEditor();
+        let land;
+        ws.chain = new Promise((resolve) => (land = resolve));
+        const pending = fire(shared('g1'));
+        await Promise.resolve();
+        expect(editor.getMissingMembers()).toEqual(['Ghost']);
+
+        profileArrives();
+        land();
+        await pending;
+        expect(editor.getPlayerInfo()).toHaveLength(2);
+    });
+
+    test('an edited editor is left alone and says so', async () => {
+        const { el, editor } = await missingGhostEditor();
+        editor.getEditedDTOs().player1.attackLevel = 120;
+        profileArrives();
+
+        await fire(shared('g1'));
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+        expect(editor.getEditedDTOs().player1.attackLevel).toBe(120);
+        expect(el.textContent).toContain("Ghost's profile arrived — Reset to Party to add them.");
+    });
+
+    test('a picked loadout counts as an edit', async () => {
+        const { editor } = await missingGhostEditor();
+        editor._selectedLoadoutName = 'Bruteforce';
+        profileArrives();
+
+        await fire(shared('g1'));
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+    });
+
+    test('an edit made while the rebuild was reading is not thrown away', async () => {
+        const { editor } = await missingGhostEditor();
+        profileArrives();
+        let release;
+        game.buildHold = new Promise((resolve) => (release = resolve));
+        const pending = fire(shared('g1'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        editor.getEditedDTOs().player1.attackLevel = 120;
+        release();
+        await pending;
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+        expect(editor.getEditedDTOs().player1.attackLevel).toBe(120);
+    });
+
+    test('a profile for someone who is not missing does nothing', async () => {
+        const { el, editor } = await missingGhostEditor();
+        profileArrives();
+
+        await fire(shared('someone-else', 'Other'));
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+        expect(el.textContent).not.toContain('profile arrived');
+    });
+
+    test('a character switch while waiting applies nothing', async () => {
+        const { editor } = await missingGhostEditor();
+        profileArrives();
+        let land;
+        ws.chain = new Promise((resolve) => (land = resolve));
+        const pending = fire(shared('g1'));
+        await Promise.resolve();
+        game.charId = 'someone-new';
+        land();
+        await pending;
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+        expect(editor.getMissingMembers()).toEqual(['Ghost']);
+    });
+
+    test('the listener is removed when the editor resets', async () => {
+        const { editor } = await missingGhostEditor();
+        expect(ws.handlers.get('profile_shared')).toHaveLength(1);
+
+        editor.reset();
+
+        expect(ws.handlers.get('profile_shared')).toHaveLength(0);
+    });
+
+    test('a fetch that leaves the member missing says their Profile is still needed', async () => {
+        viewLoadout.available = true;
+        viewLoadout.result = { status: 'done', entry: { hasLoadout: true } };
+        const { el, editor } = await missingGhostEditor();
+
+        await editor.fetchPartyMemberLoadout(GHOST);
+
+        expect(el.textContent).toContain("Fetched Ghost's party loadout, but the sim still needs their Profile");
+        expect(el.textContent).toContain('click them → Profile');
     });
 });
 
@@ -616,7 +786,7 @@ describe('the panel says how fresh its party is', () => {
         await editor.initEditor();
 
         expect(el.textContent).toContain('Not loaded: Ally');
-        expect(el.textContent).toContain('shared profile');
+        expect(el.textContent).toContain('needs their profile');
     });
 });
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim adds a party member when their profile opens
+
+When a party member is missing because their profile was never opened, opening it in game (My Party, click them, Profile) now adds them to the Combat Sim right away, unless you have edited the party, in which case a note tells you to Reset to Party. The not-loaded and fetched-loadout notes now say what to do.
+
 ### Loadouts stay with the right character
 
 Late updates and overlapping character switches no longer overwrite another character’s saved loadout snapshots or remove its linked custom-tab items. Loadout readiness also stays tied to the correct session.

@@ -1347,13 +1347,20 @@ export function recomputeLevelGapDebuffs(players) {
  * `loadoutCapturedAt`) or from the gear worn in their profile (`'profile'`).
  *
  * @returns {Promise<{players: Array, playerInfo: Array<{hrid: string, name: string}>, selfHrid: string,
- *   missingMembers: Array<string>, profileStatus: Array<Object>}>} Empty when the character
+ *   missingMembers: Array<string>, missingMemberIds: Array<string>, profileStatus: Array<Object>}>} Empty when the character
  *   changed while the cached profiles were being read
  */
 export async function buildAllPlayerDTOs() {
     const characterData = dataManager.characterData;
     const clientData = dataManager.getInitClientData();
-    const empty = { players: [], playerInfo: [], selfHrid: 'player1', missingMembers: [], profileStatus: [] };
+    const empty = {
+        players: [],
+        playerInfo: [],
+        selfHrid: 'player1',
+        missingMembers: [],
+        missingMemberIds: [],
+        profileStatus: [],
+    };
 
     if (!characterData) {
         return empty;
@@ -1377,6 +1384,7 @@ export async function buildAllPlayerDTOs() {
             playerInfo: [{ hrid: selfDTO.hrid, name: characterData.character?.name || 'Player 1' }],
             selfHrid: selfDTO.hrid,
             missingMembers: [],
+            missingMemberIds: [],
             profileStatus: [],
         };
     }
@@ -1402,6 +1410,7 @@ export async function buildAllPlayerDTOs() {
     const players = [];
     const playerNames = [];
     const missingMembers = [];
+    const missingMemberIds = [];
     const profileStatus = [];
     let selfHrid = null;
     let slotIndex = 1;
@@ -1445,6 +1454,7 @@ export async function buildAllPlayerDTOs() {
             } else {
                 const name = member.characterName || 'Unknown';
                 missingMembers.push(name);
+                missingMemberIds.push(String(member.characterID));
                 profileStatus.push({ hrid: null, name, ...sharedProfileStatus(null, now) });
             }
         }
@@ -1465,6 +1475,7 @@ export async function buildAllPlayerDTOs() {
         playerInfo,
         selfHrid: selfHrid || players[0]?.hrid || 'player1',
         missingMembers,
+        missingMemberIds,
         profileStatus,
     };
 }

@@ -5,6 +5,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import webSocketHook from '../../core/websocket.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -140,6 +141,10 @@ export class SimEditor {
         this._activeEditPlayer = null;
         this._selfHrid = null;
         this._missingMembers = [];
+        this._missingMemberIds = [];
+        // The `profile_shared` listener that adds a missing member when their profile opens;
+        // held only while a loaded party has someone missing (see _syncProfileWatch)
+        this._profileListener = null;
         // One entry per other party member from the last party load: the cached profile's
         // capture time and whether it carried gear (see shared-profile-status.js)
         this._profileStatus = [];
@@ -772,7 +777,7 @@ export class SimEditor {
      * @param {boolean} [options.restoreLoadout=true] - Re-apply the remembered Loadout
      *   selection; false for the explicit resets, whose whole point is current gear
      */
-    async initEditor({ restoreLoadout = true } = {}) {
+    async initEditor({ restoreLoadout = true, onlyIf = null } = {}) {
         const editorArea = this._editorEl;
         if (!editorArea) return;
 
@@ -789,7 +794,8 @@ export class SimEditor {
         const scenario = this._scenarioToken;
 
         try {
-            const { players, playerInfo, selfHrid, missingMembers, profileStatus } = await buildAllPlayerDTOs();
+            const { players, playerInfo, selfHrid, missingMembers, missingMemberIds, profileStatus } =
+                await buildAllPlayerDTOs();
             if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) {
                 // Left uninitialised on purpose: the next show()/initEditor
                 // builds the arriving character's own DTOs
@@ -797,6 +803,8 @@ export class SimEditor {
                 return;
             }
             if (this._scenarioToken !== scenario) return;
+            // An automatic reload asks to be dropped if the user touched the editor while the build was out
+            if (onlyIf && !onlyIf()) return;
             if (!players.length) {
                 editorArea.innerHTML =
                     '<div style="color:' +
@@ -817,6 +825,7 @@ export class SimEditor {
             this._selfHrid = selfHrid;
             this._activeEditPlayer = selfHrid;
             this._missingMembers = missingMembers;
+            this._missingMemberIds = Array.isArray(missingMemberIds) ? missingMemberIds.map(String) : [];
             this._profileStatus = Array.isArray(profileStatus) ? profileStatus : [];
             this._importSkipped = [];
             this._externalNote = '';
@@ -851,6 +860,7 @@ export class SimEditor {
         this._selfHrid = null;
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
+        this._missingMemberIds = [];
         this._profileStatus = [];
         this._importSkipped = [];
         this._partyKeyAtLoad = null;
@@ -895,6 +905,7 @@ export class SimEditor {
         this._selfHrid = selfIsLive ? 'player1' : null;
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
+        this._missingMemberIds = [];
         this._profileStatus = [];
         this._importSkipped = [];
         this._partyKeyAtLoad = null;
@@ -1022,6 +1033,7 @@ export class SimEditor {
         this._activeEditPlayer = this._editedPlayerInfo[this._editedPlayerInfo.length - 1]?.hrid;
         this._selfHrid = this._selfHrid || null;
         this._missingMembers = [];
+        this._missingMemberIds = [];
         // The loaded members keep their notes; the missing ones went with `_missingMembers`
         this._profileStatus = (this._profileStatus || []).filter((entry) => entry.hrid);
         // Added to, not replaced: an import *appends* its players to the ones
@@ -1192,6 +1204,7 @@ export class SimEditor {
         this._selfHrid = 'player1';
         this._activeEditPlayer = 'player1';
         this._missingMembers = [];
+        this._missingMemberIds = [];
         this._profileStatus = [];
         this._importSkipped = [];
         this._externalNote = '';
@@ -1235,12 +1248,14 @@ export class SimEditor {
      * Reset all editor state.
      */
     reset() {
+        this._unwatchProfiles();
         this._editorInitialized = false;
         this._editedDTOs = null;
         this._originalDTOs = null;
         this._editedPlayerInfo = null;
         this._selfHrid = null;
         this._missingMembers = [];
+        this._missingMemberIds = [];
         this._profileStatus = [];
         this._importSkipped = [];
         this._selectedLoadoutName = '';
@@ -1327,7 +1342,11 @@ export class SimEditor {
         // Only a received loadout is worth rebuilding the party for; a failed fetch
         // must not throw away the user's editor changes
         if (result?.status === 'done') await this.resetToParty();
-        this._loadoutFetchNote = this._describeLoadoutFetch(name, result);
+        // A loadout carries no skill levels, house or buffs, so a member with no cached profile is
+        // still left out of the rebuilt party; the note has to say what is still needed
+        const stillMissing =
+            this._missingMemberIds.includes(String(member.characterID)) || this._missingMembers.includes(name);
+        this._loadoutFetchNote = this._describeLoadoutFetch(name, result, stillMissing);
         this.renderEditor();
         return result;
     }
@@ -1337,11 +1356,15 @@ export class SimEditor {
      * @private
      * @param {string} name - Who was asked for
      * @param {Object|null} result - A `fetchLoadout` result
+     * @param {boolean} [stillMissing=false] - The fetched member has no cached profile, so the rebuilt party left them out
      * @returns {string}
      */
-    _describeLoadoutFetch(name, result) {
+    _describeLoadoutFetch(name, result, stillMissing = false) {
         switch (result?.status) {
             case 'done':
+                if (stillMissing) {
+                    return `Fetched ${name}'s party loadout, but the sim still needs their Profile for levels. In My Party, click them → Profile; they are added when it opens.`;
+                }
                 return result.entry.hasLoadout
                     ? `Fetched ${name}'s party loadout.`
                     : `${name} has no loadout set; their worn gear is used.`;
@@ -1469,9 +1492,98 @@ export class SimEditor {
         const missing = this._missingMembers || [];
         if (!missing.length) return '';
         return `<div style="color:#c9a227; font-size:11px; margin:-4px 0 8px;">
-            Not loaded: ${missing.join(', ')} — a party member's loadout comes from their shared profile.
-            Open their character card once, then reset again.
+            Not loaded: ${escapeHtml(missing.join(', '))} — the sim needs their profile for levels.
+            In My Party, click them → Profile; they are added when it opens.
         </div>`;
+    }
+
+    /**
+     * Keep a `profile_shared` listener while a loaded party has someone missing, and drop it
+     * the moment nobody is. Called from every render, so each path that changes the roster
+     * (import, reset, removal) is covered without naming them all.
+     * @private
+     */
+    _syncProfileWatch() {
+        const wanted = this._editorInitialized && (this._missingMemberIds || []).length > 0;
+        if (wanted && !this._profileListener) {
+            this._profileListener = (data) => this._onProfileShared(data);
+            webSocketHook.on('profile_shared', this._profileListener);
+        } else if (!wanted && this._profileListener) {
+            this._unwatchProfiles();
+        }
+    }
+
+    /** @private */
+    _unwatchProfiles() {
+        if (!this._profileListener) return;
+        webSocketHook.off('profile_shared', this._profileListener);
+        this._profileListener = null;
+    }
+
+    /**
+     * Has the loaded party been left exactly as it was built? Any hand edit, import, removal,
+     * picked loadout or a changed party means no: an automatic reload would throw that away.
+     * @private
+     * @returns {boolean}
+     */
+    _isUntouchedParty() {
+        if (!this._editorInitialized || !this._editedDTOs || !this._originalDTOs) return false;
+        if (this._partyKeyAtLoad === null || this._partyKeyAtLoad !== this._partySignature().key) return false;
+        if (this._selectedLoadoutName || this._fetchingLoadouts || this._externalNote) return false;
+        if (this._loadoutAppliedNames && Object.keys(this._loadoutAppliedNames).length) return false;
+        if ((this._importSkipped || []).length) return false;
+        // Values the game moves on its own are brought along first, so they do not read as edits
+        this._syncSelfFromGame();
+        const infoIds = (this._editedPlayerInfo || []).map((p) => p.hrid).join(',');
+        const editedIds = Object.keys(this._editedDTOs);
+        if (infoIds !== editedIds.join(',') || infoIds !== Object.keys(this._originalDTOs).join(',')) return false;
+        return JSON.stringify(this._editedDTOs) === JSON.stringify(this._originalDTOs);
+    }
+
+    /**
+     * A profile was opened in game. If it is a party member the sim could not load, add them:
+     * straight away when nothing has been edited, otherwise with a note, never over the user's work.
+     * @private
+     * @param {Object} data - The `profile_shared` message
+     */
+    async _onProfileShared(data) {
+        const profile = data?.profile;
+        const id =
+            profile?.sharableCharacter?.id || profile?.characterSkills?.[0]?.characterID || profile?.character?.id;
+        if (!id || !(this._missingMemberIds || []).includes(String(id))) return;
+
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        let scenario = this._scenarioToken;
+        const stillCurrent = () =>
+            (dataManager.getCurrentCharacterId?.() ?? null) === owner &&
+            this._scenarioToken === scenario &&
+            this._missingMemberIds.includes(String(id));
+
+        if (!this._isUntouchedParty()) {
+            const at = this._missingMemberIds.indexOf(String(id));
+            const name = this._missingMembers[at] || profile?.sharableCharacter?.name || 'A party member';
+            this._loadoutFetchNote = `${name}'s profile arrived — Reset to Party to add them.`;
+            this.renderEditor();
+            return;
+        }
+
+        // The profile is written behind this chain; reading the list before it lands finds nothing
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                await webSocketHook._profileChain;
+            } catch {
+                /* a failed write is logged where it happens */
+            }
+            if (!stillCurrent()) return;
+            await this.initEditor({ restoreLoadout: false, onlyIf: () => stillCurrent() && this._isUntouchedParty() });
+            // A rebuild that landed is the newest scenario; one that was dropped left the token alone
+            if (this._scenarioToken !== scenario && this._isUntouchedParty()) scenario = this._scenarioToken;
+            if (!this._missingMemberIds.includes(String(id))) return;
+            if (!stillCurrent()) return;
+            // Still missing: the write had not landed yet; give it one more beat
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            if (!stillCurrent() || !this._isUntouchedParty()) return;
+        }
     }
 
     /**
@@ -1724,6 +1836,7 @@ export class SimEditor {
      */
     renderEditor() {
         this._renderEditorBody();
+        this._syncProfileWatch();
         try {
             this._onRender?.();
         } catch (error) {
