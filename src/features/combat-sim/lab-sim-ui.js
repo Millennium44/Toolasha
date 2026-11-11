@@ -825,10 +825,10 @@ export function planPurchases(picks) {
         if (buy.routeMaterials) {
             for (const line of buy.routeMaterials) {
                 const level = line.enhancementLevel || 0;
-                const key = `route:${line.itemHrid}+${level}`;
-                const same = items.find((item) => item.routeKey === key);
+                const lineKey = `route:${line.itemHrid}+${level}`;
+                const same = items.find((item) => item.routeKey === lineKey);
                 if (same) same.count += line.count;
-                else items.push({ ...line, enhancementLevel: level, routeKey: key });
+                else items.push({ ...line, enhancementLevel: level, routeKey: lineKey });
             }
             continue;
         }
