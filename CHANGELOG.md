@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party tab picks up a late profile
+
+A party member whose profile arrives after you open the Party tab now shows up within a minute without reopening the tab, and the tab says "Loading party…" instead of "You are not in a party." before your character has loaded.
+
 <!-- shipped in 3.84.0 -->
 
 ### Combat Sim zone list shows every zone's icon
