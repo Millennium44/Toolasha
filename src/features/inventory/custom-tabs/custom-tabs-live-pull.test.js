@@ -225,6 +225,27 @@ describe('a pull the panel has not taken in yet', () => {
         expect(itemsOf(stored(), 'b')).toEqual(['/items/new']);
     });
 
+    test('an item deleted here and re-added on another device after the deletion survives', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(T0 + 1000);
+        write({ version: 1, selectedTabId: null, tabs: [tab('a', ['/items/x', '/items/y'])] });
+        const held = await panelLoads();
+        const edited = removeItem(held, 'a', '/items/y');
+        // The other device put it back a minute later, and the pull brought that copy
+        pullWrites({
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('a', ['/items/x', '/items/y'], { stamp: T0 + 61_000 }), tab('b')],
+        });
+        vi.setSystemTime(T0 + 62_000);
+
+        await saveConfig('char1', edited);
+        await flushConfigWrites();
+
+        expect([...itemsOf(stored(), 'a')].sort()).toEqual(['/items/x', '/items/y']);
+        expect(ids(stored())).toEqual(['a', 'b']);
+    });
+
     test('a reorder here is not undone by the fold, and the pulled tab is appended', async () => {
         write({ version: 1, selectedTabId: null, tabs: [tab('a'), tab('b'), tab('c')] });
         const held = await panelLoads();

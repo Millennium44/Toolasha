@@ -845,12 +845,14 @@ function withoutLocalDeletions(stored, baseline, held) {
                 const had = new Set(base && Array.isArray(base.items) ? base.items : []);
                 const has = new Set(Array.isArray(mine.items) ? mine.items : []);
                 const buried = graves[tab.id] || {};
-                next.items = tab.items.filter(
-                    (hrid) =>
-                        hrid === LINEBREAK_HRID ||
-                        has.has(hrid) ||
-                        (!had.has(hrid) && !(buried[hrid] !== undefined && outlives(buried[hrid], tab)))
-                );
+                // Taken out here: by its deletion record when it has one, so a stored copy touched after the
+                // deletion (re-added on another device) keeps it; else by the baseline, when the stored copy has not
+                // been touched since the baseline's
+                const takenOut = (hrid) => {
+                    if (buried[hrid] !== undefined) return outlives(buried[hrid], tab);
+                    return had.has(hrid) && stampOf(tab) <= stampOf(base);
+                };
+                next.items = tab.items.filter((hrid) => hrid === LINEBREAK_HRID || has.has(hrid) || !takenOut(hrid));
             }
             if (Array.isArray(tab.children)) next.children = prune(tab.children);
             out.push(next);
