@@ -29,12 +29,18 @@ Trigger tuning and Upgrade results have a "Copy for chat" button that copies one
 ### Sync no longer asks for a reload over inventory tabs or trial abilities
 
 A sync pull that brings in changes to your custom inventory tabs or a guild trial's ability captures now takes effect in the open page, instead of asking for a reload. A trial tick arriving just before a pull also no longer wipes a guildmate's captures of the same trial.
+
 ### Combat Sim Upgrade can analyze all players
 
 The Upgrade tab's Player box has an "All players" choice that runs the upgrade search for each party member in turn, with the total number of sims shown up front. Stop keeps the players already finished, members with no loaded profile are skipped and named, and Copy for chat covers every player.
+
 ### Trigger tuning applies new conditions
 
 Conditions found by "Search new conditions" can now be applied to the sim with the Apply button, not only threshold changes. After applying, a Fine-tune button tunes the new condition's value instead of leaving it on the fixed 25/50/75% step.
+
+### Combat Sim charts HP and MP over the run
+
+Healing & Mana now has an HP chart and an MP chart side by side, with every player on each, and an Overlay toggle that draws both in one chart. A faint band shows each stretch's lowest point so short dips are no longer averaged away, and a legend click hides or shows a player.
 
 <!-- shipped in 3.84.0 -->
 
