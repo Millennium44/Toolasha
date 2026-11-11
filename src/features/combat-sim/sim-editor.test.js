@@ -2472,6 +2472,126 @@ describe('replacing one party member via import', () => {
         expect(editor._editedPlayerInfo.map((p) => p.name)).toEqual(['Stranger A', 'Stranger B', 'Newcomer']);
     });
 
+    describe('Replace party', () => {
+        const pasted = (slots, extra = {}) => ({
+            players: slots.map((slot) => ({ ...emptyDTO(`player${slot}`), marker: `pasted-${slot}` })),
+            names: slots.map((slot) => `Pasted ${slot}`),
+            skipped: [],
+            ...extra,
+        });
+        const clickReplaceParty = (el, text = 'whatever') => {
+            el.querySelector('#mwi-csim-import-text').value = text;
+            el.querySelector('#mwi-csim-import-replace-party').click();
+        };
+
+        test('3 loaded, 5 pasted: five players in pasted order with their names and no old state', () => {
+            const el = document.createElement('div');
+            const editor = new SimEditor({ editorEl: el });
+            editor.importPlayers(
+                [emptyDTO('a'), emptyDTO('b'), emptyDTO('c')],
+                ['Old A', 'Old B', 'Old C'],
+                [{ slot: 2, itemHrid: '/items/old_gear', itemName: 'Old Gear', itemLocationHrid: null }]
+            );
+            editor._selfHrid = 'player1';
+            bridge.snapshots = [{ name: 'Bruteforce', actionTypeHrid: '/action_types/combat' }];
+            editor._activeEditPlayer = 'player3';
+            editor.applyLoadoutByName('Bruteforce');
+            editor._profileStatus = [{ hrid: 'player2', name: 'Old B', found: true }];
+            editor._missingMembers = ['Ghost'];
+            editor._missingMemberIds = ['9'];
+            editor._partyKeyAtLoad = 'me,9';
+            editor._externalNote = 'old note';
+            editor._loadoutFetchNote = 'old fetch';
+            const tokenBefore = editor._scenarioToken;
+            game.parseImport = () => pasted([1, 2, 3, 4, 5]);
+
+            clickReplaceParty(el);
+
+            expect(editor._editedPlayerInfo).toEqual([
+                { hrid: 'player1', name: 'Pasted 1' },
+                { hrid: 'player2', name: 'Pasted 2' },
+                { hrid: 'player3', name: 'Pasted 3' },
+                { hrid: 'player4', name: 'Pasted 4' },
+                { hrid: 'player5', name: 'Pasted 5' },
+            ]);
+            expect(Object.keys(editor._editedDTOs)).toEqual(['player1', 'player2', 'player3', 'player4', 'player5']);
+            expect(editor._editedDTOs.player4.marker).toBe('pasted-4');
+            expect(Object.keys(editor._originalDTOs)).toEqual(Object.keys(editor._editedDTOs));
+            expect(editor._originalDTOs.player1.marker).toBe('pasted-1');
+            expect(editor._activeEditPlayer).toBe('player1');
+            expect(editor.getSelfHrid()).toBeNull();
+            expect(editor._importSkipped).toEqual([]);
+            expect(editor._profileStatus).toEqual([]);
+            expect(editor._missingMembers).toEqual([]);
+            expect(editor._missingMemberIds).toEqual([]);
+            expect(editor._partyKeyAtLoad).toBeNull();
+            expect(editor._externalNote).toBe('');
+            expect(editor._loadoutFetchNote).toBe('');
+            expect(editor._loadoutAppliedNames).toBeNull();
+            expect(editor._loadoutBaselineDTOs).toBeNull();
+            expect(editor.getLoadoutNameFor('player3')).toBe('');
+            expect(editor.getSelectedLoadoutName()).toBe('');
+            expect(editor._scenarioToken).toBeGreaterThan(tokenBefore);
+            expect(el.textContent).not.toContain('Old Gear');
+            expect(el.textContent).not.toContain('Old A');
+        });
+
+        test('a paste whose slots start at 2 lands on player1.. and routes skipped items to the right player', () => {
+            const { el, editor } = editorWithStrangers();
+            game.parseImport = () =>
+                pasted([2, 4], {
+                    skipped: [
+                        { slot: 2, itemHrid: '/items/two', itemName: 'Two Blade', itemLocationHrid: null },
+                        { slot: 4, itemHrid: '/items/four', itemName: 'Four Charm', itemLocationHrid: null },
+                        { slot: 5, itemHrid: '/items/five', itemName: 'Five Ring', itemLocationHrid: null },
+                    ],
+                });
+
+            clickReplaceParty(el);
+
+            expect(editor._editedPlayerInfo.map((p) => [p.hrid, p.name])).toEqual([
+                ['player1', 'Pasted 2'],
+                ['player2', 'Pasted 4'],
+            ]);
+            expect(editor._importSkipped.map((e) => [e.itemName, e.hrid])).toEqual([
+                ['Two Blade', 'player1'],
+                ['Four Charm', 'player2'],
+            ]);
+        });
+
+        test('a paste with one player replaces the whole party with that one player', () => {
+            const { el, editor } = editorWithStrangers();
+            editor._activeEditPlayer = 'player2';
+            game.parseImport = () => pasted([1]);
+
+            clickReplaceParty(el);
+
+            expect(editor._editedPlayerInfo).toEqual([{ hrid: 'player1', name: 'Pasted 1' }]);
+            expect(Object.keys(editor._editedDTOs)).toEqual(['player1']);
+            expect(editor._activeEditPlayer).toBe('player1');
+        });
+
+        test('an invalid or empty paste shows the error and changes nothing', () => {
+            const { el, editor } = editorWithStrangers();
+            const before = structuredClone(editor._editedPlayerInfo);
+            const token = editor._scenarioToken;
+
+            clickReplaceParty(el, '');
+            expect(el.querySelector('#mwi-csim-import-error').textContent).toContain('Paste export data first');
+
+            game.parseImport = () => null;
+            clickReplaceParty(el, 'garbage');
+            expect(el.querySelector('#mwi-csim-import-error').textContent).toContain('Invalid format');
+
+            game.parseImport = () => ({ players: [], names: [], skipped: [] });
+            clickReplaceParty(el, '{}');
+            expect(el.querySelector('#mwi-csim-import-error').textContent).toContain('Invalid format');
+
+            expect(editor._editedPlayerInfo).toEqual(before);
+            expect(editor._scenarioToken).toBe(token);
+        });
+    });
+
     test('a 6th member is refused, not silently dropped, once the party is full', () => {
         const { el, editor } = fullParty();
 

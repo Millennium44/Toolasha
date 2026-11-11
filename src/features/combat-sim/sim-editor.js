@@ -1161,6 +1161,65 @@ export class SimEditor {
     }
 
     /**
+     * Replace the whole loaded party with imported players: the "Replace party" import option.
+     *
+     * Every piece of per-player state goes with the old roster (the same wholesale reset
+     * `loadParty` and `resetToSelf` do), so nothing keyed by an old hrid can be read as a
+     * new player's. The pasted players take `player1`..`playerN` in pasted order whatever
+     * slot numbers the export carried, and the first one becomes the active tab. The
+     * Solo checkbox is panel-wide rather than per player, so it is left as it is.
+     *
+     * @param {Array<Object>} players - Player DTOs from `parseShykaiImport`; their hrids carry the pasted slot numbers
+     * @param {Array<string>} names - Player names, same order
+     * @param {Array<Object>} [skipped] - Equipment `parseShykaiImport` could not place, tagged by pasted slot number
+     * @returns {boolean} False when there is nothing to load
+     */
+    replaceParty(players, names, skipped = []) {
+        const incoming = (Array.isArray(players) ? players : []).slice(0, MAX_PARTY_SIZE);
+        if (!incoming.length) return false;
+
+        const dtoMap = {};
+        const info = [];
+        const pastedSlotToHrid = {};
+        incoming.forEach((dto, index) => {
+            const hrid = `player${index + 1}`;
+            const pastedSlot = parseInt(dto.hrid?.match(/player(\d+)/)?.[1], 10);
+            if (Number.isFinite(pastedSlot)) pastedSlotToHrid[pastedSlot] = hrid;
+            dto.hrid = hrid;
+            dtoMap[hrid] = dto;
+            info.push({ hrid, name: names?.[index] || `Player ${index + 1}` });
+        });
+        // Only entries for a player that was actually loaded; the rest have nobody to be shown on
+        const taggedSkipped = (Array.isArray(skipped) ? skipped : [])
+            .filter((entry) => pastedSlotToHrid[entry.slot])
+            .map((entry) => ({ ...entry, hrid: pastedSlotToHrid[entry.slot] }));
+
+        this._originalDTOs = structuredClone(dtoMap);
+        this._editedDTOs = dtoMap;
+        this._editedPlayerInfo = info;
+        // An imported build is nobody's live character, so the house/shrine sync has no row to follow
+        this._selfHrid = null;
+        this._activeEditPlayer = info[0].hrid;
+        this._missingMembers = [];
+        this._missingMemberIds = [];
+        this._profileStatus = [];
+        this._importSkipped = taggedSkipped;
+        this._externalNote = '';
+        this._loadoutFetchNote = '';
+        this._partyKeyAtLoad = null;
+        this._forgetAppliedLoadouts();
+        // Cleared and not saved: the remembered selection belongs to the live character, not these builds
+        this._selectedLoadoutName = '';
+        this._rosterEdited = true;
+        this._editorInitialized = true;
+        this._scenarioToken++;
+        this._recomputeLevelGapDebuffs();
+
+        this.renderEditor();
+        return true;
+    }
+
+    /**
      * Is there a party the editor could load right now?
      *
      * A solo character still carries a `partySlotMap` with one filled slot in it,
@@ -2050,6 +2109,14 @@ export class SimEditor {
                     font-family:inherit; font-weight:600;"${atCap ? ' disabled' : ''}
                     title="${atCap ? `A party has ${MAX_PARTY_SIZE} players already — replace one instead` : 'Add the pasted build as a new member'}"
                     >${canReplace ? 'Add as new member' : 'Import'}</button>
+                ${
+                    canReplace
+                        ? `<button id="mwi-csim-import-replace-party" style="
+                    ${GAME_BTN_CSS}
+                    padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;
+                    font-weight:600;" title="Replace every loaded player with the pasted players, in the pasted order">Replace party</button>`
+                        : ''
+                }
                 <button id="mwi-csim-import-cancel" style="
                     background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;
                     padding:3px 12px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;">Cancel</button>
@@ -3942,6 +4009,26 @@ export class SimEditor {
                     ? result.skipped.filter((entry) => entry.slot === usedSlot)
                     : [];
                 this.replacePlayer(this._activeEditPlayer, result.players[0], result.names[0], skippedForUsed);
+                const area = editorArea.querySelector('#mwi-csim-import-area');
+                if (area) area.style.display = 'none';
+            });
+        }
+
+        const importReplaceParty = editorArea.querySelector('#mwi-csim-import-replace-party');
+        if (importReplaceParty) {
+            importReplaceParty.addEventListener('click', () => {
+                const text = editorArea.querySelector('#mwi-csim-import-text')?.value?.trim();
+                const errorEl = editorArea.querySelector('#mwi-csim-import-error');
+                if (!text) {
+                    if (errorEl) errorEl.textContent = 'Paste export data first.';
+                    return;
+                }
+                const result = parseShykaiImport(text);
+                if (!result || !result.players.length) {
+                    if (errorEl) errorEl.textContent = 'Invalid format. Paste a Shykai export JSON.';
+                    return;
+                }
+                this.replaceParty(result.players, result.names, result.skipped);
                 const area = editorArea.querySelector('#mwi-csim-import-area');
                 if (area) area.style.display = 'none';
             });
