@@ -897,6 +897,16 @@ describe('encounter teardown', () => {
             expect(sim.getOrderedWipeLogs()).toHaveLength(1);
         });
 
+        test('reset() clears both wipe rings, so a second run does not open with the last one', () => {
+            const sim = dungeonSim();
+            const [hurt] = party(sim, [[400, 1000]]);
+            healWith(300);
+            sim.processAbilityHealEffect(hurt, heal, effect('self'));
+            expect(sim.getOrderedWipeLogs().length).toBeGreaterThan(0);
+            sim.reset();
+            expect(sim.getOrderedWipeLogs()).toEqual([]);
+        });
+
         test('outside a dungeon nothing is recorded', () => {
             const sim = dungeonSim();
             const [p1] = party(sim, [[100, 1000]]);
