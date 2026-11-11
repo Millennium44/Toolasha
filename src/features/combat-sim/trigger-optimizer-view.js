@@ -16,7 +16,7 @@ import {
     DEFAULT_OBJECTIVE,
     describeRow,
 } from './trigger-tuning.js';
-import { describeTriggerRows } from './lab-condition-search.js';
+import { describeTriggerRows, buildConditionEditorChanges } from './lab-condition-search.js';
 import { chatCopyBarHtml, triggerHasChatContent } from './chat-summary.js';
 import { collapseHeaderHtml } from './collapsible-sections.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
@@ -420,6 +420,53 @@ export function triggerVerifyHtml(result, { canVerify = false, cached = false, r
 }
 
 /**
+ * The Apply and Copy buttons. Apply covers both kinds of change: threshold values and, when the condition
+ * search's all-together check ran, new conditions. Copy as text is the threshold lines only.
+ * @param {Object} result - A tuner result
+ * @param {boolean} canApply - A sim editor is open to write into
+ * @returns {string} HTML ('' when there is nothing to apply or copy)
+ */
+function applyBarHtml(result, canApply) {
+    const thresholds = (result.changes || []).length > 0;
+    // The condition rows belong to the player the search ran for; the editor resolves which at click time
+    const conditions = buildConditionEditorChanges(result.conditions, 'x').length > 0;
+    if (!thresholds && !conditions) return '';
+    const label = thresholds ? 'Apply to sim editor' : 'Apply new conditions';
+    const what =
+        thresholds && conditions ? 'threshold values and new conditions' : thresholds ? 'values' : 'conditions';
+    return (
+        `<div style="display:flex; gap:8px; margin-top:8px;">` +
+        `<button id="mwi-csim-trigger-apply" style="${BTN_STYLE}"${canApply ? '' : ' disabled'} ` +
+        `title="Writes the new ${what} into this simulator's trigger editor so the next Simulate uses them. Nothing is sent to the game.">${label}</button>` +
+        (thresholds
+            ? `<button id="mwi-csim-trigger-copy" style="${BTN_STYLE}" title="Copies one line per change, to enter in the game yourself">Copy as text</button>`
+            : '') +
+        `</div>`
+    );
+}
+
+/**
+ * The Fine-tune block under the Apply buttons: empty until new conditions were applied, then a button to tune
+ * their numbers (the condition search tries fixed 25/50/75% points) or a line saying there is nothing to tune.
+ * @param {{count: number, running?: boolean}|null} state - `count` is the tunable rows in the applied slots
+ * @returns {string} HTML
+ */
+export function triggerFineTuneHtml(state) {
+    const empty = '<div id="mwi-csim-trigger-finetune"></div>';
+    if (!state) return empty;
+    const muted = (text) => `<span style="color:#888; font-size:11px;">${esc(text)}</span>`;
+    const inner =
+        state.count > 0
+            ? `<button id="mwi-csim-trigger-finetune-btn" style="${BTN_STYLE}"${state.running ? ' disabled' : ''} ` +
+              `title="Runs the threshold tuner on the applied conditions' slots only, on top of what you applied">Fine-tune</button> ` +
+              muted(
+                  `Applied. Tunes ${state.count} value${state.count === 1 ? '' : 's'} in the changed slot${state.count === 1 ? '' : 's'}.`
+              )
+            : muted('Applied. Nothing to fine-tune: these conditions have no number the tuner searches.');
+    return `<div id="mwi-csim-trigger-finetune" style="margin-top:6px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">${inner}</div>`;
+}
+
+/**
  * The results box: changes grouped by player, sorted by impact, with the
  * all-together line at the bottom and the Apply / Copy buttons.
  * @param {Object|null} result - From `runTriggerOptimization`
@@ -455,6 +502,8 @@ export function renderTriggerResultsHtml(
         summary: triggerHeadline(result),
         style: `color:${ACCENT}; font-weight:700; font-size:13px; margin-bottom:4px;`,
     });
+    const fineTuneSlot = (r) =>
+        buildConditionEditorChanges(r.conditions, 'x').length > 0 ? triggerFineTuneHtml(null) : '';
     const wrap = (inner) =>
         `<div id="mwi-csim-trigger-results" style="border:1px solid ${GAME_COLORS.border}; border-radius:6px; padding:8px 10px; margin:8px 0;">${head}${inner}</div>`;
 
@@ -481,6 +530,8 @@ export function renderTriggerResultsHtml(
             `<div style="color:#888; font-size:12px;">${esc(message)}</div>` +
                 conditionResultsHtml(result.conditions, gameData) +
                 leftOut +
+                applyBarHtml(result, canApply) +
+                fineTuneSlot(result) +
                 chatBar() +
                 (verify ? triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached }) : '')
         );
@@ -586,14 +637,7 @@ export function renderTriggerResultsHtml(
         }${result.stopped ? ' (stopped early, showing what was accepted)' : ''}. ` +
         `The userscript never changes triggers in the game; enter these by hand.</div>`;
 
-    if (changes.length > 0) {
-        body +=
-            `<div style="display:flex; gap:8px; margin-top:8px;">` +
-            `<button id="mwi-csim-trigger-apply" style="${BTN_STYLE}"${canApply ? '' : ' disabled'} ` +
-            `title="Writes the new values into this simulator's trigger editor so the next Simulate uses them. Nothing is sent to the game.">Apply to sim editor</button>` +
-            `<button id="mwi-csim-trigger-copy" style="${BTN_STYLE}" title="Copies one line per change, to enter in the game yourself">Copy as text</button>` +
-            `</div>`;
-    }
+    body += applyBarHtml(result, canApply) + fineTuneSlot(result);
     body += chatBar();
     if (verify) body += triggerVerifyHtml(result, { canVerify: Boolean(verify.canVerify), cached });
     return wrap(body);

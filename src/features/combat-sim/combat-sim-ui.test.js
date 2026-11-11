@@ -165,6 +165,9 @@ const mocks = vi.hoisted(() => ({
     triggerFail: null,
     /** When set, the SimEditor stub answers `applyTriggerValueChanges` with this */
     applyOutcome: null,
+    /** Every list handed to the editor's `applyTriggerRowChanges`, and an optional outcome to answer it with */
+    rowApplied: [],
+    rowOutcome: null,
     /** The `combatSim_autoVerifyCloseCalls` setting */
     autoVerify: false,
     /** Every `verifyCombatCandidates` call's params, and an optional (params) => outcome standing in for it */
@@ -677,6 +680,10 @@ vi.mock('./sim-editor.js', () => ({
             mocks.triggerApplied.push(changes);
             mocks.onApply?.(changes);
             return mocks.applyOutcome || { applied: changes.length, skipped: [] };
+        }
+        applyTriggerRowChanges(changes) {
+            mocks.rowApplied.push(changes);
+            return mocks.rowOutcome || { applied: changes.length, skipped: [], appliedChanges: changes };
         }
         isInitialized() {
             return true;
@@ -13594,6 +13601,8 @@ describe('the Triggers option', () => {
     beforeEach(() => {
         mocks.triggerRuns = [];
         mocks.triggerApplied = [];
+        mocks.rowApplied = [];
+        mocks.rowOutcome = null;
         mocks.triggerResult = null;
         mocks.editedDTOs = { player1: { hrid: 'player1', abilities: [], food: [], drinks: [] } };
     });
@@ -14818,6 +14827,263 @@ describe('the Triggers option', () => {
             expect.objectContaining({ playerHrid: 'player1', itemHrid: '/abilities/fireball', rowIndex: 0, to: 600 }),
         ]);
         expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(true);
+    });
+
+    describe("applying the condition search's new conditions", () => {
+        const SELF = '/combat_trigger_dependencies/self';
+        const MISSING_HP = '/combat_trigger_conditions/missing_hp';
+        const fromRows = [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }];
+        const toRows = [
+            {
+                dependencyHrid: TARGET,
+                conditionHrid: HP,
+                comparatorHrid: '/combat_trigger_comparators/less_than_equal',
+                value: 5000,
+            },
+        ];
+        const conditionResult = (extra = {}) => ({
+            scope: 'me',
+            noTunables: true,
+            changes: [],
+            conditions: {
+                changes: [
+                    {
+                        key: 'abilities|1',
+                        slotType: 'abilities',
+                        slotIndex: 1,
+                        itemHrid: '/abilities/fireball',
+                        itemName: 'Fireball',
+                        fromRows,
+                        toRows,
+                        deltaScore: 3,
+                        se: 1,
+                    },
+                ],
+                rejected: [],
+                bestMeasured: [],
+                combined: { deltaScore: 3, se: 1, seeds: 8 },
+                reliable: true,
+                ...extra,
+            },
+            simCount: 10,
+        });
+        const withFireball = () => {
+            mocks.editedDTOs.player1.abilities = [
+                null,
+                { hrid: '/abilities/fireball', triggers: [{ ...fromRows[0], value: 500 }] },
+            ];
+        };
+
+        test('a run with only new conditions draws Apply, and Apply hands the editor the searched rows', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+
+            const apply = ui.panel.querySelector('#mwi-csim-trigger-apply');
+            expect(apply.textContent).toBe('Apply new conditions');
+            apply.click();
+
+            expect(mocks.triggerApplied).toHaveLength(0);
+            expect(mocks.rowApplied).toHaveLength(1);
+            expect(mocks.rowApplied[0]).toEqual([
+                expect.objectContaining({
+                    playerHrid: 'player1',
+                    slotType: 'abilities',
+                    slotIndex: 1,
+                    itemHrid: '/abilities/fireball',
+                    fromRows,
+                    toRows,
+                    dtoRef: mocks.editedDTOs.player1,
+                }),
+            ]);
+            expect(apply.disabled).toBe(true);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('Applied 1 new condition');
+        });
+
+        test('thresholds go in before conditions, in one Apply', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            const order = [];
+            mocks.onApply = () => order.push('values');
+            mocks.triggerResult = { ...conditionResult(), noTunables: false, changes: [fireballChange] };
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+            mocks.onApply = null;
+
+            expect(order).toEqual(['values']);
+            expect(mocks.triggerApplied).toHaveLength(1);
+            expect(mocks.rowApplied).toHaveLength(1);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain(
+                'Applied 1 trigger value and 1 new condition'
+            );
+        });
+
+        test('conditions that never got the all-together check are not offered', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = conditionResult({ combined: null });
+            await ui._onTuneTriggers();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-apply')).toBeNull();
+        });
+
+        test('a stale result applies nothing', async () => {
+            mocks.editedDTOs.player2 = { hrid: 'player2', equipment: {}, attackLevel: 50 };
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+
+            mocks.editedDTOs.player2.attackLevel = 90;
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(mocks.rowApplied).toHaveLength(0);
+            expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain(
+                '1 skipped: changed since analysis'
+            );
+        });
+
+        test('a build edited in place applies nothing, the zone changing too', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+
+            mocks.editedDTOs.player1.equipment = { '/equipment_types/main_hand': { itemHrid: '/items/sword' } };
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(mocks.rowApplied).toHaveLength(0);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain(
+                '1 skipped: changed since analysis'
+            );
+        });
+
+        test('a slot the editor refuses (full, moved on, not equipped) says why and applies nothing', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            mocks.rowOutcome = { applied: 0, skipped: [{ reason: 'too many trigger rows' }], appliedChanges: [] };
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+            mocks.rowOutcome = null;
+
+            expect(ui.panel.querySelector('#mwi-csim-trigger-apply').disabled).toBe(false);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain(
+                'Nothing applied (1 skipped: too many trigger rows)'
+            );
+            expect(ui.panel.querySelector('#mwi-csim-trigger-finetune-btn')).toBeNull();
+        });
+
+        const pickPlayer = (index) => {
+            const select = ui.panel.querySelector('#mwi-csim-upgrade-player');
+            select.innerHTML = '<option value="0">player1</option><option value="1">player2</option>';
+            select.value = String(index);
+        };
+
+        test('Apply writes to the player the search ran for', async () => {
+            mocks.editedDTOs.player2 = { hrid: 'player2', abilities: [], food: [], drinks: [] };
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            pickPlayer(1);
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(mocks.rowApplied).toHaveLength(1);
+            expect(mocks.rowApplied[0].map((c) => c.playerHrid)).toEqual(['player2']);
+            expect(mocks.rowApplied[0][0].dtoRef).toBe(mocks.editedDTOs.player2);
+        });
+
+        test('Apply after the selected player changed applies nothing', async () => {
+            mocks.editedDTOs.player2 = { hrid: 'player2', abilities: [], food: [], drinks: [] };
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            pickPlayer(1);
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            pickPlayer(0);
+            ui.panel.querySelector('#mwi-csim-trigger-apply')?.click();
+
+            expect(mocks.rowApplied).toHaveLength(0);
+        });
+
+        test('Fine-tune is offered after applying, runs the tuner on the applied slots only, and is not remembered', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            withFireball();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            const button = ui.panel.querySelector('#mwi-csim-trigger-finetune-btn');
+            expect(button).not.toBeNull();
+            const snapshot = () =>
+                JSON.stringify(
+                    [...mocks.store.entries()].filter(([key]) => key.includes('combatSimTriggerLastResult'))
+                );
+            const storedBefore = snapshot();
+            expect(storedBefore).toContain('Fireball');
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 4,
+            };
+            button.click();
+            await vi.waitFor(() => expect(mocks.triggerRuns).toHaveLength(2));
+
+            const run = mocks.triggerRuns[1];
+            expect(run.searchConditions).toBe(false);
+            expect(run.onlySlots).toEqual({ playerHrid: 'player1', slots: ['abilities|1'] });
+            // Only the full run was remembered; the fine-tune covers part of the setup
+            expect(snapshot()).toBe(storedBefore);
+        });
+
+        test('a condition with no number to tune says so instead of offering Fine-tune', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.editedDTOs.player1.abilities = [
+                null,
+                {
+                    hrid: '/abilities/fireball',
+                    triggers: [{ dependencyHrid: SELF, conditionHrid: MISSING_HP, comparatorHrid: GTE, value: 9 }],
+                },
+            ];
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            expect(ui.panel.querySelector('#mwi-csim-trigger-finetune-btn')).toBeNull();
+            expect(ui.panel.querySelector('#mwi-csim-trigger-finetune').textContent).toContain('Nothing to fine-tune');
+        });
+
+        test('Fine-tune on a result whose setup moved on is refused', async () => {
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            withFireball();
+            mocks.triggerResult = conditionResult();
+            await ui._onTuneTriggers();
+            ui.panel.querySelector('#mwi-csim-trigger-apply').click();
+
+            mocks.editedDTOs.player1.equipment = { '/equipment_types/main_hand': { itemHrid: '/items/sword' } };
+            ui.panel.querySelector('#mwi-csim-trigger-finetune-btn').click();
+
+            expect(mocks.triggerRuns).toHaveLength(1);
+            expect(ui.panel.querySelector('#mwi-csim-status').textContent).toContain('setup changed');
+        });
     });
 
     test('the analysis runs on private copies of the editor DTOs', async () => {

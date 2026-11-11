@@ -13,6 +13,7 @@ import {
     triggerVerifyHtml,
     verifyChipHtml,
     formatVerifyFigure,
+    triggerFineTuneHtml,
 } from './trigger-optimizer-view.js';
 
 const gameData = {
@@ -760,5 +761,82 @@ describe('Copy for chat bar', () => {
         expect(renderTriggerResultsHtml({ scope: 'me', reliable: false, changes: [change()] }, gameData)).not.toContain(
             'mwi-csim-trigger-chat-copy'
         );
+    });
+});
+
+describe('applying new conditions', () => {
+    const rows = [
+        {
+            dependencyHrid: '/combat_trigger_dependencies/targeted_enemy',
+            conditionHrid: '/combat_trigger_conditions/current_hp',
+            comparatorHrid: '/combat_trigger_comparators/greater_than_equal',
+            value: 50,
+        },
+    ];
+    const cond = {
+        key: 'abilities|1',
+        slotType: 'abilities',
+        slotIndex: 1,
+        itemHrid: '/abilities/fireball',
+        itemName: 'Fireball',
+        fromRows: [],
+        toRows: rows,
+        deltaScore: 5,
+        se: 0.4,
+    };
+    const conditions = (over = {}) => ({
+        changes: [cond],
+        bestMeasured: [],
+        reliable: true,
+        slotCount: 1,
+        combined: { deltaScore: 5, se: 0.4, seeds: 8 },
+        ...over,
+    });
+    const render = (result, options) =>
+        renderTriggerResultsHtml({ scope: 'me', simCount: 9, unchanged: [], ...result }, gameData, options);
+
+    test('a run with only new conditions has an Apply button, a fine-tune slot and no Copy as text', () => {
+        const html = render({ changes: [], conditions: conditions() });
+        expect(html).toContain('id="mwi-csim-trigger-apply"');
+        expect(html).toContain('Apply new conditions');
+        expect(html).toContain('id="mwi-csim-trigger-finetune"');
+        expect(html).not.toContain('mwi-csim-trigger-copy');
+    });
+
+    test('the same holds when there are no tunable thresholds at all', () => {
+        const html = render({ noTunables: true, changes: [], conditions: conditions() });
+        expect(html).toContain('id="mwi-csim-trigger-apply"');
+    });
+
+    test('thresholds and conditions share one Apply, with Copy as text for the thresholds', () => {
+        const html = render({ changes: [change()], conditions: conditions() });
+        expect(html.match(/id="mwi-csim-trigger-apply"/g)).toHaveLength(1);
+        expect(html).toContain('Apply to sim editor');
+        expect(html).toContain('mwi-csim-trigger-copy');
+    });
+
+    test('nothing is offered for conditions that did not pass the all-together check, or none found', () => {
+        expect(render({ changes: [], conditions: conditions({ combined: null }) })).not.toContain(
+            'mwi-csim-trigger-apply'
+        );
+        expect(render({ changes: [], conditions: conditions({ changes: [] }) })).not.toContain(
+            'mwi-csim-trigger-apply'
+        );
+        expect(render({ changes: [] })).not.toContain('mwi-csim-trigger-apply');
+    });
+
+    test('Apply is disabled without a sim editor', () => {
+        const html = render({ changes: [], conditions: conditions() }, { canApply: false });
+        expect(html).toMatch(/id="mwi-csim-trigger-apply"[^>]* disabled/);
+    });
+
+    test('the fine-tune block: empty, a button with a count, or a line saying there is nothing to tune', () => {
+        expect(triggerFineTuneHtml(null)).toBe('<div id="mwi-csim-trigger-finetune"></div>');
+        const ready = triggerFineTuneHtml({ count: 2 });
+        expect(ready).toContain('id="mwi-csim-trigger-finetune-btn"');
+        expect(ready).toContain('2 values');
+        const none = triggerFineTuneHtml({ count: 0 });
+        expect(none).not.toContain('mwi-csim-trigger-finetune-btn');
+        expect(none).toContain('Nothing to fine-tune');
     });
 });

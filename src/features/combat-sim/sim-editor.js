@@ -45,6 +45,7 @@ import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT 
 import { addStyles } from '../../utils/dom.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
+import { applyTriggerRows, rowSignature } from './lab-condition-search.js';
 import { neverFiresReason } from './trigger-checks.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
@@ -3517,6 +3518,63 @@ export class SimEditor {
 
         if (applied > 0) this.renderEditor();
         return { applied, skipped };
+    }
+
+    /**
+     * Write a condition search's recommended trigger rows into the loaded players' slots, so the next Simulate
+     * uses them. The rows written are the ones the search simulated (`applyTriggerRows` builds them, the same
+     * function the search's own sims used), in the same order.
+     *
+     * Each edit names the slot it was measured on (`slotType`, `slotIndex`, `itemHrid`) and the rows it started
+     * from; if the player's build was replaced (`dtoRef`), the slot now holds another item or other rows, or the
+     * rows to write do not fit the editor's four, the edit is skipped rather than guessed at. A slot that already
+     * holds the rows is reported as applied before, never written twice. A slot that ends up equal to the game's
+     * defaults goes back to `null`. Nothing reaches the game.
+     * @param {Array<Object>} changes - { playerHrid, slotType, slotIndex, itemHrid, fromRows, toRows, dtoRef }
+     * @returns {{applied: number, skipped: Array<{change: Object, reason: string}>, appliedChanges: Array<Object>}}
+     */
+    applyTriggerRowChanges(changes) {
+        const skipped = [];
+        const appliedChanges = [];
+        const gameData = buildGameDataPayload();
+        const rowsKey = (rows) => (rows || []).map(rowSignature).join('&');
+        for (const change of changes || []) {
+            const dto = this._editedDTOs?.[change.playerHrid];
+            if (!dto || (change.dtoRef && change.dtoRef !== dto)) {
+                skipped.push({ change, reason: 'changed since analysis' });
+                continue;
+            }
+            const slot = (dto[change.slotType] || [])[change.slotIndex];
+            if (!slot || slot.hrid !== change.itemHrid) {
+                skipped.push({ change, reason: 'not equipped any more' });
+                continue;
+            }
+            const defaults = this._getDefaultTriggers(change.slotType, change.itemHrid, gameData);
+            const current = (Array.isArray(slot.triggers) ? slot.triggers : defaults).map((t) => ({
+                dependencyHrid: t.dependencyHrid,
+                conditionHrid: t.conditionHrid,
+                comparatorHrid: t.comparatorHrid,
+                value: Number(t.value) || 0,
+            }));
+            const toKey = rowsKey(change.toRows);
+            if (rowsKey(current) === toKey) {
+                skipped.push({ change, reason: 'already applied' });
+                continue;
+            }
+            if (current.length > MAX_TRIGGERS || (change.toRows || []).length > MAX_TRIGGERS) {
+                skipped.push({ change, reason: 'too many trigger rows' });
+                continue;
+            }
+            if (rowsKey(current) !== rowsKey(change.fromRows)) {
+                skipped.push({ change, reason: 'changed since analysis' });
+                continue;
+            }
+            const written = applyTriggerRows(dto, { [`${change.slotType}|${change.slotIndex}`]: change.toRows });
+            slot.triggers = triggersForStorage(written[change.slotType][change.slotIndex].triggers, defaults);
+            appliedChanges.push(change);
+        }
+        if (appliedChanges.length > 0) this.renderEditor();
+        return { applied: appliedChanges.length, skipped, appliedChanges };
     }
 
     /** @private */

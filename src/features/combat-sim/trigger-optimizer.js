@@ -295,6 +295,8 @@ export function estimateConditionRun({
  * What a trigger run will cost, before it starts, and the rows it would tune. The run itself takes its
  * progress total from this, so the cost line and the progress bar cannot disagree.
  * @param {Object} params - The run's own parameters (see {@link runTriggerOptimization}); `precision` is a key
+ * @param {{playerHrid: string, slots: Array<string>}|null} [params.onlySlots] - Keep only this player's tunables in
+ *   these slots (`abilities|2`): the fine-tune of conditions just applied
  * @returns {{tunables: Array<Object>, wholeParty: boolean, condition: {slots: number, counts: Array<number>, sims: number},
  *   thresholdSims: number, total: number}} `total` is the sims the progress bar counts (at least 1)
  */
@@ -309,11 +311,16 @@ export function estimateTriggerRun({
     searchConditions = false,
     maxConditionSims = MAX_CONDITION_SIMS,
     playerNames = {},
+    onlySlots = null,
 }) {
     const precisionKey = (PRECISIONS[precision] || PRECISIONS[DEFAULT_PRECISION]).key;
     const wholeParty = scope === 'party' && playerDTOs.length > 1;
     const playerIndices = wholeParty ? playerDTOs.map((_, i) => i) : [playerIndex];
-    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include });
+    const tunables = collectTunables({ playerDTOs, playerIndices, gameData, playerNames, include }).filter(
+        (t) =>
+            !onlySlots ||
+            (t.playerHrid === onlySlots.playerHrid && onlySlots.slots.includes(`${t.slotType}|${t.slotIndex}`))
+    );
     const condition = searchConditions
         ? estimateConditionRun({
               gameData,
@@ -356,6 +363,8 @@ export function estimateTriggerRun({
  * @param {boolean} [params.searchConditions] - Also search new trigger conditions (slow, opt-in): after the
  *   threshold tuner, for the selected player's abilities and consumables (per `include`)
  * @param {number} [params.maxConditionSims] - Ceiling on the condition search's sims for the run
+ * @param {{playerHrid: string, slots: Array<string>}|null} [params.onlySlots] - Tune only these slots (`abilities|2`)
+ *   of this player: the fine-tune of conditions just applied
  * @param {Function} [onProgress] - Called with `{ current, total, description }`
  * @param {Object} [options] - `{ abortSignal: () => boolean }`
  * @returns {Promise<Object|null>} The search result plus `scope`, `precision`, `simCount`, `tunableCount`;
@@ -380,6 +389,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         objective: objectiveKey = DEFAULT_OBJECTIVE,
         searchConditions = false,
         maxConditionSims = MAX_CONDITION_SIMS,
+        onlySlots = null,
     } = params;
     const objective = OBJECTIVES.some((o) => o.key === objectiveKey) ? objectiveKey : DEFAULT_OBJECTIVE;
     const { abortSignal } = options;
@@ -397,6 +407,7 @@ export async function runTriggerOptimization(params, onProgress, options = {}) {
         searchConditions,
         maxConditionSims,
         playerNames,
+        onlySlots,
     });
     const { tunables, condition: conditionEstimate } = runEstimate;
     if (tunables.length === 0 && conditionEstimate.slots === 0) {

@@ -203,8 +203,10 @@ import {
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import { neverFiringWarnings } from './trigger-checks.js';
 import { abilityCastsHtml } from './ability-casts-view.js';
+import { buildConditionEditorChanges } from './lab-condition-search.js';
 import {
     buildEditorChanges,
+    collectTunables,
     formatChangesText,
     MIN_GAIN,
     MIN_GAIN_OPTIONS,
@@ -223,6 +225,7 @@ import {
     describeTriggerEstimate,
     triggerHeadline,
     triggerVerifyHtml,
+    triggerFineTuneHtml,
     verifyChipHtml,
     formatVerifyFigure,
 } from './trigger-optimizer-view.js';
@@ -13340,9 +13343,13 @@ class CombatSimUI {
      * Tune the triggers, from the Tune triggers section. Its own run: it needs no Analyze, leaves the
      * Analyze results alone, and shows its result inside the section. Show-only: the buttons under the
      * result either write into this panel's own sim editor or copy text. Nothing here touches the game.
+     * @param {Object} [options]
+     * @param {{playerHrid: string, slots: Array<string>}} [options.fineTune] - Tune only these slots of this
+     *   player (the new conditions just applied), without the condition search; the result is not remembered
+     *   because it covers only part of the setup
      * @private
      */
-    async _onTuneTriggers() {
+    async _onTuneTriggers({ fineTune = null } = {}) {
         if (this._isBusy()) {
             this._setStatus(
                 this._triggerRunning
@@ -13363,7 +13370,9 @@ class CombatSimUI {
         // A character switch or a closed feature destroys this panel; the run then belongs to nobody
         const isCurrent = () => this.panel === panel && this._stillSameCharacter(ownerId);
         const choices = this._readTriggerChoices();
-        const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective, searchConditions } = choices;
+        const { zoneHrid, difficultyTier, scope, include, precision, minGain, objective } = choices;
+        const searchConditions = fineTune ? false : choices.searchConditions;
+        const onlySlots = fineTune || null;
         if (!zoneHrid) {
             this._setStatus('Select a zone in Configure tab first.');
             return;
@@ -13410,6 +13419,10 @@ class CombatSimUI {
                 this._setStatus('No player data available. Configure a simulation first.');
                 return;
             }
+            if (fineTune && party.simDTOs[playerIndex].hrid !== fineTune.playerHrid) {
+                this._setStatus('The simulated player changed since the conditions were applied. Nothing tuned.');
+                return;
+            }
             // The editor's DTOs are live: editing the Configure loadout mid-run would change the build
             // under later candidate sims. Run on private copies, keep the live objects for Apply, and
             // fingerprint each build so Apply can tell it was edited in place.
@@ -13445,6 +13458,7 @@ class CombatSimUI {
                 precision,
                 searchConditions,
                 playerNames,
+                onlySlots,
             });
             this._setStatus(`Tuning triggers: ${describeTriggerEstimate(runEstimate)} Stop cancels at any point.`);
             started = true;
@@ -13464,6 +13478,7 @@ class CombatSimUI {
                     objective,
                     searchConditions,
                     playerNames,
+                    onlySlots,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted || !isCurrent()) return;
@@ -13497,7 +13512,10 @@ class CombatSimUI {
                 this._wireTriggerResultButtons(result, gameData, liveDTOs, runContext, choices);
                 this._setTriggerSummary(result);
             }
-            if (result && !result.stopped && !this._upgradeAborted) await saveTriggerResult(runSignature, result);
+            // A fine-tune covers only the applied slots: remembered under the setup's key it would pass for a full Tune
+            if (result && !result.stopped && !this._upgradeAborted && !fineTune) {
+                await saveTriggerResult(runSignature, result);
+            }
             if (!isCurrent()) return;
             if (!sameSetup) {
                 this._setStatus('The setup changed while tuning, so the result was not shown. Tune again.');
@@ -13612,11 +13630,35 @@ class CombatSimUI {
             const outcome = unchanged.length
                 ? this._editor.applyTriggerValueChanges(unchanged)
                 : { applied: 0, skipped: [] };
-            const applied = outcome.applied;
+            // New conditions come second: the search started from the tuned thresholds, so each slot's rows
+            // are only the ones it measured once those are in. The player is the one the search ran for.
+            const conditionChanges = buildConditionEditorChanges(
+                result?.conditions,
+                runContext?.playerHrid ?? null
+            ).map((c) => ({ ...c, dtoRef: byHrid.get(c.playerHrid) }));
+            const conditionOutcome =
+                conditionChanges.length > 0 && !setupChanged
+                    ? this._editor.applyTriggerRowChanges(conditionChanges)
+                    : { applied: 0, skipped: [], appliedChanges: [] };
+            const conditionSkipped = [
+                ...conditionOutcome.skipped,
+                ...(setupChanged ? conditionChanges : []).map((change) => ({
+                    change,
+                    reason: 'changed since analysis',
+                })),
+                ...(result?.conditions?.combined && (result.conditions.changes || []).length > 0 && !runContext
+                    ? [{ change: null, reason: 'the player the search ran for is unknown' }]
+                    : []),
+            ];
+            const applied = outcome.applied + conditionOutcome.applied;
             const skipped = [
                 ...outcome.skipped,
                 ...changedBuild.map((change) => ({ change, reason: 'changed since analysis' })),
+                ...conditionSkipped,
             ];
+            if (conditionOutcome.applied > 0) {
+                this._showTriggerFineTune(runContext.playerHrid, conditionOutcome.appliedChanges, gameData);
+            }
             if (applied > 0) {
                 applyBtn.disabled = true;
                 // The result stays for the setup it was applied to: the build its own Apply just changed is
@@ -13633,10 +13675,15 @@ class CombatSimUI {
                     };
                 }
             }
+            const appliedText = [
+                outcome.applied > 0 && `${outcome.applied} trigger value${outcome.applied === 1 ? '' : 's'}`,
+                conditionOutcome.applied > 0 &&
+                    `${conditionOutcome.applied} new condition${conditionOutcome.applied === 1 ? '' : 's'}`,
+            ]
+                .filter(Boolean)
+                .join(' and ');
             this._setStatus(
-                (applied > 0
-                    ? `Applied ${applied} trigger value${applied === 1 ? '' : 's'} to the sim editor`
-                    : 'Nothing applied') +
+                (applied > 0 ? `Applied ${appliedText} to the sim editor` : 'Nothing applied') +
                     (skipped.length ? ` (${skipped.length} skipped: ${skipped[0].reason})` : '') +
                     (applied > 0 ? '. Run Simulate to use them.' : '.')
             );
@@ -13651,6 +13698,30 @@ class CombatSimUI {
                 console.error('[CombatSimUI] Copy of the trigger changes failed:', error);
                 this._setStatus('Could not copy to the clipboard.');
             }
+        });
+    }
+
+    /**
+     * After new conditions were applied: say whether their numbers can be fine-tuned, and wire the button.
+     * The condition search only tries fixed points (25/50/75% of a pool), so the threshold tuner is offered on
+     * the changed slots; a condition with no number (a buff active) leaves nothing to tune.
+     * @param {string} playerHrid - The player the search ran for
+     * @param {Array<Object>} appliedChanges - The editor's `appliedChanges`
+     * @param {Object} gameData - Game data payload
+     * @private
+     */
+    _showTriggerFineTune(playerHrid, appliedChanges, gameData) {
+        const slot = this.panel?.querySelector('#mwi-csim-trigger-finetune');
+        const dto = this._editor?.getEditedDTOs()?.[playerHrid];
+        if (!slot || !dto) return;
+        const slots = appliedChanges.map((c) => `${c.slotType}|${c.slotIndex}`);
+        const count = collectTunables({ playerDTOs: [dto], playerIndices: [0], gameData }).filter((t) =>
+            slots.includes(`${t.slotType}|${t.slotIndex}`)
+        ).length;
+        slot.outerHTML = triggerFineTuneHtml({ count });
+        this.panel.querySelector('#mwi-csim-trigger-finetune-btn')?.addEventListener('click', () => {
+            if (this._refuseStaleTriggerResult()) return;
+            void this._onTuneTriggers({ fineTune: { playerHrid, slots } });
         });
     }
 

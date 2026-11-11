@@ -312,6 +312,28 @@ export function applyTriggerRows(dto, edits) {
 }
 
 /**
+ * The edits to hand the sim editor for a condition search's recommended changes: one per slot, carrying the
+ * rows the search simulated (`toRows`, the very lists `applyTriggerRows` was given) and the rows it started
+ * from, so the editor can refuse a slot that has moved on. Nothing is offered unless the all-together check
+ * ran: a change that only passed one at a time is not yet a recommendation.
+ * @param {Object|null} conditions - `result.conditions` from the trigger optimizer
+ * @param {string|null} playerHrid - The player the search ran for
+ * @returns {Array<Object>} `{ playerHrid, key, slotType, slotIndex, itemHrid, fromRows, toRows }`
+ */
+export function buildConditionEditorChanges(conditions, playerHrid) {
+    if (!playerHrid || !conditions?.combined || conditions.reliable === false) return [];
+    return (conditions.changes || []).map((c) => ({
+        playerHrid,
+        key: c.key,
+        slotType: c.slotType,
+        slotIndex: c.slotIndex,
+        itemHrid: c.itemHrid,
+        fromRows: c.fromRows,
+        toRows: c.toRows,
+    }));
+}
+
+/**
  * The AND-combinations the pairing stage tries: every pair of single-row survivors on different
  * conditions, and every survivor added to the slot's current rows, within the editor's four rows.
  * @param {Array<Array<Object>>} survivors - Row lists that beat the current rows in the screen

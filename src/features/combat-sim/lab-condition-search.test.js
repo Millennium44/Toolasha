@@ -11,6 +11,7 @@ import {
     SCREEN_SEEDS,
     applyTriggerRows,
     buildConditionCandidates,
+    buildConditionEditorChanges,
     combineSurvivors,
     conditionForBuff,
     conditionSlots,
@@ -613,5 +614,43 @@ describe('describeTriggerRows', () => {
             )
         ).toBe('Activate when: My Missing Hp >= 300');
         expect(describeTriggerRows([], GAME_DATA)).toBe('Activate when: always (no conditions)');
+    });
+});
+
+describe('buildConditionEditorChanges', () => {
+    const rows = [{ dependencyHrid: TARGET, conditionHrid: COND('current_hp'), comparatorHrid: GTE, value: 7 }];
+    const change = { key: 'abilities|2', slotType: 'abilities', slotIndex: 2, itemHrid: '/abilities/x', itemName: 'X' };
+    const conditions = (over = {}) => ({
+        changes: [{ ...change, fromRows: [], toRows: rows, deltaScore: 1, se: 1 }],
+        combined: { deltaScore: 1, se: 1, seeds: 8 },
+        reliable: true,
+        ...over,
+    });
+
+    test('carries the searched rows and slot for the player the search ran for', () => {
+        expect(buildConditionEditorChanges(conditions(), 'player3')).toEqual([
+            {
+                playerHrid: 'player3',
+                key: 'abilities|2',
+                slotType: 'abilities',
+                slotIndex: 2,
+                itemHrid: '/abilities/x',
+                fromRows: [],
+                toRows: rows,
+            },
+        ]);
+    });
+
+    test('the rows are the ones applyTriggerRows would simulate', () => {
+        const [c] = buildConditionEditorChanges(conditions(), 'player3');
+        const dto = { hrid: 'player3', abilities: [null, null, { hrid: '/abilities/x', triggers: null }] };
+        expect(applyTriggerRows(dto, { [c.key]: c.toRows }).abilities[2].triggers).toEqual(rows);
+    });
+
+    test('offers nothing before the all-together check ran, when it was rejected, or without a player', () => {
+        expect(buildConditionEditorChanges(conditions({ combined: null }), 'player3')).toEqual([]);
+        expect(buildConditionEditorChanges(conditions({ reliable: false }), 'player3')).toEqual([]);
+        expect(buildConditionEditorChanges(conditions(), null)).toEqual([]);
+        expect(buildConditionEditorChanges(undefined, 'player3')).toEqual([]);
     });
 });

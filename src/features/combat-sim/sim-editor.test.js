@@ -2948,6 +2948,106 @@ describe('applying optimizer trigger values', () => {
     });
 });
 
+describe('applying condition search rows', () => {
+    const TARGET = '/combat_trigger_dependencies/targeted_enemy';
+    const SELF = '/combat_trigger_dependencies/self';
+    const HP = '/combat_trigger_conditions/current_hp';
+    const MISSING = '/combat_trigger_conditions/missing_hp';
+    const GTE = '/combat_trigger_comparators/greater_than_equal';
+    const LTE = '/combat_trigger_comparators/less_than_equal';
+    const FIREBALL = '/abilities/fireball';
+    const defaults = [{ dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: GTE, value: 1 }];
+    const missing = { dependencyHrid: SELF, conditionHrid: MISSING, comparatorHrid: GTE, value: 300 };
+    const second = { dependencyHrid: TARGET, conditionHrid: HP, comparatorHrid: LTE, value: 5000 };
+
+    function editorWithFireball(triggers) {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        const dto = emptyDTO('x');
+        dto.abilities[1] = { hrid: FIREBALL, level: 10, triggers };
+        editor.importPlayers([dto], ['Milkman']);
+        vi.spyOn(editor, '_getDefaultTriggers').mockReturnValue(defaults);
+        return editor;
+    }
+    const slotOf = (editor) => editor.getEditedDTOs().player1.abilities[1];
+    const change = (over = {}) => ({
+        playerHrid: 'player1',
+        slotType: 'abilities',
+        slotIndex: 1,
+        itemHrid: FIREBALL,
+        fromRows: defaults,
+        toRows: [missing],
+        ...over,
+    });
+
+    test('writes the rows the search simulated, in its order, to the slot that was searched', () => {
+        const editor = editorWithFireball(null);
+        const out = editor.applyTriggerRowChanges([change({ toRows: [missing, second] })]);
+        expect(out.applied).toBe(1);
+        expect(out.skipped).toEqual([]);
+        expect(slotOf(editor).triggers).toEqual([missing, second]);
+    });
+
+    test('applying the same result twice writes once and reports it as already applied', () => {
+        const editor = editorWithFireball(null);
+        editor.applyTriggerRowChanges([change()]);
+        const again = editor.applyTriggerRowChanges([change()]);
+        expect(again.applied).toBe(0);
+        expect(again.skipped[0].reason).toBe('already applied');
+        expect(slotOf(editor).triggers).toEqual([missing]);
+    });
+
+    test('a slot whose rows moved on since the search is refused untouched', () => {
+        const editor = editorWithFireball([{ ...defaults[0], value: 900 }]);
+        const out = editor.applyTriggerRowChanges([change()]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toBe('changed since analysis');
+        expect(slotOf(editor).triggers[0].value).toBe(900);
+    });
+
+    test('rows that would not fit the editor four-row limit are refused', () => {
+        const editor = editorWithFireball(defaults);
+        const five = [missing, missing, missing, missing, missing];
+        const out = editor.applyTriggerRowChanges([change({ toRows: five })]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toMatch(/too many/);
+        const full = editorWithFireball([
+            defaults[0],
+            missing,
+            second,
+            { ...second, value: 9 },
+            { ...second, value: 8 },
+        ]);
+        expect(full.applyTriggerRowChanges([change()]).skipped[0].reason).toMatch(/too many/);
+    });
+
+    test('an ability no longer in that slot is refused, even when another item holds the slot', () => {
+        const editor = editorWithFireball(null);
+        const out = editor.applyTriggerRowChanges([change({ itemHrid: '/abilities/other' })]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toMatch(/not equipped/);
+        expect(editor.applyTriggerRowChanges([change({ slotIndex: 3 })]).skipped[0].reason).toMatch(/not equipped/);
+    });
+
+    test('a player whose build was replaced since the search is refused', () => {
+        const editor = editorWithFireball(null);
+        const analyzed = editor.getEditedDTOs().player1;
+        const fresh = emptyDTO('x');
+        fresh.abilities[1] = { hrid: FIREBALL, level: 10, triggers: null };
+        editor.replacePlayer('player1', fresh, 'Someone else');
+        const out = editor.applyTriggerRowChanges([change({ dtoRef: analyzed })]);
+        expect(out.applied).toBe(0);
+        expect(out.skipped[0].reason).toBe('changed since analysis');
+        expect(slotOf(editor).triggers).toBeNull();
+    });
+
+    test('rows equal to the game defaults store null so the slot keeps following them', () => {
+        const editor = editorWithFireball([missing]);
+        editor.applyTriggerRowChanges([change({ fromRows: [missing], toRows: defaults })]);
+        expect(slotOf(editor).triggers).toBeNull();
+    });
+});
+
 describe('loadParty (the Party Finder hands a whole party over)', () => {
     test('replaces the scenario: you are player1, teammates follow, each a copy', () => {
         const { editor } = editorWithStrangers();

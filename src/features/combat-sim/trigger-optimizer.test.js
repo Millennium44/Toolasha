@@ -327,6 +327,25 @@ describe('runTriggerOptimization', () => {
         }
     });
 
+    test('onlySlots keeps one player tunables in the named slots', () => {
+        const params = {
+            ...base,
+            playerDTOs: [dto('player1'), dto('player2')],
+            playerIndex: 0,
+            scope: 'party',
+            include: 'abilities',
+        };
+        const all = estimateTriggerRun(params);
+        expect(all.tunables).toHaveLength(2);
+        const slot = `${all.tunables[1].slotType}|${all.tunables[1].slotIndex}`;
+        const only = estimateTriggerRun({ ...params, onlySlots: { playerHrid: 'player2', slots: [slot] } });
+        expect(only.tunables.map((t) => t.playerHrid)).toEqual(['player2']);
+        const wrongSlot = { playerHrid: 'player2', slots: ['abilities|9'] };
+        expect(estimateTriggerRun({ ...params, onlySlots: wrongSlot }).tunables).toEqual([]);
+        const wrongPlayer = { playerHrid: 'nobody', slots: [slot] };
+        expect(estimateTriggerRun({ ...params, onlySlots: wrongPlayer }).tunables).toEqual([]);
+    });
+
     test('the estimate for a player with no trigger rows is empty, and counts at least one sim for the bar', () => {
         const estimate = estimateTriggerRun({
             ...base,
