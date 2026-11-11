@@ -128,19 +128,30 @@ export default class HpMpRecorder {
         // Whole-run: the previous sample's state held for the time since then
         if (this.prevTime !== null && timeNs > this.prevTime) {
             const weight = timeNs - this.prevTime;
-            let bucket = Math.floor(this.prevTime / this.stepNs);
-            while (bucket >= MAX_POINTS) {
-                this._mergeBuckets();
-                bucket = Math.floor(this.prevTime / this.stepNs);
+            // The held value covers every bucket the interval overlaps, each for
+            // its own share: charging it all to the bucket it started in hid
+            // low-MP time behind a boundary and could skip the final bucket
+            let t = this.prevTime;
+            while (t < timeNs) {
+                let bucket = Math.floor(t / this.stepNs);
+                while (bucket >= MAX_POINTS) {
+                    this._mergeBuckets();
+                    bucket = Math.floor(t / this.stepNs);
+                }
+                const end = Math.min(timeNs, (bucket + 1) * this.stepNs);
+                const part = end - t;
+                this.bucketWeight[bucket] += part;
+                for (let i = 0; i < n; i++) {
+                    this.bucketHp[bucket * n + i] += this.prevHp[i] * part;
+                    this.bucketMp[bucket * n + i] += this.prevMp[i] * part;
+                }
+                if (bucket > this.lastBucket) this.lastBucket = bucket;
+                t = end;
             }
-            this.bucketWeight[bucket] += weight;
             for (let i = 0; i < n; i++) {
-                this.bucketHp[bucket * n + i] += this.prevHp[i] * weight;
-                this.bucketMp[bucket * n + i] += this.prevMp[i] * weight;
                 if (this.hasMp[i] && this.prevMp[i] < LOW_MP_FRACTION * 100) this.lowMpWeight[i] += weight;
             }
             this.totalWeight += weight;
-            if (bucket > this.lastBucket) this.lastBucket = bucket;
         }
         this.prevTime = timeNs;
         this.prevHp.set(this.curHp);
