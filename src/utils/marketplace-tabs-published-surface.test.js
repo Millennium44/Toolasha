@@ -37,6 +37,7 @@ const EXPECTED_SURFACE = {
     // Gained the same `owner` option as createMaterialTab/removeMaterialTabs, in the same
     // change — it was missing from this list, so that arity was unpinned.
     createClearAllTabsControl: 2, // (referenceTab, [onClearAll], [options])
+    insertTabInOrder: 3, // (container, tab, [key]) — a companion script places its own tab with key 'companion'
 };
 
 describe('Toolasha.Utils.marketplaceTabs published surface', () => {

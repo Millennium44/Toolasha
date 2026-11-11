@@ -48,6 +48,7 @@ import webSocketHook from '../core/websocket.js';
 import dataManager from '../core/data-manager.js';
 import {
     createMaterialTab,
+    insertTabInOrder,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
@@ -259,7 +260,7 @@ function addTabs(container, reference, items) {
         fontWeight: 'bold',
         fontSize: '1.2rem',
     });
-    container.appendChild(title);
+    insertTabInOrder(container, title, 'material');
     tabs.push(title);
 
     for (const item of items) {
@@ -279,7 +280,7 @@ function addTabs(container, reference, items) {
                 handlerFor(item),
                 { owner: TAB_OWNER }
             );
-            container.appendChild(tab);
+            insertTabInOrder(container, tab, 'material');
             tabs.push(tab);
         } catch (error) {
             // One unbuildable tab must not cost the rest of the list. Logged

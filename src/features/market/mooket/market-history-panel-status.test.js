@@ -65,7 +65,10 @@ vi.mock('../../../utils/cleanup-registry.js', () => ({
     }),
 }));
 vi.mock('../../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
-vi.mock('../../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: () => {},
+    insertTabInOrder: (container, tab) => container.appendChild(tab),
+}));
 vi.mock('../../../utils/mobile.js', () => ({ hasCoarsePointer: () => false }));
 vi.mock('./market-price-store.js', () => ({
     default: { initialize: async () => {}, cleanup: () => {}, ingestSnapshot: () => {}, priceFor: () => null },

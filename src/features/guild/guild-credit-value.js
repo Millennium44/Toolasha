@@ -21,6 +21,7 @@ import {
     navigateToMarketplace,
     createMaterialTab,
     createClearAllTabsControl,
+    insertTabInOrder,
     removeShrineMarketTabs,
     navigateToMarketListingsTab,
     updateTabBadge,
@@ -3688,7 +3689,7 @@ class GuildCreditValue {
                     tab.setAttribute('data-required-quantity', mat.required.toString());
                     tab.setAttribute('data-item-name', mat.itemName);
                     tabEl = tab;
-                    tabsContainer.appendChild(tab);
+                    insertTabInOrder(tabsContainer, tab, 'material');
                 }
 
                 // One click, every shrine tab gone. Shrine tabs opt out of the
@@ -3709,7 +3710,7 @@ class GuildCreditValue {
                     },
                     { owner: TAB_OWNER }
                 );
-                tabsContainer.appendChild(clearAllControl);
+                insertTabInOrder(tabsContainer, clearAllControl, 'close-all');
 
                 // Watch for inventory/market changes and update shrine tabs accordingly
                 const shrineTabs = Array.from(document.querySelectorAll('[data-mwi-shrine-tab="true"]'));

@@ -30,6 +30,9 @@ import { addStyles } from './dom.js';
  */
 export const CAPABILITIES = Object.freeze({
     tabOwner: true,
+    // `insertTabInOrder(container, tab, key)` is published: a companion script can
+    // place its own tab (key `'companion'`) in the fixed order instead of appending
+    insertTabInOrder: true,
 });
 
 /**
@@ -363,14 +366,14 @@ export function createClearAllTabsControl(referenceTab, onClearAll, options = {}
  */
 export function ensureClearAllTabsControl(container, referenceTab, onClearAll, options = {}) {
     if (!container || container.querySelector('[data-mwi-clear-all-tab="true"]')) return;
-    container.appendChild(createClearAllTabsControl(referenceTab, onClearAll, options));
+    insertTabInOrder(container, createClearAllTabsControl(referenceTab, onClearAll, options), 'close-all');
 }
 
 /**
  * The attribute `insertTabInOrder` stamps on a tab it places, and reads back
  * off every tab already in the strip to decide where a new one belongs. A
  * label is not a safe key: the game's own tabs and ours both carry counts and
- * badges in their text (`My Listings0`, `Flips 3`), so two features racing to
+ * badges in their text (`My Listings0`, `Overbid 3`), so two features racing to
  * add "the same" tab by name alone would either duplicate it or misfile it.
  * The key is a plain string a feature picks once, e.g. `'ledger'`, and is
  * unrelated to the tab's visible text.
@@ -378,36 +381,62 @@ export function ensureClearAllTabsControl(container, referenceTab, onClearAll, o
 const TAB_ORDER_ATTR = 'data-mwi-tab-key';
 
 /**
- * The fixed left-to-right order our own tabs are kept in, once the game's own
- * tabs (never touched here — see `insertTabInOrder`). A key with no entry
- * here — including every per-item pinned tab from `createMaterialTab`, which
- * intentionally passes no key — sorts after all of these, in the order it
- * arrived, which is where a companion script's own tab lands too: nothing
- * here needs to name it to get that placement right.
+ * The fixed left-to-right order the tabs after the game's own are kept in.
  *
- * `'history'` has no current tab attached to it; it is reserved so a future
- * "History" tab (distinct from "Market History") has a slot already defined
- * instead of landing wherever it happened to attach first.
+ * `'companion'` is a tab another userscript adds through this function, ranked first after the game's own tabs.
+ * `'history'` is the price-history toggle. `'material'` is every pinned item
+ * tab (Missing Materials, house, guild shrine, lab plan, shopping list, sell
+ * queue) and the small indicators beside them; they keep the order they were
+ * pinned in. `'return'` and `'close-all'` close the row, in that order.
+ *
+ * A key with no entry here (or no key at all) ranks as `'material'`.
  */
-const TAB_ORDER = ['market-history', 'ledger', 'stale', 'bulk-sell', 'history'];
+const TAB_ORDER = [
+    'companion',
+    'market-history',
+    'ledger',
+    'stale',
+    'overbid',
+    'bulk-sell',
+    'history',
+    'material',
+    'return',
+    'close-all',
+];
+
+/** Where a tab with no recognizable key sorts: with the pinned material tabs. */
+const DEFAULT_RANK = TAB_ORDER.indexOf('material');
 
 /**
  * @param {string|null|undefined} key
- * @returns {number} The key's position in `TAB_ORDER`, or `TAB_ORDER.length`
- *   (after every named slot) for an unlisted or missing key — including every
- *   pinned material tab, which passes no key at all.
+ * @returns {number} The key's position in `TAB_ORDER`; an unknown or missing key ranks with the pinned material tabs.
  */
 function tabRank(key) {
     const index = key ? TAB_ORDER.indexOf(key) : -1;
-    return index === -1 ? TAB_ORDER.length : index;
+    return index === -1 ? DEFAULT_RANK : index;
 }
 
 /**
- * Whether `el` is one of ours — a tab this module or a feature built, as
- * opposed to one of the game's own. Matched by marker attribute rather than
- * visible text so a game tab whose label happens to contain "Ledger" (it
- * never has, but nothing guarantees it never will) can't be mistaken for
- * one of ours, and so a game tab is never a candidate for repositioning.
+ * The ordering key of one of our tabs, read from its markers: an explicit
+ * `data-mwi-tab-key`, else the "x All"
+ * control's marker, else null (a pinned material tab or indicator).
+ * @param {Element} el
+ * @returns {string|null}
+ */
+function tabKeyOf(el) {
+    const explicit = el.getAttribute(TAB_ORDER_ATTR);
+    if (explicit) return explicit;
+    if (el.hasAttribute('data-mwi-clear-all-tab')) return 'close-all';
+    return null;
+}
+
+/**
+ * Whether `el` is one of ours (a tab this module or a feature built, or one
+ * companion script's tab) as opposed to one of the game's own. Matched by marker
+ * attribute rather than visible text so a game tab whose label happens to
+ * contain "Ledger" (it never has, but nothing guarantees it never will) can't
+ * be mistaken for one of ours, and so a game tab is never a candidate for
+ * repositioning.
  * @param {Element} el
  * @returns {boolean}
  */
@@ -424,7 +453,7 @@ export const TAB_STRIP_WRAP_STYLE_ID = 'toolasha-tab-strip-wrap';
 
 /**
  * The rule. Scoped with `:has()` to a strip that currently holds one of our
- * tabs (the same three markers `isOwnTab` reads), so it reverts by itself the
+ * tabs (the same markers `isOwnTab` reads), so it reverts by itself the
  * moment the last of them is removed, by whichever path removes it: a feature's
  * disable(), `removeMaterialTabs`, a dismiss button, or the game rebuilding the
  * strip. Nothing is written onto the game's element, so nothing needs undoing.
@@ -496,7 +525,14 @@ export function insertTabInOrder(container, tab, key) {
     if (key) tab.setAttribute(TAB_ORDER_ATTR, key);
     allowTabStripToWrap();
 
-    const myRank = tabRank(key);
+    const myRank = tabRank(tabKeyOf(tab));
+    // Already where the order allows: leave it. Without this a pinned tab
+    // re-inserted among peers of its own rank would move behind them on
+    // every pass.
+    if (tab.parentElement === container && isInPlace(container, tab, myRank)) {
+        settleOwnTabs(container);
+        return;
+    }
     let nextSibling = null;
     let seenOwnTab = false;
     for (const el of container.children) {
@@ -516,7 +552,7 @@ export function insertTabInOrder(container, tab, key) {
             // injected and ranks unnamed. Matching on text would put our tabs in
             // front of a game tab the day the game renames one.
             if (!seenOwnTab) continue;
-            if (myRank < TAB_ORDER.length) {
+            if (myRank < DEFAULT_RANK) {
                 nextSibling = el;
                 break;
             }
@@ -524,7 +560,7 @@ export function insertTabInOrder(container, tab, key) {
         }
 
         seenOwnTab = true;
-        if (tabRank(el.getAttribute(TAB_ORDER_ATTR)) > myRank) {
+        if (tabRank(tabKeyOf(el)) > myRank) {
             nextSibling = el;
             break;
         }
@@ -537,6 +573,70 @@ export function insertTabInOrder(container, tab, key) {
     } else if (tab.parentElement !== container || container.lastElementChild !== tab) {
         container.appendChild(tab);
     }
+
+    settleOwnTabs(container);
+}
+
+/**
+ * Whether a tab already in the strip sits where the order allows: no tab of
+ * ours ranked after it comes before it, none ranked before it comes after it,
+ * and a named tab is not behind a foreign tab that follows one of ours.
+ * @param {HTMLElement} container
+ * @param {HTMLElement} tab - A child of `container`
+ * @param {number} myRank - The tab's rank
+ * @returns {boolean}
+ */
+function isInPlace(container, tab, myRank) {
+    let before = true;
+    let seenOwnTab = false;
+    for (const el of container.children) {
+        if (el === tab) {
+            before = false;
+            continue;
+        }
+        if (!isOwnTab(el)) {
+            if (before && seenOwnTab && myRank < DEFAULT_RANK) return false;
+            continue;
+        }
+        seenOwnTab = true;
+        const rank = tabRank(tabKeyOf(el));
+        if (before ? rank > myRank : rank < myRank) return false;
+    }
+    return true;
+}
+
+/**
+ * Put every tab of ours (and a companion script's) that is out of order back in
+ * order, so a tab that landed in the wrong place by another route (an older
+ * companion build that appends its own, a feature that mounted before this
+ * ordering existed) is settled by the next insert.
+ *
+ * Only our own tabs move: they swap among the slots they already occupy, so the
+ * game's tabs, and any foreign tab, keep their exact positions. Equal ranks keep
+ * their DOM order, which is what keeps pinned material tabs in the order they
+ * were pinned. Does nothing when the order is already right.
+ * @param {HTMLElement} container
+ */
+function settleOwnTabs(container) {
+    const children = Array.from(container.children);
+    const slots = [];
+    const own = [];
+    children.forEach((el, index) => {
+        if (isOwnTab(el)) {
+            slots.push(index);
+            own.push(el);
+        }
+    });
+    const sorted = own.slice().sort((a, b) => tabRank(tabKeyOf(a)) - tabRank(tabKeyOf(b)));
+    if (sorted.every((el, i) => el === own[i])) return;
+
+    const target = children.slice();
+    slots.forEach((slot, i) => {
+        target[slot] = sorted[i];
+    });
+    target.forEach((el, i) => {
+        if (container.children[i] !== el) container.insertBefore(el, container.children[i] || null);
+    });
 }
 
 /**

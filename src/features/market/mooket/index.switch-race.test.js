@@ -122,7 +122,10 @@ vi.mock('../../../utils/persisted-record.js', () => ({
 vi.mock('../../../utils/panel-minimize.js', () => ({
     attachMinimize: () => ({ destroy: () => {} }),
 }));
-vi.mock('../../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
+vi.mock('../../../utils/marketplace-tabs.js', () => ({
+    navigateToMarketplace: () => {},
+    insertTabInOrder: (container, tab) => container.appendChild(tab),
+}));
 vi.mock('../../../utils/mobile.js', () => ({ hasCoarsePointer: () => false }));
 vi.mock('../../../utils/command-registry.js', () => ({
     registerCommand: ({ name }) => {

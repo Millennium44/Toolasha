@@ -30,7 +30,7 @@ import domObserver from '../../../core/dom-observer.js';
 import marketAPI from '../../../api/marketplace.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
-import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
+import { navigateToMarketplace, insertTabInOrder } from '../../../utils/marketplace-tabs.js';
 import { hasCoarsePointer } from '../../../utils/mobile.js';
 import marketPriceStore from './market-price-store.js';
 import marketHistoryAPI from './market-history-api.js';
@@ -584,10 +584,10 @@ class MarketHistoryPanel {
             return;
         }
         if (this.tabButton && tabBar.contains(this.tabButton)) {
-            // Kept at the end. Every other script inserts its tab relative to an
-            // anchor, so one added after this one lands in front of it; moving
-            // back only when it is not already last leaves nothing to fight over.
-            if (tabBar.lastElementChild !== this.tabButton) tabBar.appendChild(this.tabButton);
+            // Settled into its slot (key `history`) rather than forced last: the
+            // row is ordered by key, so a tab added after this one cannot push
+            // it out of place, and a call with nothing to move touches nothing.
+            insertTabInOrder(tabBar, this.tabButton, 'history');
             return;
         }
 
@@ -614,7 +614,7 @@ class MarketHistoryPanel {
             this.toggle();
         });
 
-        tabBar.appendChild(tab);
+        insertTabInOrder(tabBar, tab, 'history');
         this.tabButton = tab;
         this.syncTabButton();
     }

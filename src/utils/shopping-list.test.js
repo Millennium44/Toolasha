@@ -31,6 +31,7 @@ vi.mock('./material-calculator.js', () => ({
 }));
 
 vi.mock('./marketplace-tabs.js', () => ({
+    insertTabInOrder: (container, tab) => container.appendChild(tab),
     createMaterialTab: (material, _reference, onClick) => {
         const tab = document.createElement('div');
         tab.setAttribute('data-item-hrid', material.itemHrid);

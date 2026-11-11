@@ -146,6 +146,7 @@ const marketplaceTabs = vi.hoisted(() => ({
     navigateToMarketListingsCalls: 0,
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
+    insertTabInOrder: (container, tab) => container.appendChild(tab),
     navigateToMarketplace: () => {},
     createMaterialTab: (mat, referenceTab, onClick) => {
         marketplaceTabs.createdTabs.push(mat);

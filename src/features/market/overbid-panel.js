@@ -748,7 +748,7 @@ class OverbidPanel {
                 event.stopPropagation();
                 this.toggleFromTab();
             });
-            insertTabInOrder(container, tab);
+            insertTabInOrder(container, tab, 'overbid');
             this.openButtons.add(tab);
         };
 

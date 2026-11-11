@@ -175,6 +175,7 @@ import {
     visibleTabsContainer,
     navigateToMarketplace,
     ensureClearAllTabsControl,
+    insertTabInOrder,
     setupMarketplaceCleanupObserver,
     watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
@@ -926,7 +927,7 @@ async function openPlanInMarketplace(picks) {
                 },
             }
         );
-        container.appendChild(tab);
+        insertTabInOrder(container, tab, 'material');
         marketPlanTabs.push(tab);
 
         // Retire the tab on its own once the item is in inventory, instead of

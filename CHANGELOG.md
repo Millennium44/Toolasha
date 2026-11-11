@@ -14,6 +14,10 @@ Shopping lists no longer count an owned prerequisite toward a separate purchase 
 
 Equipment Watch refreshes missing materials when crafting changes your inventory and closes plans whose Mirror input is gone. Pending reservation updates no longer write to another character after switching, and an old crafting plan cannot start on the new character.
 
+### Marketplace tabs keep one order
+
+The tabs added to the marketplace row now always appear in the same order, whichever loads first: Market History, Ledger, Stale, Overbid, Bulk Sell, History, then pinned item tabs, with Return and × All last.
+
 ### Rerolled tasks clear their old estimates immediately
 
 When a task changes, its previous estimate and overlay disappear without waiting for the normal refresh. Progress updates keep valid estimates, and an older calculation cannot put its result or error onto the replacement task.

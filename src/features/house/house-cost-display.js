@@ -19,6 +19,7 @@ import { addStyles, removeStyles } from '../../utils/dom.js';
 import {
     createMaterialTab,
     createClearAllTabsControl,
+    insertTabInOrder,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
@@ -1249,7 +1250,7 @@ class HouseCostDisplay {
             );
             tabEl = tab;
             tab.setAttribute('data-item-name', material.itemName);
-            tabsContainer.appendChild(tab);
+            insertTabInOrder(tabsContainer, tab, 'material');
             this.currentMaterialsTabs.push(tab);
         }
 
@@ -1258,7 +1259,7 @@ class HouseCostDisplay {
         const clearAllControl = createClearAllTabsControl(referenceTab, () => this.handleClearAllClick(), {
             owner: TAB_OWNER,
         });
-        tabsContainer.appendChild(clearAllControl);
+        insertTabInOrder(tabsContainer, clearAllControl, 'close-all');
         this.currentMaterialsTabs.push(clearAllControl);
     }
 

@@ -314,9 +314,9 @@ function injectTabs() {
             badgeSpan.innerHTML = buildBadgeHtml(entry.itemName, count);
         }
 
-        // No key: these are per-item pinned tabs, not one of the named tabs,
-        // so they sort after all of those, in arrival order — see marketplace-tabs.js
-        insertTabInOrder(tabsContainer, tab);
+        // Keyed as a pinned material tab: these sort after the named tabs, in the order
+        // they were pinned — see marketplace-tabs.js
+        insertTabInOrder(tabsContainer, tab, 'material');
         currentTabs.push(tab);
     }
 }

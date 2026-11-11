@@ -31,6 +31,7 @@ import {
     createMaterialTab,
     updateTabBadge,
     createClearAllTabsControl,
+    insertTabInOrder,
     removeMaterialTabs,
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
@@ -1473,20 +1474,20 @@ function createTesterShopTabs(missingMaterials, testerTab) {
         tab.setAttribute('data-tester-sold', sold ? 'true' : 'false');
         tab.setAttribute('data-item-name', material.itemName || '');
         if (!sold) tab.title = 'Not sold in the Tester shop — opens the marketplace';
-        tabsContainer.appendChild(tab);
+        insertTabInOrder(tabsContainer, tab, 'material');
         currentMaterialsTabs.push(tab);
     }
 
     const preparation = createBasePreparationIndicator();
     if (preparation) {
-        tabsContainer.appendChild(preparation);
+        insertTabInOrder(tabsContainer, preparation, 'material');
         currentMaterialsTabs.push(preparation);
     }
 
     // One press, one purchase: the next line still short, bought for what it
     // is short of. Pressed again, the line after it
     const control = createBuyNextControl();
-    tabsContainer.appendChild(control);
+    insertTabInOrder(tabsContainer, control, 'material');
     currentMaterialsTabs.push(control);
 
     // One click, every pinned line gone — already on the Tester tab, which is
@@ -1494,7 +1495,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     const clearAllControl = createClearAllTabsControl(testerTab, () => handleClearAllClick(false), {
         owner: TAB_OWNER,
     });
-    tabsContainer.appendChild(clearAllControl);
+    insertTabInOrder(tabsContainer, clearAllControl, 'close-all');
     currentMaterialsTabs.push(clearAllControl);
     return true;
 }
@@ -2052,7 +2053,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     // Add strategy indicator if auto-calculated
     if (strategyInfo) {
         const indicator = createStrategyIndicator(strategyInfo);
-        tabsContainer.appendChild(indicator);
+        insertTabInOrder(tabsContainer, indicator, 'material');
         currentMaterialsTabs.push(indicator);
     }
 
@@ -2063,19 +2064,19 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
         const tab = createMaterialTab(material, referenceTab, handler, { owner: TAB_OWNER });
         tab.setAttribute('data-enhancement-level', String(material.enhancementLevel || 0));
         tabRef.tab = tab;
-        tabsContainer.appendChild(tab);
+        insertTabInOrder(tabsContainer, tab, 'material');
         currentMaterialsTabs.push(tab);
     }
 
     // Add "Return to Action" tab at the end
     const preparation = createBasePreparationIndicator();
     if (preparation) {
-        tabsContainer.appendChild(preparation);
+        insertTabInOrder(tabsContainer, preparation, 'material');
         currentMaterialsTabs.push(preparation);
     }
     const returnTab = createReturnTab(referenceTab);
     if (returnTab) {
-        tabsContainer.appendChild(returnTab);
+        insertTabInOrder(tabsContainer, returnTab, 'return');
         currentMaterialsTabs.push(returnTab);
     }
 
@@ -2084,7 +2085,7 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
     const clearAllControl = createClearAllTabsControl(referenceTab, () => handleClearAllClick(true), {
         owner: TAB_OWNER,
     });
-    tabsContainer.appendChild(clearAllControl);
+    insertTabInOrder(tabsContainer, clearAllControl, 'close-all');
     currentMaterialsTabs.push(clearAllControl);
     return true;
 }
