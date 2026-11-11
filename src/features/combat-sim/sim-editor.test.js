@@ -165,7 +165,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
 
 // Per-character settings, in memory: the loadout the editor last simmed with
 // lives here, and nothing in this suite is about IndexedDB.
-const settings = vi.hoisted(() => ({ values: new Map(), hold: null }));
+const settings = vi.hoisted(() => ({ values: new Map(), hold: null, writes: [], writeHold: null }));
 vi.mock('../../utils/character-key.js', () => ({
     readScoped: async (base, storeName, defaultValue = null) => {
         // A read left open, so a test can land a character switch inside one
@@ -173,6 +173,9 @@ vi.mock('../../utils/character-key.js', () => ({
         return settings.values.has(base) ? settings.values.get(base) : defaultValue;
     },
     writeScoped: async (base, value) => {
+        // Which character's key this write resolves to is fixed as the call starts
+        settings.writes.push({ base, owner: game.charId });
+        if (settings.writeHold && base === 'simEditorLoadoutName') await settings.writeHold;
         settings.values.set(base, value);
     },
 }));
@@ -3969,14 +3972,37 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(el.textContent).toContain('Your party data is out of date');
     });
 
-    test('a login-time record is trusted when a fight roster names you', async () => {
-        bridge.snapshots = [{ id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT }];
+    test('a fight roster naming you does not make a login-time record current', async () => {
+        bridge.snapshots = [
+            { id: 900401, name: 'FromSlot', actionTypeHrid: COMBAT },
+            { id: 555, name: 'FromAction', actionTypeHrid: COMBAT },
+        ];
+        game.actions = [{ actionHrid: ZONE, characterLoadoutID: 555, isDone: false, ordinal: 1 }];
         game.partyInfoSource = 'login';
         game.battleRoster = { members: [{ characterID: 'me', characterName: 'Milkman' }] };
-        const { editor, onResetToParty } = setup(partyInfo());
+        const { el, editor, onResetToParty } = setup(partyInfo());
         await editor.resetToParty({ fromButton: true });
-        expect(editor.getSelectedLoadoutName()).toBe('FromSlot');
-        expect(onResetToParty).toHaveBeenCalledWith({ zoneHrid: ZONE, tier: 3 });
+        expect(editor.getSelectedLoadoutName()).toBe('FromAction');
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(el.textContent).toContain('Your party data is out of date');
+    });
+
+    test('the remembered name and id are both written for the character who picked, even across a switch', async () => {
+        const second = { id: 900401, name: 'Same', actionTypeHrid: COMBAT };
+        bridge.snapshots = [{ id: 111, name: 'Same', actionTypeHrid: COMBAT }, second];
+        const { editor } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        await vi.waitFor(() => expect(settings.values.get('simEditorLoadoutId')).toBe('900401'));
+        settings.writes = [];
+        let release;
+        settings.writeHold = new Promise((resolve) => (release = resolve));
+        const saving = editor._saveLoadoutMemory();
+        game.charId = 'other';
+        release();
+        await saving;
+        settings.writeHold = null;
+        expect(settings.writes.map((w) => w.owner)).toEqual(['me', 'me']);
+        expect(settings.writes.map((w) => w.base).sort()).toEqual(['simEditorLoadoutId', 'simEditorLoadoutName']);
     });
 
     test('a reset to self landing mid-build wins over the party loadout and zone', async () => {

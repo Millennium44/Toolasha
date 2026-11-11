@@ -829,11 +829,15 @@ export class SimEditor {
         if (!this._remembersLoadout()) return;
         try {
             const name = this._selectedLoadoutName || '';
-            await writeScoped(LOADOUT_MEMORY_KEY, name);
             // Only an id whose snapshot still wears this name; a name picked by hand carries none
             const id = name && this._selectedLoadoutId ? this._selectedLoadoutId : '';
             const known = id ? this._snapshotById(id) : null;
-            await writeScoped(LOADOUT_ID_MEMORY_KEY, known && known.name === name ? id : '');
+            // Both writes are started now, before any await: each resolves the character's key as it starts, so a
+            // switch while the first is pending cannot send the id to the arriving character
+            await Promise.all([
+                writeScoped(LOADOUT_MEMORY_KEY, name),
+                writeScoped(LOADOUT_ID_MEMORY_KEY, known && known.name === name ? id : ''),
+            ]);
         } catch (error) {
             console.error('[SimEditor] Failed to save the loadout selection:', error);
         }
@@ -1843,8 +1847,8 @@ export class SimEditor {
     }
 
     /**
-     * The party record, only when it can be believed: the last `party_updated` message set it, or a fight's
-     * roster names this character. A login-time record can describe a party this character has since left.
+     * The party record, only when it can be believed: the last `party_updated` message set it. A login-time
+     * record can describe a party this character has since left.
      *
      * @private
      * @returns {{info: Object|null, stale: boolean}} `stale` is true when a record exists but is not trusted
@@ -1852,11 +1856,9 @@ export class SimEditor {
     _trustedPartyInfo() {
         const info = dataManager.characterData?.partyInfo;
         if (!info) return { info: null, stale: false };
-        const selfId = dataManager.getCurrentCharacterId?.() ?? null;
-        const inFight = (dataManager.battlePartyRoster?.members || []).some(
-            (member) => selfId !== null && String(member?.characterID) === String(selfId)
-        );
-        if (dataManager.partyInfoSource === 'party' || inFight) return { info, stale: false };
+        // Only a `party_updated` message carries the zone and loadout ids: a fight's roster (solo fights
+        // included) updates membership and never those, so it does not make a login-time record current
+        if (dataManager.partyInfoSource === 'party') return { info, stale: false };
         return { info: null, stale: true };
     }
 
