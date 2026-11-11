@@ -28,7 +28,12 @@ import { patientTickPrice } from '../../utils/patient-tick.js';
 import { registerCommand, unregisterCommand } from '../../utils/command-registry.js';
 import { ironCowBook } from '../../utils/ironcow-valuation.js';
 import { getAlchemyOutputShopValue } from '../../utils/alchemy-shop-value.js';
-import { computeRefinementCraftCost, isRefinedItem, resolveRefinedItemCost } from '../../utils/refined-item-cost.js';
+import {
+    computeRefinementCraftCost,
+    findRefinementAction,
+    isRefinedItem,
+    resolveRefinedItemCost,
+} from '../../utils/refined-item-cost.js';
 import { PHILO_HRID } from '../alchemy/philosophers-stone-hrid.js';
 import {
     CAPE_BASE_VALUE_ZERO,
@@ -942,6 +947,49 @@ class PhiloCalculator {
     }
 
     /**
+     * What one refined item is worth when the player owns everything it is made from: the base item plus
+     * every refinement stone, each at the sell-after-tax price given up (see resolveOwnedInputValue), the
+     * coin fee at face value. Counts follow the Artisan reduction, as the craft estimate does. An
+     * untradable base takes the Untradable capes setting, as the craft estimate does. Any term nothing
+     * prices makes the whole cost a needs-price row: a missing price is never summed as 0.
+     * @param {string} itemHrid - Refined item HRID
+     * @returns {Object|null} Cost basis (a needs-price one when a term is unpriced), or null when the item has
+     *   no refinement recipe
+     */
+    resolveOwnedRefinedCost(itemHrid) {
+        const action = findRefinementAction(itemHrid);
+        if (!action) return null;
+        const owned = computeRefinementCraftCost(itemHrid, {
+            priceMaterial: (hrid) => this.resolveOwnedInputValue(hrid),
+            priceBase: (hrid) => this.resolveOwnedInputValue(hrid),
+            getItemName: (hrid) => this.getItemName(hrid),
+        });
+        // An unpriced stone makes the computation answer null; a tradable base with no sell side is flagged
+        if (!owned || owned.baseNote === 'unpriced') return this.needsPriceBasis();
+
+        let cost = owned.cost;
+        const lines = [...owned.lines];
+        if (owned.baseNote === 'untradable') {
+            const baseValue = this.capeBaseValue();
+            if (baseValue > 0) {
+                cost += baseValue;
+                lines.push(
+                    `Base item: untradable, ${formatLargeNumber(Math.round(baseValue))} (Untradable capes setting)`
+                );
+            } else if (getCapeBaseValueMode() === CAPE_BASE_VALUE_ZERO) {
+                lines.push('Base item: untradable, counted as nothing (Untradable capes setting)');
+            } else {
+                return this.needsPriceBasis();
+            }
+        } else if (action.upgradeItemHrid) {
+            lines.push('Base item at its sell-after-tax price');
+        }
+        this._ownedRefinedBreakdowns = this._ownedRefinedBreakdowns || {};
+        this._ownedRefinedBreakdowns[itemHrid] = lines;
+        return { itemCost: cost, selfReturnUnitValue: cost, source: 'owned', fallbackLevel: 0 };
+    }
+
+    /**
      * Resolve what one input item costs to acquire, and what a returned copy of
      * it is worth back.
      *
@@ -975,9 +1023,17 @@ class PhiloCalculator {
         }
 
         if (this.ownInputs) {
+            this._ownedRefinedBreakdowns = this._ownedRefinedBreakdowns || {};
+            delete this._ownedRefinedBreakdowns[itemHrid];
             const ownedValue = this.resolveOwnedInputValue(itemHrid);
             if (ownedValue !== null) {
                 return { itemCost: ownedValue, selfReturnUnitValue: ownedValue, source: 'owned', fallbackLevel: 0 };
+            }
+            // A refined cape nobody lists has no sale to give up: it is its base item plus the refinement
+            // stones, each valued as owned
+            if (isRefinedItem(itemHrid)) {
+                const parts = this.resolveOwnedRefinedCost(itemHrid);
+                if (parts) return parts;
             }
         }
 
@@ -1768,7 +1824,8 @@ class PhiloCalculator {
         });
         ownInputsLabel.title =
             'The transmuted items are loot you already hold, not something you would buy. Cost is what you give ' +
-            'up by not selling it instead: the sell-after-tax price.';
+            'up by not selling it instead: the sell-after-tax price. An unlisted refined cape counts as its base ' +
+            'item plus its refinement stones, all valued the same way.';
         ownInputsLabel.appendChild(ownInputsCheckbox);
         ownInputsLabel.appendChild(document.createTextNode('I own the inputs'));
         container.appendChild(ownInputsLabel);
@@ -2038,9 +2095,17 @@ class PhiloCalculator {
             override: { glyph: ' ✎', title: 'Manual cost override. Click to change, clear the field to remove.' },
             owned: {
                 glyph: ' 📦',
-                title:
-                    'Owned loot: valued at the sell-after-tax price given up, not the buy price. ' +
-                    'Click to override this cost basis.',
+                title: (r) => {
+                    const lines = philoCalculator._ownedRefinedBreakdowns?.[r.itemHrid];
+                    const head = 'Owned loot: valued at the sell-after-tax price given up, not the buy price.';
+                    if (!lines) return `${head} Click to override this cost basis.`;
+                    return [
+                        head,
+                        'A refined cape with no listing: its base item plus the refinement stones, all valued as owned:',
+                        ...lines,
+                        'Click to override this cost basis.',
+                    ].join('\n');
+                },
             },
         };
 

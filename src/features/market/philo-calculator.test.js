@@ -114,6 +114,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => mocks.characterGameMode,
         getInitClientData: () => ({
             itemDetailMap: {
+                ...mocks.itemDetails,
                 [TEA_HRID]: { name: 'Catalytic Tea', consumableDetail: { buffs: [] } },
                 [WIDGET_HRID]: { name: 'Test Widget' },
                 [ARTISAN_TEA_HRID]: {
@@ -622,7 +623,7 @@ describe('own-use toggles', () => {
             expect(row.cost).toBe(200);
         });
 
-        test('falls back to the normal cost basis when nothing prices the sell side', () => {
+        test('an unlisted refined item is costed from its parts as owned', () => {
             calc.ownInputs = true;
             mocks.refineActions['/actions/refine_test'] = {
                 outputItems: [{ itemHrid: REFINED_HRID }],
@@ -633,8 +634,9 @@ describe('own-use toggles', () => {
             delete mocks.prices[`${REFINED_HRID}+0`];
 
             const cost = calc.resolveItemCost(REFINED_HRID);
-            expect(cost.source).toBe('craft');
-            expect(cost.itemCost).toBeCloseTo(10 * 200, 6);
+            expect(cost.source).toBe('owned');
+            // 10 shards, each at the bid (100) after tax: the sale given up, not the 200 ask
+            expect(cost.itemCost).toBeCloseTo(10 * 100 * (1 - MARKET_TAX), 6);
         });
     });
 
@@ -1355,6 +1357,82 @@ describe('untradable items with no price', () => {
 
         delete calc.itemCostOverrides[CAPE_HRID];
         expect(calc.calculateRow(CAPE_HRID, cape()).needsPrice).toBe(true);
+    });
+
+    describe('I own the inputs, refined cape', () => {
+        const SHARD_TAXED = (price) => price * (1 - MARKET_TAX);
+
+        function ownedCape(count = 3) {
+            const { REFINED, details } = refinedCape();
+            mocks.refineActions['/actions/refine_cape'].inputItems = [
+                { itemHrid: OTHER_HRID, count },
+                { itemHrid: '/items/coin', count: 1000 },
+            ];
+            calc.ownInputs = true;
+            mocks.capeMode = 'zero';
+            return { REFINED, details };
+        }
+
+        test('base cape plus every stone (a stack of three) at sell-after-tax, coins at face, tax once', () => {
+            const { REFINED, details } = ownedCape(3);
+            mocks.capeMode = 'mirror';
+            mocks.prices[`${MIRROR_HRID}+0`] = { ask: 7000, bid: 6000 };
+            calc.pricingMode = 'conservative'; // sells at bid
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.costSource).toBe('owned');
+            expect(row.needsPrice).toBe(false);
+            expect(row.cost).toBeCloseTo(3 * SHARD_TAXED(100) + 1000 + 7000, 6);
+            calc.pricingMode = 'optimistic'; // sells at ask
+            expect(calc.calculateRow(REFINED, details).cost).toBeCloseTo(3 * SHARD_TAXED(200) + 1000 + 6000, 6);
+        });
+
+        test('a tradable base cape is its own sell-after-tax value', () => {
+            const { REFINED, details } = ownedCape(3);
+            mocks.itemDetails[CAPE_HRID] = { equipmentDetail: { type: '/equipment_types/back' }, isTradable: true };
+            mocks.prices[`${CAPE_HRID}+0`] = { ask: 90_000, bid: 80_000 };
+            calc.pricingMode = 'conservative';
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.cost).toBeCloseTo(3 * SHARD_TAXED(100) + 1000 + SHARD_TAXED(80_000), 6);
+            delete mocks.prices[`${CAPE_HRID}+0`];
+            const unpricedBase = calc.calculateRow(REFINED, details);
+            expect(unpricedBase.needsPrice).toBe(true);
+            expect(unpricedBase.cost).toBeNull();
+        });
+
+        test('an unpriced stone leaves it unpriced, never 0 or a buy-price craft', () => {
+            const { REFINED, details } = ownedCape(3);
+            delete mocks.prices[`${OTHER_HRID}+0`];
+            const row = calc.calculateRow(REFINED, details);
+            expect(row.needsPrice).toBe(true);
+            expect(row.cost).toBeNull();
+            expect(row.profitPerHour).toBeNull();
+        });
+
+        test('a refined cape with a listing keeps its sale given up; a manual override wins; off is unchanged', () => {
+            const { REFINED, details } = ownedCape(3);
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 500, bid: 400 };
+            expect(calc.calculateRow(REFINED, details).cost).toBeCloseTo(SHARD_TAXED(400), 6);
+            delete mocks.prices[`${REFINED_HRID}+0`];
+            calc.itemCostOverrides[REFINED] = 77;
+            expect(calc.calculateRow(REFINED, details).cost).toBe(77);
+            delete calc.itemCostOverrides[REFINED];
+            calc.ownInputs = false;
+            const off = calc.calculateRow(REFINED, details);
+            expect(off.costSource).toBe('craft');
+            expect(off.cost).toBe(3 * 200 + 1000);
+        });
+
+        test('the cost tooltip lists the parts and a switch off clears them', () => {
+            const { REFINED, details } = ownedCape(3);
+            calc.calculateRow(REFINED, details);
+            expect(calc._ownedRefinedBreakdowns[REFINED].length).toBeGreaterThan(0);
+            calc.ownInputs = false;
+            calc.calculateRow(REFINED, details);
+            calc.ownInputs = true;
+            mocks.prices[`${REFINED_HRID}+0`] = { ask: 500, bid: 400 };
+            calc.calculateRow(REFINED, details);
+            expect(calc._ownedRefinedBreakdowns[REFINED]).toBeUndefined();
+        });
     });
 
     test('a tradable item with no price is still dropped', () => {
