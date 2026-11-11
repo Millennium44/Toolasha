@@ -11,6 +11,7 @@ import {
     GLYPHS,
     ROW_COLORS,
     resetSpriteSheetCache,
+    itemIcon,
     linkToMarketplace,
 } from './overlay-format.js';
 
@@ -388,5 +389,21 @@ describe('linkToMarketplace', () => {
         const tradable = document.createElement('span');
         linkToMarketplace(tradable, '/items/cheese', navigate);
         expect(tradable.style.cursor).toBe('pointer');
+    });
+});
+
+describe('xlink-only game sprite sheets (#862)', () => {
+    test('draws item artwork from the current game asset without needing a plain href', () => {
+        resetSpriteSheetCache();
+        document.body.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.current.svg#coin"></use></svg>';
+        try {
+            const icon = itemIcon('/items/cheese');
+            expect(icon.querySelector('use')?.getAttribute('href')).toBe(
+                '/static/media/items_sprite.current.svg#cheese'
+            );
+        } finally {
+            document.body.innerHTML = '';
+            resetSpriteSheetCache();
+        }
     });
 });

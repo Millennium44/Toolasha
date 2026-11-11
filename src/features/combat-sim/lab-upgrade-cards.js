@@ -41,11 +41,21 @@ export function dashToUnknown(html) {
  * @param {string} spec.headKey - The column under the selected Rank by (the table's sort key)
  * @param {string} spec.fallbackHead - The column that leads when the table is ordered by name
  * @param {function(Object): string} spec.nameOf - Plain text name
+ * @param {function(Object): string} [spec.nameHtmlOf] - Escaped label with decorative item icons
  * @param {function(Object): string} spec.keyOf - The row's identity
  * @param {function(Object, number): Object} [spec.extra] - More entry fields (actions, detail, verify state, ...)
  * @returns {Array<Object>} Entries for `buildUpgradeCards`, in row order
  */
-export function labCardEntries({ rows, columns, headKey, fallbackHead, nameOf, keyOf, extra = () => ({}) }) {
+export function labCardEntries({
+    rows,
+    columns,
+    headKey,
+    fallbackHead,
+    nameOf,
+    nameHtmlOf,
+    keyOf,
+    extra = () => ({}),
+}) {
     const lead = columns.some((c) => c.key === headKey) ? headKey : fallbackHead;
     return rows.map((row, index) => {
         const made = (c) => {
@@ -60,6 +70,7 @@ export function labCardEntries({ rows, columns, headKey, fallbackHead, nameOf, k
             row,
             key: keyOf(row),
             name: nameOf(row),
+            ...(nameHtmlOf ? { nameHtml: nameHtmlOf(row) } : {}),
             headline: headColumn ? made(headColumn) : null,
             lines: [others('face').filter(Boolean), others('delta').filter(Boolean)],
             facts: others('fact').filter(Boolean),

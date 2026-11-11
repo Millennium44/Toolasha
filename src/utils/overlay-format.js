@@ -38,8 +38,8 @@ const spriteSheets = {};
 export function spriteUrl(sheet = 'items') {
     if (spriteSheets[sheet]) return spriteSheets[sheet];
 
-    const use = document.querySelector(`svg use[href*="${sheet}_sprite"]`);
-    const found = use?.getAttribute('href')?.split('#')[0] || '';
+    const use = document.querySelector(`svg use[href*="${sheet}_sprite"], svg use[xlink\\:href*="${sheet}_sprite"]`);
+    const found = (use?.getAttribute('href') || use?.getAttribute('xlink:href') || '').split('#')[0];
     // Not cached when it came back empty — the game may simply not have drawn
     // from this sheet yet, and one empty answer should not be the answer forever
     if (found) spriteSheets[sheet] = found;

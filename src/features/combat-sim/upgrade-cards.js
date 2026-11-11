@@ -232,6 +232,7 @@ export function cardStateOf({
  * @property {Object} row - The result row (kept by reference so a button acts on exactly this row)
  * @property {string} key - The row's identity (`upgradeRowKey`)
  * @property {string} name - Plain text name
+ * @property {string} [nameHtml] - Escaped name with decorative item icons; never raw imported markup
  * @property {string} [notesHtml] - Chips beside the name
  * @property {boolean} [baseline] - The current setup: shown, labelled, never ranked
  * @property {CardFigure} [headline] - The figure under the selected Rank by
@@ -311,6 +312,8 @@ export function buildUpgradeCards({
             rank: entry.baseline ? null : rank,
             baseline: Boolean(entry.baseline),
             name: entry.name,
+            // Built by the caller's escaped item-label renderer; keep the plain name for ARIA.
+            ...(entry.nameHtml ? { nameHtml: entry.nameHtml } : {}),
             notesHtml,
             headline,
             within: Boolean(entry.within),
@@ -528,7 +531,7 @@ function cardHtml(card, section, position) {
         `${card.baseline ? ' data-card-baseline' : ''} data-open="${card.open ? 'true' : 'false'}">` +
         `<div class="mwi-ucard-top">` +
         (card.rank ? `<span class="mwi-ucard-rank">#${card.rank}</span>` : `<span class="mwi-ucard-rank">·</span>`) +
-        `<span class="mwi-ucard-name">${esc(card.name)}${card.notesHtml}</span>${gain}</div>` +
+        `<span class="mwi-ucard-name">${card.nameHtml || esc(card.name)}${card.notesHtml}</span>${gain}</div>` +
         lines +
         `<div class="mwi-ucard-foot">` +
         `<span class="mwi-ucard-state mwi-ucard-t-${state.tone}" data-card-state-label>${esc(state.label)}</span>` +

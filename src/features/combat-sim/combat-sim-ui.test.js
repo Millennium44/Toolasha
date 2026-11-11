@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 vi.mock('../profile/build-score-row.js', () => ({
     readOwnScore: () => null,
     ensureOwnScore: async () => null,
@@ -18011,6 +18012,83 @@ describe('local equipment requirement notes', () => {
         } finally {
             details.mockRestore();
             skills.mockRestore();
+        }
+    });
+});
+
+describe('Combat Sim item icons (#862)', () => {
+    let sprite;
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+        sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        document.body.appendChild(sprite);
+    });
+    afterEach(() => {
+        ui.destroy();
+        sprite.remove();
+        mocks.drops = new Map();
+        mocks.prices = {};
+        resetSpriteSheetCache();
+    });
+    test('drops, spent supplies and healing sources retain rates and separate icons for the same item', () => {
+        mocks.drops = new Map([
+            ['/items/cheese', 3],
+            ['/items/milk', 0.4],
+        ]);
+        const results = showFight(
+            oneHourFight({
+                consumablesUsed: { player1: { '/items/cheese': 5 } },
+                hitpointsGained: { player1: { '/items/cheese': 500, regen: 50 } },
+            })
+        );
+        expect(results.querySelectorAll('[data-sim-item-icon="/items/cheese"]')).toHaveLength(3);
+        expect(results.querySelectorAll('[data-sim-item-icon="/items/milk"]')).toHaveLength(1);
+        expect(results.textContent).toContain('0.40');
+        expect(results.textContent).toContain('500');
+        expect(results.querySelector('[data-sim-item-icon="regen"]')).toBeNull();
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+    test('upgrade tables and cards retain the same labels and icons after repeated switches', () => {
+        const upgrade = row('old_ring +7 → new_ring +9', { slot: '/equipment_types/ring', cost: 100, profitGain: 50 });
+        upgrade.candidate.currentHrid = '/items/old_ring';
+        upgrade.candidate.upgradeHrid = '/items/new_ring';
+        ui._viewChoices = { wide: 'table', narrow: 'table' };
+        ui._renderUpgradeResults({ baseline: BASELINE, results: [upgrade], food: null });
+        const host = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        for (const mode of ['cards', 'table', 'cards']) {
+            host.querySelector(`[data-card-view="${mode}"]`).click();
+            const label =
+                mode === 'cards' ? host.querySelector('.mwi-ucard-name') : host.querySelector('[data-row-key] td');
+            expect(label.textContent).toContain(upgrade.candidate.description);
+            expect([...label.querySelectorAll('[data-sim-item-icon]')].map((icon) => icon.dataset.simItemIcon)).toEqual(
+                ['/items/old_ring', '/items/new_ring']
+            );
+        }
+        expect(upgrade.candidate.description).toBe('old_ring +7 → new_ring +9');
+    });
+
+    test('Seek result artwork belongs to its run even after another item is selected', () => {
+        ui._seekSelectedItem = { itemHrid: '/items/milk', name: 'milk' };
+        ui._displaySeekResults([], 'cheese', '/items/cheese');
+        const result = ui.panel.querySelector('#mwi-csim-seek-results');
+        expect(result.textContent).toBe('No zones drop cheese.');
+        expect(result.querySelector('[data-sim-item-icon]').dataset.simItemIcon).toBe('/items/cheese');
+        const rows = ['A', 'B'].map((name, index) => ({
+            zone: { name, difficultyTier: index + 1 },
+            itemsPerHour: 3 + index,
+            profitPerHour: 100,
+            costPerHour: 10,
+            costPerDrop: 2,
+        }));
+        ui._displaySeekResults(rows, 'cheese', '/items/cheese');
+        for (const column of ['zone', 'itemsPerHour', 'zone']) {
+            result.querySelector(`th[data-col="${column}"]`).click();
+            expect(result.querySelector('strong').textContent).toBe('cheese');
+            expect(result.querySelector('[data-sim-item-icon]').dataset.simItemIcon).toBe('/items/cheese');
         }
     });
 });

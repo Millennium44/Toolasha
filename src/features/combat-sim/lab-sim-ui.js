@@ -191,6 +191,7 @@ import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
+import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthFloorClearLevel } from '../combat/labyrinth-formulas.js';
 import { ROOM_LEVEL_SHORTLIST_SIZE, measureRoomLevelGains } from './labyrinth-upgrade-levels.js';
@@ -5147,7 +5148,7 @@ class LabSimUI {
                     `<span data-swap-chip="${escapeHtmlAttribute(checkedSwapKey(swap))}" style="display:inline-flex; ` +
                     `align-items:center; gap:4px; padding:1px 6px; border:1px solid ${ACCENT_BTN_BORDER}; ` +
                     `border-radius:10px; background:${ACCENT_BTN_BG}; color:${ACCENT}; font-size:11px;">` +
-                    `${escapeHtmlAttribute(describeCheckedSwap(swap, gameData))}` +
+                    `${simItemLabelHtml(swap.hrid, describeCheckedSwap(swap, gameData))}` +
                     `<button data-swap-remove="${escapeHtmlAttribute(checkedSwapKey(swap))}" title="Remove" ` +
                     `style="background:transparent; border:none; color:${ACCENT}; cursor:pointer; padding:0 2px; ` +
                     `font-size:12px; line-height:1;">×</button></span>`
@@ -7265,7 +7266,7 @@ class LabSimUI {
                         // worth only the rooms it improves on the first
                         const rooms = pick.rooms ?? 0;
                         return `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
-                                <span style="color:#e0e0e0;">${pick.candidate.description}
+                                <span style="color:#e0e0e0;">${simCandidateLabelHtml(pick.candidate)}
                                     <span style="color:${GAME_COLORS.textDim};">· ${rooms} room${rooms === 1 ? '' : 's'}</span>
                                     ${combatSimUI.upgradeRowActionsHtml(pick)}</span>
                                 <span style="white-space:nowrap; color:#aaa;">${goldCostCell(pick.cost)}
@@ -9105,7 +9106,7 @@ class LabSimUI {
                 const { isBest, cost, reach, total, perGold, measured, noise } = cellsOf(r);
                 const attemptsStyle = isBest ? 'color:#4caf50; font-weight:700;' : '';
                 html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${upgradeRequirementHtml(r)}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${simCandidateLabelHtml(r.candidate)}${upgradeRequirementHtml(r)}${rowActionsInlineHtml(combatSimUI.upgradeRowActionsHtml(r))}${
                     checked ? '' : this._verifyRowHtml('all', this._allRowKey(r), 'data-af-verify', i, verifyLive)
                 }</td>
                 <td style="${tdStyle} color:#aaa;">${cost}</td>
@@ -9431,7 +9432,7 @@ class LabSimUI {
                 levelCellsOf(r);
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-level-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}${alongLine}</td>
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${simCandidateLabelHtml(r.candidate)}${alongLine}</td>
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                 <td style="${tdStyle} color:${measured ? attemptsDeltaColor(r.attemptsDelta) : '#666'}; ${isBest && measured ? 'font-weight:700;' : ''}"
                     title="${measured ? deltaTitle : 'Smaller than the simulation\u2019s own error \u2014 not a measured gain'}">${fmtAttemptsDelta(r.attemptsDelta)}${noise}</td>
@@ -9512,7 +9513,7 @@ class LabSimUI {
                     ? ` <span style="color:${GAME_COLORS.textDim};">±${r.attemptsDeltaNoise.toFixed(1)}</span>`
                     : '';
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-allfights-token-row="${i}">
-                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${r.candidate.description}</td>
+                <td style="${tdNameStyle}${measured ? '' : ' opacity:0.55;'}">${simCandidateLabelHtml(r.candidate)}</td>
                 <td style="${tdStyle} color:#aaa;">${Number.isFinite(r.tokenCost) ? shortFigure(r.tokenCost) : UNKNOWN_TEXT}</td>
                 <td style="${tdStyle} color:${measured && r.attemptsSavedPerHundredTokens > 0 ? '#4caf50' : '#888'}; font-weight:600;">${perTokens(r.attemptsSavedPerHundredTokens ?? null)}</td>
                 <td style="${tdStyle}">${fmtAttempts(r.expectedAttempts)}</td>
@@ -9704,6 +9705,7 @@ class LabSimUI {
             headKey: lead,
             fallbackHead: 'attemptsDelta',
             nameOf: (r) => r.candidate.description,
+            nameHtmlOf: (r) => simCandidateLabelHtml(r.candidate),
             keyOf: (r) => this._allRowKey(r),
             extra: (r) => {
                 const rowKey = this._allRowKey(r);
@@ -9825,6 +9827,7 @@ class LabSimUI {
             headKey: lead,
             fallbackHead: 'score',
             nameOf: (r) => r.candidate.description,
+            nameHtmlOf: (r) => simCandidateLabelHtml(r.candidate),
             keyOf: (r) => `level:${r.candidate.description}`,
             extra: (r) => ({
                 detailHtml: `${levelCellsOf(r).alongLine}${this._renderAllFightsCostExplanation(r)}<div>${fightBreakdown(r)}</div>${this._renderAllFightsNotes(r)}`,
@@ -9922,6 +9925,7 @@ class LabSimUI {
             headKey: 'attemptsDelta',
             fallbackHead: 'attemptsDelta',
             nameOf: (r) => r.candidate.description,
+            nameHtmlOf: (r) => simCandidateLabelHtml(r.candidate),
             keyOf: (r) => `token:${r.candidate.description}`,
             extra: (r) => ({
                 detailHtml: `${exactFiguresHtml([{ label: 'Tokens', value: r.tokenCost, unit: 'tokens' }])}<div>${fightRowsOf(r)}</div>`,
@@ -10135,6 +10139,7 @@ class LabSimUI {
                       }
                     : {}),
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 // The column says "Rate"; which rate it is depends on how the row was measured
                 rateLabel: r.metricType === 'clearRate' ? 'Clear rate' : 'Win rate',
                 // Whatever handoff buttons the shared builder emits for this
@@ -10180,6 +10185,7 @@ class LabSimUI {
                     : {}),
                 desc: r.candidate?.description || '',
                 requirementHtml: upgradeRequirementHtml(r),
+                candidate: r.candidate,
                 actions: combatSimUI.upgradeRowActionsHtml(r),
                 // Unpriced sorts last rather than as the cheapest thing on the
                 // table, which is where `r.cost || 0` put a combat level
@@ -10207,6 +10213,7 @@ class LabSimUI {
             const xpDelta = r.xpPerRoomDelta || 0;
             return {
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 cowbellCost: r.cowbellCost ?? Infinity,
                 cowbellCostStr: r.cowbellCost == null ? '\u2014' : shortFigure(r.cowbellCost) + '/min',
                 exactHtml: exactFiguresHtml([{ label: 'Cowbells', value: r.cowbellCost, unit: 'per minute' }]),
@@ -10283,7 +10290,7 @@ class LabSimUI {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;${hasDetail ? ' cursor:pointer;' : ''}"${
                     hasDetail ? ` class="mwi-ract-row" data-token-row="${i}"` : ''
                 }>
-                    <td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
+                    <td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.rateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -10327,7 +10334,7 @@ class LabSimUI {
 
             goldRows.forEach((row, i) => {
                 html += `<tr data-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;" title="Click for the cost breakdown">
-                    <td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
+                    <td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.winRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -10368,7 +10375,7 @@ class LabSimUI {
                 html += `<tr style="border-bottom:1px solid #1a1a1a;${row.exactHtml ? ' cursor:pointer;' : ''}"${
                     row.exactHtml ? ` data-community-row="${i}"` : ''
                 }>
-                    <td style="${tdNameStyle}">${row.desc}</td>
+                    <td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#666;">\u2014</td>
                     <td style="${tdStyle} color:#666;">\u2014</td>
@@ -10494,6 +10501,7 @@ class LabSimUI {
                     headKey: sortState.token.key,
                     fallbackHead: 'deltaVal',
                     nameOf: (row) => row.desc,
+                    nameHtmlOf: (row) => simCandidateLabelHtml(row.candidate),
                     keyOf: (row) => `token:${row.desc}`,
                     extra: rowExtra,
                     columns: [
@@ -10547,6 +10555,7 @@ class LabSimUI {
                     headKey: sortState.community.key,
                     fallbackHead: 'xpDelta',
                     nameOf: (row) => row.desc,
+                    nameHtmlOf: (row) => simCandidateLabelHtml(row.candidate),
                     keyOf: (row) => `community:${row.desc}`,
                     extra: (row) => ({ detailHtml: row.exactHtml || '' }),
                     columns: [
@@ -10601,6 +10610,7 @@ class LabSimUI {
                     headKey: sortState.gold.key,
                     fallbackHead: 'deltaVal',
                     nameOf: (row) => row.desc,
+                    nameHtmlOf: (row) => simCandidateLabelHtml(row.candidate),
                     keyOf: (row) => `gold:${row.desc}`,
                     extra: (row) => ({ ...rowExtra(row), unpriced: !row.costKnown }),
                     columns: [
@@ -10935,7 +10945,12 @@ class LabSimUI {
             for (const credit of guild.credits) {
                 const each =
                     credit.goldEach === null ? '<span style="color:#ff9800;">no rate</span>' : money(credit.gold);
-                parts.push(line(`${formatWithSeparator(credit.count)} × ${credit.name} — ${each}`, '#888'));
+                parts.push(
+                    line(
+                        `${formatWithSeparator(credit.count)} × ${simItemLabelHtml(credit.itemHrid, credit.name)} — ${each}`,
+                        '#888'
+                    )
+                );
             }
             if (guild.needsShrineLevel) {
                 parts.push(
@@ -10962,7 +10977,11 @@ class LabSimUI {
                 books.bookPrice === null
                     ? '<span style="color:#ff9800;">no price found</span>'
                     : `${money(books.bookPrice)} each`;
-            parts.push(line(`Buy ${formatWithSeparator(Math.ceil(books.books))} × ${books.bookName} — ${each}`));
+            parts.push(
+                line(
+                    `Buy ${formatWithSeparator(Math.ceil(books.books))} × ${simItemLabelHtml(books.bookHrid, books.bookName)} — ${each}`
+                )
+            );
             if (books.learnBook) {
                 parts.push(line('Includes the one book that learns it, on top of the levels.', '#888'));
             }
@@ -10971,7 +10990,7 @@ class LabSimUI {
 
         for (const buy of detail.buys || []) {
             const price = buy.price === null ? '<span style="color:#ff9800;">no price found</span>' : money(buy.price);
-            parts.push(line(`Buy ${buy.name} +${buy.enhancementLevel} — ${price}`));
+            parts.push(line(`Buy ${simItemLabelHtml(buy.hrid, buy.name)} +${buy.enhancementLevel} — ${price}`));
         }
 
         // Nothing is listed at that enhancement, so half the figure above is a
@@ -11008,11 +11027,11 @@ class LabSimUI {
                 parts.push(
                     credit.noSalePrice
                         ? line(
-                              `Sell ${credit.name} +${credit.enhancementLevel} — no sale price, so nothing is credited back`,
+                              `Sell ${simItemLabelHtml(credit.hrid, credit.name)} +${credit.enhancementLevel} — no sale price, so nothing is credited back`,
                               '#ff9800'
                           )
                         : line(
-                              `Sell ${credit.name} +${credit.enhancementLevel} — ${money(credit.price)} back`,
+                              `Sell ${simItemLabelHtml(credit.hrid, credit.name)} +${credit.enhancementLevel} — ${money(credit.price)} back`,
                               '#8bc34a'
                           )
                 );
@@ -11922,6 +11941,7 @@ class LabSimUI {
             return {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 tokenCost,
                 clearRate,
                 clearRateStr: clearRate.toFixed(1) + '%',
@@ -11959,6 +11979,7 @@ class LabSimUI {
             return {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 cost: Number.isFinite(r.cost) ? r.cost : Infinity,
                 costStr: goldCostCell(r.cost),
                 clearRate,
@@ -12024,6 +12045,7 @@ class LabSimUI {
             return {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 cost,
                 costStr: r.cost == null ? '\u2014' : shortFigure(cost),
                 tokenCost: r.tokenCost || 0,
@@ -12064,6 +12086,7 @@ class LabSimUI {
             return {
                 ...extraFields(r),
                 desc: r.candidate?.description || '',
+                candidate: r.candidate,
                 cowbellCost: r.cowbellCost ?? Infinity,
                 cowbellCostStr: r.cowbellCost == null ? '—' : shortFigure(r.cowbellCost) + '/min',
                 exactHtml: exactFiguresHtml([{ label: 'Cowbells', value: r.cowbellCost, unit: 'per minute' }]),
@@ -12185,7 +12208,7 @@ class LabSimUI {
 
             tokenRows.forEach((row, i) => {
                 html += `<tr${exactRowAttrs('token', i, row)}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -12223,7 +12246,7 @@ class LabSimUI {
             guildRows.forEach((row, i) => {
                 const note = row.shrineNote ? ` title="${row.shrineNote}"` : '';
                 html += `<tr${exactRowAttrs('guild', i, row)}${note}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}${row.shrineNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.tokenCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
@@ -12267,7 +12290,7 @@ class LabSimUI {
 
             communityRows.forEach((row, i) => {
                 html += `<tr${exactRowAttrs('community', i, row)}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}</td>
                     <td style="${tdStyle} color:#ccc;">${row.cowbellCostStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -12311,7 +12334,7 @@ class LabSimUI {
             goldRows.forEach((row, i) => {
                 const note = ` title="${escapeHtmlAttribute(row.keptNote || 'Click for the cost breakdown')}"`;
                 html += `<tr data-skilling-gold-row="${i}" style="border-bottom:1px solid #1a1a1a; cursor:pointer;"${note}>
-                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${row.desc}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
+                    ${pickCellHtml(row)}<td style="${tdNameStyle}">${simCandidateLabelHtml(row.candidate)}${row.requirementHtml || ''}${rowActionsInlineHtml(row.actions)}${row.keptNote ? ' <span style="color:#ff9800;">*</span>' : ''}</td>
                     <td style="${tdStyle} color:#ccc;">${row.costStr}</td>
                     <td style="${tdStyle} color:#ccc;">${row.clearRateStr}</td>
                     <td style="${tdStyle} color:${row.deltaColor}; font-weight:600;">${row.deltaStr}</td>
@@ -12432,6 +12455,7 @@ class LabSimUI {
                     headKey: sortState[table].key,
                     fallbackHead,
                     nameOf: (row) => row.desc,
+                    nameHtmlOf: (row) => simCandidateLabelHtml(row.candidate),
                     keyOf: (row) => `${table}:${row.desc}`,
                     extra: (row) => ({ ...extra(row), notesHtml: pickHtml(row) + (row.requirementHtml || '') }),
                 }),

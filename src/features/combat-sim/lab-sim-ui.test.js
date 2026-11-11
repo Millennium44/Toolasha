@@ -16,6 +16,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import { UPGRADE_CARD_CSS } from './upgrade-cards.js';
 
 // The advisor's mirror and base prices go through the shared enhancement input rule; this file is not
@@ -9425,5 +9426,76 @@ describe('Use Skip Levels unticked reads the live room level', () => {
         expect(liveCombatRoomLevel({ roomData: null }, '/monsters/a')).toBe(0);
         expect(liveCombatRoomLevel({}, '/monsters/a')).toBe(0);
         expect(liveCombatRoomLevel(null, '/monsters/a')).toBe(0);
+    });
+});
+
+describe('Lab Sim item icons (#862)', () => {
+    let sprite;
+    let container;
+    beforeEach(async () => {
+        geometry.saved = null;
+        geometry.wasOpen = false;
+        game.monsters = [];
+        game.skipLevels = {};
+        ui.buildPanel();
+        await settle();
+        resetSpriteSheetCache();
+        sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        container = document.createElement('div');
+        document.body.append(sprite, container);
+    });
+    afterEach(() => {
+        ui.destroy();
+        sprite.remove();
+        container.remove();
+        resetSpriteSheetCache();
+    });
+    test('gold upgrade rows and cards display each piece without changing their sort/export description', () => {
+        const candidate = {
+            type: 'tier',
+            currentHrid: '/items/old_ring',
+            upgradeHrid: '/items/new_ring',
+            description: 'old_ring +7 → new_ring +9',
+        };
+        const analysis = {
+            baseline: { winRate: 0.5 },
+            results: [
+                {
+                    candidate,
+                    costType: 'gold',
+                    cost: 1000,
+                    winRate: 0.6,
+                    winRateDelta: 0.1,
+                    metricType: 'winRate',
+                    costDetail: null,
+                },
+            ],
+        };
+        for (const mode of ['table', 'cards', 'table']) {
+            ui._viewChoices = { wide: mode, narrow: mode };
+            ui._renderUpgradeResults(analysis, container);
+            const label =
+                mode === 'cards'
+                    ? container.querySelector('.mwi-ucard-name')
+                    : container.querySelector('[data-gold-row] td');
+            expect(label.textContent).toContain(candidate.description);
+            expect([...label.querySelectorAll('[data-sim-item-icon]')].map((icon) => icon.dataset.simItemIcon)).toEqual(
+                ['/items/old_ring', '/items/new_ring']
+            );
+        }
+        expect(candidate.description).toBe('old_ring +7 → new_ring +9');
+    });
+    test('cost details show bought, sold and unpriced items with their levels and icons', () => {
+        container.innerHTML = ui._renderCostBreakdown({
+            buys: [{ hrid: '/items/new_ring', name: 'New ring', enhancementLevel: 9, price: null }],
+            credits: [{ hrid: '/items/old_ring', name: 'Old ring', enhancementLevel: 7, price: 50 }],
+            gross: null,
+        });
+        expect([...container.querySelectorAll('[data-sim-item-icon]')].map((icon) => icon.dataset.simItemIcon)).toEqual(
+            ['/items/new_ring', '/items/old_ring']
+        );
+        expect(container.textContent).toContain('Buy New ring +9 — no price found');
+        expect(container.textContent).toContain('Sell Old ring +7 — 50 back');
     });
 });

@@ -6,6 +6,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
+import { simItemLabelHtml } from './sim-item-label.js';
 import {
     buildGameDataPayload,
     buildAllPlayerDTOs,
@@ -2174,7 +2175,7 @@ export class SimEditor {
 
             html += editorRowOpen(equipRow++);
             html += `<span style="color:#888; width:70px; flex-shrink:0;">${label}</span>`;
-            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(equip.hrid, name)}</span>`;
             html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">+</span>`;
             html += `<input type="number" min="0" max="${maxEnhancementLevel()}" value="${equip.enhancementLevel}"
                 data-enhance-slot="${slotType}"
@@ -2267,7 +2268,7 @@ export class SimEditor {
                 '<span style="color:' +
                 nameColor +
                 '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
-                name +
+                simItemLabelHtml(item?.hrid, name) +
                 '</span>';
             if (item) {
                 html += this._renderTriggerButton('food', i, item, gameData);
@@ -2291,7 +2292,7 @@ export class SimEditor {
                 '<span style="color:' +
                 nameColor +
                 '; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
-                name +
+                simItemLabelHtml(item?.hrid, name) +
                 '</span>';
             if (item) {
                 html += this._renderTriggerButton('drinks', i, item, gameData);
@@ -2454,7 +2455,7 @@ export class SimEditor {
                         '<div style="display:flex; align-items:center; gap:8px; padding:3px 4px; border-bottom:1px solid ' +
                         GAME_COLORS.raised +
                         '; color:#555; cursor:default;">' +
-                        item.name +
+                        simItemLabelHtml(item.hrid, item.name) +
                         ' <span style="font-size:10px; color:#664;">(in use)</span>' +
                         lvlTag +
                         '</div>';
@@ -2470,7 +2471,7 @@ export class SimEditor {
                         color +
                         ';"' +
                         ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
-                        item.name +
+                        simItemLabelHtml(item.hrid, item.name) +
                         indicator +
                         lvlTag +
                         '</div>';
@@ -2620,7 +2621,7 @@ export class SimEditor {
                 html +=
                     `<div data-pick-hrid="${item.hrid}" style="display:flex; align-items:center; gap:8px; padding:3px 4px; cursor:pointer; border-bottom:1px solid ${GAME_COLORS.raised}; color:${color};"` +
                     ' onmouseover="this.style.background=\'rgba(255,255,255,0.04)\'" onmouseout="this.style.background=\'\'">' +
-                    item.name +
+                    simItemLabelHtml(item.hrid, item.name) +
                     indicator +
                     lvlTag +
                     '</div>';
@@ -3031,7 +3032,7 @@ export class SimEditor {
         const header = document.createElement('div');
         header.style.cssText = `display:flex; justify-content:space-between; align-items:center; padding:8px 14px; border-bottom:1px solid ${GAME_COLORS.border}; flex-shrink:0;`;
         header.innerHTML =
-            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Triggers — ${itemName}</span>` +
+            `<span style="font-weight:700; font-size:13px; color:${GAME_COLORS.text};">Triggers — ${simItemLabelHtml(slotItem.hrid, itemName)}</span>` +
             `<button id="mwi-csim-trigger-close" style="background:none; border:none; color:${GAME_COLORS.text}; font-size:20px; cursor:pointer; padding:0; line-height:1;">×</button>`;
         popup.appendChild(header);
 

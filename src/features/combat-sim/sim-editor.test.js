@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { resetSpriteSheetCache } from '../../utils/overlay-format.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { combatLevel } from '../../utils/combat-level.js';
 
@@ -3264,5 +3265,94 @@ describe('the self row follows the game', () => {
 
         expect(self(editor).guildShrineLevels[FORCE]).toBe(6);
         expect(editor.generateSimLabel()).toBe('Swap');
+    });
+});
+
+describe('item icons in the shared Lab and Combat editor (#862)', () => {
+    let sprite;
+    const sword = '/items/test_sword';
+    const food = '/items/test_food';
+    const drink = '/items/test_drink';
+    const gameData = {
+        itemDetailMap: {
+            [sword]: { name: 'Sword <rare>', equipmentDetail: { type: '/equipment_types/main_hand' } },
+            [food]: {
+                name: 'Food & more',
+                categoryHrid: '/item_categories/food',
+                consumableDetail: { hitpointRestore: 10 },
+            },
+            [drink]: {
+                name: 'Drink',
+                categoryHrid: '/item_categories/drink',
+                consumableDetail: { cooldownDuration: 100 },
+            },
+        },
+    };
+    beforeEach(() => {
+        resetSpriteSheetCache();
+        sprite = document.createElement('div');
+        sprite.innerHTML = '<svg><use xlink:href="/static/media/items_sprite.test.svg#coin"></use></svg>';
+        document.body.appendChild(sprite);
+    });
+    afterEach(() => {
+        sprite.remove();
+        for (const id of ['consumable-picker', 'consumable-backdrop', 'equipment-picker', 'equipment-backdrop']) {
+            document.getElementById(`mwi-csim-${id}`)?.remove();
+        }
+        resetSpriteSheetCache();
+    });
+    test.each([false, true])('equipment and supplies render the same identities in Lab mode %s', (labMode) => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), labMode });
+        const dto = {
+            ...emptyDTO('p1'),
+            equipment: { '/equipment_types/main_hand': { hrid: sword, enhancementLevel: 12 } },
+            food: [{ hrid: food }],
+            drinks: [{ hrid: drink }],
+        };
+        const host = document.createElement('div');
+        host.innerHTML =
+            editor._renderEquipmentSection(dto, gameData) + editor._renderConsumablesSection(dto, gameData);
+        expect([...host.querySelectorAll('[data-sim-item-icon]')].map((icon) => icon.dataset.simItemIcon)).toEqual([
+            sword,
+            food,
+            drink,
+        ]);
+        expect(host.querySelector('input[data-enhance-slot]').value).toBe('12');
+        expect(host.textContent).toContain('Sword <rare>');
+        expect(host.textContent).toContain('Food & more');
+        expect(host.querySelector('rare')).toBeNull();
+        expect(host.querySelectorAll('use')).toHaveLength(3);
+        expect(
+            host.querySelector('[data-equipment-slot="/equipment_types/off_hand"]').parentElement.querySelector('svg')
+        ).toBeNull();
+    });
+    test('equipment picker icons select their enclosing row and removing a slot stays icon-free', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        vi.spyOn(editor, 'renderEditor').mockImplementation(() => {});
+        const dto = { ...emptyDTO('p1') };
+        editor._openEquipmentPicker('/equipment_types/main_hand', dto, gameData);
+        let popup = document.getElementById('mwi-csim-equipment-picker');
+        popup.querySelector('svg[data-sim-item-icon]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(dto.equipment['/equipment_types/main_hand']).toEqual({ hrid: sword, enhancementLevel: 0 });
+        expect(document.getElementById('mwi-csim-equipment-picker')).toBeNull();
+        editor._openEquipmentPicker('/equipment_types/main_hand', dto, gameData);
+        popup = document.getElementById('mwi-csim-equipment-picker');
+        const clear = popup.querySelector('[data-pick-hrid=""]');
+        expect(clear.querySelector('svg')).toBeNull();
+        clear.click();
+        expect(dto.equipment['/equipment_types/main_hand']).toBeUndefined();
+        expect(document.getElementById('mwi-csim-equipment-backdrop')).toBeNull();
+    });
+    test('consumable picker gives in-use items icons without making them selectable and closes cleanly', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const dto = { ...emptyDTO('p1'), food: [null, { hrid: food }] };
+        editor._openConsumablePicker('food', 0, dto, gameData);
+        const popup = document.getElementById('mwi-csim-consumable-picker');
+        const icon = popup.querySelector(`[data-sim-item-icon="${food}"]`);
+        expect(icon.parentElement.textContent).toContain('(in use)');
+        expect(icon.closest('[data-pick-hrid]')).toBeNull();
+        popup.querySelector('#mwi-csim-picker-close').click();
+        expect(document.getElementById('mwi-csim-consumable-picker')).toBeNull();
+        expect(document.getElementById('mwi-csim-consumable-backdrop')).toBeNull();
     });
 });

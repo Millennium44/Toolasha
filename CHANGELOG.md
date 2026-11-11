@@ -38,6 +38,10 @@ A protected action’s confirmation no longer carries over to another item, enha
 
 A running Max calculation stops when you edit the quantity, open a newer calculation, change character or close the shop, so it cannot overwrite your newer choice.
 
+### Item icons in the simulators
+
+The Lab and Combat simulators now show the game's item icons beside equipment, supplies and upgrade choices, including phone cards. Combat drops and costs are easier to scan, and Lab item cost breakdowns keep the same artwork beside each named piece.
+
 ### Equipment level warnings
 
 Equipment Watch, the Combat and Lab upgrade advisors, and crafting outputs now warn when your current skill levels are too low to equip an item. Advisor warnings explicitly refer to your character, even when you are simulating a party member or future levels.

@@ -186,6 +186,7 @@ import { applyMaxTierFood } from './food-optimizer.js';
 import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js';
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
+import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import {
     buildEditorChanges,
@@ -6921,7 +6922,7 @@ class CombatSimUI {
                 'padding:3px 0; font-size:12px; color:#ccc; cursor:pointer; border-bottom:1px solid ' +
                 GAME_COLORS.raised +
                 ';';
-            el.textContent = item.name;
+            el.innerHTML = simItemLabelHtml(item.itemHrid, item.name);
             el.addEventListener('mousedown', () => {
                 this._seekSelectedItem = item;
                 const input = this.panel.querySelector('#mwi-csim-seek-input');
@@ -7116,7 +7117,7 @@ class CombatSimUI {
             this._seekResults = seekRows;
             this._seekSortCol = 'itemsPerHour';
             this._seekSortAsc = false;
-            this._displaySeekResults(seekRows, itemName);
+            this._displaySeekResults(seekRows, itemName, itemHrid);
             this._setStatus(`Seek complete in ${totalElapsed}: ${seekRows.length} sources found for ${itemName}`);
         } catch (error) {
             if (!this._isCurrentRun(ownerId, startToken)) return;
@@ -7144,14 +7145,15 @@ class CombatSimUI {
      * Render seek results in a sortable table.
      * @param {Array<Object>} rows - seek result rows
      * @param {string} itemName - display name of the sought item
+     * @param {string|null} [itemHrid] - Identity captured for this result, not the current search input
      * @private
      */
-    _displaySeekResults(rows, itemName) {
+    _displaySeekResults(rows, itemName, itemHrid = null) {
         const container = this.panel?.querySelector('#mwi-csim-seek-results');
         if (!container) return;
 
         if (!rows.length) {
-            container.innerHTML = `<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No zones drop ${itemName}.</div>`;
+            container.innerHTML = `<div style="color:#888; font-size:12px; padding:20px 0; text-align:center;">No zones drop ${simItemLabelHtml(itemHrid, itemName)}.</div>`;
             return;
         }
 
@@ -7236,7 +7238,7 @@ class CombatSimUI {
             .join('');
 
         container.innerHTML = `
-            <div style="font-size:11px; color:#888; margin-bottom:8px;">Best sources for <strong style="color:${ACCENT};">${itemName}</strong></div>
+            <div style="font-size:11px; color:#888; margin-bottom:8px;">Best sources for <strong style="color:${ACCENT};">${simItemLabelHtml(itemHrid, itemName)}</strong></div>
             <div class="mwi-utable-wrap" style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:400px;">
                     <thead><tr>${headerCells}</tr></thead>
@@ -7275,7 +7277,7 @@ class CombatSimUI {
                     this._seekSortCol = col;
                     this._seekSortAsc = col === 'zone' || col === 'tier';
                 }
-                this._displaySeekResults(rows, itemName);
+                this._displaySeekResults(rows, itemName, itemHrid);
             });
         });
     }
@@ -8885,7 +8887,7 @@ class CombatSimUI {
                     const goldColor = drop.unitValue > 0 ? '#e8a87c' : '#444';
 
                     html += `<div style="${dropRowStyle}">`;
-                    html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+                    html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(drop.itemHrid, name)}</span>`;
                     html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
                     html += `<span style="${valueStyle} ${colNum}"${perDay >= 1 ? exactTitleAttr(perDay) : ''}>${perDayStr}</span>`;
                     html += `<span style="color:${goldColor}; font-weight:600; ${colGold}"${drop.unitValue > 0 ? exactTitleAttr(goldPerHr) : ''}>${goldHrStr}</span>`;
@@ -8973,7 +8975,7 @@ class CombatSimUI {
                 const cColor = cons.unitCost > 0 ? costColor : '#444';
 
                 html += `<div style="${costRowStyle}">`;
-                html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>`;
+                html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(cons.itemHrid, name)}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr)}>${perHrStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${cons.unitCost > 0 ? exactTitleAttr(costPerHr) : ''}>${costHrStr}</span>`;
@@ -9036,7 +9038,7 @@ class CombatSimUI {
                 const cColor = key.unitCost > 0 ? costColor : '#444';
 
                 html += `<div style="${costRowStyle}">`;
-                html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${key.name}</span>`;
+                html += `<span style="${labelStyle} flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(key.itemHrid, key.name)}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${perHrStr}</span>`;
                 html += `<span style="${valueStyle} ${colNum}"${exactTitleAttr(perHr * 24)}>${perDayStr}</span>`;
                 html += `<span style="color:${cColor}; font-weight:600; ${colGold}"${key.unitCost > 0 ? exactTitleAttr(costPerHr) : ''}>${costHrStr}</span>`;
@@ -9573,7 +9575,7 @@ class CombatSimUI {
 
             const rows = Object.entries(bySource)
                 .filter(([, amount]) => amount > 0)
-                .map(([source, amount]) => ({ name: this._sustainSourceName(source, gameData), amount }))
+                .map(([source, amount]) => ({ source, name: this._sustainSourceName(source, gameData), amount }))
                 .sort((a, b) => b.amount - a.amount);
             if (rows.length === 0) continue;
 
@@ -9609,7 +9611,7 @@ class CombatSimUI {
 
             for (const row of section.rows) {
                 html += `<div style="${rowStyle}">`;
-                html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>`;
+                html += `<span style="color:#aaa; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simItemLabelHtml(row.source, row.name)}</span>`;
                 html += `<span style="color:${section.color}; font-weight:600; ${colNum}"${exact(perHour(row.amount))}>${fmt(perHour(row.amount))}</span>`;
                 html += `<span style="color:#e0e0e0; font-weight:600; ${colNum}"${exact(row.amount)}>${fmt(row.amount)}</span>`;
                 html += '</div>';
@@ -12766,12 +12768,12 @@ class CombatSimUI {
         } else {
             const lines = rec.slots.map((slot) => {
                 if (!slot.hrid) {
-                    return `${slot.fromName} → <span style="color:#4caf50;">empty</span> <span style="color:${GAME_COLORS.textDim};">(not needed here)</span>`;
+                    return `${simItemLabelHtml(slot.fromHrid, slot.fromName)} → <span style="color:#4caf50;">empty</span> <span style="color:${GAME_COLORS.textDim};">(not needed here)</span>`;
                 }
                 if (!slot.changed) {
-                    return `${slot.fromName} <span style="color:${GAME_COLORS.textDim};">(kept, ${restoreLabel(slot)})</span>`;
+                    return `${simItemLabelHtml(slot.fromHrid, slot.fromName)} <span style="color:${GAME_COLORS.textDim};">(kept, ${restoreLabel(slot)})</span>`;
                 }
-                return `${slot.fromName} → <span style="color:#e0e0e0;">${slot.name}</span> <span style="color:${GAME_COLORS.textDim};">(${restoreLabel(slot)})</span>`;
+                return `${simItemLabelHtml(slot.fromHrid, slot.fromName)} → <span style="color:#e0e0e0;">${simItemLabelHtml(slot.hrid, slot.name)}</span> <span style="color:${GAME_COLORS.textDim};">(${restoreLabel(slot)})</span>`;
             });
             picksText = lines.join('<br>');
         }
@@ -12986,7 +12988,7 @@ class CombatSimUI {
         if (unsellable.length) {
             parts.push(
                 `<span style="color:#ff9800;">No sale price for ${unsellable
-                    .map((credit) => escapeAttribute(credit.name))
+                    .map((credit) => simItemLabelHtml(credit.hrid, credit.name))
                     .join(', ')}, so nothing is credited back for it.</span>`
             );
         }
@@ -13004,14 +13006,14 @@ class CombatSimUI {
         if (detail?.freshBook && detail.books) {
             const count = Number.isFinite(detail.books.books) ? Math.ceil(detail.books.books) : null;
             parts.push(
-                `<span style="color:#8ab4f8;">Priced as a fresh ${detail.books.bookName}: ` +
+                `<span style="color:#8ab4f8;">Priced as a fresh ${simItemLabelHtml(detail.books.bookHrid, detail.books.bookName)}: ` +
                     `${count == null ? 'the whole level path' : `${formatWithSeparator(count)} books`} from nothing, ` +
                     `since you do not own this ability.</span>`
             );
         } else if (detail?.ownedFromLevel != null && detail.books) {
             const count = Number.isFinite(detail.books.books) ? Math.ceil(detail.books.books) : null;
             parts.push(
-                `<span style="color:#8ab4f8;">Priced from the ${detail.books.bookName} you already own at ` +
+                `<span style="color:#8ab4f8;">Priced from the ${simItemLabelHtml(detail.books.bookHrid, detail.books.bookName)} you already own at ` +
                     `Lv${detail.ownedFromLevel}: ` +
                     `${count == null ? 'the level path from there' : `${formatWithSeparator(count)} more books`}.</span>`
             );
@@ -13404,7 +13406,7 @@ class CombatSimUI {
                 // buttons are chrome on the cell, not part of what the row says
                 value: (r) => r.candidate.description.toLowerCase(),
                 render: (r) =>
-                    `${r.candidate.description}${upgradeRowNotesHtml(r)}${rowActionsInlineHtml(upgradeRowActionsHtml(r))}`,
+                    `${simCandidateLabelHtml(r.candidate)}${upgradeRowNotesHtml(r)}${rowActionsInlineHtml(upgradeRowActionsHtml(r))}`,
             },
             {
                 key: 'cost',
@@ -13744,7 +13746,7 @@ class CombatSimUI {
             const deltaTitle = alongTitle ? `title="${alongTitle.trim()}"` : '';
 
             html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}" data-row-key="${upgradeRowKey(r)}">
-                <td style="${tdStyle}">${r.candidate.description}${alongLine}</td>
+                <td style="${tdStyle}">${simCandidateLabelHtml(r.candidate)}${alongLine}</td>
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
                 <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}" ${deltaTitle}>${fmtCell(dpsDelta, e.deltas.dps)}</td>
                 <td style="${tdStyle}" data-hours-per="dps">${formatCompactHours(hoursPer(r, 'dps'))}</td>
@@ -13897,7 +13899,7 @@ class CombatSimUI {
                 : '';
 
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-${attr}-row="${i}" data-row-key="${rowKey}">
-                <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${r.candidate.description}${upgradeRowNotesHtml(r)}${why}</td>
+                <td style="padding:4px 6px; border-bottom:1px solid ${GAME_COLORS.raised};">${simCandidateLabelHtml(r.candidate)}${upgradeRowNotesHtml(r)}${why}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
                 <td style="${tdStyle}">${cell(r, 'profit')}</td>
@@ -14075,7 +14077,7 @@ class CombatSimUI {
             const netColor = p.breakEven ? '#aaa' : p.worthIt ? '#8bc34a' : '#f44336';
             const color = scoreColor(r);
             html += `<tr style="cursor:pointer; color:#e0e0e0;" data-scroll-row="${i}" data-row-key="${rowKey}">
-                <td style="${nameStyle}">${r.candidate.description}${upgradeRowNotesHtml(r)}</td>
+                <td style="${nameStyle}">${simCandidateLabelHtml(r.candidate)}${upgradeRowNotesHtml(r)}</td>
                 <td style="${tdStyle}">${cell(r, 'dps')}</td>
                 <td style="${tdStyle}" data-scroll-gold-per="dps">${goldPerCell(r, 'dps')}</td>
                 <td style="${tdStyle}">${cell(r, 'xp')}</td>
@@ -14190,7 +14192,7 @@ class CombatSimUI {
                 const picks = plan.picks
                     .map(
                         (pick) => `<div style="display:flex; justify-content:space-between; gap:10px; padding:1px 0;">
-                            <span style="color:#e0e0e0;">${pick.candidate.description}${
+                            <span style="color:#e0e0e0;">${simCandidateLabelHtml(pick.candidate)}${
                                 pick.provisional && !plan.provisional
                                     ? `<span style="color:#e8a87c; font-size:9px; margin-left:4px;"
                                         title="This gain on ${plan.metric.label} is inside the simulation's
@@ -16168,6 +16170,7 @@ class CombatSimUI {
                 row: r,
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
+                nameHtml: simCandidateLabelHtml(r.candidate),
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figureOf(r, headKey),
                 within: cardWithinNoise(r, metric),
@@ -16246,6 +16249,7 @@ class CombatSimUI {
                 row: r,
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
+                nameHtml: simCandidateLabelHtml(r.candidate),
                 headline: figs[key === 'upgrade' ? 'score' : key],
                 // The combined measurement carries its own error (see `alongside` in the advisor); a record from
                 // before that has none, and then the card makes no claim either way
@@ -16298,6 +16302,7 @@ class CombatSimUI {
                 row: r,
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
+                nameHtml: simCandidateLabelHtml(r.candidate),
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figs[headKey],
                 within: cardWithinNoise(r, ['dps', 'xp', 'profit'].includes(headKey) ? headKey : null),
@@ -16390,6 +16395,7 @@ class CombatSimUI {
                 row: r,
                 key: upgradeRowKey(r),
                 name: r.candidate.description,
+                nameHtml: simCandidateLabelHtml(r.candidate),
                 notesHtml: upgradeRowNotesHtml(r),
                 headline: figs[headKey],
                 within: cardWithinNoise(r, metric),
