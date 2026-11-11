@@ -18276,6 +18276,61 @@ describe('Combat Sim item icons (#862)', () => {
         expect(upgrade.candidate.description).toBe('old_ring +7 → new_ring +9');
     });
 
+    test('drink swap artwork and unknown profit survive repeated table and card switches together', async () => {
+        const { default: dm } = await import('../../core/data-manager.js');
+        const names = { '/items/lucky_coffee': 'Lucky Coffee', '/items/wisdom_coffee': 'Wisdom Coffee' };
+        const details = vi.spyOn(dm, 'getItemDetails').mockImplementation((hrid) => ({ name: names[hrid] || hrid }));
+        const exported = [];
+        const original = ui._addCsvExport.bind(ui);
+        const csv = vi.spyOn(ui, '_addCsvExport').mockImplementation((container, stem, build) => {
+            exported.push(build);
+            return original(container, stem, build);
+        });
+        try {
+            const swap = row('Lucky Coffee → Wisdom Coffee', { cost: 0, type: 'drink', profitGain: 50 });
+            Object.assign(swap.candidate, {
+                currentHrid: '/items/lucky_coffee',
+                upgradeHrid: '/items/wisdom_coffee',
+                drinkIndex: 0,
+                buffFamily: '/buff_uniques/wisdom_coffee',
+            });
+            swap.costUnpriced = ['/items/lucky_coffee'];
+            swap.costUnpricedBaseline = ['/items/lucky_coffee'];
+            ui._upgradeHiddenColumns = new Set();
+            ui._upgradeSort = { key: 'deltaProfit', asc: true };
+            ui._viewChoices = { wide: 'table', narrow: 'table' };
+            ui._renderUpgradeResults({ baseline: BASELINE, results: [swap], food: null });
+            const host = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            for (const mode of ['cards', 'table', 'cards', 'table']) {
+                host.querySelector(`[data-card-view="${mode}"]`).click();
+                const label =
+                    mode === 'cards' ? host.querySelector('.mwi-ucard-name') : host.querySelector('[data-row-key] td');
+                expect(label.textContent).toContain(swap.candidate.description);
+                expect(
+                    [...label.querySelectorAll('[data-sim-item-icon]')].map((icon) => icon.dataset.simItemIcon)
+                ).toEqual(Object.keys(names));
+                expect([...label.querySelectorAll('use')].map((use) => use.getAttribute('href'))).toEqual(
+                    Object.keys(names).map((hrid) => `/static/media/items_sprite.test.svg#${hrid.split('/').pop()}`)
+                );
+                if (mode === 'cards') {
+                    const card = label.closest('[data-card-id]');
+                    expect(card.textContent).toContain('Profit gain is unknown');
+                    expect(card.textContent).not.toContain('ceiling');
+                } else {
+                    expect(host.querySelector('[data-cost-unpriced]').textContent).toBe('Unknown');
+                }
+                const sheet = exported.at(-1)();
+                expect(sheet.rows[0].profitGainPerHour).toBeNull();
+                expect(sheet.rows[0].profitPct).toBeNull();
+                expect(sheet.rows[0].costUnpricedBaseline).toBe('/items/lucky_coffee');
+            }
+            expect(host.textContent).not.toContain('could not be drawn');
+        } finally {
+            details.mockRestore();
+            csv.mockRestore();
+        }
+    });
+
     test('Seek result artwork belongs to its run even after another item is selected', () => {
         ui._seekSelectedItem = { itemHrid: '/items/milk', name: 'milk' };
         ui._displaySeekResults([], 'cheese', '/items/cheese');
