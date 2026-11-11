@@ -6,6 +6,8 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+<!-- shipped in 3.83.0 -->
+
 ### Treasure popup shows the expected total
 
 The last opening and the all-time line now show what the drop table expected (for example "114.93M ask · exp 131.29M"), so the percent beside them has its base on screen.
@@ -7144,6 +7146,109 @@ The marketplace layout change gave the price row its own "Max" button and put it
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop, cowbell bags at their own 18%: the Results summary, the Drops table's Gold columns, and the comparison and upgrade rows. Coin drops stay whole.
+
+## [3.83.0](https://github.com/Millennium44/Toolasha/compare/v3.82.0...v3.83.0) (2026-11-11)
+
+### Features
+
+- add game artwork throughout simulator labels ([6304aa6](https://github.com/Millennium44/Toolasha/commit/6304aa6d984d5635de3060620885ac898b512116))
+- add item artwork to market and watch panels ([f2d4e66](https://github.com/Millennium44/Toolasha/commit/f2d4e66c79e44a62011e76aae3a4cee51fe862d0))
+- add item icons to lab and combat sims ([2554e5b](https://github.com/Millennium44/Toolasha/commit/2554e5bf670bc04c14160a3bbf9e6e040f081f6f))
+- check craft route eligibility across planning tools ([5492450](https://github.com/Millennium44/Toolasha/commit/549245071c0d1dd86714bfc8e7413b6c29b07ceb))
+- compare combat coffee swaps and usable drink tiers ([801c4fa](https://github.com/Millennium44/Toolasha/commit/801c4fa41466b0bf4cca1b442f6f93a25ea75cad))
+- compare shared acquisition routes beside advisor costs ([69a16a4](https://github.com/Millennium44/Toolasha/commit/69a16a466b6d7c8f4638428be12e291157351a80))
+- equipment watch follows the pricing mode setting ([ba3ede8](https://github.com/Millennium44/Toolasha/commit/ba3ede839893598638a3cbb0052f2c74343cf6e1))
+- export saved-loadout auras on character cards ([cb7966e](https://github.com/Millennium44/Toolasha/commit/cb7966e8747665f896c9dc085fc9ac2441858804))
+- marketplace tab row keeps one fixed order whichever feature mounts first ([c6c3f2c](https://github.com/Millennium44/Toolasha/commit/c6c3f2c182558c8607aa3a72e3f5d1cc0657c9c5))
+- party finder locks in my in-game party and says you are in every party ([1c8af41](https://github.com/Millennium44/Toolasha/commit/1c8af4182a2b9b7f8e898a7e2613aff430a6e294))
+- party members get Auras and Edit in the party tab ([9d9a127](https://github.com/Millennium44/Toolasha/commit/9d9a127b014ddd1154bec21e17de4a7fd5461195))
+- save a party under a name, lock it in or load it in the editor ([7e4ffa6](https://github.com/Millennium44/Toolasha/commit/7e4ffa60be332bf2da28e6878c9d74e57d1fe39a))
+- show artwork inside simulator target dropdowns ([40f3f4c](https://github.com/Millennium44/Toolasha/commit/40f3f4c5e60aafb44ca09410a38f29b1f696d25b))
+- treasure popup shows the expected total beside the actual one ([14bf982](https://github.com/Millennium44/Toolasha/commit/14bf98256e05bd840718988c4f88d184936c61fd))
+- warn when equipment needs higher local skill levels ([d320e1d](https://github.com/Millennium44/Toolasha/commit/d320e1d6acd1b20e806112ccbc9036606f27e34c))
+
+### Bug Fixes
+
+- allocate owned shopping inputs before purchase stock ([fa2d6df](https://github.com/Millennium44/Toolasha/commit/fa2d6df5fb7b921922c94e1068480d655a87b8b2))
+- an action completion that uses up an owned Mirror input closes the bill ([60e70e1](https://github.com/Millennium44/Toolasha/commit/60e70e10f3d06fde82b546c3943f1f705e41ba81))
+- bind alchemy confirmation to selected action ([ea53740](https://github.com/Millennium44/Toolasha/commit/ea53740079a17f0a6dddada1f35b3b62c15c9311))
+- character cards skip extra auras on skilling loadouts ([5261475](https://github.com/Millennium44/Toolasha/commit/526147574eb76675029121f788e3dc824ebb4645))
+- clean up contributor root-file checks and testing guidance ([b2ccde6](https://github.com/Millennium44/Toolasha/commit/b2ccde627e46d39a2ed51c2c19437817455ca573))
+- clear stale Mirror shopping state and follow the selected base route ([3cc9e68](https://github.com/Millennium44/Toolasha/commit/3cc9e68e8982fad9b8d02ac778c406ca48200dbb))
+- clear stale task estimates after rerolls ([dc80c76](https://github.com/Millennium44/Toolasha/commit/dc80c7638448271185983f949c4e6d680d57954d))
+- combat sim adds a party member when their profile opens ([a87e822](https://github.com/Millennium44/Toolasha/commit/a87e8229a2504cb80c2be50aa1e14f3cb7a4b621))
+- combat sim adds both members when two profiles arrive together ([55a825d](https://github.com/Millennium44/Toolasha/commit/55a825da65ab36d720caa6ad6236e14c57486c2e))
+- combat sim keeps a forming party while you fight solo ([92f8974](https://github.com/Millennium44/Toolasha/commit/92f8974134074599e62ed216c9b93f5d2e0756b0))
+- combat sim profile reload keeps replaced and removed players ([3e971ba](https://github.com/Millennium44/Toolasha/commit/3e971bab68c9b17c0dd94e9f0de0e149f743cabd))
+- command palette joins Philo Gamba when it arrives late ([2dd1baf](https://github.com/Millennium44/Toolasha/commit/2dd1bafd1df8e5639ff6bdfd38213d0e4295c23c))
+- compare equipment craft base routes by real cost ([985e1b6](https://github.com/Millennium44/Toolasha/commit/985e1b6177d43a253703dc9c8d6b7a51eb077504))
+- discard obsolete manual combat task estimates ([58f7263](https://github.com/Millennium44/Toolasha/commit/58f7263f179858237236d456eb9c9c80e4600ed6))
+- distinguish drink family and slot conflicts ([0071777](https://github.com/Millennium44/Toolasha/commit/00717772987e9922a483e86a5439b2ab6c8e44c2))
+- equipment ranking scores actions only a skill tea unlocks ([fffce21](https://github.com/Millennium44/Toolasha/commit/fffce21d599edeacb822073f04dddb9f5cd72951))
+- equipment watch always lists buy and mirror and keeps the route chip ([028f862](https://github.com/Millennium44/Toolasha/commit/028f8626fdc23acf116779b2046e0bdf44ffde10))
+- equipment watch applies the patient tick on the mode-picked side ([dc5f465](https://github.com/Millennium44/Toolasha/commit/dc5f4655142f83448e778b0ea114dd4531f3ace5))
+- equipment watch hands the crafting planner the pricing mode by name ([9ae2258](https://github.com/Millennium44/Toolasha/commit/9ae22580c76539ee83387228b931998dfae23621))
+- honor stale-tab deletes of repaired runs ([c0b8761](https://github.com/Millennium44/Toolasha/commit/c0b8761bf0622926031795f12da7d46a60f79965))
+- isolate enhancement tracker startup ([65c3ef1](https://github.com/Millennium44/Toolasha/commit/65c3ef12b35dfa250bdf42f625227ed7dc4ab01c))
+- isolate loadout updates across character switches ([43ee478](https://github.com/Millennium44/Toolasha/commit/43ee47871bd4fb412fe7bca59a975c5321c1407c))
+- isolate net worth lifecycle and saved state ([f6f7ebd](https://github.com/Millennium44/Toolasha/commit/f6f7ebd2f573740610d15f04cc9f08252f8b5504))
+- isolate task protection and walk startup ([758e87e](https://github.com/Millennium44/Toolasha/commit/758e87e2f17d22601721a1e9a747c2fddd5f39fd))
+- keep automatic combat task estimates from interrupting player simulations ([416f82f](https://github.com/Millennium44/Toolasha/commit/416f82f187f79186bb838bd722c36fb91e1a500a))
+- keep combined Lab upgrade displays current ([9674236](https://github.com/Millennium44/Toolasha/commit/9674236dfeb49674584d45047815c5d72a7da881))
+- keep latest task estimate in control ([e9b3091](https://github.com/Millennium44/Toolasha/commit/e9b3091b98bc17f18809ed7c6c1cfcde8ae9899f))
+- keep shopping reservations current and character scoped ([4302218](https://github.com/Millennium44/Toolasha/commit/4302218bf7b15b651f9284e32c0b4ad42e0698a0))
+- key shared task simulations by current combat inputs ([7698f6b](https://github.com/Millennium44/Toolasha/commit/7698f6b3c81ff0fd7bf8b27ab4d8d5c689f7a9a5))
+- match crafting items and normalize item hashes ([0ea4ed8](https://github.com/Millennium44/Toolasha/commit/0ea4ed8fefbcc06a69419520c824b68171f4b071))
+- match settings command palette button to Philo Gamba ([73d5189](https://github.com/Millennium44/Toolasha/commit/73d5189c314ad4aebaa2453db7b1623947080fb6))
+- party search rechecks the panel is idle after reading the party ([590977d](https://github.com/Millennium44/Toolasha/commit/590977dc32261b1f643f2b48fb96ecd194a06b30))
+- party search waits for the newest party read before running ([ff06f8b](https://github.com/Millennium44/Toolasha/commit/ff06f8b67d361d5febb87887cbce6f89fcd0083c))
+- party tab keeps a mid-load click and un-hides a teammate behind Never ([bfdea1c](https://github.com/Millennium44/Toolasha/commit/bfdea1c4460c04073608fd1ca4fc4361179d632d))
+- place command palette beside Philo Gamba ([08033c0](https://github.com/Millennium44/Toolasha/commit/08033c0c27934a64172b45205e7942238aaeaca6))
+- preserve collection state through failed migrations ([b909a2d](https://github.com/Millennium44/Toolasha/commit/b909a2d0c7d3311b080f405d58e0c84acdead714))
+- preserve concurrent sync choices and failed merges ([c2617e3](https://github.com/Millennium44/Toolasha/commit/c2617e379029d54c796f5287497d0818d54acbca))
+- preserve dungeon history through interrupted date repairs ([0efd450](https://github.com/Millennium44/Toolasha/commit/0efd450bd2de493f9798cc3c02a5175d752452d2))
+- preserve newer shop quantity edits ([ab522c6](https://github.com/Millennium44/Toolasha/commit/ab522c636fb5a5434e8b597f98250dc23b335ad9))
+- preserve owned base preparation and clarify Mirror sale accounting ([f320e71](https://github.com/Millennium44/Toolasha/commit/f320e712facde2500855cdd86bc0b072a8fa28b9))
+- refresh simulator artwork and keep phone labels visible ([971daba](https://github.com/Millennium44/Toolasha/commit/971daba4885b00e08969ff1d75d152b967bdc900))
+- reserve owned Mirror inputs while shopping ([3ae3493](https://github.com/Millennium44/Toolasha/commit/3ae3493758be21832ccbbd86d876add66acb1db1))
+- saved parties reset a deleted lock-in pick, save once, ignore stale reads ([bf1e0d4](https://github.com/Millennium44/Toolasha/commit/bf1e0d43d4e9e37bcf96c1e38050ad46571c9296))
+- saved party lock-in survives a pick made during the reset write ([98959e2](https://github.com/Millennium44/Toolasha/commit/98959e2364b6863cdbd64037d73a2b06eea93565))
+- share craft eligibility across production bundles ([c26af84](https://github.com/Millennium44/Toolasha/commit/c26af842d97ac43e32b2a71a1ef1030247dc5c6e))
+- treasure popup scrolls only when its list cannot fit on screen ([63e4e4e](https://github.com/Millennium44/Toolasha/commit/63e4e4e430efe322f6d15fecb612b2e5382d8a0d))
+- wait for complete Labyrinth fight pools ([349eeaf](https://github.com/Millennium44/Toolasha/commit/349eeaf26dcc19b99dac06fe9accada582d7cbbd))
+
+### Code Refactoring
+
+- share alchemy history filtering and sorting ([7542e43](https://github.com/Millennium44/Toolasha/commit/7542e4380d965012ec049fe3bc9644e2c81f0930))
+- share pure HTML escaping across display helpers ([ebb70bf](https://github.com/Millennium44/Toolasha/commit/ebb70bfa4f3bd8f61207bc55230e7ee6ee54ee86))
+
+### Performance Improvements
+
+- cache Solo combat task simulations per tier ([6ca71a2](https://github.com/Millennium44/Toolasha/commit/6ca71a2347dbe9f9bd6ccce6302f503189aa8486))
+
+### Documentation
+
+- changelog entry for equipment watch pricing mode ([166699c](https://github.com/Millennium44/Toolasha/commit/166699c1411955cbfd7e1cbfeba326db2c1b78c5))
+- changelog entry for saved parties ([6a1854f](https://github.com/Millennium44/Toolasha/commit/6a1854f0983416b7f665c1650d832e41ca6dfb71))
+
+### Tests
+
+- await the ledger baseline queue before flushing ([efb9daf](https://github.com/Millennium44/Toolasha/commit/efb9dafa8b26e7b920368a39995a8ce579dd248e))
+- cover drink swap artwork and unknown profit across view switches ([10e9650](https://github.com/Millennium44/Toolasha/commit/10e9650828a57a846e8d39c9bc67ba852a6ccf2f))
+- remove cooldown wall-clock race ([82083f8](https://github.com/Millennium44/Toolasha/commit/82083f834b90da5cffbb932ad9c5a30d27665ead))
+- reset pending client data between websocket cases ([b260b17](https://github.com/Millennium44/Toolasha/commit/b260b17913205e96cbb757857e9eb8f13663026a))
+
+### Miscellaneous Chores
+
+- add land-stack script, union-merge the changelog, drop builds from pre-commit ([2bfa107](https://github.com/Millennium44/Toolasha/commit/2bfa107f8532602af65571021161f37519c35702))
+- console helpers for live checks ([e5e6901](https://github.com/Millennium44/Toolasha/commit/e5e6901658fd8c0e2d2c940ad812edf3800c46f9))
+- **deps:** bump the development-dependencies group across 1 directory with 3 updates ([db4e905](https://github.com/Millennium44/Toolasha/commit/db4e905deda4bb2ef9c8f1a51519b2d80fdf2db9))
+- **deps:** lift dev-tool packages past their security advisories ([02aa23a](https://github.com/Millennium44/Toolasha/commit/02aa23aa8e573a997fa217e6aadcf3083bac2149))
+- gates lock against mid-run branch switches; PR fixes skip full gates ([5c808b3](https://github.com/Millennium44/Toolasha/commit/5c808b3327cd3dbe4722d67e8bab465abdcfa765))
+- land-stack counts net changelog titles per PR ([943d2a9](https://github.com/Millennium44/Toolasha/commit/943d2a9b85ef106f8beec60682289c2afad5c6d4))
+- land-stack lands stacked PRs and retargets them to main ([2100841](https://github.com/Millennium44/Toolasha/commit/2100841dc15fe5a10658e04058c8251ff7979a5f))
+- land-stack pushes PR branches before main so GitHub marks them merged ([1f7b96c](https://github.com/Millennium44/Toolasha/commit/1f7b96c8460a77fef71c728e7f3e84cf895088a6))
+- rebase-chain moves a stacked PR chain onto a new base in one pass ([f146ebe](https://github.com/Millennium44/Toolasha/commit/f146ebe9b72e09a87d7dcbe176eb6c2feaca8de0))
 
 ## [3.82.0](https://github.com/Millennium44/Toolasha/compare/v3.81.0...v3.82.0) (2026-11-09)
 
