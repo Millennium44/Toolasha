@@ -576,8 +576,13 @@ function cssRawPlugin() {
  * Custom plugin to bundle JS worker entry points into inline strings.
  * Import with '?worker' suffix: import code from './my-worker.js?worker';
  * The imported value is the bundled worker source as a string.
+ *
+ * The library's own terser pass cannot reach inside that string, so a release build minifies the
+ * worker here, with the same settings. Left raw, the combat sim worker alone was ~430 KB of
+ * comments and indentation inside toolasha-sim.js, which sat at 99% of the 2 MiB @require ceiling.
+ * @param {{minify?: boolean}} [options] - `minify`: run terser over the worker source
  */
-function workerBundlePlugin() {
+function workerBundlePlugin({ minify = false } = {}) {
     const suffix = '?worker';
     const cache = new Map();
     return {
@@ -614,6 +619,7 @@ function workerBundlePlugin() {
             const { output } = await bundle.generate({
                 format: 'iife',
                 name: 'CombatSimWorker',
+                plugins: minify ? [terser(terserOptions())] : [],
             });
 
             const code = output[0].code;
@@ -703,7 +709,7 @@ const devConfig = {
         cssRawPlugin(),
         changelogPlugin(),
         overviewPlugin(),
-        workerBundlePlugin(),
+        workerBundlePlugin({ minify: Boolean(process.env.MINIFY) }),
         resolve({
             browser: true,
             preferBuiltins: false,
@@ -1044,7 +1050,7 @@ const prodConfig = [
                 cssRawPlugin(),
                 changelogPlugin(),
                 overviewPlugin(),
-                workerBundlePlugin(),
+                workerBundlePlugin({ minify: true }),
                 resolve({
                     browser: true,
                     preferBuiltins: false,
