@@ -41,12 +41,14 @@ const healer = (triggers) => ({
 
 describe('neverFiresReason', () => {
     test("the reported row, Allies' Total Lowest HP % >= 350, can never be true", () => {
-        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 350))).toMatch(/never above 100/);
+        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 350))).toMatch(/never true/);
     });
 
-    test('>= 100 is possible (a full-health party); >= 101 is not', () => {
+    test('>= 100 is possible (a full-health party), and so is >= 110: a lapsing stamina buff can leave HP above max', () => {
         expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 100))).toBeNull();
-        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 101))).not.toBeNull();
+        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 110))).toBeNull();
+        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 200))).toBeNull();
+        expect(neverFiresReason(row(ALLIES, LOWEST, GTE, 201))).not.toBeNull();
     });
 
     test('<= 0 on the lowest HP % never fires (living units have HP above 0); <= 1 can', () => {
@@ -82,7 +84,7 @@ describe('findNeverFiringRows', () => {
     });
 
     test('one impossible row among several is reported with its own index, and food is checked too', () => {
-        const dto = healer([row(SELF, CURRENT_HP, GTE, 1), row(ALLIES, LOWEST, GTE, 120)]);
+        const dto = healer([row(SELF, CURRENT_HP, GTE, 1), row(ALLIES, LOWEST, GTE, 350)]);
         dto.food = [{ hrid: DONUT, triggers: [row(SELF, CURRENT_HP, LTE, -5)] }];
         const found = findNeverFiringRows([dto], gameData);
         expect(found.map((f) => [f.itemName, f.rowIndex, f.slotType])).toEqual([
