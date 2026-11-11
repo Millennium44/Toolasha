@@ -90,10 +90,21 @@ const { default: feature } = await import('./dungeon-token-tooltips.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 
 /**
+ * A token tooltip. Its "Amount:" count is the player's own stack unless the test already put that token in the
+ * inventory (an amount that differs is then someone's chat link).
  * @param {string} amountText - The game's "Amount:" line
  * @returns {HTMLElement}
  */
 function labyrinthTooltip(amountText, name = 'Labyrinth Token') {
+    const itemHrid = `/items/${name.toLowerCase().replace(/ /g, '_')}`;
+    const shown = /amount:\s*([\d,]+)/i.exec(amountText);
+    if (shown && !state.inventory.some((item) => item.itemHrid === itemHrid)) {
+        state.inventory.push({
+            itemHrid,
+            itemLocationHrid: '/item_locations/inventory',
+            count: Number(shown[1].replace(/,/g, '')),
+        });
+    }
     const el = document.createElement('div');
     el.className = 'MuiTooltip-popper';
     el.innerHTML = `<div class="MuiTooltip-tooltip"><div class="ItemTooltipText_itemTooltipText__x">
@@ -174,14 +185,37 @@ describe('held count from game state', () => {
         );
     });
 
-    test('the inventory count wins over the tooltip text', async () => {
+    test('a stack linked in chat is totaled at its own amount, not as yours', async () => {
         state.inventory = [
             { itemHrid: '/items/labyrinth_token', itemLocationHrid: '/item_locations/inventory', count: 100 },
         ];
         const el = labyrinthTooltip('Amount: 22,657');
         state.handler(el);
         await Promise.resolve();
-        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('Your 100 tokens');
+        const text = el.querySelector('.dungeon-token-shop-injected').textContent;
+        expect(text).toContain('22,657 tokens ≈ 150.3M as 22 × Pathseeker Lodestone');
+        expect(text).not.toContain('Your ');
+    });
+
+    test('a linked stack of a token you do not hold is totaled too', async () => {
+        state.inventory = [{ itemHrid: '/items/task_token', itemLocationHrid: '/item_locations/inventory', count: 5 }];
+        const el = labyrinthTooltip('Amount: 22,657');
+        state.inventory = state.inventory.filter((item) => item.itemHrid !== '/items/labyrinth_token');
+        state.handler(el);
+        await Promise.resolve();
+        const text = el.querySelector('.dungeon-token-shop-injected').textContent;
+        expect(text).toContain('22,657 tokens ≈');
+        expect(text).not.toContain('Your ');
+    });
+
+    test('an abbreviated Amount line defers to the exact inventory count', async () => {
+        state.inventory = [
+            { itemHrid: '/items/labyrinth_token', itemLocationHrid: '/item_locations/inventory', count: 22657 },
+        ];
+        const el = labyrinthTooltip('Amount: 22.7K');
+        state.handler(el);
+        await Promise.resolve();
+        expect(el.querySelector('.dungeon-token-shop-injected').textContent).toContain('Your 22,657 tokens');
     });
 
     test('the title states its basis and makes no net-worth match claim', async () => {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Token totals follow a stack linked in chat
+
+Hovering tokens someone linked in chat now totals their linked amount instead of your own stack, and the line drops "Your" when the count is not yours.
+
 ### Party tab picks up a late profile
 
 A party member whose profile arrives after you open the Party tab now shows up within a minute without reopening the tab, and the tab says "Loading party…" instead of "You are not in a party." before your character has loaded.

@@ -489,12 +489,15 @@ class DungeonTokenTooltips {
 
         html += '</table>';
 
-        // The stack held, from the inventory so a non-English client works; the tooltip's own
-        // "Amount:" line is only a fallback (read before this block is appended).
-        const amount = (tokenHrid && ownedTokenCount(tokenHrid)) || this._heldAmount(tooltipText.textContent);
+        // The stack the tooltip is about: its own "Amount:" line (read before this block is appended), which is
+        // the linked count on an item someone linked in chat. The inventory covers a non-English client, whose
+        // line the English pattern cannot read, and an abbreviated line ("29.2K") that matches it.
+        const owned = tokenHrid ? ownedTokenCount(tokenHrid) : 0;
+        const shown = this._heldAmount(tooltipText.textContent);
+        const amount = shown.count && !(shown.abbreviated && owned) ? shown.count : owned || shown.count;
         const held = heldTokensWorth(amount, shopItems);
         if (held) {
-            html += this._heldTotalHtml(amount, held, shopItems[0].priceSide);
+            html += this._heldTotalHtml(amount, held, shopItems[0].priceSide, amount === owned);
         }
 
         shopDiv.innerHTML = html;
@@ -506,9 +509,10 @@ class DungeonTokenTooltips {
      * @param {number} amount - Tokens held
      * @param {Object} held - From {@link heldTokensWorth}
      * @param {'ask'|'bid'} priceSide - The book side the market-priced rows were read at
+     * @param {boolean} [isOwn=true] - The amount is the player's own stack (false: someone's chat link)
      * @returns {string} HTML
      */
-    _heldTotalHtml(amount, held, priceSide) {
+    _heldTotalHtml(amount, held, priceSide, isOwn = true) {
         // Say what the rows actually bought are priced from: a task row can be an openable's expected value
         const evParts = held.parts.filter((part) => part.valueSource === 'EV');
         const lowerBound = evParts.some((part) => part.isPartial) ? ' (a lower bound, some drops are unpriced)' : '';
@@ -529,7 +533,7 @@ class DungeonTokenTooltips {
         const what = [first, ...rest].map(spent).join(' + ');
         const unspent = held.unspent > 0 ? ` (${formatWithSeparator(held.unspent)} unspent)` : '';
         return (
-            `<div style="margin-top: 4px;" title="${title}">Your ${formatWithSeparator(amount)} tokens ` +
+            `<div style="margin-top: 4px;" title="${title}">${isOwn ? 'Your ' : ''}${formatWithSeparator(amount)} tokens ` +
             `≈ <strong>${formatKMB(held.total)}</strong> as ${what}${unspent}</div>`
         );
     }
@@ -537,11 +541,14 @@ class DungeonTokenTooltips {
     /**
      * The token count in a tooltip's "Amount:" line.
      * @param {string} text - Tooltip text
-     * @returns {number} Tokens held, 0 when the tooltip has no amount line (a collection tooltip)
+     * @returns {{count: number, abbreviated: boolean}} count 0 when the tooltip has no amount line (a collection
+     *   tooltip, a non-English client); abbreviated when the line was shortened ("29.2K")
      */
     _heldAmount(text) {
-        const match = /amount:\s*[\d,.\s]*\d[kmb]?/i.exec(text || '');
-        return match ? parseItemCount(match[0], 0) : 0;
+        const match = /amount:\s*[\d,.\s]*\d([kmb]?)/i.exec(text || '');
+        return match
+            ? { count: parseItemCount(match[0], 0), abbreviated: Boolean(match[1]) }
+            : { count: 0, abbreviated: false };
     }
 
     /**
