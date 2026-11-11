@@ -41,6 +41,7 @@ Conditions found by "Search new conditions" can now be applied to the sim with t
 ### Combat Sim charts HP and MP over the run
 
 Healing & Mana now has an HP chart and an MP chart side by side, with every player on each, and an Overlay toggle that draws both in one chart. A faint band shows each stretch's lowest point so short dips are no longer averaged away, and a legend click hides or shows a player.
+
 ### Reset to Party uses your party loadout and the party's zone
 
 Reset to Party now puts you on the loadout you selected for the party instead of Current Gear, and sets Zone and Tier to the party's. Fetch loadout also gets your own party loadout now, not only the other members'; it leaves your zone alone.

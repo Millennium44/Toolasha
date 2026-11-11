@@ -74,7 +74,8 @@ export const COMBAT_SIM_KEYS = Object.freeze({
  * The sim editor's remembered Loadout pick, per character, in `settings`. Deliberately NOT
  * live-safe: a built editor never re-reads it (reopening keeps the player's scenario, edits
  * and all), and applying a pulled loadout under it would throw those edits away. So a pull
- * of it still latches and asks for a reload, which is when the editor reads it.
+ * of it still latches and asks for a reload, which is when the editor reads it. The same holds for
+ * `simEditorLoadoutId`, the remembered pick's loadout id, which is read with the name.
  */
 export const SIM_EDITOR_LOADOUT_KEY = 'simEditorLoadoutName';
 

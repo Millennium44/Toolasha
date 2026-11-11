@@ -107,6 +107,8 @@ const KEYS = [
 const LATCHED = [
     // A built editor keeps the player's scenario; a pulled pick is read at the next build
     ['settings', 'simEditorLoadoutName'],
+    // Its id travels with the name and is read at the same moment
+    ['settings', 'simEditorLoadoutId'],
 ];
 
 describe('every simulator key a pull writes is live-safe', () => {
