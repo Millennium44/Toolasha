@@ -334,6 +334,8 @@ export class PartyFinderTab {
         this._partyMembers = [];
         this._partyNote = '';
         this._partyToken = 0;
+        /** The last party read started; {@link PartyFinderTab#start} waits for it */
+        this._latestPartyRead = null;
         this._partyUnwatch = null;
         /** Selected zone/tiers: [{zoneHrid, difficultyTier, isDungeon, name}] */
         this._zones = [];
@@ -433,6 +435,7 @@ export class PartyFinderTab {
         this._partyUnwatch?.();
         this._partyUnwatch = null;
         this._partyToken++;
+        this._latestPartyRead = null;
         this.root?.remove();
         this.root = null;
         this._rows = new Map();
@@ -814,7 +817,21 @@ export class PartyFinderTab {
      * @returns {Promise<void>}
      * @private
      */
-    async _refreshParty() {
+    _refreshParty() {
+        const before = this._partyToken;
+        const read = this._readParty();
+        // The newest read, so a caller that must act on the party as it is now can wait for the last one started.
+        // A read started from inside this one (a listener firing) is newer and has already claimed the slot.
+        if (this._partyToken === before + 1) this._latestPartyRead = read;
+        return read;
+    }
+
+    /**
+     * One read of the party; see {@link PartyFinderTab#_refreshParty}.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _readParty() {
         const token = ++this._partyToken;
         if (!this.root) return;
         const settle = (members, note) => {
@@ -2292,7 +2309,13 @@ export class PartyFinderTab {
         }
         // The party as it is now, not as it was when the tab last looked
         if (this._includeParty) {
-            await this._refreshParty();
+            // A party change during the read starts a newer one; run on the party the last read found
+            let awaited = this._refreshParty();
+            await awaited;
+            while (this.root && this._latestPartyRead !== awaited) {
+                awaited = this._latestPartyRead;
+                await awaited;
+            }
             if (!this.root || this._running) return;
             // Another simulation may have started on another tab during the read; starting now would cancel it
             if (this.host?._isBusy?.()) {

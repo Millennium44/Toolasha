@@ -98,7 +98,11 @@ vi.mock('./combat-sim-adapter.js', () => ({
         state.priceSeeds.push({ cache, options });
         return cache;
     },
-    buildAllPlayerDTOs: async () => state.built,
+    buildAllPlayerDTOs: async () => {
+        const built = state.built;
+        if (state.builtGate) await state.builtGate;
+        return built;
+    },
     buildGameDataPayload: () => state.gameData,
     buildPlayerDTO: () => (state.selfDTO ? structuredClone(state.selfDTO) : null),
     getCombatZones: () => state.zones,
@@ -2226,6 +2230,41 @@ describe('include my party', () => {
         } finally {
             host.isRunning = false;
         }
+    });
+
+    test('a party change during the search party read runs on the newest party', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        await mountTab();
+        setParty([
+            ['c1', 'Captain', build(100)],
+            ['c2', 'Dawn', build(101)],
+        ]);
+        const read = tab._readParty.bind(tab);
+        let first = true;
+        let release;
+        tab._readParty = () => {
+            const pending = read();
+            if (first) {
+                first = false;
+                // The roster update lands while start() is reading: the listener starts a newer, slower read
+                state.builtGate = new Promise((resolve) => (release = resolve));
+                fireRosterEvent();
+            }
+            return pending;
+        };
+        try {
+            el('top-k').value = '0';
+            tab.start();
+            await flush();
+            // start() is still waiting on the newer read: nothing has run on the old party
+            expect(state.calls).toHaveLength(0);
+            release();
+            await flush();
+        } finally {
+            state.builtGate = null;
+        }
+        // You alone, then you + Captain + Dawn: never the party as it was before the change
+        expect(firstPassSizes()).toEqual([1, 3]);
     });
 
     test('the party changing while the tab is open redraws', async () => {
