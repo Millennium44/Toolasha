@@ -83,6 +83,7 @@ const KEYS = [
     ['settings', 'combatSimResimCloseCalls'],
     ['settings', 'combatSimUpgradeInputs'],
     ['settings', 'combatSimUpgradeColumns'],
+    ['settings', 'combatSimResultsCollapsed'],
     ['settings', 'combatSimTriggerLastResult'],
     ['settings', 'combatSimAllZonesMaxTierFood'],
     ['settings', 'combatSimAllZonesScoreScale'],

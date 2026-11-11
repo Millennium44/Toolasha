@@ -3,7 +3,7 @@
  *
  * A section is a header element (see {@link collapseHeaderHtml}) followed, inside the same parent, by its
  * body siblings. Collapsing hides every sibling after the header, so the markup of a section needs no
- * wrapper. The collapsed state lives in a plain `{ [key]: true }` map owned by the panel, because the
+ * wrapper. In a table the header sits in a `tr[data-collapse-row]` and owns the rows up to the next such row. The collapsed state lives in a plain `{ [key]: true }` map owned by the panel, because the
  * results container is redrawn wholesale on every sort and replan: the map is reapplied after each draw.
  */
 
@@ -56,7 +56,11 @@ export function setSectionCollapsed(header, collapsed) {
     if (caret) caret.textContent = collapsed ? CARET_CLOSED : CARET_OPEN;
     const summary = header.querySelector('[data-collapse-summary]');
     if (summary) summary.style.display = collapsed && summary.textContent ? 'inline' : 'none';
-    for (let el = header.nextElementSibling; el; el = el.nextElementSibling) {
+    // A heading row of a table (`tr[data-collapse-row]`) owns the rows after it, up to the next heading row
+    const headRow = header.closest('tr[data-collapse-row]');
+    const first = headRow ? headRow.nextElementSibling : header.nextElementSibling;
+    for (let el = first; el; el = el.nextElementSibling) {
+        if (headRow && el.hasAttribute('data-collapse-row')) break;
         if (collapsed) {
             // Remember an inline display of its own (flex rows) so expanding puts it back
             if (el.dataset.collapsePrev === undefined) el.dataset.collapsePrev = el.style.display;

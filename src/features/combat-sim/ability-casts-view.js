@@ -3,6 +3,7 @@
  * actually fired, with the ones that never did called out.
  */
 import { formatRatePerHour } from '../../utils/formatters.js';
+import { collapseHeaderHtml } from './collapsible-sections.js';
 
 const escapeHtml = (text) =>
     String(text).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]);
@@ -31,13 +32,26 @@ export function abilityCastRows(abilityCasts, hours, gameData) {
  * @param {{rowStyle: string, labelStyle: string, valueStyle: string}} styles - The Overview rows' styles
  * @returns {string} HTML
  */
-export function abilityCastsHtml(abilityCasts, hours, gameData, { rowStyle, labelStyle, valueStyle }) {
+export function abilityCastsHtml(
+    abilityCasts,
+    hours,
+    gameData,
+    { rowStyle, labelStyle, valueStyle, collapsible = false }
+) {
     const rows = abilityCastRows(abilityCasts, hours, gameData);
     if (rows.length === 0) return '';
-    let html =
-        `<div data-ability-casts style="${rowStyle}" title="Casts that went through, per hour of simulated time. ` +
-        `An ability with no casts never fired: check its trigger.">` +
-        `<span style="${labelStyle}">Casts/hr by ability</span><span></span></div>`;
+    const hint =
+        'Casts that went through, per hour of simulated time. An ability with no casts never fired: check its trigger.';
+    // Minimizable: the heading and its rows share a parent of their own, so only the rows go
+    let html = collapsible
+        ? `<div data-ability-casts-block>` +
+          collapseHeaderHtml({
+              key: 'results-casts',
+              title: `<span title="${hint}">Casts/hr by ability</span>`,
+              style: `${rowStyle} ${labelStyle}`,
+          })
+        : `<div data-ability-casts style="${rowStyle}" title="${hint}">` +
+          `<span style="${labelStyle}">Casts/hr by ability</span><span></span></div>`;
     for (const row of rows) {
         const never = row.casts === 0;
         html +=
@@ -48,5 +62,5 @@ export function abilityCastsHtml(abilityCasts, hours, gameData, { rowStyle, labe
                 : `<span style="${valueStyle}">${formatRatePerHour(row.perHour)}</span>`) +
             `</div>`;
     }
-    return html;
+    return collapsible ? `${html}</div>` : html;
 }

@@ -260,6 +260,10 @@ const GAME_BTN_HOVER = `onmouseover="this.style.background='${BUTTON_LOOK.primar
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+/** The Results tab's minimized sections: `{ collapsed: { [sectionId]: true } }`, one record for every character */
+const RESULTS_COLLAPSED_KEY = 'combatSimResultsCollapsed';
+/** Healing & Mana has always opened minimized; a player who never touched the sections still sees it that way */
+const DEFAULT_RESULTS_COLLAPSED = Object.freeze({ 'results-sustain': true });
 
 /** What the Ability order section ranks by (Balanced is the trigger tuner's `balancedScore`) */
 const ABILITY_ORDER_RANKS = [
@@ -3522,6 +3526,28 @@ function modeChipHtml(mode) {
  */
 const RESULTS_SUMMARY_SLOT = '<!--mwi-csim-summary-->';
 
+/** Result-table section headings of the All view, and the per-player section each one shares its minimized state with. */
+const ALL_HEADING_KEYS = {
+    Overview: 'results-overview',
+    'Casts/hr by ability': 'results-casts',
+    'Healing & Mana': 'results-sustain',
+    'XP/hr': 'results-xp',
+    'Food & drink/hr': 'results-consumables',
+    'Gold/hr': 'results-profit',
+};
+
+/**
+ * The run charts under a heading that minimizes them. The block is its own parent, so the heading's
+ * body is the charts alone and a redraw of just the charts (Overlay, legend) stays inside it.
+ * @param {string} charts - `renderRunCharts` output
+ * @returns {string} HTML
+ */
+function runChartsSection(charts) {
+    const style = `color:${ACCENT}; font-weight:700; font-size:12px; margin:8px 0 4px;`;
+    const head = collapseHeaderHtml({ key: 'results-charts', title: 'HP and MP over the run', style });
+    return `<div>${head}${charts}</div>`;
+}
+
 /** Decimals every Deaths/hr figure — and the delta beside it — is shown to */
 const DEATHS_DECIMALS = 3;
 
@@ -4431,6 +4457,7 @@ class CombatSimUI {
         this._restoreBudgetConstraints();
         this._restoreShrineCapToGuild();
         this._loadUpgradeColumnPrefs();
+        this._loadResultsCollapsedPref();
         this._loadMaxTierFoodPref();
         this._loadZonesScorePref();
         this._loadBestiaryPlanPrefs();
@@ -8722,7 +8749,7 @@ class CombatSimUI {
         const deathsPerHr = playerDeaths / hours;
 
         html += `<div style="${sectionStyle}">`;
-        html += `<div style="${headingStyle}">Overview</div>`;
+        html += collapseHeaderHtml({ key: 'results-overview', title: 'Overview', style: headingStyle });
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Encounters/hr</span>`;
         html += `<span style="${valueStyle}"${exactTitleAttr(encountersPerHr)}>${shortCount(encountersPerHr)}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span>`;
@@ -8765,7 +8792,12 @@ class CombatSimUI {
         // usually a trigger that cannot be met rather than an ability that is not worth casting
         const abilityCasts = simResult.abilityCasts?.[activeTab];
         if (abilityCasts && Object.keys(abilityCasts).length > 0 && hours > 0) {
-            html += abilityCastsHtml(abilityCasts, hours, gameData, { rowStyle, labelStyle, valueStyle });
+            html += abilityCastsHtml(abilityCasts, hours, gameData, {
+                rowStyle,
+                labelStyle,
+                valueStyle,
+                collapsible: true,
+            });
         }
 
         // Debuff on level gap — only shown when non-zero
@@ -8845,7 +8877,7 @@ class CombatSimUI {
                 overlay: this._runChartOverlay,
                 hidden: this._runChartHidden,
             });
-        html += drawRunCharts();
+        html += runChartsSection(drawRunCharts());
 
         // XP/hr by skill — per active tab player
         const xpTotals = {};
@@ -8871,7 +8903,7 @@ class CombatSimUI {
         const summaryPrevXpPerHr = hasPrev ? Object.values(prevXpPerHr).reduce((sum, v) => sum + v, 0) : null;
         if (xpEntries.length > 0) {
             html += `<div style="${sectionStyle}">`;
-            html += `<div style="${headingStyle}">XP/hr</div>`;
+            html += collapseHeaderHtml({ key: 'results-xp', title: 'XP/hr', style: headingStyle });
             for (const [skill, total] of xpEntries) {
                 const perHr = Math.round(total / hours);
                 const prevVal = hasPrev ? prevXpPerHr[skill] || null : null;
@@ -8929,7 +8961,7 @@ class CombatSimUI {
                 const colGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
 
                 html += `<div style="${sectionStyle}">`;
-                html += `<div style="${headingStyle}">Drops</div>`;
+                html += collapseHeaderHtml({ key: 'results-drops', title: 'Drops', style: headingStyle });
                 // Column headers
                 html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
                 html += `<span style="flex:1;">Item</span>`;
@@ -9018,7 +9050,7 @@ class CombatSimUI {
             const costColor = '#ff6b6b';
 
             html += `<div style="${sectionStyle}">`;
-            html += `<div style="${headingStyle}">Consumable Costs</div>`;
+            html += collapseHeaderHtml({ key: 'results-consumables', title: 'Consumable Costs', style: headingStyle });
             // Column headers
             html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
@@ -9088,7 +9120,7 @@ class CombatSimUI {
             const costColor = '#ff6b6b';
 
             html += `<div style="${sectionStyle}">`;
-            html += `<div style="${headingStyle}">Key Costs</div>`;
+            html += collapseHeaderHtml({ key: 'results-keys', title: 'Key Costs', style: headingStyle });
             html += `<div class="mwi-csim-loot-row" style="display:flex; align-items:center; padding:0 0 4px; font-size:10px; gap:6px; color:${GAME_COLORS.textDim};">`;
             html += `<span style="flex:1;">Item</span>`;
             html += `<span style="${colNum}">/hr</span>`;
@@ -9158,7 +9190,7 @@ class CombatSimUI {
         const profitFloor = unpricedFloorMark(dropUnpriced);
 
         html += `<div style="${sectionStyle}">`;
-        html += `<div style="${headingStyle}">Net Profit</div>`;
+        html += collapseHeaderHtml({ key: 'results-profit', title: 'Net Profit', style: headingStyle });
         const netColGold = 'flex:0; white-space:nowrap; min-width:76px; text-align:right; white-space:normal;';
         const netColNum = 'flex:0; white-space:nowrap; min-width:56px; text-align:right;';
         // Column headers
@@ -9208,7 +9240,11 @@ class CombatSimUI {
         const wipeEvents = simResult.wipeEvents;
         if (wipeEvents && wipeEvents.length > 0) {
             html += `<div style="${sectionStyle}">`;
-            html += `<div style="${headingStyle}">Wipe Events (${wipeEvents.length})</div>`;
+            html += collapseHeaderHtml({
+                key: 'results-wipes',
+                title: `Wipe Events (${wipeEvents.length})`,
+                style: headingStyle,
+            });
             // Engine hrids ("player2") mean nothing to the player; the roster of
             // the run being shown maps them back to party member names
             const wipeNamer = createWipeNamer({ playerInfo, gameData });
@@ -9331,6 +9367,7 @@ class CombatSimUI {
 
         container.innerHTML = html;
         container.style.display = 'block';
+        this._enhanceResultsCollapsibles(container);
 
         // Run charts: the Overlay box and the legend redraw just that block, so the panel keeps its scroll
         const bindRunCharts = () => {
@@ -9490,19 +9527,6 @@ class CombatSimUI {
                     const isOpen = body.style.display !== 'none';
                     body.style.display = isOpen ? 'none' : 'block';
                     if (arrow) arrow.textContent = isOpen ? '▶' : '▼';
-                }
-            });
-        });
-
-        // Healing & Mana collapsible toggle
-        container.querySelectorAll('[data-toggle="sustain-section"]').forEach((el) => {
-            el.addEventListener('click', () => {
-                const section = container.querySelector('#mwi-csim-sustain-section');
-                const arrow = container.querySelector('[data-arrow="sustain-section"]');
-                if (section) {
-                    const isOpen = section.style.display !== 'none';
-                    section.style.display = isOpen ? 'none' : 'block';
-                    if (arrow) arrow.innerHTML = isOpen ? '&#9654;' : '&#9660;';
                 }
             });
         });
@@ -9696,7 +9720,11 @@ class CombatSimUI {
 
         return (
             `<div style="margin-bottom:12px; padding:8px; border:1px solid ${ACCENT_BORDER}; border-radius:6px; background:${ACCENT_BG};">` +
-            `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px;">Summary</div>` +
+            collapseHeaderHtml({
+                key: 'results-summary',
+                title: 'Summary',
+                style: `color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px;`,
+            }) +
             `<div style="display:flex; flex-wrap:wrap; gap:6px;">${tiles.join('')}</div>` +
             subLine +
             `</div>`
@@ -9759,7 +9787,7 @@ class CombatSimUI {
 
         // Party-wide: said once, not repeated per column
         let html = `<div style="${sectionStyle}">`;
-        html += `<div style="${headingStyle}">Party</div>`;
+        html += collapseHeaderHtml({ key: 'results-party', title: 'Party', style: headingStyle });
         html += `<div style="${rowStyle}"><span style="${labelStyle}">Encounters/hr</span>`;
         html += `<span style="${valueStyle}"${exactTitleAttr(encountersPerHr)}>${shortCount(encountersPerHr)}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span></div>`;
         if (ctx.partyDps !== null && ctx.partyDps !== undefined) {
@@ -10017,19 +10045,29 @@ class CombatSimUI {
         // wrapper is the only thing that scrolls, never the page
         const cellBase = 'padding:3px 8px; border-bottom:1px solid #222; text-align:right; white-space:nowrap;';
         const stickyBase = `position:sticky; left:0; z-index:1; background:${GAME_COLORS.background}; text-align:left; white-space:normal; max-width:120px; min-width:84px;`;
+        // The mwi-csim-all-* classes are what the phone stylesheet (sim-phone-layout.js) hangs its narrow rules on
         let table = `<div data-all-players style="overflow-x:auto; max-width:100%;">`;
-        table += `<table style="border-collapse:separate; border-spacing:0; font-size:12px; min-width:100%;">`;
-        table += `<thead><tr><th style="${cellBase} ${stickyBase} color:#888;"></th>`;
+        table += `<table class="mwi-csim-all-table" style="border-collapse:separate; border-spacing:0; font-size:12px; min-width:100%;">`;
+        table += `<thead><tr><th class="mwi-csim-all-label" style="${cellBase} ${stickyBase} color:#888;"></th>`;
         for (const { hrid, label } of columns) {
-            table += `<th data-player="${escapeAttribute(hrid)}" style="${cellBase} color:${ACCENT}; font-weight:700;">${escapeAttribute(label)}</th>`;
+            table += `<th class="mwi-csim-all-name" data-player="${escapeAttribute(hrid)}" title="${escapeAttribute(label)}" style="${cellBase} color:${ACCENT}; font-weight:700;">${escapeAttribute(label)}</th>`;
         }
         table += '</tr></thead><tbody>';
         for (const { heading, rows } of sections) {
-            table += `<tr data-all-heading><td colspan="${columns.length + 1}" style="padding:8px 8px 3px; border-bottom:1px solid #222; color:${ACCENT}; font-weight:700; font-size:12px;">${heading}</td></tr>`;
+            // The heading stays at the left edge while the players scroll sideways
+            const head = collapseHeaderHtml({
+                key: ALL_HEADING_KEYS[heading] || `results-${heading}`,
+                title: heading,
+                style: `color:${ACCENT}; font-weight:700; font-size:12px; position:sticky; left:0; width:fit-content;`,
+            });
+            table += `<tr data-all-heading data-collapse-row><td colspan="${columns.length + 1}" style="padding:8px 8px 3px; border-bottom:1px solid #222;">${head}</td></tr>`;
             for (const row of rows) {
-                const titleAttr = row.title ? ` title="${escapeAttribute(row.title)}"` : '';
+                // A narrow screen cuts a long figure name short, so a plain-text label is its own tooltip
+                const plainLabel = typeof row.label === 'string' && !/[<&]/.test(row.label) ? row.label : '';
+                const hover = row.title || plainLabel;
+                const titleAttr = hover ? ` title="${escapeAttribute(hover)}"` : '';
                 table += `<tr ${row.attrs || ''}>`;
-                table += `<td${titleAttr} style="${cellBase} ${stickyBase} color:#aaa;${row.total ? ' font-weight:700;' : ''}">${row.label}</td>`;
+                table += `<td class="mwi-csim-all-label"${titleAttr} style="${cellBase} ${stickyBase} color:#aaa;${row.total ? ' font-weight:700;' : ''}">${row.label}</td>`;
                 for (const cell of row.cells) table += `<td style="${cellBase}">${cell}</td>`;
                 table += '</tr>';
             }
@@ -10039,10 +10077,12 @@ class CombatSimUI {
 
         // Every player's HP and MP across the run, with the per-player view's Overlay and legend state, so the
         // results' chart binding redraws this block the same way
-        html += renderRunCharts(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player, {
-            overlay: this._runChartOverlay,
-            hidden: this._runChartHidden,
-        });
+        html += runChartsSection(
+            renderRunCharts(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player, {
+                overlay: this._runChartOverlay,
+                hidden: this._runChartHidden,
+            })
+        );
         return html;
     }
 
@@ -10207,11 +10247,13 @@ class CombatSimUI {
             .join(' · ');
 
         let html = `<div style="margin-bottom:12px;">`;
-        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px; cursor:pointer; user-select:none;" data-toggle="sustain-section">`;
-        html += `<span data-arrow="sustain-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Healing &amp; Mana`;
-        html += `<span style="color:${GAME_COLORS.textDim}; font-weight:400; font-size:10px; margin-left:6px;">${headline}</span>`;
-        html += '</div>';
-        html += `<div id="mwi-csim-sustain-section" style="display:none;">`;
+        html += collapseHeaderHtml({
+            key: 'results-sustain',
+            title: 'Healing &amp; Mana',
+            summary: headline,
+            style: `color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; border-bottom:1px solid #222; padding-bottom:4px;`,
+        });
+        html += `<div id="mwi-csim-sustain-section">`;
 
         for (const section of sections) {
             html += `<div style="color:#888; font-size:10px; margin:6px 0 2px;">${section.label}</div>`;
@@ -12371,6 +12413,7 @@ class CombatSimUI {
                     })()
                 );
             }
+            if (has('resultsCollapsed')) work.push(this._loadResultsCollapsedPref());
             if (has('upgradeColumns')) {
                 work.push(
                     (async () => {
@@ -18452,6 +18495,47 @@ class CombatSimUI {
             // An open ⚙ Columns popover would otherwise be remembered open and come back with the section
             () => this._setUpgradeColumnMenuOpen(false)
         );
+    }
+
+    /**
+     * Apply the Results tab's minimized sections to the headings under `root` and wire them. Called after
+     * every draw of the results container, which is replaced wholesale.
+     * @param {Element|null|undefined} root - The results container
+     * @private
+     */
+    _enhanceResultsCollapsibles(root) {
+        if (!root) return;
+        if (!this._resultsCollapsed) this._resultsCollapsed = { ...DEFAULT_RESULTS_COLLAPSED };
+        enhanceCollapsibles(root, this._resultsCollapsed, () => this._persistResultsCollapsedPref());
+    }
+
+    /** @private */
+    async _persistResultsCollapsedPref() {
+        this._resultsCollapsedEdits = (this._resultsCollapsedEdits || 0) + 1;
+        try {
+            await storage.set(RESULTS_COLLAPSED_KEY, { collapsed: { ...this._resultsCollapsed } }, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the minimized results sections:', error);
+        }
+    }
+
+    /** @private */
+    async _loadResultsCollapsedPref() {
+        // A toggle made while this read was out is on screen and saved; the read holds the older map
+        const editsBefore = this._resultsCollapsedEdits || 0;
+        try {
+            const saved = await storage.get(RESULTS_COLLAPSED_KEY, 'settings', null);
+            if (!saved || (this._resultsCollapsedEdits || 0) !== editsBefore) return;
+            // Replaced wholesale, so an expanded section stays expanded; no record at all keeps the default
+            const collapsed = {};
+            if (saved.collapsed && typeof saved.collapsed === 'object') {
+                for (const [key, value] of Object.entries(saved.collapsed)) if (value === true) collapsed[key] = true;
+            }
+            this._resultsCollapsed = collapsed;
+            this._enhanceResultsCollapsibles(this.panel?.querySelector('#mwi-csim-results'));
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to load the minimized results sections:', error);
+        }
     }
 
     /** @private */

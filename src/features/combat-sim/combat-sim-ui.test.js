@@ -19,7 +19,7 @@ vi.mock('../profile/build-score-row.js', () => ({
 vi.mock('../profile/score-calculator.js', () => ({ calculateCombatScore: async () => null }));
 import { readScoped } from '../../utils/character-key.js';
 import storage from '../../core/storage.js';
-import { SIM_UPGRADE_PHONE_CSS } from './sim-phone-layout.js';
+import { SIM_UPGRADE_PHONE_CSS, SIM_PHONE_CSS } from './sim-phone-layout.js';
 import { GAME_COLORS } from '../../utils/game-look.js';
 
 const mocks = vi.hoisted(() => ({
@@ -9314,6 +9314,176 @@ describe('the All pill: every player side by side', () => {
             'position:sticky'
         );
         expect(box.querySelector('thead th').getAttribute('style')).toContain('left:0');
+    });
+
+    describe('minimized sections', () => {
+        const head = (key) => ui.panel.querySelector(`#mwi-csim-results [data-collapse-key="${key}"]`);
+        const settle = async () => {
+            for (let i = 0; i < 4; i++) await Promise.resolve();
+        };
+        const bodyOf = (h) => [...h.parentElement.children].filter((el) => el !== h);
+        const allHidden = (els) => els.length > 0 && els.every((el) => el.style.display === 'none');
+        const noneHidden = (els) => els.every((el) => el.style.display !== 'none');
+        /** The All table's rows, by first-cell text, with whether each is hidden */
+        const hiddenRows = () =>
+            [...ui.panel.querySelectorAll('[data-all-players] tbody tr')].filter((tr) => tr.style.display === 'none');
+
+        beforeEach(() => {
+            ui._resultsCollapsed = undefined;
+            mocks.store.delete('settings:combatSimResultsCollapsed');
+        });
+
+        afterEach(() => {
+            ui._resultsCollapsed = undefined;
+            mocks.store.delete('settings:combatSimResultsCollapsed');
+        });
+
+        test('every per-player section heading is a button that hides its body and reopens it', () => {
+            const results = show(partyFight({ hitpointsGained: { player1: { regen: 100 } } }), { all: false });
+            const keys = [...results.querySelectorAll('[data-collapse-key]')].map((h) =>
+                h.getAttribute('data-collapse-key')
+            );
+            for (const key of [
+                'results-summary',
+                'results-overview',
+                'results-casts',
+                'results-sustain',
+                'results-charts',
+                'results-xp',
+                'results-profit',
+            ]) {
+                expect(keys).toContain(key);
+            }
+
+            const xp = head('results-xp');
+            expect(bodyOf(xp).length).toBeGreaterThan(0);
+            expect(noneHidden(bodyOf(xp))).toBe(true);
+            xp.click();
+            expect(allHidden(bodyOf(xp))).toBe(true);
+            expect(xp.getAttribute('aria-expanded')).toBe('false');
+            // The heading stays visible so there is always a way back
+            expect(xp.style.display).not.toBe('none');
+            expect(results.textContent).not.toContain('could not be drawn');
+            xp.click();
+            expect(noneHidden(bodyOf(xp))).toBe(true);
+            expect(xp.getAttribute('aria-expanded')).toBe('true');
+        });
+
+        test('a minimized section survives a redraw, a tab switch and the All pill', () => {
+            show(partyFight(), { all: false });
+            head('results-xp').click();
+            head('results-casts').click();
+            ui._displayResults(ui._lastSimResult, 1, ui._lastGameData);
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+            expect(allHidden(bodyOf(head('results-xp')))).toBe(true);
+            // Only the casts rows went; the rest of the Overview is still there
+            expect(allHidden(bodyOf(head('results-casts')))).toBe(true);
+            expect(head('results-overview').getAttribute('aria-expanded')).toBe('true');
+
+            ui.panel.querySelector('[data-tab-all]').click();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+            ui.panel.querySelector('[data-tab="player2"]').click();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+            expect(ui.panel.textContent).not.toContain('could not be drawn');
+        });
+
+        test('collapsing the Overview hides the casts under it and the heading reopens it', () => {
+            show(partyFight(), { all: false });
+            const overview = head('results-overview');
+            const block = () => overview.parentElement.querySelector('[data-ability-casts-block]');
+            overview.click();
+            expect(block().style.display).toBe('none');
+            expect(overview.style.display).not.toBe('none');
+            overview.click();
+            expect(block().style.display).not.toBe('none');
+        });
+
+        test('an All view heading hides only its own rows, up to the next heading row', () => {
+            show(partyFight());
+            expect(hiddenRows()).toHaveLength(0);
+            expect([...ui.panel.querySelectorAll('tr[data-all-heading]')].length).toBeGreaterThan(2);
+            const xpHeading = head('results-xp');
+            xpHeading.click();
+            const xpRow = xpHeading.closest('tr');
+            const owned = [];
+            for (let el = xpRow.nextElementSibling; el && !el.hasAttribute('data-collapse-row');) {
+                owned.push(el);
+                el = el.nextElementSibling;
+            }
+            expect(owned.length).toBeGreaterThan(0);
+            expect(allHidden(owned)).toBe(true);
+            // Everything else, headings included, is untouched
+            expect(hiddenRows()).toHaveLength(owned.length);
+            expect(xpRow.style.display).not.toBe('none');
+            // And it comes back
+            xpHeading.click();
+            expect(hiddenRows()).toHaveLength(0);
+            expect(ui.panel.textContent).not.toContain('could not be drawn');
+        });
+
+        test('the All view and the per-player view share the state of a section', () => {
+            show(partyFight());
+            head('results-xp').click();
+            ui.panel.querySelector('[data-tab="player1"]').click();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+        });
+
+        test('the state is saved and read back on the next opening', async () => {
+            show(partyFight(), { all: false });
+            head('results-xp').click();
+            await settle();
+            expect(mocks.store.get('settings:combatSimResultsCollapsed')).toEqual({
+                collapsed: { 'results-sustain': true, 'results-xp': true },
+            });
+
+            ui._resultsCollapsed = undefined;
+            await ui._loadResultsCollapsedPref();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+            ui._displayResults(ui._lastSimResult, 1, ui._lastGameData);
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+        });
+
+        test('Healing & Mana starts minimized and, once opened, stays open after a reload', async () => {
+            const fight = partyFight({ hitpointsGained: { player1: { regen: 100 } } });
+            show(fight, { all: false });
+            const sustain = head('results-sustain');
+            expect(sustain.getAttribute('aria-expanded')).toBe('false');
+            expect(sustain.textContent).toContain('HP gained');
+            expect(ui.panel.querySelector('#mwi-csim-sustain-section').style.display).toBe('none');
+            sustain.click();
+            await settle();
+            expect(ui.panel.querySelector('#mwi-csim-sustain-section').style.display).not.toBe('none');
+
+            ui._resultsCollapsed = undefined;
+            await ui._loadResultsCollapsedPref();
+            ui._displayResults(fight, 1, ui._lastGameData);
+            expect(head('results-sustain').getAttribute('aria-expanded')).toBe('true');
+        });
+
+        test('a toggle made while the saved record is being read is kept', async () => {
+            mocks.store.set('settings:combatSimResultsCollapsed', { collapsed: { 'results-drops': true } });
+            show(partyFight(), { all: false });
+            const pending = ui._loadResultsCollapsedPref();
+            head('results-xp').click();
+            await pending;
+            await settle();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+        });
+
+        test('the All table labels are pinned and stay on one line on a phone', () => {
+            const results = show(partyFight());
+            const labels = [...results.querySelectorAll('[data-all-players] td.mwi-csim-all-label')];
+            expect(labels.length).toBeGreaterThan(5);
+            expect(labels.every((td) => td.getAttribute('style').includes('position:sticky'))).toBe(true);
+            expect(results.querySelector('th.mwi-csim-all-label').getAttribute('style')).toContain('left:0');
+            expect(results.querySelector('table.mwi-csim-all-table')).not.toBeNull();
+            const names = [...results.querySelectorAll('th.mwi-csim-all-name')];
+            expect(names.map((th) => th.title)).toEqual(['Kasvitatti', 'Ana', 'Ana (2)']);
+            const rule = SIM_PHONE_CSS.match(/\.mwi-csim-all-label \{[^}]*\}/)?.[0] || '';
+            expect(rule).toContain('white-space: nowrap');
+            expect(SIM_PHONE_CSS).toMatch(/\.mwi-csim-all-table th, \.mwi-csim-all-table td \{ padding-left: 4px/);
+            expect(SIM_PHONE_CSS).toMatch(/#mwi-csim-results-pricing \{[^}]*background/);
+        });
     });
 });
 

@@ -52,6 +52,23 @@ export const SIM_PHONE_CSS = `
             gap: 6px !important;
         }
         #mwi-labsim-crate-row > select { min-width: 0; width: 100%; }
+        /* Results, All players: tight cells so three players fit a phone, the figure names on one line and
+           pinned while the players scroll sideways, and a long player name cut short (its full name is the
+           header's tooltip). The inline padding and wrap rules are overridden here, desktop keeps them. */
+        .mwi-csim-all-table { font-size: 11px !important; }
+        .mwi-csim-all-table th, .mwi-csim-all-table td { padding-left: 4px !important; padding-right: 4px !important; }
+        .mwi-csim-all-table .mwi-csim-all-label {
+            white-space: nowrap !important; max-width: 108px !important; min-width: 0 !important;
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .mwi-csim-all-table .mwi-csim-all-name {
+            max-width: 72px; overflow: hidden; text-overflow: ellipsis;
+        }
+        /* The Buy/Sell/Key row stays above the results and covers whatever scrolls under it */
+        #mwi-csim-results-pricing {
+            position: sticky; top: 0; z-index: 5; background: ${GAME_COLORS.background} !important;
+            padding-bottom: 6px !important; box-sizing: border-box;
+        }
         /* Zone takes a line of its own (label + select); Tier, Hours and Simulate wrap onto the next */
         #mwi-csim-zone { flex: 1 1 calc(100% - 60px) !important; }
     }

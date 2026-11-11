@@ -60,6 +60,7 @@ export const COMBAT_SIM_KEYS = Object.freeze({
     upgradeInputs: 'combatSimUpgradeInputs',
     // Global from here down
     upgradeColumns: 'combatSimUpgradeColumns',
+    resultsCollapsed: 'combatSimResultsCollapsed',
     allZonesMaxTierFood: 'combatSimAllZonesMaxTierFood',
     allZonesScoreScale: 'combatSimAllZonesScoreScale',
     allZonesIncludeDungeons: 'combatSimAllZonesIncludeDungeons',
@@ -171,6 +172,7 @@ const COMBAT_LABELS = {
     resimCloseCalls: 'Combat Sim re-sim close calls',
     upgradeInputs: 'Combat Sim upgrade level, steps and hours boxes',
     upgradeColumns: 'Combat Sim upgrade columns',
+    resultsCollapsed: 'Combat Sim minimized results sections',
     allZonesMaxTierFood: 'Combat Sim max-tier food',
     allZonesScoreScale: 'Combat Sim zones score scale',
     allZonesIncludeDungeons: 'Combat Sim zones include dungeons',
