@@ -54,6 +54,8 @@ function fakeDb() {
         broken: false,
         /** Stands in for a transaction that aborts: reads answer, no write sticks, `abort` fires instead of `complete` */
         aborting: false,
+        /** Fake-IDB timers not yet fired: lets a test wait for quiet instead of for elapsed time */
+        pending: 0,
         transaction(names) {
             if (db.broken) throw new Error('the database refused the transaction');
             const name = Array.isArray(names) ? names[0] : names;
@@ -65,7 +67,9 @@ function fakeDb() {
             const done = () => {
                 if (open === 0 && !scheduled) {
                     scheduled = true;
+                    db.pending++;
                     setTimeout(() => {
+                        db.pending--;
                         if (open !== 0) scheduled = false;
                         else if (db.aborting) txn.onabort?.();
                         else txn.oncomplete?.();
@@ -75,7 +79,9 @@ function fakeDb() {
             const req = (fn) => {
                 const r = { onsuccess: null, onerror: null, result: undefined, error: null };
                 open++;
+                db.pending++;
                 setTimeout(() => {
+                    db.pending--;
                     r.result = fn();
                     r.onsuccess?.({ target: r });
                     open--;
@@ -107,6 +113,20 @@ const { default: store, recordKey, bucketOf, advanceStoredBaselines } = await im
 const { mergeForKey, announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const STORE = 'marketListings';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Waits until the store and the fake IndexedDB are idle: no fake-IDB timer or request outstanding, and the store's
+ * fill writes settled, for several macrotask turns in a row. It waits on that state, never on elapsed time, so a
+ * loaded machine only makes it take longer, not come back early.
+ */
+async function settle() {
+    let quiet = 0;
+    for (let turn = 0; quiet < 3; turn++) {
+        if (turn > 5000) throw new Error('settle: the store never went idle');
+        await sleep(0);
+        const busy = db.pending > 0 || store._fillWrites.size > 0;
+        quiet = busy ? 0 : quiet + 1;
+    }
+}
 const hrid = '/items/x';
 const row = (id, t, q) => ({
     t,
@@ -145,7 +165,7 @@ async function reload() {
     storage._restorePendingKeys?.clear();
     storage._restorePendingStores?.clear();
     await store.handleCharacterSwitch();
-    await sleep(80);
+    await settle();
 }
 beforeEach(async () => {
     store.disable();
@@ -195,7 +215,7 @@ test('an offline fill found at load survives a repair that cuts another listing 
     seed(sameDayRepair());
     dm.listings = [wire(100, 3)];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     const rows = disk.get(dayKey(today));
     expect(qty(rows, 100)).toBe(3);
@@ -213,13 +233,13 @@ test('the same on a reconnect: the fill character_initialized finds is kept besi
     seed({ day: [row(200, today, 5), row(200, today + 100, 5)], states: { 100: baseline(0) } });
     dm.listings = [wire(100, 0)];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     // The log arrives after the load, so the reconnect's repair is the one that cuts
     disk.set('marketListingTimestamps_c1', [{ id: 200, status: 'filled', filledQuantity: 5 }]);
     dm.listings = [wire(100, 3)];
     dm.emit('character_initialized', { myMarketListings: dm.listings });
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     const rows = disk.get(dayKey(today));
     expect(qty(rows, 100)).toBe(3);
@@ -234,7 +254,7 @@ test('a row another tab stored for the repaired day is kept too', async () => {
     seed(sameDayRepair());
     dm.listings = [wire(100, 3)];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     const other = row(300, today + 200, 2);
     disk.set(dayKey(today), [...disk.get(dayKey(today)), other]);
@@ -250,7 +270,7 @@ test('an imported log row with a low count does not cut a lone real row', async 
         log: [{ id: 400, status: 'filled', filledQuantity: 1, importedAt: Date.now() }],
     });
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     expect(qty(disk.get(dayKey(today)), 400)).toBe(500);
     expect(qty(store.records, 400)).toBe(500);
@@ -260,7 +280,7 @@ test('an imported archive row with a low count does not cut two real partial fil
     seed({ day: [row(500, today, 3), row(500, today + 100, 2)], log: [] });
     arch.rows = [{ id: 500, status: 'filled', filledQuantity: 3, importedAt: Date.now() }];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     expect(qty(disk.get(dayKey(today)), 500)).toBe(5);
     expect(qty(store.records, 500)).toBe(5);
@@ -273,7 +293,7 @@ test('an imported log row does not hide a real archive row: a doubling is still 
     });
     arch.rows = [{ id: 600, status: 'filled', filledQuantity: 5 }];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
     expect(qty(disk.get(dayKey(today)), 600)).toBe(5);
 });
@@ -284,7 +304,7 @@ test('the pull fold does not cut a lone row on an imported count either', async 
         log: [{ id: 401, status: 'filled', filledQuantity: 1, importedAt: Date.now() }],
     });
     await store.initialize();
-    await sleep(80);
+    await settle();
     const registration = mergeForKey(STORE, dayKey(today));
     const fold = registration.foldPull || registration.mergeForPull;
     const out = fold([], [row(401, today, 500)], { download: {} });
@@ -313,13 +333,13 @@ async function openBook() {
     seed({ day: [row(300, today, 1)], states: { 100: baseline(0), 300: baseline(1) } });
     dm.listings = [wire(100, 0), wire(300, 1)];
     await store.initialize();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
 }
 /** The real page close, then a new page: everything the store held in memory, and the latch, is gone */
 async function closeAndOpenNewPage() {
     await storage.closeForTeardown('pagehide');
-    await sleep(80);
+    await settle();
     storage.cleanupPendingWrites();
     storage._restorePendingKeys.clear();
     storage._restorePendingStores.clear();
@@ -330,7 +350,7 @@ async function closeAndOpenNewPage() {
     store._fillWrites = new Set();
     store._statesOwed = false;
     await store.handleCharacterSwitch();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
 }
 /** Storage answering everything except the ledger's day records: their reads and their writes both fail */
@@ -356,7 +376,7 @@ describe('a fill while the reload prompt is up', () => {
         storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
 
         // Not waiting on any debounce, flush or reload
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
@@ -375,7 +395,7 @@ describe('a fill while the reload prompt is up', () => {
         storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
 
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
         await closeAndOpenNewPage();
 
         expect(qty(store.getRecords(), 100)).toBe(10);
@@ -388,11 +408,11 @@ describe('a fill while the reload prompt is up', () => {
 
         for (const filled of [2, 3, 7]) {
             fillEvent(filled);
-            await sleep(80);
+            await settle();
             expect(qty(disk.get(dayKey(today)), 100)).toBe(filled);
         }
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(10);
@@ -410,7 +430,7 @@ describe('a fill while the reload prompt is up', () => {
         storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         const rows = disk.get(dayKey(today));
@@ -425,7 +445,7 @@ describe('a fill while the reload prompt is up', () => {
         storage.finishRestore([STORE]);
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(diskBaseline(100)).toBe(3);
@@ -441,7 +461,7 @@ describe('a fill while the reload prompt is up', () => {
         storage.finishRestore(new Map([[STORE, [single]]]));
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         expect(qty(disk.get(single), 100)).toBe(3);
         await closeAndOpenNewPage();
 
@@ -454,20 +474,20 @@ describe('a fill while the reload prompt is up', () => {
         seed({ states: { 100: baseline(0) } });
         dm.listings = [wire(100, 0)];
         await store.initialize();
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         await storage.beginRestore();
         dm.listings = [wire(100, 3)];
         event(dm.listings, [wire(100, 3)]);
-        await sleep(80);
+        await settle();
         // This device held no copy of the day when the pull read, so the pull's copy goes down whole
         await storage.putAll(STORE, { [dayKey(today)]: [row(301, today, 2)] }, { bypassRestoreLatch: true });
         storage.finishRestore(new Map([[STORE, [dayKey(today)]]]));
         await storage.endRestore();
         expect(diskBaseline(100)).toBe(0);
         announceSyncPullApplied({ [STORE]: [dayKey(today)] });
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         const rows = disk.get(dayKey(today));
@@ -487,7 +507,7 @@ describe('a fill while storage is in trouble', () => {
         storage.tryGet = async (key, name) => (key.startsWith('tradeLedgerRec_') ? null : REAL_TRY_GET(key, name));
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
@@ -500,7 +520,7 @@ describe('a fill while storage is in trouble', () => {
         refuseDayRecords();
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(0);
         expect(diskBaseline(100)).toBe(0);
@@ -508,13 +528,13 @@ describe('a fill while storage is in trouble', () => {
         // Placing a listing: a change, and no fill
         dm.listings = [wire(100, 3), wire(300, 1), wire(101, 0)];
         event(dm.listings, [wire(101, 0)]);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(diskBaseline(100)).toBe(0);
 
         // The page closing with the listing open and storage still refusing: the next load finds the fill again
         await storage.closeForTeardown('pagehide');
-        await sleep(80);
+        await settle();
         allowDayRecords();
         await closeAndOpenNewPage();
         expect(qty(store.getRecords(), 100)).toBe(3);
@@ -524,16 +544,16 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         refuseDayRecords();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         fillEvent(5);
-        await sleep(80);
+        await settle();
         expect(store._unsavedFills.get('c1').size).toBe(2);
         expect(diskBaseline(100)).toBe(0);
 
         allowDayRecords();
         // Nothing in this event changes a baseline: it still has to bring the two along
         event(dm.listings, []);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         const quantities = disk
@@ -556,13 +576,13 @@ describe('a fill while storage is in trouble', () => {
             const second = Date.UTC(2031, 0, 2, 0, 1);
             now.mockReturnValue(first);
             fillEvent(3);
-            await sleep(80);
+            await settle();
             now.mockReturnValue(second);
             fillEvent(5);
-            await sleep(80);
+            await settle();
             allowDayRecords();
             event(dm.listings, []);
-            await sleep(80);
+            await settle();
             expect(qty(disk.get(dayKey(first)), 100)).toBe(3);
             expect(qty(disk.get(dayKey(second)), 100)).toBe(2);
         } finally {
@@ -574,7 +594,7 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         refuseDayRecords();
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(0);
         allowDayRecords();
 
@@ -587,11 +607,11 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         db.broken = true;
         fillEvent(3);
-        await sleep(80);
+        await settle();
         expect(diskBaseline(100)).toBe(0);
 
         await storage.closeForTeardown('pagehide');
-        await sleep(80);
+        await settle();
         db.broken = false;
         await closeAndOpenNewPage();
 
@@ -602,20 +622,20 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         refuseDayRecords();
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
 
         dm.characterId = 'c2';
         disk.set('tradeLedgerRecordsSplit_c2', { at: 1, records: 0 });
         dm.listings = [wire(900, 0)];
         await store.handleCharacterSwitch();
-        await sleep(80);
+        await settle();
         expect(store.getRecords()).toEqual([]);
         expect(store._unsavedFills.get('c1').size).toBe(1);
 
         allowDayRecords();
         dm.listings = [wire(900, 2)];
         event(dm.listings, [wire(900, 2)]);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         const arrivingDay = recordKey('c2', bucketOf({ t: today }));
@@ -626,7 +646,7 @@ describe('a fill while storage is in trouble', () => {
         dm.characterId = 'c1';
         dm.listings = [wire(300, 1)];
         await store.handleCharacterSwitch();
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(store.getRecords(), 100)).toBe(10);
     });
@@ -635,16 +655,16 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         refuseDayRecords();
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
 
         dm.characterId = 'c2';
         dm.listings = [];
         await store.handleCharacterSwitch();
-        await sleep(80);
+        await settle();
         dm.characterId = 'c1';
         dm.listings = [wire(300, 1)];
         await store.handleCharacterSwitch();
-        await sleep(80);
+        await settle();
 
         expect(qty(store.getRecords(), 100)).toBe(10);
         expect(qty(disk.get(dayKey(today)), 100)).toBe(0);
@@ -654,11 +674,11 @@ describe('a fill while storage is in trouble', () => {
         await openBook();
         refuseDayRecords();
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
         allowDayRecords();
 
         store.disable();
-        await sleep(80);
+        await settle();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(10);
         expect(store._unsavedFills.size).toBe(0);
@@ -677,19 +697,19 @@ describe('a fill while storage is in trouble', () => {
         };
         dm.listings = [wire(100, 0), wire(300, 1), wire(101, 0)];
         event(dm.listings, [wire(101, 0)]);
-        await sleep(80);
+        await settle();
         // The fill arrives meanwhile, and its row cannot be written
         refuseDayRecords();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         open();
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(diskBaseline(100)).toBe(0);
         allowDayRecords();
         event(dm.listings, []);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(diskBaseline(100)).toBe(3);
@@ -727,14 +747,14 @@ async function eventInTheGap(next, emitEvent) {
     dm.characterData = {};
     dm.listings = [];
     await store.handleCharacterSwitch();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
 }
 async function backToC1(listings) {
     dm.characterId = 'c1';
     dm.listings = listings;
     await store.handleCharacterSwitch();
-    await sleep(80);
+    await settle();
     await storage.flushAll();
 }
 
@@ -773,7 +793,7 @@ describe('a market event in the gap before character_switched', () => {
         disk.set(`tradeLedgerState_${mine}`, { 100: baseline(0) });
         dm.listings = [wire(100, 0)];
         await store.initialize();
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         await eventInTheGap('900002', () => {
             const ended = owned(mine, 100, 4, FILLED);
@@ -814,7 +834,7 @@ describe('a market event in the gap before character_switched', () => {
         await openBook();
         dm.characterId = 'c2';
         store.processListings([owned('c2', 900, 0)], true);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(diskBaseline(100)).toBe(0);
         expect(diskBaseline(300)).toBe(1);
@@ -848,12 +868,12 @@ describe('the departing-character guard never refuses a fill for good', () => {
         disk.set('tradeLedgerState_default', { 100: baseline(0) });
         dm.listings = [];
         await store.initialize();
-        await sleep(80);
+        await settle();
         expect(store.isLoaded).toBe(true);
         dm.characterId = 'c1';
         disk.set('tradeLedgerRecordsSplit_c1', { at: 1, records: 0 });
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
     });
@@ -862,11 +882,11 @@ describe('the departing-character guard never refuses a fill for good', () => {
         seed({ states: { 100: baseline(0) } });
         db.broken = true;
         await store.initialize();
-        await sleep(80);
+        await settle();
         db.broken = false;
         expect(store.isLoaded).toBe(true);
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
     });
@@ -875,7 +895,7 @@ describe('the departing-character guard never refuses a fill for good', () => {
         await openBook();
         dm.listings = [wire(100, 3), wire(300, 1)];
         dm.emit('character_initialized', { myMarketListings: dm.listings });
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(qty(store.getRecords(), 100)).toBe(3);
@@ -891,12 +911,12 @@ describe('the departing-character guard never refuses a fill for good', () => {
         dm.listings = [];
         await store.handleCharacterSwitch();
         await started;
-        await sleep(80);
+        await settle();
         expect(store.isLoaded).toBe(true);
         const moved = { ...wire(700, 5), characterID: 'c2' };
         dm.listings = [moved];
         event(dm.listings, [moved]);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(qty(disk.get(recordKey('c2', bucketOf({ t: Date.now() }))), 700)).toBe(5);
         expect(qty(disk.get(dayKey(today)), 700)).toBe(0);
@@ -924,7 +944,7 @@ describe('a fill with the baseline record latched', () => {
         };
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(batches).toEqual([[dayKey(today), STATE_KEY]]);
@@ -941,7 +961,7 @@ describe('a fill with the baseline record latched', () => {
         let total = 0;
         for (const filled of [2, 3, 7]) {
             fillEvent(filled);
-            await sleep(80);
+            await settle();
             total = filled;
             expect(diskBaseline(100)).toBe(total);
             expect(qty(disk.get(dayKey(today)), 100)).toBe(total);
@@ -954,7 +974,7 @@ describe('a fill with the baseline record latched', () => {
         await openBook();
         latchBoth();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await closeAndOpenNewPage();
         expect(qty(store.getRecords(), 100)).toBe(3);
 
@@ -968,9 +988,9 @@ describe('a fill with the baseline record latched', () => {
         await openBook();
         latchBoth();
         fillEvent(4);
-        await sleep(80);
+        await settle();
         fillEvent(10, FILLED);
-        await sleep(80);
+        await settle();
         expect(disk.get(STATE_KEY)[100]).toEqual({ done: true });
 
         dm.listings = [wire(100, 10, FILLED), wire(300, 1)];
@@ -987,7 +1007,7 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(disk.get(STATE_KEY)[100]).toEqual(stored);
@@ -998,7 +1018,7 @@ describe('a fill with the baseline record latched', () => {
     test('a restore older than memory: no silent advance past its rows; a duplicate is the worst of it', async () => {
         await openBook();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(diskBaseline(100)).toBe(3);
 
@@ -1007,7 +1027,7 @@ describe('a fill with the baseline record latched', () => {
         disk.set(STATE_KEY, { 100: baseline(1), 300: baseline(1) });
         latchBoth();
         fillEvent(5);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         expect(diskBaseline(100)).toBe(1);
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
@@ -1020,14 +1040,14 @@ describe('a fill with the baseline record latched', () => {
     test('a restore older than memory, then the listing ends: the repair cuts the duplicate to the log', async () => {
         await openBook();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         disk.set(dayKey(today), [row(100, today, 1)]);
         disk.set(STATE_KEY, { 100: baseline(1), 300: baseline(1) });
         latchBoth();
         fillEvent(5);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
         await closeAndOpenNewPage();
         expect(qty(store.getRecords(), 100)).toBe(7);
@@ -1042,14 +1062,14 @@ describe('a fill with the baseline record latched', () => {
     test('a restore matching memory: the move is exactly the row beside it, and the sum stays right', async () => {
         await openBook();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         disk.set(dayKey(today), [row(100, today, 3)]);
         disk.set(STATE_KEY, { 100: baseline(3), 300: baseline(1) });
         latchBoth();
         fillEvent(5);
-        await sleep(80);
+        await settle();
 
         expect(diskBaseline(100)).toBe(5);
         await closeAndOpenNewPage();
@@ -1062,7 +1082,7 @@ describe('a fill with the baseline record latched', () => {
         storage.finishRestore([STORE]);
 
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(disk.has(STATE_KEY)).toBe(false);
@@ -1075,7 +1095,7 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         dm.listings = [wire(100, 0), wire(300, 1), wire(101, 2), wire(102, 0)];
         event(dm.listings, [wire(101, 2), wire(102, 0)]);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(diskBaseline(101)).toBe(2);
@@ -1089,16 +1109,16 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         db.aborting = true;
         fillEvent(3);
-        await sleep(80);
+        await settle();
         fillEvent(5);
-        await sleep(80);
+        await settle();
         expect(disk.get(dayKey(today)).some((r) => r.listingId === 100)).toBe(false);
         expect(diskBaseline(100)).toBe(0);
         expect(store._unsavedFills.get('c1').size).toBe(2);
 
         db.aborting = false;
         event(dm.listings, []);
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(5);
@@ -1117,16 +1137,16 @@ describe('a fill with the baseline record latched', () => {
         try {
             now.mockReturnValue(first);
             fillEvent(3);
-            await sleep(80);
+            await settle();
             now.mockReturnValue(second);
             fillEvent(5);
-            await sleep(80);
+            await settle();
             expect(qty(disk.get(dayKey(second)), 100)).toBe(2);
             expect(diskBaseline(100)).toBe(0);
 
             storage.putAll = REAL_PUT_ALL;
             event(dm.listings, []);
-            await sleep(80);
+            await settle();
             expect(qty(disk.get(dayKey(first)), 100)).toBe(3);
             // Caught up to its own row and no further: the next load finds the rest again, over and never under
             expect(diskBaseline(100)).toBe(3);
@@ -1141,17 +1161,17 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         refuseDayRecords();
         fillEvent(3);
-        await sleep(80);
+        await settle();
 
         dm.characterId = 'c2';
         disk.set('tradeLedgerRecordsSplit_c2', { at: 1, records: 0 });
         dm.listings = [wire(900, 0)];
         await store.handleCharacterSwitch();
-        await sleep(80);
+        await settle();
         allowDayRecords();
         event(dm.listings, []);
         store._retryUnsaved();
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
@@ -1182,7 +1202,7 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         refuseDayRecords();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         allowDayRecords();
 
         await closeAndOpenNewPage();
@@ -1196,9 +1216,9 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         db.broken = true;
         fillEvent(3);
-        await sleep(80);
+        await settle();
         await storage.closeForTeardown('pagehide');
-        await sleep(80);
+        await settle();
         db.broken = false;
         expect(diskBaseline(100)).toBe(0);
 
@@ -1211,11 +1231,11 @@ describe('a fill with the baseline record latched', () => {
         latchBoth();
         refuseDayRecords();
         fillEvent(3);
-        await sleep(80);
+        await settle();
         allowDayRecords();
 
         store.disable();
-        await sleep(80);
+        await settle();
 
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(diskBaseline(100)).toBe(3);
@@ -1229,7 +1249,7 @@ describe('a fill with the baseline record latched', () => {
         await storage.beginRestore();
         dm.listings = [wire(100, 3), wire(300, 1)];
         event(dm.listings, [wire(100, 3)]);
-        await sleep(80);
+        await settle();
         expect(qty(disk.get(dayKey(today)), 100)).toBe(3);
         expect(diskBaseline(100)).toBe(0);
 
@@ -1239,7 +1259,7 @@ describe('a fill with the baseline record latched', () => {
         await storage.endRestore();
         expect(diskBaseline(100)).toBe(0);
         announceSyncPullApplied({ [STORE]: [dayKey(today)] });
-        await sleep(80);
+        await settle();
         await storage.flushAll();
 
         const rows = disk.get(dayKey(today));
@@ -1254,7 +1274,7 @@ describe('a fill with the baseline record latched', () => {
         await openBook();
         latchBoth();
         fillEvent(3);
-        await sleep(80);
+        await settle();
 
         const { merge } = mergeForKey(STORE, STATE_KEY);
         const gist = { 100: baseline(0), 400: baseline(7) };
