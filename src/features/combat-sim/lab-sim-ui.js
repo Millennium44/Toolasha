@@ -11080,6 +11080,22 @@ class LabSimUI {
             }
         }
 
+        // A mirror that spends the worn piece instead of selling it: the sale given up is not a line of the
+        // Total (it is the credit that is missing), so say what it is
+        if (detail.forgone?.length && Number.isFinite(detail.gross)) {
+            const given = detail.forgone.reduce((sum, entry) => sum + (entry.value || 0), 0);
+            const used = detail.forgone
+                .map((entry) => `+${entry.enhancementLevel} ${simItemLabelHtml(entry.hrid, entry.name)}`)
+                .join(' and ');
+            parts.push(
+                line(
+                    `Uses your ${used} in the mirror, giving up ${money(given)} of sale: ` +
+                        `${money(detail.gross + given)} in all.`,
+                    '#ff9800'
+                )
+            );
+        }
+
         if (detail.gross !== null) {
             const net = detail.net;
             parts.push(

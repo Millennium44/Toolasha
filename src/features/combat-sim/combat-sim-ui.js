@@ -14795,7 +14795,7 @@ class CombatSimUI {
         }
 
         if (detail?.ladder && (detail.gross != null || detail.ladder.alreadyHeld)) {
-            parts.push(`<span style="color:#888;">${ladderSentence(detail.ladder, detail.gross)}</span>`);
+            parts.push(`<span style="color:#888;">${ladderSentence(detail.ladder, detail.gross, detail)}</span>`);
         } else if (detail?.enhancementPath && detail.gross != null) {
             parts.push(`<span style="color:#888;">Enhances for ${formatKMB(detail.gross)}.</span>`);
         } else if (detail && (detail.gross != null || detail.credit)) {

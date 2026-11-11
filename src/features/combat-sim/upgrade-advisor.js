@@ -3038,6 +3038,25 @@ function freedPiecesCredit(candidate, spend) {
 }
 
 /**
+ * The sales a mirror route gives up by spending the row's own worn pieces as inputs, for the breakdown.
+ * Display only: the Cost already carries it as the credit the piece no longer earns. Bag copies another
+ * loadout wears are not listed (they have no `piece`, and their resale is already inside the price).
+ * @param {Array<{hrid: string, level: number, share?: number}>} consumed - From `resolveMirrorBase`
+ * @param {Function} nameOf - Item name lookup
+ * @returns {Array<{hrid: string, name: string, enhancementLevel: number, value: number}>}
+ */
+function forgoneSales(consumed, nameOf) {
+    return (consumed || [])
+        .map((piece) => ({
+            hrid: piece.hrid,
+            name: nameOf(piece.hrid),
+            enhancementLevel: piece.level,
+            value: (piece.share ?? 1) * sellValue(piece.hrid, piece.level),
+        }))
+        .filter((entry) => entry.value > 0);
+}
+
+/**
  * The route to an enhancement row's target level by building it with a Philosopher's Mirror, net of
  * what the piece it replaces would sell for.
  *
@@ -3079,6 +3098,7 @@ function enhancementMirrorRoute(candidate, gameData, isSelf = true) {
         mirrorPrice: mirror.mirrorPrice,
         heldLevels: mirror.heldLevels,
         mirrorCount: mirror.mirrorCount,
+        consumed: mirror.consumed,
     };
 }
 
@@ -5033,6 +5053,7 @@ function explainUpgradeCostRoutes(candidate, gameData, isSelf) {
     const mirror = enhancementMirrorRoute(candidate, gameData, isSelf);
     if (!mirror || !(detail.net == null || mirror.net < detail.net)) return detail;
     const name = gameData?.itemDetailMap?.[candidate.currentHrid]?.name || candidate.currentHrid.split('/').pop();
+    const forgone = forgoneSales(mirror.consumed, () => name);
     return {
         buys: [
             {
@@ -5061,6 +5082,7 @@ function explainUpgradeCostRoutes(candidate, gameData, isSelf) {
         unpriced: [],
         creditApplied: mirror.credit > 0,
         ...(mirror.capped ? { creditCapped: true, rawCredit: mirror.rawCredit } : {}),
+        ...(forgone.length ? { forgone } : {}),
         source: 'mirror',
         enhanceSource: describeEnhancementSource(enhancementSweepParams(candidate.currentHrid)),
         ladder: {
@@ -5217,6 +5239,11 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
 
     const buys = [];
     const refineConsumed = [];
+    // Worn pieces a mirror build spends as inputs: the sale each gives up, for the breakdown
+    const mirrorConsumed = [];
+    const noteConsumed = (consumed, ladder) => {
+        if (ladder?.mirror || ladder?.refine?.mirror) mirrorConsumed.push(...(consumed || []));
+    };
     if (candidate.addedSlots) {
         for (const item of Object.values(candidate.addedSlots)) {
             const { price, source, enhanceSource, ladder, consumed } = resolveUpgradeBuyPrice(
@@ -5226,6 +5253,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
                 { isSelf, candidate }
             );
             refineConsumed.push(...(consumed || []));
+            noteConsumed(consumed, ladder);
             buys.push({
                 hrid: item.hrid,
                 name: nameOf(item.hrid),
@@ -5244,6 +5272,7 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
             { isSelf, candidate }
         );
         refineConsumed.push(...(consumed || []));
+        noteConsumed(consumed, ladder);
         buys.push({
             hrid: candidate.upgradeHrid,
             name: nameOf(candidate.upgradeHrid),
@@ -5290,10 +5319,12 @@ function explainUpgradeCostWithoutMirror(candidate, gameData, isSelf) {
     // shaky as its shakiest part, so the first sweep found stands for the row
     const enhanceSource = buys.find((buy) => buy.enhanceSource)?.enhanceSource || null;
     const source = weakestCostSource(buys.map((buy) => buy.source));
+    const forgone = forgoneSales(mirrorConsumed, nameOf);
 
     return {
         buys,
         credits: shownCredits,
+        ...(forgone.length ? { forgone } : {}),
         gross,
         credit,
         ...(creditCapped ? { creditCapped, rawCredit } : {}),

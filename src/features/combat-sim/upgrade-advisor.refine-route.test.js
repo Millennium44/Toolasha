@@ -413,6 +413,17 @@ describe('refined target priced from a held base', () => {
             expect(cheapestWithMirror(ordinary, 1_000_000).mirrorTotalCounts[7]).toBe(12);
         });
 
+        test('a worn base the refine route mirrors with is listed as a forgone sale', () => {
+            state.baseSell = 50_000_000;
+            state.items = [stack(BASE, 5, '/item_locations/back')];
+            const row = tier(7, { removedItems: [{ hrid: BASE, enhancementLevel: 5 }] });
+            const detail = explainUpgradeCost(row, gameData);
+            expect(detail.ladder.refine.mirror.heldLevels).toEqual([5]);
+            expect(detail.forgone).toEqual([
+                { hrid: BASE, name: 'Sinister Cape', enhancementLevel: 5, value: 50_000_000 },
+            ]);
+        });
+
         test('held inputs spend no mirrors of their own: spare +6 and +5 leave one', () => {
             state.items = [stack(BASE, 6), stack(BASE, 5)];
             expect(explainUpgradeCost(tier(7), gameData).ladder.refine.mirror.mirrorCount).toBe(1);
@@ -844,6 +855,56 @@ describe('refined target priced from a held base', () => {
                     expect(detail.buys[0].price).toBeCloseTo(1_000_000, 0);
                     expect(detail.credit).toBe(0);
                     expect([...detail.ladder.mirror.heldLevels].sort()).toEqual([10, 11]);
+                });
+
+                test('the sale given up rides the breakdown as forgone, without changing the Cost', () => {
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    const detail = explainUpgradeCost(swapOff(10), gameData);
+                    expect(detail.forgone).toEqual([
+                        { hrid: SWORD, name: 'Cheese Sword', enhancementLevel: 10, value: DEAR },
+                    ]);
+                    expect(detail.net).toBeCloseTo(ladder.best[11] + 1_000_000, 0);
+                    const enhancement = {
+                        type: 'enhancement',
+                        currentHrid: SWORD,
+                        currentLevel: 10,
+                        upgradeHrid: SWORD,
+                        upgradeLevel: 12,
+                    };
+                    const viaRow = explainUpgradeCost(enhancement, gameData);
+                    expect(viaRow.forgone).toEqual([
+                        { hrid: SWORD, name: 'Cheese Sword', enhancementLevel: 10, value: DEAR },
+                    ]);
+                    expect(viaRow.net).toBeCloseTo(ladder.best[11] + 1_000_000, 0);
+                });
+
+                test('forgone is the expected share under Blessed Tea, and absent when nothing is used', () => {
+                    state.sweepParams = { teas: { blessed: true }, blessedTeaBonus: 0.5, guzzlingBonus: 1 };
+                    state.swordSell = DEAR;
+                    state.items = [wornSword(10)];
+                    const share = cheapestWithMirror(ordinary13, 1_000_000, 0.5).landing[11];
+                    expect(explainUpgradeCost(swapOff(10), gameData).forgone[0].value).toBeCloseTo(share * DEAR, 0);
+                    state.sweepParams = {};
+                    state.items = [wornSword(8)];
+                    expect(explainUpgradeCost(swapOff(8), gameData).forgone).toBeUndefined();
+                });
+
+                test('a claimed bag copy is inside the price already, so it is not listed as forgone', () => {
+                    state.swordSell = DEAR;
+                    state.items = [stack(SWORD, 10)];
+                    const fights = [
+                        { loadoutName: 'A', dto: { equipment: {} } },
+                        {
+                            loadoutName: 'B',
+                            dto: { equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: 10 } } },
+                        },
+                    ];
+                    // Cheap enough that using the claimed copy wins
+                    state.swordSell = 1_000;
+                    const detail = explainUpgradeCost(claimedBy(sword(12), fights), gameData);
+                    expect(detail.ladder.mirror.heldLevels).toEqual([10]);
+                    expect(detail.forgone).toBeUndefined();
                 });
 
                 test('a worn copy at no input level is left alone and sold', () => {

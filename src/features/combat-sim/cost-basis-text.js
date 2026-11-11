@@ -23,29 +23,70 @@ function heldMirrorInputsNote(heldLevels) {
 }
 
 /**
+ * Held levels a mirror uses that are not already named by the forgone-sale sentence (a worn piece the row
+ * takes off is named there), so the "using the +10 you hold" note never repeats it.
+ * @param {number[]|undefined} heldLevels - Levels of the held copies used
+ * @param {Array<{enhancementLevel: number}>|undefined} forgone - `costDetail.forgone`
+ * @returns {number[]}
+ */
+function unnamedHeldLevels(heldLevels, forgone) {
+    const named = (forgone || []).map((entry) => entry.enhancementLevel);
+    const left = [];
+    for (const level of heldLevels || []) {
+        const at = named.indexOf(level);
+        if (at >= 0) named.splice(at, 1);
+        else left.push(level);
+    }
+    return left;
+}
+
+/**
+ * The sentence for a mirror route that spends the row's own worn piece: what is paid, what sale that
+ * gives up, and the two together. The Cost stays the cash figure (the lost sale is the missing credit).
+ * @param {Array<{name: string, enhancementLevel: number, value: number}>|undefined} forgone - `costDetail.forgone`
+ * @param {number|null} pay - What the route pays (the gross)
+ * @returns {string} Plain text starting with a space, empty when nothing is given up
+ */
+export function forgoneSentence(forgone, pay) {
+    if (!forgone?.length || !Number.isFinite(pay)) return '';
+    const given = forgone.reduce((sum, entry) => sum + (Number.isFinite(entry.value) ? entry.value : 0), 0);
+    const used = forgone.map((entry) => `+${entry.enhancementLevel} ${entry.name}`).join(' and ');
+    return ` You pay ${money(pay)} and use your ${used}, giving up ${money(given)} of sale: ${money(pay + given)} in all.`;
+}
+
+/**
  * The one-line account of a laddered price: which copy it enhances from, and
  * whether a fresh base is in the figure.
  * @param {Object} ladder - `costDetail.ladder` from the advisor
  * @param {number|null} [total] - The row's figure, to name in the sentence
  * @returns {string} Plain text
  */
-export function ladderSentence(ladder, total = null) {
+export function ladderSentence(ladder, total = null, detail = null) {
     if (!ladder) return '';
+    const forgone = detail?.forgone;
+    const gives = forgoneSentence(forgone, total);
+    // A route that sells the replaced piece lands on the Cost through the resale, so the sentence says so
+    const resale = ladder.mirror || ladder.refine?.mirror ? resaleClause(detail) : '';
     if (ladder.mirror) {
         return (
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} copy into a +${ladder.toLevel} with ` +
             mirrorsPhrase(ladder.mirror) +
-            (Number.isFinite(total) ? ` for ${formatKMB(total)}` : '') +
-            heldMirrorInputsNote(ladder.mirror.heldLevels) +
-            '.'
+            (Number.isFinite(total) && !gives ? ` for ${formatKMB(total)}` : '') +
+            heldMirrorInputsNote(unnamedHeldLevels(ladder.mirror.heldLevels, forgone)) +
+            (gives ? '' : resale) +
+            '.' +
+            gives +
+            (gives && resale ? `${resale.replace(/^,\s*/, ' Also ')}.` : '')
         );
     }
     if (ladder.refine?.mirror) {
         return (
             `Mirror a +${ladder.toLevel - 1} and a +${ladder.toLevel - 2} base copy into a +${ladder.toLevel} ` +
             `(${formatKMB(ladder.refine.mirror.baseCost)} with ${mirrorsPhrase(ladder.refine.mirror)}` +
-            `${heldMirrorInputsNote(ladder.refine.mirror.heldLevels)}), then refine it: ` +
-            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}.`
+            `${heldMirrorInputsNote(unnamedHeldLevels(ladder.refine.mirror.heldLevels, forgone))}), then refine it: ` +
+            `${(ladder.refine.lines || []).join(' + ')} = ${formatKMB(ladder.refine.materialCost)}.` +
+            gives +
+            (resale ? `${resale.replace(/^,\s*/, ' Also ')}.` : '')
         );
     }
     if (ladder.refine) {
@@ -124,6 +165,15 @@ function creditClause(detail, market) {
 }
 
 /**
+ * {@link creditClause} for a Details sentence: the resale that lands a gross figure on the Cost.
+ * @param {Object|null} detail - `costDetail`
+ * @returns {string} Plain text starting with a comma, or empty
+ */
+export function resaleClause(detail) {
+    return detail ? creditClause(detail, false) : '';
+}
+
+/**
  * A compact account of how a gold row's Cost cell was reached, for the all-fights detail: one idea per
  * line, short figures, the basis folded into the wording. Long titles ride in `title` for a tooltip.
  * Never says "buy" for something enhanced, refined or mirror-built, and a held spare buys nothing.
@@ -172,17 +222,17 @@ export function compactCostLines(
                 main(`You already hold a +${ladder.fromLevel} spare that meets +${ladder.toLevel}: nothing to buy.`);
             }
         } else if (ladder.mirror) {
-            const held = ladder.mirror.heldLevels?.length
-                ? `, using the ${ladder.mirror.heldLevels.map((level) => `+${level}`).join(' and ')} you hold`
-                : '';
+            const held = heldMirrorInputsNote(unnamedHeldLevels(ladder.mirror.heldLevels, detail.forgone));
             main(
                 `Mirror build, estimate: +${ladder.toLevel - 1} and +${ladder.toLevel - 2} copies + ` +
-                    `${mirrorsShort(ladder.mirror)}${held} = ${money(total)}${creditClause(detail, false)}.${ratesTail}`
+                    `${mirrorsShort(ladder.mirror)}${held} = ${money(total)}${creditClause(detail, false)}.${ratesTail}` +
+                    forgoneSentence(detail.forgone, total)
             );
         } else if (ladder.refine?.mirror) {
             main(
                 `Mirror build and refine, estimate: base ${money(ladder.refine.mirror.baseCost)}, refining ` +
-                    `${money(ladder.refine.materialCost)} = ${money(total)}${creditClause(detail, false)}.${ratesTail}`
+                    `${money(ladder.refine.materialCost)} = ${money(total)}${creditClause(detail, false)}.${ratesTail}` +
+                    forgoneSentence(detail.forgone, total)
             );
         } else if (ladder.refine) {
             const where = ladder.fromEquipped ? 'the one you wear' : 'your spare';

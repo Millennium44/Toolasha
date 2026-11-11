@@ -13018,6 +13018,46 @@ describe('remembered-run banner', () => {
 });
 
 describe('the cost basis detail', () => {
+    describe('a mirror route that spends or sells the worn piece', () => {
+        const ladder = {
+            fromLevel: 11,
+            toLevel: 12,
+            fresh: false,
+            alreadyHeld: false,
+            mirror: { mirrorPrice: 1_000_000_000, heldLevels: [10], mirrorCount: 1 },
+        };
+        const html = (costDetail) => ui._renderUpgradeCostBasis({ costSource: 'mirror', candidate: {}, costDetail });
+
+        test('says what is paid, what sale is given up, and the total', () => {
+            const out = html({
+                ladder,
+                gross: 5_200_000_000,
+                credit: 0,
+                net: 5_200_000_000,
+                credits: [],
+                forgone: [{ hrid: '/items/x', name: 'Earrings', enhancementLevel: 10, value: 3_700_000_000 }],
+            });
+            expect(out).toContain('You pay 5.2B and use your +10 Earrings, giving up 3.7B of sale: 8.9B in all.');
+            expect(out).not.toContain('you hold');
+        });
+
+        test('a sold piece shows the resale that lands on the Cost', () => {
+            const out = html({
+                ladder: { ...ladder, mirror: { ...ladder.mirror, heldLevels: [] } },
+                gross: 10_300_000_000,
+                credit: 3_700_000_000,
+                net: 6_600_000_000,
+                credits: [{ hrid: '/items/x', name: 'Earrings', enhancementLevel: 10, price: 3_700_000_000 }],
+            });
+            expect(out).toContain('for 10.3B, less 3.7B for your +10 sold = 6.6B.');
+        });
+
+        test('an older saved row without forgone or credits renders as it did', () => {
+            const out = html({ ladder, gross: 5_200_000_000, credit: 0, net: 5_200_000_000 });
+            expect(out).toContain('for 5.2B, using the +10 you hold.');
+        });
+    });
+
     test('labels shared route comparisons without replacing the existing cost basis', async () => {
         const { default: config } = await import('../../core/config.js');
         const setting = vi
