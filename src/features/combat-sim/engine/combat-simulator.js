@@ -150,6 +150,23 @@ const PLAYER_RESPAWN_INTERVAL = 150 * ONE_SECOND;
 const RESTART_INTERVAL = 3 * ONE_SECOND;
 const ENRAGE_TICK_INTERVAL = 60 * ONE_SECOND;
 
+/**
+ * A hit log built from HP read after later changes in the same swing, moved back to the HP the hit
+ * really left: `delta` is added to the target's before/after HP and to its entry in the party snapshot.
+ * @param {Object} log - From buildCombatLog
+ * @param {string} hrid - The hit unit
+ * @param {number} delta - HP to add (negative to undo a later heal, positive to undo a later hit)
+ * @returns {Object} The same log
+ */
+function shiftLoggedHp(log, hrid, delta) {
+    if (!delta || !log || log.error) return log;
+    log.afterHp = Math.max(0, log.afterHp + delta);
+    log.beforeHp = Math.max(0, log.beforeHp + delta);
+    const entry = log.playersHp?.find((p) => p.hrid === hrid);
+    if (entry) entry.current = Math.max(0, entry.current + delta);
+    return log;
+}
+
 class CombatSimulator {
     /**
      * @param {Array} players
@@ -1178,19 +1195,24 @@ class CombatSimulator {
 
             if (attackResult.lifeStealHeal > 0) {
                 this.simResult.addHitpointsGained(source, 'lifesteal', attackResult.lifeStealHeal);
-                this.recordHealLog(source, 'lifesteal', source, attackResult.lifeStealHeal);
             }
 
             if (attackResult.manaLeechMana > 0) {
                 this.simResult.addManapointsGained(source, 'manaLeech', attackResult.manaLeechMana);
             }
 
+            // processAttack applies thorns, then retaliation, then life steal, but the HP read here is after
+            // all three. The reflected hits are logged at the HP they actually left (before the heal), and
+            // the heal after them, so the wipe timeline reads in the order it happened.
+            const lifeStealHealed = attackResult.lifeStealHeal > 0 ? attackResult.lifeStealHeal : 0;
+            const retaliationDealt = attackResult.retaliationDamageDone > 0 ? attackResult.retaliationDamageDone : 0;
+
             if (attackResult.thornDamageDone > 0) {
                 this.simResult.addAttack(target, source, attackResult.thornType, attackResult.thornDamageDone);
             }
             if (this.zone.isDungeon && attackResult.thornDamageDone > 0 && source.isPlayer) {
                 const log = this.buildCombatLog(target, attackResult.thornType, source, attackResult.thornDamageDone);
-                this.addToWipeLogs(log);
+                this.addToWipeLogs(shiftLoggedHp(log, source.hrid, retaliationDealt - lifeStealHealed));
             }
 
             if (target.combatDetails.combatStats.retaliation > 0) {
@@ -1203,8 +1225,9 @@ class CombatSimulator {
             }
             if (this.zone.isDungeon && attackResult.retaliationDamageDone > 0 && source.isPlayer) {
                 const log = this.buildCombatLog(target, 'retaliation', source, attackResult.retaliationDamageDone);
-                this.addToWipeLogs(log);
+                this.addToWipeLogs(shiftLoggedHp(log, source.hrid, -lifeStealHealed));
             }
+            if (lifeStealHealed > 0) this.recordHealLog(source, 'lifesteal', source, lifeStealHealed);
 
             if (targetWasAlive && target.combatDetails.currentHitpoints === 0) {
                 this.eventQueue.clearEventsForUnit(target);

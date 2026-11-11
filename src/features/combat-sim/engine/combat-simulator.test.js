@@ -2389,6 +2389,38 @@ describe('out-of-mana is a mana state and nothing else', () => {
         expect(casts[0].time).toBe(due);
     });
 
+    test('in the wipe log, reflected hits come before the life steal of the same swing, at the HP they left', () => {
+        const { sim, player } = soloFight();
+        sim.zone.isDungeon = true;
+        player.combatDetails.currentHitpoints = 100;
+        // processAttack applies thorns (30), retaliation (10), then life steal (20): 100 -> 70 -> 60 -> 80
+        vi.spyOn(CombatUtilities, 'processAttack').mockImplementation(() => {
+            player.combatDetails.currentHitpoints = 80;
+            return {
+                didHit: false,
+                damageDone: 0,
+                isCrit: false,
+                hpDrain: 0,
+                thornType: 'physicalThorns',
+                thornDamageDone: 30,
+                retaliationDamageDone: 10,
+                lifeStealHeal: 20,
+                manaLeechMana: 0,
+            };
+        });
+        try {
+            sim.processAutoAttackEvent({ source: player });
+        } finally {
+            vi.restoreAllMocks();
+        }
+        const entries = sim.getOrderedWipeLogs().map((e) => [e.kind, e.ability, e.beforeHp, e.afterHp]);
+        expect(entries).toEqual([
+            ['hit', 'physicalThorns', 100, 70],
+            ['hit', 'retaliation', 70, 60],
+            ['heal', 'lifesteal', 60, 80],
+        ]);
+    });
+
     test('a unit that cannot afford its triggered ability still swings', () => {
         // Measured on the live game, and the reason this is a test rather than
         // a detail: a character whose cheapest ability costs 10 mana was driven
