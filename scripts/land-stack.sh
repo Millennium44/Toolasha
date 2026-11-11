@@ -19,17 +19,20 @@
 set -euo pipefail
 
 PUSH=0
+SKIP_CI=0
 PRS=()
 for arg in "$@"; do
     case "$arg" in
         --push) PUSH=1 ;;
+        --skip-ci) SKIP_CI=1 ;;
         -h | --help) PRS=(); break ;;
         '' | *[!0-9]*) echo "Not a PR number: $arg" >&2; exit 2 ;;
         *) PRS+=("$arg") ;;
     esac
 done
 if [ "${#PRS[@]}" -eq 0 ]; then
-    echo "Usage: bash scripts/land-stack.sh [--push] <pr> [<pr> ...]"
+    echo "Usage: bash scripts/land-stack.sh [--push] [--skip-ci] <pr> [<pr> ...]"
+    echo "  --skip-ci: only when GitHub Actions is down and the maintainer said so; the full gates still run."
     echo "  Order of the PR numbers is the landing order. Without --push, stops after gates and prints the plan."
     exit 2
 fi
@@ -357,7 +360,11 @@ for n in "${PRS[@]}"; do check_pr_state "$n"; done
 cd "$INTEG"
 for n in "${PRS[@]}"; do [ -z "${PARENT[$n]:-}" ] || parent_heads "${PARENT[$n]}" >/dev/null; done
 cd "$ROOT"
-for n in "${PRS[@]}"; do check_ci "$n"; done
+if [ "$SKIP_CI" -eq 1 ]; then
+    note "SKIPPING the GitHub CI check (--skip-ci); the full gates below stand in for it"
+else
+    for n in "${PRS[@]}"; do check_ci "$n"; done
+fi
 for n in "${PRS[@]}"; do check_codex "$n"; done
 stack_prs
 TOP="$(git rev-parse HEAD)"
