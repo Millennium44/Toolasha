@@ -12102,6 +12102,16 @@ class CombatSimUI {
             // The token rate the scroll rows are priced at is part of the analysis: stamped here so a
             // remembered run restores with the rate its profit deltas were measured against, not today's.
             if (results) results.scrollTokenRate = scrollTokenRate();
+            // Who this analysis was for, by name, as of now: Copy for chat names the player from this, never from
+            // whoever sits at that hrid or index when the run is restored or the party has changed
+            if (results) {
+                results.ranFor = {
+                    hrid: playerDTOs[playerIndex]?.hrid || null,
+                    name: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                    zoneHrid: zoneHrid || null,
+                    difficultyTier: difficultyTier ?? null,
+                };
+            }
             // Verdicts belong to the analysis they re-measured; a result object handed back again starts clean
             if (results) delete results.verifyVerdicts;
             // What the Ability order section needs to tell "nothing to compare" from "stopped first": whether
@@ -12888,11 +12898,39 @@ class CombatSimUI {
         const data = this._upgradeResultsData;
         const upgrades = topUpgradeTexts(data);
         if (!upgrades.length) return null;
-        const hrid = data.context?.playerHrid || null;
-        const info = (this._editor?.getPlayerInfo?.() || []).find((p) => p.hrid === hrid);
-        const name = info?.name || this._restoredUpgradeMeta?.characterName || null;
-        if (!hrid && !name) return null;
-        return { key: hrid, name, upgrades };
+        const ranFor = data.ranFor || null;
+        const live = this._editor?.getPlayerInfo?.() || [];
+        let hrid = ranFor?.hrid || null;
+        let name = ranFor?.name || null;
+        if (!name) {
+            // No name was captured at run time: a live lookup is only trusted when the hrid still maps to the
+            // very name the run was saved under
+            hrid = data.context?.playerHrid || null;
+            const saved = this._restoredUpgradeMeta?.characterName || null;
+            const info = hrid ? live.find((p) => p.hrid === hrid) : null;
+            if (!info || !saved || info.name !== saved) return null;
+            name = info.name;
+        }
+        return {
+            key: hrid,
+            name,
+            upgrades,
+            zoneHrid: ranFor?.zoneHrid ?? data.context?.zoneHrid ?? null,
+            difficultyTier: ranFor?.difficultyTier ?? data.context?.difficultyTier ?? null,
+        };
+    }
+
+    /**
+     * Keep the Include upgrades toggle in step with the Upgrade tab: usable only while an analysis that can be
+     * named is on screen.
+     * @private
+     */
+    _syncChatToggle() {
+        const toggle = this.panel?.querySelector('#mwi-csim-trigger-chat-upgrades');
+        if (!toggle) return;
+        const can = this._chatUpgradeOwner() !== null;
+        toggle.disabled = !can;
+        toggle.checked = can && Boolean(this._chatIncludeUpgrades);
     }
 
     /**
@@ -12927,17 +12965,29 @@ class CombatSimUI {
             const hrid = runContext?.playerHrid || null;
             const name = (this._editor?.getPlayerInfo?.() || []).find((p) => p.hrid === hrid)?.name || null;
             let players = triggerChatPlayers(result, gameData, { hrid, name });
-            const include = Boolean(this.panel.querySelector('#mwi-csim-trigger-chat-upgrades')?.checked);
-            if (include) {
-                const owner = this._chatUpgradeOwner();
-                if (owner) players = withUpgrades(players, owner);
+            // Decided now, not when the box was drawn: the Upgrade tab may have finished or cleared since
+            const owner = this._chatIncludeUpgrades ? this._chatUpgradeOwner() : null;
+            let note = '';
+            if (owner) {
+                const differs = (a, b) => a != null && b != null && a !== b;
+                if (
+                    differs(owner.zoneHrid, runContext?.zoneHrid) ||
+                    differs(owner.difficultyTier, runContext?.difficultyTier)
+                ) {
+                    note = ' Upgrades left out: they were found for another zone or tier.';
+                } else {
+                    players = withUpgrades(players, owner);
+                }
             }
+            const include = Boolean(owner) && !note;
             const messages = buildChatMessages(players, { includeUpgrades: include });
             if (!messages.length) {
                 this._setStatus('Nothing to copy for chat.');
                 return;
             }
             await this._copyChatMessages(messages, 'trigger tuning');
+            if (note)
+                this._setStatus(`${this.panel.querySelector('#mwi-csim-status')?.textContent || ''}${note}`.trim());
         });
     }
 
@@ -16119,6 +16169,7 @@ class CombatSimUI {
         wireSort('data-buff-sort-key', '_buffSort');
         wireSort('data-scroll-sort-key', '_scrollSort');
         this._wireGoldVerify(container);
+        this._syncChatToggle();
         container.querySelector('#mwi-csim-upgrade-chat-copy')?.addEventListener('click', async () => {
             const owner = this._chatUpgradeOwner();
             if (!owner) return;

@@ -721,6 +721,10 @@ describe('Copy for chat bar', () => {
         const without = renderTriggerResultsHtml({ scope: 'me', changes: [change()], simCount: 1 }, gameData);
         expect(without).toContain('mwi-csim-trigger-chat-copy');
         expect(without).not.toContain('mwi-csim-trigger-chat-upgrades');
+        const disabled = renderTriggerResultsHtml({ scope: 'me', changes: [change()], simCount: 1 }, gameData, {
+            chat: { canIncludeUpgrades: false, includeUpgrades: false },
+        });
+        expect(disabled).toMatch(/mwi-csim-trigger-chat-upgrades"[^>]*disabled/);
         const withToggle = renderTriggerResultsHtml({ scope: 'me', changes: [change()], simCount: 1 }, gameData, {
             chat: { canIncludeUpgrades: true, includeUpgrades: true },
         });

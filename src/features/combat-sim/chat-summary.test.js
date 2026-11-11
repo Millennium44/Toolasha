@@ -126,6 +126,26 @@ describe('topUpgradeTexts', () => {
     });
 });
 
+describe('stopped runs and ambiguous names', () => {
+    test('a stopped run says it is partial; a food-only stop does not', () => {
+        const rows = [{ candidate: { description: 'G', type: 'equipment' }, cost: 1, score: 9, deltas: {} }];
+        expect(topUpgradeTexts({ results: rows, stopped: { completed: 1, total: 5 } })[0]).toMatch(
+            /^Top upgrade \(partial run\): G/
+        );
+        expect(topUpgradeTexts({ results: rows, foodStopped: true })[0]).toMatch(/^Top upgrade: G/);
+    });
+
+    test('upgrades keyed by name only attach to nobody when two players share the name', () => {
+        const players = [
+            { key: 'p1', name: 'Andy', changes: ['a'], upgrades: [] },
+            { key: 'p2', name: 'Andy', changes: ['b'], upgrades: [] },
+        ];
+        const out = withUpgrades(players, { key: null, name: 'Andy', upgrades: ['u'] });
+        expect(out).toHaveLength(2);
+        expect(out.every((p) => p.upgrades.length === 0)).toBe(true);
+    });
+});
+
 describe('withUpgrades', () => {
     const base = () => [{ key: 'p1', name: 'A', changes: ['c'], upgrades: [] }];
 

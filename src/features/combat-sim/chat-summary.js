@@ -113,12 +113,15 @@ export function topUpgradeTexts(results, max = TOP_UPGRADES) {
             r.score > 0
     );
     rows.sort((a, b) => b.score - a.score);
+    // A run stopped before every candidate was measured ranks only what it got to: say so. (`foodStopped` is not
+    // partial: every upgrade was measured, only the food search was cut.)
+    const partial = Boolean(results?.stopped);
     return rows.slice(0, Math.max(0, max)).map((r, i) => {
         const figures = [`score ${Math.round(r.score)}`];
         const dps = r.deltas?.dps;
         if (Number.isFinite(dps) && Math.abs(dps) >= 0.05)
             figures.push(`${dps > 0 ? '+' : '−'}${Math.abs(dps).toFixed(1)}% DPS`);
-        return `${i === 0 ? 'Top upgrade' : 'Also'}: ${r.candidate.description} (${figures.join(', ')})`;
+        return `${i === 0 ? (partial ? 'Top upgrade (partial run)' : 'Top upgrade') : 'Also'}: ${r.candidate.description} (${figures.join(', ')})`;
     });
 }
 
@@ -133,7 +136,14 @@ export function topUpgradeTexts(results, max = TOP_UPGRADES) {
 export function withUpgrades(players, { key = null, name = null, upgrades = [] } = {}) {
     const copy = players.map((p) => ({ ...p, upgrades: [...p.upgrades] }));
     if (!upgrades.length || (!key && !name)) return copy;
-    const target = copy.find((p) => (key && p.key === key) || (!key && name && p.name === name));
+    let target;
+    if (key) target = copy.find((p) => p.key === key);
+    else {
+        // Name only: two players sharing it cannot be told apart, so neither gets these
+        const same = copy.filter((p) => p.name === name);
+        if (same.length > 1) return copy;
+        target = same[0];
+    }
     if (target) target.upgrades.push(...upgrades);
     else copy.push({ key: key || name, name: name || 'Player', changes: [], upgrades: [...upgrades] });
     return copy;
@@ -234,11 +244,17 @@ export function buildChatMessages(players, { includeUpgrades = false } = {}) {
  * @param {string} [options.style] - Inline style of the button
  * @returns {string} HTML
  */
-export function chatCopyBarHtml({ buttonId, toggleId = null, includeUpgrades = false, style = '' }) {
+export function chatCopyBarHtml({
+    buttonId,
+    toggleId = null,
+    includeUpgrades = false,
+    toggleDisabled = false,
+    style = '',
+}) {
     const toggle = toggleId
         ? `<label style="font-size:11px; color:#aaa; display:flex; align-items:center; gap:4px; cursor:pointer;" ` +
           `title="Adds each player's top upgrades from the Upgrade tab to their message">` +
-          `<input type="checkbox" id="${escapeHtml(toggleId)}"${includeUpgrades ? ' checked' : ''}>Include upgrades</label>`
+          `<input type="checkbox" id="${escapeHtml(toggleId)}"${includeUpgrades ? ' checked' : ''}${toggleDisabled ? ' disabled' : ''}>Include upgrades</label>`
         : '';
     return (
         `<div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">` +

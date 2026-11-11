@@ -438,7 +438,8 @@ export function renderTriggerResultsHtml(
         triggerHasChatContent(result)
             ? chatCopyBarHtml({
                   buttonId: 'mwi-csim-trigger-chat-copy',
-                  toggleId: chat?.canIncludeUpgrades ? 'mwi-csim-trigger-chat-upgrades' : null,
+                  toggleId: chat ? 'mwi-csim-trigger-chat-upgrades' : null,
+                  toggleDisabled: !chat?.canIncludeUpgrades,
                   includeUpgrades: Boolean(chat?.includeUpgrades),
                   style: BTN_STYLE,
               })

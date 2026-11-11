@@ -15060,7 +15060,7 @@ describe('the Triggers option', () => {
         mocks.triggerResult = { scope: 'me', changes: [fireballChange], unchanged: [], combined: null, simCount: 10 };
         await ui._onTuneTriggers();
         // no upgrade run yet: no toggle
-        expect(ui.panel.querySelector('#mwi-csim-trigger-chat-upgrades')).toBeNull();
+        expect(ui.panel.querySelector('#mwi-csim-trigger-chat-upgrades').disabled).toBe(true);
 
         ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
         await Promise.resolve();
@@ -15070,14 +15070,14 @@ describe('the Triggers option', () => {
         expect(writeText.mock.calls[0][0]).not.toContain('Top upgrade');
 
         ui._upgradeResultsData = {
-            context: { playerHrid: 'player1' },
+            ranFor: { hrid: 'player1', name: 'player1' },
             results: [
                 { candidate: { description: 'Gloves +5', type: 'equipment' }, cost: 10, score: 61, deltas: { dps: 2 } },
             ],
         };
         await ui._onTuneTriggers();
         const toggle = ui.panel.querySelector('#mwi-csim-trigger-chat-upgrades');
-        expect(toggle).not.toBeNull();
+        expect(toggle.disabled).toBe(false);
         toggle.checked = true;
         toggle.dispatchEvent(new Event('change'));
         ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
@@ -15087,6 +15087,65 @@ describe('the Triggers option', () => {
         expect(writeText.mock.calls[1][0].split('\n')).toHaveLength(1);
         ui._upgradeResultsData = null;
         delete navigator.clipboard;
+    });
+
+    describe('Copy for chat upgrade owner', () => {
+        const gloves = {
+            candidate: { description: 'Gloves +5', type: 'equipment' },
+            cost: 10,
+            score: 61,
+            deltas: { dps: 2 },
+        };
+
+        test('names the player captured at run time, not whoever sits at that hrid now', () => {
+            ui.buildPanel();
+            ui._upgradeResultsData = { ranFor: { hrid: 'player1', name: 'Alice' }, results: [gloves] };
+            expect(ui._chatUpgradeOwner()).toMatchObject({ key: 'player1', name: 'Alice' });
+        });
+
+        test('with no captured name, a live lookup needs the hrid and the saved name to still agree', () => {
+            ui.buildPanel();
+            ui._upgradeResultsData = { context: { playerHrid: 'player1' }, results: [gloves] };
+            ui._restoredUpgradeMeta = { characterName: 'Alice' };
+            expect(ui._chatUpgradeOwner()).toBeNull();
+            ui._restoredUpgradeMeta = { characterName: 'player1' };
+            expect(ui._chatUpgradeOwner()).toMatchObject({ name: 'player1' });
+            ui._restoredUpgradeMeta = null;
+            expect(ui._chatUpgradeOwner()).toBeNull();
+        });
+
+        test('the toggle is read at click time and upgrades from another zone are left out', async () => {
+            const writeText = vi.fn().mockResolvedValue(undefined);
+            Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+            ui.buildPanel();
+            selectZone();
+            openSection();
+            mocks.triggerResult = {
+                scope: 'me',
+                changes: [fireballChange],
+                unchanged: [],
+                combined: null,
+                simCount: 10,
+            };
+            await ui._onTuneTriggers();
+            // the upgrade run arrives after the box was drawn
+            ui._chatIncludeUpgrades = true;
+            ui._upgradeResultsData = {
+                ranFor: { hrid: 'player1', name: 'player1', zoneHrid: '/actions/combat/elsewhere' },
+                results: [gloves],
+            };
+            ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(writeText.mock.calls[0][0]).not.toContain('Top upgrade');
+            ui._upgradeResultsData = { ranFor: { hrid: 'player1', name: 'player1' }, results: [gloves] };
+            ui.panel.querySelector('#mwi-csim-trigger-chat-copy').click();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(writeText.mock.calls[1][0]).toContain('Top upgrade: Gloves +5');
+            ui._upgradeResultsData = null;
+            delete navigator.clipboard;
+        });
     });
 });
 
