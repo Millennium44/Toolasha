@@ -29,6 +29,14 @@ const storageMock = vi.hoisted(() => {
             const stored = map.has(key) ? structuredClone(map.get(key)) : undefined;
             map.set(key, structuredClone(fold ? fold(stored, value) : value));
         },
+        /** Land the oldest held write only; later ones keep waiting */
+        releaseOne() {
+            const write = mock.held.shift();
+            if (!write) return false;
+            mock.land(write);
+            write.resolve(true);
+            return true;
+        },
         release() {
             mock.hold = false;
             const waiting = mock.held;
@@ -265,5 +273,70 @@ describe('once the panel has taken the pull in', () => {
         await flushConfigWrites();
 
         expect(stored()).toEqual(edited);
+    });
+});
+
+describe('rapid edits with no pull, each write held as storage debounces it', () => {
+    test('a burst that adds and then removes most of what it added lands exactly as the panel holds it', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(T0 + 1000);
+        write({ version: 1, selectedTabId: null, tabs: [tab('a'), tab('b', [], { stamp: null })] });
+        let held = await panelLoads();
+        storageMock.hold = true;
+
+        held = ['/items/1', '/items/2', '/items/3', '/items/4'].reduce((c, hrid) => addItem(c, 'a', hrid), held);
+        const first = saveConfig('char1', held);
+        // Its write is queued before the next edit is made
+        await vi.waitFor(() => expect(storageMock.held.length).toBe(1));
+        vi.setSystemTime(T0 + 2000);
+        held = ['/items/1', '/items/2', '/items/3'].reduce((c, hrid) => removeItem(c, 'a', hrid), held);
+        const second = saveConfig('char1', held);
+        vi.setSystemTime(T0 + 3000);
+        held = removeTab(held, 'b');
+        const third = saveConfig('char1', held);
+
+        // Land them one at a time, each folding against what the one before it wrote
+        let landed = 0;
+        for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (!storageMock.releaseOne()) break;
+            landed += 1;
+        }
+        await Promise.all([first, second, third]);
+        expect(landed).toBeGreaterThan(1);
+        await flushConfigWrites();
+
+        expect(stored()).toEqual(held);
+    });
+
+    test('a burst that adds four tabs and then removes three is not refused by the mass-delete cap', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(T0 + 1000);
+        write({ version: 1, selectedTabId: null, tabs: [tab('a')] });
+        let held = await panelLoads();
+        storageMock.hold = true;
+
+        const added = [];
+        for (const name of ['One', 'Two', 'Three', 'Four']) {
+            const result = addTab(held, null, name);
+            held = result.config;
+            added.push(result.tabId);
+        }
+        const first = saveConfig('char1', held);
+        // Its write is queued before the next edit is made
+        await vi.waitFor(() => expect(storageMock.held.length).toBe(1));
+        vi.setSystemTime(T0 + 2000);
+        for (const id of added.slice(0, 3)) held = removeTab(held, id);
+        const second = saveConfig('char1', held);
+
+        for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            if (!storageMock.releaseOne()) break;
+        }
+        await Promise.all([first, second]);
+        await flushConfigWrites();
+
+        expect(ids(stored())).toEqual(['a', added[3]]);
+        expect(stored()).toEqual(held);
     });
 });

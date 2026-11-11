@@ -1001,7 +1001,7 @@ export default class CustomTabsUI {
             if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, PULL_READ_BACKOFF_MS * attempt));
             if (generation !== this._reloadGeneration || this._configCharId !== charId) return;
             try {
-                loaded = await loadConfig(charId, { strict: true });
+                loaded = await loadConfig(charId, { strict: true, over: this._config });
             } catch (error) {
                 console.warn(`[CustomTabs] Reading the pulled tabs failed (attempt ${attempt + 1}):`, error);
             }

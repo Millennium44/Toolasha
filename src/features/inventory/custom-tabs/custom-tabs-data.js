@@ -803,14 +803,21 @@ function tabsById(tabs, into = new Map()) {
 const tabText = (tab) => stableStringify(normalizeTabs([tab]));
 
 /**
- * A stored config without what the panel deleted since `baseline`, the copy it last took in or wrote.
+ * A stored config without what the panel deleted.
  *
- * A tab the baseline has, the panel's copy has nowhere, and the stored copy holds exactly as the baseline did was
- * removed here, and nobody else has touched it since: it is dropped. An item the baseline's copy of a tab holds,
- * the panel's copy lacks and the stored copy still holds was taken out here: it is dropped from the stored copy.
- * What the stored copy changed or added (a pull, another tab) is left for `mergeConfigs` and its tombstones to
- * judge. This is what lets a deletion of an unstamped tab or item, or a large one the mass-delete caps would
- * refuse, survive a fold that a pull made necessary.
+ * Two kinds of evidence, either enough:
+ *
+ * - Against `baseline`, the copy the panel last took in or wrote: a tab the baseline has, the panel's copy has
+ *   nowhere, and the stored copy holds exactly as the baseline did was removed here and touched by nobody since.
+ *   An item the baseline's copy of a tab holds, the panel's copy lacks and the stored copy still holds was taken
+ *   out here. This covers a layout replaced by an import, which removes tabs without tombstones.
+ * - Against the panel's own tombstones: a tab or item the panel's copy lacks and has a deletion record for, whose
+ *   stored copy is unstamped or was stamped before the deletion. This covers a deletion the baseline has already
+ *   moved past (an adoption that folded in an edit whose write had not landed yet).
+ *
+ * Each is dropped from the stored copy. What the stored copy changed or added after the deletion (a pull, another
+ * tab) is left for `mergeConfigs` to judge. This is what lets a deletion of an unstamped tab or item, or a large
+ * one the mass-delete caps would refuse, survive a fold that a pull made necessary.
  * @param {Object} stored - As stored now
  * @param {Object} baseline - What the panel's copy was read from or last wrote
  * @param {Object} held - The panel's copy
@@ -819,18 +826,31 @@ const tabText = (tab) => stableStringify(normalizeTabs([tab]));
 function withoutLocalDeletions(stored, baseline, held) {
     const baseTabs = tabsById(baseline?.tabs);
     const heldTabs = tabsById(held?.tabs);
+    const removed = tombstonesOf(held);
+    const graves = itemGravesOf(held);
+    /** Whether a deletion at `at` came after everything this copy records (an unstamped copy records nothing) */
+    const outlives = (at, copy) => Number.isFinite(Number(at)) && (stampOf(copy) === 0 || Number(at) > stampOf(copy));
     const prune = (tabs) => {
         const out = [];
         for (const tab of Array.isArray(tabs) ? tabs : []) {
             if (!tab || typeof tab !== 'object') continue;
             const base = tab.id != null ? baseTabs.get(tab.id) : undefined;
-            if (base && !heldTabs.has(tab.id) && tabText(tab) === tabText(base)) continue;
+            if (tab.id != null && !heldTabs.has(tab.id)) {
+                if (base && tabText(tab) === tabText(base)) continue;
+                if (removed[tab.id] !== undefined && outlives(removed[tab.id], tab)) continue;
+            }
             const next = { ...tab };
             const mine = tab.id != null ? heldTabs.get(tab.id) : undefined;
-            if (base && mine && Array.isArray(tab.items)) {
-                const had = new Set(Array.isArray(base.items) ? base.items : []);
+            if (mine && Array.isArray(tab.items)) {
+                const had = new Set(base && Array.isArray(base.items) ? base.items : []);
                 const has = new Set(Array.isArray(mine.items) ? mine.items : []);
-                next.items = tab.items.filter((hrid) => hrid === LINEBREAK_HRID || !had.has(hrid) || has.has(hrid));
+                const buried = graves[tab.id] || {};
+                next.items = tab.items.filter(
+                    (hrid) =>
+                        hrid === LINEBREAK_HRID ||
+                        has.has(hrid) ||
+                        (!had.has(hrid) && !(buried[hrid] !== undefined && outlives(buried[hrid], tab)))
+                );
             }
             if (Array.isArray(tab.children)) next.children = prune(tab.children);
             out.push(next);
@@ -877,7 +897,7 @@ function recordFor(characterId) {
          * them, and that is a read, not a panel that deleted everything
          */
         const blanks = new WeakSet();
-        const state = { baseline: null, seq: 0, trusted: false };
+        const state = { baseline: null, adoptions: 0, trusted: false };
         record = createCuratedRecord({
             base: getStorageKey(characterId),
             store: STORE,
@@ -926,7 +946,7 @@ function recordFor(characterId) {
 export function adoptConfigBaseline(characterId, config) {
     if (!characterId || !config) return;
     const state = recordFor(characterId)._tabsState;
-    state.seq += 1;
+    state.adoptions += 1;
     state.baseline = clone(config);
 }
 
@@ -952,10 +972,14 @@ export function adoptConfigBaseline(characterId, config) {
  * @param {{strict?: boolean}} [options] - `strict`: throw when the store cannot be read, instead of returning the held config
  * @returns {Promise<Object>} { version, tabs, selectedTabId }
  */
-export async function loadConfig(characterId, { strict = false } = {}) {
+export async function loadConfig(characterId, { strict = false, over = null } = {}) {
     if (!characterId) return defaultConfig();
     const record = recordFor(characterId);
-    const readable = await record.load({ authoritative: true });
+    // `over`: the copy the caller holds, folded under what is stored rather than discarded for it. A sync pull's
+    // adoption passes the panel's copy, so an edit whose write has not landed yet (storage reads the disk, not its
+    // write queue) is neither dropped from the panel nor moved past by the baseline
+    if (over) record.set(clone(over));
+    const readable = await record.load({ authoritative: !over });
     // A caller that must know it holds what is STORED (a sync pull's adoption) asks for the throw; the rest keep
     // the config in hand, as before
     if (strict && !readable) throw new Error('[CustomTabs] The stored tab config could not be read');
@@ -999,11 +1023,13 @@ export async function saveConfig(characterId, config) {
     const state = record._tabsState;
     // The copy the panel holds once this lands, whether it was written whole or folded: never the fold, which can
     // carry what a pull brought and the panel has not taken in, so that its absence would read as a deletion here
+    // Saves land in the order they were asked (the record serializes them), so each landed one moves the baseline
+    // on; only an adoption since this save was asked for outranks it
     const lineage = state.baseline ? clone(config) : null;
-    const seq = ++state.seq;
+    const adoptions = state.adoptions;
     record.set(config);
     const written = await record.save();
-    if (written && lineage && state.seq === seq) state.baseline = lineage;
+    if (written && lineage && state.adoptions === adoptions) state.baseline = lineage;
     return written;
 }
 

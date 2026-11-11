@@ -7,6 +7,8 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const held = vi.hoisted(() => ({ on: false, queue: [] }));
+
 const storageMock = vi.hoisted(() => {
     const stores = new Map();
     const storeFor = (name) => {
@@ -29,10 +31,15 @@ const storageMock = vi.hoisted(() => {
         }),
         // The fold rides with the value and runs against what is stored when the write lands, as the real one does
         set: vi.fn(async (key, value, store = 'settings', _immediate = false, options = {}) => {
-            const map = storeFor(store);
-            const stored = map.has(key) ? structuredClone(map.get(key)) : undefined;
-            map.set(key, structuredClone(options?.fold ? options.fold(stored, value) : value));
-            return true;
+            const land = () => {
+                const map = storeFor(store);
+                const stored = map.has(key) ? structuredClone(map.get(key)) : undefined;
+                map.set(key, structuredClone(options?.fold ? options.fold(stored, value) : value));
+                return true;
+            };
+            // While held, a write waits as storage's debounce keeps it; reads see the disk only, as they do
+            if (held.on) return new Promise((resolve) => held.queue.push(() => resolve(land())));
+            return land();
         }),
         delete: vi.fn(async (key, store = 'settings') => {
             storeFor(store).delete(key);
@@ -136,6 +143,8 @@ beforeEach(() => {
     dm.listeners.clear();
     dm.charId = 'ironChar';
     loader.impl = null;
+    held.on = false;
+    held.queue = [];
 });
 
 afterEach(() => {
@@ -278,5 +287,49 @@ describe('an edit before the panel has taken a pull in', () => {
         await ui._save();
         await flushConfigWrites();
         expect(savedIds()).toEqual(['a', result.tabId]);
+    });
+});
+
+describe('a pull taken in while an edit has not landed', () => {
+    test('a deleted unstamped tab stays deleted in the panel and in storage', async () => {
+        storageMock.storeFor('settings').set(KEY('ironChar'), {
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                { id: 'a', name: 'A', items: [], children: [], updatedAt: Date.now() },
+                { id: 'd', name: 'Legacy', items: [], children: [] },
+            ],
+        });
+        await startUI();
+        // The pull has written this device's old copy plus a tab from elsewhere
+        storageMock.storeFor('settings').set(KEY('ironChar'), {
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                { id: 'a', name: 'A', items: [], children: [], updatedAt: Date.now() },
+                { id: 'd', name: 'Legacy', items: [], children: [] },
+                { id: 'b', name: 'Pulled', items: [], children: [], updatedAt: Date.now() },
+            ],
+        });
+        held.on = true;
+        ui._config = removeTab(ui._config, 'd');
+        const saving = ui._save();
+        await vi.waitFor(() => expect(held.queue.length).toBe(1));
+
+        pull('ironChar');
+        await vi.waitFor(() => expect(ui._config.tabs.map((t) => t.id)).toEqual(['a', 'b']));
+
+        held.on = false;
+        for (const landWrite of held.queue.splice(0)) landWrite();
+        await saving;
+        await ui._save();
+        await flushConfigWrites();
+
+        const ids = storageMock
+            .storeFor('settings')
+            .get(KEY('ironChar'))
+            .tabs.map((t) => t.id);
+        expect(ids).toEqual(['a', 'b']);
+        expect(ui._config.tabs.map((t) => t.id)).toEqual(['a', 'b']);
     });
 });
