@@ -384,9 +384,9 @@ describe('triggerSectionOptionsHtml', () => {
         );
     });
 
-    test('offers Just me / Whole party and the three precisions, Standard selected', () => {
+    test('offers Selected player / Whole party and the three precisions, Standard selected', () => {
         const html = triggerSectionOptionsHtml();
-        expect(html).toContain('value="me" selected');
+        expect(html).toContain('value="me" selected>Selected player<');
         expect(html).toContain('value="party"');
         expect(html).toContain('value="quick"');
         expect(html).toContain('value="standard" selected');

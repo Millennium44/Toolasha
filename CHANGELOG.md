@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim zone list shows every zone's icon
+
+Zones with several monsters and the dungeons showed a blank space instead of their icon unless the Combat Zones list happened to be on screen. They now show their icons whenever the game has loaded them.
+
+### Trigger tuning says "Selected player"
+
+The scope choice that read "Just me" now reads "Selected player", since it tunes whoever is picked in the Player box, not necessarily you.
+
 ### Combat Sim imports a whole party in one click
 
 The import box has a new "Replace party" button that swaps every sim member for the players in a pasted Export Party. Before, a 5-player paste was refused once the party already had members, and Replace took only the first player.

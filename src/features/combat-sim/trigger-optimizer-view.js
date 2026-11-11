@@ -62,8 +62,8 @@ export function triggerSectionOptionsHtml() {
     ).join('');
     return `
             <select class="toolasha-select" id="mwi-csim-trigger-scope" style="${SELECT_STYLE}"
-                title="Just me tunes only the selected player's triggers and judges them on that player's results. Whole party tunes every member's triggers and judges the party total.">
-                <option value="me" selected>Just me</option>
+                title="Selected player tunes only the triggers of the player picked in the Player box and judges them on that player's results. Whole party tunes every member's triggers and judges the party total.">
+                <option value="me" selected>Selected player</option>
                 <option value="party">Whole party</option>
             </select>
             <select class="toolasha-select" id="mwi-csim-trigger-include" style="${SELECT_STYLE}"
