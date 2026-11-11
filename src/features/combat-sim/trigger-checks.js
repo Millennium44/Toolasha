@@ -14,6 +14,15 @@ const CMP_GTE = '/combat_trigger_comparators/greater_than_equal';
 const CMP_LTE = '/combat_trigger_comparators/less_than_equal';
 const COND_LOWEST_HP_PCT = '/combat_trigger_conditions/lowest_hp_percentage';
 
+/**
+ * The highest lowest-HP % the engine can read. Normally 100, but not a hard cap: when a stamina buff
+ * ends, `CombatUnit.removeExpiredBuffs()` lowers max HP without clamping current HP, so a unit can sit
+ * above 100% for a while (1400/1100 reads 127), and with no living units the reading is 200. Only a
+ * threshold above this is reported, so a `>= 110` row that a lapsing buff can satisfy is left alone,
+ * while the reported `>= 350` still is.
+ */
+const MAX_LOWEST_HP_PCT = 200;
+
 /** Conditions whose reading is a plain count or point total: never below 0 */
 const NON_NEGATIVE_CONDITIONS = new Set([
     '/combat_trigger_conditions/number_of_active_units',
@@ -28,7 +37,8 @@ const NON_NEGATIVE_CONDITIONS = new Set([
 /**
  * Why a trigger row can never be true, or null when it can.
  *
- * - `lowest_hp_percentage >= v` with v above 100: the lowest HP% is at most 100.
+ * - `lowest_hp_percentage >= v` with v above 200 (`MAX_LOWEST_HP_PCT`): the lowest HP% is normally at
+ *   most 100, but not strictly — see the constant.
  * - `lowest_hp_percentage <= v` with v at or below 0: a living unit always has HP above 0, so its
  *   percentage is above 0.
  * - any count or point reading `<= v` with v below 0: the reading is never negative.
@@ -43,8 +53,8 @@ export function neverFiresReason(row) {
     const value = Number(row.value) || 0;
     const cmp = row.comparatorHrid;
     if (row.conditionHrid === COND_LOWEST_HP_PCT) {
-        if (cmp === CMP_GTE && value > 100) {
-            return `Lowest HP % is never above 100, so >= ${value} is never true`;
+        if (cmp === CMP_GTE && value > MAX_LOWEST_HP_PCT) {
+            return `Lowest HP % never gets near ${value} (it tops out at 100), so >= ${value} is never true`;
         }
         if (cmp === CMP_LTE && value <= 0) {
             return `A living unit's HP % is always above 0, so <= ${value} is never true`;

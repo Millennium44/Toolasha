@@ -86,7 +86,7 @@ describe('trigger editor rows', () => {
         input.dispatchEvent(new Event('change'));
         expect(warn().style.display).toBe('none');
 
-        input.value = '150';
+        input.value = '350';
         input.dispatchEvent(new Event('change'));
         expect(warn().style.display).not.toBe('none');
     });
