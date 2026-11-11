@@ -2101,6 +2101,23 @@ describe('Fetch a party loadout', () => {
         expect(el.querySelector(FETCH_BTN)).not.toBeNull();
     });
 
+    test('stays after Replace party when the paste is the party you are in now (an older export of it)', async () => {
+        viewLoadout.available = true;
+        viewLoadout.captured = {};
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor();
+
+        game.parseImport = () => ({
+            players: [emptyDTO('player1'), emptyDTO('player2'), emptyDTO('player3')],
+            names: ['Milkman', 'ally', 'Buddy'],
+            skipped: [],
+        });
+        el.querySelector('#mwi-csim-import-text').value = 'whatever';
+        el.querySelector('#mwi-csim-import-replace-party').click();
+        expect(el.querySelector(FETCH_BTN)).not.toBeNull();
+    });
+
     test('is not offered on a game build without View Loadout, and nothing is requested', async () => {
         const el = document.createElement('div');
         const editor = new SimEditor({ editorEl: el });

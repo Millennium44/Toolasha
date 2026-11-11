@@ -1356,6 +1356,20 @@ export class SimEditor {
      * @private
      * @returns {Array<{characterID: *, characterName: string}>}
      */
+    /**
+     * Whether a pasted roster is the party you are in now: every other game party member's name is in it.
+     * A paste of this group (an older export, say) keeps Fetch; a paste of some other group hides it, since
+     * Fetch reloads the game party over the paste.
+     * @private
+     * @returns {boolean}
+     */
+    _pasteMatchesParty() {
+        const others = this._otherPartyMembers();
+        if (others.length === 0) return false;
+        const names = new Set((this._editedPlayerInfo || []).map((p) => String(p?.name ?? '').toLowerCase()));
+        return others.every((member) => names.has(String(member.characterName ?? '').toLowerCase()));
+    }
+
     _otherPartyMembers() {
         const self = String(dataManager.getCurrentCharacterId?.() ?? '');
         const { members = [] } = dataManager.getPartyMembers?.() || {};
@@ -1498,7 +1512,11 @@ export class SimEditor {
         }>Reset to Party</button>`;
         // Only where the game can View Loadout at all: a build without it gets no button
         const target =
-            inParty && !this._rosterFromPaste && !this.labMode && !this.skillingMode && isViewLoadoutAvailable()
+            inParty &&
+            (!this._rosterFromPaste || this._pasteMatchesParty()) &&
+            !this.labMode &&
+            !this.skillingMode &&
+            isViewLoadoutAvailable()
                 ? this._nextLoadoutTarget()
                 : null;
         if (target) {
