@@ -5,6 +5,8 @@
 #
 # A PR may target the branch of a PR listed before it (a stack); its own commits are then the ones after
 # that PR's head, and GitHub marks it merged into that branch.
+# A PR cut from an OLDER head of that PR (it was rebased or grew commits since) is restacked: only its own
+# commits are replayed onto the parent's current head, and --push force-with-lease's its branch there.
 #
 # Works in the integration worktree ../Toolasha-integ (next to the main checkout), so the main
 # checkout and its dev build stay untouched. Without --push it stops after the full gates and prints
@@ -44,17 +46,54 @@ OWNER="${REPO%%/*}"
 NAME="${REPO##*/}"
 
 # Per-PR state, indexed by PR number.
-declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES PARENT
+declare -A HEAD_SHA BRANCH STACKED_SHA PRE_SHA ENTRIES PARENT PAST_HEADS
+
+# Every head a PR has had that GitHub still records: its current head plus both sides of each force push.
+# Cached per PR in PAST_HEADS. Objects that cannot be fetched are dropped. Run inside a checkout.
+parent_heads() { # <pr>
+    local p="$1" oid
+    if [ -z "${PAST_HEADS[$p]+set}" ]; then
+        local list="${HEAD_SHA[$p]}"
+        for oid in $(gh api graphql -F owner="$OWNER" -F name="$NAME" -F number="$p" -f query='
+query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
+timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100){nodes{... on HeadRefForcePushedEvent{
+beforeCommit{oid} afterCommit{oid}}}}}}}' \
+            --jq '.data.repository.pullRequest.timelineItems.nodes[]|.beforeCommit.oid,.afterCommit.oid' 2>/dev/null); do
+            git cat-file -e "$oid^{commit}" 2>/dev/null || git fetch -q origin "$oid" 2>/dev/null || continue
+            list="$list $oid"
+        done
+        PAST_HEADS[$p]="$list"
+    fi
+    echo "${PAST_HEADS[$p]}"
+}
 
 # Where a PR's own commits start: its merge-base with main, or, for a PR stacked on an earlier PR of this run,
-# that PR's head. Run inside a checkout.
+# the newest point it shares with ANY head that PR has had. A child cut from an older parent head (the parent
+# was rebased and force-pushed since) then replays only its own commits onto the parent's current head: a
+# restack. With only the current head, the parent's old commits counted as the child's and the picks conflicted.
+# Run inside a checkout.
 range_base() { # <pr> [commit, default refs/pr/<pr>]
     local n="$1" tip="${2:-refs/pr/$1}"
-    if [ -n "${PARENT[$n]:-}" ]; then
-        git merge-base "refs/pr/${PARENT[$n]}" "$tip"
-    else
+    if [ -z "${PARENT[$n]:-}" ]; then
         git merge-base origin/main "$tip"
+        return
     fi
+    local best h b
+    best="$(git merge-base "refs/pr/${PARENT[$n]}" "$tip")"
+    for h in $(parent_heads "${PARENT[$n]}"); do
+        b="$(git merge-base "$h" "$tip" 2>/dev/null)" || continue
+        # Keep the newest: every fork point lies on the tip's own history
+        git merge-base --is-ancestor "$best" "$b" && best="$b"
+    done
+    echo "$best"
+}
+
+# Prints a note when a stacked PR's fork point is not its parent's current head. Run inside a checkout.
+note_restack() { # <pr> <fork point>
+    local n="$1" fork="$2"
+    [ -n "${PARENT[$n]:-}" ] || return 0
+    git merge-base --is-ancestor "refs/pr/${PARENT[$n]}" "refs/pr/$n" && return 0
+    echo "PR #$n was cut from an older head of #${PARENT[$n]} (${fork:0:9}); restacking its own commits onto #${PARENT[$n]}'s current head"
 }
 
 # Stable patch id of a diff between two commits, ignoring the given pathspec excludes. Position-independent,
@@ -193,6 +232,7 @@ stack_prs() {
     local n mb c commits last
     for n in "${PRS[@]}"; do
         mb="$(range_base "$n")"
+        note_restack "$n" "$mb"
         PRE_SHA[$n]="$(git rev-parse HEAD)"
         commits="$(git rev-list --reverse "$mb..refs/pr/$n")"
         [ -n "$commits" ] || die "PR #$n has no commits beyond main"
@@ -308,6 +348,10 @@ setup_worktree
 git -C "$INTEG" fetch -q origin
 MAIN_OLD="$(git -C "$INTEG" rev-parse origin/main)"
 for n in "${PRS[@]}"; do check_pr_state "$n"; done
+# Fill PAST_HEADS here, in this shell: range_base runs in $(...) subshells, where a cache fill is lost
+cd "$INTEG"
+for n in "${PRS[@]}"; do [ -z "${PARENT[$n]:-}" ] || parent_heads "${PARENT[$n]}" >/dev/null; done
+cd "$ROOT"
 for n in "${PRS[@]}"; do check_ci "$n"; done
 for n in "${PRS[@]}"; do check_codex "$n"; done
 stack_prs

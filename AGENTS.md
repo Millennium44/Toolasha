@@ -162,7 +162,7 @@ push to `main` or merge.
   ready PRs conflict with each other on `CHANGELOG.md`: re-sync each with `main` keeping every entry, or
   merge them all locally in one pass, resolve the changelog once, run gates, and push.
   `bash scripts/land-stack.sh [--push] <pr> ...` does this in `../Toolasha-integ`: it checks each PR (open, CI,
-  Codex review or carry-over, no unresolved threads), cherry-picks them in order with `HUSKY=0`, verifies each
+  Codex review or carry-over, no unresolved threads), cherry-picks them in order with `HUSKY=0` (restacking a PR cut from an older head of the PR below it), verifies each
   stacked patch equals its PR head's, runs the full gates, and with `--push` pushes the PR branches atomically, then main (one push for both makes GitHub close the PRs instead of merging them).
 
 ### Briefing another agent
@@ -171,6 +171,9 @@ Every brief to a sub-agent carries these lines:
 
 - Work only in your own worktree and branch. Never push, never touch `CHANGELOG.md`, never spawn
   sub-agents.
+- **Branch from `origin/main`** (fetch first), even when another open PR touches the same file. Do not
+  stack on that PR: a stack cut from its old head has to be restacked every time it moves. The integrator
+  resolves the overlap once, at landing.
 - **Run only the tests your change reaches, never the full gates** — the integrator runs those once.
 - **No background polling loops** (`until grep …; do sleep …`) — run tests in the foreground. **No
   whole-disk searches** (`find /`, a drive root) — search the repo or a named scratch folder only. Both
