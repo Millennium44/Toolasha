@@ -548,6 +548,60 @@ describe('a missing member whose profile opens', () => {
         expect(editor.getMissingMembers()).toEqual([]);
     });
 
+    test('a build imported over a player counts as an edit, though it moves the baseline too', async () => {
+        const { el, editor } = await missingGhostEditor();
+        expect(editor.replacePlayer('player1', { ...emptyDTO('x'), attackLevel: 133 }, 'Milkman')).toBe(true);
+        profileArrives();
+
+        await fire(shared('g1'));
+
+        expect(editor.getPlayerInfo()).toHaveLength(1);
+        expect(editor.getEditedDTOs().player1.attackLevel).toBe(133);
+        expect(el.textContent).toContain("Ghost's profile arrived — Reset to Party to add them.");
+    });
+
+    test('a removed player counts as an edit, though the baseline loses them too', async () => {
+        const BOB = { characterID: 'b1', characterName: 'Bob' };
+        game.battleParty = [SELF, BOB, GHOST];
+        game.allPlayers = {
+            players: [
+                { ...emptyDTO('player1'), attackLevel: 90 },
+                { ...emptyDTO('player2'), attackLevel: 80 },
+            ],
+            playerInfo: [
+                { hrid: 'player1', name: 'Milkman' },
+                { hrid: 'player2', name: 'Bob' },
+            ],
+            selfHrid: 'player1',
+            missingMembers: ['Ghost'],
+            missingMemberIds: ['g1'],
+        };
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        await editor.initEditor({ restoreLoadout: false });
+        el.querySelector('[data-remove-player="player2"]').click();
+        expect(editor.getPlayerInfo().map((p) => p.name)).toEqual(['Milkman']);
+
+        game.allPlayers = {
+            players: [
+                { ...emptyDTO('player1'), attackLevel: 90 },
+                { ...emptyDTO('player2'), attackLevel: 80 },
+                { ...emptyDTO('player3'), attackLevel: 70 },
+            ],
+            playerInfo: [
+                { hrid: 'player1', name: 'Milkman' },
+                { hrid: 'player2', name: 'Bob' },
+                { hrid: 'player3', name: 'Ghost' },
+            ],
+            selfHrid: 'player1',
+            missingMembers: [],
+            missingMemberIds: [],
+        };
+        await fire(shared('g1'));
+
+        expect(editor.getPlayerInfo().map((p) => p.name)).toEqual(['Milkman']);
+    });
+
     test('a picked loadout counts as an edit', async () => {
         const { editor } = await missingGhostEditor();
         editor._selectedLoadoutName = 'Bruteforce';

@@ -825,6 +825,8 @@ export class SimEditor {
             this._selfHrid = selfHrid;
             this._activeEditPlayer = selfHrid;
             this._missingMembers = missingMembers;
+            // A fresh build from the game: nothing on this roster was placed by hand yet
+            this._rosterEdited = false;
             this._missingMemberIds = Array.isArray(missingMemberIds) ? missingMemberIds.map(String) : [];
             this._profileStatus = Array.isArray(profileStatus) ? profileStatus : [];
             this._importSkipped = [];
@@ -1029,6 +1031,7 @@ export class SimEditor {
             this._originalDTOs[dto.hrid] = structuredClone(dto);
             this._editedPlayerInfo.push({ hrid: dto.hrid, name: names[i] || `Player ${slot}` });
         }
+        this._rosterEdited = true;
 
         this._activeEditPlayer = this._editedPlayerInfo[this._editedPlayerInfo.length - 1]?.hrid;
         this._selfHrid = this._selfHrid || null;
@@ -1099,6 +1102,8 @@ export class SimEditor {
         dto.hrid = hrid;
         this._editedDTOs[hrid] = dto;
         this._originalDTOs[hrid] = structuredClone(dto);
+        // Both maps move together here, so only this flag tells an automatic reload it was a hand edit
+        this._rosterEdited = true;
 
         const infoIdx = this._editedPlayerInfo.findIndex((p) => p.hrid === hrid);
         if (infoIdx >= 0) {
@@ -1532,6 +1537,8 @@ export class SimEditor {
         if (this._selectedLoadoutName || this._fetchingLoadouts || this._externalNote) return false;
         if (this._loadoutAppliedNames && Object.keys(this._loadoutAppliedNames).length) return false;
         if ((this._importSkipped || []).length) return false;
+        // Replace, import and remove rewrite the baseline as well as the edit, so the comparison below cannot see them
+        if (this._rosterEdited) return false;
         // Values the game moves on its own are brought along first, so they do not read as edits
         this._syncSelfFromGame();
         const infoIds = (this._editedPlayerInfo || []).map((p) => p.hrid).join(',');
@@ -3797,6 +3804,7 @@ export class SimEditor {
                 const wasLoadoutTarget = Boolean(this.getLoadoutNameFor(hrid));
                 delete this._editedDTOs[hrid];
                 if (this._originalDTOs) delete this._originalDTOs[hrid];
+                this._rosterEdited = true;
                 this._editedPlayerInfo = this._editedPlayerInfo.filter((p) => p.hrid !== hrid);
                 if (this._activeEditPlayer === hrid) {
                     this._activeEditPlayer = this._editedPlayerInfo[0]?.hrid || null;
