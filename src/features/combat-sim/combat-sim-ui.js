@@ -187,6 +187,7 @@ import { enhanceHandoffCopy, isSelfEnhancedItem } from './self-enhance-ladder.js
 import { simulateZoneRate } from './zone-rate-sim.js';
 import { SimEditor } from './sim-editor.js';
 import { simEntityLabelHtml, simSkillHrid } from './sim-entity-label.js';
+import { createWipeNamer, analyzeWipe, describeWipe, summarizeWipes } from './wipe-summary.js';
 import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
@@ -9128,6 +9129,10 @@ class CombatSimUI {
         if (wipeEvents && wipeEvents.length > 0) {
             html += `<div style="${sectionStyle}">`;
             html += `<div style="${headingStyle}">Wipe Events (${wipeEvents.length})</div>`;
+            // Engine hrids ("player2") mean nothing to the player; the roster of
+            // the run being shown maps them back to party member names
+            const wipeNamer = createWipeNamer({ playerInfo, gameData });
+            html += this._renderWipeAggregate(wipeEvents, wipeNamer);
             for (let wi = 0; wi < wipeEvents.length; wi++) {
                 const event = wipeEvents[wi];
                 const wave = event.wave ?? '?';
@@ -9138,8 +9143,16 @@ class CombatSimUI {
                     display:flex; justify-content:space-between; align-items:center;
                     padding:4px 8px; background:#1a1a1a; cursor:pointer; font-size:12px;
                 ">`;
-                html += `<span style="color:#aaa;">Wipe #${wi + 1} — Wave ${wave} @ ${timeSec}s</span>`;
-                html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px;">▶</span>`;
+                const wipeText = describeWipe(analyzeWipe(event.logs), wipeNamer);
+                html += `<span style="color:#aaa; min-width:0;">Wipe #${wi + 1} — Wave ${wave} @ ${timeSec}s`;
+                if (wipeText.first) {
+                    html += `<span data-wipe-first style="display:block; color:#ff9a9a; font-size:11px;">First down: ${escapeAttribute(wipeText.first)}</span>`;
+                    html += `<span data-wipe-order style="display:block; color:${GAME_COLORS.textDim}; font-size:10px;">Fell: ${escapeAttribute(wipeText.order)}</span>`;
+                } else {
+                    html += `<span data-wipe-first style="display:block; color:${GAME_COLORS.textDim}; font-size:10px;">${(event.logs || []).length > 0 ? 'No player death in the recorded hits' : 'No hit log recorded'}</span>`;
+                }
+                html += `</span>`;
+                html += `<span style="color:${GAME_COLORS.textDim}; font-size:10px; flex-shrink:0;">▶</span>`;
                 html += `</div>`;
                 html += `<div id="${eventId}-body" style="display:none; padding:6px 8px; font-size:11px; font-family:monospace; background:#111; max-height:300px; overflow-y:auto;">`;
 
@@ -9898,6 +9911,40 @@ class CombatSimUI {
         this._lastSimHours = activeEntry.hours;
         this._lastGameData = activeEntry.gameData;
         this._displayResults(activeEntry.simResult, activeEntry.hours, activeEntry.gameData);
+    }
+
+    /**
+     * The line block above the wipe cards: which waves wiped, who fell first,
+     * and what did the killing.
+     * @param {Array<Object>} wipeEvents - `simResult.wipeEvents`
+     * @param {ReturnType<typeof createWipeNamer>} namer
+     * @returns {string} HTML
+     * @private
+     */
+    _renderWipeAggregate(wipeEvents, namer) {
+        const sum = summarizeWipes(wipeEvents, namer);
+        const esc = escapeAttribute;
+        const fmt = (n) => Math.round(n).toLocaleString('en-US');
+        const line = (label, text) =>
+            `<div style="padding:1px 0;"><span style="color:${GAME_COLORS.textDim};">${label}</span> ${text}</div>`;
+        let html = `<div data-wipe-aggregate style="margin-bottom:6px; padding:4px 8px; font-size:11px; color:#ccc; border:1px solid #333; border-radius:4px;">`;
+        html += line('Wiped on:', sum.waves.map((w) => `Wave ${esc(w.wave)} ×${w.count}`).join(', '));
+        if (sum.firstDown.length > 0) {
+            html += line('Down first:', sum.firstDown.map((f) => `${esc(f.name)} ×${f.count}`).join(', '));
+        }
+        if (sum.killers.length > 0) {
+            html += line('Killing blows:', sum.killers.map((k) => `${esc(k.label)} ×${k.blows}`).join(', '));
+        }
+        if (sum.damage.length > 0) {
+            html += line(
+                'Most damage in the recorded hits:',
+                sum.damage.map((d) => `${esc(d.label)} ${fmt(d.total)} (${Math.round(d.share * 100)}%)`).join(', ')
+            );
+        }
+        if (sum.withLog < (wipeEvents || []).length) {
+            html += line('', `${(wipeEvents || []).length - sum.withLog} wipe(s) have no hit log.`);
+        }
+        return html + '</div>';
     }
 
     /**

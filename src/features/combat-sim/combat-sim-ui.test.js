@@ -8636,6 +8636,69 @@ describe('clearing the comparison history', () => {
     });
 });
 
+describe('wipe events in the results', () => {
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    const hit = (time, target, damage, afterHp, extra = {}) => ({
+        time: time * 1e9,
+        wave: 60,
+        source: '/monsters/gummy_bear',
+        ability: '/abilities/crushing_strike',
+        target,
+        damage,
+        beforeHp: afterHp + damage,
+        afterHp,
+        isCrit: false,
+        playersHp: [{ hrid: 'player1', current: afterHp, max: 1000 }],
+        ...extra,
+    });
+
+    test('shows an aggregate, the first fall per card, and keeps the raw log in the body', () => {
+        const wipeEvents = [
+            {
+                wave: 60,
+                simulationTime: 5e9,
+                logs: [hit(1, 'player2', 100, 0, { isCrit: true }), hit(2, 'player1', 1240, 0)],
+            },
+            { wave: 55, simulationTime: 9e9, logs: [] },
+        ];
+        const results = showFight(oneHourFight({ isDungeon: true, wipeEvents }));
+        const aggregate = results.querySelector('[data-wipe-aggregate]');
+
+        expect(aggregate.textContent).toContain('Wave 60 ×1, Wave 55 ×1');
+        expect(aggregate.textContent).toContain('Down first: player2 ×1');
+        expect(aggregate.textContent).toContain('Killing blows');
+        const headers = results.querySelectorAll('[data-wipe-first]');
+        expect(headers[0].textContent).toBe("First down: player2 — Gummy Bear's Crushing Strike 100 (crit)");
+        expect(results.querySelector('[data-wipe-order]').textContent).toBe('Fell: player2 → Me');
+        // The card with an empty log says so instead of guessing
+        expect(headers[1].textContent).toBe('No hit log recorded');
+        expect(results.querySelector('#mwi-wipe-0-body').textContent).toContain('cast');
+    });
+
+    test('a member name is escaped, not injected', () => {
+        const wipeEvents = [{ wave: 3, simulationTime: 1e9, logs: [hit(1, 'player1', 10, 0)] }];
+        const simResult = oneHourFight({ isDungeon: true, wipeEvents });
+        showFight(simResult);
+        ui._playerInfo = [{ hrid: 'player1', name: '<img src=x>' }];
+        ui._displayResults(simResult, 1, ui._lastGameData);
+
+        const header = ui.panel.querySelector('[data-wipe-first]');
+        expect(header.querySelector('img')).toBeNull();
+        expect(header.textContent).toContain('<img src=x>');
+    });
+});
+
 describe('comparison labels tell entries apart by area, party and loadout', () => {
     beforeEach(() => {
         mocks.drops = new Map();
