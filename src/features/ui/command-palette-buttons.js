@@ -62,9 +62,15 @@ class CommandPaletteButtons {
         this.open = open;
 
         const resync = () => this.sync();
-        // The nav and the settings page are both rebuilt by the game, so this watches rather than injecting once
+        // The nav and the settings page are both rebuilt by the game, so this watches rather than injecting once.
+        // Philo Gamba's button is added by its own feature, often after the Settings page and this button, so
+        // its arrival is watched too: otherwise the first open after a page load leaves the two on separate rows
         this.unregisters.push(
-            domObserver.onClass('CommandPaletteButtons', ['SettingsPanel', 'NavigationBar_nav'], resync)
+            domObserver.onClass(
+                'CommandPaletteButtons',
+                ['SettingsPanel', 'NavigationBar_nav', 'mwi-philo-calc-button'],
+                resync
+            )
         );
         this.unregisters.push(domObserver.onReady('CommandPaletteButtonsCatchUp', resync));
         for (const key of [NAV_SETTING, SETTINGS_BUTTON_SETTING]) {
