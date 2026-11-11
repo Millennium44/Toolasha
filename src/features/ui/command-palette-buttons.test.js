@@ -109,6 +109,75 @@ describe('sidebar entry', () => {
 });
 
 describe('settings button', () => {
+    test('groups both Settings buttons in a wrapping row without changing their clicks', () => {
+        buildPage({ philo: true });
+        const philo = document.querySelector('.mwi-philo-calc-button');
+        const openPhilo = vi.fn();
+        philo.addEventListener('click', openPhilo);
+        buttons.start(opened);
+
+        const row = settingsBtn().parentElement;
+        expect(row.classList.contains('mwi-settings-tool-buttons')).toBe(true);
+        expect([...row.children]).toEqual([philo, settingsBtn()]);
+        expect(row.previousElementSibling.className).toBe('mwi-market-history-button');
+        expect(getComputedStyle(row).display).toBe('flex');
+        expect(getComputedStyle(row).flexWrap).toBe('wrap');
+        philo.click();
+        settingsBtn().click();
+        expect(openPhilo).toHaveBeenCalledTimes(1);
+        expect(opened).toHaveBeenCalledTimes(1);
+    });
+
+    test('unwraps Philo when the palette is disabled and recreates only one row', () => {
+        buildPage({ philo: true });
+        const panel = document.querySelector('.SettingsPanel_x');
+        const philo = panel.querySelector('.mwi-philo-calc-button');
+        buttons.start(opened);
+        expect(document.querySelectorAll('.mwi-settings-tool-buttons')).toHaveLength(1);
+        setSetting('commandPaletteSettingsButton', false);
+        expect(philo.parentElement).toBe(panel);
+        expect(philo.previousElementSibling.className).toBe('mwi-market-history-button');
+        expect(document.querySelector('.mwi-settings-tool-buttons')).toBeNull();
+        setSetting('commandPaletteSettingsButton', true);
+        observers.classCbs.forEach((cb) => cb());
+        expect(document.querySelectorAll('.mwi-settings-tool-buttons')).toHaveLength(1);
+        expect(settingsBtn().previousElementSibling).toBe(philo);
+        buttons.stop();
+        expect(philo.parentElement).toBe(panel);
+        expect(document.querySelector('.mwi-settings-tool-buttons')).toBeNull();
+    });
+
+    test('keeps the palette usable if Philo disappears or is rebuilt', () => {
+        buildPage({ philo: true });
+        buttons.start(opened);
+        const originalPhilo = document.querySelector('.mwi-philo-calc-button');
+        originalPhilo.remove();
+        observers.classCbs.forEach((cb) => cb());
+        expect(document.querySelector('.mwi-settings-tool-buttons')).toBeNull();
+        expect(settingsBtn().previousElementSibling.className).toBe('mwi-market-history-button');
+
+        const replacement = document.createElement('button');
+        replacement.className = 'mwi-philo-calc-button';
+        document.querySelector('.mwi-market-history-button').after(replacement);
+        observers.classCbs.forEach((cb) => cb());
+        expect(settingsBtn().parentElement.className).toBe('mwi-settings-tool-buttons');
+        expect(settingsBtn().previousElementSibling).toBe(replacement);
+        expect(document.querySelectorAll('.mwi-settings-tool-buttons')).toHaveLength(1);
+    });
+
+    test('rebuilds the row for a replaced Settings panel without retaining the old one', () => {
+        buildPage({ philo: true });
+        buttons.start(opened);
+        const oldRow = settingsBtn().parentElement;
+        buildPage({ philo: true });
+        observers.classCbs.forEach((cb) => cb());
+        const row = settingsBtn().parentElement;
+        expect(row).not.toBe(oldRow);
+        expect(row.className).toBe('mwi-settings-tool-buttons');
+        expect(document.querySelectorAll('.mwi-settings-tool-buttons')).toHaveLength(1);
+        expect(row.children).toHaveLength(2);
+    });
+
     test.each([true, false])('sizes to its label without Philo (mobile: %s)', (mobile) => {
         device.mobile = mobile;
         buildPage();

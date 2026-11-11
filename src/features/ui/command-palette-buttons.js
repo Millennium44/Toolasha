@@ -48,6 +48,7 @@ class CommandPaletteButtons {
         this.open = null;
         this.navItem = null;
         this.settingsButton = null;
+        this.settingsRow = null;
         this.unregisters = [];
     }
 
@@ -102,6 +103,14 @@ class CommandPaletteButtons {
     removeSettingsButton() {
         this.settingsButton?.remove();
         this.settingsButton = null;
+        this.removeSettingsRow();
+    }
+
+    /** Leave the independently owned Philo button in place when the palette goes away. */
+    removeSettingsRow() {
+        const row = this.settingsRow;
+        if (row) row.replaceWith(...row.childNodes);
+        this.settingsRow = null;
     }
 
     /** The "Search" row in the left navigation, under the Pinned and Overlay entries when present */
@@ -162,8 +171,26 @@ class CommandPaletteButtons {
             this.settingsButton = button;
         }
 
-        const anchor =
-            panel.querySelector('.mwi-philo-calc-button') || panel.querySelector('.mwi-market-history-button');
+        const philo = panel.querySelector('.mwi-philo-calc-button');
+        if (philo) {
+            let row = this.settingsRow;
+            if (!row || !panel.contains(row)) {
+                this.removeSettingsRow();
+                row = document.createElement('div');
+                row.className = 'mwi-settings-tool-buttons';
+                this.settingsRow = row;
+            }
+            // Keep the original button and its listeners, including when Philo arrives after us.
+            if (philo.parentElement !== row) {
+                philo.before(row);
+                row.append(philo);
+            }
+            if (philo.nextElementSibling !== button) philo.after(button);
+            return;
+        }
+
+        this.removeSettingsRow();
+        const anchor = panel.querySelector('.mwi-market-history-button');
         if (anchor) {
             if (anchor.nextElementSibling !== button) anchor.after(button);
         } else if (panel.firstChild !== button) {

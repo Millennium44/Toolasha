@@ -1,7 +1,7 @@
 /**
  * Content-width injected buttons on phone screens.
  *
- * The Philo Gamba and Command Palette (Settings) and XPH Calc (Enhancing) buttons are direct children
+ * The Philo Gamba and Command Palette (Settings) and XPH Calc (Enhancing) buttons are injected children
  * of a game panel that lays its children out as a column, where a button stretches across the whole
  * panel and reads as a stray bar. They size to their label and sit at the start of the line. Settings
  * buttons stretch on desktop as well, so their rule applies at every width; XPH Calc is compact only
@@ -20,6 +20,13 @@ export const PHONE_COMPACT_BUTTONS_CSS = `
         max-width: 100%;
         align-self: flex-start;
         justify-self: start;
+    }
+    .mwi-settings-tool-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        min-width: 0;
+        max-width: 100%;
     }
     @media (max-width: 768px) {
         .mwi-xph-calc-btn {
