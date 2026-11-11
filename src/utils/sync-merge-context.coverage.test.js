@@ -368,6 +368,30 @@ const FIXTURES = {
             removed: {},
         },
     },
+    'Combat Sim saved rosters': {
+        store: 'settings',
+        key: 'combatSimSavedRosters',
+        a: {
+            savedAt: EARLIER,
+            parties: [
+                {
+                    id: 'sr-1',
+                    name: 'One',
+                    members: [teammate('p1', 'One', EARLIER), teammate('p3', 'Three', EARLIER)],
+                    addedAt: EARLIER,
+                    updatedAt: EARLIER,
+                },
+            ],
+            removed: {},
+        },
+        b: {
+            savedAt: LATER,
+            parties: [
+                { id: 'sr-2', name: 'Two', members: [teammate('p2', 'Two', LATER)], addedAt: LATER, updatedAt: LATER },
+            ],
+            removed: {},
+        },
+    },
     'Combat sessions': {
         store: 'combatStats',
         key: `combatSessionHistory_${CHAR}`,

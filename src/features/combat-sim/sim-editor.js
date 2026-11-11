@@ -48,6 +48,7 @@ import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
 import { neverFiresReason } from './trigger-checks.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
+import { loadSavedParties, loadSavedRosters, removeRoster, saveRoster, usableMembers } from './party-saved.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -193,6 +194,19 @@ export class SimEditor {
         this._exportNote = '';
         this._exportNoteText = '';
         this._exportNoteTimer = null;
+        // Save party / Load party (combat Configure only): which form is open ('save', 'load' or null), the
+        // lists read when Load opened (null while reading), the name being typed, the last outcome, the saved
+        // roster whose delete waits on a second click, and a token bumped whenever the form closes or reopens
+        // so a read that lands after cannot redraw a list nobody asked for
+        this._savedForm = null;
+        this._savedLists = null;
+        this._savedDraft = '';
+        this._savedNote = '';
+        this._savedNoteWarn = false;
+        this._savedNoteScenario = 0;
+        this._savedPendingDelete = null;
+        this._savedBusy = false;
+        this._savedToken = 0;
     }
 
     getEditedDTOs() {
@@ -1175,9 +1189,11 @@ export class SimEditor {
      * @param {Array<Object>} players - Player DTOs from `parseShykaiImport`; their hrids carry the pasted slot numbers
      * @param {Array<string>} names - Player names, same order
      * @param {Array<Object>} [skipped] - Equipment `parseShykaiImport` could not place, tagged by pasted slot number
+     * @param {Object} [options]
+     * @param {string} [options.note] - A line shown above the editor about where the players came from
      * @returns {boolean} False when there is nothing to load
      */
-    replaceParty(players, names, skipped = []) {
+    replaceParty(players, names, skipped = [], { note = '' } = {}) {
         const incoming = (Array.isArray(players) ? players : []).slice(0, MAX_PARTY_SIZE);
         if (!incoming.length) return false;
 
@@ -1207,7 +1223,7 @@ export class SimEditor {
         this._missingMemberIds = [];
         this._profileStatus = [];
         this._importSkipped = taggedSkipped;
-        this._externalNote = '';
+        this._externalNote = note || '';
         this._loadoutFetchNote = '';
         this._partyKeyAtLoad = null;
         this._forgetAppliedLoadouts();
@@ -1222,6 +1238,415 @@ export class SimEditor {
 
         this.renderEditor();
         return true;
+    }
+
+    /**
+     * Whether this editor offers Save party / Load party: the combat sim's Configure tab only (the lab and skilling
+     * editors hold one player, and a skilling build carries fields a saved build does not keep).
+     * @returns {boolean}
+     * @private
+     */
+    _offersSavedParties() {
+        return !this.labMode && !this.skillingMode;
+    }
+
+    /**
+     * Close the Save party / Load party form and forget what it held. Any read still out is dropped when it lands.
+     * @private
+     */
+    _closeSavedForm() {
+        this._savedForm = null;
+        this._savedLists = null;
+        this._savedPendingDelete = null;
+        this._savedToken++;
+    }
+
+    /**
+     * The outcome line under the Save party / Load party form.
+     * @param {string} text
+     * @param {boolean} [warn=false]
+     * @private
+     */
+    _setSavedNote(text, warn = false) {
+        this._savedNote = text || '';
+        this._savedNoteWarn = Boolean(text) && warn;
+        // Shown only until the loaded players are next replaced (a reset, an import, another load)
+        this._savedNoteScenario = this._scenarioToken;
+    }
+
+    /**
+     * Every loaded player as Save party stores them: in tab order, you included, each with the build a run uses now.
+     * @returns {Array<{name: string, dto: Object, gameMode: string|null}>}
+     * @private
+     */
+    _rosterForSaving() {
+        const dtos = this.getEditedDTOs() || {};
+        const players = [];
+        for (const { hrid, name } of this._editedPlayerInfo || []) {
+            const dto = dtos[hrid];
+            if (!dto) continue;
+            const liveMode = hrid === this._selfHrid ? dataManager.getCurrentCharacterGameMode?.() : null;
+            players.push({ name, dto: structuredClone(dto), gameMode: dto.gameMode || liveMode || null });
+        }
+        return players;
+    }
+
+    /**
+     * Save every loaded player under a name (Save party). The roster is read before the write, so an edit made
+     * while the write is out is not part of it.
+     * @param {string} name
+     * @returns {Promise<Object|null>} The `saveRoster` result, or null when nothing was asked
+     */
+    async saveLoadedRoster(name) {
+        if (!this._offersSavedParties() || !this._editedDTOs || this._savedBusy) return null;
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const players = this._rosterForSaving();
+        this._savedBusy = true;
+        let result = null;
+        try {
+            result = await saveRoster(name, players);
+        } finally {
+            this._savedBusy = false;
+        }
+        // Another character's editor now: the outcome belongs to the one that left
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return result;
+        if (result.ok) {
+            const skipped = result.skipped.length
+                ? ` Left out (no build that can be saved): ${result.skipped.map((s) => s.name).join(', ')}.`
+                : '';
+            const count = players.length - result.skipped.length;
+            this._setSavedNote(
+                `Saved "${result.name}" (${count} player${count === 1 ? '' : 's'})` +
+                    `${result.duplicate ? ' — another saved party already has that name' : ''}.${skipped}`,
+                result.duplicate || result.skipped.length > 0
+            );
+            this._savedDraft = '';
+            this._closeSavedForm();
+        } else if (result.reason) {
+            this._setSavedNote(`Not saved: ${result.reason}.`, true);
+        } else {
+            this._setSavedNote('Not saved: the list could not be written.', true);
+        }
+        this.renderEditor();
+        return result;
+    }
+
+    /**
+     * Open Load party: read both saved lists (this tab's and the Party tab's) and show them.
+     * @returns {Promise<void>}
+     */
+    async openSavedList() {
+        if (!this._offersSavedParties()) return;
+        this._closeSavedForm();
+        this._savedForm = 'load';
+        this._setSavedNote('');
+        this.renderEditor();
+        await this._readSavedLists();
+    }
+
+    /**
+     * Read both saved lists into the open Load party form and redraw it; dropped if the form was closed or
+     * reopened, or the character changed, while the read was out.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _readSavedLists() {
+        const token = this._savedToken;
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const [rosters, parties] = await Promise.all([loadSavedRosters(), loadSavedParties()]);
+        if (token !== this._savedToken || (dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
+        this._savedLists = { rosters: rosters.parties, parties: parties.parties };
+        this.renderEditor();
+    }
+
+    /**
+     * Replace the loaded players with a saved one, read fresh from storage (a sync pull or another tab may have
+     * changed or deleted it since the list was drawn).
+     *
+     * A roster saved here loads every player as saved, you included: the record is account-wide, so the "you" in
+     * it may be another character's build, and no row becomes the live self. Like Replace party, the roster is not
+     * the game's party, so Fetch loadout stays hidden unless it names the party you are in.
+     *
+     * A party saved on the Party tab holds the players besides you; it loads as you (live) plus them, the way the
+     * Party tab's own "load into the editor" does.
+     *
+     * @param {'roster'|'party'} source - Which list the id is from
+     * @param {string} id
+     * @returns {Promise<boolean>} Whether anything was loaded
+     */
+    async loadSavedEntry(source, id) {
+        if (!this._offersSavedParties() || this._savedBusy) return false;
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const scenario = this._scenarioToken;
+        const token = this._savedToken;
+        this._savedBusy = true;
+        let saved;
+        try {
+            saved = source === 'roster' ? await loadSavedRosters() : await loadSavedParties();
+        } finally {
+            this._savedBusy = false;
+        }
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return false;
+        // Something else replaced the players, or the form was closed, while the list was read: that wins
+        if (this._scenarioToken !== scenario || this._savedToken !== token) return false;
+        const entry = saved.parties.find((p) => p.id === id);
+        if (!entry) {
+            this._setSavedNote('That party is no longer saved (deleted, or removed by a sync).', true);
+            this._savedLists = null;
+            this._savedPendingDelete = null;
+            this.renderEditor();
+            await this._readSavedLists();
+            return false;
+        }
+        const { members, skipped } = usableMembers(entry);
+        const skippedText = skipped.length ? ` ${skipped.join(', ')} could not be loaded.` : '';
+        if (!members.length) {
+            this._setSavedNote(`"${entry.name}" has no player this version can load.`, true);
+            this.renderEditor();
+            return false;
+        }
+        const note = `From the saved party "${entry.name}"`;
+        if (source === 'roster') {
+            if (members.length > MAX_PARTY_SIZE) {
+                this._setSavedNote(`"${entry.name}" has more than ${MAX_PARTY_SIZE} players.`, true);
+                this.renderEditor();
+                return false;
+            }
+            this._closeSavedForm();
+            // Each player keeps the mode they were saved with (what prices and taxes them as someone other than
+            // the live you), put back on a build that did not carry it, the live you's among them
+            const players = members.map((m) =>
+                m.dto.gameMode || !m.gameMode ? m.dto : { ...m.dto, gameMode: m.gameMode }
+            );
+            this.replaceParty(
+                players,
+                members.map((m) => m.name),
+                [],
+                { note }
+            );
+            this._setSavedNote(`Loaded "${entry.name}".${skippedText}`, skipped.length > 0);
+            this.renderEditor();
+            return true;
+        }
+        if (1 + members.length > MAX_PARTY_SIZE) {
+            this._setSavedNote(
+                `"${entry.name}" and you would be more than ${MAX_PARTY_SIZE} players, more than the editor holds.`,
+                true
+            );
+            this.renderEditor();
+            return false;
+        }
+        const self = buildPlayerDTO();
+        if (!self) {
+            this._setSavedNote('No character data available.', true);
+            this.renderEditor();
+            return false;
+        }
+        const mode = dataManager.getCurrentCharacterGameMode?.() || undefined;
+        const teammates = members.map((m) => {
+            // Priced and taxed as the live character's mode, as the Party tab loads them
+            const dto = { ...m.dto };
+            if (mode) dto.gameMode = mode;
+            else delete dto.gameMode;
+            return dto;
+        });
+        this._closeSavedForm();
+        this.loadParty(
+            [self, ...teammates],
+            [dataManager.characterData?.character?.name || 'You', ...members.map((m) => m.name)],
+            {
+                selfIsLive: true,
+                note,
+            }
+        );
+        // A saved party is not the game's party: Fetch loadout would reload that over it, and an automatic reload
+        // must not throw it away
+        this._rosterEdited = true;
+        this._rosterFromPaste = true;
+        this._setSavedNote(`Loaded "${entry.name}" with you.${skippedText}`, skipped.length > 0);
+        this.renderEditor();
+        return true;
+    }
+
+    /**
+     * Delete a roster saved here: the first call asks, the second (for the same one) deletes.
+     * @param {string} id
+     * @returns {Promise<boolean>} Whether it was deleted
+     */
+    async deleteSavedRoster(id) {
+        if (!this._offersSavedParties() || this._savedBusy) return false;
+        if (this._savedPendingDelete !== id) {
+            this._savedPendingDelete = id;
+            this.renderEditor();
+            return false;
+        }
+        this._savedPendingDelete = null;
+        const owner = dataManager.getCurrentCharacterId?.() ?? null;
+        const token = this._savedToken;
+        this._savedBusy = true;
+        let result;
+        try {
+            result = await removeRoster(id);
+        } finally {
+            this._savedBusy = false;
+        }
+        if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return result.ok && result.found;
+        if (!result.ok) this._setSavedNote('Could not delete: the list could not be written.', true);
+        else this._setSavedNote(result.found ? 'Deleted.' : 'That party was already deleted.');
+        if (token === this._savedToken && this._savedLists) {
+            this._savedLists = { ...this._savedLists, rosters: result.saved.parties };
+        }
+        this.renderEditor();
+        return result.ok && result.found;
+    }
+
+    /**
+     * The Save party / Load party buttons for the player tab row.
+     * @returns {string} HTML
+     * @private
+     */
+    _renderSavedButtons() {
+        if (!this._offersSavedParties()) return '';
+        const style = (open) =>
+            open
+                ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BORDER}; color:${ACCENT};`
+                : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#888;';
+        const base = 'padding:3px 8px; border-radius:5px; font-size:11px; cursor:pointer; font-family:inherit;';
+        return (
+            `<button id="mwi-csim-save-party-btn" style="${style(this._savedForm === 'save')} ${base}"
+                title="Save every loaded player, you included, with their build, to load again later">Save party</button>` +
+            `<button id="mwi-csim-load-party-btn" style="${style(this._savedForm === 'load')} ${base}"
+                title="Replace the loaded players with a saved party (saved here or on the Party tab)">Load party</button>`
+        );
+    }
+
+    /**
+     * The open Save party / Load party form and the last outcome.
+     * @returns {string} HTML, or '' when neither is open and there is nothing to say
+     * @private
+     */
+    _renderSavedForm() {
+        if (!this._offersSavedParties()) return '';
+        let html = '';
+        const small = 'padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; font-family:inherit;';
+        const plain = `background:rgba(255,255,255,0.04); border:1px solid #333; color:#888; ${small}`;
+        if (this._savedForm === 'save') {
+            const count = (this._editedPlayerInfo || []).length;
+            html += `<div data-saved-form="save" style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap; align-items:center;">
+                <input id="mwi-csim-save-party-name" type="text" maxlength="40" placeholder="Party name"
+                    value="${escapeHtml(this._savedDraft)}" style="flex:1; min-width:120px;
+                    background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder};
+                    border-radius:4px; padding:3px 6px; font-size:12px; font-family:inherit;">
+                <button id="mwi-csim-save-party-go" style="${GAME_BTN_CSS} ${small} font-weight:600;"${
+                    this._savedBusy ? ' disabled' : ''
+                }>Save ${count} player${count === 1 ? '' : 's'}</button>
+                <button id="mwi-csim-saved-cancel" style="${plain}">Cancel</button>
+            </div>`;
+        } else if (this._savedForm === 'load') {
+            html += `<div data-saved-form="load" style="margin-bottom:8px; padding:6px 8px; border:1px solid #333;
+                border-radius:5px; background:rgba(255,255,255,0.02); font-size:11px;">`;
+            const lists = this._savedLists;
+            if (!lists) {
+                html += `<div style="color:#888;">Reading the saved parties…</div>`;
+            } else if (!lists.rosters.length && !lists.parties.length) {
+                html += `<div style="color:#888;">No saved parties yet. Save one here with Save party, or on the Party tab.</div>`;
+            } else {
+                const row = (source, entry, players) => {
+                    const pending = source === 'roster' && this._savedPendingDelete === entry.id;
+                    const del =
+                        source === 'roster'
+                            ? `<button data-saved-delete="${escapeHtml(entry.id)}" style="${plain} ${
+                                  pending ? 'color:#f66; border-color:#f66;' : 'color:#f44;'
+                              }" title="Delete this saved party">${pending ? 'Delete?' : '×'}</button>`
+                            : '';
+                    return `<div style="display:flex; gap:6px; align-items:center; margin:3px 0;">
+                        <span style="color:#ddd; font-weight:600;">${escapeHtml(entry.name)}</span>
+                        <span style="color:#888; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                            title="${escapeHtml(players)}">${escapeHtml(players)}</span>
+                        <button data-saved-load="${source}:${escapeHtml(entry.id)}" style="${GAME_BTN_CSS} ${small}"${
+                            this._savedBusy ? ' disabled' : ''
+                        }>Load</button>${del}
+                    </div>`;
+                };
+                if (lists.rosters.length) {
+                    html += `<div style="color:#aaa; margin-bottom:2px;">Saved here</div>`;
+                    for (const entry of lists.rosters) {
+                        html += row('roster', entry, entry.members.map((m) => m.name).join(', '));
+                    }
+                }
+                if (lists.parties.length) {
+                    html += `<div style="color:#aaa; margin:${lists.rosters.length ? '6px' : '0'} 0 2px;"
+                        title="Parties saved on the Party tab hold the players besides you; you load as you are now">From the Party tab (loads with you)</div>`;
+                    for (const entry of lists.parties) {
+                        html += row('party', entry, ['You', ...entry.members.map((m) => m.name)].join(', '));
+                    }
+                }
+            }
+            html += `<div style="margin-top:4px;"><button id="mwi-csim-saved-cancel" style="${plain}">Close</button></div>`;
+            html += '</div>';
+        }
+        if (this._savedNote && this._savedNoteScenario === this._scenarioToken) {
+            html += `<div data-saved-note style="color:${this._savedNoteWarn ? '#c9a227' : '#8c8'}; font-size:11px; margin:-4px 0 8px;">${escapeHtml(this._savedNote)}</div>`;
+        }
+        return html;
+    }
+
+    /**
+     * Wire the Save party / Load party controls after a render.
+     * @param {HTMLElement} editorArea
+     * @private
+     */
+    _bindSavedForm(editorArea) {
+        if (!this._offersSavedParties()) return;
+        editorArea.querySelector('#mwi-csim-save-party-btn')?.addEventListener('click', () => {
+            const open = this._savedForm === 'save';
+            this._closeSavedForm();
+            this._setSavedNote('');
+            if (!open) this._savedForm = 'save';
+            this.renderEditor();
+            if (!open) editorArea.querySelector('#mwi-csim-save-party-name')?.focus();
+        });
+        editorArea.querySelector('#mwi-csim-load-party-btn')?.addEventListener('click', () => {
+            if (this._savedForm === 'load') {
+                this._closeSavedForm();
+                this.renderEditor();
+                return;
+            }
+            this.openSavedList();
+        });
+        editorArea.querySelector('#mwi-csim-saved-cancel')?.addEventListener('click', () => {
+            this._closeSavedForm();
+            this._setSavedNote('');
+            this.renderEditor();
+        });
+        const nameInput = editorArea.querySelector('#mwi-csim-save-party-name');
+        nameInput?.addEventListener('input', () => {
+            this._savedDraft = nameInput.value;
+        });
+        const save = () => {
+            const name = (nameInput?.value ?? this._savedDraft).trim();
+            this._savedDraft = nameInput?.value ?? this._savedDraft;
+            if (!name) {
+                this._setSavedNote('Give the party a name first.', true);
+                this.renderEditor();
+                return;
+            }
+            this.saveLoadedRoster(name);
+        };
+        nameInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') save();
+        });
+        editorArea.querySelector('#mwi-csim-save-party-go')?.addEventListener('click', save);
+        editorArea.querySelectorAll('[data-saved-load]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const value = button.getAttribute('data-saved-load') || '';
+                const at = value.indexOf(':');
+                this.loadSavedEntry(value.slice(0, at) === 'roster' ? 'roster' : 'party', value.slice(at + 1));
+            });
+        });
+        editorArea.querySelectorAll('[data-saved-delete]').forEach((button) => {
+            button.addEventListener('click', () => this.deleteSavedRoster(button.getAttribute('data-saved-delete')));
+        });
     }
 
     /**
@@ -1348,6 +1773,8 @@ export class SimEditor {
         this._partyKeyAtLoad = null;
         this._externalNote = '';
         this._loadoutFetchNote = '';
+        this._closeSavedForm();
+        this._savedNote = '';
         this._scenarioToken++;
     }
 
@@ -2083,6 +2510,7 @@ export class SimEditor {
                     font-family:inherit;" title="Copy every loaded player as a multi-slot export">Export Party</button>`;
             }
         }
+        html += this._renderSavedButtons();
         html += this._renderResetControls();
         // Combat mode only, and only once there is a party to sim solo out of —
         // the lab and skilling editors never load more than one player, so the
@@ -2102,6 +2530,7 @@ export class SimEditor {
         html += this._renderProfileAgeNote();
         html += this._renderImportSkippedNote();
         html += this._renderExportNote();
+        html += this._renderSavedForm();
 
         // Import paste area (hidden by default). When a player is already
         // selected, importing offers a choice: replace that one slot in place,
@@ -4075,6 +4504,8 @@ export class SimEditor {
         if (exportPartyBtn) {
             exportPartyBtn.addEventListener('click', () => this._exportParty());
         }
+
+        this._bindSavedForm(editorArea);
 
         const loadoutSelect = editorArea.querySelector('#mwi-csim-loadout-select');
         if (loadoutSelect) {
