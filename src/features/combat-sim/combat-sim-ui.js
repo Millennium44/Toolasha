@@ -193,6 +193,7 @@ import { watchSimIconRefresh } from './sim-icon-refresh.js';
 import { populateSimEntitySelect } from './sim-entity-select.js';
 import { simItemLabelHtml, simCandidateLabelHtml } from './sim-item-label.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
+import { neverFiringWarnings } from './trigger-checks.js';
 import {
     buildEditorChanges,
     formatChangesText,
@@ -7559,7 +7560,10 @@ class CombatSimUI {
 
         // Loadout lint: mistakes a party would want called out before reading
         // any of the numbers they distort
-        this._lastPartyWarnings = partyLintWarnings(playerDTOs, playerInfo, gameData);
+        this._lastPartyWarnings = [
+            ...partyLintWarnings(playerDTOs, playerInfo, gameData),
+            ...neverFiringWarnings(playerDTOs, playerInfo, gameData),
+        ];
 
         const communityBuffs = getCommunityBuffs();
 

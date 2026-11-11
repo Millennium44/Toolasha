@@ -45,6 +45,7 @@ import { fetchLoadout, getLoadout, isViewLoadoutAvailable, VIEW_LOADOUT_CONTEXT 
 import { addStyles } from '../../utils/dom.js';
 import { markToolashaSurface } from '../../utils/surface-marker.js';
 import { MAX_TRIGGERS, triggersForStorage } from './trigger-tuning.js';
+import { neverFiresReason } from './trigger-checks.js';
 import { BUTTON_LOOK, GAME_COLORS, GAME_FRAME } from '../../utils/game-look.js';
 import { maxEnhancementLevel, maxHouseRoomLevel, maxLevel } from '../../utils/game-maximums.js';
 
@@ -2887,9 +2888,11 @@ export class SimEditor {
         const title = `Triggers (${hasCustom ? 'custom' : 'default'}) — click to edit\n${summary}`
             .replace(/"/g, '&quot;')
             .replace(/\n/g, '&#10;');
-        const color = hasCustom ? ACCENT : '#aaa';
-        const border = hasCustom ? ACCENT_BTN_BORDER : '#444';
-        return `<button data-trigger-slot="${slotType}-${slotIndex}" title="${title}" style="background:rgba(255,255,255,0.06); border:1px solid ${border}; color:${color}; padding:1px 5px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">⚡</button>`;
+        const blocked = activeTriggers.some((t) => neverFiresReason(t));
+        const color = blocked ? '#e8c66c' : hasCustom ? ACCENT : '#aaa';
+        const border = blocked ? '#6b5a1f' : hasCustom ? ACCENT_BTN_BORDER : '#444';
+        const fullTitle = blocked ? `${title}&#10;Warning: a row can never be true, so this is never used` : title;
+        return `<button data-trigger-slot="${slotType}-${slotIndex}" data-trigger-blocked="${blocked ? '1' : '0'}" title="${fullTitle}" style="background:rgba(255,255,255,0.06); border:1px solid ${border}; color:${color}; padding:1px 5px; border-radius:3px; font-size:11px; cursor:pointer; font-family:inherit;">${blocked ? '⚠' : '⚡'}</button>`;
     }
 
     /**
@@ -3065,6 +3068,15 @@ export class SimEditor {
                 .map((h) => `<option value="${h}"${h === selected ? ' selected' : ''}>${labelFor(h)}</option>`)
                 .join('');
 
+        // Visible on a row that can never be true; kept in the DOM (hidden) otherwise so a value edit can fill it
+        const triggerWarningHtml = (i) => {
+            const reason = neverFiresReason(rows[i]);
+            return (
+                `<div data-trig-warn="${i}" style="${reason ? '' : 'display:none; '}margin-top:4px; font-size:11px; color:#e8c66c;">` +
+                `${reason ? '&#9888; ' + reason.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '. This row blocks the whole slot.' : ''}</div>`
+            );
+        };
+
         const renderRows = () => {
             if (!rows.length) {
                 listEl.innerHTML =
@@ -3088,7 +3100,9 @@ export class SimEditor {
                     html += `<input type="number" data-trig-value="${i}" value="${row.value}" min="0"
                         style="width:70px; background:${GAME_COLORS.inputBackground}; color:#e0e0e0; border:1px solid ${GAME_COLORS.inputBorder}; border-radius:3px;
                         padding:2px 4px; font-size:11px; text-align:center; ${hideValue ? 'visibility:hidden;' : ''}">`;
-                    html += `</div></div>`;
+                    html += `</div>`;
+                    html += triggerWarningHtml(i);
+                    html += `</div>`;
                 }
                 listEl.innerHTML = html;
             }
@@ -3136,6 +3150,12 @@ export class SimEditor {
                     const val = Math.max(0, parseInt(input.value) || 0);
                     input.value = val;
                     rows[i].value = val;
+                    const warn = listEl.querySelector(`[data-trig-warn="${i}"]`);
+                    if (warn) {
+                        const holder = document.createElement('div');
+                        holder.innerHTML = triggerWarningHtml(i);
+                        warn.replaceWith(holder.firstChild);
+                    }
                 });
             });
             listEl.querySelectorAll('[data-trig-remove]').forEach((btn) => {
