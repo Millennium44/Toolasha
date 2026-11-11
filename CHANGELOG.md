@@ -46,6 +46,10 @@ Healing & Mana now has an HP chart and an MP chart side by side, with every play
 
 Reset to Party now puts you on the loadout you selected for the party instead of Current Gear, and sets Zone and Tier to the party's. Fetch loadout also gets your own party loadout now, not only the other members'; it leaves your zone alone.
 
+### Reorder abilities in the Combat Sim
+
+Configure has ▲/▼ buttons on each ability, so you can try a different cast order. The sim casts the first ability whose trigger fires, in slot order. The special slot stays put, and a slot your Intelligence hasn't unlocked can't be used.
+
 <!-- shipped in 3.84.0 -->
 
 ### Combat Sim zone list shows every zone's icon
