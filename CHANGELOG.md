@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The last opening and the all-time line now show what the drop table expected (for example "114.93M ask · exp 131.29M"), so the percent beside them has its base on screen.
 
+### Treasure popup scrolls only when it has to
+
+The popup now grows to the window's height instead of stopping at 560px, so a chest's list scrolls only when it cannot fit on screen. Its narrowest width also leaves room for that scrollbar, so a long list no longer adds a sideways scroll.
+
 ### Missing Mats separates owned inputs from purchases
 
 Shopping lists no longer count an owned prerequisite toward a separate purchase of the same item and level. Open lists also close cleanly when you switch characters.

@@ -191,9 +191,12 @@ const OPENING_GRID =
     `repeat(2, minmax(${OPENING_FIGURE_FLOOR}px, 1fr))`;
 /**
  * The narrowest the popup can be and still hold that grid: icon + 46px + four floors + five 3px gaps, plus the
- * body's 9px side padding and the frame's 1px border.
+ * body's 9px side padding, the frame's 1px border, and room for the body's vertical scrollbar (10px in game), so a
+ * long chest does not push the grid into a sideways scroll as well.
  */
-const OPENING_MIN_WIDTH = OPENING_ICON_SIZE + 1 + 46 + 4 * OPENING_FIGURE_FLOOR + 5 * 3 + 2 * 9 + 2;
+const POPUP_SCROLLBAR_ROOM = 10;
+const OPENING_MIN_WIDTH =
+    OPENING_ICON_SIZE + 1 + 46 + 4 * OPENING_FIGURE_FLOOR + 5 * 3 + 2 * 9 + 2 + POPUP_SCROLLBAR_ROOM;
 
 /** What each expanded-chest heading's sub-columns mean */
 const COLUMN_HELP = [
@@ -535,9 +538,6 @@ export function buildTreasureDetailRows(rows, nameOf = itemName) {
         );
 }
 
-/** The tallest a freshly-opened popup is allowed to be */
-const POPUP_MAX_HEIGHT = 560;
-
 /**
  * Turn a content-sized popup into one with a height of its own.
  *
@@ -556,8 +556,10 @@ const POPUP_MAX_HEIGHT = 560;
  * @returns {number} The height it was given
  */
 export function capHeightToWindow(popup, viewportHeight = window.innerHeight) {
-    const natural = popup.offsetHeight || popup.getBoundingClientRect().height;
-    const height = Math.min(natural, POPUP_MAX_HEIGHT, Math.round(viewportHeight * 0.7));
+    // Rounded up: offsetHeight rounds a fractional height down, and the pixel it drops is enough to make the body scroll
+    const natural = Math.ceil(popup.getBoundingClientRect().height) || popup.offsetHeight;
+    // As tall as the window allows, so only a list that cannot fit on screen scrolls
+    const height = Math.min(natural, Math.max(0, Math.round(viewportHeight - 2 * EDGE_MARGIN)));
     popup.style.height = `${height}px`;
     return height;
 }

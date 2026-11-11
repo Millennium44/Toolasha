@@ -546,14 +546,22 @@ describe('the popup gets a height of its own', () => {
         const element = popup(2000);
         capHeightToWindow(element, 600);
 
-        expect(element.style.height).toBe('420px');
+        expect(element.style.height).toBe('584px');
     });
 
-    test('and to the cap on a tall screen, so it does not run the full height', () => {
-        const element = popup(2000);
-        capHeightToWindow(element, 1600);
+    test('a list that fits the window is never cut short, so it does not scroll', () => {
+        // It used to stop at 560px or 70% of the window, so a 16-row chest scrolled on a screen it fit on
+        const element = popup(820);
+        capHeightToWindow(element, 1000);
 
-        expect(element.style.height).toBe('560px');
+        expect(element.style.height).toBe('820px');
+    });
+
+    test('a fractional height is rounded up, so the last pixel does not make it scroll', () => {
+        const element = { offsetHeight: 499, getBoundingClientRect: () => ({ height: 499.6 }), style: {} };
+        capHeightToWindow(element, 1000);
+
+        expect(element.style.height).toBe('500px');
     });
 
     test('it writes height rather than max-height', () => {
