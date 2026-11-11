@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim charts HP and MP
+
+Each wipe card now charts every player's HP and MP over the 30 seconds before the wipe. Under Healing & Mana, a chart shows each player's MP across the run, with the share of time each spent under 10% MP, so it is clear who runs dry.
+
 ### Combat Sim comparison shows when each run was made
 
 Each saved run's name now starts with the time it ran, so the newest one is easy to find. Every saved run gets a ✕ to delete it, including runs not yet added to the comparison.
