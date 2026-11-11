@@ -9470,6 +9470,21 @@ describe('the All pill: every player side by side', () => {
             expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
         });
 
+        test('a pulled state applied while Results is on screen keeps the headers working and saved', async () => {
+            show(partyFight(), { all: false });
+            // A sync pull lands with XP/hr minimized while these headers are already wired
+            mocks.store.set('settings:combatSimResultsCollapsed', { collapsed: { 'results-xp': true } });
+            await ui._loadResultsCollapsedPref();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('false');
+            // The first click reopens it, and that choice is what is saved
+            head('results-xp').click();
+            await settle();
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('true');
+            expect(mocks.store.get('settings:combatSimResultsCollapsed').collapsed['results-xp']).not.toBe(true);
+            ui._displayResults(ui._lastSimResult, 1, ui._lastGameData);
+            expect(head('results-xp').getAttribute('aria-expanded')).toBe('true');
+        });
+
         test('the All table labels are pinned and stay on one line on a phone', () => {
             const results = show(partyFight());
             const labels = [...results.querySelectorAll('[data-all-players] td.mwi-csim-all-label')];

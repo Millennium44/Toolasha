@@ -18531,7 +18531,11 @@ class CombatSimUI {
             if (saved.collapsed && typeof saved.collapsed === 'object') {
                 for (const [key, value] of Object.entries(saved.collapsed)) if (value === true) collapsed[key] = true;
             }
-            this._resultsCollapsed = collapsed;
+            // In place: the headers already on screen keep their handlers (wired once), and those hold this
+            // map; a new object would leave clicks toggling the old one while the new one is saved
+            if (!this._resultsCollapsed) this._resultsCollapsed = {};
+            for (const key of Object.keys(this._resultsCollapsed)) delete this._resultsCollapsed[key];
+            Object.assign(this._resultsCollapsed, collapsed);
             this._enhanceResultsCollapsibles(this.panel?.querySelector('#mwi-csim-results'));
         } catch (error) {
             console.error('[CombatSimUI] Failed to load the minimized results sections:', error);
