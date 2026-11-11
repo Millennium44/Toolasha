@@ -1,4 +1,7 @@
-// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
+/**
+ * @license MIT. The combat engine is ported from the MWI Combat Simulator, (c) 2024 AmVoidGuy.
+ * See third-party/mwi-combat-simulator/ in the Toolasha repository.
+ */
 import { random, syncEncounterRng } from './rng.js';
 import { hasConverged, isStoppingRule } from './wilson.js';
 
