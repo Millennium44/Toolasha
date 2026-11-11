@@ -13,6 +13,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# While this runs, switching branches here would gate a mix of two branches and build the wrong dev
+# file. The lock in this checkout's own git dir lets the session's guard refuse a switch (2026-11-11).
+GATES_LOCK="$(git rev-parse --absolute-git-dir)/gates-running"
+date +%s >"$GATES_LOCK"
+trap 'rm -f "$GATES_LOCK"' EXIT
+
 step() { printf '\n== %s ==\n' "$1"; }
 
 step 'ESLint'

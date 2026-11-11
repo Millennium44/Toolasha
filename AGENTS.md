@@ -265,6 +265,15 @@ with CI's globs (`CHANGELOG.md` included), the suite, both builds, the bundle-sh
 `@require` ceiling, and the `@require` classic-script check. A branch that passes it will not learn
 anything new from CI. Never report a gate result from a run you did not do.
 
+**Which pushes need it** (maintainer, 2026-11-11): a push to `main`, and opening a PR, run the full gates.
+A review fix pushed to an already-open PR branch runs only the suites it reaches plus ESLint and Prettier on
+the touched files: the PR's CI checks it, and `land-stack.sh` runs the full gates on the whole stack before
+anything reaches `main`. One chat ran the full gates about seven times for a two-PR stack.
+
+While `gates.sh` runs it holds a lock in the checkout's git dir (`.git/gates-running`); Claude's
+`guard-bash` hook refuses `git switch`/`checkout` there until it finishes, since a switch mid-run gates and
+builds a mix of two branches.
+
 **The dev-build trap**: gates build `dist/Toolasha-dev.user.js` from whatever branch is checked out, and
 the maintainer's dev loader serves that file. Gating PR branch A then B leaves a dev build with only B.
 Before the maintainer tests live, build from `main` plus every open PR. Never run two git or gates jobs
