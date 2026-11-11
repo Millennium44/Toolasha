@@ -19478,6 +19478,27 @@ describe('the Upgrade tab: All players', () => {
             expect(ui._upgradeResultsData.context.playerHrid).toBe('player2');
         });
 
+        test('same-named players keep their plain name for identity: a combined trigger copy attaches both', async () => {
+            mocks.playerNames = { player1: 'Ann', player2: 'Ann', player3: 'Cy' };
+            ui._populateUpgradePlayerSelector();
+            chooseAll();
+            await ui._onUpgradeAnalyze();
+
+            const owners = ui._chatUpgradeOwners();
+            expect(owners.map((x) => x.name)).toEqual(['Ann', 'Ann', 'Cy']);
+            expect(ui._allPlayersRun.entries.map((e) => e.results.ranFor.name)).toEqual(['Ann', 'Ann', 'Cy']);
+            // The drawn labels still tell the twins apart
+            expect(ui._allPlayersRun.entries.map((e) => e.label)).toEqual(['Ann', 'Ann (2)', 'Cy']);
+
+            // A trigger result that names its players by their own name (no hrid) takes each twin's upgrades by name
+            const { withUpgrades } = await import('./chat-summary.js');
+            let players = [{ key: 'Ann', name: 'Ann', changes: ['x'], upgrades: [] }];
+            for (const owner of owners.slice(0, 2)) players = withUpgrades(players, { ...owner, key: null });
+            expect(players).toHaveLength(1);
+            expect(players[0].upgrades.join(' ')).toContain('player1 gear');
+            expect(players[0].upgrades.join(' ')).toContain('player2 gear');
+        });
+
         test('a player with nothing to upgrade is said to have nothing, and does not stop the others', async () => {
             mocks.upgradeResultFor = (args) =>
                 args.playerIndex === 1 ? { baseline: BASELINE, results: [], food: null, context: {} } : resultFor(args);

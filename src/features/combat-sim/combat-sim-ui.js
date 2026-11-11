@@ -11975,12 +11975,12 @@ class CombatSimUI {
         if (!edited) return null;
         const infos = this._editor.getPlayerInfo?.() || [];
         const dtos = Object.values(edited);
-        const names = this._uniqueRosterNames(
-            dtos.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`)
-        );
+        const names = dtos.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`);
         return {
             dtos,
+            // The players' own names (identity, chat) and, for drawing only, labels that tell twins apart
             names,
+            labels: this._uniqueRosterNames(names),
             selfHrid: this._editor.getSelfHrid?.() ?? null,
             skipped: [...(this._editor.getMissingMembers?.() || [])],
         };
@@ -12061,7 +12061,7 @@ class CombatSimUI {
         }
         const roster = this._allPlayersRoster();
         const at = this._upgradePlayerIndex();
-        const name = roster?.names[at] || 'the live character';
+        const name = roster?.labels[at] || 'the live character';
         hint.textContent = `Tune runs for ${name} while All players is chosen.`;
         hint.style.display = 'inline';
     }
@@ -12101,7 +12101,7 @@ class CombatSimUI {
                 };
                 const counts = roster.dtos.map((_, i) => estimateUpgradeSims({ ...params, playerIndex: i }));
                 const total = counts.reduce((sum, n) => sum + n, 0);
-                const per = roster.names.map((name, i) => `${name} ${formatWithSeparator(counts[i])}`).join(', ');
+                const per = roster.labels.map((name, i) => `${name} ${formatWithSeparator(counts[i])}`).join(', ');
                 const resim = this.panel.querySelector('#mwi-csim-upgrade-resim')?.checked
                     ? ', before any close-call re-sims'
                     : '';
@@ -12141,18 +12141,19 @@ class CombatSimUI {
                 playerDTOs: structuredClone(Object.values(editedDTOs)),
                 selfHrid: roster.selfHrid,
                 names: roster.names,
+                labels: roster.labels,
                 skipped: roster.skipped,
             };
         }
         const result = await buildAllPlayerDTOs();
         const infos = result.playerInfo || [];
         const players = result.players || [];
+        const names = players.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`);
         return {
             playerDTOs: players,
             selfHrid: result.selfHrid ?? null,
-            names: this._uniqueRosterNames(
-                players.map((dto, i) => infos.find((info) => info.hrid === dto.hrid)?.name || `Player ${i + 1}`)
-            ),
+            names,
+            labels: this._uniqueRosterNames(names),
             skipped: [...(result.missingMembers || [])],
         };
     }
@@ -12197,7 +12198,7 @@ class CombatSimUI {
             release();
             return;
         }
-        const { playerDTOs, selfHrid, names, skipped } = roster;
+        const { playerDTOs, selfHrid, names, labels, skipped } = roster;
         if (!playerDTOs.length) {
             release();
             this._setStatus(
@@ -12235,6 +12236,7 @@ class CombatSimUI {
         const entries = playerDTOs.map((dto, index) => ({
             hrid: dto.hrid,
             name: names[index],
+            label: labels[index],
             index,
             state: 'pending',
             results: null,
@@ -12260,7 +12262,7 @@ class CombatSimUI {
                 // Each player's run gets its own copy of the snapshot: nothing a run does to its roster reaches
                 // the next player's
                 const dtos = structuredClone(playerDTOs);
-                this._setStatus(`Analyzing ${entry.name} (${position})...`);
+                this._setStatus(`Analyzing ${entry.label} (${position})...`);
                 entry.state = 'running';
                 let results = null;
                 try {
@@ -12278,10 +12280,10 @@ class CombatSimUI {
                             if (fill) fill.style.width = bar.pct + '%';
                             if (text) {
                                 text.textContent =
-                                    `${entry.name} (${position}): ${done} / ${total}` +
+                                    `${entry.label} (${position}): ${done} / ${total}` +
                                     (remaining ? ` · ${remaining}` : '');
                             }
-                            this._setStatus(`${entry.name} (${position}): ${description}`);
+                            this._setStatus(`${entry.label} (${position}): ${description}`);
                         },
                         { abortSignal: () => this._upgradeAborted }
                     );
@@ -12291,7 +12293,7 @@ class CombatSimUI {
                         superseded = true;
                         return;
                     }
-                    console.error(`[CombatSimUI] Upgrade analysis failed for ${entry.name}:`, error);
+                    console.error(`[CombatSimUI] Upgrade analysis failed for ${entry.label}:`, error);
                     entry.state = 'failed';
                     entry.error = error?.message || 'unknown error';
                     analysisFailed = true;
@@ -12385,7 +12387,7 @@ class CombatSimUI {
      * @private
      */
     _allPlayersStatus(entries, skipped) {
-        const names = (state) => entries.filter((e) => e.state === state).map((e) => e.name);
+        const names = (state) => entries.filter((e) => e.state === state).map((e) => e.label);
         const done = [...names('done'), ...names('empty')];
         const stopped = names('stopped');
         const notRun = names('notrun');
@@ -12401,7 +12403,7 @@ class CombatSimUI {
             parts.push(failed.length ? 'Analysis failed partway.' : 'Analysis cancelled.');
             if (done.length) parts.push(`Finished: ${done.join(', ')}.`);
             if (stopped.length) parts.push(`Stopped partway, partial rows kept: ${stopped.join(', ')}.`);
-            if (failed.length) parts.push(`Failed: ${failed.map((e) => `${e.name} (${e.error})`).join(', ')}.`);
+            if (failed.length) parts.push(`Failed: ${failed.map((e) => `${e.label} (${e.error})`).join(', ')}.`);
             if (notRun.length) parts.push(`Not run: ${notRun.join(', ')}.`);
         }
         if (skipped.length) parts.push(`Skipped, no profile loaded: ${skipped.join(', ')}.`);
@@ -12444,7 +12446,7 @@ class CombatSimUI {
         if (unfinished.length || run.skipped.length) {
             const lines = [];
             if (unfinished.length) {
-                const list = unfinished.map((e) => `${e.name} (${stateText(e)})`).join(', ');
+                const list = unfinished.map((e) => `${e.label} (${stateText(e)})`).join(', ');
                 lines.push(`Not every player finished: ${list}.`);
             }
             if (run.skipped.length) lines.push(`Skipped, no profile loaded: ${run.skipped.join(', ')}.`);
@@ -12465,7 +12467,7 @@ class CombatSimUI {
                 `border:1px solid ${GAME_COLORS.border}; border-radius:5px; padding:6px 10px; color:#e0e0e0; ` +
                 `font-family:inherit; font-size:12px;">` +
                 `<span style="font-size:10px; color:#888;">${open ? '▼' : '▶'}</span>` +
-                `<span style="font-weight:700;">${escapeAttribute(entry.name)}</span>` +
+                `<span style="font-weight:700;">${escapeAttribute(entry.label)}</span>` +
                 `<span style="color:${colorOf(entry)};">${escapeAttribute(stateText(entry))}</span>` +
                 (hint
                     ? `<span style="color:${GAME_COLORS.textDim}; min-width:0; overflow:hidden; ` +
