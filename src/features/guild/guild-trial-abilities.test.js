@@ -1614,6 +1614,20 @@ describe('a sync pull of the session under a running page', () => {
         expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
     });
 
+    test('a capture that takes a rejected replacement’s place in the queue still discards the last trial', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const next = NOW + 10 * 60 * 1000;
+        disk.hold = true;
+
+        s.noteTrialStart(next);
+        s.recordCapture(snap('Bob', 2, ['/abilities/aqua_aura'], { at: next + 1000 }), { at: next + 1000 });
+        releaseQueue();
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+        expect(names(s.session.players)).toEqual(['Bob']);
+    });
+
     test('a trial-start signal before the pull is taken in keeps the guildmate’s captures', () => {
         const s = session(['Alice', 'Bob']);
         s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });

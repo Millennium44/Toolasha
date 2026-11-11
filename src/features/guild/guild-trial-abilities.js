@@ -1355,7 +1355,11 @@ class GuildTrialAbilities {
             // A kept copy is this trial's by the rule that kept it, however long ago it began: the blank session
             // takes its start, so the fold below cannot read the two as different trials
             const live = kept ? { ...value, startedAt: base.startedAt } : value;
-            if (replace && !kept) return value;
+            // A rule that rejects the stored copy discards it, whichever write of the generation lands first: a
+            // capture that took the replacement's place in storage's queue still carries the replacement's verdict.
+            // A later trial stored elsewhere is the exception: it is not this tab's to discard, and stands on its own
+            const later = base.startedAt > value.startedAt + SESSION_MAX_AGE_MS;
+            if (keep && !kept && !later) return value;
             const merged = mergeSessions(base, live);
             // A later trial stored by another tab stands on its own
             if (merged === base) return stored;
