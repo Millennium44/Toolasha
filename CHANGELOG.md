@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim comparison shows when each run was made
+
+Each saved run's name now starts with the time it ran, so the newest one is easy to find. Every saved run gets a ✕ to delete it, including runs not yet added to the comparison.
+
+### Dungeon summary shows clears and fails
+
+The Success tile now shows how many runs cleared and failed. Avg clear now leaves out failed attempts, so it matches the in-game dungeon tracker; the figure including fails is on hover.
+
+### Wipe events say who fell first and what killed them
+
+Above the wipe cards, a summary shows the waves the party wiped on, who usually fell first and the hits that killed them. Each card names the first player down, the hit that dropped them and the order the rest fell.
+
 <!-- shipped in 3.83.0 -->
 
 ### Treasure popup shows the expected total
