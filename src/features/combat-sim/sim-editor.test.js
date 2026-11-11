@@ -4017,6 +4017,48 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(editor.getSelectedLoadoutName()).toBe('');
     });
 
+    test('the party loadout picked among same-named ones is remembered by id and comes back as itself', async () => {
+        const first = { id: 111, name: 'Same', actionTypeHrid: COMBAT };
+        const second = { id: 900401, name: 'Same', actionTypeHrid: COMBAT };
+        bridge.snapshots = [first, second];
+        const one = setup(partyInfo());
+        await one.editor.resetToParty({ fromButton: true });
+        expect(bridge.applied.at(-1)).toBe(second);
+        await vi.waitFor(() => expect(settings.values.get('simEditorLoadoutId')).toBe('900401'));
+        expect(settings.values.get('simEditorLoadoutName')).toBe('Same');
+
+        // A later opening restores the second, not the first of the same name
+        bridge.applied = [];
+        const reopened = setup(partyInfo());
+        await reopened.editor.initEditor();
+        expect(bridge.applied.at(-1)).toBe(second);
+    });
+
+    test('memory from an older build (a name, no id) restores by name; a stale id never overrides the name', async () => {
+        const first = { id: 111, name: 'Same', actionTypeHrid: COMBAT };
+        const second = { id: 900401, name: 'Other', actionTypeHrid: COMBAT };
+        bridge.snapshots = [first, second];
+        settings.values.set('simEditorLoadoutName', 'Same');
+        const old = setup(partyInfo());
+        await old.editor.initEditor();
+        expect(bridge.applied.at(-1)).toBe('Same');
+        // An older build rewrote the name over a newer build's id for another loadout
+        settings.values.set('simEditorLoadoutId', '900401');
+        bridge.applied = [];
+        const stale = setup(partyInfo());
+        await stale.editor.initEditor();
+        expect(bridge.applied.at(-1)).toBe('Same');
+    });
+
+    test('a loadout picked by name from the dropdown forgets the id', async () => {
+        const second = { id: 900401, name: 'Same', actionTypeHrid: COMBAT };
+        bridge.snapshots = [{ id: 111, name: 'Same', actionTypeHrid: COMBAT }, second];
+        const { editor } = setup(partyInfo());
+        await editor.resetToParty({ fromButton: true });
+        editor.applyLoadoutByName('Same');
+        await vi.waitFor(() => expect(settings.values.get('simEditorLoadoutId')).toBe(''));
+    });
+
     test('a character switch during the rebuild applies nothing', async () => {
         bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
         const { editor, onResetToParty } = setup(partyInfo());

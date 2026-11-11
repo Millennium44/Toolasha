@@ -126,6 +126,13 @@ function escapeHtml(text) {
  * dropdown at all.
  */
 const LOADOUT_MEMORY_KEY = 'simEditorLoadoutName';
+/**
+ * The server id of the remembered loadout, kept beside the name rather than inside it: an older build reads only
+ * the name key (a plain string) and ignores this one, and a newer build reading memory an older build wrote finds
+ * no id and restores by name as before. The id is trusted only while the snapshot it names still carries the
+ * remembered name, so a name written by an older build over a stale id is never overridden by it.
+ */
+const LOADOUT_ID_MEMORY_KEY = 'simEditorLoadoutId';
 
 const EDITOR_ROW_STYLE_ID = 'mwi-csim-editor-row-styles';
 const EDITOR_ROW_CSS = `
@@ -191,6 +198,8 @@ export class SimEditor {
         this._importSkipped = [];
         this._editorInitialized = false;
         this._selectedLoadoutName = '';
+        // The server id of the snapshot applied by object (two loadouts can share a name); '' when picked by name
+        this._selectedLoadoutId = '';
         // Snapshot of each player's DTO taken right after a loadout was applied,
         // keyed by hrid — `generateSimLabel` diffs against this instead of
         // `_originalDTOs` while a loadout is selected, so a loadout that
@@ -777,9 +786,22 @@ export class SimEditor {
         if (!loadoutName || !this._editedDTOs) return false;
         if (!this._applyLoadoutToDTO(loadoutName)) return false;
         this._selectedLoadoutName = typeof loadoutName === 'object' ? loadoutName.name || '' : loadoutName;
+        this._selectedLoadoutId =
+            typeof loadoutName === 'object' && loadoutName.id != null ? String(loadoutName.id) : '';
         this._saveLoadoutMemory();
         this.renderEditor();
         return true;
+    }
+
+    /**
+     * The saved loadout snapshot with a server id.
+     * @private
+     * @param {string} id
+     * @returns {Object|null}
+     */
+    _snapshotById(id) {
+        const all = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots?.() || [];
+        return all.find((snap) => String(snap?.id) === String(id)) ?? null;
     }
 
     /**
@@ -806,7 +828,12 @@ export class SimEditor {
     async _saveLoadoutMemory() {
         if (!this._remembersLoadout()) return;
         try {
-            await writeScoped(LOADOUT_MEMORY_KEY, this._selectedLoadoutName || '');
+            const name = this._selectedLoadoutName || '';
+            await writeScoped(LOADOUT_MEMORY_KEY, name);
+            // Only an id whose snapshot still wears this name; a name picked by hand carries none
+            const id = name && this._selectedLoadoutId ? this._selectedLoadoutId : '';
+            const known = id ? this._snapshotById(id) : null;
+            await writeScoped(LOADOUT_ID_MEMORY_KEY, known && known.name === name ? id : '');
         } catch (error) {
             console.error('[SimEditor] Failed to save the loadout selection:', error);
         }
@@ -832,9 +859,13 @@ export class SimEditor {
         const owner = dataManager.getCurrentCharacterId?.() ?? null;
         try {
             const saved = await readScoped(LOADOUT_MEMORY_KEY, 'settings', '');
-            if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
             if (typeof saved !== 'string' || !saved) return;
-            this.applyLoadoutByName(saved);
+            const savedId = await readScoped(LOADOUT_ID_MEMORY_KEY, 'settings', '');
+            if ((dataManager.getCurrentCharacterId?.() ?? null) !== owner) return;
+            // By id first, so the second of two same-named loadouts comes back as itself; by name when there is
+            // no id (memory from an older build) or the id no longer names a loadout of that name
+            const byId = typeof savedId === 'string' && savedId ? this._snapshotById(savedId) : null;
+            this.applyLoadoutByName(byId && byId.name === saved ? byId : saved);
         } catch (error) {
             console.error('[SimEditor] Failed to restore the loadout selection:', error);
         }
@@ -4747,6 +4778,7 @@ export class SimEditor {
                     this._saveLoadoutMemory();
                 } else if (this._applyLoadoutToDTO(selectedName)) {
                     this._selectedLoadoutName = selectedName;
+                    this._selectedLoadoutId = '';
                     this._saveLoadoutMemory();
                 }
                 // A failed apply (no game data, no DTO, snapshot gone) leaves the selection and the remembered
