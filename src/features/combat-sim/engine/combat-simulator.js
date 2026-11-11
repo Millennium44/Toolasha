@@ -124,6 +124,12 @@ const ONE_SECOND = 1e9;
 const HOT_TICK_INTERVAL = 5 * ONE_SECOND;
 const DOT_TICK_INTERVAL = 3 * ONE_SECOND;
 const REGEN_TICK_INTERVAL = 10 * ONE_SECOND;
+
+/**
+ * Capacity of the ring that holds player heals and casts for a wipe log, apart
+ * from the 200-entry ring of enemy hits. Bounded so a long run stays cheap.
+ */
+const WIPE_SUPPORT_SIZE = 400;
 // The clear-to-next-wave gap is not the flat 3.000 s it looks like. Measured,
 // it spreads over a 12-bin table from 3,023 ms to 3,090 ms with a mean of
 // 3,036.9 ms, because the spawn aligns to the server's 120 s clock cycle.
@@ -188,6 +194,16 @@ class CombatSimulator {
             count: 0,
             maxSize: 200,
         };
+        // Player-side events (heals and ability casts) in a ring of their own,
+        // so they can never push the enemy hits that explain a death out of
+        // the 200-entry window. Merged back into one timeline by `seq`.
+        this.wipeSupport = {
+            buffer: new Array(WIPE_SUPPORT_SIZE),
+            index: 0,
+            count: 0,
+            maxSize: WIPE_SUPPORT_SIZE,
+        };
+        this.wipeSeq = 0;
     }
 
     /**
@@ -303,9 +319,56 @@ class CombatSimulator {
     addToWipeLogs(logEntry) {
         const { buffer, maxSize } = this.wipeLogs;
 
+        logEntry.seq = this.wipeSeq++;
         buffer[this.wipeLogs.index] = logEntry;
         this.wipeLogs.index = (this.wipeLogs.index + 1) % maxSize;
         this.wipeLogs.count = Math.min(this.wipeLogs.count + 1, maxSize);
+    }
+
+    addToWipeSupport(logEntry) {
+        const ring = this.wipeSupport;
+
+        logEntry.seq = this.wipeSeq++;
+        ring.buffer[ring.index] = logEntry;
+        ring.index = (ring.index + 1) % ring.maxSize;
+        ring.count = Math.min(ring.count + 1, ring.maxSize);
+    }
+
+    /**
+     * Wipe-log entry for HP a player gained. Dungeons only, and only HP that
+     * actually landed on a living player: a full-health target, a dead one or
+     * a monster leaves nothing to explain. `amount` is what `addHitpoints`
+     * returned, so the "before" HP is read back off the target rather than
+     * captured ahead of the heal.
+     *
+     * @param {Object} source - Unit doing the healing (must be a player)
+     * @param {string} ability - Ability, consumable hrid, or 'lifesteal'
+     * @param {Object} target - Unit that was healed (must be a player)
+     * @param {number} amount - HP actually gained
+     */
+    recordHealLog(source, ability, target, amount) {
+        if (!this.zone?.isDungeon || !source?.isPlayer || !target?.isPlayer || !(amount > 0)) return;
+        const afterHp = target.combatDetails.currentHitpoints;
+        const beforeHp = afterHp - amount;
+        if (beforeHp <= 0) return;
+        const maxHp = target.combatDetails.maxHitpoints;
+        this.addToWipeSupport({
+            kind: 'heal',
+            time: this.simulationTime,
+            wave: this.zone.encountersKilled - 1,
+            source: source.hrid || 'UNKNOWN_SOURCE',
+            ability,
+            target: target.hrid || 'UNKNOWN_TARGET',
+            amount,
+            beforeHp,
+            afterHp,
+            targetHpPct: maxHp > 0 ? (beforeHp / maxHp) * 100 : 0,
+            playersHp: this.players.map((p) => ({
+                hrid: p.hrid || 'UNKNOWN_PLAYER',
+                current: p.combatDetails?.currentHitpoints ?? 0,
+                max: p.combatDetails?.maxHitpoints ?? 0,
+            })),
+        });
     }
 
     logAndResetWipeLogs() {
@@ -317,8 +380,14 @@ class CombatSimulator {
             }
         });
 
+        this.resetWipeLogs();
+    }
+
+    resetWipeLogs() {
         this.wipeLogs.index = 0;
         this.wipeLogs.count = 0;
+        this.wipeSupport.index = 0;
+        this.wipeSupport.count = 0;
     }
 
     buildCombatLog(source, ability, target, damageDone) {
@@ -336,6 +405,7 @@ class CombatSimulator {
             }));
 
             return {
+                kind: 'hit',
                 time: this.simulationTime,
                 wave: this.zone.encountersKilled - 1,
                 source: sourceHrid,
@@ -370,6 +440,7 @@ class CombatSimulator {
             }));
 
             return {
+                kind: 'hit',
                 time: this.simulationTime,
                 wave: this.zone.encountersKilled - 1,
                 source: sourceHrid,
@@ -389,14 +460,25 @@ class CombatSimulator {
     }
 
     getOrderedWipeLogs() {
-        const { buffer, maxSize, count } = this.wipeLogs;
+        const read = ({ buffer, maxSize, count, index }) => {
+            const out = [];
+            for (let i = 0; i < count; i++) out.push(buffer[(index - count + maxSize + i) % maxSize]);
+            return out;
+        };
+        const hits = read(this.wipeLogs);
+        const support = read(this.wipeSupport);
+        if (support.length === 0) return hits;
+
+        // Both rings are already in order; merge by the sequence number every
+        // entry got when it was recorded, which keeps same-tick order (a heal
+        // that follows a lethal hit stays after it).
         const logs = [];
-
-        for (let i = 0; i < count; i++) {
-            const idx = (this.wipeLogs.index - count + maxSize + i) % maxSize;
-            logs.push(buffer[idx]);
+        let h = 0;
+        let s = 0;
+        while (h < hits.length || s < support.length) {
+            if (s >= support.length || (h < hits.length && hits[h].seq < support[s].seq)) logs.push(hits[h++]);
+            else logs.push(support[s++]);
         }
-
         return logs;
     }
 
@@ -1093,6 +1175,7 @@ class CombatSimulator {
 
             if (attackResult.lifeStealHeal > 0) {
                 this.simResult.addHitpointsGained(source, 'lifesteal', attackResult.lifeStealHeal);
+                this.recordHealLog(source, 'lifesteal', source, attackResult.lifeStealHeal);
             }
 
             if (attackResult.manaLeechMana > 0) {
@@ -1332,8 +1415,7 @@ class CombatSimulator {
                 // completion, so its interval must not enter the average.
                 this.dungeonPairBroken = true;
                 this.saveWipeLogsToSimResult(this.zone.encountersKilled - 1);
-                this.wipeLogs.index = 0;
-                this.wipeLogs.count = 0;
+                this.resetWipeLogs();
                 this.hpMpRecorder?.clearPreWipe();
                 this.hpMpRecorder?.markRunStart(this.simulationTime);
 
@@ -1515,6 +1597,7 @@ class CombatSimulator {
             );
             const hitpointsAdded = event.source.addHitpoints(tickValue);
             this.simResult.addHitpointsGained(event.source, event.consumable.hrid, hitpointsAdded);
+            this.recordHealLog(event.source, event.consumable.hrid, event.source, hitpointsAdded);
         }
 
         if (event.consumable.manapointRestore > 0) {
@@ -1837,6 +1920,7 @@ class CombatSimulator {
             if (consumable.hitpointRestore > 0) {
                 const hitpointsAdded = source.addHitpoints(consumable.hitpointRestore);
                 this.simResult.addHitpointsGained(source, consumable.hrid, hitpointsAdded);
+                this.recordHealLog(source, consumable.hrid, source, hitpointsAdded);
             }
 
             if (consumable.manapointRestore > 0) {
@@ -1917,6 +2001,22 @@ class CombatSimulator {
         source.combatDetails.currentManapoints -= ability.manaCost;
 
         ability.lastUsed = this.simulationTime;
+
+        if (this.zone?.isDungeon && source.isPlayer) {
+            // First living enemy is what a single-target effect will pick;
+            // getTarget draws no random numbers, so logging cannot move the run
+            const single = ability.abilityEffects?.some((effect) => effect.targetType === 'enemy');
+            const castTarget = single ? CombatUtilities.getTarget(this.enemies) : null;
+            const cast = {
+                kind: 'cast',
+                time: this.simulationTime,
+                wave: this.zone.encountersKilled - 1,
+                source: source.hrid || 'UNKNOWN_SOURCE',
+                ability: ability.hrid,
+            };
+            if (castTarget) cast.target = castTarget.hrid;
+            this.addToWipeSupport(cast);
+        }
 
         const todoAbilities = [ability];
 
@@ -2117,6 +2217,7 @@ class CombatSimulator {
 
                 if (attackResult.lifeStealHeal > 0) {
                     this.simResult.addHitpointsGained(tempSource, 'lifesteal', attackResult.lifeStealHeal);
+                    this.recordHealLog(tempSource, 'lifesteal', tempSource, attackResult.lifeStealHeal);
                 }
 
                 if (attackResult.manaLeechMana > 0) {
@@ -2188,6 +2289,7 @@ class CombatSimulator {
 
                 if (attackResult.hpDrain > 0) {
                     this.simResult.addHitpointsGained(source, ability.hrid, attackResult.hpDrain);
+                    this.recordHealLog(source, ability.hrid, source, attackResult.hpDrain);
                 }
 
                 if (attackResult.didHit && abilityEffect.buffs) {
@@ -2394,6 +2496,7 @@ class CombatSimulator {
             for (const target of targets.filter((unit) => unit && unit.combatDetails.currentHitpoints > 0)) {
                 const amountHealed = CombatUtilities.processHeal(source, abilityEffect, target);
                 this.simResult.addHitpointsGained(target, ability.hrid, amountHealed);
+                this.recordHealLog(source, ability.hrid, target, amountHealed);
             }
             return;
         }
@@ -2417,6 +2520,7 @@ class CombatSimulator {
             if (healTarget) {
                 const amountHealed = CombatUtilities.processHeal(source, abilityEffect, healTarget);
                 this.simResult.addHitpointsGained(healTarget, ability.hrid, amountHealed);
+                this.recordHealLog(source, ability.hrid, healTarget, amountHealed);
             }
             return;
         }
@@ -2428,6 +2532,7 @@ class CombatSimulator {
 
         const amountHealed = CombatUtilities.processHeal(source, abilityEffect, source);
         this.simResult.addHitpointsGained(source, ability.hrid, amountHealed);
+        this.recordHealLog(source, ability.hrid, source, amountHealed);
     }
 
     /**

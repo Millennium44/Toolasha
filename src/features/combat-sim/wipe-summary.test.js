@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { createWipeNamer, analyzeWipe, describeWipe, summarizeWipes } from './wipe-summary.js';
+import { createWipeNamer, analyzeWipe, describeWipe, describeWipeHealing, summarizeWipes } from './wipe-summary.js';
 
 const BOSS = '/monsters/gummy_bear';
 const STRIKE = '/abilities/crushing_strike';
@@ -146,5 +146,112 @@ describe('summarizeWipes', () => {
         const sum = summarizeWipes([{ wave: 1, logs: fourPlayerWipe() }], namer);
 
         expect(sum.killers.map((k) => k.label)).toContain('Damage over time');
+    });
+});
+
+describe('party-side entries in the wipe log', () => {
+    const QUICK_AID = '/abilities/quick_aid';
+    const ENTANGLE = '/abilities/entangle';
+    const named = createWipeNamer({
+        playerInfo,
+        gameData: {
+            ...gameData,
+            abilityDetailMap: { ...gameData.abilityDetailMap, [QUICK_AID]: { name: 'Quick Aid' } },
+        },
+    });
+    const heal = (time, target, amount, afterHp, extra = {}) => ({
+        kind: 'heal',
+        time: time * S,
+        wave: 60,
+        source: 'player1',
+        ability: QUICK_AID,
+        target,
+        amount,
+        beforeHp: afterHp - amount,
+        afterHp,
+        targetHpPct: 40,
+        playersHp: [],
+        ...extra,
+    });
+    const cast = (time, extra = {}) => ({
+        kind: 'cast',
+        time: time * S,
+        wave: 60,
+        source: 'player1',
+        ability: ENTANGLE,
+        target: BOSS,
+        ...extra,
+    });
+
+    test('casts and heals are never damage, deaths or killing blows', () => {
+        const logs = [hit(1, 'player2', 300, 700), cast(2), heal(3, 'player2', 400, 1100), hit(4, 'player2', 700, 0)];
+        const plain = [hit(1, 'player2', 300, 700), hit(4, 'player2', 700, 0)];
+
+        expect(analyzeWipe(logs).hits).toHaveLength(2);
+        expect(analyzeWipe(logs).down.map((d) => [d.target, d.damage, d.time])).toEqual(
+            analyzeWipe(plain).down.map((d) => [d.target, d.damage, d.time])
+        );
+        const sum = summarizeWipes([{ wave: 60, logs }], named);
+        const base = summarizeWipes([{ wave: 60, logs: plain }], named);
+        expect(sum.damage).toEqual(base.damage);
+        expect(sum.killers).toEqual(base.killers);
+        expect(sum.firstDown).toEqual(base.firstDown);
+    });
+
+    test('a heal entry that looks like a lethal hit is still not a death', () => {
+        // Defensive: even a malformed heal that carries damage and afterHp 0 is not a hit
+        const bad = heal(2, 'player2', 100, 0, { damage: 100, beforeHp: 100 });
+        expect(analyzeWipe([bad]).down).toEqual([]);
+        expect(analyzeWipe([bad]).hits).toEqual([]);
+    });
+
+    test('an old-shape log with no kind reads as hits and reports no healing lines', () => {
+        const logs = fourPlayerWipe();
+        const analysis = analyzeWipe(logs);
+
+        expect(analysis.hits).toHaveLength(logs.length);
+        expect(analysis.down.length).toBeGreaterThan(0);
+        expect(describeWipeHealing(analysis, named)).toEqual({ heals: '', lastHealed: '' });
+    });
+
+    test('a heal after a lethal hit in the same tick does not undo or precede the fall', () => {
+        const logs = [hit(10, 'player2', 100, 0), heal(10, 'player3', 200, 900), hit(11, 'player3', 900, 0)];
+        const analysis = analyzeWipe(logs);
+
+        expect(analysis.down.map((d) => d.target)).toEqual(['player2', 'player3']);
+        // player2 fell before any heal on them
+        expect(describeWipeHealing(analysis, named).lastHealed).toBe('Bee not healed in the log window');
+    });
+
+    test('heals in the last 30 s are counted by target, and the first faller reports its last heal', () => {
+        const logs = [
+            heal(1, 'player2', 100, 600), // older than 30 s before the end
+            hit(50, 'player3', 100, 900),
+            heal(60, 'player2', 100, 700),
+            cast(61),
+            heal(70, 'player2', 100, 800),
+            heal(72, 'player3', 100, 1000),
+            hit(80, 'player2', 800, 0),
+        ];
+        const text = describeWipeHealing(analyzeWipe(logs), named);
+
+        expect(text.heals).toBe('Heals in the last 30 s: 3, to: Bee ×2, Cee ×1');
+        expect(text.lastHealed).toBe('Bee last healed 10.0 s before falling');
+    });
+
+    test('casts alone say the first faller was not healed', () => {
+        const text = describeWipeHealing(analyzeWipe([cast(1), hit(2, 'player2', 100, 0)]), named);
+
+        expect(text.heals).toBe('Heals in the last 30 s: 0');
+        expect(text.lastHealed).toBe('Bee not healed in the log window');
+    });
+
+    test('names resolve for items and life steal', () => {
+        const withItems = createWipeNamer({
+            playerInfo,
+            gameData: { itemDetailMap: { '/items/donut': { name: 'Donut' } } },
+        });
+        expect(withItems.ability('/items/donut')).toBe('Donut');
+        expect(withItems.ability('lifesteal')).toBe('Life Steal');
     });
 });

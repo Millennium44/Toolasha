@@ -812,6 +812,165 @@ describe('encounter teardown', () => {
         expect(sim.simResult.deaths[player.hrid]).toBe(2);
     });
 
+    describe('the wipe log carries the party side: heals and casts', () => {
+        /** Stand in for a party of three players at the given [hp, max] pairs. */
+        function party(sim, pools) {
+            sim.players = pools.map(([hp, max], i) => {
+                const p = fixturePlayer();
+                p.hrid = `player${i + 1}`;
+                p.combatDetails.maxHitpoints = max;
+                p.combatDetails.currentHitpoints = hp;
+                return p;
+            });
+            return sim.players;
+        }
+
+        /** A heal ability effect whose processHeal adds exactly `amount` HP. */
+        function healWith(amount) {
+            vi.spyOn(CombatUtilities, 'processHeal').mockImplementation((source, effect, target) =>
+                target.addHitpoints(amount)
+            );
+        }
+
+        const effect = (targetType) => ({ combatStyleHrid: '/combat_styles/magic', targetType });
+        const heal = { hrid: '/abilities/quick_aid' };
+        const hitEntry = (sim, target, beforeHp, afterHp) => ({
+            kind: 'hit',
+            time: sim.simulationTime,
+            source: RAT_HRID,
+            ability: 'autoAttack',
+            target,
+            damage: beforeHp - afterHp,
+            beforeHp,
+            afterHp,
+        });
+
+        afterEach(() => {
+            vi.restoreAllMocks();
+        });
+
+        test('lowestHpAlly heals the lowest percentage, not the lowest absolute HP, and logs it', () => {
+            const sim = dungeonSim();
+            // player1 has more HP in absolute terms (600) but is at 10%; player2 has 500 of 600 (83%)
+            const [p1, p2] = party(sim, [
+                [600, 6000],
+                [500, 600],
+            ]);
+            healWith(420);
+
+            sim.processAbilityHealEffect(p2, heal, effect('lowestHpAlly'));
+
+            const entries = sim.getOrderedWipeLogs();
+            expect(entries).toHaveLength(1);
+            expect(entries[0]).toMatchObject({
+                kind: 'heal',
+                source: p2.hrid,
+                ability: heal.hrid,
+                target: p1.hrid,
+                amount: 420,
+                beforeHp: 600,
+                afterHp: 1020,
+            });
+            expect(entries[0].targetHpPct).toBeCloseTo(10, 5);
+            expect(entries[0].playersHp.map((p) => p.hrid)).toEqual([p1.hrid, p2.hrid]);
+        });
+
+        test('a dead player is never healed or logged, and a full-health heal logs nothing', () => {
+            const sim = dungeonSim();
+            const [dead, full, hurt] = party(sim, [
+                [0, 1000],
+                [1000, 1000],
+                [400, 1000],
+            ]);
+            healWith(300);
+
+            sim.processAbilityHealEffect(hurt, heal, effect('allAllies'));
+
+            const entries = sim.getOrderedWipeLogs();
+            expect(entries.map((e) => e.target)).toEqual([hurt.hrid]);
+            expect(dead.combatDetails.currentHitpoints).toBe(0);
+            expect(full.combatDetails.currentHitpoints).toBe(1000);
+
+            // Direct calls refuse the same cases
+            sim.recordHealLog(hurt, heal.hrid, dead, 50);
+            sim.recordHealLog(hurt, heal.hrid, full, 0);
+            expect(sim.getOrderedWipeLogs()).toHaveLength(1);
+        });
+
+        test('outside a dungeon nothing is recorded', () => {
+            const sim = dungeonSim();
+            const [p1] = party(sim, [[100, 1000]]);
+            sim.zone.isDungeon = false;
+            healWith(300);
+
+            sim.processAbilityHealEffect(p1, heal, effect('self'));
+
+            expect(sim.getOrderedWipeLogs()).toHaveLength(0);
+        });
+
+        test('a heal that follows a lethal hit in the same tick stays after it, and cannot revive the log', () => {
+            const sim = dungeonSim();
+            const [p1, p2] = party(sim, [
+                [300, 1000],
+                [200, 1000],
+            ]);
+            healWith(250);
+
+            sim.addToWipeLogs(hitEntry(sim, p1.hrid, 300, 0));
+            p1.combatDetails.currentHitpoints = 0;
+            // Same simulated tick: the healer heals the living player, not the one just downed
+            sim.processAbilityHealEffect(p2, heal, effect('lowestHpAlly'));
+
+            const entries = sim.getOrderedWipeLogs();
+            expect(entries.map((e) => e.kind)).toEqual(['hit', 'heal']);
+            expect(entries[1].target).toBe(p2.hrid);
+            expect(entries[0].time).toBe(entries[1].time);
+        });
+
+        test('a player cast is logged with its single target and no damage fields', () => {
+            const sim = dungeonSim();
+            const [p1] = party(sim, [[1000, 1000]]);
+            const entangle = {
+                hrid: '/abilities/entangle',
+                manaCost: 0,
+                cooldownDuration: 0,
+                abilityEffects: [],
+            };
+            const aoe = { ...entangle, hrid: '/abilities/sweep' };
+            entangle.abilityEffects = [{ effectType: '/ability_effect_types/noop', targetType: 'enemy' }];
+            sim.enemies[0].combatDetails.currentHitpoints = 50;
+
+            sim.tryUseAbility(p1, entangle);
+            sim.tryUseAbility(p1, aoe);
+
+            const [single, area] = sim.getOrderedWipeLogs();
+            expect(single).toMatchObject({ kind: 'cast', source: p1.hrid, ability: entangle.hrid });
+            expect(single.target).toBe(sim.enemies[0].hrid);
+            expect(area.target).toBeUndefined();
+            expect(single.damage).toBeUndefined();
+        });
+
+        test('the buffers are bounded and heals never evict hits', () => {
+            const sim = dungeonSim();
+            const [p1] = party(sim, [[500, 1000]]);
+            for (let i = 0; i < 150; i++) sim.addToWipeLogs(hitEntry(sim, p1.hrid, 500, 400));
+            for (let i = 0; i < 1000; i++) {
+                sim.addToWipeSupport({ kind: 'cast', time: sim.simulationTime, source: p1.hrid, ability: 'x' });
+            }
+            expect(sim.wipeSupport.count).toBe(sim.wipeSupport.maxSize);
+
+            const entries = sim.getOrderedWipeLogs();
+            expect(entries.filter((e) => e.kind === 'hit')).toHaveLength(150);
+            expect(entries.filter((e) => e.kind === 'cast')).toHaveLength(sim.wipeSupport.maxSize);
+            // Strictly in recording order
+            const seqs = entries.map((e) => e.seq);
+            expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+
+            sim.resetWipeLogs();
+            expect(sim.getOrderedWipeLogs()).toHaveLength(0);
+        });
+    });
+
     describe('a dungeon clear revives a downed player against the pools of the buffs still on them', () => {
         /** Down the player carrying a timed buff, then clear the dungeon at `clearAt`. */
         function reviveAfterClear(type, ratioBoost, duration, clearAt) {

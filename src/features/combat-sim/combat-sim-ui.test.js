@@ -8703,6 +8703,60 @@ describe('wipe events in the results', () => {
         expect(results.querySelector('#mwi-wipe-0-body').textContent).toContain('cast');
     });
 
+    test('the raw log shows heals in green and casts dim, by name, with the old hit rows unchanged', () => {
+        const heal = {
+            kind: 'heal',
+            time: 2e9,
+            wave: 60,
+            source: 'player1',
+            ability: '/abilities/quick_aid',
+            target: 'player2',
+            amount: 420,
+            beforeHp: 380,
+            afterHp: 800,
+            targetHpPct: 38,
+            playersHp: [
+                { hrid: 'player1', current: 1000, max: 1000 },
+                { hrid: 'player2', current: 800, max: 1000 },
+            ],
+        };
+        const cast = {
+            kind: 'cast',
+            time: 2e9,
+            wave: 60,
+            source: 'player1',
+            ability: '/abilities/entangle',
+            target: '/monsters/gummy_bear',
+        };
+        const wipeEvents = [
+            {
+                wave: 60,
+                simulationTime: 5e9,
+                logs: [hit(1, 'player2', 100, 380), cast, heal, hit(3, 'player2', 800, 0)],
+            },
+        ];
+        const simResult = oneHourFight({ isDungeon: true, wipeEvents });
+        showFight(simResult);
+        ui._playerInfo = [
+            { hrid: 'player1', name: 'AFKANDY' },
+            { hrid: 'player2', name: '<b>Taylor</b>' },
+        ];
+        ui._displayResults(simResult, 1, ui._lastGameData);
+
+        const body = ui.panel.querySelector('#mwi-wipe-0-body');
+        const healRow = body.querySelector('[data-wipe-heal]');
+        expect(healRow.textContent).toBe('AFKANDY Quick Aid → <b>Taylor</b> +420 (38% → 80%)');
+        expect(healRow.querySelector('b')).toBeNull();
+        expect(body.querySelector('[data-wipe-cast]').textContent).toBe('AFKANDY cast Entangle → Gummy Bear');
+        expect(body.textContent).toContain('HP 480→380');
+        // Hits keep their own rows, with names instead of hrids
+        expect(body.textContent).toContain('Gummy Bear cast Crushing Strike');
+        expect(ui.panel.querySelector('[data-wipe-heals]').textContent).toBe(
+            'Heals in the last 30 s: 1, to: <b>Taylor</b> ×1'
+        );
+        expect(ui.panel.querySelector('[data-wipe-last-heal]')).not.toBeNull();
+    });
+
     test('a member name is escaped, not injected', () => {
         const wipeEvents = [{ wave: 3, simulationTime: 1e9, logs: [hit(1, 'player1', 10, 0)] }];
         const simResult = oneHourFight({ isDungeon: true, wipeEvents });
