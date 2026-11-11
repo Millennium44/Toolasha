@@ -1566,6 +1566,54 @@ describe('a sync pull of the session under a running page', () => {
         expect(s.session.startedAt).toBe(today - 10 * 60 * 1000);
     });
 
+    test('a stored session naming another trial is not kept by the new trial’s tick, however recent', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+        let encounter = 'badger';
+        s.setLiveTrialSource(() => encounter);
+        disk.keys[KEY] = {
+            ...pulledSession({
+                startedAt: today - 10 * 60 * 1000,
+                lastActivityAt: today - 60 * 1000,
+                players: [['Bob', 2, ['/abilities/aqua_aura']]],
+            }),
+            trialKey: 'dragon',
+        };
+        disk.hold = true;
+
+        s.noteTrialActivity(today);
+        // The new trial's encounter is known by the time the write lands
+        encounter = 'cat';
+        releaseQueue();
+
+        expect(disk.keys[KEY].players).toEqual({});
+        expect(s.session.players).toEqual({});
+    });
+
+    test('a stored session naming the same trial is kept', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+        let encounter = 'badger';
+        s.setLiveTrialSource(() => encounter);
+        disk.keys[KEY] = {
+            ...pulledSession({
+                startedAt: today - 10 * 60 * 1000,
+                lastActivityAt: today - 60 * 1000,
+                players: [['Bob', 2, ['/abilities/aqua_aura']]],
+            }),
+            trialKey: 'cat',
+        };
+        disk.hold = true;
+
+        s.noteTrialActivity(today);
+        encounter = 'cat';
+        releaseQueue();
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+    });
+
     test('a trial-start signal before the pull is taken in keeps the guildmate’s captures', () => {
         const s = session(['Alice', 'Bob']);
         s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });

@@ -844,10 +844,17 @@ class GuildTrialAbilities {
         // section is not this one's. Not cleared in _start, which a capture also reaches
         this._forgetLiveTrial(at);
         this._start(at);
-        // As in noteTrialStart: a stored session this trial's ticks would keep is this trial's, not the last one
+        // As in noteTrialStart: a stored session this trial's ticks would keep is this trial's, not the last one.
+        // Unless both name their trial and the names differ: then it is another trial's, however recent
         this._persist({
             replace: true,
-            keepStored: (stored) => at - sessionLastActivity(stored) <= SESSION_MAX_AGE_MS,
+            keepStored: (stored) => {
+                const live = this._liveTrialKey();
+                if (live && typeof stored.trialKey === 'string' && stored.trialKey && stored.trialKey !== live) {
+                    return false;
+                }
+                return at - sessionLastActivity(stored) <= SESSION_MAX_AGE_MS;
+            },
         });
     }
 
