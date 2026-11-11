@@ -29,6 +29,7 @@ import { GAME_COLORS, setButtonVariant, styleGameButton } from '../../utils/game
 import { classTagIcon } from '../../utils/class-weapon.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
+import { onSyncPullApplied } from '../../utils/sync-merge-registry.js';
 import {
     fetchLoadout,
     getLoadouts,
@@ -1969,6 +1970,9 @@ let offCaptured = null;
 /** Unsubscribe from `view-loadout.js`'s captures; set in `initialize` */
 let offViewLoadoutCaptured = null;
 
+/** Unsubscribe from sync pulls; set in `initialize` */
+let offPulled = null;
+
 /** The trial-tick handler, kept so cleanup can unsubscribe exactly it */
 let onTrialTick = null;
 
@@ -2092,6 +2096,16 @@ export default {
         offCaptured = guildLoadoutCapture.onCaptured?.((event) => onCapturedEvent(event)) ?? null;
         offViewLoadoutCaptured?.();
         offViewLoadoutCaptured = onLoadoutCaptured((entry) => onViewLoadoutCaptured(entry));
+        // A pull may bring a guildmate's captures of this trial (the session is live-safe, so the page is not
+        // asked to reload): take them in and redraw
+        offPulled?.();
+        offPulled = onSyncPullApplied(async (written) => {
+            try {
+                if (await guildTrialAbilities.adoptPulled(written)) guildTrialAbilitiesPanel.render();
+            } catch (error) {
+                console.error('[GuildTrialAbilitiesUI] Taking in a pulled session failed:', error);
+            }
+        });
 
         // Which cards the player keeps folded, restored before the first draw
         try {
@@ -2125,6 +2139,8 @@ export default {
         offCaptured = null;
         offViewLoadoutCaptured?.();
         offViewLoadoutCaptured = null;
+        offPulled?.();
+        offPulled = null;
         if (onTrialTick) for (const type of TRIAL_TICK_MESSAGES) webSocketHook.off(type, onTrialTick);
         onTrialTick = null;
         guildTrialAbilitiesPanel.hide({ remember: false });

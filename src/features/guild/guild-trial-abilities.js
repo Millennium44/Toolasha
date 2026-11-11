@@ -525,6 +525,10 @@ registerSyncMerge({
     prefix: `${SESSION_KEY_PREFIX}_`,
     merge: mergeStoredSessions,
     label: 'Guild trial ability session',
+    // A pull may replace the stored session under a running page: every write folds into what is stored inside its
+    // own transaction (`_persist`; a new trial's blank session keeps a stored copy of the same trial), the panel's
+    // copy takes in a pull through `adoptPulled`, and the one write that discards outright is the Recapture button
+    liveSafe: true,
 });
 
 class GuildTrialAbilities {
@@ -808,7 +812,14 @@ class GuildTrialAbilities {
         // A new trial: last trial's plan section is not this one's
         this._forgetLiveTrial(at);
         this._start(at);
-        this._persist({ replace: true });
+        // What this tab held is the last trial's. A session stored since, by a pull or another tab, that this same
+        // rule would call the running trial is not, and its captures stay
+        this._persist({
+            replace: true,
+            keepStored: (stored) =>
+                at - stored.startedAt <= TRIAL_START_GRACE_MS ||
+                at - sessionLastActivity(stored) <= TRIAL_START_GRACE_MS,
+        });
     }
 
     /**
@@ -833,7 +844,11 @@ class GuildTrialAbilities {
         // section is not this one's. Not cleared in _start, which a capture also reaches
         this._forgetLiveTrial(at);
         this._start(at);
-        this._persist({ replace: true });
+        // As in noteTrialStart: a stored session this trial's ticks would keep is this trial's, not the last one
+        this._persist({
+            replace: true,
+            keepStored: (stored) => at - sessionLastActivity(stored) <= SESSION_MAX_AGE_MS,
+        });
     }
 
     /**
@@ -1302,35 +1317,54 @@ class GuildTrialAbilities {
      * judgement and stand as they are. The stored captures come into memory
      * too. A fresh session — a new trial, the recapture button — is written
      * with `replace`: folding it would hand back the captures it threw away.
-     * @param {{replace?: boolean}} [options] - `replace` writes the session as it stands
+     * A new trial's blank session passes `keepStored`, which names a stored
+     * session that is the new trial's own (a guildmate's device captured into
+     * it and a pull brought it before this tab took it in): that one is folded
+     * as an ordinary write would be, and only an older trial is discarded.
+     * @param {{replace?: boolean, keepStored?: (stored: Object) => boolean}} [options] - `replace` writes the
+     *   session as it stands; `keepStored` says which stored session a replacement folds into instead
      */
-    _persist({ replace = false } = {}) {
+    _persist({ replace = false, keepStored = null } = {}) {
         if (!this.session) return;
         const key = sessionStorageKey(this.guildName, this.characterId);
         // A replacement starts a new generation: a fold already in flight for the session it
         // replaced must not hand that session's captures to the fresh one
         if (replace) this._sessionGeneration = (this._sessionGeneration || 0) + 1;
         const generation = this._sessionGeneration || 0;
-        const fold = replace
-            ? undefined
-            : (stored, value) => {
-                  if (!Number.isFinite(stored?.startedAt) || !Number.isFinite(value?.startedAt)) return value;
-                  if (stored.guildName && value.guildName && stored.guildName !== value.guildName) return value;
-                  const base = sanitizeStoredSession(stored);
-                  const merged = mergeSessions(base, value);
-                  // A later trial stored by another tab stands on its own
-                  if (merged === base) return stored;
-                  const {
-                      roster: _roster,
-                      trialKey: _trialKey,
-                      ...session
-                  } = {
-                      ...merged,
-                      completedAt: value.completedAt ?? null,
-                  };
-                  this._adoptStored(key, session, generation);
-                  return { ...session, roster: value.roster, trialKey: value.trialKey };
-              };
+        // A replacement that keeps a stored copy of its own trial keeps that rule for every write of its
+        // generation until the copy has been taken in: a capture made before the first write lands takes that
+        // write's place in storage's queue, and its plain fold judges "the same trial" by start time alone
+        if (replace) this._keepStoredRule = typeof keepStored === 'function' ? { generation, keepStored } : null;
+        const rule = this._keepStoredRule;
+        const keep = rule && rule.generation === generation ? rule.keepStored : null;
+        const foldInto = (stored, value) => {
+            // The first write of the generation to land has settled what the key holds; later writes fold plainly
+            if (keep && this._keepStoredRule === rule) this._keepStoredRule = null;
+            if (!Number.isFinite(stored?.startedAt) || !Number.isFinite(value?.startedAt)) return value;
+            if (stored.guildName && value.guildName && stored.guildName !== value.guildName) return value;
+            const base = sanitizeStoredSession(stored);
+            // Never a trial that began after this one could have: that is a later trial, and stands on its own
+            const kept = keep ? base.startedAt <= value.startedAt + SESSION_MAX_AGE_MS && keep(base) : false;
+            // A kept copy is this trial's by the rule that kept it, however long ago it began: the blank session
+            // takes its start, so the fold below cannot read the two as different trials
+            const live = kept ? { ...value, startedAt: base.startedAt } : value;
+            if (replace && !kept) return value;
+            const merged = mergeSessions(base, live);
+            // A later trial stored by another tab stands on its own
+            if (merged === base) return stored;
+            const {
+                roster: _roster,
+                trialKey: _trialKey,
+                ...session
+            } = {
+                ...merged,
+                completedAt: value.completedAt ?? null,
+            };
+            this._adoptStored(key, session, generation, { kept });
+            return { ...session, roster: value.roster, trialKey: value.trialKey };
+        };
+        // A replacement with nothing it may keep is a plain write, which also overrides a fold still queued
+        const fold = replace && !keep ? undefined : foldInto;
         storage
             // The current roster rides along so a reload can restore the
             // joined view — it is display state, not part of the session's
@@ -1357,14 +1391,60 @@ class GuildTrialAbilities {
      * @param {string} key - The key the write went to
      * @param {Object} stored - The folded session, roster and trial key removed
      * @param {number} [generation] - The session generation the write started under
+     * @param {{kept?: boolean}} [options] - `kept`: a new trial's blank session folded into a stored copy of
+     *   that trial (see `_persist`), which the session in hand joins whatever its start
      * @returns {void}
      */
-    _adoptStored(key, stored, generation = this._sessionGeneration || 0) {
+    _adoptStored(key, stored, generation = this._sessionGeneration || 0, { kept = false } = {}) {
         if (!this.session || key !== sessionStorageKey(this.guildName, this.characterId)) return;
         if (generation !== (this._sessionGeneration || 0)) return;
-        if (Math.abs(this.session.startedAt - stored.startedAt) > SESSION_MAX_AGE_MS) return;
+        const live = kept ? { ...this.session, startedAt: stored.startedAt } : this.session;
+        if (Math.abs(live.startedAt - stored.startedAt) > SESSION_MAX_AGE_MS) return;
         const completedAt = this.session.completedAt;
-        this.session = { ...mergeSessions(stored, this.session), completedAt };
+        this.session = { ...mergeSessions(stored, live), completedAt };
+    }
+
+    /**
+     * A sync pull wrote keys: take in the session it stored under this tab's key, if it did.
+     *
+     * Folded under the session in hand exactly as a read at start-up is (`_restore`), but never written back: the
+     * pull's own write is what storage holds, and this tab's next write folds into it anyway. A read overtaken by
+     * a move of the key, or by a new trial started meanwhile, is dropped; a session of another guild is ignored.
+     * @param {Record<string, Array<string>>} written - The keys the pull wrote, by store
+     * @returns {Promise<boolean>} Whether the session in hand changed, so the panel should redraw
+     */
+    async adoptPulled(written) {
+        if (!this.initialized) return false;
+        const key = sessionStorageKey(this.guildName, this.characterId);
+        const keys = written?.[SESSION_STORE];
+        if (!Array.isArray(keys) || !keys.includes(key)) return false;
+        const generation = this._sessionGeneration || 0;
+        let stored;
+        try {
+            stored = await storage.get(key, SESSION_STORE, null);
+        } catch (error) {
+            console.error('[GuildTrialAbilities] Reading the pulled session failed:', error);
+            return false;
+        }
+        if (!this.initialized || key !== sessionStorageKey(this.guildName, this.characterId)) return false;
+        if (generation !== (this._sessionGeneration || 0)) return false;
+        if (!Number.isFinite(stored?.startedAt)) return false;
+        const guild = this.session?.guildName || this.guildName;
+        if (stored.guildName && guild && stored.guildName !== guild) return false;
+
+        const before = JSON.stringify(this.session);
+        // The roster and trial key ride beside the session on disk, not inside it
+        const { roster: _roster, trialKey: _trialKey, ...pulled } = sanitizeStoredSession(stored);
+        this.session = mergeSessions(pulled, this.session);
+        if (!this.roster.length && Array.isArray(stored.roster)) this.roster = normalizeRoster(stored.roster);
+        if (!this.liveTrialKey && typeof stored.trialKey === 'string' && stored.trialKey) {
+            this.liveTrialKey = stored.trialKey;
+        }
+        if (this.session) {
+            this.session.guildName = this.session.guildName || this.guildName;
+            this._recheckComplete(this.session.completedAt ?? Date.now());
+        }
+        return JSON.stringify(this.session) !== before;
     }
 }
 

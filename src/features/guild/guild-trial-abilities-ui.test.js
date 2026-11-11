@@ -24,10 +24,13 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+/** What a sync pull stored, by key; everything else reads as absent */
+const pulledDisk = vi.hoisted(() => ({ keys: {} }));
+
 // Sessions and geometry live in IndexedDB, which is not what this file is about
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async () => null,
+        get: async (key) => pulledDisk.keys[key] ?? null,
         set: async () => {},
         getJSON: async () => null,
         setJSON: async () => {},
@@ -101,6 +104,7 @@ const {
 } = await import('./guild-trial-abilities-ui.js');
 const { resetPlanUi, resetChipUi, resetFetchNext, resetPretrialUi } = await import('./guild-trial-abilities-ui.js');
 const { guildXPTracker } = await import('./guild-xp-tracker.js');
+const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
@@ -210,6 +214,7 @@ describe('trial abilities panel', () => {
         // test that follows, so a chip press lands in the previous test's spy
         // instead of clicking a unit box
         resetControls();
+        pulledDisk.keys = {};
     });
 
     afterEach(() => {
@@ -1683,5 +1688,72 @@ describe('pre-trial loadout check', () => {
         expect(viewLoadoutState.core.handleViewLoadout).toHaveBeenCalledTimes(1);
         // Alice's reply belongs to the pre-trial check that asked for it
         expect(guildTrialAbilities.session).toBeNull();
+    });
+});
+
+describe('a sync pull while the panel is open', () => {
+    const KEY = 'guildTrialAbilities_Cats';
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        document.body.replaceChildren();
+        game.abilityDetailMap = {
+            '/abilities/fierce_aura': aura('Fierce Aura'),
+            '/abilities/aqua_aura': aura('Aqua Aura'),
+        };
+        capture.listeners = [];
+        capture.players = {};
+        pulledDisk.keys = {};
+        resetControls();
+    });
+
+    afterEach(() => {
+        feature.cleanup();
+        guildTrialAbilities.session = null;
+        guildTrialAbilities.roster = [];
+        guildTrialAbilities.guildName = null;
+        pulledDisk.keys = {};
+        vi.useRealTimers();
+    });
+
+    /** Let the fire-and-forget listener's read and redraw run */
+    async function settle() {
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+    }
+
+    test('a guildmate’s capture the pull brought is drawn without a reload', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice', 'Bob']);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+        openTrialAbilitiesPanel();
+        expect(text()).toContain('1/2 captured');
+
+        const held = guildTrialAbilities.session;
+        pulledDisk.keys[KEY] = {
+            ...held,
+            players: {
+                ...held.players,
+                'id:2': { ...snapshot('Bob', 2, [{ hrid: '/abilities/aqua_aura', level: 60 }]), capturedAt: NOW },
+            },
+        };
+        announceSyncPullApplied({ guildHistory: [KEY] });
+        await settle();
+
+        expect(text()).toContain('2/2 captured');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('after cleanup a pull is not taken in', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice', 'Bob']);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+        const spy = vi.spyOn(guildTrialAbilities, 'adoptPulled');
+        feature.cleanup();
+
+        announceSyncPullApplied({ guildHistory: [KEY] });
+        await settle();
+
+        expect(spy).not.toHaveBeenCalled();
     });
 });

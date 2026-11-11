@@ -15,15 +15,27 @@ import { _resetClassOverrides, setClassOverride } from '../../utils/class-overri
  * itself load-bearing: the guild's name arrives after the module initialises,
  * and a read under the wrong key is a session lost.
  */
-const disk = vi.hoisted(() => ({ value: null, saved: null, keys: {} }));
+const disk = vi.hoisted(() => ({ value: null, saved: null, keys: {}, sets: 0, hold: false, queued: {} }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key) => (key in disk.keys ? disk.keys[key] : disk.value),
         // A folding write is handed what is stored when it lands, as the real one is
         set: async (key, value, _store, _immediate, options) => {
+            disk.sets += 1;
+            const fold = options?.fold ?? null;
+            if (disk.hold) {
+                // Storage's debounce queue: a newer write takes the waiting one's place, and a fold queued over a
+                // plain write folds into that write's value rather than the disk
+                const existing = disk.queued[key];
+                disk.queued[key] =
+                    fold && existing && !existing.fold
+                        ? { value: fold(existing.value, value) ?? value, fold: null }
+                        : { value, fold };
+                return;
+            }
             const stored = key in disk.keys ? disk.keys[key] : undefined;
-            const written = options?.fold ? (options.fold(stored, value) ?? value) : value;
+            const written = fold ? (fold(stored, value) ?? value) : value;
             disk.saved = written;
             disk.keys[key] = written;
         },
@@ -42,6 +54,19 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
+/** Land every write the held queue is waiting on, each folding into the disk as it is now */
+function releaseQueue() {
+    disk.hold = false;
+    for (const [key, { value, fold }] of Object.entries(disk.queued)) {
+        const stored = key in disk.keys ? disk.keys[key] : undefined;
+        const written = fold ? (fold(stored, value) ?? value) : value;
+        disk.saved = written;
+        disk.keys[key] = written;
+    }
+    disk.queued = {};
+}
+
+const { isLiveSafeKey } = await import('../../utils/sync-merge-registry.js');
 const {
     GuildTrialAbilities,
     sessionStorageKey,
@@ -108,6 +133,9 @@ beforeEach(() => {
     disk.value = null;
     disk.saved = null;
     disk.keys = {};
+    disk.sets = 0;
+    disk.hold = false;
+    disk.queued = {};
     game.characterId = null;
     game.items = {};
 });
@@ -1482,5 +1510,225 @@ describe('a sectioned plan follows the trial lifecycle, not the panel', () => {
         expect(s._liveTrialKey()).toBe('badger');
         s.cleanup();
         expect(s._liveTrialKey()).toBeNull();
+    });
+});
+
+describe('a sync pull of the session under a running page', () => {
+    const KEY = sessionStorageKey('Cats');
+    const HOUR = 60 * 60 * 1000;
+
+    /** What a guildmate's device stored for a trial, as a pull writes it */
+    function pulledSession({ startedAt, lastActivityAt, players }) {
+        return {
+            startedAt,
+            lastActivityAt,
+            guildName: 'Cats',
+            captureTier: 4,
+            capturedTiers: [4],
+            completedAt: null,
+            players: Object.fromEntries(
+                players.map(([name, id, abilities]) => [
+                    playerKey({ name, characterId: id }),
+                    { ...snap(name, id, abilities), capturedAt: lastActivityAt, capturedTier: 4 },
+                ])
+            ),
+            roster: [{ characterId: null, name: 'Bob' }],
+            trialKey: null,
+        };
+    }
+
+    const names = (players) =>
+        Object.values(players || {})
+            .map((player) => player.name)
+            .sort();
+
+    test('the session key is live-safe, so a pull does not latch it', () => {
+        expect(isLiveSafeKey('guildHistory', KEY)).toBe(true);
+        expect(isLiveSafeKey('guildHistory', 'guildTrialAbilities_default')).toBe(true);
+        expect(isLiveSafeKey('guildHistory', 'guildTrialAbilities_char_42')).toBe(true);
+    });
+
+    test('a tick of the new trial before the pull is taken in keeps the guildmate’s captures', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        // A day later this tab's session is last trial's; a pull has just stored today's, with Bob in it
+        const today = NOW + 24 * HOUR;
+        disk.keys[KEY] = pulledSession({
+            startedAt: today - 10 * 60 * 1000,
+            lastActivityAt: today - 60 * 1000,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+
+        s.noteTrialActivity(today);
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+        expect(names(s.session.players)).toEqual(['Bob']);
+        expect(s.session.startedAt).toBe(today - 10 * 60 * 1000);
+    });
+
+    test('a trial-start signal before the pull is taken in keeps the guildmate’s captures', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+        disk.keys[KEY] = pulledSession({
+            startedAt: today - 60 * 1000,
+            lastActivityAt: today - 30 * 1000,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+
+        s.noteTrialStart(today);
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+        expect(names(s.session.players)).toEqual(['Bob']);
+    });
+
+    test('a capture made before that write lands keeps the rule: a long trial’s pulled captures survive it', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        // Today's trial began more than the session window ago and is still being ticked on the other device
+        const today = NOW + 24 * HOUR;
+        disk.keys[KEY] = pulledSession({
+            startedAt: today - 90 * 60 * 1000,
+            lastActivityAt: today - 60 * 1000,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+        disk.hold = true;
+
+        s.noteTrialActivity(today);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura'], { at: today + 1000 }), { at: today + 1000 });
+        releaseQueue();
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Alice', 'Bob']);
+        expect(names(s.session.players)).toEqual(['Alice', 'Bob']);
+    });
+
+    test('a stored session of the last trial is still discarded by the new trial', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+
+        s.noteTrialActivity(today);
+
+        expect(disk.keys[KEY].players).toEqual({});
+        expect(disk.keys[KEY].startedAt).toBe(today);
+    });
+
+    test('once the new trial has been written, a later trial stored elsewhere is not folded into it', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+        s.noteTrialActivity(today);
+        // Two days on, another tab stores the trial after that one; this tab, still on today's, captures
+        const later = today + 24 * HOUR;
+        disk.keys[KEY] = pulledSession({
+            startedAt: later,
+            lastActivityAt: later,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura'], { at: today + 1000 }), { at: today + 1000 });
+
+        // The later trial stands on its own, as it did before
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+        expect(names(s.session.players)).toEqual(['Alice']);
+    });
+
+    test('a later trial is never kept into this one, even when the new trial first wrote over nothing', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const today = NOW + 24 * HOUR;
+        delete disk.keys[KEY];
+        disk.hold = true;
+        s.noteTrialActivity(today);
+        // The next day's trial lands from elsewhere before this tab's write does
+        const later = today + 24 * HOUR;
+        disk.keys[KEY] = pulledSession({
+            startedAt: later,
+            lastActivityAt: later,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura'], { at: today + 1000 }), { at: today + 1000 });
+        releaseQueue();
+
+        expect(names(disk.keys[KEY].players)).toEqual(['Bob']);
+        expect(disk.keys[KEY].startedAt).toBe(later);
+        expect(names(s.session.players)).toEqual(['Alice']);
+    });
+
+    test('Recapture still throws away a pulled capture of the same trial', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        disk.keys[KEY] = pulledSession({
+            startedAt: NOW,
+            lastActivityAt: NOW + 1000,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+
+        s.recapture(NOW + 2000);
+
+        expect(disk.keys[KEY].players).toEqual({});
+        expect(s.session.players).toEqual({});
+    });
+
+    test('adoptPulled folds the pulled captures into memory without writing', async () => {
+        const s = session(['Alice', 'Bob']);
+        s.initialized = true;
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const pulled = pulledSession({
+            startedAt: NOW - 1000,
+            lastActivityAt: NOW + 500,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+        disk.keys[KEY] = { ...pulled, players: { ...disk.keys[KEY].players, ...pulled.players } };
+        const sets = disk.sets;
+
+        const changed = await s.adoptPulled({ guildHistory: [KEY] });
+
+        expect(changed).toBe(true);
+        expect(names(s.session.players)).toEqual(['Alice', 'Bob']);
+        expect(s.session.roster).toBeUndefined();
+        expect(disk.sets).toBe(sets);
+        // Both of the roster's two are captured now
+        expect(s.session.completedAt).not.toBeNull();
+    });
+
+    test('adoptPulled ignores a pull of another key, another guild, or one overtaken by a new trial', async () => {
+        const s = session(['Alice', 'Bob']);
+        s.initialized = true;
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        const pulled = pulledSession({
+            startedAt: NOW,
+            lastActivityAt: NOW,
+            players: [['Bob', 2, ['/abilities/aqua_aura']]],
+        });
+        disk.keys[KEY] = pulled;
+        expect(await s.adoptPulled({ guildHistory: ['guildTrialAbilities_Dogs'] })).toBe(false);
+        expect(await s.adoptPulled({ settings: [KEY] })).toBe(false);
+        expect(names(s.session.players)).toEqual(['Alice']);
+
+        disk.keys[KEY] = { ...pulled, guildName: 'Dogs' };
+        expect(await s.adoptPulled({ guildHistory: [KEY] })).toBe(false);
+        expect(names(s.session.players)).toEqual(['Alice']);
+
+        disk.keys[KEY] = pulled;
+        const reading = s.adoptPulled({ guildHistory: [KEY] });
+        s.recapture(NOW + 1000);
+        expect(await reading).toBe(false);
+        expect(s.session.players).toEqual({});
+    });
+
+    test('adoptPulled of the session this tab wrote changes nothing and asks for no redraw', async () => {
+        const s = session(['Alice', 'Bob']);
+        s.initialized = true;
+        s.recordCapture(snap('Alice', 1, ['/abilities/fierce_aura']), { at: NOW });
+        expect(await s.adoptPulled({ guildHistory: [KEY] })).toBe(false);
+        expect(names(s.session.players)).toEqual(['Alice']);
+    });
+
+    test('adoptPulled before the module is initialized reads nothing', async () => {
+        const s = session(['Alice']);
+        disk.keys[KEY] = pulledSession({ startedAt: NOW, lastActivityAt: NOW, players: [['Bob', 2, []]] });
+        expect(await s.adoptPulled({ guildHistory: [KEY] })).toBe(false);
+        expect(s.session).toBeNull();
     });
 });
