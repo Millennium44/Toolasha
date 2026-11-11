@@ -86,6 +86,10 @@ New Zone and boss-task estimates use current task targets, remaining kills, gear
 
 Automatic combat task estimates, including Best Score searches, no longer cancel simulations you start. They skip cards that have changed or closed, and return to the Estimate controls if repeatedly interrupted.
 
+### Equipment Watch compares the full cost of a craft base
+
+Crafting now compares buying the required base with enhancing a copy you own after counting the sale you give up. Auto can find the cheaper craft, and its base caption and Missing Mats listing follow the selected route.
+
 ### Equipment Watch follows the pricing mode
 
 Equipment Watch now buys and sells on the sides your pricing mode setting picks, like the rest of Toolasha's profit figures, instead of always buying at ask and selling at bid. The price labels on its cards name the side in use.

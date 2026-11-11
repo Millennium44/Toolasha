@@ -2388,6 +2388,163 @@ describe('the base a refinement recipe consumes is priced at the output level', 
     });
 });
 
+describe('a retaining craft compares both base routes by real cost', () => {
+    const BASE = '/items/plain_spear';
+    const TARGET = '/items/refined_spear';
+    const M = 1_000_000;
+    const craftRow = () => watchedTargets()[0].routes.find((route) => route.id === 'craft');
+    let bills;
+
+    beforeEach(() => {
+        game.equipment = new Map();
+        game.inventory.push({ itemHrid: BASE, enhancementLevel: 12, count: 3 });
+        game.actions['/actions/refine'].retainAllEnhancement = true;
+        game.actions['/actions/refine'].inputItems = [{ itemHrid: '/items/shard', count: 20 }];
+        game.details[BASE].itemLevel = 90;
+        game.details[BASE].enhancementCosts = [{ itemHrid: '/items/shard', count: 1 }];
+        // 100M after tax, 80M to enhance, 150M to buy the required base, 20M ingredients.
+        game.prices[`${BASE}:12`] = { ask: 120 * M, bid: 104_166_667 };
+        game.prices[`${BASE}:13`] = { ask: 150 * M, bid: 130 * M };
+        game.prices[`${TARGET}:13`] = { ask: 180 * M, bid: 170 * M };
+        bills = [];
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: {
+                    calculateEnhancement: () => ({ attempts: 80, protectionCount: 0 }),
+                },
+                enhancementConfig: {
+                    getAutoDetectedParams: () => ({ enhancingLevel: 100, toolBonus: 10 }),
+                },
+            },
+            Actions: {
+                missingMaterialsButton: {
+                    openMissingMaterials: (...args) => bills.push(args),
+                },
+            },
+        };
+        watchTarget(TARGET, 13);
+    });
+
+    afterEach(() => {
+        delete window.Toolasha;
+    });
+
+    test.each([false, true])('buys the base rather than losing a valuable owned copy (planner: %s)', (planner) => {
+        if (planner) {
+            window.Toolasha.Actions.craftingPlanCalculator = {
+                computeBestCraftingPlan: (itemHrid, count) => ({
+                    itemHrid,
+                    strategy: 'buy',
+                    buyPrice: game.prices[`${itemHrid}:0`]?.ask,
+                    totalCost: game.prices[`${itemHrid}:0`]?.ask * count,
+                    children: [],
+                }),
+            };
+        }
+        expect(enhancementCost(BASE, 13, 12)).toBe(80 * M);
+        const [target] = watchedTargets();
+        expect(target).toMatchObject({ route: 'craft', cost: 170 * M, realCost: 170 * M, upgradeBaseLevel: 13 });
+        expect(craftRow()).toMatchObject({ cash: 170 * M, real: 170 * M, priced: true });
+    });
+
+    test('both base routes follow a changed pricing mode on the next pass', () => {
+        expect(watchedTargets()[0].cost).toBe(170 * M);
+        game.profitMode = 'patientBuy';
+        // Bid-side buys: 130M base plus 18M materials, rather than a 72M run plus a 100M sale.
+        expect(watchedTargets()[0]).toMatchObject({
+            route: 'craft',
+            cost: 148 * M,
+            realCost: 148 * M,
+            upgradeBaseLevel: 13,
+        });
+    });
+
+    test('a craft pin and Prefer Craft use the same cheapest real base', () => {
+        game.prices[`${TARGET}:13`].ask = 160 * M;
+        expect(watchedTargets()[0].route).toBe('buy');
+        game.routePreference = 'craft';
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 170 * M, upgradeBaseLevel: 13 });
+        game.routePreference = 'auto';
+        setRoutePin(TARGET, 13, 'craft');
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 170 * M, upgradeBaseLevel: 13 });
+    });
+
+    test('the selected base level reaches the Missing Mats marketplace', async () => {
+        equipmentSavingsPanel.show();
+        expect(text()).not.toContain(FAILED);
+        const button = Array.from(equipmentSavingsPanel.panel.querySelectorAll('button')).find(
+            (element) => element.textContent === 'Missing Mats Marketplace'
+        );
+        expect(button).toBeTruthy();
+        button.click();
+        await vi.waitFor(() => expect(bills).toHaveLength(1));
+        expect(bills[0]).toEqual(['/actions/refine', 1, { upgradeItemLevel: 13 }]);
+    });
+
+    test('the craft caption names the selected bought base, then the owned enhance route', () => {
+        setRoutePin(TARGET, 13, 'craft');
+        equipmentSavingsPanel.show();
+        expect(text()).toContain('buy a +13 base, counted in');
+        expect(text()).not.toContain('enhance yours');
+        game.prices[`${BASE}:12`].bid = 10 * M;
+        equipmentSavingsPanel.render();
+        expect(text()).toContain('enhance yours (+12) up, counted in');
+        expect(text()).not.toContain('buy a +13 base');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('buying the base leaves the worn copy available for the trade-in', () => {
+        game.inventory = [{ itemHrid: BASE, enhancementLevel: 12, itemLocationHrid: '/item_locations/main_hand' }];
+        game.equipment = new Map([['/item_locations/main_hand', { itemHrid: BASE, enhancementLevel: 12 }]]);
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 70 * M, realCost: 70 * M });
+        setNoSell(true);
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 170 * M, realCost: 170 * M });
+    });
+
+    test('an unrelated worn trade-in is applied once, including when cash clamps to zero', () => {
+        game.equipment = new Map([['/item_locations/main_hand', { itemHrid: '/items/cheese_sword' }]]);
+        game.prices['/items/cheese_sword:0'].bid = 208_333_334; // 200M after tax
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 0, realCost: -30 * M });
+        expect(craftRow()).toMatchObject({ cash: 0, real: -30 * M });
+    });
+
+    test('an unknown owned sale does not hide a fully priced bought-base craft', () => {
+        game.prices[`${BASE}:12`].bid = 0;
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 170 * M, realCost: 170 * M });
+    });
+
+    test('a real-cost tie keeps the directly shoppable base', () => {
+        game.prices[`${BASE}:13`].ask = 180 * M;
+        game.prices[`${TARGET}:13`].ask = 250 * M;
+        expect(watchedTargets()[0]).toMatchObject({ route: 'craft', cost: 200 * M, upgradeBaseLevel: 13 });
+    });
+
+    test('a changed owned sale recomputes which base is cheapest', () => {
+        expect(watchedTargets()[0].upgradeBaseLevel).toBe(13);
+        game.prices[`${BASE}:12`].bid = 10 * M;
+        expect(watchedTargets()[0]).toMatchObject({
+            route: 'craft',
+            cost: 100 * M,
+            realCost: 109_600_000,
+            upgradeBaseLevel: 0,
+        });
+    });
+
+    test('without a base listing, a pinned unpriced owned run retains its known cash', () => {
+        game.prices[`${BASE}:13`].ask = 0;
+        game.prices[`${BASE}:12`].bid = 0;
+        expect(watchedTargets()[0].route).toBe('buy');
+        setRoutePin(TARGET, 13, 'craft');
+        expect(watchedTargets()[0]).toMatchObject({
+            route: 'craft',
+            cost: 100 * M,
+            realCost: null,
+            upgradeBaseLevel: 0,
+        });
+        expect(craftRow()).toMatchObject({ cash: 100 * M, real: null, priced: false });
+    });
+});
+
 /**
  * The tile's `version()`.
  *

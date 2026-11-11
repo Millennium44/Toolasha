@@ -1842,8 +1842,8 @@ function planPriced(node) {
  * @param {string} itemHrid - The finished piece
  * @param {Object|null} recipe - From `recipeFor`
  * @param {number} [enhancementLevel] - The level the output is wanted at
- * @returns {{cost: number, upgradeBaseLevel: number}|null} Coins for one and the
- *   level its base was shopped for, or null when it cannot be priced
+ * @returns {{cost: number, upgradeBaseLevel: number, alternatives: Array<Object>}|null} The
+ *   cheapest cash route, plus every base alternative for the real-cost comparison
  */
 function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
     return oncePerPass(`craftmat:${itemHrid}:${enhancementLevel}`, () =>
@@ -1856,7 +1856,7 @@ function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
  * @param {string} itemHrid - The finished piece
  * @param {Object|null} recipe - From `recipeFor`
  * @param {number} enhancementLevel - The level the output is wanted at
- * @returns {{cost: number, upgradeBaseLevel: number, consumed: Object|null}|null}
+ * @returns {{cost: number, upgradeBaseLevel: number, consumed: Object|null, alternatives: Array<Object>}|null}
  */
 function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
@@ -1873,6 +1873,21 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         return ask > 0 ? ask : null;
     };
 
+    // Preserve the base choices until the caller can compare their forgone sales and trade-in.
+    // Legacy cash-only callers (including the ladder's fresh base) still get the cheapest cash.
+    const withBases = (materials, outputCount = 1) => {
+        const alternatives = upgradeBaseRoutes(recipe, enhancementLevel, plannerBase)
+            .filter((base) => base.cost !== null)
+            .map((base) => ({
+                cost: (materials + base.cost) / outputCount,
+                upgradeBaseLevel: base.level,
+                consumed: upgradeBaseConsumed(recipe, enhancementLevel, base),
+            }));
+        if (!alternatives.length) return null;
+        const cheapest = alternatives.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
+        return { ...cheapest, alternatives };
+    };
+
     if (planner && recipe?.inputItems?.length) {
         try {
             let total = 0;
@@ -1882,22 +1897,12 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
                 total += plan.totalCost;
             }
 
-            const base = upgradeBaseRoute(recipe, enhancementLevel, plannerBase);
-            if (base.cost === null) return null;
-            total += base.cost;
-
-            return {
-                cost: total / (recipe.outputCount > 0 ? recipe.outputCount : 1),
-                upgradeBaseLevel: base.level,
-                consumed: upgradeBaseConsumed(recipe, enhancementLevel, base),
-            };
+            return withBases(total, recipe.outputCount > 0 ? recipe.outputCount : 1);
         } catch (error) {
             console.error('[EquipmentSavings] The crafting planner failed, falling back to material asks:', error);
         }
     }
 
-    const flatBase = upgradeBaseRoute(recipe, enhancementLevel, plannerBase);
-    if (flatBase.cost === null) return null;
     const flat = craftCost({
         inputItems: recipe?.inputItems,
         priceOf: (hrid) => buyPrice(hrid, 0),
@@ -1906,13 +1911,7 @@ function craftMaterialsCostRaw(itemHrid, recipe, enhancementLevel) {
         haveBase: true,
         upgradeAsk: 0,
     });
-    return flat === null
-        ? null
-        : {
-              cost: flat + flatBase.cost,
-              upgradeBaseLevel: flatBase.level,
-              consumed: upgradeBaseConsumed(recipe, enhancementLevel, flatBase),
-          };
+    return flat === null ? null : withBases(flat);
 }
 
 /**
@@ -1997,20 +1996,36 @@ export function upgradeBaseCost(recipe, enhancementLevel, priceBase) {
  * @returns {{cost: number|null, level: number}} Coins for the base, and the level to buy it at
  */
 export function upgradeBaseRoute(recipe, enhancementLevel, priceBase) {
+    const candidates = upgradeBaseRoutes(recipe, enhancementLevel, priceBase);
+    // This cash-only helper stays compatible with callers that are not comparing real costs.
+    return candidates.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
+}
+
+/**
+ * Every base alternative, before a consumed owned copy's sale value is known. In particular, keep
+ * buying at the required level beside enhancing an owned lower copy: the cheaper cash run can be
+ * more expensive in real cost. Order ties toward the listing, the directly shoppable option.
+ *
+ * @param {Object|null} recipe - From `recipeFor`
+ * @param {number} enhancementLevel - The level the output needs
+ * @param {Function} priceBase - +0 base price, or null when unpriced
+ * @returns {Array<{cost: number|null, level: number}>} A null-cost entry when no route is priced
+ */
+function upgradeBaseRoutes(recipe, enhancementLevel, priceBase) {
     const baseHrid = recipe?.upgradeItemHrid;
-    if (!baseHrid) return { cost: 0, level: 0 };
+    if (!baseHrid) return [{ cost: 0, level: 0 }];
 
     const needsLevel = recipe.retainAllEnhancement ? enhancementLevel || 0 : 0;
     if (needsLevel <= 0) {
-        if (ownsBase(baseHrid)) return { cost: 0, level: 0 };
-        return { cost: priceBase(baseHrid), level: 0 };
+        if (ownsBase(baseHrid)) return [{ cost: 0, level: 0 }];
+        return [{ cost: priceBase(baseHrid), level: 0 }];
     }
 
     const held = highestOwnedLevel(baseHrid);
     // Already in the bag at the level: nothing to buy, but the bill is still
     // ABOUT that level, and a tab reading "sufficient" against +0 copies while
     // the +12 sits unspent would be the same lie the other way round
-    if (held !== null && held >= needsLevel) return { cost: 0, level: needsLevel };
+    if (held !== null && held >= needsLevel) return [{ cost: 0, level: needsLevel }];
 
     const candidates = [];
     const directAsk = buyPrice(baseHrid, needsLevel);
@@ -2022,9 +2037,7 @@ export function upgradeBaseRoute(recipe, enhancementLevel, priceBase) {
         if (fresh !== null) candidates.push({ cost: run + fresh, level: 0 });
     }
 
-    if (!candidates.length) return { cost: null, level: needsLevel };
-    // Ties go to the listing, which is the one route the button can shop for
-    return candidates.reduce((best, entry) => (entry.cost < best.cost ? entry : best));
+    return candidates.length ? candidates : [{ cost: null, level: needsLevel }];
 }
 
 /** Where a piece in the inventory list is a market listing, which cannot be spent */
@@ -2247,16 +2260,24 @@ function costOf(
             const materials = craftMaterialsCost(itemHrid, recipe, enhancementLevel);
             if (materials === null) add('craft', null, null);
             else {
-                // A craft that uses up the worn piece cannot also sell it, so no trade-in against the cash
-                const usesWorn =
-                    materials.consumed &&
-                    heldCopyAt(materials.consumed.itemHrid, materials.consumed.level, worn)?.worn === true;
-                add(
-                    'craft',
-                    noSell || usesWorn ? materials.cost : Math.max(0, materials.cost - wornBid),
-                    realOf(materials.cost, materials.consumed),
-                    { recipe, upgradeBaseLevel: materials.upgradeBaseLevel }
-                );
+                const alternatives = materials.alternatives.map((option) => {
+                    // A consumed worn copy cannot also be sold. Buying the base leaves it available.
+                    const usesWorn =
+                        option.consumed &&
+                        heldCopyAt(option.consumed.itemHrid, option.consumed.level, worn)?.worn === true;
+                    return {
+                        cash: noSell || usesWorn ? option.cost : Math.max(0, option.cost - wornBid),
+                        real: realOf(option.cost, option.consumed),
+                        upgradeBaseLevel: option.upgradeBaseLevel,
+                    };
+                });
+                // Choose a fully priced real cost before any cash-only fallback. The latter still
+                // lets a craft pin stand when every owned alternative has an unknown sale value.
+                const priced = alternatives.filter((option) => option.real !== null);
+                const craft = priced.length
+                    ? priced.reduce((best, option) => (option.real < best.real ? option : best))
+                    : alternatives.reduce((best, option) => (option.cash < best.cash ? option : best));
+                add('craft', craft.cash, craft.real, { recipe, upgradeBaseLevel: craft.upgradeBaseLevel });
             }
         }
         const build = mirrorBuildRoute(itemHrid, enhancementLevel, { worn, noSell });
@@ -3440,9 +3461,11 @@ function recipeLines(target) {
             ? 'you have one'
             : held === null && onlyListed(recipe.upgradeItemHrid)
               ? 'yours is listed on the market, counted in'
-              : needsLevel > 0 && held !== null
-                ? `enhance yours (+${held}) up, counted in`
-                : 'not owned, counted in';
+              : needsLevel > 0 && target.upgradeBaseLevel === needsLevel
+                ? `buy a +${needsLevel} base, counted in`
+                : needsLevel > 0 && held !== null
+                  ? `enhance yours (+${held}) up, counted in`
+                  : 'not owned, counted in';
         wrap.appendChild(priceLine(`Upgrades ${baseName}`, status, owned ? ROW_COLORS.good : ROW_COLORS.accent));
     }
 
