@@ -2942,6 +2942,55 @@ export class SimEditor {
         return html;
     }
 
+    /**
+     * What a move button should say right now: whether the move can happen and, when it cannot, why.
+     * @private
+     * @returns {{moved: boolean, label: string, title: string}}
+     */
+    _abilityMoveState(dto, gameData, slotIndex, direction, name) {
+        const unlocked = abilitySlotUnlocks(dto, gameData);
+        const probe = moveAbilitySlot(dto.abilities, slotIndex, direction, unlocked);
+        const word = direction < 0 ? 'up' : 'down';
+        const requirement = (slot) => gameData?.abilitySlotsLevelRequirementList?.[slot + 1];
+        let why = '';
+        if (probe.reason === 'limit') why = direction < 0 ? 'Top of the order' : 'Bottom of the order';
+        else if (probe.reason === 'special') why = 'The special slot does not move';
+        else if (probe.reason === 'locked') {
+            why =
+                unlocked[slotIndex] === false
+                    ? `Slot ${slotIndex} is locked (needs Intelligence ${requirement(slotIndex)})`
+                    : `Slot ${slotIndex + direction} needs Intelligence ${requirement(slotIndex + direction)}`;
+        }
+        return {
+            moved: probe.moved,
+            label: probe.moved ? `Move ${name} ${word}` : `Cannot move ${name} ${word}: ${why}`,
+            title: probe.moved ? `Move ${word} (cast ${direction < 0 ? 'earlier' : 'later'})` : why,
+        };
+    }
+
+    /**
+     * Bring the move buttons up to date after something that opens or shuts ability slots (the Intelligence
+     * level) changed without a redraw, so none stays enabled for a move that would be refused, and a newly
+     * opened slot's move is offered. Only the buttons change, so the field being typed in keeps focus.
+     * @private
+     */
+    _refreshAbilityMoveButtons(dto) {
+        const gameData = buildGameDataPayload();
+        if (!gameData || !this._editorEl) return;
+        this._editorEl.querySelectorAll('[data-ability-move]').forEach((btn) => {
+            const [slot, direction] = btn.dataset.abilityMove.split(':').map(Number);
+            const ability = dto.abilities?.[slot];
+            if (!ability) return;
+            const name = gameData.abilityDetailMap?.[ability.hrid]?.name || ability.hrid.split('/').pop();
+            const state = this._abilityMoveState(dto, gameData, slot, direction, name);
+            btn.disabled = !state.moved;
+            btn.title = state.title;
+            btn.setAttribute('aria-label', state.label);
+            btn.style.cursor = state.moved ? 'pointer' : 'default';
+            btn.style.opacity = state.moved ? '1' : '0.35';
+        });
+    }
+
     /** @private */
     _renderAbilitiesSection(dto, gameData) {
         const abilityDetailMap = gameData.abilityDetailMap || {};
@@ -2956,23 +3005,9 @@ export class SimEditor {
         const maxSlots = 5;
         const slotCount = Math.max(dto.abilities.length, maxSlots);
 
-        const unlocked = abilitySlotUnlocks(dto, gameData);
         const moveButton = (i, direction, name) => {
-            const probe = moveAbilitySlot(dto.abilities, i, direction, unlocked);
-            const word = direction < 0 ? 'up' : 'down';
-            const requirement = (slot) => gameData?.abilitySlotsLevelRequirementList?.[slot + 1];
-            let why = '';
-            if (probe.reason === 'limit') why = direction < 0 ? 'Top of the order' : 'Bottom of the order';
-            else if (probe.reason === 'special') why = 'The special slot does not move';
-            else if (probe.reason === 'locked') {
-                why =
-                    unlocked[i] === false
-                        ? `Slot ${i} is locked (needs Intelligence ${requirement(i)})`
-                        : `Slot ${i + direction} needs Intelligence ${requirement(i + direction)}`;
-            }
-            const label = probe.moved ? `Move ${name} ${word}` : `Cannot move ${name} ${word}: ${why}`;
-            const title = probe.moved ? `Move ${word} (cast ${direction < 0 ? 'earlier' : 'later'})` : why;
-            return `<button type="button" data-ability-move="${i}:${direction}" aria-label="${escapeHtml(label)}" title="${escapeHtml(title)}" ${probe.moved ? '' : 'disabled'} style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; min-width:26px; min-height:24px; padding:0 4px; border-radius:3px; font-size:11px; cursor:${probe.moved ? 'pointer' : 'default'}; opacity:${probe.moved ? 1 : 0.35}; font-family:inherit;">${direction < 0 ? '\u25b2' : '\u25bc'}</button>`;
+            const state = this._abilityMoveState(dto, gameData, i, direction, name);
+            return `<button type="button" data-ability-move="${i}:${direction}" aria-label="${escapeHtml(state.label)}" title="${escapeHtml(state.title)}" ${state.moved ? '' : 'disabled'} style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; min-width:26px; min-height:24px; padding:0 4px; border-radius:3px; font-size:11px; cursor:${state.moved ? 'pointer' : 'default'}; opacity:${state.moved ? 1 : 0.35}; font-family:inherit;">${direction < 0 ? '▲' : '▼'}</button>`;
         };
 
         for (let i = 0; i < slotCount; i++) {
@@ -4501,7 +4536,11 @@ export class SimEditor {
                 input.value = val;
                 dto[key] = val;
                 // A typed Intelligence is a known one
-                if (key === 'intelligenceLevel') delete dto.intelligenceUnknown;
+                if (key === 'intelligenceLevel') {
+                    delete dto.intelligenceUnknown;
+                    // Intelligence opens and shuts ability slots, which the move buttons depend on
+                    this._refreshAbilityMoveButtons(dto);
+                }
             });
         });
 

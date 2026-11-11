@@ -4183,6 +4183,32 @@ describe('reordering abilities in Configure', () => {
         expect(editor.moveAbility(1, 1).moved).toBe(true);
     });
 
+    test('typing a new Intelligence level refreshes which moves are offered, without a redraw', async () => {
+        game.gameData = {
+            itemDetailMap: {},
+            abilityDetailMap: {},
+            houseRoomDetailMap: {},
+            abilitySlotsLevelRequirementList: [0, 1, 1, 1, 90, 120],
+        };
+        const { el, editor } = await loaded([AURA, A, B, C, null]);
+        const intelligence = el.querySelector('[data-skill="intelligenceLevel"]');
+        expect(intelligence).not.toBeNull();
+        expect(button(el, 2, 1).disabled).toBe(true);
+
+        intelligence.value = '90';
+        intelligence.dispatchEvent(new Event('change'));
+        expect(el.querySelector('[data-skill="intelligenceLevel"]')).toBe(intelligence);
+        expect(button(el, 2, 1).disabled).toBe(false);
+        expect(button(el, 2, 1).title).toContain('cast later');
+        expect(button(el, 3, -1).disabled).toBe(false);
+
+        intelligence.value = '5';
+        intelligence.dispatchEvent(new Event('change'));
+        expect(button(el, 2, 1).disabled).toBe(true);
+        expect(button(el, 2, 1).title).toBe('Slot 3 needs Intelligence 90');
+        expect(editor.moveAbility(2, 1).moved).toBe(false);
+    });
+
     test('an ability sitting in a locked slot says its slot is locked', async () => {
         game.gameData = {
             itemDetailMap: {},
