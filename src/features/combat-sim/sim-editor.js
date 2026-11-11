@@ -1782,19 +1782,19 @@ export class SimEditor {
      * them.
      *
      * @param {Object} [options]
-     * @param {boolean} [options.fromButton=false] - The Reset to Party button, as opposed to Fetch rebuilding
-     *   the party: only the button also puts this character on the loadout picked for the party and moves the
-     *   owner's Zone and Tier to the party's, so Fetch never changes a zone the user chose
+     * @param {boolean} [options.fromButton=false] - The Reset to Party button: also moves the owner's Zone and
+     *   Tier to the party's (Fetch never changes a zone the user chose)
+     * @param {boolean} [options.withLoadout=fromButton] - Also put this character on the loadout picked for the party
      * @returns {Promise<void>}
      */
-    async resetToParty({ fromButton = false } = {}) {
+    async resetToParty({ fromButton = false, withLoadout = fromButton } = {}) {
         this._selectedLoadoutName = '';
         this._loadoutFetchNote = '';
         this._editorInitialized = false;
         await this.initEditor({ restoreLoadout: false });
         // A character switch or a newer scenario landing inside the build leaves the editor uninitialised
-        if (fromButton && this._editorInitialized && this._remembersLoadout()) {
-            this._adoptPartyLoadoutAndZone();
+        if ((fromButton || withLoadout) && this._editorInitialized && this._remembersLoadout()) {
+            this._adoptPartyLoadoutAndZone({ withZone: fromButton });
         }
         this._saveLoadoutMemory();
     }
@@ -1849,7 +1849,7 @@ export class SimEditor {
      *
      * @private
      */
-    _adoptPartyLoadoutAndZone() {
+    _adoptPartyLoadoutAndZone({ withZone = true } = {}) {
         const notes = [];
 
         const loadoutId = this._partyLoadoutId();
@@ -1865,8 +1865,10 @@ export class SimEditor {
             }
         }
 
-        const zone = this._partyZone();
-        if (!zone) {
+        const zone = withZone ? this._partyZone() : null;
+        if (!withZone) {
+            // Fetch: the zone stays whatever the user chose
+        } else if (!zone) {
             notes.push('The party has no zone set, so your zone is unchanged.');
         } else if (this._onResetToParty) {
             try {
@@ -1994,12 +1996,18 @@ export class SimEditor {
 
         // Only a received loadout is worth rebuilding the party for; a failed fetch
         // must not throw away the user's editor changes
-        if (result?.status === 'done') await this.resetToParty();
+        let selfNote = '';
+        if (result?.status === 'done') {
+            await this.resetToParty({ withLoadout: true });
+            selfNote = this._loadoutFetchNote;
+        }
         // A loadout carries no skill levels, house or buffs, so a member with no cached profile is
         // still left out of the rebuilt party; the note has to say what is still needed
         const stillMissing =
             this._missingMemberIds.includes(String(member.characterID)) || this._missingMembers.includes(name);
-        this._loadoutFetchNote = this._describeLoadoutFetch(name, result, stillMissing);
+        this._loadoutFetchNote = [this._describeLoadoutFetch(name, result, stillMissing), selfNote]
+            .filter(Boolean)
+            .join(' ');
         this.renderEditor();
         return result;
     }

@@ -3947,7 +3947,15 @@ describe('Reset to Party picks your party loadout and the party zone', () => {
         expect(el.textContent).toContain('Not in list.');
     });
 
-    test('Fetch (plain resetToParty) leaves the zone and loadout alone', async () => {
+    test('Fetch applies your loadout but leaves the zone alone', async () => {
+        bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
+        const { editor, onResetToParty } = setup(partyInfo());
+        await editor.resetToParty({ withLoadout: true });
+        expect(onResetToParty).not.toHaveBeenCalled();
+        expect(editor.getSelectedLoadoutName()).toBe('Boss');
+    });
+
+    test('a plain resetToParty changes neither', async () => {
         bridge.snapshots = [{ id: 900401, name: 'Boss', actionTypeHrid: COMBAT }];
         const { editor, onResetToParty } = setup(partyInfo());
         await editor.resetToParty();
