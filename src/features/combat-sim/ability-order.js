@@ -68,7 +68,8 @@ export function abilitySlotUnlocks(playerDTO, gameData) {
 /**
  * Move the ability in an ordinary slot one place up or down, swapping it with its neighbor.
  *
- * The slot order is the casting order (the game casts the first ready ability in slot order), so this is a
+ * The slot order is the casting order: the engine casts the first ability whose trigger fires, and if that one
+ * cannot be afforded (`skipNextAbility`) the later slots are blocked for that tick. So this is a
  * re-ordering and nothing else: each entry is carried whole, which keeps its level and its trigger rows with it.
  * Slot 0 is the special (aura) slot, which holds only a special ability, so it never moves and nothing moves into
  * it. A slot the Intelligence level has not opened is not entered or left either, as the game would not allow it.

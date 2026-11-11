@@ -4143,7 +4143,10 @@ describe('reordering abilities in Configure', () => {
         const { el, editor } = await loaded();
         expect(el.querySelector('[data-ability-move^="0:"]')).toBeNull();
         expect(button(el, 1, -1).disabled).toBe(true);
+        expect(button(el, 1, -1).title).toBe('Top of the order');
+        expect(button(el, 1, -1).getAttribute('aria-label')).toContain('Top of the order');
         expect(button(el, 1, 1).disabled).toBe(false);
+        expect(button(el, 1, 1).title).toContain('cast later');
         expect(button(el, 3, 1).disabled).toBe(false);
         expect(el.querySelector('[data-ability-move^="4:"]')).toBeNull();
         expect(editor.moveAbility(1, -1)).toEqual({ moved: false, reason: 'limit' });
@@ -4155,6 +4158,7 @@ describe('reordering abilities in Configure', () => {
     test('a full bar stops at the last slot', async () => {
         const { el, editor } = await loaded([AURA, A, B, C, ab('/abilities/d', 5)]);
         expect(button(el, 4, 1).disabled).toBe(true);
+        expect(button(el, 4, 1).title).toBe('Bottom of the order');
         expect(editor.moveAbility(4, 1).reason).toBe('limit');
     });
 
@@ -4175,7 +4179,26 @@ describe('reordering abilities in Configure', () => {
         // intelligenceLevel 1: slots 3 and 4 (list entries 4 and 5) are shut
         expect(editor.moveAbility(2, 1)).toEqual({ moved: false, reason: 'locked' });
         expect(button(el, 2, 1).disabled).toBe(true);
+        expect(button(el, 2, 1).title).toBe('Slot 3 needs Intelligence 90');
         expect(editor.moveAbility(1, 1).moved).toBe(true);
+    });
+
+    test('an ability sitting in a locked slot says its slot is locked', async () => {
+        game.gameData = {
+            itemDetailMap: {},
+            abilityDetailMap: {},
+            houseRoomDetailMap: {},
+            abilitySlotsLevelRequirementList: [0, 1, 1, 1, 90, 120],
+        };
+        const { el } = await loaded([AURA, A, B, C, null]);
+        expect(button(el, 3, -1).disabled).toBe(true);
+        expect(button(el, 3, -1).title).toBe('Slot 3 is locked (needs Intelligence 90)');
+    });
+
+    test('the ability rows carry the phone stylesheet hooks', async () => {
+        const { el } = await loaded();
+        expect(el.querySelectorAll('.mwi-csim-ability-row')).toHaveLength(4);
+        expect(el.querySelector('.mwi-csim-ability-row .mwi-csim-ability-name')).not.toBeNull();
     });
 
     test('the edit is visible to the build signature and the export order', async () => {

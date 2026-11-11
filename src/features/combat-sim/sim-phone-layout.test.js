@@ -17,6 +17,18 @@ describe('sim phone layout', () => {
         expect(name).toContain('overflow: visible !important');
     });
 
+    it('gives the ability move buttons a 34px tap target and lets the row wrap so the name keeps a width', () => {
+        const rule = (selector) => {
+            const at = SIM_PHONE_CSS.indexOf(selector + ' {');
+            return at < 0 ? '' : SIM_PHONE_CSS.slice(at, SIM_PHONE_CSS.indexOf('}', at));
+        };
+        expect(rule('.mwi-csim-ability-row')).toContain('flex-flow: row wrap');
+        const button = rule('.mwi-csim-ability-row button[data-ability-move]');
+        expect(button).toContain('min-width: 34px !important');
+        expect(button).toContain('min-height: 34px !important');
+        expect(rule('.mwi-csim-ability-row > .mwi-csim-ability-name')).toContain('min-width: 110px');
+    });
+
     beforeEach(() => {
         document.head.innerHTML = '';
     });

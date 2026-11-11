@@ -15,6 +15,11 @@ export const SIM_PHONE_STYLE_ID = 'mwi-sim-phone-layout';
 /** The stylesheet text. Exported so tests can read the rules without a layout engine. */
 export const SIM_PHONE_CSS = `
     @media ${MARKET_MOBILE_QUERY} {
+        /* Ability rows: the move buttons get the same 34px tap target as the row actions, and the row wraps so the
+           ability name keeps a readable width instead of being squeezed out */
+        .mwi-csim-ability-row { flex-flow: row wrap; }
+        .mwi-csim-ability-row > .mwi-csim-ability-name { flex: 1 1 110px !important; min-width: 110px; }
+        .mwi-csim-ability-row button[data-ability-move] { min-width: 34px !important; min-height: 34px !important; }
         /* Full viewport width whatever geometry was saved; nothing is written back to storage */
         #mwi-combat-sim-panel,
         #mwi-lab-sim-panel {

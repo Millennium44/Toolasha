@@ -147,10 +147,11 @@ const EDITOR_ROW_CSS = `
  * Odd rows get the stripe class so the eye can follow a row across the gap
  * between the name and its controls; the hover rule lives in the stylesheet.
  * @param {number} index - Row position within its list
+ * @param {string} [extraClass] - Another class for the row (the phone stylesheet's hook)
  * @returns {string} HTML
  */
-function editorRowOpen(index) {
-    const alt = index % 2 === 1 ? ' mwi-csim-row-alt' : '';
+function editorRowOpen(index, extraClass = '') {
+    const alt = (index % 2 === 1 ? ' mwi-csim-row-alt' : '') + (extraClass ? ` ${extraClass}` : '');
     return `<div class="mwi-csim-row${alt}" style="display:flex; align-items:center; gap:6px; font-size:12px;">`;
 }
 
@@ -772,7 +773,9 @@ export class SimEditor {
 
     /**
      * Move an ability one slot up (-1, cast earlier) or down (+1) among the ordinary slots, taking its level and
-     * trigger rows with it. See {@link moveAbilitySlot} for what may not move. A hand edit like any other: the
+     * trigger rows with it. See {@link moveAbilitySlot} for what may not move. Slot order is the casting order:
+     * the engine casts the first ability whose trigger fires, and when that one cannot be afforded it blocks
+     * the later slots for that tick (`skipNextAbility`), so moving an ability changes what the others get to do. A hand edit like any other: the
      * DTO changes in place, so the build signature a trigger or upgrade result was measured against no longer
      * matches and those results read as stale.
      *
@@ -2957,7 +2960,19 @@ export class SimEditor {
         const moveButton = (i, direction, name) => {
             const probe = moveAbilitySlot(dto.abilities, i, direction, unlocked);
             const word = direction < 0 ? 'up' : 'down';
-            return `<button type="button" data-ability-move="${i}:${direction}" aria-label="Move ${escapeHtml(name)} ${word}" title="Move ${word} (cast ${direction < 0 ? 'earlier' : 'later'})" ${probe.moved ? '' : 'disabled'} style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; min-width:26px; min-height:24px; padding:0 4px; border-radius:3px; font-size:11px; cursor:${probe.moved ? 'pointer' : 'default'}; opacity:${probe.moved ? 1 : 0.35}; font-family:inherit;">${direction < 0 ? '\u25b2' : '\u25bc'}</button>`;
+            const requirement = (slot) => gameData?.abilitySlotsLevelRequirementList?.[slot + 1];
+            let why = '';
+            if (probe.reason === 'limit') why = direction < 0 ? 'Top of the order' : 'Bottom of the order';
+            else if (probe.reason === 'special') why = 'The special slot does not move';
+            else if (probe.reason === 'locked') {
+                why =
+                    unlocked[i] === false
+                        ? `Slot ${i} is locked (needs Intelligence ${requirement(i)})`
+                        : `Slot ${i + direction} needs Intelligence ${requirement(i + direction)}`;
+            }
+            const label = probe.moved ? `Move ${name} ${word}` : `Cannot move ${name} ${word}: ${why}`;
+            const title = probe.moved ? `Move ${word} (cast ${direction < 0 ? 'earlier' : 'later'})` : why;
+            return `<button type="button" data-ability-move="${i}:${direction}" aria-label="${escapeHtml(label)}" title="${escapeHtml(title)}" ${probe.moved ? '' : 'disabled'} style="background:rgba(255,255,255,0.06); border:1px solid #444; color:#aaa; min-width:26px; min-height:24px; padding:0 4px; border-radius:3px; font-size:11px; cursor:${probe.moved ? 'pointer' : 'default'}; opacity:${probe.moved ? 1 : 0.35}; font-family:inherit;">${direction < 0 ? '\u25b2' : '\u25bc'}</button>`;
         };
 
         for (let i = 0; i < slotCount; i++) {
@@ -2976,9 +2991,9 @@ export class SimEditor {
             const detail = abilityDetailMap[ability.hrid];
             const name = detail?.name || ability.hrid.split('/').pop();
 
-            html += editorRowOpen(i);
+            html += editorRowOpen(i, 'mwi-csim-ability-row');
             html += `<span style="color:#888; width:50px; flex-shrink:0;">${slotLabel}</span>`;
-            html += `<span style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simEntityLabelHtml(ability.hrid, name)}</span>`;
+            html += `<span class="mwi-csim-ability-name" style="color:#e0e0e0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${simEntityLabelHtml(ability.hrid, name)}</span>`;
             html += `<span style="color:${GAME_COLORS.textDim}; font-size:11px;">Lv</span>`;
             html += `<input type="number" min="1" max="${maxLevel()}" value="${ability.level}"
                 data-ability-idx="${i}"
