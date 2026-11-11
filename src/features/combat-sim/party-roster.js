@@ -80,7 +80,7 @@ export const TOMBSTONE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * @param {number} now
  * @returns {Object<string, number>} id → deletedAt
  */
-function normalizeTombstones(removed, now) {
+export function normalizeTombstones(removed, now) {
     const out = {};
     if (!removed || typeof removed !== 'object' || Array.isArray(removed)) return out;
     for (const [id, at] of Object.entries(removed)) {
@@ -97,7 +97,7 @@ function normalizeTombstones(removed, now) {
  * @param {Object<string, number>} b
  * @returns {Object<string, number>}
  */
-function unionTombstones(a, b) {
+export function unionTombstones(a, b) {
     const out = { ...a };
     for (const [id, at] of Object.entries(b)) if (!(id in out) || at > out[id]) out[id] = at;
     return out;
@@ -237,7 +237,7 @@ export function normalizeAuraOptions(value) {
  * @param {number} max
  * @returns {Array} The entries kept, in their order
  */
-function keepMostRecent(list, max) {
+export function keepMostRecent(list, max) {
     if (list.length <= max) return list;
     const ranked = [...list].sort((x, y) => y.updatedAt - x.updatedAt || (x.id < y.id ? -1 : 1));
     const kept = new Set(ranked.slice(0, max).map((entry) => entry.id));
@@ -361,7 +361,7 @@ let idCounter = 0;
  * @param {string} [prefix] - 'tm' for a teammate, 'sb' for a saved build
  * @returns {string}
  */
-function newEntryId(prefix = 'tm') {
+export function newEntryId(prefix = 'tm') {
     idCounter += 1;
     return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }

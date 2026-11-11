@@ -10,6 +10,8 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 const state = vi.hoisted(() => ({
     charId: 'me',
     db: undefined,
+    /** The saved-parties record (its own key) */
+    savedDb: undefined,
     prefs: {},
     failWrite: false,
     calls: [],
@@ -68,16 +70,20 @@ vi.mock('../../core/storage.js', () => ({
                 String(k).startsWith('combatSimPartyIncludeParty_')
             )
                 return k in state.prefs ? state.prefs[k] : fallback;
+            if (k === 'combatSimSavedParties') {
+                return state.savedDb === undefined ? fallback : structuredClone(state.savedDb);
+            }
             return state.db === undefined ? fallback : structuredClone(state.db);
         },
         set: async (k, v) => {
             state.prefs[k] = v;
         },
-        update: async (_k, mutate) => {
+        update: async (k, mutate) => {
             if (state.failWrite) return null;
-            const next = mutate(state.db === undefined ? undefined : structuredClone(state.db));
-            if (next === undefined) return { written: false, value: state.db };
-            state.db = structuredClone(next);
+            const key = k === 'combatSimSavedParties' ? 'savedDb' : 'db';
+            const next = mutate(state[key] === undefined ? undefined : structuredClone(state[key]));
+            if (next === undefined) return { written: false, value: state[key] };
+            state[key] = structuredClone(next);
             return { written: true, value: structuredClone(next) };
         },
     },
@@ -294,6 +300,7 @@ beforeEach(() => {
     state.charId = 'me';
     state.gameMode = undefined;
     state.db = undefined;
+    state.savedDb = undefined;
     state.prefs = {};
     state.failWrite = false;
     state.calls = [];
@@ -2019,7 +2026,7 @@ describe('include my party', () => {
     test('on by default: a party member shows as Always and is in every party tried', async () => {
         setParty([['c1', 'Captain', build(100)]]);
         await mountTab();
-        expect(el('include-party').checked).toBe(true);
+        expect(el('lock-party').value).toBe('my');
         expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Captain (in party)']);
         expect(partyChoice('party:c1').value).toBe('always');
         await run();
@@ -2128,8 +2135,8 @@ describe('include my party', () => {
         setParty([['c1', 'Captain', build(100)]]);
         await mountTab();
         expect(partyRows()).toHaveLength(1);
-        el('include-party').checked = false;
-        el('include-party').dispatchEvent(new Event('change'));
+        el('lock-party').value = 'nobody';
+        el('lock-party').dispatchEvent(new Event('change'));
         await flush();
         expect(partyRows()).toHaveLength(0);
         expect(el('party-note').textContent).toBe('');
@@ -2137,7 +2144,7 @@ describe('include my party', () => {
         // A later opening reads it back
         tab.detach();
         await mountTab();
-        expect(el('include-party').checked).toBe(false);
+        expect(el('lock-party').value).toBe('nobody');
         expect(partyRows()).toHaveLength(0);
     });
 
@@ -2148,12 +2155,12 @@ describe('include my party', () => {
         state.includeGate = new Promise((resolve) => (release = resolve));
         try {
             await mountTab();
-            el('include-party').checked = false;
-            el('include-party').dispatchEvent(new Event('change'));
+            el('lock-party').value = 'nobody';
+            el('lock-party').dispatchEvent(new Event('change'));
             await flush();
             release();
             await flush();
-            expect(el('include-party').checked).toBe(false);
+            expect(el('lock-party').value).toBe('nobody');
             expect(partyRows()).toHaveLength(0);
         } finally {
             state.includeGate = null;
@@ -2315,5 +2322,306 @@ describe('you are in every party', () => {
         const annRow = tab.sortedRows().find((r) => labelOfRow(r) === 'You + Ann');
         tab.root.querySelector(`[data-pf-load="${annRow.id}"]`).click();
         expect(lastStatus()).toBe('Loaded Milkman + Ann into the editor.');
+    });
+});
+
+describe('saved parties', () => {
+    const savedRecord = (parties, removed = {}) => ({ savedAt: 5, parties, removed });
+    const savedParty = (id, name, members, updatedAt = 5) => ({ id, name, members, addedAt: 1, updatedAt });
+    const savedMember = (name, magic, extra = {}) => ({ name, dto: build(magic), choice: 'always', ...extra });
+    const savedRow = (id) => tab.root.querySelector(`[data-pf-saved-party="${id}"]`);
+    const savedButton = (id, label) =>
+        [...savedRow(id).querySelectorAll('button')].find((b) => b.textContent === label);
+    const lockValue = () => el('lock-party').value;
+    const lockLabels = () => [...el('lock-party').options].map((o) => o.textContent);
+    const choose = async (value) => {
+        el('lock-party').value = value;
+        el('lock-party').dispatchEvent(new Event('change'));
+        await flush();
+    };
+    const editorWith = (names) => {
+        host._editor.players = [
+            { hrid: 'player1', name: 'Milkman', dto: build(90), self: true },
+            ...names.map((name, i) => ({ hrid: `player${i + 2}`, name, dto: build(100 + i) })),
+        ];
+    };
+
+    test('save from the editor: members besides you, with the pick and auras of a matching party row', async () => {
+        setParty([['c1', 'Ann', build(100)]]);
+        editorWith(['Ann', 'Bo']);
+        await mountTab();
+        pick('party:c1', 'try');
+        tab._partyAuras.set('party:c1', {
+            auras: [{ hrid: '/abilities/mystic_aura', level: 20 }],
+            includeAsBuilt: false,
+        });
+        el('save-party-open').click();
+        // Named after the members until the player types their own
+        expect(el('save-party-form').style.display).toBe('flex');
+        expect(el('party-name').value).toBe('Ann, Bo');
+        el('party-name').value = 'Raid';
+        el('save-party').click();
+        await flush();
+        const [party] = state.savedDb.parties;
+        expect(party.name).toBe('Raid');
+        expect(party.members.map((m) => [m.name, m.choice])).toEqual([
+            ['Ann', 'try'],
+            ['Bo', 'always'],
+        ]);
+        expect(party.members[0].auras).toEqual([{ hrid: '/abilities/mystic_aura', level: 20 }]);
+        expect(party.members[0].includeAsBuilt).toBe(false);
+        // Never touches the roster record
+        expect(state.db).toBeUndefined();
+        expect(el('saved-party-note').textContent).toBe('Saved "Raid".');
+        expect(savedRow(party.id).querySelector('[data-pf-saved-party-members]').textContent).toBe('Ann, Bo');
+        expect(lockLabels()).toEqual(['My party', 'Saved: Raid', 'Nobody']);
+    });
+
+    test('every way a save can end: nobody loaded, only you, empty name, duplicate name, write failure, cap', async () => {
+        await mountTab();
+        host._editor.players = [];
+        el('save-party-open').click();
+        expect(el('saved-party-note').textContent).toMatch(/Nobody is loaded in the editor/);
+        editorWith([]);
+        el('save-party-open').click();
+        expect(el('saved-party-note').textContent).toMatch(/Only you are in the editor/);
+        editorWith(['Ann']);
+        el('save-party-open').click();
+        el('party-name').value = '  ';
+        el('save-party').click();
+        await flush();
+        expect(el('saved-party-note').textContent).toBe('Not saved: give the party a name.');
+        expect(state.savedDb).toBeUndefined();
+        el('party-name').value = 'Crew';
+        el('save-party').click();
+        await flush();
+        el('party-name').value = 'crew';
+        el('save-party').click();
+        await flush();
+        expect(state.savedDb.parties).toHaveLength(2);
+        expect(el('saved-party-note').textContent).toMatch(/another saved party already has that name/);
+        state.failWrite = true;
+        el('party-name').value = 'Third';
+        el('save-party').click();
+        await flush();
+        expect(el('saved-party-note').textContent).toMatch(/could not be written/);
+        state.failWrite = false;
+        state.savedDb.parties = Array.from({ length: 40 }, (_, i) =>
+            savedParty(`sp-${i}`, `P${i}`, [savedMember('Ann', 80)])
+        );
+        await tab._reloadSaved();
+        el('party-name').value = 'Over';
+        el('save-party').click();
+        await flush();
+        expect(el('saved-party-note').textContent).toBe('Not saved: at most 40 parties can be saved.');
+        expect(state.savedDb.parties).toHaveLength(40);
+    });
+
+    test('five other players in the editor are refused, nothing written', async () => {
+        editorWith(['A', 'B', 'C', 'D', 'E']);
+        await mountTab();
+        el('save-party').click();
+        await flush();
+        expect(el('saved-party-note').textContent).toMatch(/at most 4 besides you/);
+        expect(state.savedDb).toBeUndefined();
+    });
+
+    test('rename, and a two-click delete', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 100)])]);
+        await mountTab();
+        savedButton('sp-1', 'Rename').click();
+        const input = savedRow('sp-1').querySelector('input');
+        input.value = 'Dungeon crew';
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+        await flush();
+        expect(state.savedDb.parties[0].name).toBe('Dungeon crew');
+        expect(savedRow('sp-1').textContent).toContain('Dungeon crew');
+        savedButton('sp-1', '×').click();
+        await flush();
+        expect(state.savedDb.parties).toHaveLength(1);
+        expect(savedButton('sp-1', 'Delete?')).toBeTruthy();
+        savedButton('sp-1', 'Delete?').click();
+        await flush();
+        expect(state.savedDb.parties).toEqual([]);
+        expect(state.savedDb.removed['sp-1']).toBeGreaterThan(0);
+        expect(savedRow('sp-1')).toBeNull();
+    });
+
+    test('lock in: the saved members replace the in-game party as labeled rows with their saved picks', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.savedDb = savedRecord([
+            savedParty('sp-1', 'Raid', [
+                savedMember('Ann', 110, { choice: 'try', auras: [{ hrid: '/abilities/mystic_aura', level: 25 }] }),
+                savedMember('Bo', 120),
+            ]),
+        ]);
+        await mountTab();
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Captain (in party)']);
+        savedButton('sp-1', 'Lock in').click();
+        await flush();
+        expect(lockValue()).toBe('saved:sp-1');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual([
+            'Ann (saved party: Raid)',
+            'Bo (saved party: Raid)',
+        ]);
+        const [annId, boId] = partyRows().map((r) => r.dataset.pfPartyMember);
+        expect(partyChoice(annId).value).toBe('try');
+        expect(partyChoice(boId).value).toBe('always');
+        expect(tab.root.querySelector(`[data-pf-party-auras="${annId}"]`).textContent).toBe('Auras (1)');
+        // Remembered per character as the select's value; nothing reaches the roster
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe('saved:sp-1');
+        expect(state.db).toBeUndefined();
+        // Every party tried holds Bo (Always); Ann (Try) comes and goes
+        el('top-k').value = '0';
+        tab.start();
+        await flush();
+        const zones = state.calls[0].params.zones;
+        expect(zones.length).toBeGreaterThan(1);
+        expect(zones.every((z) => z.playerDTOs.length === 1 || z.playerDTOs.some((d) => d.magicLevel === 120))).toBe(
+            true
+        );
+        expect(zones.some((z) => z.playerDTOs.some((d) => d.magicLevel === 120))).toBe(true);
+    });
+
+    test('a pick made this session on a saved-party row stands over the saved one', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        const id = partyRows()[0].dataset.pfPartyMember;
+        pick(id, 'never');
+        await tab._refreshParty();
+        expect(partyChoice(id).value).toBe('never');
+    });
+
+    test('saved-party members are never written to the roster', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        pick(partyRows()[0].dataset.pfPartyMember, 'try');
+        expect(state.db).toBeUndefined();
+    });
+
+    test('the stored pick of a saved party waits for the saved parties to be read', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        state.prefs.combatSimPartyIncludeParty_me = 'saved:sp-1';
+        await mountTab();
+        expect(lockValue()).toBe('saved:sp-1');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Ann (saved party: Raid)']);
+        expect(el('party-note').textContent).not.toMatch(/gone/);
+    });
+
+    test('a locked-in party deleted elsewhere (a sync pull) falls back to my party with a note', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        state.savedDb = savedRecord([], { 'sp-1': Date.now() });
+        announceSyncPullApplied({ settings: ['combatSimSavedParties'] });
+        await flush();
+        expect(lockValue()).toBe('my');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Captain (in party)']);
+        expect(el('party-note').textContent).toMatch(/saved party you had locked in is gone/);
+    });
+
+    test('deleting the locked-in party here also falls back', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110)])]);
+        await mountTab();
+        await choose('saved:sp-1');
+        savedButton('sp-1', '×').click();
+        await flush();
+        savedButton('sp-1', 'Delete?').click();
+        await flush();
+        expect(lockValue()).toBe('my');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Captain (in party)']);
+    });
+
+    test('a member with a malformed build is left out with a note, never a blank build', async () => {
+        state.savedDb = savedRecord([
+            savedParty('sp-1', 'Raid', [
+                savedMember('Ann', 110),
+                { name: 'Odd', dto: { equipment: {} }, choice: 'always' },
+            ]),
+        ]);
+        await mountTab();
+        expect(savedRow('sp-1').querySelector('[data-pf-saved-party-members]').textContent).toBe(
+            'Ann, Odd (cannot be loaded)'
+        );
+        await choose('saved:sp-1');
+        expect(partyRows().map((r) => r.firstChild.textContent)).toEqual(['Ann (saved party: Raid)']);
+        expect(el('party-note').textContent).toMatch(/Odd in "Raid" has a build this version cannot run/);
+        // Still in the record
+        expect(state.savedDb.parties[0].members).toHaveLength(2);
+    });
+
+    test('more members than a zone takes shows the existing cannot-all-fit note', async () => {
+        state.savedDb = savedRecord([
+            savedParty('sp-1', 'Raid', [savedMember('Ann', 110), savedMember('Bo', 111), savedMember('Cy', 112)]),
+        ]);
+        await mountTab();
+        await choose('saved:sp-1');
+        // Swamp Planet takes 3 players: you and three locked members do not fit
+        expect(el('plan').textContent).toMatch(/Ann, Bo, Cy cannot all fit in a 3-player party here/);
+    });
+
+    test('load in editor: you (live) first, then the saved members, then the Configure tab', async () => {
+        state.savedDb = savedRecord([savedParty('sp-1', 'Raid', [savedMember('Ann', 110), savedMember('Bo', 120)])]);
+        await mountTab();
+        savedButton('sp-1', 'Load in editor').click();
+        const [players, names, options] = host._editor.loadParty.mock.calls[0];
+        expect(names).toEqual(['Milkman', 'Ann', 'Bo']);
+        expect(players.map((d) => d.magicLevel)).toEqual([90, 110, 120]);
+        expect(options).toMatchObject({ selfIsLive: true, note: 'From the saved party "Raid"' });
+        expect(host._switchTab).toHaveBeenCalledWith('configure');
+    });
+
+    test('load in editor refuses when nobody can be loaded or the party and you are more than five', async () => {
+        state.savedDb = savedRecord([savedParty('sp-bad', 'Bad', [{ name: 'Odd', dto: { equipment: {} } }])]);
+        await mountTab();
+        savedButton('sp-bad', 'Load in editor').click();
+        expect(host._editor.loadParty).not.toHaveBeenCalled();
+        expect(el('saved-party-note').textContent).toMatch(/no member this version can load/);
+        // The record caps a party at four; a hand-edited one with more is still refused
+        const five = ['A', 'B', 'C', 'D', 'E'].map((n, i) => savedMember(n, 100 + i));
+        expect(tab._loadSavedPartyInEditor({ name: 'Huge', members: five })).toBe(false);
+        expect(el('saved-party-note').textContent).toMatch(/more than 5 players/);
+        expect(host._editor.loadParty).not.toHaveBeenCalled();
+    });
+
+    test('a stored false from the checkbox era reads as Nobody; true and nothing as My party', async () => {
+        setParty([['c1', 'Captain', build(100)]]);
+        state.prefs.combatSimPartyIncludeParty_me = false;
+        await mountTab();
+        expect(lockValue()).toBe('nobody');
+        expect(partyRows()).toHaveLength(0);
+        tab.detach();
+        state.prefs.combatSimPartyIncludeParty_me = true;
+        await mountTab();
+        expect(lockValue()).toBe('my');
+        expect(partyRows()).toHaveLength(1);
+        tab.detach();
+        delete state.prefs.combatSimPartyIncludeParty_me;
+        await mountTab();
+        expect(lockValue()).toBe('my');
+        expect(PartyFinderTab.lockModeOf('saved:')).toBe('my');
+        expect(PartyFinderTab.lockModeOf('whatever')).toBe('my');
+    });
+
+    test('My party and Nobody are stored as true / false so an older build still reads them', async () => {
+        await mountTab();
+        await choose('nobody');
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe(false);
+        await choose('my');
+        expect(state.prefs.combatSimPartyIncludeParty_me).toBe(true);
+    });
+
+    test('a sync pull of the saved parties shows a party another device added', async () => {
+        await mountTab();
+        expect(savedRow('sp-9')).toBeNull();
+        state.savedDb = savedRecord([savedParty('sp-9', 'From phone', [savedMember('Ann', 100)])]);
+        announceSyncPullApplied({ settings: ['combatSimSavedParties'] });
+        await flush();
+        expect(savedRow('sp-9')).not.toBeNull();
+        expect(lockLabels()).toContain('Saved: From phone');
     });
 });

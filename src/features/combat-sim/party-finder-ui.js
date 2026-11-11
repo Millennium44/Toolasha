@@ -58,6 +58,17 @@ import {
     MAX_AURA_OPTIONS,
     buildFingerprint,
 } from './party-roster.js';
+import {
+    SAVED_PARTIES_KEY,
+    MAX_SAVED_PARTIES,
+    MAX_PARTY_MEMBERS,
+    evictedPartiesByCap,
+    loadSavedParties,
+    saveParty,
+    renameParty,
+    removeParty,
+    usableMembers,
+} from './party-saved.js';
 import { tuneTemplate, clearTunerCache } from './party-template-tuner.js';
 import { BUTTON_LOOK, GAME_COLORS } from '../../utils/game-look.js';
 import { PARTY_TEMPLATES, TEMPLATE_ROLE_GROUPS, templatesForGroup, templateTeammateName } from './party-templates.js';
@@ -73,6 +84,7 @@ import {
     partyLabel,
     memberLabel,
     planPartyLock,
+    PARTY_ENTRY_PREFIX,
     sharedAuras,
     checkAuraOption,
     isPlayerSpecialAbility,
@@ -223,6 +235,18 @@ function esc(value) {
     );
 }
 
+/** Two names compared without case or stray spaces */
+function sameDisplayName(a, b) {
+    return (
+        String(a ?? '')
+            .trim()
+            .toLowerCase() ===
+        String(b ?? '')
+            .trim()
+            .toLowerCase()
+    );
+}
+
 /**
  * Clamp a number input's value.
  * @param {HTMLInputElement|null} input
@@ -325,6 +349,15 @@ export class PartyFinderTab {
          * in as always-included teammates. They are never written to the saved roster; this is all in memory.
          */
         this._includeParty = true;
+        /**
+         * What is locked in: 'my' (your in-game party), 'nobody', or `saved:<party id>` (a saved party's members,
+         * in place of the in-game party). Stored per character in the old checkbox's key as true / false / the
+         * `saved:` string, so a build from before the select reads it as on or off.
+         */
+        this._lockMode = 'my';
+        /** The saved parties, and whether they have been read yet (a stored pick of one waits for the read) */
+        this._saved = { savedAt: 0, parties: [], removed: {} };
+        this._savedLoaded = false;
         /** Party member row id (`party:<characterID>`) → 'try' | 'always' | 'never' picked this session */
         this._partyChoices = new Map();
         /** Party row id → aura options to try them with, this session only (never the saved roster) */
@@ -401,9 +434,11 @@ export class PartyFinderTab {
         this._wire();
         this._unsubscribePull = onSyncPullApplied((written) => {
             if ((written?.settings || []).includes(PARTY_ROSTER_KEY)) this._reloadRoster({ pulled: true });
+            if ((written?.settings || []).includes(SAVED_PARTIES_KEY)) this._reloadSaved({ pulled: true });
         });
         this._watchParty();
         this._reloadRoster();
+        this._reloadSaved();
         this._loadScoreWeight();
         this._loadIncludeParty();
     }
@@ -443,6 +478,9 @@ export class PartyFinderTab {
         this._roster = { savedAt: 0, entries: [], builds: [] };
         this._choices = {};
         this._includeParty = true;
+        this._lockMode = 'my';
+        this._saved = { savedAt: 0, parties: [], removed: {} };
+        this._savedLoaded = false;
         this._partyChoices = new Map();
         /** Party row id → aura options to try them with, this session only (never the saved roster) */
         this._partyAuras = new Map();
@@ -531,8 +569,8 @@ export class PartyFinderTab {
                 'Teammates <span data-pf="roster-count" style="color:' +
                     GAME_COLORS.textDim +
                     '; font-weight:400;"></span>',
-                `<label style="color:#aaa; font-size:11px; display:flex; gap:4px; align-items:center; margin-bottom:4px;" title="Each member of your current in-game party is added here as Always, so every party tried already holds them and the search fills only the leftover slots. They are not saved to your roster.">
-                    <input type="checkbox" data-pf="include-party" checked> Include my party</label>
+                `<label style="color:#aaa; font-size:11px; display:flex; gap:6px; align-items:center; margin-bottom:4px;" title="The members of the party you pick are added here as Always, so every party tried already holds them and the search fills only the leftover slots. They are not saved to your roster.">
+                    Lock in <select class="toolasha-select" data-pf="lock-party" style="${INPUT_STYLE}"></select></label>
                 <div data-pf="party-note" style="color:#888; font-size:11px; margin-bottom:4px;"></div>
                 <div data-pf="party-rows" style="display:flex; flex-direction:column; gap:3px; margin-bottom:4px;"></div>
                 <div data-pf="roster" style="display:flex; flex-direction:column; gap:3px;"></div>
@@ -566,6 +604,21 @@ export class PartyFinderTab {
                     <button data-pf="save-build-cancel" style="${SMALL_BTN_STYLE}">Cancel</button>
                 </div>
                 <div data-pf="build-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
+            ),
+            section(
+                'Saved parties <span data-pf="party-saved-count" style="color:' +
+                    GAME_COLORS.textDim +
+                    '; font-weight:400;"></span>',
+                `<div data-pf="saved-parties" style="display:flex; flex-direction:column; gap:3px;"></div>
+                <div style="margin-top:6px;">
+                    <button data-pf="save-party-open" style="${SMALL_BTN_STYLE}" title="Keep the players in the editor besides you, with their Try/Always/Never and auras, under a name">Save party…</button>
+                </div>
+                <div data-pf="save-party-form" style="display:none; flex-wrap:wrap; gap:6px; align-items:center; margin-top:6px;">
+                    <input type="text" data-pf="party-name" placeholder="Party name" maxlength="40" style="${INPUT_STYLE}">
+                    <button data-pf="save-party" style="${BTN_STYLE}">Save</button>
+                    <button data-pf="save-party-cancel" style="${SMALL_BTN_STYLE}">Cancel</button>
+                </div>
+                <div data-pf="saved-party-note" style="color:#888; font-size:11px; margin-top:4px;"></div>`
             ),
             section(
                 'Zones',
@@ -642,7 +695,15 @@ export class PartyFinderTab {
             this._renderSelfAuras();
             this._renderPlan();
         });
-        this._el('include-party').addEventListener('change', (e) => this._onIncludeParty(e.target.checked));
+        this._el('lock-party').addEventListener('change', (e) => this._onLockMode(e.target.value));
+        this._el('save-party-open').addEventListener('click', () => this._openSaveParty());
+        this._el('save-party-cancel').addEventListener('click', () => {
+            this._el('save-party-form').style.display = 'none';
+        });
+        this._el('save-party').addEventListener('click', () => this._onSaveParty());
+        this._el('party-name').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this._onSaveParty();
+        });
         this._el('self-aura-edit').addEventListener('click', () => {
             this._selfAuraOpen = !this._selfAuraOpen;
             this._renderSelfAuras();
@@ -739,7 +800,18 @@ export class PartyFinderTab {
     }
 
     /**
-     * Read this character's saved "Include my party" switch (on until they turn it off).
+     * What a stored lock-in value means: the old checkbox stored true / false, the select stores `saved:<id>` too.
+     * @param {*} saved
+     * @returns {string} 'my', 'nobody' or `saved:<id>`
+     */
+    static lockModeOf(saved) {
+        if (saved === false) return 'nobody';
+        if (typeof saved === 'string' && saved.startsWith('saved:') && saved.length > 'saved:'.length) return saved;
+        return 'my';
+    }
+
+    /**
+     * Read this character's saved lock-in pick (your party until they change it).
      * @private
      */
     async _loadIncludeParty() {
@@ -748,32 +820,59 @@ export class PartyFinderTab {
         const edits = this._includePartyEdits || 0;
         const saved = await storage.get(this._includePartyKey(ownerId), 'settings', null);
         if (!this.root || dataManager.getCurrentCharacterId() !== ownerId) return;
-        // The player flipped the box while this read was out: their click is newer than what was saved
+        // The player changed the pick while this read was out: their choice is newer than what was saved
         if ((this._includePartyEdits || 0) !== edits) return;
-        const next = saved !== false;
-        if (next === this._includeParty) return;
-        this._includeParty = next;
-        const tick = this._el('include-party');
-        if (tick) tick.checked = next;
+        const next = PartyFinderTab.lockModeOf(saved);
+        if (next === this._lockMode) return;
+        this._lockMode = next;
+        this._includeParty = next !== 'nobody';
         this._refreshParty();
     }
 
     /**
-     * The player switched "Include my party".
-     * @param {boolean} checked
+     * The player picked what to lock in.
+     * @param {string} mode - 'my', 'nobody' or `saved:<id>`
      * @private
      */
-    async _onIncludeParty(checked) {
+    async _onLockMode(mode) {
         const ownerId = dataManager.getCurrentCharacterId();
         this._includePartyEdits = (this._includePartyEdits || 0) + 1;
-        this._includeParty = Boolean(checked);
+        this._lockMode = PartyFinderTab.lockModeOf(mode === 'nobody' ? false : mode);
+        this._includeParty = this._lockMode !== 'nobody';
         this._refreshParty();
         if (ownerId == null) return;
+        const stored = this._lockMode === 'my' ? true : this._lockMode === 'nobody' ? false : this._lockMode;
         try {
-            await storage.set(this._includePartyKey(ownerId), this._includeParty, 'settings');
+            await storage.set(this._includePartyKey(ownerId), stored, 'settings');
         } catch (error) {
-            console.error('[PartyFinder] Could not save the Include my party switch:', error);
+            console.error('[PartyFinder] Could not save the lock-in pick:', error);
         }
+    }
+
+    /** The Lock in select: your party, each saved party, nobody. @private */
+    _renderLockSelect() {
+        const select = this._el('lock-party');
+        if (!select) return;
+        const options = [
+            ['my', 'My party'],
+            ...this._saved.parties.map((p) => [`saved:${p.id}`, `Saved: ${p.name}`]),
+            ['nobody', 'Nobody'],
+        ];
+        select.textContent = '';
+        for (const [value, label] of options) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            select.appendChild(option);
+        }
+        // A pick of a saved party not read yet is kept as the value until the read says whether it exists
+        if (!options.some(([value]) => value === this._lockMode)) {
+            const pending = document.createElement('option');
+            pending.value = this._lockMode;
+            pending.textContent = 'Saved party…';
+            select.insertBefore(pending, select.lastChild);
+        }
+        select.value = this._lockMode;
     }
 
     /**
@@ -834,9 +933,10 @@ export class PartyFinderTab {
     async _readParty() {
         const token = ++this._partyToken;
         if (!this.root) return;
+        let prefix = '';
         const settle = (members, note) => {
             this._partyMembers = members;
-            this._partyNote = note;
+            this._partyNote = prefix + note;
             // The roster rows too: a saved teammate who is also in your party is shown as replaced
             this._renderRoster();
             this._renderPlan();
@@ -844,6 +944,42 @@ export class PartyFinderTab {
         if (!this._includeParty) {
             settle([], '');
             return;
+        }
+        if (this._lockMode.startsWith('saved:')) {
+            // A stored pick waits for the saved parties to be read: a party not read yet is not a party deleted
+            if (!this._savedLoaded) await this._reloadSaved({ refresh: false });
+            if (token !== this._partyToken || !this.root) return;
+            const id = this._lockMode.slice('saved:'.length);
+            const party = this._saved.parties.find((p) => p.id === id);
+            if (party) {
+                const { members, skipped } = usableMembers(party);
+                const rows = members.map((member, index) => {
+                    const memberId = `${PARTY_ENTRY_PREFIX}saved-${party.id}-${index}`;
+                    // Saved picks stand until the player changes them this session
+                    if (!this._partyChoices.has(memberId)) this._partyChoices.set(memberId, member.choice);
+                    if (!this._partyAuras.has(memberId)) {
+                        this._partyAuras.set(memberId, { auras: member.auras, includeAsBuilt: member.includeAsBuilt });
+                    }
+                    return {
+                        characterID: `saved-${party.id}-${index}`,
+                        characterName: member.name,
+                        dto: member.dto,
+                        savedParty: party.name,
+                    };
+                });
+                settle(
+                    rows,
+                    skipped.length
+                        ? `${skipped.join(', ')} in "${party.name}" ${skipped.length === 1 ? 'has' : 'have'} a build this version cannot run, so ${skipped.length === 1 ? 'that member is' : 'those members are'} left out.`
+                        : ''
+                );
+                return;
+            }
+            // Deleted (here or on another device): back to your in-game party. The stored pick is left alone, so a
+            // read that failed is not mistaken for a deletion for good
+            this._lockMode = 'my';
+            prefix = 'The saved party you had locked in is gone, so this is your in-game party again. ';
+            this._renderLockSelect();
         }
         const owner = dataManager.getCurrentCharacterId();
         const partyNow = () => dataManager.getPartyMembers?.().members || [];
@@ -933,8 +1069,7 @@ export class PartyFinderTab {
         const list = this._el('party-rows');
         const note = this._el('party-note');
         if (!list || !note) return;
-        const tick = this._el('include-party');
-        if (tick) tick.checked = this._includeParty;
+        this._renderLockSelect();
         list.textContent = '';
         note.textContent = this._includeParty ? this._partyNote : '';
         for (const row of this._partyLock().rows) {
@@ -943,7 +1078,9 @@ export class PartyFinderTab {
             line.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px;';
             const name = document.createElement('span');
             name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-            name.textContent = `${row.name} (in party)`;
+            name.textContent = row.savedParty
+                ? `${row.name} (saved party: ${row.savedParty})`
+                : `${row.name} (in party)`;
             line.appendChild(name);
             if (row.status === 'missing') {
                 const why = document.createElement('span');
@@ -957,7 +1094,7 @@ export class PartyFinderTab {
                 choice.dataset.pfPartyChoice = row.id;
                 choice.style.cssText = INPUT_STYLE + ' font-size:11px; padding:1px 4px;';
                 choice.title =
-                    'From your party. Always: every party has them. Try: may join a party. Never: left out. ' +
+                    'From the party locked in. Always: every party has them. Try: may join a party. Never: left out. ' +
                     'Kept for this session only, not saved to your roster.';
                 for (const [value, label] of [
                     ['always', 'Always'],
@@ -1161,6 +1298,7 @@ export class PartyFinderTab {
             if (this._auraOpen === entry.id) list.appendChild(this._auraEditor(entry));
         }
         this._renderBuilds();
+        this._renderSavedParties();
         this._renderAddFromEditor();
         this._renderPlan();
     }
@@ -1459,6 +1597,261 @@ export class PartyFinderTab {
         ]);
         this._adoptRoster(result);
         this._reportAdd(result);
+    }
+
+    // ---------------------------------------------------------------- saved parties
+
+    /**
+     * @param {string} text
+     * @param {boolean} [warn]
+     * @private
+     */
+    _savedPartyNote(text, warn = false) {
+        const note = this._el('saved-party-note');
+        if (!note) return;
+        note.textContent = text || '';
+        note.style.color = warn ? '#ff9800' : '#888';
+    }
+
+    /**
+     * Read the saved parties back.
+     * @param {{pulled?: boolean, refresh?: boolean}} [options] - `pulled`: a sync pull wrote them, so a fold may have
+     *   dropped some for want of room; `refresh: false`: the caller is the party refresh itself
+     * @private
+     */
+    async _reloadSaved({ pulled = false, refresh = true } = {}) {
+        const before = this._saved;
+        const saved = await loadSavedParties();
+        if (!this.root) return;
+        this._saved = saved;
+        this._savedLoaded = true;
+        this._renderSavedParties();
+        this._renderLockSelect();
+        if (refresh && this._lockMode.startsWith('saved:')) this._refreshParty();
+        if (!pulled) return;
+        const lost = evictedPartiesByCap(before, saved);
+        if (lost.length) {
+            this._savedPartyNote(
+                `Sync joined two full lists and kept the ${MAX_SAVED_PARTIES} most recently changed: ${lostNames(lost)} dropped.`,
+                true
+            );
+        }
+    }
+
+    /**
+     * Take the saved parties a write handed back.
+     * @param {{ok: boolean, saved: Object, duplicate?: boolean}} result
+     * @private
+     */
+    _adoptSaved(result) {
+        if (!this.root) return;
+        this._saved = result.saved;
+        this._savedLoaded = true;
+        this._renderSavedParties();
+        this._renderLockSelect();
+        // The party locked in may be the one just renamed (its label) or deleted (back to your party)
+        if (this._lockMode.startsWith('saved:')) this._refreshParty();
+    }
+
+    /** The saved parties list. @private */
+    _renderSavedParties() {
+        const list = this._el('saved-parties');
+        if (!list) return;
+        const parties = this._saved.parties;
+        this._el('party-saved-count').textContent = `(${parties.length}/${MAX_SAVED_PARTIES})`;
+        list.textContent = '';
+        if (!parties.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'color:' + GAME_COLORS.textDim + '; font-size:11px;';
+            empty.textContent =
+                'No saved parties. Load a party in the editor (Reset to Party), then "Save party…" keeps it under a name.';
+            list.appendChild(empty);
+        }
+        for (const party of parties) {
+            const row = document.createElement('div');
+            row.dataset.pfSavedParty = party.id;
+            row.style.cssText = 'display:flex; gap:6px; align-items:center; font-size:12px; flex-wrap:wrap;';
+            const name = document.createElement('span');
+            name.dataset.pfSavedPartyName = '';
+            name.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            const { members, skipped } = usableMembers(party);
+            const who = [...members.map((m) => m.name), ...skipped.map((n) => `${n} (cannot be loaded)`)].join(', ');
+            name.textContent = party.name;
+            const memberLine = document.createElement('span');
+            memberLine.dataset.pfSavedPartyMembers = '';
+            memberLine.style.cssText = `color:${GAME_COLORS.textDim}; font-size:11px; flex-basis:100%; order:5;`;
+            memberLine.textContent = who || 'no members';
+            const button = (label, title, onClick) => {
+                const b = document.createElement('button');
+                b.style.cssText = SMALL_BTN_STYLE;
+                b.textContent = label;
+                b.title = title;
+                b.addEventListener('click', onClick);
+                return b;
+            };
+            const deleting = this._pendingDelete === party.id;
+            const locked = this._lockMode === `saved:${party.id}`;
+            const adopt = (result) => {
+                this._adoptSaved(result);
+                if (result.duplicate) this._savedPartyNote('Another saved party has that name too.');
+            };
+            const lockButton = button(
+                locked ? 'Locked in' : 'Lock in',
+                'Lock these members into every party tried, in place of your in-game party',
+                () => this._onLockMode(`saved:${party.id}`)
+            );
+            lockButton.disabled = locked;
+            row.append(
+                name,
+                lockButton,
+                button('Load in editor', 'Put you and these members in the editor (Configure tab)', () =>
+                    this._loadSavedPartyInEditor(party)
+                ),
+                button('Rename', 'Rename', () =>
+                    this._onRename(party, row, name, renameParty, '_savedPartyNote', adopt)
+                ),
+                button(deleting ? 'Delete?' : '×', deleting ? 'Click again to delete' : 'Delete', () =>
+                    this._onDelete(party, removeParty, '_savedPartyNote', adopt)
+                ),
+                memberLine
+            );
+            if (deleting) row.children[4].style.color = RED;
+            list.appendChild(row);
+        }
+    }
+
+    /**
+     * The players the editor holds besides you, as saved-party members with the picks this tab holds for any that
+     * is also a row in the party locked in (matched by name).
+     * @returns {{members: Array<Object>, count: number}}
+     * @private
+     */
+    _partyDraft() {
+        const editor = this.host?._editor;
+        const players = this._editorPlayers();
+        let selfHrid = editor?.getSelfHrid?.() || null;
+        const picked = this._el('self')?.value || '';
+        if (!selfHrid && picked.startsWith('editor:')) selfHrid = picked.slice('editor:'.length);
+        const others = players.filter((p) => p.hrid !== selfHrid);
+        const rows = this._partyLock().rows;
+        const members = others.map((player) => {
+            const row = rows.find((r) => sameDisplayName(r.name, player.name));
+            const picks = row ? this._partyAuras.get(row.id) : null;
+            return {
+                name: player.name,
+                dto: player.dto,
+                choice: (row && this._partyChoices.get(row.id)) || 'always',
+                auras: picks?.auras || [],
+                includeAsBuilt: picks ? picks.includeAsBuilt !== false : true,
+                gameMode: this._editorPlayerMode(player),
+            };
+        });
+        return { members, count: players.length };
+    }
+
+    /** Show the name form, filled with the members' names until the player types their own. @private */
+    _openSaveParty() {
+        const form = this._el('save-party-form');
+        if (!form) return;
+        const { members, count } = this._partyDraft();
+        if (!count) {
+            this._savedPartyNote('Nobody is loaded in the editor. Load a party on the Configure tab first.', true);
+            return;
+        }
+        if (!members.length) {
+            this._savedPartyNote('Only you are in the editor, so there is no party to save.', true);
+            return;
+        }
+        const input = this._el('party-name');
+        if (input && !input.value)
+            input.value = members
+                .map((m) => m.name)
+                .join(', ')
+                .slice(0, 40);
+        form.style.display = 'flex';
+        input?.focus();
+    }
+
+    /** @private */
+    async _onSaveParty() {
+        const { members, count } = this._partyDraft();
+        if (!count) {
+            this._savedPartyNote('Nobody is loaded in the editor. Load a party on the Configure tab first.', true);
+            return;
+        }
+        if (!members.length) {
+            this._savedPartyNote('Only you are in the editor, so there is no party to save.', true);
+            return;
+        }
+        if (members.length > MAX_PARTY_MEMBERS) {
+            this._savedPartyNote(
+                `A party holds at most ${MAX_PARTY_MEMBERS} besides you, and the editor holds ${members.length} other players.`,
+                true
+            );
+            return;
+        }
+        const typed = this._el('party-name')?.value || '';
+        const result = await saveParty(typed, members);
+        this._adoptSaved(result);
+        const skippedText = result.skipped.length
+            ? ` ${result.skipped.map((s) => `${s.name} was left out (${s.reason})`).join('; ')}.`
+            : '';
+        if (!result.ok) {
+            this._savedPartyNote(
+                result.reason
+                    ? `Not saved: ${result.reason}.${skippedText}`
+                    : 'Could not save the party: the list could not be written.',
+                true
+            );
+            return;
+        }
+        this._savedPartyNote(
+            `Saved "${result.name}"${result.duplicate ? ' (another saved party already has that name)' : ''}.${skippedText}`,
+            result.duplicate || result.skipped.length > 0
+        );
+        const input = this._el('party-name');
+        if (input) input.value = '';
+        const form = this._el('save-party-form');
+        if (form) form.style.display = 'none';
+    }
+
+    /**
+     * Put you (live) and a saved party's members in the editor, and show the Configure tab.
+     * @param {Object} party - A saved party
+     * @returns {boolean} Whether it was loaded
+     * @private
+     */
+    _loadSavedPartyInEditor(party) {
+        const editor = this.host?._editor;
+        if (!editor?.loadParty) return false;
+        const { members, skipped } = usableMembers(party);
+        if (!members.length) {
+            this._savedPartyNote(`"${party.name}" has no member this version can load.`, true);
+            return false;
+        }
+        if (1 + members.length > DUNGEON_MAX_PARTY) {
+            this._savedPartyNote(
+                `"${party.name}" and you would be more than ${DUNGEON_MAX_PARTY} players, more than the editor holds.`,
+                true
+            );
+            return false;
+        }
+        const self = this._resolveChoice('live');
+        if (!self) {
+            this._savedPartyNote('No character data available.', true);
+            return false;
+        }
+        editor.loadParty(
+            [self.dto, ...members.map((m) => this._withAssumedMode(structuredClone(m.dto)))],
+            [self.name, ...members.map((m) => m.name)],
+            { selfIsLive: true, note: `From the saved party "${party.name}"` }
+        );
+        this._savedPartyNote(
+            `Loaded "${party.name}" into the editor.${skipped.length ? ` ${skipped.join(', ')} could not be loaded.` : ''}`,
+            skipped.length > 0
+        );
+        this.host._switchTab?.('configure');
+        return true;
     }
 
     /**
@@ -1805,7 +2198,7 @@ export class PartyFinderTab {
      * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    _onRename(entry, row, nameEl, rename = renameTeammate, note = '_rosterNote') {
+    _onRename(entry, row, nameEl, rename = renameTeammate, note = '_rosterNote', adopt = null) {
         const input = document.createElement('input');
         input.type = 'text';
         input.value = entry.name;
@@ -1821,7 +2214,8 @@ export class PartyFinderTab {
                 return;
             }
             const result = await rename(entry.id, input.value);
-            this._adoptRoster(result);
+            if (adopt) adopt(result);
+            else this._adoptRoster(result);
             if (!result.ok) this[note]('Could not save the new name.', true);
         };
         input.addEventListener('keydown', (e) => {
@@ -1837,7 +2231,7 @@ export class PartyFinderTab {
      * @param {string} [note] - The note method that reports a failure
      * @private
      */
-    async _onDelete(entry, remove = removeTeammate, note = '_rosterNote') {
+    async _onDelete(entry, remove = removeTeammate, note = '_rosterNote', adopt = null) {
         if (this._pendingDelete !== entry.id) {
             this._pendingDelete = entry.id;
             clearTimeout(this._pendingDeleteTimer);
@@ -1851,8 +2245,9 @@ export class PartyFinderTab {
         this._pendingDelete = null;
         clearTimeout(this._pendingDeleteTimer);
         const result = await remove(entry.id);
-        this._adoptRoster(result);
-        if (!result.ok) this[note]('Could not delete: the roster could not be written.', true);
+        if (adopt) adopt(result);
+        else this._adoptRoster(result);
+        if (!result.ok) this[note]('Could not delete: the list could not be written.', true);
     }
 
     // ---------------------------------------------------------------- you

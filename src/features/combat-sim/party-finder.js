@@ -828,6 +828,7 @@ export function planPartyLock({
             name,
             status: ready ? 'ready' : 'missing',
             duplicates,
+            savedParty: member.savedParty || null,
         });
         if (ready) {
             const picks = auraPicks.get(id);
