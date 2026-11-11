@@ -2118,7 +2118,10 @@ function setupInventoryListener() {
     webSocketHook.on('*', inventoryUpdateHandler);
     unsubscribeBaseReservations?.();
     unsubscribeBaseReservations = null;
-    if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
+    if (baseQueueHandler) {
+        dataManager.off('actions_updated', baseQueueHandler);
+        dataManager.off('items_updated', baseQueueHandler);
+    }
     baseQueueHandler = null;
     if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
     ownedListCharacterHandler = null;
@@ -2147,6 +2150,9 @@ function setupInventoryListener() {
         unsubscribeBaseReservations = onReservationsChanged(validateBase);
         baseQueueHandler = validateBase;
         dataManager.on('actions_updated', baseQueueHandler);
+        // A completed action reports what it used up only as an inventory update, not a queue
+        // change: an infinite or ignored-queue craft can spend the owned source while the bill is open
+        dataManager.on('items_updated', baseQueueHandler);
         if (storedMaterialList?.ownedInputs?.length) {
             ownedListCharacterHandler = handleMarketplaceCleanup;
             dataManager.on('character_switching', ownedListCharacterHandler);
@@ -2260,7 +2266,10 @@ function handleMarketplaceCleanup() {
 
     unsubscribeBaseReservations?.();
     unsubscribeBaseReservations = null;
-    if (baseQueueHandler) dataManager.off('actions_updated', baseQueueHandler);
+    if (baseQueueHandler) {
+        dataManager.off('actions_updated', baseQueueHandler);
+        dataManager.off('items_updated', baseQueueHandler);
+    }
     baseQueueHandler = null;
     if (ownedListCharacterHandler) dataManager.off('character_switching', ownedListCharacterHandler);
     ownedListCharacterHandler = null;

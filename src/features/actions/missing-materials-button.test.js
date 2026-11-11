@@ -2074,6 +2074,17 @@ describe('Mirror owned inputs remain required while shopping', () => {
         }
     );
 
+    test('an action completion that uses up the owned source closes the bill', async () => {
+        await settle(open());
+        expect(tabs()).toHaveLength(1);
+        // action_completed carries endCharacterItems; the data manager reports it only as items_updated
+        state.inventory = state.inventory.filter((item) => item.itemHrid !== SWORD);
+        for (const listener of state.dataListeners.filter((l) => l.event === 'items_updated')) listener.handler();
+        expect(tabs()).toHaveLength(0);
+        expect(ledger.claims.missingMats).toBeUndefined();
+        expect(state.dataListeners.filter((l) => l.event === 'items_updated')).toHaveLength(0);
+    });
+
     test('queue deductions honor Ignore queue, remain level-specific and permit three-copy stacks', async () => {
         state.inventory = [own(12, BAG, 3)];
         state.queuedInputs.set(SWORD + '@12', 2);
@@ -2098,6 +2109,7 @@ describe('Mirror owned inputs remain required while shopping', () => {
         expect(ledger.claims.missingMats[SWORD + '|12']).toBe(1);
         expect(ledger.listeners.size).toBe(1);
         expect(state.dataListeners.filter((l) => l.event === 'actions_updated')).toHaveLength(1);
+        expect(state.dataListeners.filter((l) => l.event === 'items_updated')).toHaveLength(1);
         await settle(openMaterialsList([{ itemHrid: '/items/other', count: 2 }]));
         expect(ledger.claims.missingMats[SWORD + '|12']).toBeUndefined();
         expect(ledger.listeners.size).toBe(0);
