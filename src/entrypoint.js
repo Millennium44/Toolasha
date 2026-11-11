@@ -3490,6 +3490,19 @@ if (combatSimulatorSite === 'metz') {
         // running — refreshes the storage numbers so the report is current,
         // logs it so it is copyable straight from the console, and opens the
         // panel with its Copy button. Returns the report text, or null on error.
+        // Live-check helpers: what a button would do, from the console, with nothing clicked.
+        // The card link for the character as worn, or for a saved loadout by id or name; nothing opens.
+        cardLink: (loadout) => Combat.characterCardButton?.cardLink?.(loadout) ?? Promise.resolve(null),
+        // Add or remove one Equipment Watch target exactly as the Watch button does; returns whether
+        // it is watched afterward. Changes the watch list (it syncs), so use it on test characters.
+        watch: (itemHrid, enhancementLevel = 0) => {
+            Market.watchTarget?.(itemHrid, enhancementLevel);
+            return Boolean(Market.isTargeted?.(itemHrid, enhancementLevel));
+        },
+        unwatch: (itemHrid, enhancementLevel = 0) => {
+            Market.unwatchTarget?.(itemHrid, enhancementLevel);
+            return Boolean(Market.isTargeted?.(itemHrid, enhancementLevel));
+        },
         health: async () => {
             try {
                 const failures = mergeFailures(featureRegistry.checkFeatureHealth(), [

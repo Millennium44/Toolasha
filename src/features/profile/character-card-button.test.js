@@ -45,7 +45,7 @@ vi.mock('../combat/loadout-snapshot.js', () => ({
 }));
 
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
-import { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
+import characterCardButton, { handleViewCardClick, handleViewCardFromSnapshot } from './character-card-button.js';
 import { buildCharacterSheetLink } from './character-sheet.js';
 
 function addModal() {
@@ -228,5 +228,26 @@ describe('character card button', () => {
         game.resolveScore({ total: 1 });
         await pending;
         expect(buildCharacterSheetLink.mock.calls[0][6]).toEqual({ includeLoadoutAuras: expected });
+    });
+
+    test('cardLink builds the worn-build link without opening a tab', async () => {
+        const pending = characterCardButton.cardLink();
+        await vi.waitFor(() => expect(game.resolveScore).toBeTypeOf('function'));
+        game.resolveScore({ total: 1 });
+        expect(await pending).toBe('https://sheet.test/?urpt=x');
+        expect(window.open).not.toHaveBeenCalled();
+    });
+
+    test('cardLink finds a saved loadout by id or by name, and says null for an unknown one', async () => {
+        game.snapshots = [{ id: 7, name: 'Main', equipment: [], abilities: [], food: [], drinks: [] }];
+        for (const ref of [7, 'Main']) {
+            game.resolveScore = null;
+            const pending = characterCardButton.cardLink(ref);
+            await vi.waitFor(() => expect(game.resolveScore).toBeTypeOf('function'));
+            game.resolveScore({ total: 1 });
+            expect(await pending).toBe('https://sheet.test/?urpt=x');
+        }
+        expect(await characterCardButton.cardLink('Missing')).toBeNull();
+        expect(window.open).not.toHaveBeenCalled();
     });
 });

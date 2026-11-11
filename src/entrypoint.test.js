@@ -817,6 +817,11 @@ describe('the debug console API', () => {
     test('exposes health() so the report can be opened on demand', () => {
         expect(typeof window.Toolasha.debug.health).toBe('function');
     });
+
+    test('exposes the live-check helpers', () => {
+        for (const name of ['cardLink', 'watch', 'unwatch'])
+            expect(typeof window.Toolasha.debug[name]).toBe('function');
+    });
 });
 
 describe('the selector canary', () => {

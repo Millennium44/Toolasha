@@ -97,7 +97,12 @@ import autoAllButton from '../features/inventory/auto-all-button.js';
 import scrollPlanner, { scrollPlannerInstance } from '../features/inventory/scroll-planner/scroll-planner.js';
 import inventoryCategoryTotals from '../features/inventory/inventory-category-totals.js';
 import customTabsFeature from '../features/inventory/custom-tabs/custom-tabs-feature.js';
-import equipmentSavings, { equipmentSavingsPanel, watchTarget } from '../features/inventory/equipment-savings-row.js';
+import equipmentSavings, {
+    equipmentSavingsPanel,
+    isTargeted,
+    unwatchTarget,
+    watchTarget,
+} from '../features/inventory/equipment-savings-row.js';
 // The savings-goal alert reads the three costed lists the panel above draws, so
 // it rides in this bundle rather than beside the other alerts in the UI one — a
 // second copy of that panel's costing machinery in another bundle would be the
@@ -181,6 +186,9 @@ toolashaRoot.Market = {
     // inline copies as a fallback — see check-bundle-sharing's single-copy list.
     watchItem,
     watchTarget,
+    // For the console's live-check helpers (Toolasha.debug.watch / unwatch)
+    unwatchTarget,
+    isTargeted,
     autoAllButton,
     scrollPlanner,
     // The singleton behind the record above, for the action panel's scroll chips in the actions bundle

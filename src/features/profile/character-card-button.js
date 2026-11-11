@@ -68,8 +68,11 @@ function readDisplayedProfileName(modal) {
 /**
  * Handle View Card button click - opens character sheet in new tab
  * @param {Object} profileData - Profile data from WebSocket (profile_shared event)
+ * @param {Object} [options]
+ * @param {boolean} [options.open=true] - false builds the link without opening a tab (console live checks)
+ * @returns {Promise<string|undefined>} The card link, or undefined when none was built
  */
-export async function handleViewCardClick(profileData) {
+export async function handleViewCardClick(profileData, { open = true } = {}) {
     try {
         const clientData = dataManager.getInitClientData();
 
@@ -163,7 +166,8 @@ export async function handleViewCardClick(profileData) {
         );
 
         // Open in new tab
-        window.open(url, '_blank', 'noopener');
+        if (open) window.open(url, '_blank', 'noopener');
+        return url;
     } catch (error) {
         console.error('[CharacterCardButton] Failed to open character card:', error);
     }
@@ -174,8 +178,11 @@ export async function handleViewCardClick(profileData) {
  * Skills, housing, achievements, and cosmetics are always taken from live character data.
  * @param {string} snapshotName - Name of the loadout snapshot to use (fallback when no id is given)
  * @param {string|number} [snapshotId] - Stable snapshot id; duplicate names are allowed, so the id wins
+ * @param {Object} [options]
+ * @param {boolean} [options.open=true] - false builds the link without opening a tab (console live checks)
+ * @returns {Promise<string|undefined>} The card link, or undefined when none was built
  */
-export async function handleViewCardFromSnapshot(snapshotName, snapshotId) {
+export async function handleViewCardFromSnapshot(snapshotName, snapshotId, { open = true } = {}) {
     try {
         const clientData = dataManager.getInitClientData();
         const characterData = dataManager.characterData;
@@ -288,7 +295,8 @@ export async function handleViewCardFromSnapshot(snapshotName, snapshotId) {
             }
         );
 
-        window.open(url, '_blank', 'noopener');
+        if (open) window.open(url, '_blank', 'noopener');
+        return url;
     } catch (error) {
         console.error('[CharacterCardButton] Failed to open character card from snapshot:', error);
     }
@@ -321,6 +329,20 @@ class CharacterCardButton {
                 this.refresh();
             }
         });
+    }
+
+    /**
+     * The card link for the current character, or for one of its saved loadouts, without opening a tab.
+     * For console live checks (`Toolasha.debug.cardLink`); builds exactly what the buttons would open.
+     * @param {string|number} [loadout] - A saved loadout's id or name; omitted = the character as worn
+     * @returns {Promise<string|null>}
+     */
+    async cardLink(loadout) {
+        const url =
+            loadout === undefined || loadout === null || loadout === ''
+                ? await handleViewCardClick(undefined, { open: false })
+                : await handleViewCardFromSnapshot(String(loadout), loadout, { open: false });
+        return url ?? null;
     }
 
     /**
