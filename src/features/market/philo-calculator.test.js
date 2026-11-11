@@ -623,7 +623,7 @@ describe('own-use toggles', () => {
             expect(row.cost).toBe(200);
         });
 
-        test('an unlisted refined item is costed from its parts as owned', () => {
+        test('a refined item is costed from its parts as owned', () => {
             calc.ownInputs = true;
             mocks.refineActions['/actions/refine_test'] = {
                 outputItems: [{ itemHrid: REFINED_HRID }],
@@ -1408,15 +1408,15 @@ describe('untradable items with no price', () => {
             expect(row.profitPerHour).toBeNull();
         });
 
-        test('a refined cape with a listing keeps its sale given up; a manual override wins; off is unchanged', () => {
+        test('a listed refined cape is still base plus stones; a manual override wins; off is unchanged', () => {
             const { REFINED, details } = ownedCape(3);
             mocks.prices[`${REFINED_HRID}+0`] = { ask: 500, bid: 400 };
-            expect(calc.calculateRow(REFINED, details).cost).toBeCloseTo(SHARD_TAXED(400), 6);
-            delete mocks.prices[`${REFINED_HRID}+0`];
+            expect(calc.calculateRow(REFINED, details).cost).toBeCloseTo(3 * SHARD_TAXED(100) + 1000, 6);
             calc.itemCostOverrides[REFINED] = 77;
             expect(calc.calculateRow(REFINED, details).cost).toBe(77);
             delete calc.itemCostOverrides[REFINED];
             calc.ownInputs = false;
+            delete mocks.prices[`${REFINED_HRID}+0`];
             const off = calc.calculateRow(REFINED, details);
             expect(off.costSource).toBe('craft');
             expect(off.cost).toBe(3 * 200 + 1000);
@@ -1429,7 +1429,7 @@ describe('untradable items with no price', () => {
             calc.ownInputs = false;
             calc.calculateRow(REFINED, details);
             calc.ownInputs = true;
-            mocks.prices[`${REFINED_HRID}+0`] = { ask: 500, bid: 400 };
+            calc.itemCostOverrides[REFINED] = 77;
             calc.calculateRow(REFINED, details);
             expect(calc._ownedRefinedBreakdowns[REFINED]).toBeUndefined();
         });

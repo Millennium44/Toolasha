@@ -1017,23 +1017,23 @@ class PhiloCalculator {
      *   needsPrice?: boolean}|null}
      */
     resolveItemCost(itemHrid, itemDetails) {
+        this._ownedRefinedBreakdowns = this._ownedRefinedBreakdowns || {};
+        delete this._ownedRefinedBreakdowns[itemHrid];
         const override = this.itemCostOverrides[itemHrid];
         if (typeof override === 'number' && override > 0) {
             return { itemCost: override, selfReturnUnitValue: override, source: 'override', fallbackLevel: 0 };
         }
 
         if (this.ownInputs) {
-            this._ownedRefinedBreakdowns = this._ownedRefinedBreakdowns || {};
-            delete this._ownedRefinedBreakdowns[itemHrid];
-            const ownedValue = this.resolveOwnedInputValue(itemHrid);
-            if (ownedValue !== null) {
-                return { itemCost: ownedValue, selfReturnUnitValue: ownedValue, source: 'owned', fallbackLevel: 0 };
-            }
-            // A refined cape nobody lists has no sale to give up: it is its base item plus the refinement
-            // stones, each valued as owned
+            // A refined cape is account bound, so a listing is no sale given up: it is always its base item
+            // plus the refinement stones, each valued as owned
             if (isRefinedItem(itemHrid)) {
                 const parts = this.resolveOwnedRefinedCost(itemHrid);
                 if (parts) return parts;
+            }
+            const ownedValue = this.resolveOwnedInputValue(itemHrid);
+            if (ownedValue !== null) {
+                return { itemCost: ownedValue, selfReturnUnitValue: ownedValue, source: 'owned', fallbackLevel: 0 };
             }
         }
 
@@ -1824,7 +1824,7 @@ class PhiloCalculator {
         });
         ownInputsLabel.title =
             'The transmuted items are loot you already hold, not something you would buy. Cost is what you give ' +
-            'up by not selling it instead: the sell-after-tax price. An unlisted refined cape counts as its base ' +
+            'up by not selling it instead: the sell-after-tax price. A refined cape counts as its base ' +
             'item plus its refinement stones, all valued the same way.';
         ownInputsLabel.appendChild(ownInputsCheckbox);
         ownInputsLabel.appendChild(document.createTextNode('I own the inputs'));
