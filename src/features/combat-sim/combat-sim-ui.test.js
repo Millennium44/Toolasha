@@ -8811,6 +8811,275 @@ describe('wipe events in the results', () => {
     });
 });
 
+describe('the All pill: every player side by side', () => {
+    const ROSTER = [
+        { hrid: 'player1', name: 'Kasvitatti' },
+        { hrid: 'player2', name: 'Ana' },
+        { hrid: 'player3', name: 'Ana' },
+    ];
+    const partyFight = (overrides = {}) =>
+        oneHourFight({
+            numberOfPlayers: 3,
+            deaths: { player1: 0, player2: 0.5, player3: 2 },
+            experienceGained: {
+                player1: { attack: 1000, stamina: 500 },
+                player2: { magic: 3000 },
+                player3: { attack: 200 },
+            },
+            consumablesUsed: { player1: { '/items/donut': 120 }, player2: {}, player3: { '/items/donut': 60 } },
+            totalDamageDealt: { player1: 3600 * 500, player2: 3600 * 400, player3: 3600 * 100 },
+            playerRanOutOfMana: { player1: false, player2: true, player3: false },
+            // player2 never casts quick_aid; player3 has no per-ability counts at all
+            abilityCasts: {
+                player1: { '/abilities/fireball': 360 },
+                player2: { '/abilities/fireball': 720, '/abilities/quick_aid': 0 },
+            },
+            ...overrides,
+        });
+
+    /** Draw a run through the real path; `all` picks the All pill or the named player's pill. */
+    function show(simResult, { all = true, tab = 'player1', roster = ROSTER, hours = 1 } = {}) {
+        ui._playerInfo = roster;
+        ui._activePlayerTab = tab;
+        ui._resultsAllPlayers = all;
+        ui._lastSimResult = simResult;
+        ui._lastSimHours = hours;
+        ui._lastGameData = { itemDetailMap: {} };
+        ui._displayResults(simResult, hours, ui._lastGameData);
+        return ui.panel.querySelector('#mwi-csim-results');
+    }
+    const headers = (results) =>
+        [...results.querySelectorAll('[data-all-players] thead th')].map((th) => th.textContent);
+    /** The cells of the table row whose first cell reads `label`. */
+    const row = (results, label) =>
+        [...results.querySelectorAll('[data-all-players] tbody tr')]
+            .find((tr) => tr.cells[0]?.textContent === label)
+            ?.querySelectorAll('td');
+    /** A single-view Overview row's value, by its label. */
+    const singleValue = (results, label) =>
+        [...results.querySelectorAll('div')].find((d) => d.children.length === 2 && d.children[0].textContent === label)
+            ?.children[1].textContent;
+
+    beforeEach(() => {
+        mocks.drops = new Map();
+        mocks.prices = {};
+        ui.buildPanel();
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.drops = new Map();
+        mocks.prices = {};
+    });
+
+    test('the pill follows the names and the table has one column per player in pill order', () => {
+        const results = show(partyFight());
+
+        const pills = [...results.querySelectorAll('button[data-tab], button[data-tab-all]')].map((b) => b.textContent);
+        expect(pills).toEqual(['Kasvitatti', 'Ana', 'Ana', 'All']);
+        expect(headers(results)).toEqual(['', 'Kasvitatti', 'Ana', 'Ana (2)']);
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+
+    test("a cell equals the figure that player's own pill shows", () => {
+        const fight = partyFight();
+        // A copy: drawing the single views below redraws the same results box
+        const all = show(fight).cloneNode(true);
+        const columns = { player1: 1, player2: 2, player3: 3 };
+        const names = { player1: 'Kasvitatti', player2: 'Ana', player3: 'Ana' };
+
+        for (const [hrid, col] of Object.entries(columns)) {
+            const single = show(fight, { all: false, tab: hrid });
+            expect(row(all, 'Deaths/hr')[col].textContent).toBe(singleValue(single, 'Deaths/hr'));
+            expect(row(all, 'Mana Run Out')[col].textContent).toBe(singleValue(single, 'Mana Run Out'));
+            // DPS: the single view lists it under the player's name
+            // (same-named players list in roster order, so the nth of a name is the nth player of it)
+            const dpsRows = [...single.querySelectorAll('div')].filter(
+                (d) => d.children.length === 2 && d.children[0].textContent === names[hrid] && d.children[1].textContent
+            );
+            const sameName = Object.keys(names).filter((h) => names[h] === names[hrid]);
+            expect(row(all, 'DPS')[col].textContent).toBe(dpsRows[sameName.indexOf(hrid)].children[1].textContent);
+            // Total XP/hr
+            const xpTotal = [...single.querySelectorAll('div')].find(
+                (d) =>
+                    d.children.length === 2 &&
+                    d.children[0].textContent === 'Total' &&
+                    /\d/.test(d.children[1].textContent)
+            );
+            const allXp = row(all, 'Total')?.[col].textContent;
+            if (xpTotal) expect(allXp).toBe(xpTotal.children[1].textContent);
+            // Casts
+            for (const ability of single.querySelectorAll('[data-ability-cast]')) {
+                const key = ability.getAttribute('data-ability-cast');
+                const cell = all.querySelector(`[data-all-players] tr[data-ability-cast="${key}"]`).cells[col];
+                expect(cell.textContent).toBe(ability.children[1].textContent);
+            }
+        }
+        // The single view of a lone party member never grew a table
+        expect(ui.panel.querySelector('[data-all-players]')).toBeNull();
+    });
+
+    test('an ability a player lacks shows a dash; one equipped that never fired says so', () => {
+        const results = show(partyFight());
+        const fireball = results.querySelector('tr[data-ability-cast="/abilities/fireball"]').cells;
+        expect([fireball[1], fireball[2], fireball[3]].map((c) => c.textContent)).toEqual(['360', '720', '—']);
+        const aid = results.querySelector('tr[data-ability-cast="/abilities/quick_aid"]').cells;
+        expect([aid[1], aid[2], aid[3]].map((c) => c.textContent)).toEqual(['—', 'never cast', '—']);
+    });
+
+    test('a run with no per-ability counts has no casts section', () => {
+        const results = show(partyFight({ abilityCasts: undefined }));
+        expect(results.querySelector('[data-all-players]')).not.toBeNull();
+        expect(results.textContent).not.toContain('Casts/hr by ability');
+    });
+
+    test('party-wide figures appear once above the table, not per column', () => {
+        const results = show(partyFight());
+        const text = results.textContent;
+        expect(text.match(/Encounters\/hr/g)).toHaveLength(1);
+        expect(row(results, 'Encounters/hr')).toBeUndefined();
+        expect(text).toContain('Party DPS');
+        expect(text.indexOf('Encounters/hr')).toBeLessThan(text.indexOf('Kasvitatti', text.indexOf('Encounters/hr')));
+        expect(results.textContent).not.toContain('Dungeons completed/hr');
+    });
+
+    test('a dungeon result states its clears once; a zone result has none', () => {
+        const results = show(
+            partyFight({ isDungeon: true, dungeonsCompleted: 10, dungeonsFailed: 2, maxWaveReached: 4 })
+        );
+        expect(results.textContent.match(/Dungeons completed\/hr/g)).toHaveLength(1);
+        expect(results.textContent).toContain('Max wave reached');
+        expect(results.textContent).not.toContain('could not be drawn');
+    });
+
+    test("the summary tiles (one player's figures) give way to the table", () => {
+        expect(show(partyFight({}), { all: false }).textContent).toContain('Summary');
+        expect(show(partyFight({})).textContent).not.toContain('Summary');
+    });
+
+    describe('against a comparison baseline', () => {
+        const baseline = () =>
+            partyFight({
+                deaths: { player1: 1, player2: 0.5, player3: 0 },
+                totalDamageDealt: { player1: 3600 * 400, player2: 3600 * 400, player3: 3600 * 100 },
+            });
+
+        test('carries the same deltas as the single view, and none for a player absent from the baseline', () => {
+            pushHistory('base', baseline());
+            ui._comparisonBaseline = 0;
+            const current = partyFight({
+                totalDamageDealt: { player1: 3600 * 500, player2: 3600 * 400, player3: 3600 * 100 },
+            });
+            ui._activeDetailIndex = null;
+            const all = show(current).cloneNode(true);
+            const single = show(current, { all: false, tab: 'player1' });
+
+            const dpsAll = row(all, 'DPS')[1].textContent;
+            expect(dpsAll).toContain('(+100)');
+            const kasvitattiRow = [...single.querySelectorAll('div')].find(
+                (d) => d.children.length === 2 && d.children[0].textContent === 'Kasvitatti'
+            );
+            expect(dpsAll).toBe(kasvitattiRow.children[1].textContent);
+            expect(row(all, 'Deaths/hr')[1].textContent).toBe('0.000 (-1.000)');
+
+            // Absent from the baseline: nothing to compare, no fabricated badge
+            ui._simHistory[0].simResult = {
+                ...baseline(),
+                deaths: { player1: 1 },
+                totalDamageDealt: { player1: 3600 * 400 },
+            };
+            ui._simHistory[0].metrics = null;
+            const redrawn = show(current);
+            expect(row(redrawn, 'Deaths/hr')[2].textContent).toBe('0.500');
+            expect(row(redrawn, 'DPS')[3].textContent).not.toContain('(');
+        });
+
+        test('without a baseline there are no deltas at all', () => {
+            const results = show(partyFight());
+            expect(row(results, 'Deaths/hr')[1].textContent).toBe('0.000');
+            expect(results.querySelector('[data-all-players]').textContent).not.toContain('(+');
+        });
+
+        test('switching the run or the baseline redraws the table from that run', () => {
+            const first = partyFight();
+            const second = partyFight({ deaths: { player1: 3, player2: 0, player3: 0 } });
+            pushHistory('first', first);
+            pushHistory('second', second);
+            ui._comparisonBaseline = 0;
+            ui._playerInfo = ROSTER;
+            ui._resultsAllPlayers = true;
+            ui._activeDetailIndex = 1;
+            ui._displayResults(first, 1, ui._lastGameData);
+            let results = ui.panel.querySelector('#mwi-csim-results');
+            expect(row(results, 'Deaths/hr')[1].textContent).toBe('3.000 (+3.000)');
+
+            ui._activeDetailIndex = 0;
+            ui._displayResults(first, 1, ui._lastGameData);
+            results = ui.panel.querySelector('#mwi-csim-results');
+            expect(row(results, 'Deaths/hr')[1].textContent).toBe('0.000');
+            expect(results.querySelector('[data-all-players]')).not.toBeNull();
+        });
+    });
+
+    test('clicking a name leaves the All view and clicking All comes back', () => {
+        const results = show(partyFight(), { all: false });
+        expect(results.querySelector('[data-all-players]')).toBeNull();
+
+        ui.panel.querySelector('[data-tab-all]').click();
+        expect(ui.panel.querySelector('[data-all-players]')).not.toBeNull();
+        expect(ui._activePlayerTab).toBe('player1');
+
+        ui.panel.querySelector('[data-tab="player2"]').click();
+        expect(ui.panel.querySelector('[data-all-players]')).toBeNull();
+        expect(ui._activePlayerTab).toBe('player2');
+    });
+
+    test('a solo result has no All pill and ignores a remembered All choice', () => {
+        const results = show(oneHourFight(), { roster: [{ hrid: 'player1', name: 'Me' }] });
+        expect(results.querySelector('[data-tab-all]')).toBeNull();
+        expect(results.querySelector('[data-all-players]')).toBeNull();
+        expect(results.textContent).toContain('Summary');
+    });
+
+    test('a one-player history entry opened after a party run draws its own single view', () => {
+        pushHistory('solo', oneHourFight(), 1, { partySize: 1, playerHrid: 'player1', playerInfo: [ROSTER[0]] });
+        ui._playerInfo = ROSTER;
+        ui._resultsAllPlayers = true;
+        ui._displayResults(oneHourFight(), 1, ui._lastGameData);
+        const results = ui.panel.querySelector('#mwi-csim-results');
+        expect(results.querySelector('[data-all-players]')).toBeNull();
+        expect(results.querySelector('[data-tab-all]')).toBeNull();
+    });
+
+    test('a party entry loaded from history draws the table for its own roster', () => {
+        pushHistory('party', partyFight(), 1, { partySize: 3, playerInfo: ROSTER });
+        ui._playerInfo = [{ hrid: 'player1', name: 'Someone else' }];
+        ui._resultsAllPlayers = true;
+        ui._displayResults(null, null, null);
+        const results = ui.panel.querySelector('#mwi-csim-results');
+        expect(headers(results)).toEqual(['', 'Kasvitatti', 'Ana', 'Ana (2)']);
+    });
+
+    test('player names are escaped in the headers', () => {
+        const results = show(partyFight(), {
+            roster: [ROSTER[0], { hrid: 'player2', name: '<img src=x>' }, ROSTER[2]],
+        });
+        expect(results.querySelector('[data-all-players] img')).toBeNull();
+        expect(headers(results)[2]).toBe('<img src=x>');
+    });
+
+    test('the table scrolls inside its own box with the figure names pinned', () => {
+        const results = show(partyFight());
+        const box = results.querySelector('[data-all-players]');
+        expect(box.style.overflowX).toBe('auto');
+        expect(box.style.maxWidth).toBe('100%');
+        expect(box.querySelector('tbody tr:not([data-all-heading]) td').getAttribute('style')).toContain(
+            'position:sticky'
+        );
+        expect(box.querySelector('thead th').getAttribute('style')).toContain('left:0');
+    });
+});
+
 describe('HP and MP charts in the results', () => {
     beforeEach(() => {
         mocks.drops = new Map();

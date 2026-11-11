@@ -202,8 +202,9 @@ import {
 } from './chat-summary.js';
 import { estimateTriggerRun, runTriggerOptimization } from './trigger-optimizer.js';
 import { neverFiringWarnings } from './trigger-checks.js';
-import { abilityCastsHtml } from './ability-casts-view.js';
+import { abilityCastsHtml, abilityCastRows } from './ability-casts-view.js';
 import { buildConditionEditorChanges } from './lab-condition-search.js';
+import { playerColumnLabels } from './all-players-view.js';
 import {
     buildEditorChanges,
     collectTunables,
@@ -3567,6 +3568,11 @@ class CombatSimUI {
         this._evGeneration = 0;
         this.elapsedTimer = null;
         this._activePlayerTab = 'player1';
+        // The Results tab's "All" pill: every player side by side. Its own flag, not a value of
+        // `_activePlayerTab`, which every analysis reads as a real player hrid. Kept for the life of the
+        // panel like the player pills' choice; the view falls back to the single-player one when the
+        // run shown has fewer than two players
+        this._resultsAllPlayers = false;
         this._playerInfo = [];
         this._lastSimResult = null;
         this._lastSimHours = null;
@@ -8647,10 +8653,12 @@ class CombatSimUI {
         }
 
         // Player tabs (only shown for party sims)
+        // The All pill needs two players to compare; a run with fewer draws the single view whatever was chosen
+        const allMode = this._resultsAllPlayers && numberOfPlayers > 1 && playerInfo.length > 1;
         if (numberOfPlayers > 1) {
             html += `<div style="display:flex; gap:4px; margin-bottom:10px; flex-wrap:wrap;">`;
             for (const { hrid, name } of playerInfo) {
-                const isActive = hrid === activeTab;
+                const isActive = !allMode && hrid === activeTab;
                 const tabStyle = isActive
                     ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT}; font-weight:700;`
                     : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
@@ -8660,8 +8668,20 @@ class CombatSimUI {
                     font-family:inherit; transition:all 0.1s;
                 ">${name}</button>`;
             }
+            if (playerInfo.length > 1) {
+                const allStyle = allMode
+                    ? `background:${ACCENT_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:${ACCENT}; font-weight:700;`
+                    : 'background:rgba(255,255,255,0.04); border:1px solid #333; color:#aaa;';
+                html += `<button data-tab-all="1" title="Every player's figures side by side" style="
+                    ${allStyle}
+                    padding:3px 10px; border-radius:5px; font-size:12px; cursor:pointer;
+                    font-family:inherit; transition:all 0.1s;
+                ">All</button>`;
+            }
             html += '</div>';
         }
+        // Where the per-player body starts: the All view replaces everything from here to the wipe events
+        const bodyStart = html.length;
 
         // Compute previous values for delta comparison (from history)
         // Use baseline for deltas (comparison table baseline, not the old comparisonIndex)
@@ -8797,67 +8817,7 @@ class CombatSimUI {
         }
 
         // Dungeon stats if applicable
-        if (simResult.isDungeon) {
-            const completedPerHr = simResult.dungeonsCompleted / hours;
-            const failedPerHr = simResult.dungeonsFailed / hours;
-
-            html += `<div style="${rowStyle}">`;
-            html += `<span style="${labelStyle}">Dungeons completed/hr</span>`;
-            html += `<span style="${valueStyle}">${this._formatRate(completedPerHr)}</span>`;
-            html += '</div>';
-            html += `<div style="${rowStyle}">`;
-            html += `<span style="${labelStyle}">Dungeons failed/hr</span>`;
-            html += `<span style="${valueStyle}">${this._formatRate(failedPerHr)}</span>`;
-            html += '</div>';
-            html += `<div style="${rowStyle}">`;
-            html += `<span style="${labelStyle}">Total completed / failed</span>`;
-            html += `<span style="${valueStyle}">${shortCount(simResult.dungeonsCompleted)} / ${shortCount(simResult.dungeonsFailed)}</span>`;
-            html += '</div>';
-            if (simResult.dungeonsCompleted > 0) {
-                const formatClear = (ns) => {
-                    const sec = ns / 1e9;
-                    if (config.getSettingValue('combatSim_decimalMinutes', false)) {
-                        return `${(sec / 60).toFixed(2)} min`;
-                    }
-                    return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
-                };
-
-                // Two clear-time numbers answer two different questions.
-                //
-                // Clean: mean interval between consecutive successful clears
-                // (no wipe between), which matches the in-game dungeon tracker —
-                // "how fast is a run when it works".
-                if (simResult.dungeonCleanClearCount > 0) {
-                    const cleanNs = simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount;
-                    html += `<div style="${rowStyle}">`;
-                    html += `<span style="${labelStyle}" title="Mean time between consecutive successful clears, failed attempts excluded. Matches the in-game dungeon tracker.">Avg clear (clean)</span>`;
-                    html += `<span style="${valueStyle}">${formatClear(cleanNs)}</span>`;
-                    html += '</div>';
-                }
-
-                // Effective: total simulated time amortised over every
-                // completion, so wipe time and the unfinished tail are charged
-                // against throughput — "effective time per clear including
-                // failures". Above the clean number by the cost of failures,
-                // which is the figure for judging whether a higher tier that
-                // occasionally wipes is still worth pushing.
-                const effectiveNs = simResult.simulatedTime / simResult.dungeonsCompleted;
-                html += `<div style="${rowStyle}">`;
-                html += `<span style="${labelStyle}" title="Total simulated time divided by dungeons completed — includes failed attempts and the unfinished final run. Compare with the clean number to see the cost of failures at this tier.">Avg clear (incl. fails)</span>`;
-                html += `<span style="${valueStyle}">${formatClear(effectiveNs)}</span>`;
-                html += '</div>';
-            }
-            html += `<div style="${rowStyle}">`;
-            html += `<span style="${labelStyle}">Max wave reached</span>`;
-            // A run that carries no wave figure says so: the string "undefined"
-            // on screen is worse than an em dash, and reading it as 0 would be
-            // worse than either
-            const maxWave = Number.isFinite(simResult.maxWaveReached)
-                ? formatWithSeparator(simResult.maxWaveReached)
-                : '—';
-            html += `<span style="${valueStyle}">${maxWave}</span>`;
-            html += '</div>';
-        }
+        html += this._dungeonStatsHtml(simResult, hours, { rowStyle, labelStyle, valueStyle });
         html += '</div>';
 
         // Sustain — HP/MP the engine has always tracked per source and never shown
@@ -9220,6 +9180,24 @@ class CombatSimUI {
         html += '</div>';
         html += '</div>';
 
+        if (allMode) {
+            html =
+                html.slice(0, bodyStart) +
+                this._renderAllPlayersView({
+                    simResult,
+                    hours,
+                    gameData,
+                    playerInfo,
+                    hasPrev: Boolean(hasPrev),
+                    compEntry,
+                    encountersPerHr,
+                    prevEncPerHr,
+                    partyDps: summaryDps,
+                    prevPartyDps: summaryPrevDps,
+                    styles: { sectionStyle, headingStyle, rowStyle, labelStyle, valueStyle },
+                });
+        }
+
         // Wipe Events
         const wipeEvents = simResult.wipeEvents;
         if (wipeEvents && wipeEvents.length > 0) {
@@ -9342,7 +9320,8 @@ class CombatSimUI {
         });
         // Function replacement: a literal one would read `$&` and friends in the
         // summary as capture references
-        html = html.replace(RESULTS_SUMMARY_SLOT, () => summaryHtml);
+        // The summary tiles are one player's figures; the All view has a table of them instead
+        html = html.replace(RESULTS_SUMMARY_SLOT, () => (allMode ? '' : summaryHtml));
 
         container.innerHTML = html;
         container.style.display = 'block';
@@ -9374,6 +9353,14 @@ class CombatSimUI {
         container.querySelectorAll('[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 this._activePlayerTab = btn.dataset.tab;
+                this._resultsAllPlayers = false;
+                this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
+            });
+        });
+
+        container.querySelectorAll('[data-tab-all]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this._resultsAllPlayers = true;
                 this._displayResults(this._lastSimResult, this._lastSimHours, this._lastGameData);
             });
         });
@@ -9728,6 +9715,387 @@ class CombatSimUI {
             return dataManager.getItemDetails(source)?.name || source.split('/').pop();
         }
         return source;
+    }
+
+    /**
+     * The Results tab's All view: the party-wide figures once, then one column per player (the pill order)
+     * and one row per per-player figure. Every cell is the figure the player's own pill shows, read off
+     * the same result and formatted by the same helpers; nothing is re-simulated.
+     * @param {Object} ctx
+     * @param {Object} ctx.simResult - The run shown
+     * @param {number} ctx.hours - Simulated hours
+     * @param {Object} ctx.gameData - Game data payload
+     * @param {Array<{hrid: string, name: string}>} ctx.playerInfo - The run's roster
+     * @param {boolean} ctx.hasPrev - Whether a comparison baseline is set
+     * @param {Object|null} ctx.compEntry - The baseline history entry
+     * @param {number} ctx.encountersPerHr - Party encounters per hour
+     * @param {number|null} ctx.prevEncPerHr - The baseline's, or null
+     * @param {number|null} ctx.partyDps - Party DPS (null when the run recorded no damage)
+     * @param {number|null} ctx.prevPartyDps - The baseline's, or null
+     * @param {Object} ctx.styles - The Overview's row styles
+     * @returns {string} HTML
+     * @private
+     */
+    _renderAllPlayersView(ctx) {
+        const { simResult, hours, gameData, playerInfo, hasPrev, compEntry, encountersPerHr, prevEncPerHr } = ctx;
+        const { sectionStyle, headingStyle, rowStyle, labelStyle, valueStyle } = ctx.styles;
+        const compResult = hasPrev ? compEntry.simResult : null;
+        const compHours = hasPrev ? compEntry.hours : null;
+        const columns = playerColumnLabels(playerInfo);
+        const NONE = '<span style="color:#555;">—</span>';
+        const num = (value) => `<span style="${valueStyle}"${exactTitleAttr(value)}>${shortCount(value)}</span>`;
+
+        // Party-wide: said once, not repeated per column
+        let html = `<div style="${sectionStyle}">`;
+        html += `<div style="${headingStyle}">Party</div>`;
+        html += `<div style="${rowStyle}"><span style="${labelStyle}">Encounters/hr</span>`;
+        html += `<span style="${valueStyle}"${exactTitleAttr(encountersPerHr)}>${shortCount(encountersPerHr)}${this._formatDelta(encountersPerHr, prevEncPerHr)}</span></div>`;
+        if (ctx.partyDps !== null && ctx.partyDps !== undefined) {
+            html += `<div style="${rowStyle}"><span style="${labelStyle}">Party DPS</span>`;
+            html += `<span style="${valueStyle}"${exactTitleAttr(ctx.partyDps)}>${shortCount(ctx.partyDps)}${this._formatDelta(ctx.partyDps, ctx.prevPartyDps)}</span></div>`;
+        }
+        html += this._dungeonStatsHtml(simResult, hours, { rowStyle, labelStyle, valueStyle });
+        html += '</div>';
+
+        // The table: a row is { label, cells[], title?, attrs?, total? }; a section is { heading, rows[] }
+        const sections = [];
+        const section = (heading) => {
+            const entry = { heading, rows: [] };
+            sections.push(entry);
+            return entry.rows;
+        };
+        const hrids = columns.map((c) => c.hrid);
+        const simSeconds = simResult.simulatedTime / 1e9;
+
+        // Overview
+        const overview = section('Overview');
+        overview.push({
+            label: 'Deaths/hr',
+            cells: hrids.map((hrid) => {
+                const perHr = (simResult.deaths?.[hrid] || 0) / hours;
+                const prev =
+                    hasPrev && compResult.deaths?.[hrid] !== undefined ? compResult.deaths[hrid] / compHours : null;
+                return `<span style="${valueStyle}">${this._formatDeathsPerHour(perHr)}${this._formatDelta(perHr, prev, false, false, DEATHS_DECIMALS)}</span>`;
+            }),
+        });
+        if (simResult.totalDamageDealt && simResult.simulatedTime > 0) {
+            overview.push({
+                label: 'DPS',
+                cells: hrids.map((hrid) => {
+                    const dps = (simResult.totalDamageDealt[hrid] || 0) / simSeconds;
+                    const prev =
+                        hasPrev && compResult.totalDamageDealt?.[hrid] !== undefined && compResult.simulatedTime > 0
+                            ? compResult.totalDamageDealt[hrid] / (compResult.simulatedTime / 1e9)
+                            : null;
+                    return `<span style="${valueStyle}"${exactTitleAttr(dps)}>${shortCount(dps)}${this._formatDelta(dps, prev)}</span>`;
+                }),
+            });
+        }
+        const ranOut = (hrid) => simResult.playerRanOutOfMana?.[hrid] ?? false;
+        overview.push({
+            label: 'Mana Run Out',
+            cells: hrids.map((hrid) => {
+                const yes = ranOut(hrid);
+                return `<span style="color:${yes ? '#ff6b6b' : '#4ade80'}; font-weight:600;">${yes ? 'Yes' : 'No'}</span>`;
+            }),
+        });
+        if (hrids.some((hrid) => ranOut(hrid) && simResult.playerRanOutOfManaTime?.[hrid] && simResult.simulatedTime)) {
+            overview.push({
+                label: 'Run Out Ratio',
+                cells: hrids.map((hrid) => {
+                    const stat = simResult.playerRanOutOfManaTime?.[hrid];
+                    if (!ranOut(hrid) || !stat || !simResult.simulatedTime) return NONE;
+                    const openWindow = stat.isOutOfMana ? simResult.simulatedTime - stat.startTimeForOutOfMana : 0;
+                    const ratio = (((stat.totalTimeForOutOfMana + openWindow) / simResult.simulatedTime) * 100).toFixed(
+                        2
+                    );
+                    return `<span style="color:#ff6b6b; font-weight:600;">${ratio}%</span>`;
+                }),
+            });
+        }
+        if (simResult.simulatedTime > 0 && hrids.some((hrid) => (simResult.manaCastsRefused?.[hrid] ?? 0) > 0)) {
+            overview.push({
+                label: 'Casts Refused/hr',
+                title: 'Times a ready ability could not be cast for lack of mana, counted once per ability per cooldown period while it stays blocked. Share is refused out of refused plus cast.',
+                cells: hrids.map((hrid) => {
+                    const refused = simResult.manaCastsRefused?.[hrid] ?? 0;
+                    if (!(refused > 0)) return NONE;
+                    const made = simResult.manaCastsMade?.[hrid] ?? 0;
+                    const share = (refused / (refused + made)) * 100;
+                    return `<span style="color:#ff6b6b; font-weight:600;">${formatRatePerHour(refused / (simResult.simulatedTime / 3.6e12))} (${share.toFixed(1)}%)</span>`;
+                }),
+            });
+        }
+        if (hrids.some((hrid) => (simResult.debuffOnLevelGap?.[hrid] ?? 0) !== 0)) {
+            overview.push({
+                label: 'Debuff on Level Gap',
+                cells: hrids.map((hrid) => {
+                    const debuff = simResult.debuffOnLevelGap?.[hrid] ?? 0;
+                    return debuff === 0
+                        ? NONE
+                        : `<span style="color:#ff6b6b; font-weight:600;">${Math.round(Math.abs(debuff) * 100)}%</span>`;
+                }),
+            });
+        }
+
+        // Casts/hr by ability: one row per ability any player has, busiest overall first. A player with no
+        // count for an ability (not equipped, or no per-ability counts at all) shows a dash, which differs
+        // from an equipped ability that never fired ("never cast", as in their own view)
+        if (hours > 0) {
+            const everyone = {};
+            for (const hrid of hrids) {
+                for (const [ability, casts] of Object.entries(simResult.abilityCasts?.[hrid] || {})) {
+                    everyone[ability] = (everyone[ability] || 0) + (Number(casts) || 0);
+                }
+            }
+            const abilityRows = abilityCastRows(everyone, hours, gameData);
+            if (abilityRows.length > 0) {
+                const rows = section('Casts/hr by ability');
+                for (const row of abilityRows) {
+                    rows.push({
+                        label: escapeAttribute(row.name),
+                        attrs: `data-ability-cast="${escapeAttribute(row.hrid)}"`,
+                        cells: hrids.map((hrid) => {
+                            const casts = simResult.abilityCasts?.[hrid]?.[row.hrid];
+                            if (casts === undefined) return NONE;
+                            return Number(casts) > 0
+                                ? `<span style="${valueStyle}">${formatRatePerHour(Number(casts) / hours)}</span>`
+                                : `<span style="color:#ff6b6b; font-weight:600;">never cast</span>`;
+                        }),
+                    });
+                }
+            }
+        }
+
+        // Healing & mana: each player's totals per hour (the per-source breakdown is in their own pill)
+        const sustainRows = [
+            { key: 'hitpointsGained', label: 'HP gained/hr', color: '#7ec87e' },
+            { key: 'manapointsGained', label: 'MP gained/hr', color: '#93c5fd' },
+            { key: 'hitpointsSpent', label: 'HP spent/hr', color: '#ff6b6b' },
+        ]
+            .map(({ key, label, color }) => {
+                const totals = hrids.map((hrid) =>
+                    Object.values(simResult[key]?.[hrid] || {}).reduce(
+                        (sum, amount) => sum + (amount > 0 ? amount : 0),
+                        0
+                    )
+                );
+                if (!totals.some((total) => total > 0)) return null;
+                return {
+                    label,
+                    cells: totals.map((total) => {
+                        if (!(total > 0)) return NONE;
+                        const perHr = hours > 0 ? total / hours : 0;
+                        const text = perHr >= 1 ? shortCount(perHr) : perHr.toFixed(2);
+                        return `<span style="color:${color}; font-weight:600;"${perHr >= 1 ? exactTitleAttr(perHr) : ''}>${text}</span>`;
+                    }),
+                };
+            })
+            .filter(Boolean);
+        if (sustainRows.length > 0) section('Healing & Mana').push(...sustainRows);
+
+        // XP/hr: each skill any player trained, then the total
+        const xpOf = (result, hrid) => {
+            const bySkill = {};
+            for (const [skill, amount] of Object.entries(result?.experienceGained?.[hrid] || {})) {
+                if (amount > 0) bySkill[skill] = amount;
+            }
+            return bySkill;
+        };
+        const xpBySkill = hrids.map((hrid) => xpOf(simResult, hrid));
+        const skills = [...new Set(xpBySkill.flatMap((bySkill) => Object.keys(bySkill)))];
+        if (skills.length > 0) {
+            const rows = section('XP/hr');
+            const combined = (skill) => xpBySkill.reduce((sum, bySkill) => sum + (bySkill[skill] || 0), 0);
+            skills.sort((a, b) => combined(b) - combined(a));
+            // A player who was not in the baseline run has nothing to be compared with
+            const inBaseline = (hrid) => hasPrev && compResult.experienceGained?.[hrid] !== undefined;
+            for (const skill of skills) {
+                const skillLabel = skill.charAt(0).toUpperCase() + skill.slice(1);
+                rows.push({
+                    label: simEntityLabelHtml(`/skills/${skill}`, skillLabel),
+                    cells: hrids.map((hrid, i) => {
+                        if (!xpBySkill[i][skill]) return NONE;
+                        const perHr = Math.round(xpBySkill[i][skill] / hours);
+                        const prevRaw = inBaseline(hrid) ? xpOf(compResult, hrid)[skill] : undefined;
+                        const prev = prevRaw !== undefined ? Math.round(prevRaw / compHours) || null : null;
+                        return `<span style="${valueStyle}"${exactTitleAttr(perHr)}>${shortCount(perHr)}${this._formatDelta(perHr, prev)}</span>`;
+                    }),
+                });
+            }
+            rows.push({
+                label: 'Total',
+                total: true,
+                cells: hrids.map((hrid, i) => {
+                    const perHr = Object.values(xpBySkill[i]).reduce(
+                        (sum, amount) => sum + Math.round(amount / hours),
+                        0
+                    );
+                    const prev = inBaseline(hrid)
+                        ? Object.values(xpOf(compResult, hrid)).reduce(
+                              (sum, amount) => sum + Math.round(amount / compHours),
+                              0
+                          )
+                        : null;
+                    return `<span style="${valueStyle}"${exactTitleAttr(perHr)}>${shortCount(perHr)}${this._formatDelta(perHr, prev)}</span>`;
+                }),
+            });
+        }
+
+        // Food and drinks: the per-hour count of each item any player used
+        const used = hrids.map((hrid) => simResult.consumablesUsed?.[hrid] || {});
+        const itemHrids = [...new Set(used.flatMap((byItem) => Object.keys(byItem)))];
+        if (itemHrids.length > 0) {
+            const rows = section('Food & drink/hr');
+            const combinedUse = (itemHrid) => used.reduce((sum, byItem) => sum + (byItem[itemHrid] || 0), 0);
+            itemHrids.sort((a, b) => combinedUse(b) - combinedUse(a));
+            for (const itemHrid of itemHrids) {
+                const name = dataManager.getItemDetails(itemHrid)?.name || itemHrid.split('/').pop();
+                rows.push({
+                    label: simItemLabelHtml(itemHrid, name),
+                    cells: used.map((byItem) => (byItem[itemHrid] > 0 ? num(byItem[itemHrid] / hours) : NONE)),
+                });
+            }
+        }
+
+        // Gold: revenue from drops, consumable and key costs, and profit, from the metrics helper the
+        // baseline deltas already use
+        if (gameData) {
+            const metricsFor = (result, resultHours, data, hrid) => {
+                try {
+                    return this._computeMetrics(result, resultHours, data, hrid, this._saleTaxRateFor(result, hrid));
+                } catch (error) {
+                    console.error('[CombatSimUI] All view: could not price', hrid, error);
+                    return null;
+                }
+            };
+            const now = hrids.map((hrid) => metricsFor(simResult, hours, gameData, hrid));
+            const before = hrids.map((hrid) =>
+                hasPrev && compResult.experienceGained?.[hrid] !== undefined
+                    ? metricsFor(compResult, compHours, compEntry.gameData, hrid)
+                    : null
+            );
+            const money = (label, field, { higherIsBetter, color, signed }) => ({
+                label,
+                cells: now.map((metrics, i) => {
+                    if (!metrics) return NONE;
+                    const value = metrics[field];
+                    const sign = signed && value < 0 ? '-' : '';
+                    const delta = before[i] ? this._formatDelta(value, before[i][field], higherIsBetter, true) : '';
+                    const tint = typeof color === 'function' ? color(value) : color;
+                    return `<span style="color:${tint}; font-weight:600;"${exactTitleAttr(value)}>${sign}${formatKMB(Math.abs(Math.round(value)))}${delta}</span>`;
+                }),
+            });
+            section('Gold/hr').push(
+                money('Revenue', 'revenuePerHr', { higherIsBetter: true, color: '#e8a87c' }),
+                money('Expenses', 'expensesPerHr', { higherIsBetter: false, color: '#ff6b6b' }),
+                money('Profit', 'profitPerHr', {
+                    higherIsBetter: true,
+                    color: (value) => (value >= 0 ? '#7ec87e' : '#ff6b6b'),
+                    signed: true,
+                })
+            );
+        }
+
+        // The first column is pinned (sticky) so a phone can scroll the players sideways under it; the
+        // wrapper is the only thing that scrolls, never the page
+        const cellBase = 'padding:3px 8px; border-bottom:1px solid #222; text-align:right; white-space:nowrap;';
+        const stickyBase = `position:sticky; left:0; z-index:1; background:${GAME_COLORS.background}; text-align:left; white-space:normal; max-width:120px; min-width:84px;`;
+        let table = `<div data-all-players style="overflow-x:auto; max-width:100%;">`;
+        table += `<table style="border-collapse:separate; border-spacing:0; font-size:12px; min-width:100%;">`;
+        table += `<thead><tr><th style="${cellBase} ${stickyBase} color:#888;"></th>`;
+        for (const { hrid, label } of columns) {
+            table += `<th data-player="${escapeAttribute(hrid)}" style="${cellBase} color:${ACCENT}; font-weight:700;">${escapeAttribute(label)}</th>`;
+        }
+        table += '</tr></thead><tbody>';
+        for (const { heading, rows } of sections) {
+            table += `<tr data-all-heading><td colspan="${columns.length + 1}" style="padding:8px 8px 3px; border-bottom:1px solid #222; color:${ACCENT}; font-weight:700; font-size:12px;">${heading}</td></tr>`;
+            for (const row of rows) {
+                const titleAttr = row.title ? ` title="${escapeAttribute(row.title)}"` : '';
+                table += `<tr ${row.attrs || ''}>`;
+                table += `<td${titleAttr} style="${cellBase} ${stickyBase} color:#aaa;${row.total ? ' font-weight:700;' : ''}">${row.label}</td>`;
+                for (const cell of row.cells) table += `<td style="${cellBase}">${cell}</td>`;
+                table += '</tr>';
+            }
+        }
+        table += '</tbody></table></div>';
+        html += table;
+
+        // Who ran dry across the run: already every player's line
+        html += renderRunMpChart(simResult.hpMpSeries, createWipeNamer({ playerInfo, gameData }).player);
+        return html;
+    }
+
+    /**
+     * The dungeon-only rows of the Overview: clears and fails per hour, totals, average clear times, deepest wave.
+     * Party-wide, so the single-player view and the All view draw the same block.
+     * @param {Object} simResult - The run shown
+     * @param {number} hours - Simulated hours
+     * @param {{rowStyle: string, labelStyle: string, valueStyle: string}} styles - The Overview rows' styles
+     * @returns {string} HTML, '' for a run that is not a dungeon
+     * @private
+     */
+    _dungeonStatsHtml(simResult, hours, { rowStyle, labelStyle, valueStyle }) {
+        if (!simResult.isDungeon) return '';
+        let html = '';
+        const completedPerHr = simResult.dungeonsCompleted / hours;
+        const failedPerHr = simResult.dungeonsFailed / hours;
+
+        html += `<div style="${rowStyle}">`;
+        html += `<span style="${labelStyle}">Dungeons completed/hr</span>`;
+        html += `<span style="${valueStyle}">${this._formatRate(completedPerHr)}</span>`;
+        html += '</div>';
+        html += `<div style="${rowStyle}">`;
+        html += `<span style="${labelStyle}">Dungeons failed/hr</span>`;
+        html += `<span style="${valueStyle}">${this._formatRate(failedPerHr)}</span>`;
+        html += '</div>';
+        html += `<div style="${rowStyle}">`;
+        html += `<span style="${labelStyle}">Total completed / failed</span>`;
+        html += `<span style="${valueStyle}">${shortCount(simResult.dungeonsCompleted)} / ${shortCount(simResult.dungeonsFailed)}</span>`;
+        html += '</div>';
+        if (simResult.dungeonsCompleted > 0) {
+            const formatClear = (ns) => {
+                const sec = ns / 1e9;
+                if (config.getSettingValue('combatSim_decimalMinutes', false)) {
+                    return `${(sec / 60).toFixed(2)} min`;
+                }
+                return `${Math.floor(sec / 60)}m ${Math.round(sec % 60)}s`;
+            };
+
+            // Two clear-time numbers answer two different questions.
+            //
+            // Clean: mean interval between consecutive successful clears
+            // (no wipe between), which matches the in-game dungeon tracker —
+            // "how fast is a run when it works".
+            if (simResult.dungeonCleanClearCount > 0) {
+                const cleanNs = simResult.dungeonCleanClearTimeTotal / simResult.dungeonCleanClearCount;
+                html += `<div style="${rowStyle}">`;
+                html += `<span style="${labelStyle}" title="Mean time between consecutive successful clears, failed attempts excluded. Matches the in-game dungeon tracker.">Avg clear (clean)</span>`;
+                html += `<span style="${valueStyle}">${formatClear(cleanNs)}</span>`;
+                html += '</div>';
+            }
+
+            // Effective: total simulated time amortised over every
+            // completion, so wipe time and the unfinished tail are charged
+            // against throughput — "effective time per clear including
+            // failures". Above the clean number by the cost of failures,
+            // which is the figure for judging whether a higher tier that
+            // occasionally wipes is still worth pushing.
+            const effectiveNs = simResult.simulatedTime / simResult.dungeonsCompleted;
+            html += `<div style="${rowStyle}">`;
+            html += `<span style="${labelStyle}" title="Total simulated time divided by dungeons completed — includes failed attempts and the unfinished final run. Compare with the clean number to see the cost of failures at this tier.">Avg clear (incl. fails)</span>`;
+            html += `<span style="${valueStyle}">${formatClear(effectiveNs)}</span>`;
+            html += '</div>';
+        }
+        html += `<div style="${rowStyle}">`;
+        html += `<span style="${labelStyle}">Max wave reached</span>`;
+        // A run that carries no wave figure says so: the string "undefined"
+        // on screen is worse than an em dash, and reading it as 0 would be
+        // worse than either
+        const maxWave = Number.isFinite(simResult.maxWaveReached) ? formatWithSeparator(simResult.maxWaveReached) : '—';
+        html += `<span style="${valueStyle}">${maxWave}</span>`;
+        html += '</div>';
+        return html;
     }
 
     /**
@@ -10743,6 +11111,7 @@ class CombatSimUI {
         // and a hrid nobody in the new party has reads as no experience and no
         // deaths at all
         this._activePlayerTab = 'player1';
+        this._resultsAllPlayers = false;
         this._lastSimResult = null;
         this._lastSimHours = null;
         this._lastGameData = null;
