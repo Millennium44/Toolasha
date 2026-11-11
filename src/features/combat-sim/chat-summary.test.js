@@ -156,6 +156,14 @@ describe('withUpgrades', () => {
         expect(added[1]).toMatchObject({ name: 'Z', changes: [], upgrades: ['u'] });
     });
 
+    test('a reused slot holding a different player gets none of the old player’s upgrades', () => {
+        // `player2` ran for Alice; Bob was put in the same slot before the trigger run
+        const players = [{ key: 'player2', name: 'Bob', changes: ['c'], upgrades: [] }];
+        const out = withUpgrades(players, { key: 'player2', name: 'Alice', upgrades: ['Alice gear'] });
+        expect(out).toHaveLength(1);
+        expect(out[0].upgrades).toEqual([]);
+    });
+
     test('does not change its input and ignores an empty or unnamed owner', () => {
         const input = base();
         withUpgrades(input, { key: 'p1', upgrades: ['u'] });

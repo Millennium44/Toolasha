@@ -127,8 +127,8 @@ export function topUpgradeTexts(results, max = TOP_UPGRADES) {
 
 /**
  * Attach upgrade items to the player they belong to, adding the player when the trigger result has none.
- * The player is matched by `key` (the character's hrid) and, when the upgrade run has none (a remembered
- * run), by name.
+ * The player is matched by `key` (the sim's player slot) and, when the upgrade run has none (a remembered
+ * run), by name. A slot whose player's name differs from the one the upgrade run captured gets nothing.
  * @param {Array<Object>} players - From {@link triggerChatPlayers}
  * @param {{key: string|null, name: string|null, upgrades: string[]}} owner - Whose upgrades these are
  * @returns {Array<Object>} A new array; the input is not changed
@@ -137,8 +137,12 @@ export function withUpgrades(players, { key = null, name = null, upgrades = [] }
     const copy = players.map((p) => ({ ...p, upgrades: [...p.upgrades] }));
     if (!upgrades.length || (!key && !name)) return copy;
     let target;
-    if (key) target = copy.find((p) => p.key === key);
-    else {
+    if (key) {
+        target = copy.find((p) => p.key === key);
+        // A sim hrid is a slot (`player2`), kept when the player in it is replaced: a slot match whose captured
+        // name differs is someone else, and their upgrades go to nobody rather than under the wrong name
+        if (target && name && target.name && target.name !== name) return copy;
+    } else {
         // Name only: two players sharing it cannot be told apart, so neither gets these
         const same = copy.filter((p) => p.name === name);
         if (same.length > 1) return copy;
