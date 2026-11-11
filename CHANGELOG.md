@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Saved parties in the Combat Sim
+
+Save the players in the editor as a named party, then lock it into every Party tab search or load it back into Configure later. Saved parties sync across your devices like saved builds.
+
 ### Party tab includes your party and shows you in every row
 
 A new "Include my party" box, on by default, puts your in-game party members into every party the Party tab tries; set any of them to Try or Never. Result rows now read "You alone" and "You + …", so it is clear you are always in the party. Party members have Auras and Edit buttons like saved teammates.
