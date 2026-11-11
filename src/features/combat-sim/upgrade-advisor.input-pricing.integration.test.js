@@ -108,7 +108,7 @@ vi.mock('../settings/custom-price-overrides.js', () => ({
     getCustomPriceVersion: () => 0,
 }));
 vi.mock('../../utils/game-lookups.js', () => ({
-    getShopCoinCost: () => 0,
+    getShopCoinCost: (hrid) => state.shop?.[hrid] || 0,
     getShopCoinOnlyCost: () => 0,
 }));
 vi.mock('../../utils/market-data.js', () => {
@@ -204,6 +204,7 @@ beforeEach(() => {
         '/items/mirror_of_protection:0': { ask: 90_000, bid: 80_000 },
     };
     state.custom = {};
+    state.shop = {};
     state.craftingSetting = false;
     state.sides = null;
     state.capeMode = 'zero';
@@ -528,21 +529,29 @@ describe('a refined untradable cape in the advisor follows the cape setting', ()
 });
 
 describe('route pricing: a supported row ranks on the shared route', () => {
-    test('a Buy quote that differs from the advisor quote sets Cost and breakdown together; off restores both', () => {
+    test('a wide +0 book: both models read the guarded price, so the Cost is unchanged', () => {
         const candidate = tier(0);
         const before = explainUpgradeCost(candidate, gameData);
         const cost = calculateUpgradeCost(candidate, gameData);
-        // The advisor guards a wide book at the bid; the shared Buy route is the ask Equipment Watch quotes
+        // The ask is over 1.3x the bid: the advisor guards it at the bid, and so does the shared Buy
         expect(cost).toBe(400);
         state.compareRoutes = true;
         const after = explainUpgradeCost(candidate, gameData);
-        expect(after.sharedRoute).toMatchObject({ applied: true, route: 'buy', real: 1000, advisorNet: 400 });
-        expect(after).toMatchObject({ net: 1000, gross: 1000, source: 'market', ladder: null });
-        expect(after.buys).toEqual([expect.objectContaining({ hrid: SWORD, enhancementLevel: 0, price: 1000 })]);
-        expect(calculateUpgradeCost(candidate, gameData)).toBe(1000);
+        expect(after.acquisitionComparison.routes.find((r) => r.id === 'buy').gross).toBe(400);
+        expect(after.sharedRoute).toMatchObject({ applied: false, agrees: true, route: 'buy' });
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(400);
         state.compareRoutes = false;
         expect(explainUpgradeCost(candidate, gameData)).toEqual(before);
-        expect(calculateUpgradeCost(candidate, gameData)).toBe(cost);
+    });
+    test('an NPC shop below the ask is the shared Buy too, as it is the advisor quote', () => {
+        state.shop = { [SWORD]: 300 };
+        const candidate = tier(0);
+        const cost = calculateUpgradeCost(candidate, gameData);
+        expect(cost).toBe(300);
+        state.compareRoutes = true;
+        const after = explainUpgradeCost(candidate, gameData);
+        expect(after.acquisitionComparison.routes.find((r) => r.id === 'buy').gross).toBe(300);
+        expect(calculateUpgradeCost(candidate, gameData)).toBe(300);
     });
     test.each([
         ['a custom buy price on the target', () => (state.custom[`${SWORD}:0:buy`] = 700)],
@@ -666,12 +675,18 @@ describe('route pricing: a supported row ranks on the shared route', () => {
         expect(member.costDetail.acquisitionComparison).toBe(comparison);
         expect(result.cost).toBe(20 - credit);
     });
-    test('comparison Mirror cannot borrow a craft-valued fresh input without a listing', () => {
+    test('a custom price on a lower Mirror rung keeps the advisor quote, which reads it', () => {
         state.compareRoutes = true;
-        // Legacy priceBase may value a +0 from a custom/production fallback.
-        // Comparison leaf inputs must instead exist on the same book as Watch.
+        // The Mirror service prices its rungs from the book; a rung the player priced by hand would be dropped
         state.books = { [`${SWORD}:5`]: { ask: 5000, bid: 5000 }, [`${MIRROR}:0`]: { ask: 100, bid: 100 } };
         state.custom[`${SWORD}:0:buy`] = 10;
+        const detail = explainUpgradeCost(tier(5), gameData);
+        expect(detail.acquisitionComparison).toMatchObject({ status: 'unsupported' });
+        expect(detail.sharedRoute).toMatchObject({ applied: false, reason: expect.stringContaining('custom price') });
+    });
+    test('comparison Mirror cannot borrow a production-valued fresh input without a listing', () => {
+        state.compareRoutes = true;
+        state.books = { [`${SWORD}:5`]: { ask: 5000, bid: 5000 }, [`${MIRROR}:0`]: { ask: 100, bid: 100 } };
         const result = explainUpgradeCost(tier(5), gameData).acquisitionComparison;
         expect(result).toMatchObject({ status: 'priced', route: 'buy' });
         expect(result.routes.some((route) => route.id === 'mirror')).toBe(false);
