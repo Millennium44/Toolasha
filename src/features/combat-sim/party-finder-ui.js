@@ -886,31 +886,50 @@ export class PartyFinderTab {
      */
     _watchParty() {
         const onRoster = () => this._refreshParty();
-        const onProfile = () => this._onProfileShared();
+        const onProfile = (data) => this._onProfileShared(data);
         dataManager.on?.('party_roster_updated', onRoster);
+        // Character data arriving ends the "Loading party…" line
+        dataManager.on?.('character_initialized', onRoster);
         webSocketHook.on?.('profile_shared', onProfile);
         this._partyUnwatch = () => {
             dataManager.off?.('party_roster_updated', onRoster);
+            dataManager.off?.('character_initialized', onRoster);
             webSocketHook.off?.('profile_shared', onProfile);
         };
     }
 
     /**
-     * A profile was opened in game: if a party member was waiting on theirs, look again once it is written.
+     * A profile was opened in game: if a party member was waiting on theirs, look again once it is written. The
+     * write lands behind the hook's profile chain at a time of its own, so this keeps looking, a little slower each
+     * time, for as long as the tab is open and that member is still waiting. A newer share for the same member
+     * hands the wait to itself; closing the tab or switching character ends it.
+     * @param {Object} [data] - The `profile_shared` message
      * @private
      */
-    async _onProfileShared() {
+    async _onProfileShared(data) {
         if (!this.root || !this._partyMembers.some((m) => !m.dto)) return;
-        for (let attempt = 0; attempt < 2; attempt++) {
+        const profile = data?.profile;
+        const sharedId =
+            profile?.sharableCharacter?.id || profile?.characterSkills?.[0]?.characterID || profile?.character?.id;
+        // The member this profile is for, or any member still waiting when the message does not say
+        const waiting = () =>
+            this._partyMembers.some((m) => !m.dto && (sharedId == null || String(m.characterID) === String(sharedId)));
+        if (!waiting()) return;
+        const owner = dataManager.getCurrentCharacterId();
+        const ticket = (this._profileWaitTicket = (this._profileWaitTicket || 0) + 1);
+        const cancelled = () =>
+            !this.root || ticket !== this._profileWaitTicket || dataManager.getCurrentCharacterId() !== owner;
+        for (let delay = 100; ; delay = Math.min(delay * 2, 2000)) {
             try {
                 await webSocketHook._profileChain;
             } catch {
                 /* a failed write is logged where it happens */
             }
-            if (!this.root) return;
+            if (cancelled()) return;
             await this._refreshParty();
-            if (!this.root || !this._partyMembers.some((m) => !m.dto)) return;
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            if (cancelled() || !waiting()) return;
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            if (cancelled()) return;
         }
     }
 
@@ -1003,6 +1022,11 @@ export class PartyFinderTab {
             this._renderLockSelect();
         }
         const owner = dataManager.getCurrentCharacterId();
+        // Character data not in yet: an empty party here means "not read", not "no party"
+        if (owner == null || !dataManager.characterData) {
+            settle([], 'Loading party…');
+            return;
+        }
         const partyNow = () => dataManager.getPartyMembers?.().members || [];
         const keyOf = (list) => list.map((m) => String(m.characterID)).join(',');
         const all = partyNow();

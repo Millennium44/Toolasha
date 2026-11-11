@@ -35,6 +35,8 @@ const state = vi.hoisted(() => ({
     /** What buildAllPlayerDTOs answers */
     built: null,
     partyListeners: [],
+    /** Character data not loaded yet */
+    noCharacterData: false,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -53,6 +55,7 @@ vi.mock('../../core/data-manager.js', () => ({
             state.partyListeners = state.partyListeners.filter(([e, c]) => !(e === event && c === cb));
         },
         get characterData() {
+            if (state.noCharacterData) return null;
             return { character: { name: 'Milkman' }, characterAbilities: state.owned };
         },
     },
@@ -175,6 +178,7 @@ vi.mock('./all-zones-runner.js', () => ({
     },
 }));
 
+const { default: webSocketHook } = await import('../../core/websocket.js');
 const { PartyFinderTab, displayNames, unpricedMark } = await import('./party-finder-ui.js');
 const { announceSyncPullApplied } = await import('../../utils/sync-merge-registry.js');
 const { PARTY_TEMPLATES, templateTeammateName } = await import('./party-templates.js');
@@ -332,6 +336,7 @@ beforeEach(() => {
     state.party = [];
     state.built = null;
     state.partyListeners = [];
+    state.noCharacterData = false;
     state.gameData = {
         itemDetailMap: {
             '/items/rippling_trident': {},
@@ -2092,6 +2097,43 @@ describe('include my party', () => {
         await mountTab();
         expect(partyRows()).toHaveLength(0);
         expect(el('party-note').textContent).toBe('You are not in a party.');
+    });
+
+    test('before character data has loaded: a loading line, then the party once it has', async () => {
+        state.charId = null;
+        state.noCharacterData = true;
+        await mountTab();
+        expect(el('party-note').textContent).toBe('Loading party…');
+        expect(el('party-note').textContent).not.toContain('not in a party');
+        state.charId = 'me';
+        state.noCharacterData = false;
+        for (const [event, cb] of state.partyListeners) if (event === 'character_initialized') cb();
+        await flush();
+        expect(el('party-note').textContent).toBe('You are not in a party.');
+    });
+
+    test('a profile that lands long after it was shared is still picked up, and the wait ends with the tab', async () => {
+        setParty([['c1', 'Captain', null]]);
+        const handlers = [];
+        const onSpy = vi.spyOn(webSocketHook, 'on').mockImplementation((type, cb) => handlers.push([type, cb]));
+        const offSpy = vi.spyOn(webSocketHook, 'off').mockImplementation(() => {});
+        try {
+            await mountTab();
+            const onProfile = handlers.find(([type]) => type === 'profile_shared')[1];
+            expect(partyRows()[0].querySelector('[data-pf-party-missing]')).not.toBeNull();
+            onProfile({ profile: { sharableCharacter: { id: 'c1', name: 'Captain' } } });
+            await new Promise((r) => setTimeout(r, 350));
+            // The write lands well after the first two looks (0 ms and 100 ms) would have given up
+            setParty([['c1', 'Captain', build(100)]]);
+            await new Promise((r) => setTimeout(r, 1100));
+            expect(partyRows()[0].querySelector('[data-pf-party-missing]')).toBeNull();
+            expect(partyChoice('party:c1').value).toBe('always');
+            tab.detach();
+            expect(offSpy).toHaveBeenCalledWith('profile_shared', onProfile);
+        } finally {
+            onSpy.mockRestore();
+            offSpy.mockRestore();
+        }
     });
 
     test('a member whose profile is not loaded is said so and left out, never a blank build', async () => {
