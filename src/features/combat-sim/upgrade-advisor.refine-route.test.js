@@ -663,6 +663,61 @@ describe('refined target priced from a held base', () => {
                     expect(row.cost).toBeCloseTo(row.costDetail.net, 0);
                 });
 
+                test('a row priced before the claims keeps a breakdown that lands on its Cost', async () => {
+                    state.swordSell = 5_000_000;
+                    state.items = [stack(SWORD, 6)];
+                    const armed = {
+                        ...ITEM_DETAIL_MAP,
+                        [SWORD]: {
+                            ...ITEM_DETAIL_MAP[SWORD],
+                            equipmentDetail: {
+                                type: '/equipment_types/main_hand',
+                                combatStats: { slashDamage: 10 },
+                            },
+                        },
+                    };
+                    buildGameDataPayload.mockReturnValue({ actionDetailMap: {}, itemDetailMap: armed });
+                    runLabyrinthSimulation.mockResolvedValue({ labyAttemptCount: 100, encounters: 50 });
+                    const dto = (level) => ({
+                        equipment: { '/equipment_types/main_hand': { hrid: SWORD, enhancementLevel: level } },
+                        staminaLevel: 50,
+                        meleeLevel: 50,
+                    });
+                    // Not a checked swap, so it is not priced again: its Cost is the one its builder set
+                    const extra = {
+                        ...sword(7),
+                        slot: '/equipment_types/main_hand',
+                        currentHrid: SWORD,
+                        currentLevel: 3,
+                        removedItems: [],
+                        allLoadouts: true,
+                        isSelf: true,
+                    };
+                    extra.cost = calculateUpgradeCost(extra, gameData);
+                    const { results } = await runLabyrinthAllFightsAnalysis(
+                        {
+                            fights: [
+                                { monsterHrid: '/monsters/goblin', monsterName: 'Goblin', roomLevel: 100, dto: dto(3) },
+                                { monsterHrid: '/monsters/wisp', monsterName: 'Wisp', roomLevel: 110, dto: dto(6) },
+                            ],
+                            crates: [],
+                            hours: 1,
+                            communityBuffs: {},
+                            labyrinthCombatBuffs: [],
+                            modes: [],
+                            extraCandidates: [extra],
+                        },
+                        null,
+                        {}
+                    );
+                    const row = results.find((r) => r.candidate.description === extra.description);
+                    expect(row.cost).toBe(extra.cost);
+                    expect(row.costDetail).not.toBeNull();
+                    expect(row.costDetail.net).toBeCloseTo(row.cost, 0);
+                    // A row stores its breakdown once, as its costDetail
+                    expect(row.candidate).not.toHaveProperty('routeCostDetail');
+                });
+
                 test('the copy one loadout wears while equipped also serves another loadout', () => {
                     // A wears the +6 right now (equipped); B wears one too, but loadouts are alternatives, so the
                     // equipped copy serves both and the bag copy is a free spare

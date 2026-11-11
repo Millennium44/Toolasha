@@ -2997,9 +2997,15 @@ function upgradeCostAtTax(candidate, gameData, isSelf) {
     const own = net == null ? net : net - freedPiecesCredit(candidate, net).credit;
     // The shared route's figure comes from the one place the breakdown takes it, so the Cost a row
     // ranks on and the breakdown it prints cannot disagree
-    if (!sharedRouteMayApply(candidate, gameData, isSelf)) return own;
-    const detail = explainUpgradeCost(candidate, gameData, isSelf);
-    return detail?.sharedRoute?.applied ? detail.net : own;
+    // A failure here loses this row's shared route only, never the analysis: the advisor's own figure stands
+    try {
+        if (!sharedRouteMayApply(candidate, gameData, isSelf)) return own;
+        const detail = explainUpgradeCost(candidate, gameData, isSelf);
+        return detail?.sharedRoute?.applied ? detail.net : own;
+    } catch (error) {
+        console.error('[UpgradeAdvisor] Shared route pricing failed; keeping the advisor quote:', error);
+        return own;
+    }
 }
 
 /**
@@ -4517,9 +4523,6 @@ export function explainUpgradeCost(candidate, gameData, isSelf = true) {
     });
 }
 
-/** The shared route each of the advisor's own cost sources is another quote of, where there is one */
-const SHARED_ROUTE_OF_SOURCE = { market: 'buy', craft: 'craft', refine: 'craft', mirror: 'mirror' };
-
 /** The cost source a shared route reports as, so the basis tag and the savings handoff read it */
 const SOURCE_OF_SHARED_ROUTE = { buy: 'market', craft: 'craft', mirror: 'mirror' };
 
@@ -4563,10 +4566,8 @@ function withSharedRoute(detail, comparison, gameData) {
         return keep(comparison.followReason?.[route] || 'Its shopping is not supported here yet.', stamp);
     if (own !== null && Math.abs(chosen.real - own) <= SHARED_ROUTE_TOLERANCE)
         return keep('Same as the advisor quote.', { ...stamp, agrees: true });
-    const ownRoute = SHARED_ROUTE_OF_SOURCE[detail.source] || null;
-    const preferred = comparison.preference !== 'auto' && comparison.preference === route;
-    if (!(own === null || chosen.real < own || ownRoute === route || preferred))
-        return keep('The advisor quote is cheaper and has no shared equivalent.', stamp);
+    // Only ever downwards: a shared route that would raise the row's Cost leaves the advisor's quote in place
+    if (own !== null && !(chosen.real < own)) return keep('The advisor quote is cheaper.', stamp);
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid?.split('/').pop().replace(/_/g, ' ') || '?';
     const { itemHrid, level } = comparison.target;
@@ -4707,7 +4708,16 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
             },
             patientTickPrice
         );
-    const buy = (hrid, atLevel) => quote(hrid, atLevel, 'buy') || null;
+    // A Buy is priced by the advisor's own buy rule, so both models read one book the same way: the
+    // ask-inflation guard and shop floor at +0, the mode's side with its cross-fill above it. A
+    // production-cost figure with no quote behind it is the craft route's business, not a purchase
+    const buy = (hrid, atLevel) => {
+        const priced = atLevel > 0 ? priceAtLevel(hrid, atLevel) : priceBase(hrid, { useCraftingCost: false });
+        if (!(priced?.price > 0) || priced.partial || priced.assumed) return null;
+        const book = getItemPrices(hrid, atLevel);
+        const quoted = (book?.ask > 0 && !book.askEstimated) || (book?.bid > 0 && !book.bidEstimated);
+        return quoted || !priced.estimated ? priced.price : null;
+    };
     const sale = (hrid, atLevel) => {
         const vendor = atLevel === 0 ? Number(gameData?.itemDetailMap?.[hrid]?.sellPrice) || 0 : 0;
         const market = afterSaleTax(quote(hrid, atLevel, 'sell'));
@@ -4753,7 +4763,8 @@ function advisorRouteComparison(candidate, gameData, isSelf) {
     // The shared routes read the order book only. A custom price the advisor honors on anything the routes
     // buy or sell would be silently dropped, so such a row keeps the advisor quote
     const customed =
-        getCustomPrice(itemHrid, level, 'buy') !== null ||
+        // Every rung a Mirror build may buy, as well as the target itself
+        Array.from({ length: level + 1 }, (_, at) => at).some((at) => getCustomPrice(itemHrid, at, 'buy') !== null) ||
         getCustomPrice(MIRROR_ITEM_HRID, 0, 'buy') !== null ||
         (recipe?.inputItems || []).some((input) => getCustomPrice(input.itemHrid, 0, 'buy') !== null) ||
         (recipe?.upgradeItemHrid &&
@@ -7195,13 +7206,15 @@ export function buildModifiedCombatBuffs(baseBuffs, candidate) {
  * read leaves the row without one rather than without a table.
  * @param {Object} candidate - The row's candidate
  * @param {Object} gameData - Game data payload
+ * @param {number|null} cost - The row's Cost, which a drawn shared route must land on
  * @returns {Object|null}
  */
-function allFightsCostDetail(candidate, gameData) {
+function allFightsCostDetail(candidate, gameData, cost) {
     if (candidate.noPurchase || candidate.abilityOrder) return null;
     if (['guild_shrine', 'labyrinth_buff', 'combat_level'].includes(candidate.type)) return null;
     try {
-        return explainLabCandidateCost(candidate, gameData, candidate.isSelf !== false);
+        const isSelf = candidate.isSelf !== false;
+        return detailForCost(explainLabCandidateCost(candidate, gameData, isSelf), cost, candidate, gameData, isSelf);
     } catch (error) {
         console.error('[UpgradeAdvisor] Reading the all-fights cost breakdown failed:', error);
         return null;
@@ -7239,6 +7252,23 @@ function withoutStaleRoute(detail, cost) {
 }
 
 /**
+ * A row's breakdown at drawing time that agrees with its Cost: where the shared route now applies but the
+ * Cost was priced on the advisor's own quote (a pre-priced row, a bag or book that moved during the sims),
+ * the advisor's own breakdown, so the row keeps its figure and its explanation together.
+ * @param {Object|null} detail - The breakdown just drawn
+ * @param {number|null} cost - The row's Cost
+ * @param {Object} candidate - The row's candidate
+ * @param {Object} gameData - Game data payload
+ * @param {boolean} isSelf - Whether the row is the live character's
+ * @returns {Object|null}
+ */
+function detailForCost(detail, cost, candidate, gameData, isSelf) {
+    if (!detail?.sharedRoute?.applied) return detail;
+    if (Number.isFinite(cost) && Math.abs(detail.net - cost) <= 1) return detail;
+    return withSaleTaxOf(candidate, () => explainLabCandidateCostAtTax(candidate, gameData, isSelf, false));
+}
+
+/**
  * The breakdown behind a route-priced Cost, taken when the Cost is, so the row draws and shops the very route
  * it was ranked on even if the bag or the book moves while its sims run. Null for a row on the advisor's own
  * quote, which keeps drawing its breakdown as before.
@@ -7249,9 +7279,14 @@ function withoutStaleRoute(detail, cost) {
  * @returns {Object|null}
  */
 function routeDetailAtPricing(candidate, cost, gameData, isSelf) {
-    if (!Number.isFinite(cost) || !sharedRouteMayApply(candidate, gameData, isSelf)) return null;
-    const detail = explainLabCandidateCost(candidate, gameData, isSelf);
-    return detail?.sharedRoute?.applied && Math.abs(detail.net - cost) <= 1 ? detail : null;
+    try {
+        if (!Number.isFinite(cost) || !sharedRouteMayApply(candidate, gameData, isSelf)) return null;
+        const detail = explainLabCandidateCost(candidate, gameData, isSelf);
+        return detail?.sharedRoute?.applied && Math.abs(detail.net - cost) <= 1 ? detail : null;
+    } catch (error) {
+        console.error('[UpgradeAdvisor] Reading a route-priced breakdown failed:', error);
+        return null;
+    }
 }
 
 /**
@@ -7273,8 +7308,11 @@ export function explainLabCandidateCost(candidate, gameData, isSelf = true) {
  * @param {boolean} isSelf - Whether the row is the live character's
  * @returns {Object}
  */
-function explainLabCandidateCostAtTax(candidate, gameData, isSelf) {
-    const detail = explainUpgradeCost(candidate, gameData, isSelf);
+function explainLabCandidateCostAtTax(candidate, gameData, isSelf, route = true) {
+    // With route false: the advisor's own breakdown, no shared route weighed
+    const detail = route
+        ? explainUpgradeCost(candidate, gameData, isSelf)
+        : explainUpgradeCostAtTax(candidate, gameData, isSelf);
     if (!candidate.keptItems?.length) return detail;
 
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid.split('/').pop().replace(/_/g, ' ');
@@ -7473,14 +7511,19 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
     const communityCandidates = candidates.filter((c) => c.type === 'community_buff' && !c.measuresLoss);
     // Resale is taxed as the analysed character pays it (see `saleTaxRateOf`), as the combat analysis does
     const labSaleTaxRate = saleTaxRateOf(playerDTO, isSelf);
+    // The breakdown each route-priced row was priced with, kept for this run only (never on the candidate,
+    // so a saved row stores it once, as its costDetail)
+    const routeDetails = new Map();
     const candidatesWithCost = candidates
         // No drink slot or combat scroll runs in the Labyrinth, so either from any source has nothing to measure
         .filter((c) => c.type !== 'community_buff' && labCanUse(c))
         .map((generated) => {
             const c = labSaleTaxRate == null ? generated : { ...generated, saleTaxRate: labSaleTaxRate };
             const cost = calculateUpgradeCost(c, gameData, isSelf);
-            const routeCostDetail = routeDetailAtPricing(c, cost, gameData, isSelf);
-            return { ...c, cost, ...(routeCostDetail ? { routeCostDetail } : {}) };
+            const row = { ...c, cost };
+            const routeDetail = routeDetailAtPricing(c, cost, gameData, isSelf);
+            if (routeDetail) routeDetails.set(row, routeDetail);
+            return row;
         });
 
     // Generate buff candidates. Skilling buffs are handled in the skilling tab;
@@ -7586,8 +7629,14 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             // An owned copy that is only moved buys nothing, so it has no purchase to break down beside its zero
             costDetail: candidate.noPurchase
                 ? null
-                : (candidate.routeCostDetail ??
-                  withoutStaleRoute(explainLabCandidateCost(candidate, gameData, isSelf), candidate.cost)),
+                : (routeDetails.get(candidate) ??
+                  detailForCost(
+                      explainLabCandidateCost(candidate, gameData, isSelf),
+                      candidate.cost,
+                      candidate,
+                      gameData,
+                      isSelf
+                  )),
             costType: 'gold',
             cost: candidate.cost,
             winRate,
@@ -9235,25 +9284,35 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // loadout wears, so with claims it is priced again; a copy already owned stays at zero.
     const prePricedAgainstClaims = (candidate) =>
         Boolean(loadoutClaims) && candidate.checkedSwap === true && !candidate.noPurchase && candidate.cost != null;
+    // The breakdown each route-priced row was priced with, and the object each row's Cost was priced on
+    // (a pre-priced row's builder priced it without these claims), kept for this run only
+    const routeDetails = new Map();
+    const pricedOn = new Map();
     const candidates = [...candidatesByKey.values()]
         // No drink slot or combat scroll runs in the Labyrinth: dropped before pricing, not only by `appliesTo`
         .filter(labCanUse)
         .map((pooled) => {
             const candidate = withLoadoutClaims(pooled, loadoutClaims);
+            const isSelfRow = candidate.isSelf ?? true;
             // Priced as whoever the builder priced it for (`isSelf`), here too when it came back unpriced: the
             // live character's own copies and books say nothing about what another player holds
-            const cost = prePricedAgainstClaims(candidate)
-                ? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true)
-                : (candidate.cost ?? calculateUpgradeCost(candidate, gameData, candidate.isSelf ?? true));
-            const routeCostDetail = routeDetailAtPricing(candidate, cost, gameData, candidate.isSelf ?? true);
-            return {
-                ...candidate,
-                cost,
-                ...(routeCostDetail ? { routeCostDetail } : {}),
-                appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
-            };
+            const repriced = prePricedAgainstClaims(candidate) || candidate.cost == null;
+            const cost = repriced ? calculateUpgradeCost(candidate, gameData, isSelfRow) : candidate.cost;
+            const row = withLoadoutClaims(
+                {
+                    ...candidate,
+                    cost,
+                    appliesTo: fights.map((fight) => candidateAppliesToDTO(candidate, fight.dto, gameData)),
+                },
+                loadoutClaims
+            );
+            // Read on the very object the Cost was priced on: a pre-priced row's builder priced it without claims
+            const priced = repriced ? candidate : pooled;
+            pricedOn.set(row, priced);
+            const routeDetail = routeDetailAtPricing(priced, cost, gameData, isSelfRow);
+            if (routeDetail) routeDetails.set(row, routeDetail);
+            return row;
         })
-        .map((row) => withLoadoutClaims(row, loadoutClaims))
         .filter((candidate) => candidate.appliesTo.some(Boolean));
 
     // Labyrinth token buffs. Character-wide and not held in a loadout at all —
@@ -9484,8 +9543,13 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             // hand-checked ability order is a re-ordering with nothing to buy, and one that moves a
             // copy already owned buys nothing so has no purchase to break down beside its zero
             costDetail:
-                candidate.routeCostDetail ??
-                matchingCostDetail(allFightsCostDetail(candidate, gameData), cost, candidate),
+                routeDetails.get(candidate) ??
+                matchingCostDetail(
+                    // Explained on what the Cost was priced on, so the two read the same claims
+                    allFightsCostDetail(pricedOn.get(candidate) ?? candidate, gameData, cost),
+                    cost,
+                    candidate
+                ),
             // A shrine row carries no breakdown here, but a budget plan still has to know its price leaves
             // the guild tokens out. The one cheap field rather than a full costDetail per row
             ...(candidate.type === 'guild_shrine'
