@@ -69,6 +69,7 @@ export const COMBAT_SIM_KEYS = Object.freeze({
     bestiaryPlanPoints: 'combatSimBestiaryPlanPoints',
     bestiaryPlanTotal: 'combatSimBestiaryPlanTotal',
     bestiaryPlanTolerance: 'combatSimBestiaryPlanTolerance',
+    bestiaryPlanMinClear: 'combatSimBestiaryPlanMinClear',
 });
 
 /**
@@ -181,6 +182,7 @@ const COMBAT_LABELS = {
     bestiaryPlanPoints: 'Bestiary plan points',
     bestiaryPlanTotal: 'Bestiary plan total',
     bestiaryPlanTolerance: 'Bestiary plan tolerance',
+    bestiaryPlanMinClear: 'Bestiary plan minimum clear rate',
 };
 for (const [name, base] of Object.entries(COMBAT_SIM_KEYS)) {
     register('settings', base, name === 'triggerChoices' ? mergeFieldRecord : incomingWins, COMBAT_LABELS[name]);

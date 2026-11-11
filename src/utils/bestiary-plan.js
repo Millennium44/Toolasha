@@ -711,6 +711,8 @@ function padSegmentFights(segments, zonesByHrid, options) {
  * @param {number} [input.tolerancePercent] - How much slower (in percent) a zone may be at reaching its next
  *   point and still be preferred over the fastest one, when its `score` is higher. 0 (default) reproduces the
  *   old pure-speed behavior.
+ * @param {number} [input.minClearPercent] - A zone with a `clearRate` (fraction) below this percent is left out of
+ *   the route and listed in `leftOut` with its reason. 0 (default) leaves nothing out; a zone with no `clearRate` is never left out.
  * @param {number} [input.confidencePercent] - How often a segment's quoted fight count should be enough to
  *   actually cross the thresholds it claims. Defaults to the `combatFightConfidence` setting; 0 turns the
  *   variance padding off and leaves only the flat floor.
@@ -735,6 +737,7 @@ function padSegmentFights(segments, zonesByHrid, options) {
  *     partial: boolean, isDungeon: boolean, note: string|null, viaScore: boolean,
  *     monsters: Array<{monsterHrid: string, from: number, count: number, to: number, reached: boolean, points: number}>}>,
  *   bestSingle: {zoneHrid: string, name: string, points: number, encounters: number|null, hours?: number|null}|null,
+ *   leftOut: Array<{zoneHrid: string, name: string, reason: string}>,
  *   counts: Object,
  * }}
  */
@@ -744,6 +747,7 @@ export function planBestiaryRoute({
     hours = 24,
     targetPoints = null,
     tolerancePercent = 0,
+    minClearPercent = 0,
     confidencePercent = null,
     bufferPercent = null,
     isBossMonster = null,
@@ -752,13 +756,22 @@ export function planBestiaryRoute({
     const targeting = Number(targetPoints) > 0;
     const target = targeting ? Number(targetPoints) : 0;
     const budget = targeting ? Infinity : Number(hours) > 0 ? Number(hours) : 0;
-    const usable = (zones || []).filter(
+    const earning = (zones || []).filter(
         (zone) =>
             zone &&
             zone.zoneHrid &&
             zone.creditsPerHour &&
             Object.values(zone.creditsPerHour).some((rate) => Number(rate) > 0)
     );
+    // A dungeon whose clear rate is known and below the minimum stays out of the route, and is
+    // reported in `leftOut` so the plan can say so. An unknown rate (null) is not a low one: it stays in.
+    const leftOut = [];
+    const usable = earning.filter((zone) => {
+        const reason = clearRateLeftOutReason(zone, minClearPercent);
+        if (!reason) return true;
+        leftOut.push({ zoneHrid: zone.zoneHrid, name: zone.name || zone.zoneHrid, reason });
+        return false;
+    });
     // The counts arriving here are Bestiary credits (see `bestiary.js`), which
     // are openly fractional — a party kill can be worth a third of a credit —
     // so no flooring happens here. `state` is the walk's own mutable copy;
@@ -960,8 +973,30 @@ export function planBestiaryRoute({
         pointsByZone,
         segments,
         bestSingle,
+        leftOut,
         counts: state,
     };
+}
+
+/**
+ * Why a zone is left out of the route for its clear rate, or null when it stays in.
+ * Only a zone with a known `clearRate` (a fraction, 0-1) can be left out; exactly the minimum stays.
+ * @param {{clearRate?: number|null, clearRateSource?: string|null}} zone
+ * @param {number} minClearPercent - The minimum clear rate in percent; 0 or less turns the rule off
+ * @returns {string|null}
+ */
+export function clearRateLeftOutReason(zone, minClearPercent) {
+    const minimum = Number(minClearPercent);
+    const rate = zone?.clearRate;
+    if (rate === null || rate === undefined || !Number.isFinite(Number(rate))) return null;
+    if (!(minimum > 0)) return null;
+    const percent = Number(rate) * 100;
+    if (percent >= minimum - 1e-9) return null;
+    // Whole percent unless rounding would make the rate look like it met the minimum
+    const whole = Math.round(percent);
+    const shown = whole >= minimum ? percent.toFixed(1) : String(whole);
+    const source = zone.clearRateSource ? ` (${zone.clearRateSource})` : '';
+    return `clears ${shown}%${source} < ${minimum}% minimum`;
 }
 
 /**
@@ -1036,6 +1071,7 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid, totals = nu
             `Best single zone: ${labeled(plan.bestSingle.name, plan.bestSingle.paceLabel)} — ${plan.bestSingle.points} points`
         );
     }
+    for (const left of plan.leftOut || []) lines.push(`Left out: ${left.name} — ${left.reason}`);
     return lines.join('\n');
 }
 

@@ -8,6 +8,7 @@ import {
     clearTimeShare,
     formatPlanHours,
     formatPlanText,
+    clearRateLeftOutReason,
 } from './bestiary-plan.js';
 import { pointsFromCount, monsterCreditsPerHour, resolvePartySize } from './bestiary.js';
 import { fightsForKillConfidence } from './fight-confidence.js';
@@ -1226,5 +1227,84 @@ describe('the share of your time that goes to clears', () => {
 
     test('with no clear time to weigh against, a failure is one more clear', () => {
         expect(clearTimeShare([at(3), at(4), at(5)], [at(2, 60_000)], 0)).toBeCloseTo(0.75, 12);
+    });
+});
+
+describe('the minimum clear rate', () => {
+    const fly = { '/monsters/fly': 10 };
+    const dungeon = (id, clearRate, extra = {}) => ({
+        ...zone(id, fly),
+        isDungeon: true,
+        clearRate,
+        clearRateSource: 'sim',
+        ...extra,
+    });
+    const names = (plan) => plan.segments.map((segment) => segment.zoneHrid);
+
+    test('a dungeon below the minimum is left out and listed with its reason, never silently', () => {
+        const plan = planBestiaryRoute({
+            zones: [dungeon('shaky', 0.55), dungeon('steady', 0.9, { creditsPerHour: { '/monsters/fly': 5 } })],
+            counts: {},
+            hours: 10,
+            minClearPercent: 70,
+        });
+        expect(names(plan)).toEqual(['steady']);
+        expect(plan.leftOut).toEqual([{ zoneHrid: 'shaky', name: 'shaky', reason: 'clears 55% (sim) < 70% minimum' }]);
+        // Nor does the single-zone comparison use it
+        expect(plan.bestSingle.zoneHrid).toBe('steady');
+        expect(formatPlanText(plan)).toContain('Left out: shaky — clears 55% (sim) < 70% minimum');
+    });
+
+    test('exactly the minimum stays in; a hair under is out and never reads as meeting it', () => {
+        const plan = planBestiaryRoute({
+            zones: [dungeon('at', 0.7), dungeon('under', 0.6996)],
+            counts: {},
+            hours: 5,
+            minClearPercent: 70,
+        });
+        expect(names(plan)).toEqual(['at']);
+        expect(plan.leftOut).toHaveLength(1);
+        expect(plan.leftOut[0].reason).toBe('clears 69.96% (sim) < 70% minimum'.replace('69.96', '70.0'));
+    });
+
+    test('zero clears is a known 0%, left out; 100% stays; no data is unknown and stays', () => {
+        const plan = planBestiaryRoute({
+            zones: [dungeon('never', 0), dungeon('perfect', 1), dungeon('unknown', null), zone('plain', fly)],
+            counts: {},
+            hours: 5,
+            minClearPercent: 70,
+        });
+        expect(plan.leftOut.map((left) => left.zoneHrid)).toEqual(['never']);
+        expect(plan.leftOut[0].reason).toBe('clears 0% (sim) < 70% minimum');
+        expect(names(plan)).toEqual(['perfect']);
+    });
+
+    test('0 turns the rule off, and leaving nothing out reports an empty list', () => {
+        const zones = [dungeon('never', 0)];
+        const off = planBestiaryRoute({ zones, counts: {}, hours: 5, minClearPercent: 0 });
+        expect(names(off)).toEqual(['never']);
+        expect(off.leftOut).toEqual([]);
+        expect(planBestiaryRoute({ zones, counts: {}, hours: 5 }).leftOut).toEqual([]);
+    });
+
+    test('every dungeon left out: no route, and all of them still listed', () => {
+        const plan = planBestiaryRoute({
+            zones: [dungeon('a', 0.1), dungeon('b', 0.2)],
+            counts: {},
+            hours: 5,
+            minClearPercent: 70,
+        });
+        expect(plan.segments).toEqual([]);
+        expect(plan.bestSingle).toBeNull();
+        expect(plan.leftOut.map((left) => left.zoneHrid)).toEqual(['a', 'b']);
+    });
+
+    test('the reason helper: ordinary zones, unknown rates and a rate of your own runs', () => {
+        expect(clearRateLeftOutReason({}, 70)).toBeNull();
+        expect(clearRateLeftOutReason({ clearRate: null }, 70)).toBeNull();
+        expect(clearRateLeftOutReason({ clearRate: 0.5 }, 0)).toBeNull();
+        expect(clearRateLeftOutReason({ clearRate: 0.5, clearRateSource: 'your runs' }, 70)).toBe(
+            'clears 50% (your runs) < 70% minimum'
+        );
     });
 });

@@ -93,6 +93,7 @@ const KEYS = [
     ['settings', 'combatSimBestiaryPlanPoints'],
     ['settings', 'combatSimBestiaryPlanTotal'],
     ['settings', 'combatSimBestiaryPlanTolerance'],
+    ['settings', 'combatSimBestiaryPlanMinClear'],
     ['settings', 'combatSimPartyRoster'],
     ['combatExport', 'combatSimUpgradeResults'],
     ['combatExport', 'zoneSimRates'],
