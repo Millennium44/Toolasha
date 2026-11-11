@@ -1802,7 +1802,7 @@ export function wipeTimeInfo(info, timeHasWipes) {
 /**
  * Charge a dungeon zone for its wipes and carry its clear rate to the planner. Adjusted time is the
  * measured time / (1 - wipe share), the expected attempts per clear, so the zone's credits and clears per hour are
- * multiplied by the clear rate. A rate of 0 is never clearing: `neverClears`, left out of the route. The
+ * multiplied by the clear rate. A sim rate of 0 on a row timed from your clears is kept with no charge and an unknown rate. The
  * label and note say so (`+18% for wipes`); a row whose time already includes its wipes (`timeHasWipes`) keeps its
  * time and only carries the rate; an unknown clear rate is said to be unknown and charges nothing.
  *
@@ -1830,10 +1830,18 @@ export function withWipeRules(planZone) {
     const out = { ...zone, clearRate: rate, clearRateSource: info.source, wipePenaltyPercent: 0 };
     // A time that already includes its wipes is not charged twice; the rate still faces the minimum
     if (!(wipeShare > 0) || info.timeHasWipes) return out;
-    // Never clears: no number of attempts gets a clear, so no finite time exists to rank it by
+    // The sim never clears it, but this row is timed from your own clears (that is the only way to get here), and
+    // real clears beat the sim: kept, no wipe charge, and with no rate of your own its clear rate is unknown
     if (!(rate > 0)) {
-        out.neverClears = true;
-        out.note = [zone.note, 'never clears (every attempt wipes), so it is left out of the route']
+        out.clearRate = null;
+        out.clearRateSource = null;
+        out.paceLabel = [zone.paceLabel, 'sim never clears; your clears used, no wipe charge']
+            .filter(Boolean)
+            .join(', ');
+        out.note = [
+            zone.note,
+            'the sim never clears it, but your own clears time it: no wipe charge, clear rate unknown',
+        ]
             .filter(Boolean)
             .join(' · ');
         return out;
@@ -6550,7 +6558,7 @@ class CombatSimUI {
                 <label style="color:#888; display:flex; align-items:center; gap:4px;" title="When two zones would reach their next Bestiary point within this many percent of each other's pace, the route prefers the one with the higher Score instead of the merely faster one. 0 turns this off and always takes the fastest.">Tolerance %
                     <input id="mwi-csim-bestiary-plan-tolerance" type="number" min="0" max="100" step="1" value="${tolerance}" style="${inputStyle}">
                 </label>
-                <label style="color:#888; display:flex; align-items:center; gap:4px;" title="A dungeon that clears less often than this (in the sim, or in your own recorded runs where the row uses them) is left out of the route; the plan lists it with the reason. A dungeon with no clear data is kept. 0 turns this off. Dungeons timed from your clears alone are also charged for wipes: their time is divided by (1 - wipe share). A dungeon that never clears is always left out.">Min clear %
+                <label style="color:#888; display:flex; align-items:center; gap:4px;" title="A dungeon that clears less often than this (in the sim, or in your own recorded runs where the row uses them) is left out of the route; the plan lists it with the reason. A dungeon with no clear data is kept. 0 turns this off. Dungeons timed from your clears alone are also charged for wipes: their time is divided by (1 - wipe share). A dungeon the sim never clears stays in when your own clears time it.">Min clear %
                     <input id="mwi-csim-bestiary-plan-minclear" type="number" min="0" max="100" step="1" value="${minClear}" style="${inputStyle}">
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="${GAME_BTN_CSS} padding:2px 8px; font-size:11px;" ${GAME_BTN_HOVER}>Plan</button>
