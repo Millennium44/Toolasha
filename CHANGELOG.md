@@ -9,9 +9,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Party tab picks up a late profile
 
 A party member whose profile arrives after you open the Party tab now shows up within a minute without reopening the tab, and the tab says "Loading party…" instead of "You are not in a party." before your character has loaded.
+
 ### Save and load a party on the Combat Sim roster
 
 Configure has Save party and Load party: save the whole roster, you and imported players included, under a name, and load it back later. Party-tab saved parties are listed too, and load with you as the live player.
+
+### Combat Sim zone icons show before you've been in combat
+
+Zone and monster icons in the sim's zone list stayed blank on a character that hadn't been in combat or opened the Combat page since the page loaded. They now load either way.
 
 <!-- shipped in 3.84.0 -->
 
